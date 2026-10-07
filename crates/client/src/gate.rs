@@ -317,6 +317,8 @@ struct Gate {
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// Views in a language with line rules where no text had its line breaks checked.
+    unbroken: Vec<String>,
     /// The interface font before the gate tried another, to go back to.
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
@@ -405,6 +407,7 @@ impl Gate {
             fall_judged: false,
             cover_checked: false,
             spills: Vec::new(),
+            unbroken: Vec::new(),
             font: None,
             food_moved: false,
             tame_aim: [0; 3],
@@ -2759,8 +2762,14 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let index = gate.phase as usize;
     let Some((language, view)) = FIT_LANGUAGES.get(index / views.len()).map(|language| (*language, views[index % views.len()])) else {
         let spills: Vec<String> = std::mem::take(&mut gate.spills).into_iter().map(|(_, line)| line).collect();
-        let result = if spills.is_empty() {
-            Ok(format!("every text fits on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+        // Line breaks are checked on every view in the languages with rules (Japanese), or
+        // the pass fails.
+        let breaks = world.remove_resource::<crate::ui::fit::LineBreaksChecked>().unwrap_or_default();
+        let unbroken = std::mem::take(&mut gate.unbroken);
+        let result = if !unbroken.is_empty() {
+            Err(format!("no line breaks checked on {} views in a language with line rules: {}", unbroken.len(), unbroken.join("; ")))
+        } else if spills.is_empty() {
+            Ok(format!("every text fits on {} views in {}; line breaks checked {}", views.len(), FIT_LANGUAGES.join(" and "), breaks.checked))
         } else {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };
@@ -2784,11 +2793,16 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     {
         return;
     }
+    let checked = |world: &World| world.get_resource::<crate::ui::fit::LineBreaksChecked>().copied().unwrap_or_default();
+    let before = checked(world);
     for spill in crate::ui::fit::find(world) {
         let what = format!("{language}: {spill}");
         if !gate.spills.iter().any(|(known, _)| *known == what) {
             gate.spills.push((what, format!("{language}, {view:?}: {spill}")));
         }
+    }
+    if checked(world).none_since(&before) {
+        gate.unbroken.push(format!("{language}, {view:?}"));
     }
     gate.advance(now);
 }

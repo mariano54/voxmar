@@ -9,6 +9,14 @@
 // default to what the block's tags say. The ten rare herbs (tagged `rare_herb`) grow only in
 // the biomes that name them, one or two each.
 (
+    // How densely small plants grow (flowers, ground plants, grasses and ferns): a factor
+    // on every biome's own, 1 being the biomes' own. Halved so the land reads less crowded:
+    // more bare ground between tufts, flowers and herbs, with drifts and rarities as before.
+    density: 0.5,
+    // What the density leaves at the biomes' own rate: the plants gathered for food,
+    // crafting and alchemy (wild crops, rare herbs, forage, berries, fungi, sugar cane), so
+    // thinning the look never thins the harvest.
+    density_keeps: [Tag("wild_crop", 1.0), Tag("rare_herb", 1.0), Tag("forage", 1.0), Tag("berry", 1.0), Tag("fungus", 1.0), Name("sugar_cane", 1.0)],
     plants: [
         // Grasses and ferns.
         (name: "short_grass", block: "short_grass", habitat: Open),

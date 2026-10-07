@@ -65,6 +65,19 @@ animals and monsters spawning for anyone:
 
 What no package sets keeps the defaults above.
 
+The same file sets, the same way, when creatures' blows train Defence (design wiki draft
+63):
+
+```ron
+defence: (fought_within: 10.0, least_level: 0.5),
+```
+
+A blow that misses trains the player's Defence only if they landed a damaging blow on that
+very creature within `fought_within` seconds, and only from a creature of at least
+`least_level` times their Defence level. Standing among weak monsters, or tapping a penned
+hen between a strong one's blows, trains nothing; with two players at one creature, only
+the last to hurt it trains on its blows.
+
 ## A creature
 
 ```ron
@@ -238,7 +251,9 @@ Content fails to load, with the file and a reason, when:
 - a supernatural species has no aether minimum;
 - the limits leave no room for wild creatures (`wild_most` 0), one player's `animals_near`
   and `monsters_near` together are more than `wild_most`, or `most` is less than
-  `wild_most` and `keepers` players' `kept_each`.
+  `wild_most` and `keepers` players' `kept_each`;
+- `defence` makes a fight last no time (`fought_within` 0 or less) or asks a negative
+  `least_level`.
 
 Test-time checks (in `cargo test`): every species can be spawned and survives a simulated
 day in the sandbox; the supernatural share of species is 15–30% and of encounters, over a

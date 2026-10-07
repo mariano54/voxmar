@@ -45,7 +45,7 @@
             why: "Your home: you wake here after dying, and the Farm age opens. A hearthstone in a ring of stone, with a chimney at a corner.",
             tasks: [[Home]],
             after: ["a_bed_of_your_own", "where_to_settle"],
-            rewards: [Item("seed_pouch", 1), Item("bread", 4)],
+            rewards: [Xp("construction", 250.0), Item("seed_pouch", 1), Item("bread", 4)],
         ),
         (
             name: "a_friend_in_the_wild", age: "nomad", branch: "hunter", title: "A Friend in the Wild",
@@ -101,12 +101,21 @@
             after: ["homestead_hearth"],
             rewards: [Xp("crafting", 305.0), Item("vial", 4)],
         ),
+        // Fuel before metal, and the Engineering and Mining that copper asks for (design
+        // drafts 100 and 102: the nomad path alone left both short of 5).
+        (
+            name: "charcoal", age: "farm", branch: "main", title: "Charcoal",
+            why: "Fuel before metal: coal or charcoal smelts copper and makes torches. Burn logs down in a campfire, or dig out a coal seam.",
+            tasks: [[Cook("charcoal", 16)], [Mine("coal_ore", 24)]],
+            after: ["the_potter"],
+            rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
+        ),
         (
             name: "red_metal", age: "farm", branch: "main", title: "Red Metal",
             why: "Copper tools are faster and find more, and copper is three parts of bronze.",
             tasks: [[Mine("copper_ore", 9), Craft("copper_pickaxe", 1)]],
-            after: ["homestead_hearth"],
-            rewards: [Xp("mining", 375.0), Xp("engineering", 360.0)],
+            after: ["charcoal"],
+            rewards: [Xp("mining", 650.0), Xp("engineering", 750.0)],
         ),
         (
             name: "crucible_kiln", age: "farm", branch: "main", title: "Crucible Kiln",
