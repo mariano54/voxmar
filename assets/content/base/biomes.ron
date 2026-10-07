@@ -1117,7 +1117,7 @@
             // Where aether runs high in mild country: pale stone breaks through the turf in
             // patches and veins.
             name: "moonlit_meadow",
-            tags: ["grassland", "temperate", "open", "fantastical"],
+            tags: ["grassland", "temperate", "open", "fantastical", "no_settlement"],
             // Stones on gentle open ground: pale or mossy, of the grassland, not the dark rock.
             field_stones: [Name("diorite", 2.0), Name("calcite", 1.0), Name("stone", 1.0)],
             rarity: Uncommon,
@@ -1155,7 +1155,7 @@
         (
             // A cold wood of silver-barked trees whose leaves glow faintly at dusk.
             name: "silverwood_glade",
-            tags: ["forest", "cold", "fantastical"],
+            tags: ["forest", "cold", "fantastical", "no_settlement"],
             rarity: Rare,
             climate: [(temperature: ("frozen", "cool"), moisture: ("moderate", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.78, 1.0))],
             flora: (
@@ -1182,7 +1182,7 @@
         (
             // A damp wood of giant glowing mushrooms under a dark canopy.
             name: "glowcap_forest",
-            tags: ["forest", "fungal", "fantastical", "dense"],
+            tags: ["forest", "fungal", "fantastical", "no_settlement", "dense"],
             rarity: Rare,
             climate: [(temperature: ("cool", "warm"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.8, 1.0))],
             flora: (
@@ -1208,7 +1208,7 @@
         (
             // Hot barrens where emberwoods smoulder and the ground is ash and red earth.
             name: "ember_wastes",
-            tags: ["desert", "hot", "dry", "fantastical"],
+            tags: ["desert", "hot", "dry", "fantastical", "no_settlement"],
             rarity: Rare,
             climate: [(temperature: ("warm", "hot"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), aether: (0.78, 1.0))],
             flora: (
@@ -1236,7 +1236,7 @@
             // Frozen ground set with crystals of ice and pale stone, where blooms of crystal
             // grow.
             name: "crystal_expanse",
-            tags: ["frozen", "ice", "open", "fantastical"],
+            tags: ["frozen", "ice", "open", "fantastical", "no_settlement"],
             rarity: VeryRare,
             climate: [(temperature: ("frozen", "cold"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"), aether: (0.82, 1.0))],
             flora: (
@@ -1264,7 +1264,7 @@
             // Golden downs where the legendary sunspire grows: a place told of more often
             // than found.
             name: "sunspire_downs",
-            tags: ["grassland", "warm", "open", "fantastical"],
+            tags: ["grassland", "warm", "open", "fantastical", "no_settlement"],
             // Stones on gentle open ground: pale, sun-bleached, of the place.
             field_stones: [Name("chalk", 2.0), Name("limestone", 2.0)],
             rarity: Legendary,

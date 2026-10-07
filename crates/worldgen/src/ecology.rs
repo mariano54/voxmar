@@ -177,6 +177,8 @@ pub struct Ecology {
     richness: f32,
     /// The content's tree density, on forest trees.
     tree_density: f32,
+    /// The content's plant density, on flowers, plants growing alone and the carpet.
+    plant_density: f32,
     seed: u64,
 }
 
@@ -313,6 +315,7 @@ impl Ecology {
             varieties: noise(seed, 36, 1.0 / 600.0, FractalType::FBm, 2),
             richness: dials.vegetation,
             tree_density: content.tree_density,
+            plant_density: content.plant_density,
             seed,
         }
     }
@@ -534,7 +537,7 @@ impl Ecology {
                 // creeks and rivers.
                 let edge = smoothstep(0.05, 0.25, site.forest) * (1.0 - smoothstep(0.35, 0.6, site.forest));
                 let open = (1.0 - 0.75 * site.forest) * (1.0 + 0.5 * site.clearing + 1.2 * edge + 1.5 * site.river);
-                if take(flora.flowers * field * open * thriving * (0.7 + 0.6 * self.richness) * fertile) {
+                if take(self.plant_density * flora.flowers * field * open * thriving * (0.7 + 0.6 * self.richness) * fertile) {
                     let variety = crate::climate::uniform(self.varieties.get_noise_2d(x as f32, z as f32));
                     let local = crate::climate::uniform(self.kinds.get_noise_2d(x as f32, z as f32)) + 0.1 * (second - 0.5);
                     let window = (KINDS_AT_ONCE / flora.drifts.len() as f32).min(1.0);
@@ -552,7 +555,7 @@ impl Ecology {
         }
         // Fungi, bushes, reeds: plants that grow alone.
         for &(plant, weight) in &flora.alone {
-            if take(ALONE_CHANCE * weight * grows(plant)) {
+            if take(self.plant_density * ALONE_CHANCE * weight * grows(plant)) {
                 return Some(self.place(plant, second, snow));
             }
         }
@@ -565,7 +568,7 @@ impl Ecology {
                 let lush = (meadow + 0.3 * site.clearing).min(1.0);
                 // The biome's cover, eased so the lushest meadows keep theirs while
                 // ordinary ground is a little thinner.
-                if take(flora.cover.powf(COVER_EASE) * site.vegetation * lush * thriving * fertile) {
+                if take(self.plant_density * flora.cover.powf(COVER_EASE) * site.vegetation * lush * thriving * fertile) {
                     return Some(self.place(choose(&flora.carpet, total, second), third, snow));
                 }
             }

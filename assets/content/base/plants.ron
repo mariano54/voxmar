@@ -9,6 +9,10 @@
 // default to what the block's tags say. The ten rare herbs (tagged `rare_herb`) grow only in
 // the biomes that name them, one or two each.
 (
+    // How densely small plants grow (flowers, ground plants, grasses and ferns): a factor
+    // on every biome's own, 1 being the biomes' own. Halved so the land reads less crowded:
+    // more bare ground between tufts, flowers and herbs, with drifts and rarities as before.
+    density: 0.5,
     plants: [
         // Grasses and ferns.
         (name: "short_grass", block: "short_grass", habitat: Open),

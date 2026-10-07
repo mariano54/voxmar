@@ -1333,6 +1333,10 @@ struct TreeFile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PlantFile {
+    /// How densely small plants grow (flowers, ground plants, grasses and ferns), against
+    /// the base game's (1); a later package's replaces an earlier one's.
+    #[serde(default)]
+    density: Option<f32>,
     plants: Vec<PlantDef>,
 }
 
@@ -1364,6 +1368,8 @@ pub struct WorldContent {
     /// How densely trees grow in forests, a factor on every biome's tree cover (`density`
     /// in `trees.ron`).
     pub tree_density: f32,
+    /// How densely small plants grow, from `plants.ron` (1 when no package sets it).
+    pub plant_density: f32,
     pub plants: Vec<PlantDef>,
     pub particles: Vec<ParticleDef>,
     pub shapes: Vec<ShapeDef>,
@@ -1462,6 +1468,7 @@ impl WorldContent {
         let mut trails = None;
         let mut land = None;
         let mut tree_density = None;
+        let mut plant_density = None;
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles, mut shapes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut decorations, mut rule_sets) = (Vec::new(), Vec::new());
@@ -1521,10 +1528,19 @@ impl WorldContent {
                 "ambient.ron" => particles.extend(
                     parse::<AmbientFile>(&at, &file.source)?.particles.into_iter().map(|p| ParticleDef { name: qualify(&file.package, &p.name), ..p }),
                 ),
-                "plants.ron" => plants.extend(parse::<PlantFile>(&at, &file.source)?.plants.into_iter().map(|p| {
-                    let q = |n: &str| qualify(&file.package, n);
-                    PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), snowy: p.snowy.as_deref().map(q), ..p }
-                })),
+                "plants.ron" => {
+                    let def = parse::<PlantFile>(&at, &file.source)?;
+                    if let Some(density) = def.density {
+                        if !(density > 0.0 && density <= 4.0) {
+                            return Err(ContentError(format!("{at}: the plant density {density} is outside (0, 4]")));
+                        }
+                        plant_density = Some(density);
+                    }
+                    plants.extend(def.plants.into_iter().map(|p| {
+                        let q = |n: &str| qualify(&file.package, n);
+                        PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), snowy: p.snowy.as_deref().map(q), ..p }
+                    }));
+                }
                 "terrain.ron" => shapes.extend(parse::<ShapeFile>(&at, &file.source)?.shapes.into_iter().map(|s| ShapeDef {
                     name: q(&s.name),
                     surface: s.surface.map(|surface| qualify_surface(&file.package, surface)),
@@ -1592,7 +1608,8 @@ impl WorldContent {
         }
         let snow_cover = weather.snow_cover().to_vec();
         let tree_density = tree_density.unwrap_or(1.0);
-        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements };
+        let plant_density = plant_density.unwrap_or(1.0);
+        let content = Self { climate, provinces, biomes, trees, tree_density, plant_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements };
         content.ores.check(registry, &content.provinces)?;
         if !content.settlements.styles.is_empty() {
             content.settlements.check(registry)?;

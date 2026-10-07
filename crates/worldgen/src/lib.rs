@@ -1570,11 +1570,11 @@ mod tests {
     #[ignore]
     fn flower_counts() {
         let registry = registry();
-        let names = std::env::var("BIOMES").unwrap_or_else(|_| "plains,meadow,flower_meadow,forest,birch_forest,cherry_grove,savanna".into());
+        let names = std::env::var("BIOMES").unwrap_or_else(|_| "plains,meadow,flower_meadow,forest,taiga,jungle,savanna,swamp".into());
         let seeds = [1u64, 7, 42];
         let worlds: Vec<Overworld> = seeds.iter().map(|&s| Overworld::new(s, registry.clone())).collect();
         for name in names.split(',') {
-            let (mut flowers, mut areas) = (0, 0);
+            let (mut flowers, mut plants, mut areas) = (0, 0, 0);
             let mut kinds = std::collections::BTreeMap::<String, i32>::new();
             for world in &worlds {
                 let Some(at) = world.locate_biome(name, IVec2::ZERO, 8000) else { continue };
@@ -1586,6 +1586,9 @@ mod tests {
                                 let b = column.block(IVec3::new(x, y, z));
                                 if b.is_air() {
                                     continue;
+                                }
+                                if registry.info(b).render == voxmar_engine::block::RenderKind::Plant {
+                                    plants += 1;
                                 }
                                 if registry.def(b).has_tag("flower") && registry.info(b).render == voxmar_engine::block::RenderKind::Plant {
                                     flowers += 1;
@@ -1603,7 +1606,8 @@ mod tests {
             let mut top: Vec<_> = kinds.into_iter().collect();
             top.sort_by_key(|k| -k.1);
             top.truncate(4);
-            println!("{name}: {:.0} flowers per 9 columns ({areas} seeds); most: {top:?}", flowers as f32 / areas.max(1) as f32);
+            let per = |n: i32| n as f32 / areas.max(1) as f32;
+            println!("{name}: {:.0} plants, {:.0} flowers per 9 columns ({areas} seeds); most flowers: {top:?}", per(plants), per(flowers));
         }
     }
 
@@ -1770,7 +1774,8 @@ mod tests {
         }
     }
 
-    /// Most open grass in a meadow carries a plant, but few of them are flowers.
+    /// A meadow is well carpeted (about three blocks of open grass in ten carry a plant, since
+    /// plants grow at half the biomes' own density), and few of the plants are flowers.
     #[test]
     fn meadows_are_carpeted_and_flowers_stay_sparse() {
         let registry = registry();
@@ -1805,7 +1810,7 @@ mod tests {
         }
         let (planted, flowers) = (planted as f32 / open as f32, flowers as f32 / open as f32);
         println!("{open} open grass blocks, {planted:.2} planted, {flowers:.3} flowers");
-        assert!(open > 1000 && planted > 0.5 && flowers < 0.08, "{open} open, {planted} planted, {flowers} flowers");
+        assert!(open > 1000 && planted > 0.25 && flowers < 0.05, "{open} open, {planted} planted, {flowers} flowers");
     }
 
     /// `cargo test --release -p voxmar_worldgen decor_sights -- --ignored --nocapture`
