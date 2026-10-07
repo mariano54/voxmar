@@ -123,7 +123,12 @@ The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loa
 - Wait on the server by its own clock, `gate.server_now` and `gate.server_in_phase()`
   (its ticks, `ServerHandle::ticks`), never by the game's seconds: anything the server
   does once a second (effects, quests, vitals, cooking) takes longer on a busy machine.
-  Fail on no progress for a while by that clock, not on a total.
+  Fail on no progress for a while by that clock, not on a total. Give up by it too: a
+  wait on anything the server does (an item, a block, a reply, an effect) gives up by
+  `gate.server_in_phase()`, and each step's own limit (`guard`) is in the server's
+  seconds. Given up by the game's seconds, the cook step failed on a stalled server
+  before the server had run the ticks it waited for. Only waits on the client's own work
+  (drawing, shots, screens, movement it predicts) count the game's seconds.
 - Propose actions (clicks that ask the server for something) at most every few server
   seconds while waiting, or once and then wait: `SERVER_LAG` stalls 600 ms on every other
   proposal, so a step proposing every 30 frames starves the server of ticks and the
