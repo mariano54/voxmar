@@ -729,8 +729,10 @@ fn show(
         if let Ok(mut transform) = transforms.get_mut(shown.entity) {
             *transform = root;
         }
-        // What the last frame drew of a falling body, joint by joint, for the gate.
-        if shown.dying.is_some() {
+        // What the last frame drew of a falling body, joint by joint, for the gate: while it
+        // tips over, before it starts to sink away.
+        let sinking = shown.dying.is_some_and(|d| d >= def.death.seconds * 0.5);
+        if shown.dying.is_some() && !sinking {
             let middle = shown.position + Vec3::Y * height * 0.5;
             for (joint, _) in &shown.joints {
                 if let Ok(global) = drawn.globals.get(*joint) {
