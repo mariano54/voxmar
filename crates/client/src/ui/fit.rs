@@ -31,6 +31,18 @@ pub struct Spill {
     pub over: Option<String>,
     /// Where its lines break against the language's rules, if that is the trouble (ク|リック).
     pub broken: Option<String>,
+    /// Its glyphs and characters, when they could not be matched up to check its line
+    /// breaks: a text left unchecked fails rather than passing unseen.
+    pub unmatched: Option<(usize, usize)>,
+}
+
+/// How many texts [`find`] has checked the line breaks of, and how many with the language's
+/// rules it saw (once per text per look), for the gate to say and to fail on when none were.
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct LineBreaksChecked {
+    pub checked: usize,
+    /// Looks in a language with line rules.
+    pub looks: usize,
 }
 
 impl std::fmt::Display for Spill {
@@ -39,6 +51,9 @@ impl std::fmt::Display for Spill {
         let past: Vec<String> = self.past.iter().zip(sides).filter(|(by, _)| **by > 0.5).map(|(by, side)| format!("{by:.0} px {side}")).collect();
         if let Some(other) = &self.over {
             return write!(f, "{:?} runs into {other:?}", self.text);
+        }
+        if let Some((glyphs, chars)) = self.unmatched {
+            return write!(f, "{:?} has {glyphs} glyphs for {chars} characters, so its line breaks went unchecked", self.text);
         }
         if let Some(word) = &self.broken {
             return write!(f, "{:?} breaks a line where its language forbids, at {word:?}", self.text);
@@ -116,26 +131,34 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         .collect();
     // Lines break only where the language lets them (kinsoku: never before a closing
     // bracket or small kana, after an opening bracket, or inside a katakana word). Text is
-    // laid out joined (see `crate::lang::Joined`), a glyph for each character of that.
+    // laid out joined (see `crate::lang::Joined`); each glyph is matched to a character of
+    // that, with or without the spaces and word joiners, as the layout gives them.
     let rules = world.get_resource::<crate::lang::Locale>().map(|locale| voxmar_engine::lang::LineRules::of(locale)).unwrap_or_default();
+    let mut checked = 0;
     for (_, text, layout, _, _, visible) in texts.iter(world) {
         let Some(joined) = rules.join(&text.0).filter(|_| visible.get()) else { continue };
         let chars: Vec<char> = joined.chars().collect();
-        let held = rules.held(&chars);
-        // Each glyph's character, if the layout gives one each (with or without spaces).
-        let at: Vec<usize> = if layout.glyphs.len() == chars.len() {
-            (0..chars.len()).collect()
-        } else {
-            (0..chars.len()).filter(|&i| !chars[i].is_whitespace()).collect()
-        };
-        if at.len() != layout.glyphs.len() {
+        let joiner = |c: char| c == voxmar_engine::lang::WORD_JOINER;
+        // Where the rules hold the text as written together, by each joined character.
+        let held = rules.held(&text.0.chars().collect::<Vec<_>>());
+        let written: Vec<usize> = chars.iter().scan(0, |n, &c| Some(std::mem::replace(n, *n + usize::from(!joiner(c))))).collect();
+        let mappings: [fn(char) -> bool; 3] = [|_| true, |c| !c.is_whitespace(), |c| !c.is_whitespace() && c != voxmar_engine::lang::WORD_JOINER];
+        let Some(at) = mappings.iter().map(|keep| (0..chars.len()).filter(|&i| keep(chars[i])).collect::<Vec<usize>>()).find(|at| at.len() == layout.glyphs.len()) else {
+            found.push(Spill { text: text.0.clone(), past: [0.0; 4], own: true, size: Vec2::ZERO, lines: layout.size, over: None, broken: None, unmatched: Some((layout.glyphs.len(), chars.len())) });
             continue;
+        };
+        checked += 1;
+        let first_written = |i: usize| (i..chars.len()).find(|&i| !joiner(chars[i])).map(|i| written[i]);
+        if let Some(at) = (1..at.len()).filter(|&k| layout.glyphs[k].line_index != layout.glyphs[k - 1].line_index).find_map(|k| first_written(at[k]).filter(|&at| held[at])) {
+            let plain: Vec<char> = text.0.chars().collect();
+            let break_at = format!("{}|{}", plain[at.saturating_sub(4)..at].iter().collect::<String>(), plain[at..(at + 4).min(plain.len())].iter().collect::<String>());
+            found.push(Spill { text: text.0.clone(), past: [0.0; 4], own: true, size: Vec2::ZERO, lines: layout.size, over: None, broken: Some(break_at), unmatched: None });
         }
-        let shown = |range: std::ops::Range<usize>| chars[range].iter().filter(|&&c| c != voxmar_engine::lang::WORD_JOINER).collect::<String>();
-        if let Some(k) = (1..at.len()).find(|&k| layout.glyphs[k].line_index != layout.glyphs[k - 1].line_index && (at[k - 1] + 1..=at[k]).any(|i| held[i])) {
-            let break_at = format!("{}|{}", shown(at[k].saturating_sub(4)..at[k]), shown(at[k]..(at[k] + 4).min(chars.len())));
-            found.push(Spill { text: text.0.clone(), past: [0.0; 4], own: true, size: Vec2::ZERO, lines: layout.size, over: None, broken: Some(break_at) });
-        }
+    }
+    if !rules.is_empty() {
+        let mut tally = world.get_resource_or_init::<LineBreaksChecked>();
+        tally.checked += checked;
+        tally.looks += 1;
     }
     // Texts running into one another, as far as each shows (a scrolling list hides what
     // lies past its edges).
@@ -149,7 +172,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             let both = first.intersect(second);
             if both.width() > slack && both.height() > slack {
                 let text = candidates[i].1.clone();
-                found.push(Spill { text, past: [0.0; 4], own: false, size: second.size(), lines: first.size(), over: Some(candidates[j].1.clone()), broken: None });
+                found.push(Spill { text, past: [0.0; 4], own: false, size: second.size(), lines: first.size(), over: Some(candidates[j].1.clone()), broken: None, unmatched: None });
             }
         }
     }
@@ -160,7 +183,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         for &(i, seen) in &shown {
             let by = past(seen, screen.inflate(-ROOM));
             if spills(&by, true, slack) {
-                found.push(Spill { text: candidates[i].1.clone(), past: by, own: false, size: screen.size(), lines: seen.size(), over: None, broken: None });
+                found.push(Spill { text: candidates[i].1.clone(), past: by, own: false, size: screen.size(), lines: seen.size(), over: None, broken: None, unmatched: None });
             }
         }
     }
@@ -187,7 +210,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             let both = seen.intersect(**icon);
             both.width() > slack && both.height() > slack
         }) {
-            found.push(Spill { text: text.clone(), past: [0.0; 4], own: false, size: icon.size(), lines: seen.size(), over: Some("an icon".into()), broken: None });
+            found.push(Spill { text: text.clone(), past: [0.0; 4], own: false, size: icon.size(), lines: seen.size(), over: Some("an icon".into()), broken: None, unmatched: None });
         }
     }
     for (entity, text, lines, own) in candidates {
@@ -198,7 +221,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         // screen pixels, and their smoothed edge can show a pixel either side of the box.
         let by = past(lines, own);
         if spills(&by, false, slack + units_per_pixel) {
-            found.push(Spill { text, past: by, own: true, size: own.size(), lines: lines.size(), over: None, broken: None });
+            found.push(Spill { text, past: by, own: true, size: own.size(), lines: lines.size(), over: None, broken: None, unmatched: None });
             continue;
         }
         // Past a scrolling list, lines may be cut off above and below by every box out to
@@ -220,7 +243,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             let inner = if drawn { outer.inflate(-(FRAME + ROOM)) } else { outer };
             let by = past(lines, inner);
             if node.size().min_element() > 0.0 && spills(&by, vertical, slack) {
-                found.push(Spill { text, past: by, own: false, size: outer.size(), lines: lines.size(), over: None, broken: None });
+                found.push(Spill { text, past: by, own: false, size: outer.size(), lines: lines.size(), over: None, broken: None, unmatched: None });
                 break;
             }
         }
@@ -231,6 +254,34 @@ pub fn find(world: &mut World) -> Vec<Spill> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Japanese line broken inside a katakana word is found however the layout gives its
+    /// glyphs (with word joiners or without), and a text whose glyphs can't be matched to
+    /// its characters fails rather than passing unchecked.
+    #[test]
+    fn line_breaks_against_the_rules_are_found() {
+        use bevy::text::{GlyphAtlasInfo, PositionedGlyph};
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let look = |lines: &[usize]| {
+            let mut world = World::new();
+            world.insert_resource(crate::lang::Locale::load(&content, "ja"));
+            let atlas_info = GlyphAtlasInfo { texture: AssetId::default(), rect: Rect::default(), offset: Vec2::ZERO, is_alpha_mask: false };
+            let glyphs = lines.iter().map(|&line_index| PositionedGlyph { position: Vec2::ZERO, atlas_info: atlas_info.clone(), section_index: 0, line_index }).collect();
+            let layout = TextLayoutInfo { glyphs, size: Vec2::splat(10.0), ..Default::default() };
+            world.spawn((Text::new("クリックする"), layout, ComputedNode::default(), UiGlobalTransform::default(), InheritedVisibility::VISIBLE));
+            let found: Vec<String> = find(&mut world).iter().map(ToString::to_string).collect();
+            (found, world.resource::<LineBreaksChecked>().checked)
+        };
+        // Laid out as ク⁠リ⁠ッ⁠クする, a glyph each with the joiners (9) or without (6).
+        let (found, checked) = look(&[0, 0, 1, 1, 1, 1, 1, 1, 1]);
+        assert!(checked == 1 && found.len() == 1 && found[0].contains("ク|リック"), "{found:?}");
+        let (found, checked) = look(&[0, 1, 1, 1, 1, 1]);
+        assert!(checked == 1 && found.len() == 1 && found[0].contains("ク|リック"), "{found:?}");
+        // Broken where it may break: after the word.
+        assert_eq!(look(&[0, 0, 0, 0, 1, 1]), (vec![], 1));
+        let (found, checked) = look(&[0, 0, 0]);
+        assert!(checked == 0 && found.len() == 1 && found[0].contains("unchecked"), "{found:?}");
+    }
 
     #[test]
     fn reaching_past_counts_each_side() {

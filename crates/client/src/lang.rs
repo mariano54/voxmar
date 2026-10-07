@@ -40,8 +40,14 @@ impl Plugin for LangPlugin {
                         .after(bevy::text::load_font_assets_into_font_collection)
                         .before(bevy::ui::UiSystems::Prepare),
                     // Text is laid out joined where the language keeps characters together,
-                    // and is as written again right after.
-                    join_for_layout.in_set(bevy::ui::UiSystems::Content).before(bevy::ui::widget::measure_text_system),
+                    // and is as written again right after. Joined only for measuring: this
+                    // depends on bevy_ui's `text_system` (PostLayout) breaking lines from
+                    // `ComputedTextBlock`, never reading `Text` (bevy_ui widget/text.rs,
+                    // 0.19.1). Re-check that when upgrading Bevy.
+                    join_for_layout
+                        .in_set(bevy::ui::UiSystems::Content)
+                        .after(bevy::ui::UiSystems::Prepare)
+                        .before(bevy::ui::widget::measure_text_system),
                     unjoin_after_layout.in_set(bevy::ui::UiSystems::Content).after(bevy::ui::widget::measure_text_system),
                 ),
             );
@@ -273,8 +279,11 @@ fn join_for_layout(locale: Res<Locale>, mut joined: ResMut<Joined>, mut texts: Q
 }
 
 fn unjoin_after_layout(mut joined: ResMut<Joined>, mut texts: Query<&mut Text>) {
+    let joined = &mut *joined;
     for (&entity, other) in joined.texts.iter_mut() {
         if let Ok(mut text) = texts.get_mut(entity) {
+            // Nothing writes text while it is joined: a write here would be lost.
+            debug_assert_eq!(Some(&text.0), joined.rules.join(other).as_ref(), "text written while it was laid out joined");
             std::mem::swap(&mut text.bypass_change_detection().0, other);
         }
     }
@@ -945,6 +954,19 @@ mod tests {
         // English has no rules: as written throughout.
         *app.world_mut().resource_mut::<Locale>() = Locale::load(&content(), "en");
         assert_eq!(frame(&mut app), (vec!["ボタン".to_owned()], "ボタン".to_owned()));
+    }
+
+    /// A text written while it is joined (between being joined and measured, and back)
+    /// would be lost: debug runs say so.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "text written while it was laid out joined")]
+    fn writing_joined_text_is_caught() {
+        let mut app = App::new();
+        app.insert_resource(Locale::load(&content(), "ja")).init_resource::<Joined>();
+        app.add_systems(Update, (join_for_layout, |mut texts: Query<&mut Text>| texts.iter_mut().for_each(|mut text| text.0 = "ボタン".into()), unjoin_after_layout).chain());
+        app.world_mut().spawn(Text::new("クリック"));
+        app.update();
     }
 
     /// Japanese text wraps as kinsoku wants at every width: no line starts with closing
