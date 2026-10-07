@@ -673,6 +673,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
         Step::Workshop => 220.0,
+        // Torches crafted for a pinned quest, waited on in the server's seconds, and a quest
+        // done left to drop off.
+        Step::Quests => 60.0,
         _ => STEP_LIMIT,
     };
     // The journal's tour is judged page by page.
@@ -2415,7 +2418,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let lines = tracker_lines(world);
             let reads = lines.as_ref().is_some_and(|lines| lines.contains(&words));
             if !(ready && reads) {
-                if waited > QUEST_WAIT {
+                if waited > QUEST_WAIT || in_phase > 3.0 * QUEST_WAIT {
                     quit(world, gate, "quests: pinned", format!("{QUEST_WAIT} server s on, charcoal and a stick in hand: {ready}; the tracker reads {lines:?}, not {words:?}"));
                 }
                 return;
@@ -2437,8 +2440,8 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             let words = tracker_words(world, made);
             if !(tracked(world).0 == made && lines.contains(&words)) {
-                if waited > QUEST_WAIT {
-                    quit(world, gate, "quests: torches", format!("4 torches crafted, {QUEST_WAIT} server s on the server counts {:?} and the tracker reads {lines:?}, not {words:?}", tracked(world)));
+                if waited > QUEST_WAIT || in_phase > 3.0 * QUEST_WAIT {
+                    quit(world, gate, "quests: torches", format!("4 torches crafted, {waited:.1} server s ({in_phase:.1} s) on the server counts {:?}, {} torches held, and the tracker reads {lines:?}, not {words:?}", tracked(world), holding(world, "base:torch").0));
                 }
                 return;
             }
