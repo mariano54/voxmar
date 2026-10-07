@@ -370,7 +370,7 @@ fn movement(
     world: Res<ClientWorld>,
     mut player: ResMut<LocalPlayer>,
     mut last_forward: Local<Option<f32>>,
-    (net, actions, mut fighting, creatures): (Res<crate::net::Net>, Res<crate::Actions>, ResMut<crate::fight::Fighting>, Res<crate::creatures::Creatures>),
+    (net, actions, mut fighting, creatures, target): (Res<crate::net::Net>, Res<crate::Actions>, ResMut<crate::fight::Fighting>, Res<crate::creatures::Creatures>, Res<crate::interact::Target>),
 ) {
     let player = &mut *player;
     if !player.joined || player.dead {
@@ -404,7 +404,7 @@ fn movement(
         *last_forward = (!double_tap).then_some(now);
     }
     // A dodge (`fight`): with a direction, a dash that way; alone, a step back. Not in the
-    // air, nor with the guard up, nor sooner than the last allows.
+    // air, nor eating, nor with the guard up, nor sooner than the last allows.
     let combat = &launch.content.combat;
     let clock = time.elapsed_secs_f64();
     if ui.cursor_locked
@@ -412,6 +412,7 @@ fn movement(
         && player.on_ground
         && !player.flying
         && fighting.guard.is_none()
+        && now >= target.eating_until
         && clock >= fighting.dodge_ready
         && let Some(dodge_action) = actions.0.id("core:dodge")
     {
@@ -454,25 +455,15 @@ fn movement(
     let tuning = launch.content.movement.on_foot(speed);
     let dt = time.delta_secs().min(0.25);
     let around = Around { world: &world, water };
-    if let Some((dir, dash_speed, left)) = fighting.dash {
-        // The dash carries the player, stopping at a wall or at a ledge, so it never drops
-        // them off an edge.
-        let ahead = (body.position + dir * 0.45).floor().as_ivec3();
-        let ground = (0..=1).any(|d| around.solid(ahead - IVec3::Y * (1 + d)));
-        if ground {
-            body.velocity.x = dir.x * dash_speed;
-            body.velocity.z = dir.z * dash_speed;
-        } else {
-            body.velocity.x = 0.0;
-            body.velocity.z = 0.0;
-        }
-        fighting.dash = (left > dt && ground).then_some((dir, dash_speed, left - dt));
+    match fighting.dash {
+        Some(under_way) => fighting.dash = dash(&mut body, under_way, &around, &tuning, controls, dt),
+        None => movement::advance(&mut body, &around, &tuning, controls, dt),
     }
-    movement::advance(&mut body, &around, &tuning, controls, dt);
     // A creature's body is not walked into: the player is put back out of it, a little
     // clear, so the view never ends up inside its model.
+    let clearance = combat.feel.creature_clearance;
     for aabb in creatures.bodies(&launch) {
-        if let Some(out) = out_of(body.position, &aabb, dims::WIDTH / 2.0 + CLEAR_OF_CREATURES)
+        if let Some(out) = out_of(body.position, &aabb, dims::WIDTH / 2.0 + clearance)
             && !Aabb::standing(out, dims::WIDTH, dims::HEIGHT).intersects(|cell| around.solid(cell))
         {
             body.position = out;
@@ -488,8 +479,29 @@ fn movement(
     player.jump_delay = body.jump_delay;
 }
 
-/// How far clear of a creature's body the player stands, past their own half width.
-const CLEAR_OF_CREATURES: f32 = 0.2;
+/// A dash under way, `(direction, speed, seconds left)`, carries the body `dt` further: at
+/// exactly its speed, so it covers its distance at any frame rate, stopping at a wall or at
+/// a ledge, so it never drops the player off an edge. Returns what is left of it.
+fn dash(body: &mut Body, (dir, speed, left): (Vec3, f32, f32), around: &impl Surroundings, tuning: &movement::Tuning, controls: Controls, dt: f32) -> Option<(Vec3, f32, f32)> {
+    let ahead = (body.position + dir * 0.45).floor().as_ivec3();
+    let ground = (0..=1).any(|d| around.solid(ahead - IVec3::Y * (1 + d)));
+    // The last frame moves only for the time left of it.
+    let step = dt.min(left);
+    let now = if ground && dt > 0.0 { speed * step / dt } else { 0.0 };
+    body.velocity = (dir * now).with_y(body.velocity.y);
+    // Asked for the speed it already has, movement's easing toward it changes nothing.
+    let tuning = movement::Tuning { walk_speed: now, sprint_speed: now, water_speed: 1.0, ..tuning.clone() };
+    let controls = Controls { wish: if ground { dir } else { Vec3::ZERO }, forward: false, sprint: false, ..controls };
+    movement::advance(body, around, &tuning, controls, dt);
+    let left = left - step;
+    if ground && left > 1e-4 {
+        return Some((dir, speed, left));
+    }
+    // Done: it stops, rather than sliding on.
+    body.velocity.x = 0.0;
+    body.velocity.z = 0.0;
+    None
+}
 
 /// Where a player standing at `feet` must move to be `room` clear of `aabb` sideways, if
 /// they are not already (or above or below it).
@@ -554,6 +566,48 @@ fn follow_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Flat ground below y 0.
+    struct Floor;
+
+    impl Surroundings for Floor {
+        fn solid(&self, cell: IVec3) -> bool {
+            cell.y < 0
+        }
+
+        fn water(&self, _: &Aabb) -> (f32, Vec2) {
+            (0.0, Vec2::ZERO)
+        }
+    }
+
+    #[test]
+    fn a_dash_covers_its_distance_at_any_frame_rate() {
+        let tuning = movement::Tuning {
+            walk_speed: 4.7,
+            sprint_speed: 6.0,
+            sprint_jump_boost: 0.0,
+            jump_velocity: 9.0,
+            gravity: 32.0,
+            terminal_velocity: 78.0,
+            water_speed: 0.4,
+            fly_speed: 10.0,
+            fly_sprint_speed: 20.0,
+        };
+        // The light dodge: 3 blocks in 0.25 s.
+        for fps in [20.0, 30.0, 60.0, 144.0, 240.0] {
+            let start = Vec3::new(0.5, 0.0, 0.5);
+            let mut body = Body { position: start, velocity: Vec3::ZERO, on_ground: true, in_water: false, flying: false, fly_speed: 1.0, against_wall: false, sprinting: false, jump_delay: 0.0 };
+            let mut under_way = Some((Vec3::X, 3.0 / 0.25, 0.25));
+            let mut frames = 0;
+            while let Some(d) = under_way {
+                under_way = dash(&mut body, d, &Floor, &tuning, Controls::default(), 1.0 / fps);
+                frames += 1;
+            }
+            let went = (body.position - start).with_y(0.0).length();
+            assert!((went - 3.0).abs() < 0.02, "{fps} fps: {went} blocks in {frames} frames");
+            assert_eq!(body.velocity.with_y(0.0), Vec3::ZERO, "it stops at the end");
+        }
+    }
 
     #[test]
     fn zoom_eases_in_and_out_and_the_wheel_changes_it() {

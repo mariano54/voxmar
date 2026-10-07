@@ -27,7 +27,7 @@ use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rustc_hash::FxHashMap;
-use voxmar_engine::action::{ActionTarget, REACH_CREATURE};
+use voxmar_engine::action::ActionTarget;
 use voxmar_engine::creature::brain::Pose;
 use voxmar_engine::creature::skin::{self, FACES};
 use voxmar_engine::creature::volume::{self, BodyMesh, Shape};
@@ -808,7 +808,7 @@ pub fn aim(
         .shown
         .keys()
         .filter_map(|&id| Some((id, ray_box(eye, look, &creatures.aabb(&launch, id)?)?)))
-        .filter(|&(_, d)| d <= REACH_CREATURE + weapon.reach && d < block)
+        .filter(|&(_, d)| d <= weapon.reach && d < block)
         .min_by(|a, b| a.1.total_cmp(&b.1));
     target.creature = nearest.map(|(id, _)| id);
     if target.creature.is_some() {

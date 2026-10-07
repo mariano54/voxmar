@@ -251,6 +251,8 @@ pub(crate) fn receive(
             ServerMessage::Teleport { position } => {
                 player.position = position;
                 player.velocity = Vec3::ZERO;
+                // Put somewhere, a dash under way stops (a dodge the server refused, too).
+                fighting.dash = None;
             }
             ServerMessage::Players { players } => {
                 let seen: Vec<PlayerId> = players.iter().map(|p| p.id).collect();
@@ -291,9 +293,9 @@ pub(crate) fn receive(
             ServerMessage::Quests { states } => player.quests = states,
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
-            ServerMessage::Struck { creature, damage, killed, blow } => {
+            ServerMessage::Struck { creature, damage, killed, blow, pips } => {
                 creatures.struck(creature, damage, killed, time.elapsed_secs());
-                fighting.struck(creature, damage, blow, time.elapsed_secs_f64());
+                fighting.struck(creature, damage, blow, pips, time.elapsed_secs_f64());
             }
             ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),

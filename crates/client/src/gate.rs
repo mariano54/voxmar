@@ -2836,7 +2836,7 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         gate.struck_heights = (gate.struck_heights.0.min(view.position.y), gate.struck_heights.1.max(view.position.y));
                     }
                     // Close in to striking reach, then strike.
-                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.6;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
                     // A well-timed click, a full charge apart, as a player swings (spamming
@@ -2954,7 +2954,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             match bear(world) {
                 Some(view) if !stalled => {
                     // Close in and strike a full charge apart, as a player swings.
-                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.4;
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.0;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.6);
                     let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
@@ -3014,7 +3014,10 @@ struct FeelRun {
 
 /// The bear in survival: provoked with a click every few server seconds until it winds up,
 /// then the guard raised (phase 2) or a dodge (phase 4) a moment after the wind-up shows.
-/// A perfect block must take nothing, and the click after it (phase 3) be a counter.
+/// A perfect block must take nothing, and the click after it (phase 3) be a counter. The
+/// dodge dashes forward, past the bear's lunge, so the blow is judged in reach: it must pass
+/// through the dodge, not fall short. Whatever came of it, the bears are killed (phase 5)
+/// and the player put back on the test ground.
 fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use voxmar_engine::combat::{Blow, Defended};
     use voxmar_engine::creature::brain::Pose;
@@ -3055,9 +3058,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let roomy = world.resource::<LocalPlayer>().max_health >= 100;
             if roomy && bear(world).is_some() && select(world, WEAPON) {
                 gate.advance(now);
-            } else if in_phase > 10.0 {
+            } else if gate.server_in_phase() > 10.0 {
                 gate.check("perfect block", Err(format!("the sword, Hitpoints 60 or the bear never came (bear seen: {}, most health {roomy})", bear(world).is_some())));
-                end_feel(world, gate, now);
+                clear_feel(gate, now);
             }
         }
         2 | 4 => {
@@ -3071,12 +3074,12 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     summon(world);
                 } else if gate.feel.bears >= FEEL_BEARS {
                     gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_BEARS} bears died before it came")));
-                    end_feel(world, gate, now);
+                    clear_feel(gate, now);
                 }
                 return;
             };
             let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
-            key(world, KeyCode::KeyW, distance > 2.2 && gate.feel.seen.is_none());
+            key(world, KeyCode::KeyW, distance > 2.0 && gate.feel.seen.is_none());
             aim_at(world, view.position + Vec3::Y * 0.6);
             if view.pose == Pose::Attacking && gate.feel.seen.is_none() && !gate.feel.answered {
                 gate.feel.seen = Some(Instant::now());
@@ -3089,8 +3092,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if blocking {
                     mouse(world, MouseButton::Right, true);
                 } else {
-                    // With no direction held, a step back.
-                    key(world, KeyCode::KeyW, false);
+                    // Forward, through the blow: a step back would take the player out of its
+                    // reach, which proves nothing of the dodge.
+                    key(world, KeyCode::KeyW, true);
                     key(world, dodge_key, true);
                 }
             } else if !blocking {
@@ -3111,10 +3115,11 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.feel.poked = gate.server_now;
             mouse(world, MouseButton::Right, false);
             key(world, dodge_key, false);
+            key(world, KeyCode::KeyW, false);
             let answered = std::mem::take(&mut gate.feel.answered);
             gate.feel.seen = None;
             gate.feel.outcomes.push(defended);
-            let passed = if blocking { defended == Defended::Perfect } else { matches!(defended, Defended::Dodged | Defended::Evaded) };
+            let passed = if blocking { defended == Defended::Perfect } else { defended == Defended::Dodged };
             if passed {
                 let detail = format!("{defended:?} for {damage} damage, answered {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
                 let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
@@ -3124,17 +3129,19 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.feel.tries += 1;
-            // Guarded but not perfect: raised too soon. Hit with an answer given: too late.
+            // Guarded but not perfect: raised too soon. Hit with an answer given: too late, for
+            // a guard; for a dodge, too soon or too late, so it tries either side in turn.
             let shift = match defended {
                 Defended::Blocked => FEEL_STEP,
-                Defended::Hit if answered => -FEEL_STEP,
+                Defended::Hit if answered && blocking => -FEEL_STEP,
+                Defended::Hit if answered => if gate.feel.tries % 2 == 1 { FEEL_STEP * gate.feel.tries as f32 } else { -FEEL_STEP * gate.feel.tries as f32 },
                 _ => 0.0,
             };
             gate.feel.after = (gate.feel.after + shift).clamp(0.0, windup);
             if gate.feel.tries >= FEEL_TRIES {
                 let outcomes = std::mem::take(&mut gate.feel.outcomes);
                 gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}")));
-                end_feel(world, gate, now);
+                clear_feel(gate, now);
             }
         }
         3 => {
@@ -3164,7 +3171,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.advance(now);
                 } else if gate.feel.tries + 1 >= FEEL_TRIES {
                     gate.check("counter", Err(format!("the click after the perfect block was {blow:?} for {damage}")));
-                    end_feel(world, gate, now);
+                    clear_feel(gate, now);
                 } else {
                     // Too late for the window (a server far behind): block again.
                     gate.feel.tries += 1;
@@ -3173,7 +3180,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
             } else if gate.server_in_phase() > UNANSWERED {
                 gate.check("counter", Err(format!("the server answered no blow for {UNANSWERED}s")));
-                end_feel(world, gate, now);
+                clear_feel(gate, now);
             }
         }
         5 => {
@@ -3184,7 +3191,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             match bear(world) {
                 Some(view) if gate.server_in_phase() < UNANSWERED * 2.0 => {
-                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.4;
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.0;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.6);
                     let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
@@ -3201,16 +3208,27 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// Back to survival at the first levels with the hands free, for the steps after.
+/// On a failed check: on to killing the bears (phase 5), so none is left provoked for the
+/// steps after.
+fn clear_feel(gate: &mut Gate, now: f32) {
+    gate.phase = 4;
+    gate.feel.bears = gate.feel.bears.max(1);
+    gate.advance(now);
+}
+
+/// Back to survival at the first levels with the hands free, on the test ground, for the
+/// steps after.
 fn end_feel(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Left, false);
     mouse(world, MouseButton::Right, false);
     key(world, KeyCode::KeyW, false);
     key(world, world.resource::<Settings>().dodge_key.0, false);
+    let feet = gate.feet;
     let net = world.resource::<Net>();
     net.command("gamemode survival");
     net.command("skill attack 1");
     net.command("skill hitpoints 10");
+    net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
     gate.next(Step::Cook, now);
 }
 

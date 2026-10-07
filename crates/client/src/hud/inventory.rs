@@ -709,7 +709,8 @@ fn seed_line(
 }
 
 /// How a weapon fights: its class, style and the level that wields it (red while the
-/// player's is short of it), then its max hit at their level and how often it strikes.
+/// player's is short of it), then its max hit at their level and how often it strikes, and
+/// its reach if it is not the usual.
 fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
     let Some(weapon) = content.combat.weapon(item) else { return Vec::new() };
     let (Some(class), Some(skill)) = (weapon.class, weapon.skill) else { return Vec::new() };
@@ -727,8 +728,9 @@ fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, play
     );
     let hit = locale.format("item.weapon_hit", &[("hit", &weapon.max_hit(level)), ("seconds", &format!("{:.1}", weapon.cooldown))]);
     let mut lines = vec![(what, if ready { SOFT } else { ERROR }), (hit, SOFT)];
-    if weapon.reach > 0.0 {
-        lines.push((locale.get("item.weapon_reach").to_owned(), SOFT));
+    // Its reach, when it is not the usual (a spear's further, a dagger's shorter).
+    if (weapon.reach - content.combat.feel.reach).abs() > 0.05 {
+        lines.push((locale.format("item.weapon_reach", &[("reach", &format!("{:.1}", weapon.reach))]), SOFT));
     }
     lines
 }

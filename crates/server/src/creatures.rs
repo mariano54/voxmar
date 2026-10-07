@@ -108,6 +108,8 @@ pub struct Live {
     pub held_until: u64,
     /// Winding up an attack (`fight`): shown in the attacking pose until it lands.
     pub winding: bool,
+    /// Following the player it winds up at, until a tick, before its aim locks (`fight`).
+    pub tracking: Option<(PlayerId, u64)>,
     /// Its genes, and what shows of them.
     pub genome: genes::Genome,
     pub traits: genes::Traits,
@@ -409,15 +411,17 @@ impl Server {
         let mut body = creature.body;
         let decision = creature.decision;
         let held = self.tick < creature.held_until;
+        // Winding up, it still turns and walks at its target until its aim locks.
+        let tracking = if held { self.tracking_drive(id) } else { None };
         let drive = match decision.goal {
-            _ if held => Drive::default(),
+            _ if held => tracking.unwrap_or_default(),
             Some(goal) if goal.with_y(0.0).distance(body.position.with_y(0.0)) > 0.4 => {
                 let wish = (goal - body.position).with_y(if species.def.habitat.water == Water::Swim { goal.y - body.position.y } else { 0.0 });
                 Drive { wish: wish.normalize_or_zero(), speed: decision.speed * (1.0 - self.fights.slow(id)), face: decision.face.map(|f| f - body.position) }
             }
             _ => Drive { wish: Vec3::ZERO, speed: 0.0, face: decision.face.map(|f| f - body.position) },
         };
-        if held {
+        if held && tracking.is_none() {
             // Held still: nothing carries it along, neither its legs nor a neighbour's push.
             body.velocity.x = 0.0;
             body.velocity.z = 0.0;
@@ -529,6 +533,10 @@ impl Server {
         let Some(attack) = self.content.creatures.get(species).def.attack else { return };
         let Some(skill) = self.skill("core:defence") else { return };
         let (low, high) = attack.damage;
+        // Nothing for turning aside what could never hurt.
+        if high == 0 {
+            return;
+        }
         let tenths = (40 * (low as u32 + high as u32) / 2).max(10);
         let Some(target) = self.players.get_mut(&player) else { return };
         target.skills.grant(skill, tenths);
@@ -546,23 +554,23 @@ impl Server {
     /// from the weapon's skill and accuracy against the creature's defence (half against
     /// the style it is weak to), damage up to the weapon's max hit for their level, as the
     /// stroke raises them. Returns the damage, 0 for a miss, `None` if it is gone.
-    pub(crate) fn land_blow(&mut self, player: PlayerId, id: u32, weapon: &voxmar_engine::combat::Weapon, stroke: crate::fight::Stroke) -> Option<u16> {
+    pub(crate) fn land_blow(&mut self, player: PlayerId, id: u32, weapon: &voxmar_engine::combat::Weapon, stroke: voxmar_engine::combat::Stroke) -> Option<u16> {
         let creature = self.creatures.live.get(&id)?;
         let species = self.content.creatures.get(creature.species);
         let attack = self.level(player, weapon.skill);
         let sunder = self.fights.sunder(id);
         let defence = voxmar_engine::combat::defence_against(species.def.defence, species.def.weak, weapon.style);
-        let defence = (defence as f32 * (1.0 - sunder)).round() as u8;
         let [hit, amount] = combat_roll(self.tick, id, player as u64 ^ 0x5717);
+        // Shares of a level or a max hit round by chance, so a small one still counts.
+        let defence = voxmar_engine::combat::by_chance(defence as f32 * (1.0 - sunder), unit_from(mix(hit.to_bits() as u64, 0x5d)))
+            .min(u8::MAX as u16) as u8;
         if !stroke.certain && hit >= voxmar_engine::combat::hit_chance_with(attack, weapon.accuracy, defence, 0, stroke.accuracy) {
             let creature = self.creatures.live.get_mut(&id).expect("checked above");
             creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
-            if let Some(p) = self.players.get(&player) {
-                p.connection.send(ServerMessage::Struck { creature: id, damage: 0, killed: false, blow: stroke.blow });
-            }
+            self.struck(player, id, 0, false, stroke.blow);
             return Some(0);
         }
-        let max_hit = (weapon.max_hit(attack) as f32 * (1.0 + stroke.max_hit)).round().max(1.0) as u16;
+        let max_hit = stroke.max_hit(weapon.max_hit(attack), unit_from(mix(amount.to_bits() as u64, 0x3a7)));
         let full = (1 + (amount * max_hit as f32) as u16).min(max_hit);
         // A blow struck sooner than the buffer lands lighter (`combat`).
         let damage = voxmar_engine::combat::scaled(full, stroke.strength, unit_from(mix(amount.to_bits() as u64, 0x5e1f)));
@@ -592,9 +600,7 @@ impl Server {
             target.changed(traits::SKILLS);
         }
         let killed = self.creatures.live[&id].health == 0;
-        if let Some(p) = self.players.get(&player) {
-            p.connection.send(ServerMessage::Struck { creature: id, damage, killed, blow });
-        }
+        self.struck(player, id, damage, killed, blow);
         if killed {
             self.creature_dies(id);
         }
@@ -681,6 +687,7 @@ impl Server {
             ready_until: 0,
             held_until: 0,
             winding: false,
+            tracking: None,
             genome,
             traits,
             breeds_again: 0,

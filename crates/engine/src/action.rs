@@ -16,9 +16,9 @@ use crate::skill::SkillId;
 use crate::glam::{IVec3, Vec3};
 use crate::physics::player::REACH;
 
-/// How far a player reaches to strike a creature, from the eye to its box (Minecraft's 3,
-/// with a little slack for a server running behind).
-pub const REACH_CREATURE: f32 = 3.6;
+/// How far a player reaches to strike a creature, from the eye to its box, without combat
+/// content to say (`combat::Feel::reach`: Minecraft's 3, less a little).
+pub const REACH_CREATURE: f32 = 2.8;
 /// How far a fishing line is cast, from the eye.
 pub const CAST: f32 = 9.0;
 
@@ -431,11 +431,14 @@ impl ActionDef {
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
-                // A spear reaches further, for one who can wield it.
-                let reach = ctx.combat().map_or(0.0, |combat| combat.wielded(ctx.actor_held(), |skill| ctx.actor_own_level(skill)).reach);
+                // What is held reaches (a spear further, a dagger less, for one who can wield
+                // it), with slack for the player's view of the creature running behind.
+                let reach = ctx.combat().map_or(REACH_CREATURE + crate::combat::Feel::default().reach_slack, |combat| {
+                    combat.wielded(ctx.actor_held(), |skill| ctx.actor_own_level(skill)).reach + combat.feel.reach_slack
+                });
                 ctx.creature_box(id).is_some_and(|aabb| {
                     let nearest = ctx.actor_eye().clamp(aabb.min, aabb.max);
-                    ctx.actor_eye().distance(nearest) <= REACH_CREATURE + reach
+                    ctx.actor_eye().distance(nearest) <= reach
                 })
             }
             Requirement::Replaceable => {

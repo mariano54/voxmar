@@ -43,14 +43,10 @@ pub struct Fighting {
 }
 
 impl Fighting {
-    /// The player's blow at `creature` was answered.
-    pub fn struck(&mut self, creature: u32, damage: u16, blow: Blow, now: f64) {
-        self.rhythm.pips = match blow {
-            Blow::Beat | Blow::Counter => self.rhythm.pips + 1,
-            Blow::Plain | Blow::Flourish => 0,
-            Blow::Bleed => self.rhythm.pips,
-        }
-        .min(3);
+    /// The player's blow at `creature` was answered, with their pips as the server counts
+    /// them.
+    pub fn struck(&mut self, creature: u32, damage: u16, blow: Blow, pips: u8, now: f64) {
+        self.rhythm.set_pips(pips, now);
         self.struck.retain(|s| now - s.3 < KEPT);
         self.struck.push((creature, damage, blow, now));
         self.struck_count += 1;
@@ -72,11 +68,20 @@ impl Fighting {
         if self.guard.is_some() {
             return false;
         }
+        self.holding(now, timing, held, feel);
+        matches!(self.rhythm.click(now, timing, feel), Click::Swing(_))
+    }
+
+    /// What is in hand at `now`: switching it drops the swing under way and the pips, as the
+    /// server does. `timing` is the rhythm of what was held.
+    pub fn holding(&mut self, now: f64, timing: &Timing, held: Option<voxmar_engine::block::BlockId>, feel: &voxmar_engine::combat::Feel) {
         if held != self.held {
+            if self.rhythm.pending().is_some() {
+                self.rhythm.cancel(now, timing, feel);
+            }
             self.rhythm.lose_pips();
             self.held = held;
         }
-        matches!(self.rhythm.click(now, timing, feel), Click::Swing(_))
     }
 }
 
@@ -98,6 +103,8 @@ pub fn guard(
     let combat = &launch.content.combat;
     let held = player.inventory.get(player.selected).map(|s| s.item);
     let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    let was = combat.wielded(fighting.held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    fighting.holding(now, &combat.timing(&was), held, &combat.feel);
     let can = combat.guard(&weapon).is_some() && ui.cursor_locked && !player.dead && player.joined;
     if mouse.just_pressed(MouseButton::Right) {
         fighting.right_used = target.used_right;

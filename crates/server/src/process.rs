@@ -54,6 +54,7 @@ impl Process for Falling {
         let fluid = |name: &str| blocks.id(name).and_then(|b| blocks.fluid(b)).map(|f| f.fluid);
         let (water, lava) = (fluid("base:water"), fluid("base:lava"));
         let burns = server.tick.is_multiple_of(BURN_TICKS);
+        let tick = server.tick;
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
             let player = &server.players[&id];
@@ -72,6 +73,9 @@ impl Process for Falling {
             let (in_water, in_lava) = (touching(water), touching(lava));
 
             let player = server.players.get_mut(&id).unwrap();
+            if on_ground && !player.flying {
+                player.grounded = tick;
+            }
             let mut damage = 0.0;
             if in_lava && burns {
                 damage += BURN;

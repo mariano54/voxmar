@@ -55,6 +55,8 @@ pub struct Target {
     pub used_right: bool,
     /// Block being broken and progress in 0..1.
     pub breaking: Option<(IVec3, f32)>,
+    /// Until when (seconds of game time) the player is eating: no dodge before.
+    pub eating_until: f32,
     /// The target the mining in progress was proposed at, which its `Finished` names.
     mining: Option<ActionTarget>,
     mining_seconds: f32,
@@ -362,6 +364,9 @@ fn break_and_place(
                     // Eating takes the player's hands: the server drops (or, if nearly
                     // done, completes) any mining it replaces, and so does the client.
                     net.propose_from(&player, eat, ActionTarget::None);
+                    if let Some(voxmar_engine::action::Duration::Seconds(seconds)) = actions.0.get(eat).map(|def| def.duration) {
+                        target.eating_until = time.elapsed_secs() + seconds;
+                    }
                     target.used_right = true;
                     target.breaking = None;
                     target.mine_cooldown = 1.2;
