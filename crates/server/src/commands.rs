@@ -208,9 +208,7 @@ impl Server {
         }
         let mut lines = vec![Words::key("command.help.title")];
         for def in self.content.commands.iter().filter(|def| allowed(def)) {
-            let summary = def.help.split_inclusive(". ").next().unwrap_or(&def.help).trim();
-            let key = format!("{}.summary", help_key(def));
-            lines.push(Words::key("command.help.line").with("command", def.short_name()).with("summary", Words::Own(key, summary.to_owned())));
+            lines.push(Words::key("command.help.line").with("command", def.short_name()).with("summary", def.summary_words()));
         }
         Ok(Words::Lines(lines))
     }
@@ -518,6 +516,21 @@ impl Server {
         let name = self.players[&player].name.clone();
         let tick = self.tick;
         let mut count = 0;
+        // Killed outright, as a blow would kill them: their death, their drops.
+        if what == "kill" {
+            // Never another player's kept animals: only wild ones and the admin's own.
+            let near: Vec<u32> = self
+                .creatures
+                .live
+                .iter()
+                .filter(|(_, c)| c.body.position.distance(at) <= 8.0 && c.owner.as_ref().is_none_or(|owner| *owner == name))
+                .map(|(&id, _)| id)
+                .collect();
+            for &id in &near {
+                self.creature_dies(id);
+            }
+            return Ok(Words::key("command.creatures.done").with("count", Words::text(near.len())));
+        }
         for creature in self.creatures.live.values_mut().filter(|c| c.body.position.distance(at) <= 8.0) {
             match what {
                 "tame" if creature.owner.is_none() => {
@@ -529,7 +542,6 @@ impl Server {
                     creature.ready_until = tick + 30 * voxmar_protocol::TICKS_PER_SECOND as u64;
                     creature.breeds_again = 0;
                 }
-                // Stands still for a minute: for a closer look, or a picture.
                 // Stands still for a minute, side on to whoever asked, for a closer look or
                 // a picture.
                 "hold" => {
@@ -614,7 +626,7 @@ impl Server {
         let rarity = Words::Own(format!("rarity.{}", snake(&rarity)), rarity);
         Words::key("command.biome")
             .with("biome", Words::Own(voxmar_engine::lang::def_key("biome", &biome.name), biome.name.clone()))
-            .with("tags", Words::text(biome.tags.join(", ")))
+            .with("tags", Words::List(biome.tags.iter().map(|tag| Words::Own(format!("biome.tag.{tag}"), tag.replace('_', " "))).collect()))
             .with("rarity", rarity)
             .with("temperature", Words::text(format!("{:.1}", site.temperature)))
             .with("rain", Words::text(format!("{:.0}", site.precipitation)))
@@ -1016,16 +1028,11 @@ fn minutes(seconds: u64) -> Words {
 
 /// A command's help, in the player's language where it has one.
 fn help(def: &CommandDef) -> Words {
-    Words::Own(help_key(def), def.help.clone())
-}
-
-/// The key of a command's help: `command.core.time.help`.
-fn help_key(def: &CommandDef) -> String {
-    format!("{}.help", voxmar_engine::lang::def_key("command", &def.name))
+    def.help_words()
 }
 
 /// A weather name (`kind`, `effect`, `wind` or `channel`) in words, or as named.
-fn weather_name(what: &str, name: &str) -> Words {
+pub fn weather_name(what: &str, name: &str) -> Words {
     Words::Own(format!("weather.{what}.{name}"), name.replace('_', " "))
 }
 
@@ -1035,7 +1042,7 @@ fn share(name: Words, value: f32) -> Words {
 }
 
 /// The numbers behind the weather: temperature, cloud, rain, wind and what else shows.
-fn weather_numbers(weather: &voxmar_engine::weather::Weather) -> Words {
+pub fn weather_numbers(weather: &voxmar_engine::weather::Weather) -> Words {
     let mut numbers = Words::key("command.weather.numbers")
         .with("temperature", Words::text(format!("{:.1}", weather.temperature)))
         .with("cloud", Words::text(format!("{:.0}", weather.cover * 100.0)))
@@ -1046,9 +1053,7 @@ fn weather_numbers(weather: &voxmar_engine::weather::Weather) -> Words {
         .with("precipitation", Words::text(format!("{:.0}", weather.precipitation * 100.0)))
         .with("wind", Words::text(format!("{:.1}", weather.wind.length())))
         .with("visibility", Words::text(format!("{:.0}", weather.visibility())));
-    // The effects' channels, from gusts on.
-    let channels: Vec<Words> =
-        weather.fractions()[7..].iter().filter(|(_, value)| *value >= 0.05).map(|&(name, value)| share(weather_name("channel", name), value)).collect();
+    let channels: Vec<Words> = weather.channels().filter(|&(_, value)| value >= 0.05).map(|(name, value)| share(weather_name("channel", name), value)).collect();
     if !channels.is_empty() {
         numbers = Words::key("command.weather.numbers_and").with("numbers", numbers).with("channels", Words::List(channels));
     }

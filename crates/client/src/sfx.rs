@@ -2,10 +2,11 @@
 //!
 //! A block declares what it is made of (`sound: Wood`); every cue for that material (a
 //! step, landing, placing, a tap while mining, breaking) comes from the player's own
-//! Minecraft install when they have one (see `minecraft`), played with the volume and pitch
-//! Minecraft gives that use of it, so grass, flowers, dirt and stone sound exactly as they
-//! do there. Without an install, or for a cue it lacks, the cue is synthesized at startup
-//! from the material.
+//! Minecraft install when they have one and allow it (the `minecraft_assets` setting; see
+//! `minecraft`), played with the volume and pitch Minecraft gives that use of it, so grass,
+//! flowers, dirt and stone sound exactly as they do there. Without an install, without the
+//! setting, or for a cue the install lacks, the cue is synthesized at startup from the
+//! material.
 //!
 //! Sound philosophy, for the synthesized cues:
 //! - Sounds come from materials, not from individual blocks. A block only declares what it
@@ -219,14 +220,20 @@ fn minecraft_event(sound: Sound, cue: Cue) -> Option<(String, f32, f32)> {
     Some((format!("block.{kind}.{event}"), volume, pitch))
 }
 
-/// Loads each cue's clips from the player's Minecraft install where it has them, and
-/// synthesizes the rest.
+/// Loads each cue's clips from the player's Minecraft install where it has them (with the
+/// `minecraft_assets` setting on), and synthesizes the rest.
 ///
 /// Minecraft's clips are levelled to the loudness of our synthesized ones for the same
 /// cue: Minecraft plays a step at 0.15 of a clip already quieter than its break, which
 /// under music and ambience was lost altogether. Within a cue's clips their own volumes
 /// and Minecraft's variation stay; across materials each cue sounds about as loud.
-fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>, assets: Res<AssetServer>, launch: Res<Launch>) {
+fn synthesize(
+    mut commands: Commands,
+    mut sources: ResMut<Assets<AudioSource>>,
+    assets: Res<AssetServer>,
+    launch: Res<Launch>,
+    settings: Res<crate::settings::Settings>,
+) {
     let started = std::time::Instant::now();
     let recorded = match Recordings::load(&launch.content.files) {
         Ok(recorded) => recorded,
@@ -236,7 +243,8 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>, 
         }
     };
     let load = |paths: &[String]| paths.iter().map(|path| assets.load::<AudioSource>(path.clone())).collect::<Vec<_>>();
-    let store = SoundStore::discover();
+    // The player's own Minecraft sounds only when they opted in.
+    let store = if settings.minecraft_assets { SoundStore::discover() } else { None };
     // Hits, steps and falls share files; each is read and measured once.
     let mut loaded: FxHashMap<String, Option<(Handle<AudioSource>, f32)>> = FxHashMap::default();
     let mut clips = FxHashMap::default();
