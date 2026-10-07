@@ -544,6 +544,15 @@ pub enum Habitat {
     LakeShore,
 }
 
+impl Habitat {
+    /// Whether it runs along the edge of water, a thin line through the land: trees of
+    /// such a habitat grow beside a forest rather than in it, and a rare herb's patches
+    /// start from it where it crosses their cell rather than at a random spot.
+    pub fn edge(self) -> bool {
+        matches!(self, Self::Water | Self::Shore | Self::Shallows | Self::LakeShore)
+    }
+}
+
 /// The climate something grows best in: inside both ranges it thrives, and it fades out
 /// over a margin beyond them (2 °C, 0.12 of moisture). An axis left out suits everywhere.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -1141,6 +1150,35 @@ pub struct ShapeDef {
     pub strata: Vec<String>,
 }
 
+/// Tarns: small still lakes in hollows high in the hills, which the stream tier of the
+/// rivers fills where it would otherwise breach a small pit (see `crate::water`). Nothing is
+/// carved for them: the land's own hollows hold them. A later package's replace an earlier
+/// one's.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TarnsDef {
+    /// The climate they lie in, on the bands of `climate.ron`, as for shapes.
+    pub climate: Vec<ClimateBox>,
+    /// The lowest a pit's bottom may lie, in blocks above the sea: tarns are a highland
+    /// thing, and lowland water never changes for them.
+    pub floor: f32,
+    /// Depth of a pit under its rim, in blocks, from which it may hold one.
+    pub depth: f32,
+    /// The chance that such a pit in tarn country holds one, where the climate keeps lakes
+    /// full; less in drier climates, none in deserts.
+    pub chance: f32,
+    /// Tarn country: a slow noise about `scale` blocks across gathers tarns into `share`
+    /// of their climate, a lake district in places and dry rock in others; none elsewhere.
+    pub country: TarnCountryDef,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TarnCountryDef {
+    pub scale: f32,
+    pub share: f32,
+}
+
 /// What a shape makes, and its sizes in blocks.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 pub enum ShapeKind {
@@ -1340,6 +1378,8 @@ struct BiomeFile {
 #[serde(deny_unknown_fields)]
 struct ShapeFile {
     shapes: Vec<ShapeDef>,
+    #[serde(default)]
+    tarns: Option<TarnsDef>,
 }
 
 #[derive(Deserialize)]
@@ -1401,6 +1441,8 @@ pub struct WorldContent {
     pub ores: crate::ores::OresDef,
     /// Settlements (`settlements.ron`).
     pub settlements: crate::settlements::SettlementsDef,
+    /// Tarns (`terrain.ron`); none when no package defines them.
+    pub tarns: Option<TarnsDef>,
 }
 
 /// What hiking trails are made of (`trails.ron`); a later package's replaces an earlier
@@ -1493,6 +1535,7 @@ impl WorldContent {
         let mut weather = voxmar_engine::weather::WeatherTable::default();
         let mut ores = crate::ores::OresDef::default();
         let mut settlements = crate::settlements::SettlementsDef::default();
+        let mut tarns = None;
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
@@ -1550,12 +1593,18 @@ impl WorldContent {
                     let q = |n: &str| qualify(&file.package, n);
                     PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), snowy: p.snowy.as_deref().map(q), ..p }
                 })),
-                "terrain.ron" => shapes.extend(parse::<ShapeFile>(&at, &file.source)?.shapes.into_iter().map(|s| ShapeDef {
-                    name: q(&s.name),
-                    surface: s.surface.map(|surface| qualify_surface(&file.package, surface)),
-                    strata: s.strata.iter().map(|n| q(n)).collect(),
-                    ..s
-                })),
+                "terrain.ron" => {
+                    let file_shapes = parse::<ShapeFile>(&at, &file.source)?;
+                    shapes.extend(file_shapes.shapes.into_iter().map(|s| ShapeDef {
+                        name: q(&s.name),
+                        surface: s.surface.map(|surface| qualify_surface(&file.package, surface)),
+                        strata: s.strata.iter().map(|n| q(n)).collect(),
+                        ..s
+                    }));
+                    if file_shapes.tarns.is_some() {
+                        tarns = file_shapes.tarns;
+                    }
+                }
                 "land.ron" => land = Some(parse::<LandDef>(&at, &file.source)?),
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
                 "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
@@ -1640,7 +1689,7 @@ impl WorldContent {
         }
         let snow_cover = weather.snow_cover().to_vec();
         let tree_density = tree_density.unwrap_or(1.0);
-        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements };
+        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements, tarns };
         content.ores.check(registry, &content.provinces)?;
         if !content.settlements.styles.is_empty() {
             content.settlements.check(registry)?;
@@ -1831,6 +1880,22 @@ impl WorldContent {
                 block(&|| format!("{}, strata", at()), name)?;
             }
             self.check_surface(&biome.surface, !biome.strata.is_empty(), &|| at(), &block, &blocks)?;
+        }
+
+        if let Some(tarns) = &self.tarns {
+            let at = || "terrain.ron: tarns".to_owned();
+            for climate in &tarns.climate {
+                if climate.aether.is_some() || climate.depth.is_some() || climate.height.is_some() || climate.provinces.is_some() {
+                    return Err(ContentError(format!("{}: tarns follow the climate bands alone", at())));
+                }
+                self.check_box(climate, &at)?;
+            }
+            let TarnCountryDef { scale, share } = tarns.country;
+            for (what, value, range) in [("floor", tarns.floor, 0.0..=256.0), ("depth", tarns.depth, 0.5..=16.0), ("chance", tarns.chance, 0.0..=1.0), ("country scale", scale, 64.0..=16384.0), ("country share", share, 0.0..=1.0)] {
+                if !range.contains(&value) {
+                    return Err(ContentError(format!("{}: the {what} {value} is outside {range:?}", at())));
+                }
+            }
         }
 
         // Terrain shapes.
@@ -2027,12 +2092,24 @@ impl WorldContent {
             let at = || format!("{file}: biome `{}`", biome.name);
             // A patch plant's weight here may make at most one patch a cell (ecology.rs
             // `in_patch`): its rate times the weight, over a mean patch, fills a cell at most.
+            // One along water (`edge_patches`) may at most grow on every column of its habitat.
             for select in biome.flora.plants.iter().chain(biome.flora.wonders.iter().flatten()) {
                 let Select::Name(name, weight) = select else { continue };
-                let Some(p) = self.plants.iter().find(|p| p.name == *name).and_then(|p| p.patches.as_ref()) else { continue };
+                let Some(plant) = self.plants.iter().find(|p| p.name == *name) else { continue };
+                let Some(p) = &plant.patches else { continue };
+                if !(weight.is_finite() && *weight > 0.0) {
+                    return Err(ContentError(format!("{}: plant `{name}` at weight {weight}: a weight must be above 0", at())));
+                }
+                if plant.habitat.edge() {
+                    let share = p.rate * weight / 1e6;
+                    if share > 1.0 {
+                        return Err(ContentError(format!("{}: plant `{name}` at weight {weight} asks for {share:.2} plants a column of its habitat; at most 1", at())));
+                    }
+                    continue;
+                }
                 let cell = (crate::ecology::PATCH_CELL * crate::ecology::PATCH_CELL) as f32;
                 let chance = p.rate * weight * cell / ((p.size.0 + p.size.1) as f32 / 2.0) / 1e6;
-                if !(weight.is_finite() && *weight > 0.0 && chance <= 1.0) {
+                if chance > 1.0 {
                     return Err(ContentError(format!("{}: plant `{name}` at weight {weight} asks for {chance:.2} patches a {}-block cell; at most 1", at(), crate::ecology::PATCH_CELL)));
                 }
             }
@@ -2726,6 +2803,39 @@ mod tests {
         for (file, source, expected) in cases {
             let message = load(file, &source);
             assert!(message.contains(expected), "expected `{expected}` in: {message}");
+        }
+    }
+
+    /// A rare herb's patches are refused at load unless they make sense: a rate above 0, 1
+    /// to 25 plants a patch, an aim, `named_only`, and no biome naming it so heavily that a
+    /// cell would need more than one patch.
+    #[test]
+    fn bad_patches_are_refused() {
+        let registry = registry();
+        let load = |patches: &str, weight: f32| {
+            let mut files = base_files();
+            files.iter_mut().find(|f| f.name == "biomes.ron").unwrap().source = biomes(&format!("(name: \"herbs\", climate: [()], flora: (plants: [Name(\"mod:herb\", {weight:?})]), {GROUND})"));
+            let plant = format!("(plants: [(name: \"herb\", block: \"base:poppy\", {patches})])");
+            files.push(ContentFile { package: "mod".into(), name: "plants.ron".into(), source: plant });
+            WorldContent::from_files(files.iter(), &registry).map(|_| ()).map_err(|e| e.0)
+        };
+        assert_eq!(load("named_only: true, patches: (rate: 200.0, size: (3, 6), aim: 200.0)", 1.0), Ok(()));
+        let cases = [
+            ("named_only: true, patches: (rate: 0.0, size: (3, 6), aim: 200.0)", 1.0, "patch rate 0"),
+            ("named_only: true, patches: (rate: inf, size: (3, 6), aim: 200.0)", 1.0, "patch rate inf"),
+            ("named_only: true, patches: (rate: 200.0, size: (0, 6), aim: 200.0)", 1.0, "1 to 25 plants"),
+            ("named_only: true, patches: (rate: 200.0, size: (6, 3), aim: 200.0)", 1.0, "1 to 25 plants"),
+            ("named_only: true, patches: (rate: 200.0, size: (3, 26), aim: 200.0)", 1.0, "1 to 25 plants"),
+            ("named_only: true, patches: (rate: 200.0, size: (3, 6), aim: -1.0)", 1.0, "patch aim"),
+            ("patches: (rate: 200.0, size: (3, 6), aim: 200.0)", 1.0, "named_only"),
+            // 200 plants a million blocks at weight 30, in patches of 4.5 on average: 1.37
+            // patches a 32-block cell.
+            ("named_only: true, patches: (rate: 200.0, size: (3, 6), aim: 200.0)", 30.0, "plant `mod:herb` at weight 30"),
+        ];
+        for (patches, weight, expected) in cases {
+            let message = load(patches, weight).unwrap_err();
+            assert!(message.contains(expected), "expected `{expected}` in: {message}");
+            assert!(message.contains("mod:herb") || message.contains("`herb`"), "no plant named in: {message}");
         }
     }
 

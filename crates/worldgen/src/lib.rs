@@ -303,7 +303,7 @@ impl Overworld {
         Self {
             dials,
             geology: Geology::new(stream, &dials, content, &rocks),
-            rivers: water::Rivers::new(stream, &dials),
+            rivers: water::Rivers::new(stream, &dials, content),
             ecology,
             decor,
             trails: trails::Trails::new(stream, content.trails.laid),
@@ -1028,6 +1028,23 @@ mod tests {
     }
 
     /// Generates the `count`×`count` columns from `first` on all cores.
+    /// The columns at `positions`, generated on all cores, in their order.
+    pub(crate) fn generate_columns(world: &Overworld, positions: &[ColumnPos]) -> Vec<Column> {
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let mut columns: Vec<Option<Column>> = positions.iter().map(|_| None).collect();
+        let chunk = columns.len().div_ceil(threads).max(1);
+        std::thread::scope(|scope| {
+            for (slots, part) in columns.chunks_mut(chunk).zip(positions.chunks(chunk)) {
+                scope.spawn(move || {
+                    for (slot, &pos) in slots.iter_mut().zip(part) {
+                        *slot = Some(world.generate(pos));
+                    }
+                });
+            }
+        });
+        columns.into_iter().map(Option::unwrap).collect()
+    }
+
     pub(crate) fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         let mut columns: Vec<Option<Column>> = (0..count * count).map(|_| None).collect();
@@ -1741,69 +1758,119 @@ mod tests {
         }
     }
 
-    /// Plants as they are actually placed: in generated columns around the nearest place of
-    /// each biome given, the plants standing on the ground (after trees, trails, boulders and
-    /// water), per million columns of that biome, and the size of their patches (plants
-    /// within four blocks of each other). Each biome's land is generated once for all the
-    /// plants. Returns (plant, biome, rate, plants a patch, plants, columns).
-    fn plant_counts(seeds: &[u64], chunks: i32, plants: &[&str], biomes: &[&str]) -> Vec<(String, String, f64, f64, usize, u64)> {
+    /// Every look of each plant's block (pairs, clumps, its snowy look), as the plant's index
+    /// in `plants`: the blocks that count as it.
+    fn plant_looks(plants: &[&str]) -> std::collections::HashMap<BlockId, usize> {
         let registry = registry();
         let content = crate::content::WorldContent::base(&registry).unwrap();
-        // Every look of each plant's block (pairs, clumps, its snowy look) counts as it.
-        let mut owner = std::collections::HashMap::new();
+        let mut looks = std::collections::HashMap::new();
         for (i, name) in plants.iter().enumerate() {
             let def = content.plants.iter().find(|p| p.name.trim_start_matches("base:") == *name).unwrap_or_else(|| panic!("no plant {name}"));
             let block = registry.expect(&def.block);
             for id in registry.looks(block).iter().map(|l| l.block).chain([block]).chain(def.snowy.as_deref().map(|n| registry.expect(n))) {
-                owner.insert(id, i);
+                looks.insert(id, i);
             }
         }
-        let worlds: Vec<Overworld> = seeds.iter().map(|&s| Overworld::new(s, registry.clone())).collect();
-        let mut out = Vec::new();
-        for biome in biomes {
-            let mut columns = 0u64;
-            let mut placed: Vec<Vec<(i32, i32)>> = vec![Vec::new(); plants.len()];
-            for world in &worlds {
-                let Some(id) = world.biomes.id(&format!("base:{biome}")) else { continue };
-                let Some(at) = world.locate_biome(biome, IVec2::ZERO, 60000) else { continue };
-                let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-chunks / 2, -chunks / 2);
-                let area = generate_area(world, first, chunks);
-                let origin = first.origin();
-                for (i, column) in area.iter().enumerate() {
-                    let corner = origin + IVec3::new(i as i32 % chunks * 32, 0, i as i32 / chunks * 32);
-                    for z in 0..32 {
-                        for x in 0..32 {
-                            let site = world.site(corner.x + x, corner.z + z);
-                            if site.home != id || site.height < site.water || site.height + 1 >= WORLD_HEIGHT_FOR_TESTS {
-                                continue;
-                            }
-                            columns += 1;
-                            if let Some(&k) = owner.get(&column.block(IVec3::new(x, site.height + 1, z))) {
-                                placed[k].push((corner.x + x, corner.z + z));
-                            }
-                        }
+        looks
+    }
+
+    /// One area of a biome as generated: `chunks` columns of chunks square around the
+    /// nearest place of `biome` in `world`, with its columns (dry land of that home biome)
+    /// and where each of `count` plants (by `looks`) stands on them, after trees, trails,
+    /// boulders and water; none where the world has no such biome near.
+    fn biome_area(world: &Overworld, biome: &str, chunks: i32, looks: &std::collections::HashMap<BlockId, usize>, count: usize) -> Option<(u64, Vec<Vec<(i32, i32)>>)> {
+        let id = world.biomes.id(&format!("base:{biome}"))?;
+        let at = world.locate_biome(biome, IVec2::ZERO, 60000)?;
+        let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-chunks / 2, -chunks / 2);
+        // One sampler a column of chunks: the same sites as `Overworld::site`, far quicker
+        // than sampling each alone.
+        let sampler = |pos: ColumnPos| {
+            let corner = pos.origin();
+            world.dense_sampler(IVec2::new(corner.x, corner.z), IVec2::new(corner.x + 31, corner.z + 31))
+        };
+        // Only the columns of chunks the biome reaches into (seen every four blocks) are
+        // generated: a biome in scattered pockets costs no more than its own land.
+        let positions: Vec<ColumnPos> = (0..chunks * chunks)
+            .map(|i| first.offset(i % chunks, i / chunks))
+            .filter(|&pos| {
+                let (sampler, corner) = (sampler(pos), pos.origin());
+                (0..64).any(|k| sampler.site(corner.x + k % 8 * 4 + 2, corner.z + k / 8 * 4 + 2).home == id)
+            })
+            .collect();
+        let area = generate_columns(world, &positions);
+        let (mut columns, mut placed) = (0u64, vec![Vec::new(); count]);
+        for (&pos, column) in positions.iter().zip(&area) {
+            let corner = pos.origin();
+            let sampler = sampler(pos);
+            for z in 0..32 {
+                for x in 0..32 {
+                    let site = sampler.site(corner.x + x, corner.z + z);
+                    if site.home != id || site.height < site.water || site.height + 1 >= WORLD_HEIGHT_FOR_TESTS {
+                        continue;
+                    }
+                    columns += 1;
+                    if let Some(&k) = looks.get(&column.block(IVec3::new(x, site.height + 1, z))) {
+                        placed[k].push((corner.x + x, corner.z + z));
                     }
                 }
             }
-            for (k, placed) in placed.iter().enumerate() {
-                // Patches: plants within four blocks of one already in it.
-                let mut patches: Vec<Vec<(i32, i32)>> = Vec::new();
-                for &p in placed {
-                    match patches.iter().position(|g| g.iter().any(|q| (q.0 - p.0).abs() <= 4 && (q.1 - p.1).abs() <= 4)) {
-                        Some(g) => patches[g].push(p),
-                        None => patches.push(vec![p]),
+        }
+        Some((columns, placed))
+    }
+
+    /// Plants gathered into patches: each joins the first patch with a plant within four
+    /// blocks of it.
+    fn patches(placed: &[(i32, i32)]) -> Vec<Vec<(i32, i32)>> {
+        let mut patches: Vec<Vec<(i32, i32)>> = Vec::new();
+        for &p in placed {
+            match patches.iter().position(|g| g.iter().any(|q| (q.0 - p.0).abs() <= 4 && (q.1 - p.1).abs() <= 4)) {
+                Some(g) => patches[g].push(p),
+                None => patches.push(vec![p]),
+            }
+        }
+        patches
+    }
+
+    /// Plants as they are actually placed (`biome_area`), around the nearest place of each
+    /// biome given in each seed's world, per million columns of that biome, and the size of
+    /// their patches. One world at a time, its land generated once for all the plants of a
+    /// biome. Returns (plant, biome, rate, plants a patch, plants, columns).
+    fn plant_counts(seeds: &[u64], chunks: i32, plants: &[&str], biomes: &[&str]) -> Vec<(String, String, f64, f64, usize, u64)> {
+        let registry = registry();
+        let looks = plant_looks(plants);
+        // Per biome: columns, and per plant its plants, patches and biggest patch (with its seed).
+        let mut tally: Vec<(u64, Vec<(usize, usize, Option<(usize, u64, (i32, i32))>)>)> = vec![(0, vec![(0, 0, None); plants.len()]); biomes.len()];
+        for &seed in seeds {
+            let world = Overworld::new(seed, registry.clone());
+            for (b, biome) in biomes.iter().enumerate() {
+                let Some((columns, placed)) = biome_area(&world, biome, chunks, &looks, plants.len()) else { continue };
+                tally[b].0 += columns;
+                for (k, placed) in placed.iter().enumerate() {
+                    let groups = patches(placed);
+                    let t = &mut tally[b].1[k];
+                    t.0 += placed.len();
+                    t.1 += groups.len();
+                    if let Some(g) = groups.iter().max_by_key(|g| g.len())
+                        && t.2.is_none_or(|(n, _, _)| g.len() > n)
+                    {
+                        t.2 = Some((g.len(), seed, g[0]));
                     }
                 }
-                let rate = placed.len() as f64 * 1e6 / columns.max(1) as f64;
-                let size = if patches.is_empty() { 0.0 } else { placed.len() as f64 / patches.len() as f64 };
-                // AT=1 shows where the biggest patch is, for shots (in the first seed's world
-                // that has the biome; positions are not told apart by seed).
+            }
+        }
+        let mut out = Vec::new();
+        for (b, biome) in biomes.iter().enumerate() {
+            let columns = tally[b].0;
+            for (k, &(n, groups, biggest)) in tally[b].1.iter().enumerate() {
+                // AT=1 shows where the biggest patch is, for shots.
                 if std::env::var("AT").is_ok()
-                    && let Some(g) = patches.iter().max_by_key(|g| g.len())
+                    && let Some((size, seed, at)) = biggest
                 {
-                    println!("  {} in {biome}: a patch of {} at {:?}", plants[k], g.len(), g[0]);
+                    println!("  {} in {biome}: a patch of {size} at {at:?} (seed {seed})", plants[k]);
                 }
-                out.push((plants[k].to_owned(), (*biome).to_owned(), rate, size, placed.len(), columns));
+                let rate = n as f64 * 1e6 / columns.max(1) as f64;
+                let size = if groups == 0 { 0.0 } else { n as f64 / groups as f64 };
+                out.push((plants[k].to_owned(), (*biome).to_owned(), rate, size, n, columns));
             }
         }
         out
@@ -1837,6 +1904,111 @@ mod tests {
         plant_counts(seeds, chunks, &herbs, &biomes).into_iter().filter(|r| pairs.contains(&(r.0.clone(), r.1.clone()))).collect()
     }
 
+    /// Tarns and lake banks in mountains and their alpine meadows (and snowy peaks, whose
+    /// own lakes the sky lotus shares): `cargo test --profile iter -p voxmar_worldgen
+    /// tarn_census -- --ignored --nocapture` (SEEDS=1,2,3,4, REGIONS=3, AT=1 for places to
+    /// look). Over `REGIONS` × `REGIONS` regions of rivers (a kilometre each) around the
+    /// nearest place of each of those biomes to the origin of each seed's world: each biome's land in and out of
+    /// tarn country, the still lakes there per square kilometre (by their pit) and their size,
+    /// and the share of its land that is lake bank (a block or two over a lake's water,
+    /// where the sky lotus may grow).
+    #[test]
+    #[ignore]
+    fn tarn_census() {
+        let registry = registry();
+        let seeds: Vec<u64> = std::env::var("SEEDS").unwrap_or_else(|_| "1,2,3,4".into()).split(',').filter_map(|s| s.parse().ok()).collect();
+        let regions: i32 = std::env::var("REGIONS").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
+        let names = ["mountains", "alpine_meadow", "snowy_peaks"];
+        // Per biome, in country and out: land columns (sampled every 8 blocks, so 64 each),
+        // bank columns, lakes, lake cells.
+        let mut tally = [[[0u64; 4]; 2]; 3];
+        const STEP: i32 = 8;
+        for &seed in &seeds {
+            let world = Overworld::new(seed, registry.clone());
+            let ids: Vec<BiomeId> = names.iter().map(|n| world.biomes.id(&format!("base:{n}")).unwrap()).collect();
+            let size = crate::water::REGION;
+            // The regions around the nearest place of each biome, each once.
+            let mut around: Vec<IVec2> = Vec::new();
+            for name in names {
+                let Some(at) = world.locate_biome(name, IVec2::ZERO, 60000) else { continue };
+                let centre = at.div_euclid(IVec2::splat(size));
+                for r in 0..regions * regions {
+                    let region = centre + IVec2::new(r % regions - regions / 2, r / regions - regions / 2);
+                    if !around.contains(&region) {
+                        around.push(region);
+                    }
+                }
+            }
+            let country = |x: i32, z: i32| usize::from(world.rivers.tarn_country(x, z) >= 0.5);
+            let mut dry: Option<((i32, i32), i32)> = None;
+            let mut banks = std::collections::HashSet::new();
+            for region in around {
+                let first = region * size;
+                // The land, every `STEP` blocks, a sampler a 256-block tile.
+                for t in 0..16 {
+                    let tile = first + IVec2::new(t % 4, t / 4) * 256;
+                    let sampler = world.dense_sampler(tile, tile + 255);
+                    for k in 0..(256 / STEP) * (256 / STEP) {
+                        let (x, z) = (tile.x + k % (256 / STEP) * STEP, tile.y + k / (256 / STEP) * STEP);
+                        let site = sampler.site(x, z);
+                        let Some(b) = ids.iter().position(|&id| id == site.home) else { continue };
+                        if site.height >= site.water {
+                            let c = country(x, z);
+                            tally[b][c][0] += (STEP * STEP) as u64;
+                            if b < 2 && world.rivers.tarn_country(x, z) == 0.0 && dry.is_none_or(|(_, h)| site.height > h) {
+                                dry = Some(((x, z), site.height));
+                            }
+                        }
+                    }
+                }
+                // The lakes by their pits, and the banks around each, column by column.
+                for (pit, water, cells) in world.rivers.stream_lakes(world.stages(), region) {
+                    let site = world.site(pit.x, pit.y);
+                    let Some(b) = ids.iter().position(|&id| id == site.home) else { continue };
+                    let c = country(pit.x, pit.y);
+                    tally[b][c][2] += 1;
+                    tally[b][c][3] += cells as u64;
+                    if std::env::var("AT").is_ok() && b < 2 {
+                        println!("  seed {seed}: a lake of {cells} cells, its water at {water}, at {}, {} ({}{})", pit.x, pit.y, names[b], if c == 1 { ", tarn country" } else { "" });
+                    }
+                    let reach = 8 + 4 * (cells as f32).sqrt() as i32 * 2;
+                    let sampler = world.dense_sampler(pit - reach, pit + reach);
+                    for z in pit.y - reach..=pit.y + reach {
+                        for x in pit.x - reach..=pit.x + reach {
+                            let site = sampler.site(x, z);
+                            if let Some(b) = ids.iter().position(|&id| id == site.home)
+                                && site.body == Body::Lake
+                                && (0..=2).contains(&(site.height - site.water))
+                                && banks.insert((x, z))
+                            {
+                                tally[b][country(x, z)][1] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            if std::env::var("AT").is_ok()
+                && let Some((at, height)) = dry
+            {
+                println!("  seed {seed}: high ground outside tarn country at {at:?}, height {height}");
+            }
+        }
+        for (b, name) in names.iter().enumerate() {
+            let land: u64 = tally[b].iter().map(|t| t[0]).sum();
+            for (country, label) in [(1, "in tarn country"), (0, "outside it")] {
+                let [columns, banks, lakes, cells] = tally[b][country];
+                let km2 = columns as f64 / 1e6;
+                let across = if lakes > 0 { 2.0 * (cells as f64 * 64.0 / lakes as f64 / std::f64::consts::PI).sqrt() } else { 0.0 };
+                println!(
+                    "{name:<14} {label:<16} {:>5.1}% of its land, {km2:>6.2} km2: {:>5.1} lakes a km2 (about {across:.0} blocks across), bank {:.2}% of the land",
+                    columns as f64 * 100.0 / land.max(1) as f64,
+                    lakes as f64 / km2.max(1e-9),
+                    banks as f64 * 100.0 / columns.max(1) as f64
+                );
+            }
+        }
+    }
+
     /// Where the rare herbs grow and how many: `cargo test --profile iter -p voxmar_worldgen
     /// rare_herb_census -- --ignored --nocapture` (SEEDS=7,1,42, CHUNKS=12).
     #[test]
@@ -1847,13 +2019,25 @@ mod tests {
         for (herb, biome, rate, size, n, columns) in rare_herb_counts(&seeds, chunks) {
             println!("{herb:>13} {biome:<18} {rate:>6.0} per million columns, {n:>4} plants in {columns:>6} columns, {size:.1} a patch");
         }
-        // WILD=plant,plant: those plants over a spread of climates, every biome they appear in.
-        if let Ok(wild) = std::env::var("WILD") {
-            let plants: Vec<&str> = wild.split(',').collect();
-            let biomes = ["plains", "meadow", "forest", "taiga", "steppe", "sagebrush_steppe", "savanna", "baobab_savanna", "outback", "desert", "badlands", "mediterranean", "jungle", "swamp", "bayou", "mangrove_swamp"];
+        // WILD=plant,plant (or WILDTAG=tag, every plant carrying it): those plants over a
+        // spread of climates (or WILDBIOMES=a,b), every biome they appear in, as placed plants
+        // per million columns (a square kilometre) and one in how many columns.
+        let registry = registry();
+        let content = crate::content::WorldContent::base(&registry).unwrap();
+        let tagged: Vec<String> = std::env::var("WILDTAG")
+            .map(|tag| content.plants.iter().filter(|p| content.plant_tags(p, &registry).any(|t| t == tag)).map(|p| p.name.trim_start_matches("base:").to_owned()).collect())
+            .unwrap_or_default();
+        let wild = std::env::var("WILD").unwrap_or_default();
+        let plants: Vec<&str> = wild.split(',').filter(|p| !p.is_empty()).chain(tagged.iter().map(String::as_str)).collect();
+        if !plants.is_empty() {
+            let listed = std::env::var("WILDBIOMES").unwrap_or_default();
+            let mut biomes: Vec<&str> = listed.split(',').filter(|b| !b.is_empty()).collect();
+            if biomes.is_empty() {
+                biomes = vec!["plains", "meadow", "forest", "taiga", "steppe", "sagebrush_steppe", "savanna", "baobab_savanna", "outback", "desert", "badlands", "mediterranean", "jungle", "swamp", "bayou", "mangrove_swamp"];
+            }
             for (plant, biome, rate, size, n, columns) in plant_counts(&seeds, chunks, &plants, &biomes) {
                 if n > 0 {
-                    println!("{plant:>13} {biome:<18} {rate:>6.0} per million columns, {n:>4} plants in {columns:>6} columns, {size:.1} a patch");
+                    println!("{plant:>16} {biome:<18} {rate:>6.0} per million columns, 1 in {:>6.0}, {n:>4} plants in {columns:>7} columns, {size:.1} a patch", 1e6 / rate);
                 }
             }
         }
@@ -1872,46 +2056,47 @@ mod tests {
         let content = crate::content::WorldContent::base(&registry).unwrap();
         let (herbs, biomes, pairs) = rare_herbs();
         let herb_names: Vec<&str> = herbs.iter().map(String::as_str).collect();
+        let looks = plant_looks(&herb_names);
         let def = |herb: &str| content.plants.iter().find(|p| p.name.trim_start_matches("base:") == herb).unwrap();
-        let mut wrong = Vec::new();
-        let mut measured: Vec<(String, f64)> = Vec::new();
-        for biome in &biomes {
-            let here: Vec<&String> = pairs.iter().filter(|p| p.1 == *biome).map(|p| &p.0).collect();
-            // Per herb here: plants, patches; and the biome's columns.
-            let mut tally: std::collections::HashMap<String, (usize, f64)> = std::collections::HashMap::new();
-            let mut columns = 0u64;
-            let mut seeds = 0u64;
-            while seeds < 24 {
-                let batch: Vec<u64> = (seeds + 1..=seeds + 4).collect();
-                seeds += 4;
-                let mut batch_columns = 0;
-                for (herb, _, _, size, n, cols) in plant_counts(&batch, 12, &herb_names, &[biome.as_str()]) {
-                    batch_columns = cols;
-                    let e = tally.entry(herb).or_default();
-                    e.0 += n;
-                    e.1 += if size > 0.0 { n as f64 / size } else { 0.0 };
-                }
-                columns += batch_columns;
-                if here.iter().all(|h| tally.get(h.as_str()).is_some_and(|t| t.1 >= 25.0)) {
-                    break;
-                }
-            }
-            for herb in here {
-                let (n, patches) = tally.get(herb.as_str()).copied().unwrap_or_default();
-                let rate = n as f64 * 1e6 / columns.max(1) as f64;
-                let aim = def(herb).patches.as_ref().unwrap().aim as f64;
-                if patches < 25.0 {
-                    println!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}) from only {patches:.0} patches in {columns} columns over {seeds} seeds: left to the census");
-                    continue;
-                }
-                let size = n as f64 / patches;
-                println!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}), {size:.1} a patch, {patches:.0} patches over {seeds} seeds");
-                measured.push((herb.clone(), rate));
-                if !(0.5 * aim..=1.6 * aim).contains(&rate) || !(2.5..=6.5).contains(&size) {
-                    wrong.push(format!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}), {size:.1} a patch"));
+        let herb_index = |herb: &str| herbs.iter().position(|h| h == herb).unwrap();
+        // Per biome: columns, and per herb its plants and patches.
+        let mut tally: Vec<(u64, Vec<(usize, usize)>)> = vec![(0, vec![(0, 0); herbs.len()]); biomes.len()];
+        let done = |tally: &[(u64, Vec<(usize, usize)>)], b: usize| pairs.iter().filter(|p| p.1 == biomes[b]).all(|p| tally[b].1[herb_index(&p.0)].1 >= 25);
+        let mut seeds = 0;
+        while seeds < 24 && (0..biomes.len()).any(|b| !done(&tally, b)) {
+            seeds += 1;
+            let world = Overworld::new(seeds, registry.clone());
+            let open: Vec<usize> = (0..biomes.len()).filter(|&b| !done(&tally, b)).collect();
+            for b in open {
+                let Some((columns, placed)) = biome_area(&world, &biomes[b], 16, &looks, herbs.len()) else { continue };
+                tally[b].0 += columns;
+                for (k, placed) in placed.iter().enumerate() {
+                    tally[b].1[k].0 += placed.len();
+                    tally[b].1[k].1 += patches(placed).len();
                 }
             }
         }
+        let mut wrong = Vec::new();
+        let mut measured: Vec<(String, f64)> = Vec::new();
+        for (herb, biome) in &pairs {
+            let b = biomes.iter().position(|x| x == biome).unwrap();
+            let columns = tally[b].0;
+            let (n, groups) = tally[b].1[herb_index(herb)];
+            let rate = n as f64 * 1e6 / columns.max(1) as f64;
+            let aim = def(herb).patches.as_ref().unwrap().aim as f64;
+            let size = n as f64 / groups.max(1) as f64;
+            let line = format!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}, {:.2}x), {:.0} patches a million, {size:.1} a patch, {groups} patches in {columns} columns", rate / aim, groups as f64 * 1e6 / columns.max(1) as f64);
+            if groups < 25 {
+                println!("{line}: too few to judge, left to the census");
+                continue;
+            }
+            println!("{line}");
+            measured.push((herb.clone(), rate));
+            if !(0.5 * aim..=1.6 * aim).contains(&rate) || !(2.5..=6.5).contains(&size) {
+                wrong.push(line);
+            }
+        }
+        println!("over {seeds} seeds");
         // The classes in order, by each class's mean rate over its herbs' biomes.
         let class = |herb: &str| registry.def(registry.expect(&def(herb).block)).rarity;
         let mean = |r: voxmar_engine::block::Rarity| {

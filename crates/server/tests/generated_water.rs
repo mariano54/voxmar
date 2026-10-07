@@ -53,6 +53,26 @@ fn generated_water_does_not_move() {
     assert!(fluid_cells > 10_000 && pinned > 500 && curtain > 20);
 }
 
+/// Tarns, the small still lakes in high hollows, settle like any other lake: around the
+/// tarn nearest the alpine meadows closest to spawn on a few seeds, found afresh.
+#[test]
+fn tarns_do_not_move() {
+    let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let world_content = WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let mut tarns = 0;
+    for seed in [1, 2, 3, 4] {
+        let generator = Overworld::with_content(seed, registry.clone(), &world_content);
+        let spawn = generator.spawn_point();
+        let Some(meadow) = generator.locate_biome("alpine_meadow", IVec2::new(spawn.x, spawn.z), 20000) else { continue };
+        let Some(&(_, at)) = generator.water_sights(meadow, 400).iter().find(|(kind, _)| *kind == WaterSight::Tarn) else { continue };
+        let fluids = check_area(&registry, &generator, seed, IVec2::new(at.x, at.z)).0;
+        assert!(fluids > 0, "seed {seed}: no water around the tarn at {at}");
+        tarns += 1;
+    }
+    assert!(tarns >= 2, "only {tarns} tarns found near alpine meadows");
+}
+
 /// Generates the area around `place` and checks that none of its water would move: none is
 /// scheduled when its columns load, and ticking any of it would change nothing. Counts its
 /// fluid cells as `count_fluid` does.

@@ -31,13 +31,15 @@ use voxmar_engine::glam::{IVec2, IVec3};
 
 use self::cache::Cache;
 use self::channel::{Carved, Channels, Span, Style, carve, top_block};
-use self::drainage::{Budget, DIRS, Drainage, Ground, Reader, Tier, Tile, TunnelRule};
+use self::drainage::{Budget, DIRS, Drainage, Ground, Reader, TarnRule, Tier, Tile, TunnelRule};
 use crate::climate::{self, Climate, LAPSE_RATE, Regional};
 use crate::dials::WorldDials;
-use fastnoise_lite::FractalType;
+use fastnoise_lite::{FastNoiseLite, FractalType};
 
 use crate::density::Crag;
 use crate::geology::{Corners, GeoSample, Geology, Landform, noise, smoothstep};
+use crate::content::WorldContent;
+use crate::shapes::{Gate, region_share};
 use crate::stage::{self, Stage};
 use crate::{SEA_LEVEL, rng};
 
@@ -82,6 +84,30 @@ pub struct Rivers {
     trunk: f32,
     /// Tells this world's entries apart in the per-thread cache of channels.
     id: u64,
+    /// Where tarns may lie, if the content has them.
+    tarns: Option<Tarns>,
+}
+
+/// Where tarns lie (`content::TarnsDef`): their climate, and the slow noise that gathers
+/// them into tarn country.
+struct Tarns {
+    gates: Vec<Gate>,
+    country: FastNoiseLite,
+    share: f32,
+}
+
+impl Tarns {
+    /// How fully tarns may lie at a position, 0 ..= 1: inside tarn country, as far inside
+    /// their climate as the position lies.
+    fn weight(&self, land: Stages, at: IVec2) -> f32 {
+        let country = region_share(self.share, self.country.get_noise_2d(at.x as f32, at.y as f32));
+        if country <= 0.0 {
+            return 0.0;
+        }
+        let r = land.climate.regional_at(land.geology, at);
+        let fields = [r.temperature(), r.moisture(), r.continentalness, r.erosion];
+        country * self.gates.iter().map(|g| g.weight(&fields)).fold(0.0, f32::max)
+    }
 }
 
 /// The stages rivers read: the land, and the climate for rain.
@@ -127,6 +153,12 @@ impl Ground for StreamGround<'_> {
     fn humidity(&self, cell: IVec2) -> f32 {
         self.rivers.humidity(self.land, self.rivers.streams.tier.centre(cell))
     }
+
+    fn tarns(&self, cell: IVec2) -> f32 {
+        let Some(tarns) = &self.rivers.tarns else { return 0.0 };
+        let weight = tarns.weight(self.land, self.rivers.streams.tier.centre(cell));
+        if weight > 0.0 { weight * self.humidity(cell) } else { 0.0 }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -145,7 +177,7 @@ thread_local! {
 }
 
 impl Rivers {
-    pub fn new(seed: u64, dials: &WorldDials) -> Self {
+    pub fn new(seed: u64, dials: &WorldDials, content: &WorldContent) -> Self {
         static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seed = rng::mix(seed ^ 0x51ee_4a7e);
         let trunks = Tier {
@@ -161,6 +193,7 @@ impl Rivers {
             incision: 3.0,
             lakes: false,
             springs: 0.0,
+            tarns: None,
             tunnel: Some(TunnelRule { depth: 14.0, chance: 0.35, length: 6 }),
             seed,
         };
@@ -178,6 +211,7 @@ impl Rivers {
             lakes: true,
             // Rare: a few in a volcanic world's kilometre, none in a quiet one.
             springs: 0.02 * smoothstep(0.35, 0.9, dials.volcanism),
+            tarns: content.tarns.as_ref().map(|t| TarnRule { floor: SEA_LEVEL as f32 + t.floor, depth: t.depth, chance: t.chance }),
             tunnel: None,
             seed: rng::mix(seed),
         };
@@ -216,6 +250,11 @@ impl Rivers {
             creek,
             trunk: creek * 6.0,
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            tarns: content.tarns.as_ref().map(|t| Tarns {
+                gates: t.climate.iter().map(|b| Gate::new(content, b)).collect(),
+                country: noise(seed, 0x17, 1.0 / t.country.scale, FractalType::FBm, 2),
+                share: t.country.share,
+            }),
         }
     }
 
@@ -248,6 +287,34 @@ impl Rivers {
     }
 
     /// Whether lakes stay full: 0 in deserts, 1 from moist grassland up.
+    /// The still lakes whose pits lie in a region of the stream tier, wet ones only: each
+    /// one's pit (the centre of its cell, in blocks), top water block and cells. For the
+    /// tarn census.
+    #[cfg(test)]
+    pub(crate) fn stream_lakes(&self, land: Stages, region: IVec2) -> Vec<(IVec2, i32, usize)> {
+        let ground = StreamGround { rivers: self, land };
+        let basin = self.streams.basin(&ground, region);
+        let side = self.streams.tier.side;
+        basin
+            .lakes
+            .iter()
+            .filter(|l| l.wet() && !l.spring && l.pit.div_euclid(IVec2::splat(side)) == region)
+            .map(|l| (self.streams.tier.centre(l.pit), top_block(l.level), l.cells.len()))
+            .collect()
+    }
+
+    /// The lowest a tarn lies, in blocks, if there are tarns.
+    pub(crate) fn tarn_floor(&self) -> Option<f32> {
+        self.streams.tier.tarns.as_ref().map(|t| t.floor)
+    }
+
+    /// How much of tarn country a position lies in, 0 ..= 1 (none without tarns), for the
+    /// tarn census.
+    #[cfg(test)]
+    pub(crate) fn tarn_country(&self, x: i32, z: i32) -> f32 {
+        self.tarns.as_ref().map_or(0.0, |t| region_share(t.share, t.country.get_noise_2d(x as f32, z as f32)))
+    }
+
     fn humidity(&self, land: Stages, at: IVec2) -> f32 {
         let height = land.geology.land(at.x, at.y).height;
         smoothstep(0.2, 0.5, self.moisture(land, at.x, at.y, height))
@@ -739,7 +806,7 @@ mod tests {
         let content = crate::WorldContent::base(&registry).unwrap();
         let rocks = crate::rocks::Rocks::new(stream, &content, &registry, &dials.featured);
         let geology = Geology::new(stream, &dials, &content, &rocks);
-        let rivers = Rivers::new(stream, &dials);
+        let rivers = Rivers::new(stream, &dials, &content);
         let land = Stages { geology: &geology, climate: geology.climate() };
         let x = std::env::var("X").ok().and_then(|s| s.parse().ok()).unwrap_or(2544);
         let z = std::env::var("Z").ok().and_then(|s| s.parse().ok()).unwrap_or(384);
