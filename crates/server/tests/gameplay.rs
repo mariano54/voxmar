@@ -1136,8 +1136,8 @@ fn a_lit_homestead_hearth_is_home_and_the_dead_wake_there() {
     client.pump_until(|c| c.world.block(core) == Some(hearthstone));
     let light = |client: &mut Client| {
         client.chat.clear();
-        client.propose("base:light_hearth", ActionTarget::Block { block: core, face: Face::PosY });
-        client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("hearth")));
+        client.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+        client.pump_until(|c| c.chat.iter().any(|(_, t)| t.to_lowercase().contains("hearth")));
         std::mem::take(&mut client.chat).into_iter().map(|(_, t)| t).collect::<String>()
     };
     assert!(light(&mut client).contains("needs"), "no chimney yet");
@@ -1170,4 +1170,54 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     client.propose("core:craft", ActionTarget::Slot(0));
     client.chat.clear();
     client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table")));
+}
+
+#[test]
+fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
+    let mut client = Client::join();
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~3 ~ ~-1 ~5 ~2 ~1 air", "/setblock ~4 ~ ~ crucible", "/give copper_ore 2", "/skill engineering 20"] {
+        client.ok(line);
+    }
+    let crucible = client.content.blocks.expect("base:crucible");
+    let (ore, ingot) = (client.content.blocks.expect("base:copper_ore"), client.content.blocks.expect("base:copper_ingot"));
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.inventory.get(0).is_some());
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let smelt = |client: &mut Client| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    };
+    // A crucible alone smelts nothing, and says what the kiln needs.
+    smelt(&mut client);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("kiln needs")));
+    assert_eq!(count(&client, ore), 2);
+    // Ringed with kiln bricks and a pillar on each corner, it smelts.
+    for line in ["/fill ~3 ~ ~-1 ~5 ~ ~1 kiln_bricks", "/setblock ~4 ~ ~ crucible", "/setblock ~3 ~1 ~-1 kiln_bricks", "/setblock ~5 ~1 ~-1 kiln_bricks", "/setblock ~3 ~1 ~1 kiln_bricks", "/setblock ~5 ~1 ~1 kiln_bricks"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks"));
+    client.chat.clear();
+    client.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Crucible Kiln is lit")));
+    smelt(&mut client);
+    client.pump_until(|c| count(c, ingot) == 1 && count(c, ore) == 1);
+}
+
+#[test]
+fn a_sleeping_bag_is_where_the_homeless_wake() {
+    let mut client = Client::join_remote("sleeper", &["sleeper"]);
+    let bag = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    for line in ["/fill ~3 ~ ~ ~3 ~1 ~ air", "/setblock ~3 ~ ~ sleeping_bag"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag"));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("wake here")));
+    client.ok("/tp ~-20 ~ ~");
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0);
+    client.propose("core:respawn", ActionTarget::None);
+    client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(bag.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
 }

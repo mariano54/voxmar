@@ -273,6 +273,12 @@ struct Gate {
     /// (in server seconds) that last went up.
     fell: Vec3,
     gathered: (u32, f32),
+    /// The crucible of the kiln the workshop builds and lights, and when (server seconds)
+    /// it was first lit.
+    kiln: IVec3,
+    kiln_since: f32,
+    /// When (server seconds) the kiln was last asked to light.
+    kiln_asked: f32,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -361,6 +367,9 @@ impl Gate {
             count_before: 0,
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
+            kiln: IVec3::ZERO,
+            kiln_since: 0.0,
+            kiln_asked: f32::MIN,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -648,7 +657,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Strike | Step::Weapon => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
-        Step::Workshop => 160.0,
+        Step::Workshop => 220.0,
         _ => STEP_LIMIT,
     };
     // The journal's tour is judged page by page.
@@ -1589,10 +1598,69 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 for line in ["clear", "give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
                     net.command(line);
                 }
-                end_workshop(world, gate, now);
+                // A Crucible Kiln built in the air over the player's head, clear of the
+                // test ground and the pool, to light.
+                let kiln = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 4, 0);
+                let at = |dx: i32, dy: i32, dz: i32| format!("{} {} {}", kiln.x + dx, kiln.y + dy, kiln.z + dz);
+                let net = world.resource::<Net>();
+                for line in [
+                    format!("fill {} {} air", at(-1, 0, -1), at(1, 1, 1)),
+                    format!("fill {} {} kiln_bricks", at(-1, 0, -1), at(1, 0, 1)),
+                    format!("setblock {} crucible", at(0, 0, 0)),
+                    format!("setblock {} kiln_bricks", at(-1, 1, -1)),
+                    format!("setblock {} kiln_bricks", at(1, 1, -1)),
+                    format!("setblock {} kiln_bricks", at(-1, 1, 1)),
+                    format!("setblock {} kiln_bricks", at(1, 1, 1)),
+                ] {
+                    net.command(&line);
+                }
+                gate.kiln = kiln;
+                gate.advance(now);
             } else if gate.server_now - gate.gathered.1 > 15.0 {
                 let left: Vec<String> = lying.iter().map(|at| format!("{:+.1},{:+.1},{:+.1}", at.x - fell.x, at.y - fell.y, at.z - fell.z)).collect();
                 fail(world, gate, "grave", format!("nothing more was picked up for 15 server seconds, carrying {back} of {} items; stacks lying near, from where they fell: [{}]", gate.count_before, left.join(" ")));
+            }
+        }
+        // Right clicking the crucible lights the kiln: the quest that asks for it counts it.
+        15 => {
+            let kiln = gate.kiln;
+            let lit = |world: &World| {
+                world.resource::<LocalPlayer>().quests.iter().find(|q| q.name == "base:crucible_kiln").and_then(|q| q.tasks.first()?.first().copied()).is_some_and(|(have, _)| have > 0)
+            };
+            let crucible = world.resource::<ClientWorld>().registry.id("base:crucible");
+            if world.resource::<ClientWorld>().block(kiln) != crucible {
+                if in_phase > WORKSHOP_WAIT {
+                    fail(world, gate, "kiln", "the crucible never came".into());
+                }
+                return;
+            }
+            if gate.kiln_since == 0.0 {
+                gate.kiln_since = gate.server_now;
+            }
+            // Asked again only every few server seconds: each ask may stall the lagging
+            // server (`SERVER_LAG`), and asked every few frames it never got to a tick.
+            if gate.server_now - gate.kiln_asked >= 3.0 {
+                gate.kiln_asked = gate.server_now;
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+            }
+            // Quests are checked once a second of the server's time, which a loaded machine
+            // stretches: the wait is by its clock.
+            let done = lit(world);
+            let late = gate.server_now - gate.kiln_since > 20.0 || in_phase > 40.0;
+            if done || late {
+                // Taken down again either way, so the pool's bank is clear for the swim.
+                let (a, b) = (kiln - IVec3::new(1, 0, 1), kiln + IVec3::new(1, 1, 1));
+                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z));
+            }
+            if done {
+                gate.check("workshop: kiln", Ok("lighting the crucible lit the Crucible Kiln round it".into()));
+                end_workshop(world, gate, now);
+            } else if late {
+                let quests = &world.resource::<LocalPlayer>().quests;
+                let state = quests.iter().find(|q| q.name == "base:crucible_kiln").cloned();
+                let waited = (gate.server_now - gate.kiln_since, in_phase);
+                fail(world, gate, "kiln", format!("lighting the crucible in its kiln never counted ({:.1} server s, {:.1} game s): {} quests, the kiln's {state:?}", waited.0, waited.1, quests.len()));
             }
         }
         _ => {}
@@ -1638,6 +1706,12 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         1 => {
             gate.highest = gate.highest.max(position.y);
+            // Out of the water at the step's height, jump is let go so the player lands on
+            // the step and stays: held, a frame on the ground is easy to miss on a loaded
+            // machine, and the player hopped on and off the test ground.
+            if !in_water && position.y >= step_top - 0.01 {
+                key(world, KeyCode::Space, false);
+            }
             if on_ground && position.y >= step_top - 0.01 {
                 key(world, KeyCode::KeyW, false);
                 key(world, KeyCode::Space, false);
@@ -2096,33 +2170,43 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    use crate::hud::effects::ShowEffects;
-    use crate::hud::tips::{Popup, Tips};
-    let Some(warmed) = world.resource::<Launch>().content.effects.find("ember_warmed") else {
-        gate.check("tips", Err("no ember_warmed effect in the content".into()));
-        gate.next(Step::Guides, now);
-        return;
-    };
+    use crate::hud::tips::Tips;
+    let showing = |world: &World| world.resource::<Tips>().showing.map(|(name, _)| name);
     match gate.phase {
+        // As for a player who has seen every tip but the inventory's, the inventory shut.
         0 => {
-            // As for a player who has seen none.
-            world.resource_mut::<crate::settings::Settings>().tips_seen.clear();
-            world.insert_resource(ShowEffects(vec![("ember_warmed".into(), 60)]));
+            let others = crate::hud::tips::TIPS.iter().filter(|name| **name != "inventory").map(|name| name.to_string()).collect();
+            world.resource_mut::<crate::settings::Settings>().tips_seen = others;
+            *world.resource_mut::<Tips>() = Tips::default();
+            world.resource_mut::<UiState>().inventory_open = false;
+            gate.advance(now);
+        }
+        1 if in_phase > 0.2 => {
             world.resource_mut::<UiState>().inventory_open = true;
             gate.advance(now);
         }
-        _ => {
-            let popped = world.query::<&Popup>().iter(world).any(|popup| popup.0 == warmed);
-            let tip = world.resource::<Tips>().showing.map(|(name, _)| name);
-            if !(popped && tip.is_some()) && in_phase < 3.0 {
+        2 => {
+            let tip = showing(world);
+            if tip.is_none() && in_phase < 3.0 {
                 return;
             }
-            gate.check("tips: effect", if popped { Ok("Ember-warmed popped up as it came on".into()) } else { Err("an effect came on with no pop-up".into()) });
-            gate.check("tips: first look", match tip { Some(name) => Ok(format!("the {name} tip showed")), None => Err("opening the inventory brought no tip".into()) });
-            world.remove_resource::<ShowEffects>();
+            gate.check("tips: first look", match tip { Some(name) => Ok(format!("opening the inventory brought the {name} tip")), None => Err("opening the inventory brought no tip".into()) });
+            // Gone, and the inventory shut and opened again: it does not come back.
+            world.resource_mut::<Tips>().dismiss();
+            world.resource_mut::<UiState>().inventory_open = false;
+            gate.advance(now);
+        }
+        3 if in_phase > 0.2 => {
+            world.resource_mut::<UiState>().inventory_open = true;
+            gate.advance(now);
+        }
+        4 if in_phase > 1.0 => {
+            let again = showing(world).filter(|name| *name == "inventory");
+            gate.check("tips: once", if again.is_none() { Ok("seen once, it does not come back".into()) } else { Err("the inventory tip came back".into()) });
             world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Guides, now);
         }
+        _ => {}
     }
 }
 
@@ -2695,9 +2779,9 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
-                // Those near enough to fight show their combat level over them.
-                let labels: Vec<String> = world.query::<(&crate::hud::levels::LevelLabel, &Text)>().iter(world).map(|(_, text)| text.0.clone()).collect();
-                gate.check("creature levels", if labels.is_empty() { Err("no creature shows its level over it".into()) } else { Ok(format!("{} creatures show their level over them ({})", labels.len(), labels[0])) });
+                // The one pointed at shows its level and health over it.
+                let shown = world.query_filtered::<&Visibility, With<crate::hud::levels::LevelLabel>>().iter(world).any(|v| *v != Visibility::Hidden);
+                gate.check("creature level", if shown { Ok("the creature pointed at shows its level and health over it".into()) } else { Err("the creature pointed at shows no level over it".into()) });
                 gate.next(Step::Strike, now);
             }
         }

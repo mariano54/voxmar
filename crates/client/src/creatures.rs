@@ -313,6 +313,16 @@ impl Creatures {
     }
 
     /// The box a creature is drawn in, by its species' size and its own scale.
+    /// The living creature along a ray from `eye`, within `reach` and nearer than `block`.
+    pub fn pointed(&self, launch: &Launch, eye: Vec3, look: Vec3, reach: f32, block: f32) -> Option<u32> {
+        self.shown
+            .keys()
+            .filter_map(|&id| Some((id, ray_box(eye, look, &self.aabb(launch, id)?)?)))
+            .filter(|&(_, d)| d <= reach && d < block)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+
     fn aabb(&self, launch: &Launch, id: u32) -> Option<Aabb> {
         let shown = self.shown.get(&id).filter(|s| s.dying.is_none())?;
         let size = launch.content.creatures.get(shown.view.species).def.body.size;

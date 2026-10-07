@@ -301,13 +301,18 @@ fn break_and_place(
                 return;
             }
         }
-        // A hearthstone is lit: the server says whether the hearth around it stands.
-        if let (Some(hit), Some(light)) = (hit, actions.0.id("base:light_hearth")) {
-            let context = ClientContext { world: &world, player: &player, content };
-            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
-            if actions.0.get(light).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
-                net.propose_from(&player, light, action_target);
-                return;
+        // A multiblock's core is lit (the server says whether the structure around it
+        // stands); a sleeping bag is slept in.
+        for name in ["base:light", "base:sleep"] {
+            if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
+                let context = ClientContext { world: &world, player: &player, content };
+                let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+                // With something it smelts in hand, a crucible smelts it (below) instead.
+                let cooks = actions.0.id("base:cook").and_then(|cook| actions.0.get(cook)).is_some_and(|def| def.validate(&context, action_target).is_ok());
+                if !cooks && actions.0.get(action).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                    net.propose_from(&player, action, action_target);
+                    return;
+                }
             }
         }
         // Using what a station cooks on that station cooks it, before eating or placing.
@@ -323,7 +328,7 @@ fn break_and_place(
                 Some(Err(Rejection::Unmet(Requirement::CookingLevel))) => {
                     let item = context.actor_held();
                     let station = world.block(hit.block).map(|b| world.registry.def(b).tags.clone()).unwrap_or_default();
-                    if let (Some(recipe), Some(skill)) = (item.and_then(|i| content.cooking.for_item(i, &station)), content.cooking.skill) {
+                    if let (Some(recipe), Some(skill)) = { let recipe = item.and_then(|i| content.cooking.for_item(i, &station)); (recipe, recipe.and_then(|r| r.skill)) } {
                         let skill = locale.skill(content.skills.get(skill));
                         let words = locale.format("skills.needs", &[("skill", &skill), ("level", &recipe.def.level)]);
                         toasts.refused(words, time.elapsed_secs());
