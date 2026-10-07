@@ -1,5 +1,5 @@
-"""Draws Voxmar HD's 32×32 fish that have their own shape (sturgeon, marlin, deepwater
-lanternfish) and writes assets/packs/voxmar_hd/recipes/fish.ron. Run
+"""Draws Voxmar HD's 32×32 fish that have their own shape (sturgeon, marlin, swordfish,
+deepwater lanternfish) and writes assets/packs/voxmar_hd/recipes/fish.ron. Run
 `python3 tools/art/fish.py`; edit this file, not the book.
 
 Each fish is drawn once in default's `head` slot (three shades, dark to light) with fixed
@@ -153,6 +153,24 @@ def _():
             if s.get(x, y) == 'head:1':
                 s.put(x, y, 'head:2')
     eye(s, 9, 15)
+    return s.ink()
+
+
+@fish('swordfish', '["#283a5a", "#5a7ab0", "#b0c8f0"]')
+def _():
+    # The broadbill: a longer, flat sword of a bill, a short rigid sickle of a dorsal fin
+    # instead of the marlin's sail, a smooth unbarred flank and a sickle tail.
+    s = Sprite()
+    body = poly([(9, 16), (12, 13.5), (18, 12.5), (24, 14), (27, 16), (24, 18.5), (18, 19.5), (12, 19)])
+    bill = poly([(0, 15.2), (10, 14.4), (10, 17), (0, 16.4)])
+    dorsal = poly([(14, 13), (16, 6), (18, 6.5), (17.5, 9), (19, 13)])
+    tail = poly([(26, 15.5), (29, 9), (31, 6), (30.5, 9), (29.5, 16), (30.5, 23), (31, 26), (29, 23), (26, 16.5)])
+    s.fill(body | bill | tail)
+    s.fill(dorsal)
+    # The bill's flat edge catches the light along its top.
+    for x in range(1, 10):
+        s.put(x, 15, 'head:2')
+    eye(s, 11, 15)
     return s.ink()
 
 
