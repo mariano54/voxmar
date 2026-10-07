@@ -122,6 +122,17 @@ pub struct Settings {
     pub water_quality: WaterQuality,
     /// Which texture pack comes first; takes effect the next time the game starts.
     pub textures: TextureOrder,
+    /// Whether the game borrows from the player's own Minecraft install: the textures in
+    /// its client jar and the sounds the launcher keeps. Off for a new player, who gets
+    /// Voxmar's own; a settings file from before the setting existed reads it as on when
+    /// a jar is found, so nothing changes for anyone who had it (see `Settings::load`).
+    /// Takes effect the next time the game starts.
+    pub minecraft_assets: bool,
+    /// With `minecraft_assets` on, music also comes from a Prism Launcher instance
+    /// (`music::prism`): the launcher's data folder, empty for the standard one, and the
+    /// instance's folder name, empty for the most recently launched GT New Horizons one.
+    pub prism_folder: String,
+    pub prism_instance: String,
     /// How many particles effects show (breaking blocks).
     pub particles: ParticleAmount,
     /// How coarsely far chunks are meshed.
@@ -135,6 +146,8 @@ pub struct Settings {
     pub ui_scale: i32,
     /// The tips shown already (`hud::tips`), each once.
     pub tips_seen: Vec<String>,
+    /// The quests followed on screen (`hud::quests`), at most three.
+    pub pinned_quests: Vec<String>,
     /// The sounds buttons and the inventory make.
     pub ui_sounds: UiSounds,
     /// Key that opens and closes the inventory.
@@ -142,6 +155,7 @@ pub struct Settings {
     /// Key that opens and closes the character screen (skills and how you are).
     pub character_key: Key,
     pub journal_key: Key,
+    pub quests_key: Key,
     /// Keys that show, over an item, the recipes that make it and the ones it goes into.
     pub recipes_key: Key,
     pub uses_key: Key,
@@ -209,17 +223,23 @@ impl FarDetail {
 /// Which texture pack the game prefers (see `textures`). `$VOXMAR_TEXTURES` overrides them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextureOrder {
-    /// The player's Minecraft textures where they have them, ours for everything else.
-    #[default]
+    /// The player's Minecraft textures where they have them, ours for everything else:
+    /// only with `minecraft_assets` on.
     Minecraft,
     /// Our own pack for everything.
+    #[default]
     Voxmar,
     /// Voxmar HD (`assets/packs/voxmar_hd`, docs/voxmar-hd.md): our own 32×32 look.
     VoxmarHd,
 }
 
 impl TextureOrder {
-    pub const ALL: [TextureOrder; 3] = [TextureOrder::Minecraft, TextureOrder::Voxmar, TextureOrder::VoxmarHd];
+    pub const ALL: [TextureOrder; 3] = [TextureOrder::Voxmar, TextureOrder::VoxmarHd, TextureOrder::Minecraft];
+
+    /// The orders a player can pick: Minecraft's only when the game may use their install.
+    fn choices(minecraft_assets: bool) -> &'static [TextureOrder] {
+        if minecraft_assets { &Self::ALL } else { &Self::ALL[..2] }
+    }
 
     fn key(self) -> &'static str {
         match self {
@@ -317,6 +337,9 @@ impl Default for Settings {
             volumetric_light: true,
             water_quality: WaterQuality::default(),
             textures: TextureOrder::default(),
+            minecraft_assets: false,
+            prism_folder: String::new(),
+            prism_instance: String::new(),
             particles: ParticleAmount::default(),
             far_detail: FarDetail::default(),
             resolution: 50,
@@ -324,10 +347,12 @@ impl Default for Settings {
             // A little smaller than the art's own size: still whole pixels on a Retina screen.
             ui_scale: 75,
             tips_seen: Vec::new(),
+            pinned_quests: Vec::new(),
             ui_sounds: UiSounds::default(),
             inventory_key: Key(KeyCode::KeyE),
             character_key: Key(KeyCode::KeyC),
             journal_key: Key(KeyCode::KeyJ),
+            quests_key: Key(KeyCode::KeyL),
             recipes_key: Key(KeyCode::KeyR),
             uses_key: Key(KeyCode::KeyU),
             screenshot_key: Key(KeyCode::F2),
@@ -343,16 +368,34 @@ impl Settings {
     pub fn load() -> Self {
         let Some(path) = path() else { return Self::default() };
         let Ok(source) = std::fs::read_to_string(&path) else { return Self::default() };
-        let (settings, skipped) = Self::parse(&source);
+        let (settings, skipped) = Self::parse(&source, || crate::textures::find_minecraft_jar().is_some());
         if !skipped.is_empty() {
             warn!("{}: kept the defaults for {} ({})", path.display(), skipped.join(", "), "unreadable values");
         }
         settings
     }
 
-    /// The settings in `source`, and the names of the fields it could not read.
-    fn parse(source: &str) -> (Self, Vec<String>) {
-        if let Ok(settings) = ron::from_str::<Settings>(source) {
+    /// For a file written before `minecraft_assets` existed, when the game always used the
+    /// player's Minecraft install if it found one: the setting is on if a jar is found
+    /// (`jar_found`), and so is Minecraft first for a file older still, from before
+    /// `textures`. Decided as the file is read, never written back by itself: an existing
+    /// player's game looks and sounds as it did, and a new one's starts as Voxmar.
+    fn keep_minecraft(&mut self, source: &str, jar_found: impl FnOnce() -> bool) {
+        let has = |name: &str| top_level_fields(source).iter().any(|field| field.split(':').next().is_some_and(|field| field.trim() == name));
+        if has("minecraft_assets") {
+            return;
+        }
+        self.minecraft_assets = jar_found();
+        if self.minecraft_assets && !has("textures") {
+            self.textures = TextureOrder::Minecraft;
+        }
+    }
+
+    /// The settings in `source`, and the names of the fields it could not read;
+    /// `jar_found` says whether the player has Minecraft (see [`Settings::keep_minecraft`]).
+    fn parse(source: &str, jar_found: impl FnOnce() -> bool) -> (Self, Vec<String>) {
+        if let Ok(mut settings) = ron::from_str::<Settings>(source) {
+            settings.keep_minecraft(source, jar_found);
             return (settings.clamped(), Vec::new());
         }
         // Add the file's fields one at a time, keeping each only if the settings still read.
@@ -365,7 +408,8 @@ impl Settings {
                 skipped.push(field.split(':').next().unwrap_or(field).trim().to_owned());
             }
         }
-        let settings = ron::from_str::<Settings>(&format!("({})", kept.join(", "))).unwrap_or_default();
+        let mut settings = ron::from_str::<Settings>(&format!("({})", kept.join(", "))).unwrap_or_default();
+        settings.keep_minecraft(source, jar_found);
         (settings.clamped(), skipped)
     }
 
@@ -388,6 +432,17 @@ impl Settings {
     /// no two of the keys that open screens bound to one key.
     pub fn clamped(mut self) -> Self {
         self.resolution = nearest_resolution(self.resolution);
+        // Each quest pinned once (the quest book caps how many, from its data).
+        let mut pinned: Vec<String> = Vec::new();
+        for name in std::mem::take(&mut self.pinned_quests) {
+            if !pinned.contains(&name) {
+                pinned.push(name);
+            }
+        }
+        self.pinned_quests = pinned;
+        if !TextureOrder::choices(self.minecraft_assets).contains(&self.textures) {
+            self.textures = TextureOrder::Voxmar;
+        }
         if self.zoom_key == self.character_key || self.zoom_key == self.inventory_key {
             // Zoom used to be on C, which now opens the character screen.
             self.zoom_key = Key(KeyCode::KeyZ);
@@ -570,6 +625,7 @@ enum Toggle {
     ZoomInSurvival,
     DoubleTapSprint,
     FovEffects,
+    MinecraftAssets,
 }
 
 impl Toggle {
@@ -582,6 +638,7 @@ impl Toggle {
             Toggle::ZoomInSurvival => "settings.zoom_in_survival",
             Toggle::DoubleTapSprint => "settings.double_tap_sprint",
             Toggle::FovEffects => "settings.fov_effects",
+            Toggle::MinecraftAssets => "settings.minecraft_assets",
         }
     }
 
@@ -594,6 +651,7 @@ impl Toggle {
             Toggle::ZoomInSurvival => settings.zoom_in_survival,
             Toggle::DoubleTapSprint => settings.double_tap_sprint,
             Toggle::FovEffects => settings.fov_effects,
+            Toggle::MinecraftAssets => settings.minecraft_assets,
         }
     }
 
@@ -606,7 +664,12 @@ impl Toggle {
             Toggle::ZoomInSurvival => &mut settings.zoom_in_survival,
             Toggle::DoubleTapSprint => &mut settings.double_tap_sprint,
             Toggle::FovEffects => &mut settings.fov_effects,
+            Toggle::MinecraftAssets => &mut settings.minecraft_assets,
         } = on;
+        // Without the install, its textures cannot come first.
+        if !settings.minecraft_assets && settings.textures == TextureOrder::Minecraft {
+            settings.textures = TextureOrder::Voxmar;
+        }
     }
 }
 
@@ -694,7 +757,7 @@ impl Choice {
             Choice::Shadows => settings.shadows = cycle(&ShadowQuality::ALL, settings.shadows, forward),
             Choice::Water => settings.water_quality = cycle(&WaterQuality::ALL, settings.water_quality, forward),
             Choice::Textures => {
-                settings.textures = cycle(&TextureOrder::ALL, settings.textures, forward);
+                settings.textures = cycle(TextureOrder::choices(settings.minecraft_assets), settings.textures, forward);
             }
             Choice::Particles => settings.particles = cycle(&ParticleAmount::ALL, settings.particles, forward),
         }
@@ -717,6 +780,7 @@ enum Binding {
     Inventory,
     Character,
     Journal,
+    Quests,
     Recipes,
     Uses,
     Screenshot,
@@ -731,6 +795,7 @@ impl Binding {
             Binding::Inventory => "settings.key.inventory",
             Binding::Character => "settings.key.character",
             Binding::Journal => "settings.key.journal",
+            Binding::Quests => "settings.key.quests",
             Binding::Recipes => "settings.key.recipes",
             Binding::Uses => "settings.key.uses",
             Binding::Screenshot => "settings.key.screenshot",
@@ -745,6 +810,7 @@ impl Binding {
             Binding::Inventory => settings.inventory_key,
             Binding::Character => settings.character_key,
             Binding::Journal => settings.journal_key,
+            Binding::Quests => settings.quests_key,
             Binding::Recipes => settings.recipes_key,
             Binding::Uses => settings.uses_key,
             Binding::Screenshot => settings.screenshot_key,
@@ -759,6 +825,7 @@ impl Binding {
             Binding::Inventory => &mut settings.inventory_key,
             Binding::Character => &mut settings.character_key,
             Binding::Journal => &mut settings.journal_key,
+            Binding::Quests => &mut settings.quests_key,
             Binding::Recipes => &mut settings.recipes_key,
             Binding::Uses => &mut settings.uses_key,
             Binding::Screenshot => &mut settings.screenshot_key,
@@ -856,6 +923,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Switch(Toggle::FovEffects),
             Control::Choice(Choice::AntiAliasing),
             Control::Switch(Toggle::Vsync),
+            Control::Switch(Toggle::MinecraftAssets),
             Control::Choice(Choice::Textures),
         ],
     ),
@@ -887,6 +955,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Key(Binding::Inventory),
             Control::Key(Binding::Character),
             Control::Key(Binding::Journal),
+            Control::Key(Binding::Quests),
             Control::Key(Binding::Recipes),
             Control::Key(Binding::Uses),
             Control::Key(Binding::Screenshot),
@@ -1726,9 +1795,46 @@ mod tests {
         let edited: Settings = ron::from_str("(view_distance: 99, music_volume: -5)").unwrap();
         assert_eq!(edited.clamped(), Settings { view_distance: 32, music_volume: 0, ..Settings::default() });
         // A value an older game wrote that no longer reads keeps its default, and only it.
-        let (old, skipped) = Settings::parse("(fov: 80, resolution: Balanced, zoom_key: \"KeyC\")");
+        let (old, skipped) = Settings::parse("(fov: 80, resolution: Balanced, zoom_key: \"KeyC\")", || false);
         assert_eq!((old.fov, old.resolution, skipped), (80, 50, vec!["resolution".to_owned()]));
         // Zoom on C made way for the character screen.
         assert_eq!(old.zoom_key, Key(KeyCode::KeyZ));
+    }
+
+    /// A new player starts with Voxmar's own textures and sounds; a player whose settings
+    /// file predates the choice keeps their Minecraft install's, decided as the file is
+    /// read (nothing writes the file for it).
+    #[test]
+    fn minecraft_is_opted_into_except_by_files_from_before() {
+        // No file: a fresh install.
+        let fresh = Settings::default();
+        assert_eq!((fresh.minecraft_assets, fresh.textures), (false, TextureOrder::Voxmar));
+        assert_eq!(TextureOrder::ALL[0], TextureOrder::Voxmar, "the settings list Voxmar first");
+        let found = || true;
+        let not_found = || false;
+        // A file from before the setting, with Minecraft found: as it was.
+        let (old, _) = Settings::parse("(fov: 80, textures: Minecraft)", found);
+        assert_eq!((old.minecraft_assets, old.textures, old.fov), (true, TextureOrder::Minecraft, 80));
+        let (old, _) = Settings::parse("(textures: VoxmarHd)", found);
+        assert_eq!((old.minecraft_assets, old.textures), (true, TextureOrder::VoxmarHd));
+        // Older still, from before `textures`: Minecraft first was the default then.
+        let (older, _) = Settings::parse("(fov: 80)", found);
+        assert_eq!((older.minecraft_assets, older.textures), (true, TextureOrder::Minecraft));
+        // No Minecraft to borrow from: Voxmar's.
+        let (old, _) = Settings::parse("(textures: Minecraft)", not_found);
+        assert_eq!((old.minecraft_assets, old.textures), (false, TextureOrder::Voxmar));
+        // Once the file names the setting, it holds, and the install is not even looked for.
+        let (off, _) = Settings::parse("(textures: Minecraft, minecraft_assets: false)", || panic!("looked for a jar"));
+        assert_eq!((off.minecraft_assets, off.textures), (false, TextureOrder::Voxmar));
+        let (on, _) = Settings::parse("(minecraft_assets: true)", not_found);
+        assert_eq!((on.minecraft_assets, on.textures), (true, TextureOrder::Voxmar));
+        // An unreadable value elsewhere does not lose the decision.
+        let (old, skipped) = Settings::parse("(resolution: Balanced, textures: Minecraft)", found);
+        assert_eq!((old.minecraft_assets, old.textures, skipped), (true, TextureOrder::Minecraft, vec!["resolution".to_owned()]));
+        // Turning it off takes Minecraft out of the texture choices.
+        let mut settings = Settings { minecraft_assets: true, textures: TextureOrder::Minecraft, ..Settings::default() };
+        Toggle::MinecraftAssets.set(&mut settings, false);
+        assert_eq!((settings.minecraft_assets, settings.textures), (false, TextureOrder::Voxmar));
+        assert_eq!(TextureOrder::choices(false), [TextureOrder::Voxmar, TextureOrder::VoxmarHd]);
     }
 }

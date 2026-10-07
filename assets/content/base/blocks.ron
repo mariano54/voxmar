@@ -344,6 +344,9 @@
         (name: "emerald_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("emerald_ore"), host: "stone", hardness: 0.5, drops: "emerald_ore", color: (40, 170, 100), tags: ["ore_sample", "ore", "gem", "gem:emerald", "natural"]),
         // Building
         (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "building"]),
+        // Settlements' windows: old panes that break to nothing, so a village is no free
+        // glass while glass has no recipe (settlements.ron `window`).
+        (name: "old_glass", sound: Glass, textures: All("old_glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["building"]),
         (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building"]),
         (name: "sea_lantern", sound: Glass, textures: All("sea_lantern"), light: 15, hardness: 0.3, color: (200, 225, 220), tags: ["light", "building"]),
         // Food made in the crafting grid (recipes.ron).
@@ -602,6 +605,7 @@
         (template: "flower", name: "wild_beans", tags: ["pulse", "vegetable", "forest_edge", "warm", "edible", "flavour:savoury", "forage"], all: (color: (80, 140, 50), rarity: Rare)),
         (template: "flower", name: "wild_peas", tags: ["pulse", "vegetable", "meadow", "temperate", "edible", "flavour:sweet", "forage"], all: (color: (130, 190, 80), rarity: Rare)),
         (template: "flower", name: "wild_lentils", tags: ["pulse", "steppe", "warm", "dry", "edible", "flavour:savoury", "forage"], all: (color: (170, 150, 90), rarity: Rare)),
+        (template: "flower", name: "wild_chickpea", tags: ["pulse", "steppe", "savanna", "warm", "dry", "edible", "flavour:savoury", "forage"], all: (color: (196, 172, 112), rarity: Rare)),
         (template: "plant", name: "cranberry_bush", tags: ["bush", "berry", "wetland", "cold", "edible", "flavour:sour", "dye:red", "alchemy:antidote", "forage"], all: (sound: Leaves, color: (150, 30, 50), rarity: Uncommon)),
         (template: "plant", name: "lingonberry_bush", tags: ["bush", "berry", "heath", "tundra", "forest_floor", "cold", "evergreen", "edible", "flavour:sour", "dye:red", "forage"], all: (sound: Leaves, color: (200, 40, 40), rarity: Uncommon)),
         (template: "plant", name: "cloudberry", tags: ["berry", "tundra", "wetland", "cold", "edible", "flavour:sweet", "alchemy:frost_resistance", "forage"], all: (color: (240, 150, 50), rarity: Rare)),

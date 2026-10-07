@@ -39,6 +39,17 @@
         "strawberry_flower": ["#c8c4b8", "#e6e2d8", "#f6f4ee", "#ffffff"],
         "potato_flower": ["#8a6aa8", "#b496d0", "#d8c4ec", "#f4ecff"],
         "tomato_flower": ["#b08a10", "#e0b420", "#f4d84a", "#fff08a"],
+        "rye_green": ["#2c4a34", "#3c5e40", "#4e744e", "#64885c", "#7e9c70"],
+        "rye_grain": ["#6e6248", "#9e8e66", "#c8b88c"],
+        "chickpea_leaf": ["#2e4a24", "#40602c", "#547638", "#6c8c46", "#88a45a"],
+        "chickpea_pod": ["#7a7038", "#b0a65a", "#d8d08a"],
+        "chickpea_seed": ["#8a6a3c", "#c8a468", "#ead09a"],
+        "rice_green": ["#264e1c", "#336a22", "#448428", "#5a9c34", "#76b448"],
+        "rice_grain": ["#8a7430", "#c4a84c", "#e6d27c"],
+        "rice_white": ["#a8a294", "#dcd8cc", "#f6f4ee"],
+        "taro_leaf": ["#1e4a30", "#2a603c", "#38784a", "#4c925a", "#68ac70"],
+        "taro_skin": ["#3e2a1e", "#6a4a32", "#94704c"],
+        "taro_flesh": ["#8a7aa0", "#b4a6c6", "#ddd2ea"],
     },
     templates: {
         // The two sprouting stages and the seeds every crop shares, in its own colours.
@@ -117,19 +128,25 @@
         (template: "crop", name: "taro", palettes: {"leaf": "cabbage_leaf"}, without: ["block/{name}_seeds"]),
     ],
     textures: {
-        // Placeholders for the regional crops (P50) until the pack draws them.
-        "block/rye_crop2": (base: "block/wheat_crop2"),
-        "block/rye_crop3": (base: "block/wheat_crop3"),
-        "block/rye": (base: "block/wheat"),
-        "block/chickpea_crop2": (base: "block/potato_crop2"),
-        "block/chickpea_crop3": (base: "block/potato_crop3"),
-        "block/chickpea": (base: "block/potato"),
-        "block/rice_crop2": (base: "block/wheat_crop2"),
-        "block/rice_crop3": (base: "block/wheat_crop3"),
-        "block/rice": (base: "block/wheat"),
-        "block/taro_crop2": (base: "block/potato_crop2"),
-        "block/taro_crop3": (base: "block/potato_crop3"),
-        "block/taro": (base: "block/potato"),
+        // Chickpea sprouts as a pulse does, round paired leaflets rather than grass blades.
+        "block/chickpea_crop0": (base: "shape/plant", palettes: {"leaf": "chickpea_leaf"}, layers: [Grid(rows: ["................", "................", "................", "................", "................", "................", "................", "................", "................", "................", "................", "...e.......e....", "..ede.e...ede...", "...c.ede...c..e.", "...c..c....c.ede", "...c..c....c..c."])]),
+        "block/chickpea_crop1": (base: "shape/plant", palettes: {"leaf": "chickpea_leaf"}, layers: [Grid(rows: ["................", "................", "................", "................", "................", "................", "................", "....e.e...e.e...", "...edede.edede..", "....dcd...dcd.e.", "..e..c.e...c.ede", ".ede.cede..c..c.", "..c..c.c...c..c.", "..c..cc...cc..c.", "...c..c...c..c..", "...cc.cc.cc.cc.."])]),
+        // The regional crops (content/base/crops.ron), each its own plant: rye tall and blue-green
+        // with long awned heads greyer than wheat; chickpea a bushy pulse with puffed pods;
+        // rice arching grass with drooping golden panicles, its harvest a heap of white grain;
+        // taro big heart-shaped leaves, its harvest a ringed brown corm.
+        "block/rye_crop2": (base: "shape/plant", palettes: {"leaf": "rye_green"}, layers: [Grid(rows: ["................", "..e.......e.....", "..d...e...d...e.", "..d...d...d...d.", ".ed..ed...d..ed.", "..d...d..ed...d.", "..c...c...c...c.", "..c.e.c...c.e.c.", "..cd..c.e.c.d.c.", "..c...cd..cd..c.", "..c...c...c...c.", "..cc..c...c..cc.", "...c..cc..c..c..", "...bc..c.cc.c...", "....bb.bbb.bb...", ".....bbbb.bb...."])]),
+        "block/rye_crop3": (base: "shape/plant", palettes: {"wood": "rye_grain"}, layers: [Grid(rows: [".m.......m......", "..m...m...m...m.", "..lm...m..lm...m", "..ml..lm..ml..lm", "..lm..ml..lm..ml", "..mk..lm..mk..lm", "..k...mk..k...mk", "..k...k...k...k.", "..k...k...k...k.", "...k..k...k..k..", "...k..k...k..k..", "...k...k..k.k...", "....k..k.k..k...", "....k..k.k.k....", ".....k.kkk.k....", "......kkkkk....."])]),
+        "block/rye": (base: "shape/plant", palettes: {"wood": "rye_grain", "centre": "twine"}, layers: [Grid(rows: ["..m.....m.....m.", "...m..m...m..m..", "...lm..lm..lm...", "...ml..ml..ml...", "...lm..lm..lm...", "...mk..mk..mk...", "....k...k..k....", ".....k..k.k.....", "......kkk.......", "......xyx.......", "......kkk.......", ".....k.k.k......", "....k..k..k.....", "...k...k...k....", "................", "................"])]),
+        "block/chickpea_crop2": (base: "shape/plant", palettes: {"leaf": "chickpea_leaf"}, layers: [Grid(rows: ["................", "................", "................", "................", "......e...e.....", "....ede.ede.e...", "...e.d.e.d.ede..", "..ede.dcd..d....", "...d.ed.de.cd...", "..ed.c..c.edc...", "...c.cd.cd..c.e.", "..dc..c.c..dcd..", "...c..c.c.c.c...", "....c.ccc.cc....", "....bcb.bcb.....", ".....bbbbb......"])]),
+        "block/chickpea_crop3": (base: "shape/plant", palettes: {"leaf": "chickpea_leaf", "fruit": "chickpea_pod"}, layers: [Grid(rows: ["................", "................", "................", "......e...e.....", "....ede.ede.e...", "...ehj.e.d.ede..", "..edhhjcd.hj....", "...d.ffde.hhj...", "..ed.c..chhf.e..", "..hj.cd.cff.c...", "..hhj.c.c..hj...", "..ff.c..c.chhj..", "...c..c.c..ff...", "....c.ccc.cc....", "....bcb.bcb.....", ".....bbbbb......"])]),
+        "block/chickpea": (base: "shape/plant", palettes: {"fruit": "chickpea_seed"}, layers: [Grid(rows: ["................", "................", "................", "................", "................", ".......jh.......", "......jhhf..jh..", "..jh..hhff.jhhf.", ".jhhf..ff..hhff.", ".hhff.jh....ff..", "..ff.jhhf.jh....", ".....hhff.hhf...", "..jh..ff..fff...", ".jhhf...........", ".hhff...........", "..ff............"])]),
+        "block/rice_crop2": (base: "shape/plant", palettes: {"leaf": "rice_green"}, layers: [Grid(rows: ["................", "................", "....e.....e.....", "...ed....ed..e..", "..e.d...e.d.ed..", ".e..d..e..de.d..", "....dc....c..d..", "...dc..e..cd.c.e", "..d.c.ed..c..cd.", "....c.d...c..c..", "....cd...cc..c..", ".....c..c.c.cc..", ".....cc.c..cc...", "......cbc.cb....", "......bbbbb.....", ".......bbb......"])]),
+        "block/rice_crop3": (base: "shape/plant", palettes: {"leaf": "rice_green", "wood": "rice_grain"}, layers: [Grid(rows: ["................", "....e....e......", "...ed...ed.lm...", "...d..mled..ml..", "..ml.mlm.d..lm..", "..lm.lm..d...ml.", "...m.m...dc...m.", "...d.c..ed.c....", "..d.c..e..c.....", "....c.....c.....", "....cd...cc..c..", ".....c..c.c.cc..", ".....cc.c..cc...", "......cbc.cb....", "......bbbbb.....", ".......bbb......"])]),
+        "block/rice": (base: "shape/plant", palettes: {"fruit": "rice_white"}, layers: [Grid(rows: ["................", "................", "................", "................", "................", "................", ".......j.j......", "....j.jhjhj.j...", "...jhjhhjhhjhj..", "..jhhjhhhhjhhhj.", "..hhhhjhhhhjhhh.", ".fhhhhhhhhhhhhf.", "..ffhhhhhhhhff..", "....ffffffff....", "................", "................"])]),
+        "block/taro_crop2": (base: "shape/plant", palettes: {"leaf": "taro_leaf"}, layers: [Grid(rows: ["................", "................", "................", "................", "................", "................", "...dee....ee....", "..dceed..eced...", "..ccdc..dccde...", "...cc....ccd....", "....b..e..b.....", "....b.ece.b.....", "....b.dcd.b.....", ".....b.c.b......", ".....bbcbb......", "......bbb......."])]),
+        "block/taro_crop3": (base: "shape/plant", palettes: {"leaf": "taro_leaf"}, layers: [Grid(rows: ["................", "..deee...eeed...", ".dcedee.eedced..", ".ccddce.ecddcc..", "..cccd...dccc...", "...cc..e..cc....", "....b.ede..b....", "....b.ceed.b..e.", "....b.dcce.b.ece", "....b..ccd.b.dcc", ".....b..b..b..cc", ".....b..b.b..b..", "......b.b.b.b...", "......bbbbbb....", ".......bbbb.....", "................"])]),
+        "block/taro": (base: "shape/plant", palettes: {"fruit": "taro_skin", "centre": "taro_flesh"}, layers: [Grid(rows: ["................", "................", "................", ".......a........", "......ab........", ".....fhhf.......", "....fhjhhf......", "....hfhhhhf.....", "...fhhfhjhf.....", "...hhhhfhhhf....", "...fhjhhhfhh....", "...hhhfhhhhf....", "....fhhhfhf.....", ".....ffhhf......", "......fff.......", "................"])]),
         "block/wheat_crop2": (base: "shape/plant", palettes: {"leaf": "crop_green"}, layers: [Grid(rows: [
             "................",
             "................",

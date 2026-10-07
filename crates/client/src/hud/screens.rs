@@ -1,11 +1,11 @@
 //! The in-game screens and the keys between them: the inventory (E), the character
-//! screen (C), the journal (J) and the menu (Esc). Each key opens its screen from play or from another
+//! screen (C), the journal (J), the quest book (L) and the menu (Esc). Each key opens its screen from play or from another
 //! screen, and closes it again; every screen shows the keys to the others along its foot,
 //! and the keys can be clicked too. The keys are the player's bindings (`Settings`).
 
 use bevy::prelude::*;
 
-use crate::lang::Localized;
+use crate::lang::{Locale, Localized};
 use crate::menu::Screen;
 use crate::player::{LocalPlayer, UiState};
 use crate::settings::Settings;
@@ -31,11 +31,12 @@ pub enum GameScreen {
     Inventory,
     Character,
     Journal,
+    Quests,
     Menu,
 }
 
 impl GameScreen {
-    const ALL: [GameScreen; 4] = [GameScreen::Inventory, GameScreen::Character, GameScreen::Journal, GameScreen::Menu];
+    const ALL: [GameScreen; 5] = [GameScreen::Inventory, GameScreen::Character, GameScreen::Journal, GameScreen::Quests, GameScreen::Menu];
 
     /// The key of its name (see `lang`).
     fn title(self) -> &'static str {
@@ -43,16 +44,18 @@ impl GameScreen {
             GameScreen::Inventory => "screen.inventory",
             GameScreen::Character => "screen.character",
             GameScreen::Journal => "screen.journal",
+            GameScreen::Quests => "screen.quests",
             GameScreen::Menu => "screen.menu",
         }
     }
 
-    fn key_label(self, settings: &Settings) -> &'static str {
+    fn key_label(self, settings: &Settings, locale: &Locale) -> String {
         match self {
-            GameScreen::Inventory => settings.inventory_key.label(),
-            GameScreen::Character => settings.character_key.label(),
-            GameScreen::Journal => settings.journal_key.label(),
-            GameScreen::Menu => "Esc",
+            GameScreen::Inventory => settings.inventory_key.name(locale),
+            GameScreen::Character => settings.character_key.name(locale),
+            GameScreen::Journal => settings.journal_key.name(locale),
+            GameScreen::Quests => settings.quests_key.name(locale),
+            GameScreen::Menu => crate::keys::escape_name(locale),
         }
     }
 
@@ -61,6 +64,7 @@ impl GameScreen {
             GameScreen::Inventory => ui.inventory_open,
             GameScreen::Character => ui.character_open,
             GameScreen::Journal => ui.journal_open,
+            GameScreen::Quests => ui.quests_open,
             GameScreen::Menu => ui.menu_open,
         }
     }
@@ -72,6 +76,7 @@ fn toggle(ui: &mut UiState, screen: GameScreen) {
     ui.inventory_open = open && screen == GameScreen::Inventory;
     ui.character_open = open && screen == GameScreen::Character;
     ui.journal_open = open && screen == GameScreen::Journal;
+    ui.quests_open = open && screen == GameScreen::Quests;
     ui.menu_open = open && screen == GameScreen::Menu;
 }
 
@@ -82,6 +87,7 @@ fn switch(keys: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, player: Res<
         ui.inventory_open = false;
         ui.character_open = false;
         ui.journal_open = false;
+        ui.quests_open = false;
         return;
     }
     if ui.console_open {
@@ -93,6 +99,8 @@ fn switch(keys: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, player: Res<
         toggle(&mut ui, GameScreen::Character);
     } else if keys.just_pressed(settings.journal_key.0) {
         toggle(&mut ui, GameScreen::Journal);
+    } else if keys.just_pressed(settings.quests_key.0) {
+        toggle(&mut ui, GameScreen::Quests);
     }
 }
 
@@ -123,11 +131,12 @@ fn click_hotkeys(keys: Query<(&Hotkey, &Interaction), Changed<Interaction>>, mut
 fn label_hotkeys(
     mut commands: Commands,
     settings: Res<Settings>,
+    locale: Res<Locale>,
     font: Res<UiFont>,
     bars: Query<(Entity, &HotkeyBar, Ref<HotkeyBar>)>,
 ) {
     for (entity, bar, added) in &bars {
-        if !added.is_added() && !settings.is_changed() {
+        if !added.is_added() && !settings.is_changed() && !locale.is_changed() {
             continue;
         }
         commands.entity(entity).despawn_children().with_children(|row| {
@@ -137,7 +146,7 @@ fn label_hotkeys(
                 row.spawn((Button, Hotkey(screen), node)).with_children(|key| {
                     let cap = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), min_width: Val::Px(crate::ui::skin::CAP_MIN), justify_content: JustifyContent::Center, ..default() };
                     let piece = if current { Piece::ButtonSelected } else { Piece::Button };
-                    let label = shadowed(&font.0, screen.key_label(&settings), BODY, if current { GOLD } else { TEXT });
+                    let label = shadowed(&font.0, screen.key_label(&settings, &locale), BODY, if current { GOLD } else { TEXT });
                     key.spawn((cap, piece.image(), crate::ui::widgets::HoverLight)).with_child((label, crate::lang::TightLine));
                     key.spawn((Localized(screen.title()), text(&font.0, "", BODY, if current { GOLD } else { MUTED })));
                 });

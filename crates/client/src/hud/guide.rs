@@ -190,6 +190,15 @@ fn crop_hints(locale: &Locale, launch: &Launch, crop: &Crop) -> Vec<String> {
         };
         hints.push(locale.get(climate).to_owned());
     }
+    let (dry, wet) = crop.def.comfort.moisture;
+    if wet <= 1.0 {
+        hints.push(locale.get("guide.climate.dry").to_owned());
+    } else if dry >= 0.9 {
+        hints.push(locale.get("guide.climate.wet").to_owned());
+    }
+    if crop.def.water {
+        hints.push(locale.get("guide.water").to_owned());
+    }
     if crop.def.light >= 9 {
         hints.push(locale.get("guide.light").to_owned());
     }

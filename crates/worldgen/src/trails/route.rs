@@ -125,6 +125,9 @@ pub fn route(start: IVec2, goal: IVec2, min: IVec2, max: IVec2, budget: usize, c
     // Slightly overestimates (flat walking costs 1 per block, contours as little as 0.3),
     // which keeps the search quick at little cost to the route.
     let estimate = |c: IVec2| ((c - goal).as_vec2().length() * CELL as f32 * 0.8 * UNIT) as u32;
+    // A settlement's gate and the cells round it may be marked built (a building within a
+    // block of a cell marks it), and a trail must still leave or reach the gate.
+    let at_an_end = |c: IVec2| (c - start).abs().max_element() <= 1 || (c - goal).abs().max_element() <= 1;
     let mut open = BinaryHeap::new();
     cost[start_i] = 0;
     open.push(Reverse((estimate(start), 0u32, start.x, start.y)));
@@ -166,12 +169,16 @@ pub fn route(start: IVec2, goal: IVec2, min: IVec2, max: IVec2, budget: usize, c
             if done[j] {
                 continue;
             }
+            // Never through a settlement's building, but to or from one's gate.
+            if get(next, j).built && !at_an_end(next) {
+                continue;
+            }
             // A knight's move passes between two cells; both must be dry land a trail
             // could cross.
             if step.abs().max_element() == 2 {
                 let half = step.as_vec2() / 2.0;
                 let between = [c + half.floor().as_ivec2(), c + half.ceil().as_ivec2()];
-                if between.iter().any(|&b| index(b).is_none_or(|bi| get(b, bi).submerged())) {
+                if between.iter().any(|&b| index(b).is_none_or(|bi| get(b, bi).submerged() || (get(b, bi).built && !at_an_end(b)))) {
                     continue;
                 }
             }
@@ -196,7 +203,7 @@ mod tests {
     use super::*;
 
     fn flat(_: IVec2) -> Cell {
-        Cell { height: 140, water: 140, body: 0 }
+        Cell { height: 140, water: 140, body: 0, built: false }
     }
 
     #[test]
@@ -212,7 +219,7 @@ mod tests {
         // A slope rising 0.6 blocks per block northwards (+z): straight up is too steep.
         let slope = |c: IVec2| {
             let h = (140.0 + c.y as f32 * CELL as f32 * 0.6) as i16;
-            Cell { height: h, water: h, body: 0 }
+            Cell { height: h, water: h, body: 0, built: false }
         };
         let path = route(IVec2::ZERO, IVec2::new(0, 12), IVec2::new(-20, -2), IVec2::new(20, 14), 50_000, &slope).unwrap();
         // It wanders sideways to keep its grade down, turning back on long legs.
@@ -226,10 +233,10 @@ mod tests {
 
     #[test]
     fn never_crosses_the_sea_and_gives_up_cleanly() {
-        let sea = |c: IVec2| if c.x == 5 { Cell { height: 100, water: 128, body: crate::water::Body::Sea as u8 } } else { flat(c) };
+        let sea = |c: IVec2| if c.x == 5 { Cell { height: 100, water: 128, body: crate::water::Body::Sea as u8, built: false } } else { flat(c) };
         assert_eq!(route(IVec2::ZERO, IVec2::new(10, 0), IVec2::new(-2, -2), IVec2::new(12, 2), 10_000, &sea), None);
         // Fords shallow river water.
-        let creek = |c: IVec2| if c.x == 5 { Cell { height: 139, water: 140, body: crate::water::Body::Creek as u8 } } else { flat(c) };
+        let creek = |c: IVec2| if c.x == 5 { Cell { height: 139, water: 140, body: crate::water::Body::Creek as u8, built: false } } else { flat(c) };
         assert!(route(IVec2::ZERO, IVec2::new(10, 0), IVec2::new(-2, -2), IVec2::new(12, 2), 10_000, &creek).is_some());
     }
 
@@ -237,10 +244,22 @@ mod tests {
     fn routes_are_deterministic() {
         let hills = |c: IVec2| {
             let h = (150.0 + 20.0 * ((c.x as f32 * 0.3).sin() + (c.y as f32 * 0.21).cos())) as i16;
-            Cell { height: h, water: h, body: 0 }
+            Cell { height: h, water: h, body: 0, built: false }
         };
         let a = route(IVec2::ZERO, IVec2::new(30, 25), IVec2::splat(-10), IVec2::splat(40), 50_000, &hills);
         assert!(a.is_some());
         assert_eq!(a, route(IVec2::ZERO, IVec2::new(30, 25), IVec2::splat(-10), IVec2::splat(40), 50_000, &hills));
+    }
+
+    /// A gate whose cell and every cell round it are marked built (houses within a block
+    /// of each) is still reached and left; built cells further off are gone round.
+    #[test]
+    fn reaches_a_gate_hemmed_in_by_buildings() {
+        let gate = IVec2::new(10, 0);
+        let town = |c: IVec2| Cell { built: (c - gate).abs().max_element() <= 1 || (c.x == 5 && c.y.abs() <= 2), ..flat(c) };
+        for (from, to) in [(IVec2::ZERO, gate), (gate, IVec2::ZERO)] {
+            let path = route(from, to, IVec2::splat(-6), IVec2::splat(16), 20_000, &town).unwrap_or_else(|| panic!("no route from {from} to {to}"));
+            assert!(path.iter().all(|&c| !town(c).built || (c - gate).abs().max_element() <= 1), "{path:?}");
+        }
     }
 }
