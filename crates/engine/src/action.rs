@@ -9,7 +9,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::{BlockId, BlockInfo, BlockRegistry, RegistryError, Support};
+use crate::block::{BlockId, BlockInfo, BlockRegistry, Facing, RegistryError, Support};
 use crate::coords::Face;
 use crate::crop::CropRegistry;
 use crate::skill::SkillId;
@@ -309,14 +309,36 @@ pub fn placement_cell(ctx: &impl ActionContext, block: IVec3, face: Face) -> IVe
     if ctx.block(block).is_some_and(|b| ctx.info(b).replaceable) { block } else { block + face.normal() }
 }
 
+/// The block placing `held` against `face` of `block` puts there: what it goes on walls as
+/// (a wall torch, facing out) against a side it does not go into, otherwise itself.
+pub fn placed_block(ctx: &impl ActionContext, held: BlockId, block: IVec3, face: Face) -> BlockId {
+    match (ctx.info(held).wall, Facing::of_face(face)) {
+        (Some(wall), Some(facing)) if placement_cell(ctx, block, face) != block => ctx.blocks().facing(wall, facing),
+        _ => held,
+    }
+}
+
+/// Whether the actor may harvest what is at `cell`: a ripe crop (or fruit) asks for its
+/// level; anything else is fine.
+pub fn crop_level_met(ctx: &impl ActionContext, cell: IVec3) -> bool {
+    let crops = ctx.crops();
+    ctx.block(cell).and_then(|b| crops.stage_of(b)).is_none_or(|(crop, stage)| {
+        let crop = crops.get(crop);
+        stage != crop.ripe_stage() || ctx.actor_level(crop.skill) >= crop.def.level
+    })
+}
+
 /// The blocks resting on `pos` that go when it is cleared: the plants standing on it (a
-/// flower, both halves of tall grass, a stalk of sugar cane) and the column hanging from
-/// it (vines, roots, a stalactite).
+/// flower, both halves of tall grass, a stalk of sugar cane), the column hanging from it
+/// (vines, roots, a stalactite) and what is fixed to its sides (wall torches).
 pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Vec<IVec3> {
     let column = |step: i32, support: Support| {
         (1..).map(move |d| pos + IVec3::Y * (d * step)).take_while(move |&p| ctx.block(p).is_some_and(|b| ctx.info(b).support == support))
     };
-    column(1, Support::Below).chain(column(-1, Support::Above)).collect()
+    let walls = Facing::ALL.into_iter().map(move |f| pos + f.normal()).filter(move |&p| {
+        ctx.block(p).is_some_and(|b| ctx.info(b).support == Support::Wall && ctx.info(b).facing.is_some_and(|f| p - f.normal() == pos))
+    });
+    column(1, Support::Below).chain(column(-1, Support::Above)).chain(walls).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -401,11 +423,9 @@ impl ActionDef {
             }
             Requirement::CropLevel => {
                 let (block, _) = block_target()?;
-                let crops = ctx.crops();
-                ctx.block(block).and_then(|b| crops.stage_of(b)).is_none_or(|(crop, stage)| {
-                    let crop = crops.get(crop);
-                    stage != crop.ripe_stage() || ctx.actor_level(crop.skill) >= crop.def.level
-                })
+                // The target, and what stands on it: breaking the ground under a ripe crop
+                // harvests it too.
+                std::iter::once(block).chain(supported_by(ctx, block)).all(|cell| crop_level_met(ctx, cell))
             }
             Requirement::BlockLevel => {
                 let (block, _) = block_target()?;
@@ -460,10 +480,12 @@ impl ActionDef {
                 let (block, face) = block_target()?;
                 let cell = placement_cell(ctx, block, face);
                 let solid = |p: IVec3| ctx.block(p).is_some_and(|b| ctx.info(b).solid);
-                match ctx.actor_held().map_or(Support::None, |b| ctx.info(b).support) {
+                let Some(placed) = ctx.actor_held().map(|held| placed_block(ctx, held, block, face)) else { return Ok(true) };
+                match ctx.info(placed).support {
                     Support::None => true,
                     Support::Below => solid(cell - IVec3::Y),
                     Support::Above => solid(cell + IVec3::Y),
+                    Support::Wall => ctx.info(placed).facing.is_some_and(|f| solid(cell - f.normal())),
                 }
             }
         })
@@ -546,10 +568,60 @@ mod tests {
                 support: Some(Support::Above),
                 ..Default::default()
             },
+            BlockDef {
+                name: "test:torch".into(),
+                render: RenderKind::Plant,
+                solid: false,
+                wall: Some("test:wall_torch".into()),
+                ..Default::default()
+            },
+            BlockDef {
+                name: "test:wall_torch".into(),
+                render: RenderKind::Plant,
+                solid: false,
+                drops: Some("test:torch".into()),
+                facing: true,
+                support: Some(Support::Wall),
+                ..Default::default()
+            },
         ])
         .unwrap();
         let blocks = [(IVec3::ZERO, STONE), (IVec3::Y, FLOWER), (IVec3::Z, STONE)].into_iter().collect();
         World { registry, blocks, held, crops: CropRegistry::default() }
+    }
+
+    const TORCH: BlockId = BlockId(4);
+
+    #[test]
+    fn a_torch_against_a_wall_is_a_wall_torch_facing_out_and_goes_with_the_wall() {
+        let mut world = world(TORCH);
+        let (registry, east) = (&world.registry, Face::PosX);
+        let placed = placed_block(&world, TORCH, IVec3::ZERO, east);
+        assert_eq!(registry.def(placed).name, "test:wall_torch_east");
+        assert_eq!(registry.info(placed).facing, Some(Facing::East));
+        assert_eq!(registry.info(placed).drops, TORCH);
+        // On top of a block it is the torch itself.
+        assert_eq!(placed_block(&world, TORCH, IVec3::ZERO, Face::PosY), TORCH);
+        assert!(place().validate(&world, ActionTarget::Block { block: IVec3::ZERO, face: east }).is_ok());
+        world.blocks.insert(IVec3::X, placed);
+        assert!(supported_by(&world, IVec3::ZERO).contains(&IVec3::X));
+        // The stone beside it along +z holds nothing.
+        assert!(!supported_by(&world, IVec3::Z).contains(&IVec3::X));
+        assert_eq!(world.registry.facing(placed, Facing::West), world.registry.id("test:wall_torch_west").unwrap());
+        assert_eq!(world.registry.facing(placed, Facing::North), world.registry.id("test:wall_torch").unwrap());
+    }
+
+    #[test]
+    fn facings_turn_clockwise_from_north() {
+        let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-6);
+        assert!(near(Facing::East.turn([0.5, 0.8, 0.75]), [0.25, 0.8, 0.5]));
+        assert!(near(Facing::South.turn([0.5, 0.8, 0.75]), [0.5, 0.8, 0.25]));
+        assert!(near(Facing::West.turn([0.5, 0.8, 0.75]), [0.75, 0.8, 0.5]));
+        for facing in Facing::ALL {
+            // The wall a torch facing north rests on (+z) turns to the one behind it.
+            let wall = facing.turn([0.5, 0.5, 1.0]);
+            assert_eq!(IVec3::new((wall[0] * 2.0 - 1.0).round() as i32, 0, (wall[2] * 2.0 - 1.0).round() as i32), -facing.normal());
+        }
     }
 
     fn place() -> ActionDef {

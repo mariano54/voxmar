@@ -605,6 +605,7 @@
         (template: "flower", name: "wild_beans", tags: ["pulse", "vegetable", "forest_edge", "warm", "edible", "flavour:savoury", "forage"], all: (color: (80, 140, 50), rarity: Rare)),
         (template: "flower", name: "wild_peas", tags: ["pulse", "vegetable", "meadow", "temperate", "edible", "flavour:sweet", "forage"], all: (color: (130, 190, 80), rarity: Rare)),
         (template: "flower", name: "wild_lentils", tags: ["pulse", "steppe", "warm", "dry", "edible", "flavour:savoury", "forage"], all: (color: (170, 150, 90), rarity: Rare)),
+        (template: "flower", name: "wild_chickpea", tags: ["pulse", "steppe", "savanna", "warm", "dry", "edible", "flavour:savoury", "forage"], all: (color: (196, 172, 112), rarity: Rare)),
         (template: "plant", name: "cranberry_bush", tags: ["bush", "berry", "wetland", "cold", "edible", "flavour:sour", "dye:red", "alchemy:antidote", "forage"], all: (sound: Leaves, color: (150, 30, 50), rarity: Uncommon)),
         (template: "plant", name: "lingonberry_bush", tags: ["bush", "berry", "heath", "tundra", "forest_floor", "cold", "evergreen", "edible", "flavour:sour", "dye:red", "forage"], all: (sound: Leaves, color: (200, 40, 40), rarity: Uncommon)),
         (template: "plant", name: "cloudberry", tags: ["berry", "tundra", "wetland", "cold", "edible", "flavour:sweet", "alchemy:frost_resistance", "forage"], all: (color: (240, 150, 50), rarity: Rare)),
