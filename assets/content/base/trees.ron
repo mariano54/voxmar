@@ -305,7 +305,7 @@
         (
             // Gnarled and grey-green, of dry warm hills.
             name: "olive", tags: ["gathering", "fruit", "warm", "dry"], rarity: Uncommon,
-            log: "cypress_log", leaves: "olive_leaves", height: (3, 5), lean: 1.4,
+            log: "oak_log", leaves: "olive_leaves", height: (3, 5), lean: 1.4,
             fruit: (leaves: "olives_leaves", share: 0.1),
             crown: Umbrella(reach: (1.6, 2.6), radius: (1.6, 2.2), squash: 0.6, fork: 0.4),
             comfort: (temperature: (12.0, 30.0), moisture: (0.1, 1.0)),
