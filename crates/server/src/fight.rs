@@ -136,6 +136,12 @@ impl Server {
         self.fights.secs(self.arrival)
     }
 
+    /// How `player` guards: with their shield, or their weapon (`CombatRegistry::guard_of`).
+    pub(crate) fn guard_of(&self, player: PlayerId) -> Option<voxmar_engine::combat::GuardDef> {
+        let p = self.players.get(&player)?;
+        self.content.combat.guard_of(p.held(), &p.inventory.worn, |skill| self.content.skills.level(p.skills.xp(skill)))
+    }
+
     fn wielded_by(&self, player: PlayerId) -> Option<Weapon> {
         let p = self.players.get(&player)?;
         Some(self.content.combat.wielded(p.held(), |skill| self.content.skills.level(p.skills.xp(skill))))
@@ -198,8 +204,13 @@ impl Server {
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
         let feel = self.content.combat.feel;
-        // Armour weight sets the dodge; without armour, the first.
-        let dodge = self.content.combat.dodge(None).clone();
+        // The heaviest armour worn sets the dodge; without armour, the first. Not falling
+        // (the client also keeps it to the ground; this stops one far into a fall).
+        let Some(p) = self.players.get(&player) else { return };
+        if p.fall_start.is_some_and(|top| p.position.y < top - 1.0) {
+            return;
+        }
+        let dodge = self.content.combat.dodge_of(&p.inventory.worn).clone();
         let fighter = self.fights.fighters.entry(player).or_default();
         // A little early is the client's clock running ahead of the arrival clock.
         if fighter.guard.is_some() || now + 0.1 < fighter.dodge_ready {
@@ -395,8 +406,7 @@ impl Server {
         let flat = (target.position - at).with_y(0.0).length();
         let tall = (target.position.y - at.y).abs() < size.1 * scale + 1.5;
         let (look, facing) = (target.look(), at - target.position);
-        let weapon = self.wielded_by(player).unwrap_or(Weapon::FISTS);
-        let guard = self.content.combat.guard(&weapon).filter(|g| !attack.heavy && g.covers(look, facing));
+        let guard = self.guard_of(player).filter(|g| !attack.heavy && g.covers(look, facing));
         let fighter = self.fights.fighters.entry(player).or_default();
         let raised = fighter.guard;
         let defended = if flat > reach || !tall {

@@ -204,6 +204,9 @@ enum Step {
     /// its wind-up ends is a perfect block that takes nothing, a click then is a counter,
     /// and a dodge as the next blow comes down lets it pass.
     Feel,
+    /// A chainmail shirt and a wooden shield in hand, each right click puts one on in its
+    /// own worn slot, and with the shield on the guard is the shield's.
+    Wear,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -882,6 +885,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Strike => strike(world, gate, now, in_phase),
         Step::Weapon => weapon(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
+        Step::Wear => wear(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
@@ -3211,6 +3215,74 @@ fn end_feel(world: &mut World, gate: &mut Gate, now: f32) {
     net.command("gamemode survival");
     net.command("skill attack 1");
     net.command("skill hitpoints 10");
+    gate.next(Step::Wear, now);
+}
+
+/// What the wear step puts on, and where (`inventory::WORN` on).
+const WORN_SHIRT: (&str, usize) = ("base:chainmail_shirt", 1);
+const WORN_SHIELD: (&str, usize) = ("base:wooden_shield", 5);
+
+/// Each piece selected and right-clicked goes on: the server's word must put it in its
+/// worn slot. Then the shield is what guards (a stop of 55%, not the sword's 35%).
+fn wear(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use voxmar_engine::inventory::WORN;
+    let worn = |world: &World, (name, at): (&str, usize)| {
+        let item = world.resource::<ClientWorld>().registry.id(name);
+        world.resource::<LocalPlayer>().inventory.get(WORN + at).is_some_and(|s| Some(s.item) == item)
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("skill defence 20");
+            for (name, _) in [WORN_SHIRT, WORN_SHIELD] {
+                net.command(&format!("give {} 1", name.trim_start_matches("base:")));
+            }
+            gate.advance(now);
+        }
+        1 | 3 => {
+            // Selected, then one right click, once the server has given it.
+            let piece = if gate.phase == 1 { WORN_SHIRT } else { WORN_SHIELD };
+            if select(world, piece.0) {
+                look(world, 0.0, 80.0);
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if in_phase > 10.0 {
+                gate.check("wear", Err(format!("no {} came to the inventory", piece.0)));
+                end_wear(world, gate, now);
+            }
+        }
+        2 | 4 => {
+            mouse(world, MouseButton::Right, false);
+            let piece = if gate.phase == 2 { WORN_SHIRT } else { WORN_SHIELD };
+            if worn(world, piece) {
+                if gate.phase == 4 {
+                    let player = world.resource::<LocalPlayer>();
+                    let launch = world.resource::<Launch>();
+                    let held = world.resource::<ClientWorld>().registry.id(WEAPON);
+                    let guard = launch.content.combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill)));
+                    let stop = guard.map_or(0.0, |g| g.stop);
+                    gate.check("wear", if stop > 0.5 { Ok(format!("a chainmail shirt and a wooden shield on; the guard stops {:.0}%", stop * 100.0)) } else { Err(format!("with the shield on, the guard stops {:.0}%", stop * 100.0)) });
+                    end_wear(world, gate, now);
+                } else {
+                    gate.advance(now);
+                }
+            } else if gate.server_in_phase() > 5.0 {
+                gate.check("wear", Err(format!("a right click with {} in hand did not put it on", piece.0)));
+                end_wear(world, gate, now);
+            }
+        }
+        _ => end_wear(world, gate, now),
+    }
+}
+
+/// Takes it all off again, for the steps after.
+fn end_wear(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Right, false);
+    let net = world.resource::<Net>();
+    for (name, _) in [WORN_SHIRT, WORN_SHIELD] {
+        net.command(&format!("clear {}", name.trim_start_matches("base:")));
+    }
+    net.command("skill defence 1");
     gate.next(Step::Cook, now);
 }
 

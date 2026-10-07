@@ -64,5 +64,31 @@ pack can retune or replace all of it.
 | 8 | Bodies | The player cannot walk into a creature's body: the client pushes them 0.2 blocks clear, so the camera never ends up inside a model. |
 | 9 | Falling blows | A blow struck while falling, as Minecraft's critical hit, has +15% max hit (`falling_max_hit`). |
 
+## Armour and shields
+
+Oct 7, 2026 (the wiki's "Items" tab for sets, weights and Defence levels, its material tiers
+for "Armour ×", and "Combat feel" for shields and dodges by weight). Data in `combat.ron`
+(`sets:`, `shields:`), items in `blocks_armour.ron`, recipes in `recipes_armour.ron`.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Slots | Head, body, legs, hands, feet, and the off-hand for a shield: six worn slots after the crafting grid (`inventory::WORN`). Each takes only the piece made for it. Right click with a piece in hand puts it on, swapped for what was there; shift-click in the inventory too. |
+| 2 | Armour | A piece gives its slot's share of a bronze set's 36 (head 6, body 14, legs 10, hands 3, feet 3) times its set's material: hide 0.4, copper 0.7, bronze 1.0, iron 1.2. It adds to the defence roll as RuneScape's armour does. |
+| 3 | Weight | Light (hide, leather) counts 0.8 against melee and full against arrows and spells; medium full against all; heavy (plate) 1.2 against melee and arrows, 0.6 against spells; robes 1.5 against spells, 0.7 arrows, 0.5 melee. A set's `resists` count half again (chainmail against slash). |
+| 4 | Levels | Worn below its Defence level a piece gives nothing, and a shield does not guard: your own level, boosts never count. |
+| 5 | Shields | In the off-hand a shield guards in place of the weapon: hide buckler 45% over 120° with a 0.28 s perfect window; wooden 55%, copper 60%, bronze 65%, iron 70%, each over 150° with 0.20 s. Shields stop arrows and thrown things too, never spells. A spear (two-handed) guards with itself, shield or not. A shield's own armour (1 to 7) adds to the defence roll. |
+| 6 | Dodge | The heaviest armour worn picks the dodge: light or none 3.0 blocks, safe 0.04 to 0.22 s, every 1.0 s; medium 2.6, to 0.20, 1.2 s; heavy 2.2, to 0.18, 1.5 s. |
+| 7 | Death | What is worn counts with the rest: the three most valuable things carried are kept. |
+
+| Set | Weight | Defence | Material × | Whole set | Made from |
+| --- | --- | --- | --- | --- | --- |
+| Hide wraps (hood, tunic, trousers, gloves, boots) | Light | 1 | 0.4 | 14 | 24 hide, Crafting 1 |
+| Copper (helmet, chestplate, leggings, gauntlets, boots) | Medium | 10 | 0.7 | 25 | 24 copper ingots, Engineering 5 |
+| Bronze scale (helmet, scale shirt, leggings, gauntlets, boots) | Medium | 15 | 1.0 | 36 | 24 bronze ingots, Engineering 12 |
+| Chainmail (coif, shirt, leggings, gloves, boots) | Medium, resists slash | 20 | 1.2 | 44 | 24 iron ingots, Engineering 15 |
+
+Against a brown bear (level 28, slash) a Defence 15 player is hit about 68% of the time bare,
+50% in bronze scale; a Defence 20 player in chainmail (66 against slash) about 32%.
+
 Still to come in phase 4, in order: ranged weapons, ammunition and projectiles; armour slots and sets with resistances; the
 weapons' specials (bleed, stun, brace); then modifications (P42).

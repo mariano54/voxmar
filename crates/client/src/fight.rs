@@ -97,8 +97,9 @@ pub fn guard(
     fighting.rhythm.landed(now);
     let combat = &launch.content.combat;
     let held = player.inventory.get(player.selected).map(|s| s.item);
-    let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
-    let can = combat.guard(&weapon).is_some() && ui.cursor_locked && !player.dead && player.joined;
+    let level = |skill| launch.content.skills.level(player.skills.xp(skill));
+    let weapon = combat.wielded(held, level);
+    let can = combat.guard_of(held, &player.inventory.worn, level).is_some() && ui.cursor_locked && !player.dead && player.joined;
     if mouse.just_pressed(MouseButton::Right) {
         fighting.right_used = target.used_right;
     }

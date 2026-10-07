@@ -831,7 +831,7 @@ pub fn aim(
             let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
             (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool))
         });
-        let action = if accepts { Some("base:tend") } else if combat.guard(&weapon).is_none() { Some("base:inspect") } else { None };
+        let action = if accepts { Some("base:tend") } else if combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_none() { Some("base:inspect") } else { None };
         if let Some(action) = action.and_then(|a| actions.0.id(a)) {
             net.propose_from(&player, action, ActionTarget::Creature(id));
         }

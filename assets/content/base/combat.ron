@@ -77,4 +77,29 @@
         (weight: "medium", distance: 2.6, time: 0.25, safe: (0.04, 0.20), cooldown: 1.2),
         (weight: "heavy", distance: 2.2, time: 0.25, safe: (0.04, 0.18), cooldown: 1.5),
     ],
+    // Armour (the wiki's "Items" tab: sets, weights and Defence levels; "Armour x" from its
+    // material tiers). A piece's armour is its slot's share of a bronze set's 36 (head 6,
+    // body 14, legs 10, hands 3, feet 3) times the set's `armour`. Worn below its Defence
+    // level a piece gives nothing.
+    sets: [
+        (name: "hide_wraps", weight: Light, level: 1, armour: 0.4,
+            pieces: [(Head, "hide_hood"), (Body, "hide_tunic"), (Legs, "hide_trousers"), (Hands, "hide_gloves"), (Feet, "hide_boots")]),
+        (name: "copper", weight: Medium, level: 10, armour: 0.7,
+            pieces: [(Head, "copper_helmet"), (Body, "copper_chestplate"), (Legs, "copper_leggings"), (Hands, "copper_gauntlets"), (Feet, "copper_boots")]),
+        (name: "bronze_scale", weight: Medium, level: 15, armour: 1.0,
+            pieces: [(Head, "bronze_helmet"), (Body, "bronze_scale_shirt"), (Legs, "bronze_leggings"), (Hands, "bronze_gauntlets"), (Feet, "bronze_boots")]),
+        (name: "chainmail", weight: Medium, level: 20, armour: 1.2, resists: [Slash],
+            pieces: [(Head, "chainmail_coif"), (Body, "chainmail_shirt"), (Legs, "chainmail_leggings"), (Hands, "chainmail_gloves"), (Feet, "chainmail_boots")]),
+    ],
+    // Shields, in the off-hand (the wiki's "Combat feel" blocking table): the share of a
+    // melee blow or missile they stop, over what arc, the perfect window, and the Defence
+    // level that carries them. A two-handed weapon guards with itself instead. `armour`
+    // adds to the defence roll as a piece's does (not in the wiki: about a helmet's worth).
+    shields: [
+        (item: "hide_buckler", level: 1, armour: 1, guard: (stop: 0.45, arc: 120.0, perfect: 0.28, missiles: true)),
+        (item: "wooden_shield", level: 1, armour: 2, guard: (stop: 0.55, arc: 150.0, perfect: 0.20, missiles: true)),
+        (item: "copper_shield", level: 5, armour: 4, guard: (stop: 0.60, arc: 150.0, perfect: 0.20, missiles: true)),
+        (item: "bronze_shield", level: 15, armour: 6, guard: (stop: 0.65, arc: 150.0, perfect: 0.20, missiles: true)),
+        (item: "iron_shield", level: 20, armour: 7, guard: (stop: 0.70, arc: 150.0, perfect: 0.20, missiles: true)),
+    ],
 )

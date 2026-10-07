@@ -415,8 +415,8 @@ fn movement(
         && clock >= fighting.dodge_ready
         && let Some(dodge_action) = actions.0.id("core:dodge")
     {
-        // Armour weight will choose the dodge; without armour, the first.
-        let dodge = combat.dodge(None);
+        // The heaviest armour worn chooses the dodge; without armour, the first.
+        let dodge = combat.dodge_of(&player.inventory.worn);
         let dir = if wish == Vec3::ZERO { -forward } else { wish.normalize() };
         fighting.dash = Some((dir, dodge.distance / dodge.time.max(0.05), dodge.time));
         fighting.dodge_ready = clock + dodge.cooldown as f64;
@@ -428,7 +428,7 @@ fn movement(
     // Guarding, the player walks slower and cannot sprint.
     let guard_speed = fighting.guard.and_then(|_| {
         let held = player.inventory.get(player.selected).map(|s| s.item);
-        combat.guard(&combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)))).map(|g| g.speed)
+        combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).map(|g| g.speed)
     });
     let controls = Controls {
         wish: wish.normalize_or_zero(),

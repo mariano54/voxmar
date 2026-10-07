@@ -372,6 +372,17 @@ fn break_and_place(
             }
             return;
         }
+        // Armour or a shield in hand goes on, swapped for what was worn there.
+        if let Some(at) = held.and_then(voxmar_engine::inventory::worn_slot).filter(|_| target.creature.is_none()) {
+            let to = voxmar_engine::inventory::WORN + at;
+            let slots = ActionTarget::Slots { from: player.selected as u8, to: to as u8, count: 1 };
+            net.propose_from(&player, actions.0.expect("core:transfer"), slots);
+            let selected = player.selected;
+            player.inventory.move_items(selected, to, 1);
+            target.used_right = true;
+            target.place_cooldown = 0.4;
+            return;
+        }
     }
     // A rod in hand casts into the water looked at, again each time the line comes up while
     // the button is held.

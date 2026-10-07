@@ -30,7 +30,9 @@
 //! its material's armour by slot. Worn armour adds to the defence roll against every
 //! blow, more or less by its weight (plate turns blades and arrows but not spells, robes the
 //! reverse) and half again against a style its set resists. A piece worn below its Defence
-//! level gives nothing, as a weapon held below its level strikes as a fist.
+//! level gives nothing, as a weapon held below its level strikes as a fist. A **shield** goes
+//! in the off-hand: it guards in place of the weapon (stopping more, over a wider arc, and
+//! arrows too) unless the weapon takes both hands. The heaviest armour worn picks the dodge.
 
 use serde::{Deserialize, Serialize};
 
@@ -493,6 +495,8 @@ pub struct CombatFile {
     pub dodges: Vec<DodgeDef>,
     #[serde(default)]
     pub sets: Vec<SetDef>,
+    #[serde(default)]
+    pub shields: Vec<ShieldDef>,
 }
 
 /// Where a piece of armour is worn: the inventory's worn slots, in this order.
@@ -503,10 +507,12 @@ pub enum Slot {
     Legs,
     Hands,
     Feet,
+    /// The off-hand: a shield, which guards in place of the weapon.
+    Shield,
 }
 
 impl Slot {
-    pub const ALL: [Slot; 5] = [Slot::Head, Slot::Body, Slot::Legs, Slot::Hands, Slot::Feet];
+    pub const ALL: [Slot; 6] = [Slot::Head, Slot::Body, Slot::Legs, Slot::Hands, Slot::Feet, Slot::Shield];
 
     /// Its worn slot, counted from the first (`inventory::WORN`).
     pub fn index(self) -> usize {
@@ -521,6 +527,7 @@ impl Slot {
             Slot::Body => 14.0,
             Slot::Legs => 10.0,
             Slot::Hands | Slot::Feet => 3.0,
+            Slot::Shield => 0.0,
         }
     }
 
@@ -532,6 +539,7 @@ impl Slot {
             Slot::Legs => "legs",
             Slot::Hands => "hands",
             Slot::Feet => "feet",
+            Slot::Shield => "shield",
         }
     }
 }
@@ -599,6 +607,27 @@ pub struct SetDef {
     pub pieces: Vec<(Slot, String)>,
 }
 
+/// A shield as content defines it: worn in the off-hand, it guards in place of the weapon
+/// (unless the weapon takes both hands) from its Defence level, and adds its armour.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShieldDef {
+    pub item: String,
+    #[serde(default = "first_level")]
+    pub level: u8,
+    pub guard: GuardDef,
+    #[serde(default)]
+    pub armour: u16,
+}
+
+/// A shield, worked out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shield {
+    pub level: u8,
+    pub guard: GuardDef,
+    pub armour: u16,
+}
+
 /// A piece of armour, worked out.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Piece {
@@ -647,7 +676,11 @@ pub struct CombatRegistry {
     weapons: Vec<Option<Weapon>>,
     /// The skill fists train and are judged by.
     attack: Option<SkillId>,
+    /// The skill armour and shields are worn by.
+    defence: Option<SkillId>,
     sets: Vec<SetDef>,
+    /// Each block id's shield, if it is one.
+    shields: Vec<Option<Shield>>,
     /// Each block id's piece of armour, if it is one.
     pieces: Vec<Option<Piece>>,
     pub feel: Feel,
@@ -671,15 +704,21 @@ impl CombatRegistry {
                 *item = format!("{namespace}:{item}");
             }
         }
+        for shield in &mut file.shields {
+            if !shield.item.contains(':') {
+                shield.item = format!("{namespace}:{}", shield.item);
+            }
+        }
         Ok(file)
     }
 
     pub fn new(files: Vec<CombatFile>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
-        let (mut classes, mut defs, mut feel, mut dodges, mut sets) = (Vec::new(), Vec::new(), Feel::default(), Vec::<DodgeDef>::new(), Vec::new());
+        let (mut classes, mut defs, mut feel, mut dodges, mut sets, mut shield_defs) = (Vec::new(), Vec::new(), Feel::default(), Vec::<DodgeDef>::new(), Vec::new(), Vec::new());
         for file in files {
             classes.extend(file.classes);
             defs.extend(file.weapons);
             sets.extend(file.sets);
+            shield_defs.extend(file.shields);
             feel = file.feel.unwrap_or(feel);
             for dodge in file.dodges {
                 // A later package's dodge for a weight replaces an earlier one's.
@@ -705,6 +744,15 @@ impl CombatRegistry {
                 pieces[item.0 as usize] = Some(Piece { set: index, slot: *slot, weight: set.weight, level: set.level, armour });
             }
         }
+        let mut shields = vec![None; blocks.len()];
+        for def in shield_defs {
+            let error = |why: &str| RegistryError(format!("combat.ron: shield {}: {why}", def.item));
+            let item = blocks.id(&def.item).ok_or_else(|| error("no such item"))?;
+            if pieces[item.0 as usize].is_some() || shields[item.0 as usize].is_some() {
+                return Err(error("listed twice"));
+            }
+            shields[item.0 as usize] = Some(Shield { level: def.level, guard: def.guard, armour: def.armour });
+        }
         let mut weapons = vec![None; blocks.len()];
         for def in defs {
             let error = |why: String| RegistryError(format!("combat.ron: {}: {why}", def.item));
@@ -727,7 +775,7 @@ impl CombatRegistry {
             });
         }
         let fist = classes.iter().position(|c| c.name == FIST_CLASS);
-        Ok(Self { classes, weapons, attack: skills.id("core:attack"), feel, fist, dodges, sets, pieces })
+        Ok(Self { classes, weapons, attack: skills.id("core:attack"), defence: skills.id("core:defence"), feel, fist, dodges, sets, shields, pieces })
     }
 
     /// What `item` is as a weapon, if it is one.
@@ -756,9 +804,15 @@ impl CombatRegistry {
         &self.sets[index]
     }
 
-    /// Each block id's worn slot, if it is armour (`inventory::set_worn_slots`).
+    /// What `item` is as a shield, if it is one.
+    pub fn shield(&self, item: BlockId) -> Option<&Shield> {
+        self.shields.get(item.0 as usize).and_then(Option::as_ref)
+    }
+
+    /// Each block id's worn slot, if it is armour or a shield (`inventory::set_worn_slots`).
     pub fn worn_slots(&self) -> Vec<Option<u8>> {
-        self.pieces.iter().map(|p| p.map(|p| p.slot.index() as u8)).collect()
+        let shield = Slot::Shield.index() as u8;
+        self.pieces.iter().zip(&self.shields).map(|(p, s)| p.map(|p| p.slot.index() as u8).or(s.map(|_| shield))).collect()
     }
 
     /// What `piece` adds to the defence roll against a blow of `style`.
@@ -770,8 +824,50 @@ impl CombatRegistry {
     /// The armour `worn` gives against a blow of `style`, for a wearer whose own Defence
     /// level is `level`: pieces worn below their level give nothing.
     pub fn worn_armour(&self, worn: impl IntoIterator<Item = BlockId>, style: Style, level: u8) -> u16 {
-        let total: f32 = worn.into_iter().filter_map(|item| self.piece(item)).filter(|p| level >= p.level).map(|p| self.armour_against(p, style)).sum();
+        let total: f32 = worn
+            .into_iter()
+            .map(|item| match (self.piece(item), self.shield(item)) {
+                (Some(p), _) if level >= p.level => self.armour_against(p, style),
+                (_, Some(s)) if level >= s.level => s.armour as f32,
+                _ => 0.0,
+            })
+            .sum();
         total.round() as u16
+    }
+
+    /// How a fighter holding `held`, with `worn` on (the inventory's worn slots), guards by
+    /// their own levels (`level`).
+    pub fn guard_of(&self, held: Option<BlockId>, worn: &[Option<crate::inventory::ItemStack>], level: impl Fn(SkillId) -> u8) -> Option<GuardDef> {
+        let weapon = self.wielded(held, &level);
+        let off_hand = worn.get(Slot::Shield.index()).copied().flatten().map(|s| s.item);
+        self.guard_with(&weapon, off_hand, self.defence.map_or(1, &level))
+    }
+
+    /// The armour `worn` (the inventory's worn slots) gives against a blow of `style`, by
+    /// the wearer's own Defence level.
+    pub fn armour_of(&self, worn: &[Option<crate::inventory::ItemStack>], style: Style, level: impl Fn(SkillId) -> u8) -> u16 {
+        self.worn_armour(worn.iter().flatten().map(|s| s.item), style, self.defence.map_or(1, level))
+    }
+
+    /// The dodge in `worn` (the inventory's worn slots).
+    pub fn dodge_of(&self, worn: &[Option<crate::inventory::ItemStack>]) -> &DodgeDef {
+        self.dodge_in(worn.iter().flatten().map(|s| s.item))
+    }
+
+    /// The heaviest weight among `worn`, if any of it is armour.
+    pub fn heaviest(&self, worn: impl IntoIterator<Item = BlockId>) -> Option<Weight> {
+        let rank = |w: Weight| match w {
+            Weight::Robe => 0,
+            Weight::Light => 1,
+            Weight::Medium => 2,
+            Weight::Heavy => 3,
+        };
+        worn.into_iter().filter_map(|item| self.piece(item)).map(|p| p.weight).max_by_key(|&w| rank(w))
+    }
+
+    /// The dodge in `worn`: by its heaviest weight (robes dodge as light armour).
+    pub fn dodge_in(&self, worn: impl IntoIterator<Item = BlockId>) -> &DodgeDef {
+        self.dodge(self.heaviest(worn).map(|w| if w == Weight::Robe { "light" } else { w.key() }))
     }
 
     /// The class `weapon` fights as: its own, or for fists the fist class, if any.
@@ -790,6 +886,17 @@ impl CombatRegistry {
     /// How `weapon` guards, if it can.
     pub fn guard(&self, weapon: &Weapon) -> Option<GuardDef> {
         self.class_of(weapon).and_then(|c| c.guard)
+    }
+
+    /// How a fighter guards with `weapon` and `off_hand` worn, at Defence `level`: with the
+    /// shield, if it is one worn at its level and the weapon leaves a hand free; else with
+    /// the weapon.
+    pub fn guard_with(&self, weapon: &Weapon, off_hand: Option<BlockId>, level: u8) -> Option<GuardDef> {
+        let two_handed = self.class_of(weapon).is_some_and(|c| c.two_handed);
+        match off_hand.and_then(|item| self.shield(item)) {
+            Some(shield) if !two_handed && level >= shield.level => Some(shield.guard),
+            _ => self.guard(weapon),
+        }
     }
 
     /// What a flourish with `weapon` does besides its max hit.
@@ -856,7 +963,7 @@ mod tests {
     fn registry(source: &str) -> Result<(CombatRegistry, BlockRegistry), RegistryError> {
         use crate::block::BlockDef;
         let block = |name: &str| BlockDef { name: format!("t:{name}"), ..Default::default() };
-        let blocks = BlockRegistry::new(vec![block("air"), block("stick"), block("sword"), block("spear")]).unwrap();
+        let blocks = BlockRegistry::new(vec![block("air"), block("stick"), block("sword"), block("spear"), block("stone")]).unwrap();
         let mut skills = SkillRegistry::default();
         skills.extend("core", r#"(curve: RuneScape(max: 99), skills: [(name: "attack", title: "", description: "")])"#).unwrap();
         Ok((CombatRegistry::new(vec![CombatRegistry::read("t", source)?], &blocks, &skills)?, blocks))
@@ -907,6 +1014,33 @@ mod tests {
         assert!(hit_chance(20, 0, 20, 36) < hit_chance(20, 0, 20, 0) * 0.8);
         assert!(registry(r#"(sets: [(name: "x", armour: 1.0, pieces: [(Head, "nothing")])])"#).is_err());
         assert!(registry(r#"(sets: [(name: "x", armour: 1.0, pieces: [(Head, "sword"), (Body, "sword")])])"#).is_err());
+    }
+
+    #[test]
+    fn a_shield_guards_unless_the_weapon_takes_both_hands_and_plate_dodges_short() {
+        let (combat, blocks) = registry(
+            r#"(
+                classes: [
+                    (name: "sword", style: Slash, cooldown: 0.6, guard: Some((stop: 0.35, arc: 90, perfect: 0.15))),
+                    (name: "spear", style: Stab, cooldown: 0.73, two_handed: true, guard: Some((stop: 0.35, arc: 90, perfect: 0.12))),
+                ],
+                weapons: [(item: "sword", class: "sword", max_hit: 5), (item: "spear", class: "spear", max_hit: 5)],
+                sets: [(name: "plate", weight: Heavy, armour: 1.0, pieces: [(Body, "stick")])],
+                shields: [(item: "stone", level: 5, armour: 4, guard: (stop: 0.65, arc: 150, perfect: 0.2, missiles: true))],
+                dodges: [(weight: "light", distance: 3.0, time: 0.25, safe: (0.04, 0.22), cooldown: 1.0), (weight: "heavy", distance: 2.2, time: 0.25, safe: (0.04, 0.18), cooldown: 1.5)],
+            )"#,
+        )
+        .unwrap();
+        let [sword, spear, plate, shield] = ["t:sword", "t:spear", "t:stick", "t:stone"].map(|name| blocks.id(name).unwrap());
+        let level = |_| 99;
+        let (sword, spear) = (combat.wielded(Some(sword), level), combat.wielded(Some(spear), level));
+        assert_eq!(combat.worn_slots()[shield.0 as usize], Some(Slot::Shield.index() as u8));
+        assert_eq!(combat.guard_with(&sword, Some(shield), 5).map(|g| g.stop), Some(0.65));
+        assert_eq!(combat.guard_with(&sword, Some(shield), 4).map(|g| g.stop), Some(0.35), "below its level the sword guards");
+        assert_eq!(combat.guard_with(&spear, Some(shield), 5).map(|g| g.stop), Some(0.35), "a spear takes both hands");
+        assert_eq!(combat.worn_armour([plate, shield], Style::Stab, 5), 21, "plate turns a stab by 1.2: 16.8, and the shield 4");
+        assert_eq!(combat.dodge_in([plate, shield]).distance, 2.2);
+        assert_eq!(combat.dodge_in([shield]).distance, 3.0);
     }
 
     fn sword() -> Timing {

@@ -509,7 +509,9 @@ impl Server {
         let defence = self.level(player, defence_skill);
         let [hit, amount] = combat_roll(self.tick, species.0 as u32, player as u64 ^ 0xa7);
         let (low, high) = attack.damage;
-        if hit >= creature::hit_chance(def.level, defence) {
+        // Worn armour adds to the defence roll, by the wearer's own Defence level.
+        let armour = self.content.combat.armour_of(&target.inventory.worn, attack.style, |skill| self.content.skills.level(target.skills.xp(skill)));
+        if hit >= voxmar_engine::combat::hit_chance(def.level, 0, defence, armour) {
             self.defence_xp(player, species);
             return None;
         }

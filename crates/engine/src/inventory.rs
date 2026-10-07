@@ -7,8 +7,8 @@
 //! pointer ([`CURSOR`]), [`Inventory::quick_move`] between the hotbar and the rest, and
 //! [`Inventory::stow_cursor`] when the screen closes. The crafting grid is nine more slots
 //! ([`CRAFT`]; two by two of them away from a crafting table, see `craft::SMALL`), and [`Inventory::craft`] turns what it holds into a recipe's
-//! output. Five more slots ([`WORN`]) hold the armour worn, each only the piece made for
-//! it (`combat::Slot`). The client works out which moves a gesture means; the server checks and
+//! output. Six more slots ([`WORN`]) hold the armour worn and a shield, each only the piece
+//! made for it (`combat::Slot`). The client works out which moves a gesture means; the server checks and
 //! applies each the same way.
 
 use serde::{Deserialize, Serialize};
@@ -57,9 +57,10 @@ pub fn max_stack(item: BlockId) -> u8 {
 pub const CURSOR: usize = SLOTS;
 /// The crafting grid's first slot; its nine are `CRAFT..CRAFT + 9`, row by row.
 pub const CRAFT: usize = CURSOR + 1;
-/// The first worn slot; its five are head, body, legs, hands and feet (`combat::Slot`).
+/// The first worn slot; its six are head, body, legs, hands, feet and the off-hand's
+/// shield (`combat::Slot`).
 pub const WORN: usize = CRAFT + GRID;
-pub const WORN_SLOTS: usize = 5;
+pub const WORN_SLOTS: usize = 6;
 /// The last slot number there is.
 pub const LAST: usize = WORN + WORN_SLOTS - 1;
 
