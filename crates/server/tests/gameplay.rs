@@ -1377,7 +1377,9 @@ fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
     let ticks = |c: &Client| c._server.as_ref().expect("the server").ticks();
     let asked = ticks(&client);
     client.ok("/creatures kill");
-    let fall = (falls * TICKS_PER_SECOND as f32).round() as u64;
+    // Less one: the counter is advanced after the tick's work, so loot sent in tick D is
+    // seen while ticks() reads D-1.
+    let fall = (falls * TICKS_PER_SECOND as f32).round() as u64 - 1;
     // While the server has not run a fall's length since we asked, nothing has dropped.
     while ticks(&client) < asked + fall {
         assert_eq!(client.items.len(), before, "loot came out of a body still falling, {} ticks after asking", ticks(&client) - asked);
