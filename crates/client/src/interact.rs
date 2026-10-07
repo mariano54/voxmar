@@ -401,7 +401,7 @@ fn break_and_place(
         let held = context.actor_held();
         // A ripe crop above the player's Farming level says so, and is not built on.
         if let Some(Some(Err(Rejection::Unmet(need @ Requirement::CropLevel)))) = actions.0.id("base:pick").map(valid) {
-            if let Some(words) = refusal(&world, content, &locale, hit.block, need) {
+            if let Some(words) = refusal(&context, &locale, hit.block, need) {
                 toasts.refused(words, time.elapsed_secs());
             }
             return;
