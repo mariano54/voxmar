@@ -55,13 +55,14 @@ fn start(
     time: Res<Time>,
     mut world: ResMut<ClientWorld>,
     mut world_generator: ResMut<WorldGenerator>,
+    launch: Res<crate::session::Launch>,
     mut cycle: ResMut<DayCycle>,
     mut spawn: Local<Option<ColumnPos>>,
 ) {
     world.reset(RADIUS);
     // The same generator, with the loaded content packages, makes the real and distant
     // terrain.
-    let generator = world_generator.start(SEED, world.registry.clone());
+    let generator = world_generator.start(SEED, &launch.content);
     // Searching for the spawn point takes a moment; it never changes.
     let center = *spawn.get_or_insert_with(|| ColumnPos::of_block(generator.spawn_point()));
     cycle.ticks = START_TICKS;

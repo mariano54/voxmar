@@ -13,8 +13,12 @@
 // band of the vein (`within`, 0 its foot, 1 its top), drawn by `share` where bands overlap.
 // `sample` lies on the ground over the vein, `samples` of it at most (fewer where the
 // ground is not open), so a sample always has its vein below.
+//
+// The mix (design draft 63): about 67% of veins common, 17% uncommon, 13% rare and 3%
+// very rare, counted by rarity class over many squares (the rock provinces shift it
+// locally); `veins_come_in_the_designed_mix_of_rarities` checks it.
 (
-    grid: (spacing: 112, slots: 2, chance: 0.8),
+    grid: (spacing: 112, slots: 2, chance: 0.7),
     veins: [
         // Coal in seams in the bedded rocks, shallow: the first vein most players find.
         (
@@ -184,7 +188,7 @@
         // Corundum in marble: ruby above, sapphire below.
         (
             name: "corundum",
-            weight: 30,
+            weight: 57,
             rarity: Rare,
             height: (-90, -40),
             radius: (8, 12),
@@ -201,7 +205,7 @@
         // Emeralds in a granite pegmatite, small and rich.
         (
             name: "emerald_pegmatite",
-            weight: 30,
+            weight: 57,
             rarity: Rare,
             height: (-80, -30),
             radius: (6, 10),
@@ -216,7 +220,7 @@
         // hours from one spot. More samples lie over them.
         (
             name: "iron_motherlode",
-            weight: 16,
+            weight: 30.4,
             rarity: Rare,
             height: (-112, -88),
             radius: (34, 44),
@@ -232,7 +236,7 @@
         ),
         (
             name: "copper_motherlode",
-            weight: 12,
+            weight: 22.8,
             rarity: Rare,
             height: (-112, -88),
             radius: (32, 42),
@@ -248,7 +252,7 @@
         ),
         (
             name: "coal_motherlode",
-            weight: 10,
+            weight: 19,
             rarity: Rare,
             height: (-100, -70),
             radius: (36, 46),
@@ -262,7 +266,7 @@
         // A kimberlite pipe rising from the depths, sparse with diamonds.
         (
             name: "kimberlite_pipe",
-            weight: 30,
+            weight: 57,
             rarity: Rare,
             height: (-100, -70),
             shape: Pipe,
@@ -277,7 +281,7 @@
         // A lode of aetherite near the bottom of the world, glowing in the dark.
         (
             name: "aetherite_lode",
-            weight: 40,
+            weight: 300,
             rarity: VeryRare,
             height: (-118, -100),
             radius: (6, 9),

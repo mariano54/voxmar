@@ -1345,8 +1345,44 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     client.propose("core:craft", ActionTarget::Slot(0));
     let (table, stick) = (client.content.blocks.expect("base:crafting_table"), client.content.blocks.expect("base:stick"));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == table));
-    let wait = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > wait);
+    // The first table also finishes the Crafting Table quest, whose reward (18 Engineering)
+    // comes at the next quest check: wait for it, so both grants are counted exactly.
+    client.pump_until(|c| c.quests.iter().any(|q| q.name == "base:crafting_table" && q.done));
+    client.ok("/time");
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
-    assert_eq!(client.earned[earned..], [80], "one table's Engineering, once");
+    assert_eq!(client.earned[earned..], [80, 180], "one table's Engineering, once, then the quest's reward");
+}
+
+/// A server started on a world another server holds open answers its first player: the
+/// land round spawn, with its rivers, trails and settlements, is planned once per process
+/// (`Overworld::shared`, whose sharing worldgen's `servers_on_one_world_share_its_planning`
+/// proves), so both stand their players on the same spot; the join's own wait
+/// (`SERVER_WAIT`) is the only clock on it.
+#[test]
+fn a_second_server_on_the_same_world_answers_a_join() {
+    let first = Client::join();
+    let second = Client::join();
+    assert_eq!(first.position, second.position);
+}
+
+#[test]
+fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
+    let mut client = Client::join();
+    let rabbit = client.content.creatures.find("rabbit").expect("rabbits in the content");
+    let falls = client.content.creatures.get(rabbit).def.death.drops_after();
+    client.ok("/summon rabbit 1 ~ ~ ~-2");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
+    let before = client.items.len();
+    let killed = Instant::now();
+    client.ok("/creatures kill");
+    // While it falls, nothing has dropped.
+    let early = Duration::from_secs_f32(falls * 0.6);
+    while killed.elapsed() < early {
+        assert_eq!(client.items.len(), before, "loot came out of a body still falling");
+        let until = Instant::now() + Duration::from_millis(20);
+        client.pump_until(|_| Instant::now() > until);
+    }
+    // Then its meat is on the ground.
+    client.pump_until(|c| c.items.len() > before);
+    assert!(killed.elapsed().as_secs_f32() >= falls * 0.9, "dropped after {:.2}s, before the {falls}s fall", killed.elapsed().as_secs_f32());
 }
