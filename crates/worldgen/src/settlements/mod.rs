@@ -271,6 +271,10 @@ fn lane_distance(points: &[Vec2], p: Vec2) -> f32 {
     best
 }
 
+/// How high over a building's floor the land's trees are cut back: over the tallest roof
+/// and the tallest crown.
+const PRUNE_HEIGHT: i32 = 48;
+
 /// A square of the grid: its settlement, if it has one.
 pub struct Slot(pub Option<Plan>);
 
@@ -298,10 +302,23 @@ pub struct Settlements {
     /// None where the content lacks a block every settlement needs; then there are none.
     fixed: Option<Fixed>,
     plans: Cache<IVec2, Arc<Slot>>,
+    /// The land's own tree blocks (natural leaves and logs) by block id, which no roof
+    /// lies under.
+    wild_tree: Vec<bool>,
     /// Near where a new player spawns (see `Overworld::spawn_estimate`), and the square
     /// settled for them there, if none was already within reach.
-    spawn: std::sync::OnceLock<Option<(IVec2, IVec2)>>,
+    spawn: std::sync::OnceLock<Spawn>,
     id: u64,
+    /// How many squares were planned, for tests that no square is planned twice.
+    #[cfg(test)]
+    pub(crate) planned: std::sync::atomic::AtomicUsize,
+}
+
+/// What finding the spawn's square settled: the square, and the plans made on the way,
+/// which the squares' first asks take instead of planning again.
+struct Spawn {
+    square: Option<(IVec2, IVec2)>,
+    early: std::sync::Mutex<FxHashMap<IVec2, Arc<Slot>>>,
 }
 
 impl Settlements {
@@ -313,8 +330,16 @@ impl Settlements {
             resolved: Resolved::new(def, registry),
             fixed: fixed(registry, def),
             plans: Cache::new(32 * MB),
+            wild_tree: (0..registry.len())
+                .map(|i| {
+                    let b = registry.def(BlockId(i as u16));
+                    b.has_tag("natural") && (b.render == RenderKind::Leaves || b.has_tag("log"))
+                })
+                .collect(),
             spawn: std::sync::OnceLock::new(),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            #[cfg(test)]
+            planned: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -348,11 +373,12 @@ impl Settlements {
             if self.def.styles.is_empty() || self.def.sizes.is_empty() {
                 return Arc::new(Slot(None));
             }
-            let land = world.land();
-            let spawn = *self.spawn.get_or_init(|| self.spawn_square(world, fixed));
-            let spawn = spawn.filter(|&(_, square)| square == cell).map(|(at, _)| at);
-            let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn };
-            Arc::new(Slot(plan::plan(&ctx, cell)))
+            let spawn = self.spawn.get_or_init(|| self.spawn_square(world, fixed));
+            if let Some(slot) = spawn.early.lock().unwrap_or_else(|p| p.into_inner()).remove(&cell) {
+                return slot;
+            }
+            let at = spawn.square.filter(|&(_, square)| square == cell).map(|(at, _)| at);
+            Arc::new(Slot(self.plan(world, fixed, cell, at)))
         });
         RECENT.with(|recent| {
             let mut recent = recent.borrow_mut();
@@ -406,6 +432,7 @@ impl Settlements {
         // reaches past it).
         let slot = self.slot(world, self.cell_of(origin.x, origin.z));
         let plan = slot.0.as_ref()?;
+        self.prune(plan, origin, blocks);
         let voxels = plan.voxels.get(&key)?;
         let mut top = None;
         for v in voxels {
@@ -439,6 +466,28 @@ impl Settlements {
         top
     }
 
+    /// Cuts back the land's trees over each building and `site.eaves` blocks round it:
+    /// the glade keeps their trunks `site.glade.0` blocks off, but a crown reaches further,
+    /// and one over a roof buries it. Done before the settlement's own blocks go in, so its
+    /// planted trees stand whole.
+    fn prune(&self, plan: &Plan, origin: IVec3, blocks: &mut Blocks) {
+        let eaves = self.def.site.eaves;
+        let (lo, hi) = (IVec2::new(origin.x, origin.z), IVec2::new(origin.x, origin.z) + CHUNK_SIZE - 1);
+        for b in &plan.buildings {
+            let (min, max) = ((b.min - eaves).max(lo), (b.max + eaves).min(hi));
+            for z in min.y..=max.y {
+                for x in min.x..=max.x {
+                    for y in b.floor + 1..b.floor + PRUNE_HEIGHT {
+                        let p = IVec3::new(x, y, z);
+                        if blocks.contains(p) && self.wild_tree[blocks.get(p).0 as usize] {
+                            blocks.set(p, BlockId::AIR);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// The settlements whose squares lie within `radius` blocks of `centre`.
     pub fn near(&self, world: &Overworld, centre: IVec2, radius: i32) -> Vec<Arc<Slot>> {
         let (first, last) = (self.cell_of(centre.x - radius, centre.y - radius), self.cell_of(centre.x + radius, centre.y + radius));
@@ -455,20 +504,30 @@ impl Settlements {
         cells.into_iter().map(|c| self.slot(world, c)).filter(|slot| slot.0.is_some()).collect()
     }
 
-    /// Whether any settlement's gate lies within `reach` blocks of the box from `min` to
-    /// `max`.
+    /// Plans square `cell`, settled near `spawn` if it is the spawn's.
+    fn plan(&self, world: &Overworld, fixed: &Fixed, cell: IVec2, spawn: Option<IVec2>) -> Option<Plan> {
+        #[cfg(test)]
+        self.planned.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let land = world.land();
+        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn };
+        plan::plan(&ctx, cell)
+    }
+
     /// Where a new player will spawn, and the square settled for them within
     /// `spawn_settlement_within` of it: none where a square near is settled anyway within
     /// reach; else the nearest square that can be, trying the squares in reach nearest
     /// first. Planned once per world, before any square, so every square's plan is the
-    /// same whichever is asked for first.
-    fn spawn_square(&self, world: &Overworld, fixed: &Fixed) -> Option<(IVec2, IVec2)> {
+    /// same whichever is asked for first. The squares in reach are planned side by side,
+    /// and each plan made here that stands is kept for the square's first ask, so none is
+    /// planned twice.
+    fn spawn_square(&self, world: &Overworld, fixed: &Fixed) -> Spawn {
+        let mut spawn = Spawn { square: None, early: std::sync::Mutex::new(FxHashMap::default()) };
         let within = self.def.rules.spawn_settlement_within;
         if within <= 0 {
-            return None;
+            return spawn;
         }
         let at = world.spawn_estimate();
-        let (grid, land) = (&self.def.grid, world.land());
+        let grid = &self.def.grid;
         let inner = |cell: IVec2| (cell * grid.spacing + grid.margin, (cell + 1) * grid.spacing - grid.margin);
         let reach = |cell: IVec2| {
             let (lo, hi) = inner(cell);
@@ -477,15 +536,30 @@ impl Settlements {
         let (first, last) = (self.cell_of(at.x - within, at.y - within), self.cell_of(at.x + within, at.y + within));
         let mut cells: Vec<IVec2> = (first.y..=last.y).flat_map(|z| (first.x..=last.x).map(move |x| IVec2::new(x, z))).filter(|&c| reach(c) <= within as f32).collect();
         cells.sort_by(|a, b| reach(*a).total_cmp(&reach(*b)).then((a.x, a.y).cmp(&(b.x, b.y))));
-        let plan = |cell: IVec2, spawn: Option<IVec2>| {
-            let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn };
-            plan::plan(&ctx, cell)
-        };
+        // Each square as any other would plan it, side by side.
+        let made = std::sync::Mutex::new(FxHashMap::default());
+        crate::parallel::for_each(&cells, |&c| {
+            let plan = self.plan(world, fixed, c, None);
+            made.lock().unwrap_or_else(|p| p.into_inner()).insert(c, plan);
+        });
+        let mut made = made.into_inner().unwrap_or_else(|p| p.into_inner());
         let near = |p: &Plan| p.centre.as_vec2().distance(at.as_vec2()) <= within as f32;
-        if cells.iter().any(|&c| plan(c, None).is_some_and(|p| near(&p))) {
-            return None;
+        if !cells.iter().any(|c| made[c].as_ref().is_some_and(near)) {
+            // None near: the nearest square that can be settled is, near the spawn. Each
+            // is tried side by side, as on a coast under mountains none may be.
+            let forced = std::sync::Mutex::new(FxHashMap::default());
+            crate::parallel::for_each(&cells, |&c| {
+                let plan = self.plan(world, fixed, c, Some(at));
+                forced.lock().unwrap_or_else(|p| p.into_inner()).insert(c, plan);
+            });
+            let mut forced = forced.into_inner().unwrap_or_else(|p| p.into_inner());
+            if let Some(&c) = cells.iter().find(|c| forced[c].is_some()) {
+                made.insert(c, forced.remove(&c).flatten());
+                spawn.square = Some((at, c));
+            }
         }
-        cells.into_iter().find(|&c| plan(c, Some(at)).is_some()).map(|c| (at, c))
+        spawn.early = std::sync::Mutex::new(made.into_iter().map(|(c, p)| (c, Arc::new(Slot(p)))).collect());
+        spawn
     }
 
     /// Whether (x, z) lies within a settlement's bounds, a few blocks round included.
@@ -494,6 +568,8 @@ impl Settlements {
         self.slot(world, self.cell_of(x, z)).0.as_ref().is_some_and(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all())
     }
 
+    /// Whether any settlement's gate lies within `reach` blocks of the box from `min` to
+    /// `max`.
     pub fn any_near(&self, world: &Overworld, min: IVec2, max: IVec2, reach: i32) -> bool {
         let centre = (min + max) / 2;
         let radius = (max - min).max_element() / 2 + reach;

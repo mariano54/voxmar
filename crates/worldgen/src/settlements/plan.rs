@@ -509,6 +509,73 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     site(ctx, cell, spawn).into_iter().find_map(|(centre, fresh)| lay_out(ctx, cell, centre, fresh, rng.clone()))
 }
 
+/// The stream names are drawn from, apart from the rest of the plan so a square's
+/// neighbours can draw the names it may take without planning it.
+const NAMING: u64 = 0x4a3e_5eed;
+
+/// How many names each square offers to take; its neighbours keep off all of them.
+const NAME_OFFERS: u32 = 3;
+
+/// The `k`th name square `cell` may take from names list `list`: a first part and a last
+/// (never "Brookbrook"), or a hamlet's first part and a small word.
+fn offered_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, k: u32, small: bool) -> (String, String) {
+    let names = &def.names[list];
+    let mut rng = Rng::new(seed, NAMING + 1 + (list as u64) * 1024 + k as u64, cell.x, cell.y);
+    let first = &names.first[rng.below(names.first.len() as u32) as usize];
+    if small {
+        let word = &names.small[rng.below(names.small.len() as u32) as usize];
+        return (format!("{} {}", first.0, word.0), format!("{}・{}", first.1, word.1));
+    }
+    let mut last = &names.last[rng.below(names.last.len() as u32) as usize];
+    for _ in 0..4 {
+        let (a, b) = (first.0.to_lowercase(), last.0.to_lowercase());
+        if !a.contains(&b) && !b.contains(&a) {
+            break;
+        }
+        last = &names.last[rng.below(names.last.len() as u32) as usize];
+    }
+    (format!("{}{}", first.0, last.0), join_kana(&def.kana, first, last))
+}
+
+/// The name of square `cell`'s settlement, drawn from names list `list`: the first it
+/// offers that no square within `rules.names_apart` blocks offers too. Each square takes
+/// one of its own offers and keeps off its neighbours', so no two near share a name, and
+/// none needs another planned to know it. Only where every offer is taken (rare) does it
+/// look further, still keeping off its neighbours' offers.
+pub(super) fn unique_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, small: bool) -> (String, String) {
+    let (grid, apart) = (&def.grid, def.rules.names_apart);
+    let first = offered_name(def, seed, cell, list, 0, small);
+    if apart <= 0 {
+        return first;
+    }
+    let inner = |c: IVec2| (c * grid.spacing + grid.margin, (c + 1) * grid.spacing - grid.margin - 1);
+    let (lo, hi) = inner(cell);
+    let reach = apart.div_euclid(grid.spacing) + 1;
+    let mut taken = rustc_hash::FxHashSet::default();
+    for dz in -reach..=reach {
+        for dx in -reach..=reach {
+            let other = cell + IVec2::new(dx, dz);
+            let (olo, ohi) = inner(other);
+            let gap = (olo - hi).max(lo - ohi).max(IVec2::ZERO).as_vec2().length();
+            // Squares too far, and those whose roll holds no settlement (see `plan`).
+            if other == cell || gap > apart as f32 || !Rng::new(seed, 0x5e771e, other.x, other.y).chance(grid.chance) {
+                continue;
+            }
+            for l in 0..def.names.len() {
+                for k in 0..NAME_OFFERS {
+                    for small in [false, true] {
+                        if small && def.names[l].small.is_empty() {
+                            continue;
+                        }
+                        taken.insert(offered_name(def, seed, other, l, k, small).0);
+                    }
+                }
+            }
+        }
+    }
+    (0..NAME_OFFERS + 32).map(|k| offered_name(def, seed, cell, list, k, small)).find(|n| !taken.contains(&n.0)).unwrap_or(first)
+}
+
 /// Lays out the settlement of the square `cell` round `centre`, if it can.
 fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng) -> Option<Plan> {
     let def = ctx.def;
@@ -546,23 +613,9 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng) -> 
     let kit = kit(ctx, style, &levers, size.crop_level, &mut rng);
     let names = def.names.iter().find(|n| tagged(&n.biome)).unwrap_or(&def.names[0]);
     let name = {
-        let first = &names.first[rng.below(names.first.len() as u32) as usize];
-        let small = size_index == 0 && !names.small.is_empty() && rng.chance(names.small_chance);
-        let name = if small {
-            let word = &names.small[rng.below(names.small.len() as u32) as usize];
-            (format!("{} {}", first.0, word.0), format!("{}・{}", first.1, word.1))
-        } else {
-            // Never "Brookbrook".
-            let mut last = &names.last[rng.below(names.last.len() as u32) as usize];
-            for _ in 0..4 {
-                let (a, b) = (first.0.to_lowercase(), last.0.to_lowercase());
-                if !a.contains(&b) && !b.contains(&a) {
-                    break;
-                }
-                last = &names.last[rng.below(names.last.len() as u32) as usize];
-            }
-            (format!("{}{}", first.0, last.0), join_kana(&def.kana, first, last))
-        };
+        let small = size_index == 0 && !names.small.is_empty() && Rng::new(ctx.seed, NAMING, cell.x, cell.y).chance(names.small_chance);
+        let list = def.names.iter().position(|n| std::ptr::eq(n, names)).unwrap_or(0);
+        let name = unique_name(def, ctx.seed, cell, list, small);
         // Now and then a word before it, leaning on the levers ("Old" where it is old).
         let prefixes: Vec<(usize, f32)> = names.prefixes.iter().enumerate().map(|(i, p)| (i, p.3.weigh(p.2, &levers))).collect();
         match (rng.chance(names.prefix_chance), pick(&mut rng, &prefixes)) {
