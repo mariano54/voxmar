@@ -15,7 +15,11 @@ N = 32
 
 # Materials: shade letters, darkest first. Each face picks from these by name.
 MATERIALS = {
-    'wood': ['#3e2a16', '#5a3e22', '#76552e', '#93703c', '#ad884c'],
+    # Wood is HD's own oak (wood.ron's `oak_wood`) and dark oak for seams, wells and the
+    # bands of machines that hold no metal, through palette slots, so machine wood matches
+    # the planks it is made from.
+    'wood': ['wood:0', 'wood:1', 'wood:2', 'wood:3', 'wood:4', 'wood:5'],
+    'dark': ['dark:0', 'dark:1', 'dark:2', 'dark:3', 'dark:4', 'dark:5'],
     'bronze': ['#5a3410', '#8a5420', '#b87a34', '#dca456', '#f4cc80'],
     'iron': ['#2a2c32', '#464a52', '#62676f', '#80858e', '#a2a7b0', '#c8ccd4'],
     'steel': ['#1c1e24', '#30333b', '#444852', '#5a5f6a', '#767c88', '#9aa0ac'],
@@ -42,12 +46,15 @@ MATERIALS = {
     'glint': ['#fff6e0'],
 }
 TIERS = {'lv': 'tier_lv', 'mv': 'tier_mv', 'hv': 'tier_hv'}
+SLOTS = {'wood': 'oak_wood', 'dark': 'dark_oak_wood'}
 
 
 class Face:
-    def __init__(self):
+    def __init__(self, base=None):
         self.px = [[None] * N for _ in range(N)]
         self.palettes = {}
+        # A face drawn over another texture (`block/<base>`): only what differs is drawn.
+        self.base = base
 
     def tiers(self, tier, high=None):
         self.palettes['tier'] = TIERS[tier]
@@ -109,14 +116,22 @@ class Face:
                 else:
                     self.put(x + w, y, mat, shade)
 
-    def grain(self, mat, seed, chance=0.12, shift=-1):
-        """Darker or lighter texels scattered over what is already `mat`."""
+    def streaks(self, seed, count=40, vertical=False):
+        """Wood grain as HD's planks draw it: streaks 3-8 texels long along the boards, a
+        shade darker or lighter, each kept to the board it starts on. Never single texels:
+        the HD guide forbids per-texel grain."""
         r = random.Random(seed)
-        for y in range(N):
-            for x in range(N):
-                p = self.px[y][x]
-                if p and p[0] == mat and r.random() < chance:
-                    self.put(x, y, mat, p[1] + (shift if r.random() < 0.7 else -shift))
+        for _ in range(count):
+            x, y = r.randrange(N), r.randrange(N)
+            start = self.get(x, y)
+            if not start or start[0] != 'wood':
+                continue
+            shift = -1 if r.random() < 0.65 else 1
+            for i in range(r.randint(3, 8)):
+                xx, yy = (x, y + i) if vertical else (x + i, y)
+                if self.get(xx, yy) != start:
+                    break
+                self.put(xx, yy, 'wood', start[1] + shift)
 
     def rivets(self, points, mat='iron'):
         for x, y in points:
@@ -149,10 +164,13 @@ class Face:
             rows.append(row)
         leg = ", ".join(f"'{c}': \"{MATERIALS[m][s]}\"" for (m, s), c in legend.items())
         body = ",\n".join(f'            "{r}"' for r in rows)
+        palettes = dict(self.palettes)
+        palettes.update({m: SLOTS[m] for (m, _) in legend if m in SLOTS})
         pal = ''
-        if self.palettes:
-            pal = ', palettes: {' + ', '.join(f'"{k}": "{v}"' for k, v in self.palettes.items()) + '}'
-        return f"(size: (32, 32){pal}, layers: [Grid(legend: {{{leg}}}, rows: [\n{body},\n        ])])"
+        if palettes:
+            pal = ', palettes: {' + ', '.join(f'"{k}": "{v}"' for k, v in palettes.items()) + '}'
+        head = f'base: "block/{self.base}"' if self.base else 'size: (32, 32)'
+        return f"({head}{pal}, layers: [Grid(legend: {{{leg}}}, rows: [\n{body},\n        ])])"
 
 
 # Shared bodies ----------------------------------------------------------------------------
@@ -162,7 +180,6 @@ def iron_casing(f=None, seed=1):
     f.rect(0, 0, 31, 31, 'iron', 2)
     f.outline(0, 0, 31, 31, 'iron', 0)
     f.rect(2, 2, 29, 29, 'iron', 3)
-    f.grain('iron', seed, 0.05)
     f.rivets([(2, 2), (28, 2), (2, 28), (28, 28), (15, 2), (15, 28), (2, 15), (28, 15)])
     return f
 
@@ -175,41 +192,58 @@ def hv_casing(f=None, seed=2):
     for x in range(32):
         for y in (0, 1, 2, 29, 30, 31):
             f.put(x, y, 'hazard', 0 if ((x + y) // 3) % 2 else 1)
-    f.grain('steel', seed, 0.05)
     f.rivets([(3, 5), (27, 5), (3, 25), (27, 25)], 'steel')
     return f
 
 
-def wood_frame(f=None, seed=3):
+def wood_frame(f=None, seed=3, band='bronze'):
+    """Oak boards in a frame of `band`: bronze for the Bronze-age machines that are made with
+    bronze, iron for those with iron, dark oak for those of wood alone, so bronze stays a
+    Bronze-age marker."""
     f = f or Face()
     for y in range(N):
         board = y // 8
         for x in range(N):
-            s = 2 + (board % 2) - (1 if y % 8 == 7 else 0) + (1 if y % 8 == 0 else 0)
-            f.put(x, y, 'wood', s)
-    f.grain('wood', seed, 0.15)
+            if y % 8 == 7:
+                f.put(x, y, 'dark', 2)
+            else:
+                f.put(x, y, 'wood', 2 + (board % 2) + (1 if y % 8 == 0 else 0))
+    f.streaks(seed, 50)
+    lit, shade = {'bronze': (3, 1), 'iron': (4, 2), 'dark': (3, 1)}[band]
     for x in range(N):
         for y in (0, 1, 30, 31):
-            f.put(x, y, 'bronze', 3 if y in (0, 30) else 1)
+            f.put(x, y, band, lit if y in (0, 30) else shade)
     for y in range(N):
         for x in (0, 1, 30, 31):
-            f.put(x, y, 'bronze', 3 if x in (0, 30) else 1)
-    f.rivets([(3, 3), (27, 3), (3, 27), (27, 27)], 'bronze')
+            f.put(x, y, band, lit if x in (0, 30) else shade)
+    f.rivets([(3, 3), (27, 3), (3, 27), (27, 27)], 'bronze' if band == 'bronze' else 'iron')
     return f
 
 
 def kiln(f=None, seed=4):
+    """Kiln bricks that tile: 8-row courses of bricks 16 wide, each course offset by 8 (default's
+    4-row courses of 8-wide bricks, drawn at 32), each brick its own tone, lit along its
+    top and left, shadowed along its bottom, a dark mortar line between."""
     f = f or Face()
+    r = random.Random(seed)
+    tone = {}
     for y in range(N):
-        course = y // 6
-        off = 4 if course % 2 else 0
+        course = y // 8
+        off = 8 if course % 2 else 0
         for x in range(N):
-            mortar = y % 6 == 5 or (x + off) % 12 == 11
-            if mortar:
-                f.put(x, y, 'brick', 0)
-            else:
-                v = random.Random(seed * 97 + course * 13 + (x + off) // 12).randint(2, 3)
-                f.put(x, y, 'brick', v + (1 if y % 6 == 0 else 0))
+            u, v = (x + off) % 16, y % 8
+            if v == 0 or u == 15:
+                f.put(x, y, 'brick', 1)
+                continue
+            key = (course, ((x + off) // 16) % 2)
+            t = tone.setdefault(key, r.choice((2, 3, 3)))
+            f.put(x, y, 'brick', t + 1 if v == 1 or u == 0 else t - 1 if v == 7 else t)
+    # A few chips, 2-3 texels, in the brick faces.
+    for _ in range(6):
+        x, y = r.randrange(2, 29), r.randrange(2, 30)
+        if y % 8 in (3, 4, 5) and (x + (8 if (y // 8) % 2 else 0)) % 16 in range(2, 12):
+            for i in range(r.randint(2, 3)):
+                f.put(x + i, y, 'brick', 1)
     return f
 
 
@@ -255,7 +289,7 @@ def cells(f, x0, y0, n, w, h, mat, charge):
 
 def wheel(f, cx, cy, r, spokes, mat='wood', rim='bronze', paddles=False):
     # A dark well behind the wheel, so spokes read against the frame.
-    f.disc(cx, cy, r - 1.5, mat, 0)
+    f.disc(cx, cy, r - 1.5, 'dark', 0)
     for y in range(N):
         for x in range(N):
             d = math.hypot(x + 0.5 - cx, y + 0.5 - cy)
@@ -310,7 +344,7 @@ def _():
 @face('windmill_side')
 def _():
     f = wood_frame()
-    f.disc(16, 16, 14.5, 'wood', 0)
+    f.disc(16, 16, 14.5, 'dark', 0)
     for a in range(4):
         ang = a * math.pi / 2 + math.pi / 4
         ux, uy = math.cos(ang), math.sin(ang)
@@ -339,14 +373,14 @@ def _():
 
 @face('treadwheel_side')
 def _():
-    f = wood_frame()
+    f = wood_frame(band='dark')
     wheel(f, 16, 16, 14, 12)
     return f
 
 
 @face('treadwheel_top')
 def _():
-    f = wood_frame()
+    f = wood_frame(band='dark')
     for x in range(3, 29, 3):
         f.rect(x, 4, x + 1, 27, 'wood', 3)
     return f
@@ -371,9 +405,16 @@ def _():
     return f
 
 
+@face('kiln_bricks')
+def _():
+    # The furnaces are built of these (bloomery, coke oven and blast furnace below draw only
+    # their openings over them), and so are default's crucible and pit kiln.
+    return kiln(seed=5)
+
+
 @face('bloomery_side')
 def _():
-    f = kiln(seed=5)
+    f = Face(base='kiln_bricks')
     for y in range(14, 30):
         for x in range(9, 23):
             if (x - 15.5) ** 2 / 49 + (y - 30) ** 2 / 256 <= 1:
@@ -384,14 +425,14 @@ def _():
 
 @face('bellows_top')
 def _():
-    f = wood_frame()
+    f = wood_frame(band='dark')
     f.disc(16, 16, 4, 'iron', 2, ring=0)
     return f
 
 
 @face('coke_oven_side')
 def _():
-    f = kiln(seed=6)
+    f = Face(base='kiln_bricks')
     f.rect(10, 12, 21, 28, 'iron', 2)
     window(f, 12, 18, 19, 25, 'glow')
     f.rect(10, 12, 21, 14, 'iron', 4)
@@ -400,7 +441,7 @@ def _():
 
 @face('blast_furnace_side')
 def _():
-    f = kiln(seed=7)
+    f = Face(base='kiln_bricks')
     for y in range(18, 30):
         for x in range(10, 22):
             f.put(x, y, 'glow', 4 - (y - 18) // 3)
@@ -412,7 +453,7 @@ def _():
 
 @face('sawmill_side')
 def _():
-    f = wood_frame()
+    f = wood_frame(band='iron')
     f.disc(16, 16, 11, 'iron', 4, ring=2)
     for k in range(24):
         a = k * 2 * math.pi / 24
@@ -423,21 +464,21 @@ def _():
 
 @face('sawmill_top')
 def _():
-    f = wood_frame()
+    f = wood_frame(band='iron')
     f.rect(15, 2, 16, 29, 'iron', 4, bevel=False)
     return f
 
 
 @face('sawmill_bottom')
 def _():
-    return wood_frame(seed=8)
+    return wood_frame(seed=8, band='iron')
 
 
 @face('hopper_side')
 def _():
     # Planks only (recipes_machines.ron), so oak bound in bronze like the chest: a funnel of
     # darker boards narrowing to the spout, lit along its left slope.
-    f = wood_frame(seed=9)
+    f = wood_frame(seed=9, band='dark')
     for y in range(4, 28):
         half = 12 - (y - 4) // 2
         for x in range(16 - half, 16 + half):
@@ -445,13 +486,13 @@ def _():
             f.put(x, y, 'wood', 4 if edge else 1 if x < 16 else 0)
         for x in (16 - half - 1, 16 + half):
             f.put(x, y, 'wood', 0)
-    f.rivets([(15, 25)], 'bronze')
+    f.rivets([(15, 25)])
     return f
 
 
 @face('hopper_top')
 def _():
-    f = wood_frame(seed=10)
+    f = wood_frame(seed=10, band='dark')
     f.rect(5, 5, 26, 26, 'wood', 1, bevel=False)
     f.outline(5, 5, 26, 26, 'wood', 0)
     for i in range(5, 12):
@@ -462,7 +503,7 @@ def _():
 
 @face('hopper_bottom')
 def _():
-    f = wood_frame(seed=11)
+    f = wood_frame(seed=11, band='dark')
     f.disc(16, 16, 5, 'wood', 1, ring=0)
     f.disc(16, 16, 3, 'rubber', 0)
     return f
@@ -470,7 +511,7 @@ def _():
 
 @face('chest_side')
 def _():
-    f = wood_frame(seed=12)
+    f = wood_frame(seed=12, band='dark')
     f.rect(13, 10, 18, 17, 'iron', 4)
     f.rect(15, 13, 16, 15, 'rubber', 0, bevel=False)
     return f
@@ -478,7 +519,7 @@ def _():
 
 @face('chest_top')
 def _():
-    f = wood_frame(seed=13)
+    f = wood_frame(seed=13, band='dark')
     for x in range(N):
         f.put(x, 15, 'bronze', 1)
         f.put(x, 16, 'bronze', 3)
@@ -691,10 +732,10 @@ def _():
     for y in range(N):
         for x in range(N):
             f.put(x, y, 'wood', 0 if y in (0, 31) else 4 if y < 4 else 3 if y < 12 else 2 if y < 24 else 1)
-    f.grain('wood', 9, 0.18)
+    f.streaks(9, 60)
     for x0 in (4, 25):
-        f.rect(x0, 0, x0 + 2, 31, 'bronze', 2)
-        f.rivets([(x0 + 1, 6), (x0 + 1, 24)], 'bronze')
+        f.rect(x0, 0, x0 + 2, 31, 'dark', 2)
+        f.rivets([(x0 + 1, 6), (x0 + 1, 24)], 'dark')
     return f
 
 
@@ -706,10 +747,8 @@ def _():
             d = math.hypot(x + 0.5 - 16, y + 0.5 - 16)
             f.put(x, y, 'wood', 3 if int(d) % 4 < 2 else 2)
     f.outline(0, 0, 31, 31, 'wood', 0)
-    f.grain('wood', 19, 0.08)
-    f.rect(11, 11, 20, 20, 'bronze', 3)
+    f.rect(11, 11, 20, 20, 'dark', 3)
     f.rect(14, 14, 17, 17, 'rubber', 0, bevel=False)
-    f.rivets([(12, 12), (18, 12), (12, 18), (18, 18)], 'bronze')
     return f
 
 
@@ -725,7 +764,7 @@ def _():
                 f.put(x, y, 'wood', 1 if fold else 0)
             else:
                 f.put(x, y, 'leather', 3 if fold == 0 else 2 if fold == 1 else 1)
-    f.rivets([(3, 3), (28, 3), (3, 27), (28, 27)], 'bronze')
+    f.rivets([(3, 3), (28, 3), (3, 27), (28, 27)])
     return f
 
 
@@ -736,14 +775,17 @@ def _():
     f = Face()
     for y in range(N):
         for x in range(N):
-            f.put(x, y, 'wood', 2 + (y // 7) % 2 - (1 if y % 7 == 6 else 0))
-    f.grain('wood', 29, 0.15)
+            if y % 7 == 6:
+                f.put(x, y, 'dark', 2)
+            else:
+                f.put(x, y, 'wood', 2 + (y // 7) % 2)
+    f.streaks(29, 50)
     f.rect(0, 0, 31, 3, 'wood', 4)
-    f.rect(1, 4, 30, 9, 'wood', 0, bevel=False)
+    f.rect(1, 4, 30, 9, 'dark', 0, bevel=False)
     for x0 in (3, 26):
         f.rect(x0, 10, x0 + 2, 31, 'wood', 3)
         f.rivets([(x0 + 1, 13), (x0 + 1, 27)])
-    f.outline(0, 0, 31, 31, 'wood', 0)
+    f.outline(0, 0, 31, 31, 'dark', 1)
     return f
 
 
@@ -753,15 +795,15 @@ def _():
     f = Face()
     for y in range(N):
         for x in range(N):
-            f.put(x, y, 'wood', 3 if (x // 8) % 2 else 2)
-    f.grain('wood', 30, 0.15)
+            f.put(x, y, 'dark', 2) if x % 8 == 7 else f.put(x, y, 'wood', 3 if (x // 8) % 2 else 2)
+    f.streaks(30, 40, vertical=True)
     for y in range(4, 24):
         half = 11 - max(0, y - 14)
         for x in range(16 - half, 16 + half):
             f.put(x, y, 'rubber', 1 if y < 7 else 0)
         f.put(16 - half - 1, y, 'wood', 4)
-        f.put(16 + half, y, 'wood', 0)
-    f.outline(0, 0, 31, 31, 'wood', 0)
+        f.put(16 + half, y, 'dark', 2)
+    f.outline(0, 0, 31, 31, 'dark', 1)
     f.rivets([(3, 27), (27, 27), (3, 3), (27, 3)])
     return f
 
@@ -773,7 +815,7 @@ def _():
     f.outline(0, 0, 31, 31, 'iron', 0)
     for x in range(N):
         for y in range(0, 5):
-            f.put(x, y, 'rubber', 3 if y == 0 else 2 if x % 4 < 2 else 1)
+            f.put(x, y, 'leather', 3 if y == 0 else 2 if x % 4 < 2 else 1)
     f.rect(1, 5, 30, 18, 'iron', 1, bevel=False)
     for cx in (5, 16, 27):
         f.disc(cx, 11, 4.6, 'iron', 4, ring=2)
@@ -786,7 +828,7 @@ def _():
 @face('conveyor_end')
 def _():
     f = iron_casing(seed=31)
-    f.rect(1, 1, 30, 5, 'rubber', 2)
+    f.rect(1, 1, 30, 5, 'leather', 2)
     f.disc(16, 15, 6, 'iron', 4, ring=2)
     f.disc(16, 15, 2, 'iron', 1)
     return f
@@ -798,7 +840,6 @@ def _():
     for y in range(N):
         for x in range(N):
             f.put(x, y, 'copper', 0 if y in (0, 31) else 4 if y < 5 else 3 if y < 12 else 2 if y < 24 else 1)
-    f.grain('copper', 32, 0.05)
     for x0 in (0, 28):
         f.rect(x0, 0, x0 + 3, 31, 'iron', 3)
         f.rivets([(x0 + 1, 4), (x0 + 1, 14), (x0 + 1, 25)])
