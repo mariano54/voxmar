@@ -78,6 +78,11 @@ fn clipped(world: &World, parents: &mut QueryState<&ChildOf>, boxes: &mut QueryS
     (seen.width() > 0.0 && seen.height() > 0.0).then_some(seen)
 }
 
+/// A text drawn only to set off another (the ring round a stack count), which stands where
+/// that one does: the check leaves it out.
+#[derive(Component)]
+pub struct Decoration;
+
 /// Every visible text that does not fit, each once (against the first box it spills from,
 /// its own node first).
 pub fn find(world: &mut World) -> Vec<Spill> {
@@ -85,7 +90,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
     // pixels can move an edge by more than a unit.
     let units_per_pixel = world.query::<&ComputedNode>().iter(world).map(ComputedNode::inverse_scale_factor).fold(1.0f32, f32::max);
     let slack = (SLACK * units_per_pixel).max(SLACK);
-    let mut texts = world.query::<(Entity, &Text, &TextLayoutInfo, &ComputedNode, &UiGlobalTransform, &InheritedVisibility)>();
+    let mut texts = world.query_filtered::<(Entity, &Text, &TextLayoutInfo, &ComputedNode, &UiGlobalTransform, &InheritedVisibility), Without<Decoration>>();
     let mut boxes = world.query::<Boxes>();
     let mut parents = world.query::<&ChildOf>();
     let mut found = Vec::new();
