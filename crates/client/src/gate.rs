@@ -3067,7 +3067,7 @@ const CREATURE_DROP: &str = "base:lumen_slime";
 
 /// A lumen snail and a few grazers are summoned on open test ground: they must reach the
 /// client and draw, and the snail, struck with left clicks as a player would, must die
-/// and drop its slime, which walking over it picks up.
+/// and drop its slime once its body has fallen, which walking to it picks up.
 fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let species = world.resource::<Launch>().content.creatures.find(CREATURE);
     let Some(species) = species else {
@@ -3237,20 +3237,33 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.check("creature falls", Err("its body never finished falling".into()));
                 }
             }
-            // Walk over where it died, as a player picks up loot.
+            // Walk to the slime, as a player picks up loot. It comes out only once the body
+            // has fallen (a second of the server's time after the kill, later on a server
+            // running behind), popped a little way off where it died: until it shows, the
+            // player walks over that spot, then to where it lies.
             let feet = world.resource::<LocalPlayer>().position;
-            let close = feet.xz().distance(gate.quarry.xz()) < 0.4;
+            let slime = world.resource::<ClientWorld>().registry.id(CREATURE_DROP);
+            let quarry = gate.quarry;
+            let lying: Vec<Vec3> = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, at)| Some(stack.item) == slime && at.distance(quarry) < 6.0).map(|(_, _, at)| at).collect();
+            let to = lying.iter().copied().min_by(|a, b| a.distance(feet).total_cmp(&b.distance(feet))).unwrap_or(quarry);
+            let close = feet.xz().distance(to.xz()) < 0.4;
             key(world, KeyCode::KeyW, !close);
             if !close {
-                aim_at(world, gate.quarry + Vec3::Y * 1.6);
+                aim_at(world, to + Vec3::Y * 1.6);
             }
+            // Picking up is the server's work: waited on by its clock.
             let count = item_count(world, CREATURE_DROP);
             if count > gate.count_before || gate.server_in_phase() > 8.0 {
                 key(world, KeyCode::KeyW, false);
                 let result = if count > gate.count_before {
                     Ok(format!("picked up {} {CREATURE_DROP}", count - gate.count_before))
                 } else {
-                    Err(format!("no {CREATURE_DROP} picked up after the kill"))
+                    let room = slime.map_or(0, |item| world.resource::<LocalPlayer>().inventory.room_for(item, 1));
+                    let lying: Vec<String> = lying.iter().map(|at| format!("{:.1} blocks off", at.distance(feet))).collect();
+                    Err(format!(
+                        "no {CREATURE_DROP} picked up in 8 server s ({in_phase:.1} s) after the kill: slime lying near where it died {lying:?}, the player {:.1} blocks from that spot, room for {room}",
+                        feet.xz().distance(quarry.xz())
+                    ))
                 };
                 gate.check("creature drops", result);
                 gate.next(Step::Weapon, now);
