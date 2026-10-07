@@ -370,7 +370,18 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
     let pitch = spec.pitch.max(1);
     let Foot { x0, z0, w, d, .. } = *foot;
     let flat = shape == Roof::Flat;
-    let roofed = |x: i32, z: i32| if flat { foot.inside(x, z) } else { (-1..=1).any(|dz| (-1..=1).any(|dx| foot.inside(x + dx, z + dz))) };
+    // Eaves one column out, but an A-frame's timber ends stand flush with its roof.
+    let a_frame = foot.form == Form::AFrame;
+    let roofed = |x: i32, z: i32| {
+        if flat {
+            foot.inside(x, z)
+        } else if a_frame {
+            let (along, across) = if ridge_x { (x - x0, z) } else { (z - z0, x) };
+            along >= 0 && along < if ridge_x { w } else { d } && (-1..=1).any(|o| if ridge_x { foot.inside(x, across + o) } else { foot.inside(across + o, z) })
+        } else {
+            (-1..=1).any(|dz| (-1..=1).any(|dx| foot.inside(x + dx, z + dz)))
+        }
+    };
     let (span, run) = if ridge_x { (d, w) } else { (w, d) };
     // Hipped: the steps in from the nearest eave.
     let hip = |x: i32, z: i32| -> i32 {
@@ -593,6 +604,13 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
         for x in 0..w {
             pen.set(x, lift + spec.wall + 1, -1, canopy);
             pen.set(x, lift + spec.wall, -2, canopy);
+        }
+        // Posts at its corners carry the awning's outer edge.
+        for x in [0, w - 1] {
+            for y in lift + 1..lift + spec.wall {
+                pen.set(x, y, -2, mats.frame);
+            }
+            pen.put(x, lift, -2, Put::Down(mats.frame));
         }
     }
 

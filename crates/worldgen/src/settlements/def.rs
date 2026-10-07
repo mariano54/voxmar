@@ -782,6 +782,9 @@ struct HouseFile {
     /// The sizes (by name) that build it; all when empty.
     #[serde(default)]
     sizes: Vec<String>,
+    /// Styles it is never built in.
+    #[serde(default)]
+    not_in: Vec<String>,
     /// The most of it one settlement builds.
     #[serde(default)]
     most: Option<u32>,
@@ -1012,6 +1015,7 @@ pub struct HouseDef {
     pub always: Vec<Extra>,
     pub roofs: Vec<(Roof, f32)>,
     pub sizes: Vec<String>,
+    pub not_in: Vec<String>,
     pub most: Option<u32>,
     pub stilts: Option<u32>,
     pub water: bool,
@@ -1244,6 +1248,7 @@ impl SettlementsDef {
                 always: h.always,
                 roofs: h.roofs,
                 sizes: h.sizes,
+                not_in: h.not_in,
                 most: h.most,
                 stilts: h.stilts,
                 water: h.water,
@@ -1408,6 +1413,9 @@ impl SettlementsDef {
             }
             if h.sizes.iter().any(|s| !self.sizes.iter().any(|z| z.name == *s)) {
                 return fail(format!("house `{}` names a size there is none of", h.name));
+            }
+            if h.not_in.iter().any(|s| !self.styles.iter().any(|z| z.name == *s)) {
+                return fail(format!("house `{}` is kept out of a style there is none of", h.name));
             }
         }
         for p in &self.props {

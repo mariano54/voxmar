@@ -61,6 +61,34 @@ fn write_ppm(path: &str, w: i32, h: i32, image: &[[u8; 3]]) {
     std::fs::write(path, out).unwrap();
 }
 
+/// The pictures at `paths` (as `write_ppm` writes them) side by side, bottoms lined up,
+/// to `out`; the pieces are removed.
+fn side_by_side(paths: &[String], out: &str) {
+    let read = |path: &String| {
+        let bytes = std::fs::read(path).unwrap();
+        let header = bytes.iter().position(|&b| b == b'\n').unwrap();
+        let size: Vec<usize> = std::str::from_utf8(&bytes[..header]).unwrap().split(' ').skip(1).take(2).map(|n| n.parse().unwrap()).collect();
+        (size[0], size[1], bytes[header + 1..].to_vec())
+    };
+    let pictures: Vec<(usize, usize, Vec<u8>)> = paths.iter().map(read).collect();
+    let (w, h) = (pictures.iter().map(|p| p.0).sum::<usize>(), pictures.iter().map(|p| p.1).max().unwrap_or(0));
+    let mut image = vec![[200u8, 214, 230]; w * h];
+    let mut left = 0;
+    for (pw, ph, data) in &pictures {
+        for y in 0..*ph {
+            for x in 0..*pw {
+                let i = (y * pw + x) * 3;
+                image[(y + h - ph) * w + left + x] = [data[i], data[i + 1], data[i + 2]];
+            }
+        }
+        left += pw;
+    }
+    write_ppm(out, w as i32, h as i32, &image);
+    for path in paths {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 /// The box from `min` to `max` from above, `scale` pixels a block, shaded by height.
 fn top_down(area: &Area, registry: &BlockRegistry, min: IVec2, max: IVec2, scale: i32, path: &str) {
     let (w, h) = ((max.x - min.x + 1) * scale, (max.y - min.y + 1) * scale);
@@ -476,7 +504,8 @@ impl Look for Model {
 /// `cargo test --profile iter -p voxmar_worldgen house_catalogue -- --ignored --nocapture`
 /// draws every house in settlements.ron, and every roof and extra on some house, on flat
 /// grass in rows, fronts and then backs to the south-east, to
-/// `target/houses_{front,back}_ROW_N.ppm`: for judging the drawing of each piece.
+/// `target/houses_{front,back}_ROW_N.ppm`: for judging the drawing of each piece; and a
+/// row of houses in each style's own materials to `target/houses_style_STYLE_SIDE.ppm`.
 #[test]
 #[ignore]
 fn house_catalogue() {
@@ -602,6 +631,83 @@ fn house_catalogue() {
                 let model = Model::new(canvas, &registry, min, max);
                 isometric(&model, &registry, min, max, -2, 24, 12.0, &format!("{out}/houses_{side}_{n}_{k}.ppm"));
             }
+        }
+    }
+    // One row per style, in its own materials (the first of each list, its first wood),
+    // roofs and stilts: `target/houses_style_STYLE_{front,back}.ppm`.
+    for name in ["log_cabin", "turf_house", "mudbrick", "villa", "stilts", "jungle_stilts"] {
+        let style = def.styles.iter().find(|s| s.name == name).unwrap();
+        let wood = &style.woods[0].0;
+        let block = |m: &super::def::Material| registry.id(&super::def::fill(&m.0[0].0, wood, wood)).unwrap();
+        let mats = Mats {
+            foundation: super::canvas::Palette(style.foundation.0.iter().map(|(n, w)| (registry.id(&super::def::fill(n, wood, wood)).unwrap(), *w)).collect()),
+            floor: block(&style.floor),
+            wall: block(&style.walls),
+            frame: block(&style.frame),
+            roof: block(&style.roof),
+            trim: block(&style.trim),
+            window: style.window.as_deref().and_then(|w| registry.id(w)),
+            weathered: palette("mossy_cobblestone"),
+            hedge: palette("oak_leaves"),
+            log: registry.id(&super::def::fill(&style.log, wood, wood)).unwrap(),
+            chimney: block(&style.chimney),
+            crops: Vec::new(),
+            fruit: palette("apple_leaves_2"),
+        };
+        let row: [(&str, Vec<Extra>); 6] = [
+            ("cottage", vec![Chimney, Shutters]),
+            ("hut", vec![Woodpile]),
+            ("a_frame", vec![]),
+            ("roundhouse", vec![Chimney]),
+            ("long_house", vec![Chimney, Porch]),
+            ("town_house", vec![Balcony]),
+        ];
+        for (side, facing) in [("front", super::canvas::Facing::South), ("back", super::canvas::Facing::North)] {
+            let mut pieces = Vec::new();
+            for (k, (house_name, extras)) in row.iter().enumerate() {
+                let h = def.houses.iter().find(|h| h.name == *house_name).unwrap();
+                let w = h.width.0 as i32 | 1;
+                let d = if h.form == Form::Round { w } else { h.depth.0 as i32 };
+                let mut extras = extras.clone();
+                extras.extend(h.always.iter().copied());
+                let roof = match h.form {
+                    Form::Round => Roof::Conical,
+                    Form::Courtyard => Roof::Hip,
+                    Form::AFrame => Roof::Gable,
+                    _ => style.roofs.first().map_or(Roof::Gable, |r| r.0),
+                };
+                let spec = Spec {
+                    kind: Kind::House,
+                    w,
+                    d,
+                    wall: if h.form == Form::AFrame { 0 } else { h.walls.0 as i32 },
+                    storeys: if h.form == Form::AFrame { 1 } else { h.storeys.1 as i32 },
+                    roof,
+                    pitch: 1,
+                    ridge_x: h.form != Form::AFrame && w > d,
+                    door: w / 2,
+                    shed: 0,
+                    wing: None,
+                    stilts: h.stilts.unwrap_or(style.stilts) as i32,
+                    extras,
+                    regular: true,
+                    window_chance: style.window_chance,
+                    form: h.form,
+                    inside: h.inside.clone(),
+                    centre: None,
+                    seed: k as u64 + 1,
+                };
+                let (low, high) = spec.envelope();
+                let extent = super::canvas::Frame::extent(low, high, facing);
+                let frame = super::canvas::Frame::fit(low, high, facing, IVec2::ZERO, 0);
+                let mut canvas = super::canvas::Canvas::default();
+                house::draw(&spec, &frame, &mats, &fixed, &mut canvas);
+                let (min, max) = (IVec2::splat(-3), extent + 2);
+                let piece = format!("{out}/houses_style_{name}_{side}_{k}.ppm");
+                isometric(&Model::new(canvas, &registry, min, max), &registry, min, max, -2, 24, 12.0, &piece);
+                pieces.push(piece);
+            }
+            side_by_side(&pieces, &format!("{out}/houses_style_{name}_{side}.ppm"));
         }
     }
 }
@@ -974,4 +1080,46 @@ fn numbers_that_would_hang_planning_are_refused() {
     assert!(refused(&|d| d.rules.dressing.every = (9.0, f32::NAN)), "lamps every (9, NaN)");
     assert!(refused(&|d| d.sizes[0].lamps = 0.0), "a size's lamps 0");
     assert!(refused(&|d| d.sizes[0].lamps = 0.01), "a size's lamps 0.01");
+}
+
+/// On a slope the ground is cut back level round a building and eased out beyond, so no
+/// wall stands buried: the land a block out from each building's box (porch, shed and eaves
+/// included) is at most a block over its floor, in the worlds as generated.
+#[test]
+fn slopes_never_bury_walls() {
+    use super::house::Kind;
+    let registry = base_registry();
+    let mut failures = Vec::new();
+    let mut looked = 0;
+    for seed in [1u64, 42, 7] {
+        let world = Overworld::new(seed, registry.clone());
+        let spawn = world.spawn_point();
+        let mut columns: rustc_hash::FxHashMap<ColumnPos, Column> = Default::default();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000).iter().take(4) {
+            for b in s.buildings.iter().filter(|b| matches!(b.kind, Kind::House | Kind::Inn | Kind::Trader | Kind::Smithy)) {
+                let (lo, hi) = (b.min - 1, b.max + 1);
+                for z in lo.y..=hi.y {
+                    for x in lo.x..=hi.x {
+                        if x != lo.x && x != hi.x && z != lo.y && z != hi.y {
+                            continue;
+                        }
+                        let c = ColumnPos::of_block(IVec3::new(x, 0, z));
+                        let col = columns.entry(c).or_insert_with(|| world.generate(c));
+                        // The land: soil, or natural stone; not a woodpile or a wall.
+                        let land = |y: i32| {
+                            let d = registry.def(col.block(IVec3::new(x & 31, y, z & 31)));
+                            d.solid && (d.has_tag("soil") || d.has_tag("surface") || (d.has_tag("stone") && d.has_tag("natural") && !d.has_tag("building")))
+                        };
+                        let Some(top) = (b.floor - 12..=b.floor + 8).rev().find(|&y| land(y)) else { continue };
+                        looked += 1;
+                        if top > b.floor + 1 {
+                            failures.push(format!("seed {seed} {}: the {}'s walls are buried {} deep at {x}, {z}", s.name.0, b.what, top - b.floor));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(looked > 2000, "only {looked} columns round buildings");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

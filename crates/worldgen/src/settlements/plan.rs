@@ -1180,12 +1180,12 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     }
     let mut raster = Raster::new(min, max);
     // The square: flat in the middle, easing out.
-    raster.pad(&Rect { min: centre - square, max: centre + square }, square_height, FALLOFF + 1, 0, |p| p.as_vec2().distance(centre.as_vec2()) <= square as f32 + 0.5);
+    raster.pad(&Rect { min: centre - square, max: centre + square }, square_height, FALLOFF + 1, 0, true, |p| p.as_vec2().distance(centre.as_vec2()) <= square as f32 + 0.5);
     for lot in &lots {
         let grade = !matches!(lot.spec.kind, Kind::Stall | Kind::Shrine | Kind::Pen | Kind::Orchard | Kind::Woodyard);
         let core = lot.rect.grow(if grade { 1 } else { 0 });
         if grade {
-            raster.pad(&core, lot.floor, FALLOFF, lot.yard, |_| true);
+            raster.pad(&core, lot.floor, FALLOFF, lot.yard, true, |_| true);
         } else {
             raster.clear_rect(&lot.rect.grow(lot.yard));
         }
@@ -1194,9 +1194,12 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             min: lot.rect.min,
             max: lot.rect.max,
             floor: lot.floor + lot.spec.stilts,
-            // Two blocks out from the door, on the step below the top one when it stands
-            // on stilts.
-            door: lot.door.map(|(d, _)| IVec3::new(d.x, lot.floor + (lot.spec.stilts - 1).max(0) + 1, d.y)),
+            // Two blocks out from the door: on its porch, or on the step below the top
+            // one when it stands on stilts.
+            door: lot.door.map(|(d, _)| {
+                let up = if lot.spec.has(Extra::Porch) { lot.spec.stilts + 1 } else { (lot.spec.stilts - 1).max(0) + 1 };
+                IVec3::new(d.x, lot.floor + up, d.y)
+            }),
             facing: lot.frame.facing,
             what: match (lot.house, lot.centre) {
                 (Some(i), _) => def.houses[i].name.clone(),
@@ -1213,7 +1216,8 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     for &(rect, prop, _) in &props {
         if def.props[prop].kind == PropKind::Drawn(Prop::Washtub) {
             let height = ground.at(rect.min).height;
-            raster.pad(&rect.grow(1), height, 2, 0, |_| true);
+            // Its own little pad, never under a building's edge.
+            raster.pad(&rect.grow(1), height, 2, 0, false, |_| true);
         }
     }
     raster.finish();
@@ -1525,6 +1529,7 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
     let rules = &def.rules.houses;
     let fits = |i: usize, h: &super::def::HouseDef| {
         (h.sizes.is_empty() || h.sizes.iter().any(|s| s == town.size))
+            && !h.not_in.contains(&style.name)
             && h.most.is_none_or(|most| town.built.get(&i).copied().unwrap_or(0) < most)
             && (!h.water || near_water)
             && match want {

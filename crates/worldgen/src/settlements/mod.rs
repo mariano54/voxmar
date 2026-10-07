@@ -149,14 +149,18 @@ impl Raster {
     }
 
     /// A pad at `height` over `core`, held exactly where `inside`, easing out over
-    /// `falloff` blocks, its yard kept clear for `yard` blocks round it.
-    fn pad(&mut self, core: &plan::Rect, height: i32, falloff: i32, yard: i32, inside: impl Fn(IVec2) -> bool) {
+    /// `falloff` blocks, its yard kept clear for `yard` blocks round it. Where `under` is
+    /// false it leaves alone ground another pad already holds.
+    fn pad(&mut self, core: &plan::Rect, height: i32, falloff: i32, yard: i32, under: bool, inside: impl Fn(IVec2) -> bool) {
         for z in core.min.y - falloff..=core.max.y + falloff {
             for x in core.min.x - falloff..=core.max.x + falloff {
                 let p = IVec2::new(x, z);
                 let Some(i) = self.index(p) else { continue };
                 let in_core = x >= core.min.x && x <= core.max.x && z >= core.min.y && z <= core.max.y && inside(p);
                 let cell = &mut self.cells[i];
+                if cell.core && !under {
+                    continue;
+                }
                 if in_core {
                     cell.core = true;
                     cell.target = height as i16;

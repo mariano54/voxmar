@@ -34,8 +34,9 @@
 //   there) and what stands `inside` (Oven, Millstone, Vats, Racks, Stalls, Bins, Smoke,
 //   Altar, Pews, Boat, Counter; a house with fittings has one storey, as stairs run
 //   round the walls where fittings stand); a house may have extras it `always` has, its own
-//   `roofs`, the `sizes` that build it, the `most` one place builds, `stilts`, and
-//   `water: true` to stand only beside fresh water.
+//   `roofs`, the `sizes` that build it, the styles it is `not_in`, the `most` one place
+//   builds, `stilts`, and `water: true` to stand only beside fresh water. A-frames stay
+//   out of turf villages, where their grass roofs to the ground read as banks of earth.
 // roofs: how every roof shape leans, multiplying the weights styles give them (Gable,
 //   Hip, HalfHip, Saltbox, Gambrel, Conical, Flat, Shed). Round houses take cones,
 //   courtyard houses hips, A-frames steep gables, whatever was rolled, unless flat.
@@ -212,7 +213,7 @@
         (name: "wing_house", weight: 1.0, lean: {"wealth": 0.6}, width: (6, 8), depth: (7, 9), walls: (3, 3), storeys: (1, 2), wing: 1.0),
         // New outlines.
         (name: "roundhouse", form: Round, weight: 1.0, lean: {"age": 0.6, "wealth": -0.4, "order": -0.5}, width: (7, 9), depth: (7, 9), walls: (3, 3), storeys: (1, 1)),
-        (name: "a_frame", form: AFrame, always: [Chimney], weight: 0.8, lean: {"green": 0.6, "wealth": -0.2}, width: (5, 7), depth: (6, 9), walls: (3, 3), storeys: (1, 1)),
+        (name: "a_frame", form: AFrame, always: [Chimney], not_in: ["turf_house"], weight: 0.8, lean: {"green": 0.6, "wealth": -0.2}, width: (5, 7), depth: (6, 9), walls: (3, 3), storeys: (1, 1)),
         (name: "courtyard_house", form: Courtyard, sizes: ["village"], weight: 0.35, lean: {"wealth": 1.0, "crowding": -0.5}, width: (11, 12), depth: (11, 13), walls: (3, 3), storeys: (1, 1)),
         (name: "shop_house", form: ShopFront, sizes: ["village"], weight: 0.8, lean: {"wealth": 0.5, "crowding": 0.8}, width: (5, 7), depth: (6, 8), walls: (3, 4), storeys: (2, 2)),
         // Working buildings, one of each to a place (barns two); `work` names the trade.
