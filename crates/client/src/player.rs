@@ -82,6 +82,8 @@ pub struct LocalPlayer {
     pub journal: voxmar_engine::journal::Journal,
     /// Every quest's state, as the server tells it (the quest book's data).
     pub quests: Vec<voxmar_engine::quest::QuestState>,
+    /// Counts the server's word on quests, for screens to redraw only on a change.
+    pub quests_rev: u32,
 }
 
 impl Default for LocalPlayer {
@@ -114,6 +116,7 @@ impl Default for LocalPlayer {
             seed: 0,
             journal: Default::default(),
             quests: Vec::new(),
+            quests_rev: 0,
         }
     }
 }

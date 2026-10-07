@@ -336,7 +336,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut settings = if reproducible { Settings::default() } else { Settings::load() };
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
     settings.fov = options.fov.unwrap_or(settings.fov);
-    settings.pinned_quests.extend(options.pins.iter().cloned());
     settings.vsync = options.vsync.unwrap_or(settings.vsync);
     // Captures are in English unless asked otherwise, whatever the machine's language.
     let default_language = if reproducible { voxmar_engine::lang::ENGLISH.to_owned() } else { settings.language.clone() };
@@ -458,6 +457,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(tab) = options.tab {
         app.insert_resource(settings::StartTab(tab));
+    }
+    if !options.pins.is_empty() {
+        app.insert_resource(hud::quests::StartPins(options.pins.clone()));
     }
     if let Some(quest) = options.quests {
         app.insert_resource(hud::quests::StartQuest(quest));

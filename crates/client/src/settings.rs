@@ -393,6 +393,14 @@ impl Settings {
     /// no two of the keys that open screens bound to one key.
     pub fn clamped(mut self) -> Self {
         self.resolution = nearest_resolution(self.resolution);
+        // Each quest pinned once (the quest book caps how many, from its data).
+        let mut pinned: Vec<String> = Vec::new();
+        for name in std::mem::take(&mut self.pinned_quests) {
+            if !pinned.contains(&name) {
+                pinned.push(name);
+            }
+        }
+        self.pinned_quests = pinned;
         if self.zoom_key == self.character_key || self.zoom_key == self.inventory_key {
             // Zoom used to be on C, which now opens the character screen.
             self.zoom_key = Key(KeyCode::KeyZ);

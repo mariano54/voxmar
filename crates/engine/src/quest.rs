@@ -84,12 +84,35 @@ pub struct QuestDef {
 pub struct QuestFile {
     #[serde(default)]
     pub quests: Vec<QuestDef>,
+    /// How the interface follows pinned quests (`core/quests.ron`); the first package to
+    /// give it keeps it.
+    #[serde(default)]
+    pub tracker: Option<Tracker>,
+}
+
+/// How the interface follows pinned quests on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tracker {
+    /// Quests pinned at once, at most.
+    pub pins: usize,
+    /// Seconds a done quest stays on screen, ticked, before it drops off.
+    pub done_stays: f32,
+    /// How opaque the backing behind each pinned quest is, 0 to 1.
+    pub backing_alpha: f32,
+}
+
+impl Default for Tracker {
+    fn default() -> Self {
+        Self { pins: 3, done_stays: 5.0, backing_alpha: 0.5 }
+    }
 }
 
 /// Every quest, in the order packages list them.
 #[derive(Debug, Default)]
 pub struct QuestRegistry {
     quests: Vec<QuestDef>,
+    tracker: Tracker,
 }
 
 /// What a player has done, as quests read it.
@@ -171,6 +194,10 @@ impl QuestRegistry {
     }
 
     pub fn new(files: Vec<QuestFile>) -> Result<Self, RegistryError> {
+        let tracker = files.iter().find_map(|f| f.tracker).unwrap_or_default();
+        if tracker.pins == 0 || !(tracker.done_stays >= 0.0) || !(0.0..=1.0).contains(&tracker.backing_alpha) {
+            return Err(RegistryError(format!("quests.ron: the tracker needs a pin or more, a stay of 0 s or more and a backing from 0 to 1, not {tracker:?}")));
+        }
         let quests: Vec<QuestDef> = files.into_iter().flat_map(|f| f.quests).collect();
         for quest in &quests {
             if quest.tasks.is_empty() {
@@ -182,7 +209,12 @@ impl QuestRegistry {
                 }
             }
         }
-        Ok(Self { quests })
+        Ok(Self { quests, tracker })
+    }
+
+    /// How the interface follows pinned quests.
+    pub fn tracker(&self) -> Tracker {
+        self.tracker
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &QuestDef> {
@@ -273,6 +305,18 @@ mod tests {
         journal.record(&rules, Page::Fish, "base:raw_trout", 2, 3);
         let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, home: true };
         assert_eq!(quests.newly_done(&done, &progress), ["base:fish"]);
+    }
+
+    #[test]
+    fn the_tracker_comes_from_the_first_package_to_give_it() {
+        let core = QuestRegistry::read("core", "(tracker: (pins: 2, done_stays: 3.0, backing_alpha: 0.4))").unwrap();
+        let base = QuestRegistry::read("base", "(tracker: (pins: 5, done_stays: 1.0, backing_alpha: 0.9))").unwrap();
+        assert_eq!(QuestRegistry::new(vec![core, base]).unwrap().tracker(), Tracker { pins: 2, done_stays: 3.0, backing_alpha: 0.4 });
+        assert_eq!(registry().tracker(), Tracker::default());
+        let none = QuestRegistry::read("core", "(tracker: (pins: 0, done_stays: 3.0, backing_alpha: 0.4))").unwrap();
+        assert!(QuestRegistry::new(vec![none]).is_err());
+        let clear = QuestRegistry::read("core", "(tracker: (pins: 3, done_stays: 3.0, backing_alpha: 1.5))").unwrap();
+        assert!(QuestRegistry::new(vec![clear]).is_err());
     }
 
     #[test]

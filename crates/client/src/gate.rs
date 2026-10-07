@@ -275,6 +275,10 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
+    /// Where the feet stood when W went down with the quest book open.
+    quest_feet: Vec3,
+    /// The quests' revision when torches were crafted for the tracker.
+    quests_rev: u32,
     /// Where the player died in the workshop, the most items carried since waking, and when
     /// (in server seconds) that last went up.
     fell: Vec3,
@@ -373,6 +377,8 @@ impl Gate {
             digging: None,
             dug: Vec::new(),
             count_before: 0,
+            quest_feet: Vec3::ZERO,
+            quests_rev: 0,
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
@@ -2291,46 +2297,181 @@ fn journal(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
+/// The torch quest the tracker follows, and the quest it sees done.
+const TRACKED: &str = "base:torchlight";
+const DONE_QUEST: &str = "base:crafting_table";
+/// Longest the quest stages wait for the server, in its seconds.
+const QUEST_WAIT: f32 = 10.0;
+
+/// The torch quest's first goal as the server last told it: (have, need).
+fn tracked(world: &World) -> (u32, u32) {
+    let player = world.resource::<LocalPlayer>();
+    player.quests.iter().find(|q| q.name == TRACKED).and_then(|q| q.tasks.first()?.first().copied()).unwrap_or((0, 1))
+}
+
+/// The words the tracker shows for the torch quest at `have` torches, or done.
+fn tracker_words(world: &World, have: u32) -> String {
+    let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+    let Some(quest) = launch.content.quests.get(TRACKED) else { return String::new() };
+    let Some(goal) = quest.tasks.first().and_then(|t| t.first()) else { return String::new() };
+    let need = if let voxmar_engine::quest::Goal::Craft(_, need) = goal { *need } else { 1 };
+    if have >= need {
+        return locale.get("quest.tracker.done").to_owned();
+    }
+    let met = locale.get("quest.mark.todo");
+    format!("{met} {}", crate::hud::quests::goal_words(locale, &launch.content, quest, goal, (have, need)))
+}
+
+/// The tracker's lines, when it is shown.
+fn tracker_lines(world: &mut World) -> Option<Vec<String>> {
+    use crate::hud::quests::{Tracker, TrackerLine};
+    let shown = world.query_filtered::<&Visibility, With<Tracker>>().iter(world).any(|v| *v != Visibility::Hidden);
+    shown.then(|| world.query_filtered::<&Text, With<TrackerLine>>().iter(world).map(|t| t.0.clone()).collect())
+}
+
+/// The quest book and the tracker, played: L opens the book on a quest worth reading, W
+/// held with it open does not walk, Esc shuts it and grabs the mouse again; a quest
+/// pinned stands at the right and counts torches crafted for real, as the server counts
+/// them; a quest done reads so, then drops off and the tracker goes.
 fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::quests::{QuestView, toggle_pin};
     let key_code = world.resource::<crate::settings::Settings>().quests_key.0;
-    let first = world.resource::<Launch>().content.quests.iter().next().map(|q| q.name.clone());
-    let Some(first) = first else {
-        gate.check("quests", Err("no quests in the content".into()));
+    let waited = gate.server_in_phase();
+    let known = {
+        let quests = &world.resource::<Launch>().content.quests;
+        quests.get(TRACKED).is_some() && quests.get(DONE_QUEST).is_some()
+    };
+    if !known {
+        gate.check("quests", Err(format!("the content has no {TRACKED} or {DONE_QUEST}")));
         gate.next(Step::Catalogue, now);
         return;
+    }
+    let quit = |world: &mut World, gate: &mut Gate, what: &str, why: String| {
+        gate.check(what, Err(why));
+        for code in [key_code, KeyCode::KeyW, KeyCode::Escape] {
+            key(world, code, false);
+        }
+        world.resource_mut::<UiState>().quests_open = false;
+        world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
+        gate.next(Step::Catalogue, now);
     };
     match gate.phase {
         0 => {
-            *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked: Some(first.clone()) };
+            world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
+            *world.resource_mut::<QuestView>() = QuestView::default();
             key(world, key_code, true);
             gate.advance(now);
         }
         1 => {
             key(world, key_code, false);
             let open = world.resource::<UiState>().quests_open;
-            let nodes = world.query_filtered::<(), With<Button>>().iter(world).count();
-            if !open && in_phase < 2.0 {
+            let picked = world.resource::<QuestView>().picked.clone();
+            if !(open && picked.is_some()) && in_phase < 2.0 {
                 return;
             }
-            gate.check("quests: book", if open { Ok(format!("L opened the quest book ({nodes} buttons drawn)")) } else { Err("L did not open the quest book".into()) });
-            // Pinned, and the book shut: it stands on screen.
+            let Some(picked) = picked.filter(|_| open) else {
+                return quit(world, gate, "quests: book", if open { "the book opened on no quest".into() } else { "L did not open the quest book".into() });
+            };
+            let nodes = world.query_filtered::<(), With<Button>>().iter(world).count();
+            gate.check("quests: book", Ok(format!("L opened the quest book on {picked} ({nodes} buttons drawn)")));
+            // W held with the book open.
+            gate.quest_feet = world.resource::<LocalPlayer>().position;
+            key(world, KeyCode::KeyW, true);
+            gate.advance(now);
+        }
+        2 => {
+            if in_phase < 1.0 {
+                return;
+            }
+            key(world, KeyCode::KeyW, false);
+            let moved = (world.resource::<LocalPlayer>().position - gate.quest_feet).xz().length();
+            gate.check("quests: still", if moved < 0.05 { Ok(format!("W held a second with the book open moved the feet {moved:.2} blocks")) } else { Err(format!("W held with the book open walked {moved:.2} blocks")) });
+            key(world, KeyCode::Escape, true);
+            gate.advance(now);
+        }
+        3 => {
+            key(world, KeyCode::Escape, false);
+            let ui = world.resource::<UiState>();
+            let (open, locked, menu) = (ui.quests_open, ui.cursor_locked, ui.menu_open);
+            if (open || !locked) && in_phase < 2.0 {
+                return;
+            }
+            if open || !locked || menu {
+                return quit(world, gate, "quests: Esc", format!("Esc left the book open: {open}, the mouse grabbed: {locked}, the menu open: {menu}"));
+            }
+            gate.check("quests: Esc", Ok("Esc shut the book and grabbed the mouse again".into()));
+            // Pinned, the torch quest stands at the right; then torches made for it.
+            let content = world.resource::<Launch>().content.clone();
+            toggle_pin(&mut world.resource_mut::<crate::settings::Settings>(), &content, TRACKED);
+            gate.count_before = tracked(world).0;
+            let net = world.resource::<Net>();
+            net.command("give charcoal 1");
+            net.command("give stick 1");
+            gate.advance(now);
+        }
+        4 => {
+            let ready = holding(world, "base:charcoal").0 >= 1 && holding(world, "base:stick").0 >= 1;
+            let words = tracker_words(world, gate.count_before);
+            let lines = tracker_lines(world);
+            let reads = lines.as_ref().is_some_and(|lines| lines.contains(&words));
+            if !(ready && reads) {
+                if waited > QUEST_WAIT {
+                    quit(world, gate, "quests: pinned", format!("{QUEST_WAIT} server s on, charcoal and a stick in hand: {ready}; the tracker reads {lines:?}, not {words:?}"));
+                }
+                return;
+            }
+            gate.check("quests: pinned", Ok(format!("pinned, the tracker reads {words:?}")));
+            if !lay_and_craft(world, &[(0, "base:charcoal"), (2, "base:stick")]) {
+                return quit(world, gate, "quests: torches", "the charcoal or the stick went missing".into());
+            }
+            gate.quests_rev = world.resource::<LocalPlayer>().quests_rev;
+            gate.advance(now);
+        }
+        5 => {
+            let made = gate.count_before + 4;
+            let rev = world.resource::<LocalPlayer>().quests_rev;
+            let lines = tracker_lines(world).unwrap_or_default();
+            // Nothing counts on screen before the server says so.
+            if rev == gate.quests_rev && !lines.contains(&tracker_words(world, gate.count_before)) {
+                return quit(world, gate, "quests: torches", format!("before the server counted the torches the tracker read {lines:?}"));
+            }
+            let words = tracker_words(world, made);
+            if !(tracked(world).0 == made && lines.contains(&words)) {
+                if waited > QUEST_WAIT {
+                    quit(world, gate, "quests: torches", format!("4 torches crafted, {QUEST_WAIT} server s on the server counts {:?} and the tracker reads {lines:?}, not {words:?}", tracked(world)));
+                }
+                return;
+            }
+            gate.check("quests: torches", Ok(format!("4 torches crafted, the server counted {made} and the tracker reads {words:?}")));
+            // A quest done reads so, then goes, and the tracker with it.
+            let content = world.resource::<Launch>().content.clone();
             let mut settings = world.resource_mut::<crate::settings::Settings>();
             settings.pinned_quests.clear();
-            toggle_pin(&mut settings, &first);
-            world.resource_mut::<UiState>().quests_open = false;
+            toggle_pin(&mut settings, &content, DONE_QUEST);
+            gate.advance(now);
+        }
+        6 => {
+            let done = world.resource::<Locale>().get("quest.tracker.done").to_owned();
+            let lines = tracker_lines(world);
+            if !lines.as_ref().is_some_and(|lines| lines.contains(&done)) {
+                if waited > 2.0 {
+                    quit(world, gate, "quests: done", format!("{DONE_QUEST} pinned, done; 2 server s on the tracker reads {lines:?}"));
+                }
+                return;
+            }
+            gate.check("quests: done", Ok(format!("{DONE_QUEST} pinned reads {done:?}")));
             gate.advance(now);
         }
         _ => {
-            let title = {
-                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
-                launch.content.quests.get(&first).map(|quest| crate::hud::quests::title(locale, quest)).unwrap_or_default()
-            };
-            let shown = world.query::<&Text>().iter(world).any(|text| text.0 == title);
-            if !shown && in_phase < 2.0 {
+            let pinned = !world.resource::<crate::settings::Settings>().pinned_quests.is_empty();
+            let lines = tracker_lines(world);
+            if (pinned || lines.is_some()) && in_phase < 8.0 {
                 return;
             }
-            gate.check("quests: pinned", if shown { Ok(format!("pinned, {title} stands on screen")) } else { Err(format!("pinned, {title} is nowhere on screen")) });
+            gate.check(
+                "quests: retired",
+                if pinned || lines.is_some() { Err(format!("8 s after it was done, still pinned: {pinned}; the tracker reads {lines:?}")) } else { Ok(format!("done, it dropped off after {in_phase:.1} s and the tracker went")) },
+            );
             world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
             gate.next(Step::Catalogue, now);
         }
@@ -2575,8 +2716,16 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         ui.recipes_open = false;
     }
     if let Some(View::Quests) = view {
-        let first = world.resource::<Launch>().content.quests.iter().next().map(|q| q.name.clone());
-        *world.resource_mut::<crate::hud::quests::QuestView>() = crate::hud::quests::QuestView { chapter: 0, picked: first };
+        // A quest still waiting on another, so its page reads so, beside those done and open.
+        use crate::hud::quests::{QuestView, Standing, standing};
+        let picked = {
+            let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
+            let content = &launch.content;
+            let first_age = content.quests.iter().next().map(|q| q.age.clone());
+            let chapter: Vec<_> = content.quests.iter().filter(|q| Some(&q.age) == first_age.as_ref()).collect();
+            chapter.iter().find(|q| standing(content, player, q) == Standing::Waiting).or(chapter.first()).map(|q| q.name.clone())
+        };
+        *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked };
     }
     if let Some(View::Journal(page)) = view {
         world.resource_mut::<crate::hud::journal::JournalView>().page = page;

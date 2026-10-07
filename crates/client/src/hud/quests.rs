@@ -1,10 +1,12 @@
 //! The quest book (L) and the quests pinned on screen. One chapter per age down the left;
-//! each chapter's quests as a web, a quest after the ones it follows, joined by lines,
-//! gold once done, bright while open, dim until what comes before is done. A quest's page
-//! says first why it is worth doing (the reason and the reward), then its routes (any one
-//! finishes it) with each goal's progress, then the rewards, and pins it. Up to three
-//! pinned quests stand at the right of the screen with their live progress, and drop off a
-//! moment after they are done. The quests and their progress are the server's
+//! each chapter's quests as a web, a quest after the ones it follows, joined by lines:
+//! gold once done, lit while open, dim while what comes first is not done. A quest from
+//! another chapter that comes first stands at the web's left, dim, to show the way in. A
+//! quest's page says first why it is worth doing (the reason and the reward), then what
+//! comes first if anything, its routes (any one finishes it) with each goal's progress,
+//! and its rewards, and pins it while it is open. The quests pinned (`core/quests.ron`'s
+//! tracker says how many) stand at the right of the screen with their live progress, and
+//! drop off a moment after they are done. The quests and their progress are the server's
 //! (`voxmar_engine::quest`, docs/quests.md).
 
 use bevy::prelude::*;
@@ -32,15 +34,11 @@ pub struct QuestsPlugin;
 impl Plugin for QuestsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestView>()
-            .add_systems(PostStartup, (spawn, spawn_tracker, open_start_quest))
-            .add_systems(Update, ((show, pick, draw).chain().after(ScreenSystems), (retire, track).chain()).run_if(in_state(Screen::InGame)));
+            .add_systems(PostStartup, (spawn, spawn_tracker))
+            .add_systems(OnEnter(Screen::InGame), keep_known_pins)
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, draw).chain().after(ScreenSystems), (retire, track).chain()).run_if(in_state(Screen::InGame)));
     }
 }
-
-/// Quests pinned at once, at most.
-pub const PINS: usize = 3;
-/// Seconds a done quest stays on screen, ticked, before it drops off.
-const DONE_STAYS: f32 = 5.0;
 
 /// The chapter open and the quest picked in it.
 #[derive(Resource, Default, Clone, PartialEq)]
@@ -49,17 +47,76 @@ pub struct QuestView {
     pub picked: Option<String>,
 }
 
-/// A quest to open the book on at startup (`--quests`, for captures).
+/// A quest to open the book on (`--quests`, for captures).
 #[derive(Resource)]
 pub struct StartQuest(pub String);
 
-fn open_start_quest(start: Option<Res<StartQuest>>, launch: Res<Launch>, mut view: ResMut<QuestView>, mut ui: ResMut<UiState>) {
+/// Quests to pin on joining (`--pin`, for captures), as the book's Pin would.
+#[derive(Resource)]
+pub struct StartPins(pub Vec<String>);
+
+/// A quest by a name with its package or without (`torchlight`, `base:torchlight`).
+fn find<'a>(content: &'a Content, name: &str) -> Option<&'a QuestDef> {
+    content.quests.get(name).or_else(|| content.quests.get(&format!("base:{name}")))
+}
+
+/// Opens the book on `--quests`'s quest, and pins `--pin`'s, once the game is up.
+fn open_start(
+    mut commands: Commands,
+    start: Option<Res<StartQuest>>,
+    pins: Option<Res<StartPins>>,
+    launch: Res<Launch>,
+    mut view: ResMut<QuestView>,
+    mut ui: ResMut<UiState>,
+    mut settings: ResMut<Settings>,
+) {
+    let content = &launch.content;
+    if let Some(pins) = pins {
+        for name in &pins.0 {
+            if let Some(quest) = find(content, name)
+                && !settings.pinned_quests.contains(&quest.name)
+            {
+                toggle_pin(&mut settings, content, &quest.name);
+            }
+        }
+        commands.remove_resource::<StartPins>();
+    }
     let Some(start) = start else { return };
-    let quests = &launch.content.quests;
-    let Some(quest) = quests.get(&start.0).or_else(|| quests.get(&format!("base:{}", start.0))) else { return };
-    view.chapter = chapters(&launch.content).iter().position(|age| *age == quest.age).unwrap_or(0);
-    view.picked = Some(quest.name.clone());
-    ui.quests_open = true;
+    if let Some(quest) = find(content, &start.0) {
+        view.chapter = chapters(content).iter().position(|age| *age == quest.age).unwrap_or(0);
+        view.picked = Some(quest.name.clone());
+        ui.quests_open = true;
+    }
+    commands.remove_resource::<StartQuest>();
+}
+
+/// Only quests the content has stay pinned, and no more than the tracker shows.
+fn keep_known_pins(launch: Res<Launch>, mut settings: ResMut<Settings>) {
+    let content = &launch.content;
+    let most = content.quests.tracker().pins;
+    let before = settings.pinned_quests.clone();
+    settings.pinned_quests.retain(|name| content.quests.get(name).is_some());
+    settings.pinned_quests.truncate(most);
+    if settings.pinned_quests != before {
+        settings.save();
+    }
+}
+
+/// Opened, the book shows the first unfinished pinned quest, else the first open one, in
+/// its chapter.
+fn choose_on_open(ui: Res<UiState>, player: Res<LocalPlayer>, launch: Res<Launch>, settings: Res<Settings>, mut view: ResMut<QuestView>, mut was_open: Local<bool>) {
+    let opened = ui.quests_open && !*was_open;
+    *was_open = ui.quests_open;
+    if !opened || view.picked.is_some() {
+        return;
+    }
+    let content = &launch.content;
+    let pinned = settings.pinned_quests.iter().filter_map(|name| content.quests.get(name)).find(|quest| standing(content, &player, quest) != Standing::Done);
+    let chosen = pinned.or_else(|| content.quests.iter().find(|quest| standing(content, &player, quest) == Standing::Open));
+    if let Some(quest) = chosen {
+        view.chapter = chapters(content).iter().position(|age| *age == quest.age).unwrap_or(0);
+        view.picked = Some(quest.name.clone());
+    }
 }
 
 /// Where a quest stands for the player.
@@ -67,7 +124,7 @@ fn open_start_quest(start: Option<Res<StartQuest>>, launch: Res<Launch>, mut vie
 pub enum Standing {
     Done,
     Open,
-    /// What comes before it is not done yet.
+    /// What comes first is not done yet.
     Waiting,
 }
 
@@ -106,64 +163,98 @@ fn why(locale: &Locale, quest: &QuestDef) -> String {
     locale.get_or(&format!("{}.why", def_key("quest", &quest.name)), &quest.why).to_owned()
 }
 
-/// An item by a quest's name for it: `any`, `tag:TAG` or an item's name, its package left out
-/// or not.
-fn item_words(locale: &Locale, content: &Content, name: &str) -> String {
+/// The package a quest belongs to, where the names it gives are looked up first.
+fn package(quest: &QuestDef) -> &str {
+    quest.name.split_once(':').map_or("base", |(package, _)| package)
+}
+
+/// A content name as a quest gives it: its own package's first, then as written.
+fn qualified(package: &str, name: &str) -> [String; 2] {
+    [if name.contains(':') { name.to_owned() } else { format!("{package}:{name}") }, name.to_owned()]
+}
+
+fn item_id(content: &Content, package: &str, name: &str) -> Option<BlockId> {
+    qualified(package, name).iter().find_map(|name| content.blocks.id(name))
+}
+
+/// An item by a quest's name for it: `any`, `tag:TAG` or an item's name.
+fn item_words(locale: &Locale, content: &Content, package: &str, name: &str) -> String {
     if name == "any" {
         return locale.get("quest.any").to_owned();
     }
     if let Some(tag) = name.strip_prefix("tag:") {
         return locale.get_or(&format!("tag.{tag}"), &title_from_id(tag)).to_owned();
     }
-    let blocks = &content.blocks;
-    match blocks.id(name).or_else(|| blocks.id(&format!("base:{name}"))) {
-        Some(id) => locale.block(blocks.def(id)),
+    match item_id(content, package, name) {
+        Some(id) => locale.block(content.blocks.def(id)),
         None => title_from_id(name),
     }
 }
 
-fn creature_words(locale: &Locale, content: &Content, name: &str) -> String {
+fn creature_words(locale: &Locale, content: &Content, package: &str, name: &str) -> String {
     if name == "any" {
         return locale.get("quest.any_creature").to_owned();
     }
-    match content.creatures.find(name).or_else(|| content.creatures.find(&format!("base:{name}"))) {
+    match qualified(package, name).iter().find_map(|name| content.creatures.find(name)) {
         Some(id) => locale.creature(&content.creatures.get(id).def),
         None => title_from_id(name),
     }
 }
 
-fn skill_words(locale: &Locale, content: &Content, name: &str) -> String {
+fn multiblock_words(locale: &Locale, content: &Content, package: &str, name: &str) -> String {
+    let found = qualified(package, name).into_iter().find(|name| content.multiblocks.get(name).is_some());
+    let name = found.unwrap_or_else(|| name.to_owned());
+    locale.get_or(&def_key("multiblock", &name), &title_from_id(&name)).to_owned()
+}
+
+fn skill_id(content: &Content, name: &str) -> Option<voxmar_engine::skill::SkillId> {
     let skills = &content.skills;
-    match skills.ids().find(|&id| skills.get(id).name.rsplit(':').next() == Some(name.rsplit(':').next().unwrap_or(name))) {
-        Some(id) => locale.skill(skills.get(id)),
+    let local = name.rsplit(':').next().unwrap_or(name);
+    skills.ids().find(|&id| skills.get(id).name.rsplit(':').next() == Some(local))
+}
+
+fn skill_words(locale: &Locale, content: &Content, name: &str) -> String {
+    match skill_id(content, name) {
+        Some(id) => locale.skill(content.skills.get(id)),
         None => title_from_id(name),
     }
 }
 
-/// The item a quest is drawn with: what it gives, else what it asks for.
-fn quest_item(content: &Content, quest: &QuestDef) -> Option<BlockId> {
-    let blocks = &content.blocks;
-    let item = |name: &str| blocks.id(name).or_else(|| blocks.id(&format!("base:{name}")));
+/// What a quest is drawn with: the item it gives, else the item it asks for, else the
+/// skill it trains.
+fn quest_icon(content: &Content, images: &HudImages, quest: &QuestDef) -> Handle<Image> {
+    let package = package(quest);
+    let item = |name: &str| item_id(content, package, name);
     let given = quest.rewards.iter().find_map(|r| if let Reward::Item(name, _) = r { item(name) } else { None });
-    given.or_else(|| {
+    let asked = || {
         quest.tasks.iter().flatten().find_map(|goal| match goal {
             Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) => item(name),
             _ => None,
         })
-    })
+    };
+    if let Some(icon) = given.or_else(asked).and_then(|id| images.icons.get(id.0 as usize)) {
+        return icon.clone();
+    }
+    let skill = quest
+        .rewards
+        .iter()
+        .find_map(|r| if let Reward::Xp(name, _) = r { skill_id(content, name) } else { None })
+        .or_else(|| quest.tasks.iter().flatten().find_map(|goal| if let Goal::Level(name, _) = goal { skill_id(content, name) } else { None }));
+    skill.and_then(|id| images.skills.get(id.0 as usize).cloned()).unwrap_or_default()
 }
 
 /// What a goal asks, in words, with its progress when it counts more than one.
-pub fn goal_words(locale: &Locale, content: &Content, goal: &Goal, (have, need): (u32, u32)) -> String {
+pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &Goal, (have, need): (u32, u32)) -> String {
+    let package = package(quest);
     let what = match goal {
-        Goal::Craft(item, _) => locale.format("quest.goal.craft", &[("item", &item_words(locale, content, item))]),
-        Goal::Cook(item, _) => locale.format("quest.goal.cook", &[("item", &item_words(locale, content, item))]),
+        Goal::Craft(item, _) => locale.format("quest.goal.craft", &[("item", &item_words(locale, content, package, item))]),
+        Goal::Cook(item, _) => locale.format("quest.goal.cook", &[("item", &item_words(locale, content, package, item))]),
         Goal::Catch(fish, _) if fish == "Kinds" => locale.get("quest.goal.kinds").to_owned(),
-        Goal::Catch(fish, _) => locale.format("quest.goal.catch", &[("item", &item_words(locale, content, fish))]),
-        Goal::Kill(creature, _) => locale.format("quest.goal.kill", &[("creature", &creature_words(locale, content, creature))]),
-        Goal::Tame(creature, _) => locale.format("quest.goal.tame", &[("creature", &creature_words(locale, content, creature))]),
-        Goal::Pick(plant, _) => locale.format("quest.goal.pick", &[("item", &item_words(locale, content, plant))]),
-        Goal::Mine(ore, _) => locale.format("quest.goal.mine", &[("item", &item_words(locale, content, ore))]),
+        Goal::Catch(fish, _) => locale.format("quest.goal.catch", &[("item", &item_words(locale, content, package, fish))]),
+        Goal::Kill(creature, _) => locale.format("quest.goal.kill", &[("creature", &creature_words(locale, content, package, creature))]),
+        Goal::Tame(creature, _) => locale.format("quest.goal.tame", &[("creature", &creature_words(locale, content, package, creature))]),
+        Goal::Pick(plant, _) => locale.format("quest.goal.pick", &[("item", &item_words(locale, content, package, plant))]),
+        Goal::Mine(ore, _) => locale.format("quest.goal.mine", &[("item", &item_words(locale, content, package, ore))]),
         Goal::Visit(_) => locale.get("quest.goal.visit").to_owned(),
         Goal::Discover(page, _) => {
             let page = locale.get(&format!("journal.page.{}", super::journal::page_name(*page))).to_owned();
@@ -172,11 +263,17 @@ pub fn goal_words(locale: &Locale, content: &Content, goal: &Goal, (have, need):
         Goal::Level(skill, level) => {
             return locale.format("quest.goal.level", &[("skill", &skill_words(locale, content, skill)), ("level", level)]);
         }
-        Goal::Have(item, _) => locale.format("quest.goal.have", &[("item", &item_words(locale, content, item))]),
+        Goal::Have(item, _) => locale.format("quest.goal.have", &[("item", &item_words(locale, content, package, item))]),
         Goal::Home => return locale.get("quest.goal.home").to_owned(),
-        Goal::Built(name, _) => locale.format("quest.goal.built", &[("item", &item_words(locale, content, name))]),
+        Goal::Built(name, _) => locale.format("quest.goal.built", &[("item", &multiblock_words(locale, content, package, name))]),
     };
     if need > 1 { locale.format("quest.progress", &[("goal", &what), ("have", &have.min(need)), ("need", &need)]) } else { what }
+}
+
+/// A goal's line: its mark (met, or not yet) and its words.
+fn goal_line(locale: &Locale, content: &Content, quest: &QuestDef, goal: &Goal, progress: (u32, u32), met: bool) -> String {
+    let mark = locale.get(if met { "quest.mark.done" } else { "quest.mark.todo" });
+    format!("{mark} {}", goal_words(locale, content, quest, goal, progress))
 }
 
 /// Each goal of the task nearest done, with its progress: (have, need).
@@ -190,10 +287,17 @@ fn best_task<'a>(quest: &'a QuestDef, state: Option<&QuestState>) -> Vec<(&'a Go
     quest.tasks.get(best).map_or_else(Vec::new, |goals| goals.iter().enumerate().map(|(g, goal)| (goal, progress(best, g))).collect())
 }
 
+/// The quests a quest comes after, each way it may (`a|b` is either).
+fn before<'a>(content: &'a Content, quest: &QuestDef) -> Vec<&'a QuestDef> {
+    quest.after.iter().flat_map(|a| a.split('|')).filter_map(|name| content.quests.get(name)).collect()
+}
+
 #[derive(Component)]
 struct QuestScreen;
 #[derive(Component)]
 struct ChapterButton(usize);
+#[derive(Component)]
+struct Chapters;
 #[derive(Component)]
 struct Web;
 #[derive(Component)]
@@ -203,14 +307,17 @@ struct Detail;
 #[derive(Component)]
 struct PinButton;
 
-/// The panel's width, the chapters' column, and the web's height.
+/// The panel's width, the chapters' column, the web's height and the page's.
 const WIDTH: f32 = 540.0 * PX;
 const CHAPTERS: f32 = 80.0 * PX;
-const WEB_HEIGHT: f32 = 110.0 * PX;
+const WEB_HEIGHT: f32 = 170.0 * PX;
 const DETAIL_HEIGHT: f32 = 120.0 * PX;
-/// The web's grid: a column per step after the first quest, a row per quest in a column.
-const STEP_X: f32 = SLOT + 14.0 * PX;
-const STEP_Y: f32 = SLOT + 6.0 * PX;
+/// The web's room across and down (inside its well), and its quests' least and most step.
+const WEB_ROOM: Vec2 = Vec2::new(WIDTH - CHAPTERS - 4.0 * space::OUTER, WEB_HEIGHT - 2.0 * space::GAP);
+const STEP_LEAST: Vec2 = Vec2::new(SLOT + 10.0 * PX, SLOT + 5.0 * PX);
+const STEP_MOST: Vec2 = Vec2::new(SLOT + 90.0 * PX, SLOT + 20.0 * PX);
+/// The width of the Pin button.
+const PIN: f32 = 52.0 * PX;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -220,7 +327,12 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             card.spawn(Node { column_gap: Val::Px(space::GAP), ..default() }).with_children(|columns| {
                 columns.spawn((Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), width: Val::Px(CHAPTERS), flex_shrink: 0.0, ..default() }, Chapters));
                 columns.spawn(Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::GAP), min_width: Val::ZERO, ..default() }).with_children(|right| {
-                    let web = Node { height: Val::Px(WEB_HEIGHT), overflow: Overflow::scroll(), padding: UiRect::all(Val::Px(space::GAP)), ..default() };
+                    let web = Node {
+                        height: Val::Px(WEB_HEIGHT),
+                        overflow: Overflow::scroll(),
+                        padding: UiRect::all(Val::Px(space::GAP)),
+                        ..default()
+                    };
                     right.spawn((Web, ScrollList, web, Piece::Well.image()));
                     let detail = Node {
                         height: Val::Px(DETAIL_HEIGHT),
@@ -240,9 +352,6 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     });
 }
 
-#[derive(Component)]
-struct Chapters;
-
 fn show(ui: Res<UiState>, mut root: Query<&mut Visibility, With<QuestScreen>>) {
     if let Ok(mut visibility) = root.single_mut() {
         visibility.set_if_neq(if ui.quests_open { Visibility::Inherited } else { Visibility::Hidden });
@@ -251,35 +360,41 @@ fn show(ui: Res<UiState>, mut root: Query<&mut Visibility, With<QuestScreen>>) {
 
 #[allow(clippy::type_complexity)]
 fn pick(
-    chapters: Query<(&ChapterButton, &Interaction), Changed<Interaction>>,
+    launch: Res<Launch>,
+    chapters_pressed: Query<(&ChapterButton, &Interaction), Changed<Interaction>>,
     nodes: Query<(&QuestNode, &Interaction), Changed<Interaction>>,
     pins: Query<&Interaction, (Changed<Interaction>, With<PinButton>)>,
     mut view: ResMut<QuestView>,
     mut settings: ResMut<Settings>,
 ) {
-    for (chapter, interaction) in &chapters {
+    let content = &launch.content;
+    for (chapter, interaction) in &chapters_pressed {
         if *interaction == Interaction::Pressed && view.chapter != chapter.0 {
             view.chapter = chapter.0;
             view.picked = None;
         }
     }
     for (node, interaction) in &nodes {
-        if *interaction == Interaction::Pressed {
-            view.picked = Some(node.0.clone());
+        if *interaction == Interaction::Pressed
+            && let Some(quest) = content.quests.get(&node.0)
+        {
+            // A quest from another chapter opens there.
+            view.chapter = chapters(content).iter().position(|age| *age == quest.age).unwrap_or(view.chapter);
+            view.picked = Some(quest.name.clone());
         }
     }
     if pins.iter().any(|i| *i == Interaction::Pressed)
         && let Some(name) = view.picked.clone()
     {
-        toggle_pin(&mut settings, &name);
+        toggle_pin(&mut settings, content, &name);
     }
 }
 
-/// Pins a quest, or unpins it; pinning a fourth does nothing.
-pub fn toggle_pin(settings: &mut Settings, name: &str) {
+/// Pins a quest, or unpins it; pinning past the tracker's room does nothing.
+pub fn toggle_pin(settings: &mut Settings, content: &Content, name: &str) {
     if let Some(i) = settings.pinned_quests.iter().position(|p| p == name) {
         settings.pinned_quests.remove(i);
-    } else if settings.pinned_quests.len() < PINS {
+    } else if settings.pinned_quests.len() < content.quests.tracker().pins && content.quests.get(name).is_some() {
         settings.pinned_quests.push(name.to_owned());
     } else {
         return;
@@ -302,13 +417,13 @@ fn draw(
     chapters_column: Query<Entity, With<Chapters>>,
     web: Query<Entity, With<Web>>,
     detail: Query<Entity, With<Detail>>,
-    mut drawn: Local<Option<(QuestView, Vec<QuestState>, Vec<String>)>>,
+    mut drawn: Local<Option<(QuestView, u32, Vec<String>)>>,
 ) {
     if !ui.quests_open {
         *drawn = None;
         return;
     }
-    let wanted = (view.clone(), player.quests.clone(), settings.pinned_quests.clone());
+    let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone());
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
         return;
     }
@@ -337,49 +452,79 @@ fn draw(
                 button.with_children(|button| {
                     let name = locale.get_or(&format!("quest.age.{age}"), &title_from_id(age)).to_owned();
                     button.spawn((shadowed(font, name, BODY, TEXT), TightLine));
-                    button.spawn((text(font, format!("{done}/{}", quests.len()), BODY, MUTED), TightLine));
+                    let count = locale.format("quest.chapter.count", &[("done", &done), ("all", &quests.len())]);
+                    button.spawn((text(font, count, BODY, MUTED), TightLine));
                 });
             }
         });
     }
     let Some(age) = ages.get(view.chapter) else { return };
-    let quests: Vec<&QuestDef> = content.quests.iter().filter(|q| &q.age == age).collect();
-    // Each quest's column: one past the furthest of those it comes after, in this chapter.
-    let mut depth: Vec<usize> = vec![0; quests.len()];
-    for _ in 0..quests.len() {
-        for (i, quest) in quests.iter().enumerate() {
-            let before = quest.after.iter().flat_map(|a| a.split('|')).filter_map(|name| quests.iter().position(|q| q.name == name)).map(|j| depth[j] + 1).max().unwrap_or(0);
-            depth[i] = before;
+    // The chapter's quests, and those of other chapters that come first, at the left.
+    let mut quests: Vec<&QuestDef> = content.quests.iter().filter(|q| &q.age == age).collect();
+    let mut outside: Vec<&QuestDef> = Vec::new();
+    for quest in &quests {
+        for first in before(content, quest) {
+            if first.age != *age && !outside.iter().any(|o| o.name == first.name) {
+                outside.push(first);
+            }
         }
     }
-    let mut rows: Vec<usize> = Vec::new();
-    let place: Vec<Vec2> = depth
-        .iter()
-        .map(|&d| {
-            if rows.len() <= d {
-                rows.resize(d + 1, 0);
-            }
-            let at = Vec2::new(d as f32 * STEP_X, rows[d] as f32 * STEP_Y);
-            rows[d] += 1;
-            at
-        })
-        .collect();
-    let centre = |i: usize| place[i] + Vec2::splat(SLOT / 2.0);
-    let icon_of = |item: Option<BlockId>| item.and_then(|item| images.icons.get(item.0 as usize).cloned()).unwrap_or_default();
+    let ours = quests.len();
+    quests.extend(outside);
+    // Each quest's column: one past the furthest of those it comes after; those outside
+    // the chapter stand in the first.
+    let mut depth: Vec<usize> = vec![0; quests.len()];
+    for _ in 0..quests.len() {
+        for i in 0..ours {
+            depth[i] = before(content, quests[i]).iter().filter_map(|first| quests.iter().position(|q| q.name == first.name)).map(|j| depth[j] + 1).max().unwrap_or(0);
+        }
+    }
+    // Each column's quests in the order of the rows of those they come after, so lines
+    // cross as little as may be; each column centred on the tallest.
+    let columns = depth.iter().copied().max().map_or(1, |d| d + 1);
+    let mut row: Vec<f32> = vec![0.0; quests.len()];
+    let mut tallest = 1;
+    for d in 0..columns {
+        let mut column: Vec<usize> = (0..quests.len()).filter(|&i| depth[i] == d).collect();
+        let key = |i: usize| -> f32 {
+            let firsts: Vec<f32> = if i < ours { before(content, quests[i]).iter().filter_map(|first| quests.iter().position(|q| q.name == first.name)).map(|j| row[j]).collect() } else { Vec::new() };
+            if firsts.is_empty() { f32::MAX } else { firsts.iter().sum::<f32>() / firsts.len() as f32 }
+        };
+        let keys: Vec<(usize, f32)> = column.iter().map(|&i| (i, key(i))).collect();
+        column.sort_by(|a, b| {
+            let (ka, kb) = (keys.iter().find(|k| k.0 == *a).unwrap().1, keys.iter().find(|k| k.0 == *b).unwrap().1);
+            ka.total_cmp(&kb).then(a.cmp(b))
+        });
+        for (r, &i) in column.iter().enumerate() {
+            row[i] = r as f32;
+        }
+        tallest = tallest.max(column.len());
+    }
+    for d in 0..columns {
+        let count = depth.iter().filter(|&&x| x == d).count();
+        let shift = (tallest - count) as f32 / 2.0;
+        for i in (0..quests.len()).filter(|&i| depth[i] == d) {
+            row[i] += shift;
+        }
+    }
+    // Spread to fill the well, within reason; a web too big for it scrolls.
+    let step = Vec2::new(WEB_ROOM.x / columns as f32, WEB_ROOM.y / tallest as f32).clamp(STEP_LEAST, STEP_MOST);
+    let place = |i: usize| Vec2::new(depth[i] as f32, row[i]) * step + (step - Vec2::splat(SLOT)) / 2.0;
+    let centre = |i: usize| place(i) + Vec2::splat(SLOT / 2.0);
     if let Ok(web) = web.single() {
         commands.entity(web).despawn_children().with_children(|web| {
-            if quests.is_empty() {
+            if ours == 0 {
                 web.spawn((Localized("quest.empty"), text(font, "", BODY, MUTED)));
                 return;
             }
-            // Room for the whole web, so it scrolls.
-            let width = (rows.len() as f32) * STEP_X;
-            let height = rows.iter().copied().max().unwrap_or(1) as f32 * STEP_Y;
-            web.spawn(Node { width: Val::Px(width), height: Val::Px(height), flex_shrink: 0.0, ..default() }).with_children(|area| {
+            let size = Vec2::new(columns as f32, tallest as f32) * step;
+            // Centred by its margins, which a web too big for the well gives up, so it scrolls
+            // from its top-left rather than being cut off.
+            web.spawn(Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin: UiRect::all(Val::Auto), ..default() }).with_children(|area| {
                 // The lines first, under the quests.
-                for (i, quest) in quests.iter().enumerate() {
-                    for name in quest.after.iter().flat_map(|a| a.split('|')) {
-                        let Some(j) = quests.iter().position(|q| q.name == name) else { continue };
+                for i in 0..ours {
+                    for first in before(content, quests[i]) {
+                        let Some(j) = quests.iter().position(|q| q.name == first.name) else { continue };
                         let (from, to) = (centre(j), centre(i));
                         let length = from.distance(to);
                         let middle = (from + to) / 2.0;
@@ -387,48 +532,51 @@ fn draw(
                         let line = Node {
                             position_type: PositionType::Absolute,
                             left: Val::Px(middle.x - length / 2.0),
-                            top: Val::Px(middle.y - PX / 2.0),
+                            top: Val::Px(middle.y - PX),
                             width: Val::Px(length),
-                            height: Val::Px(PX),
+                            height: Val::Px(2.0 * PX),
                             ..default()
                         };
                         let turn = UiTransform { rotation: Rot2::radians((to - from).to_angle()), ..default() };
-                        area.spawn((line, turn, BackgroundColor(if done { GOLD } else { MUTED.with_alpha(0.6) })));
+                        area.spawn((line, turn, BackgroundColor(if done { GOLD } else { MUTED.with_alpha(0.7) })));
                     }
                 }
                 for (i, quest) in quests.iter().enumerate() {
                     let standing = standing(content, &player, quest);
-                    let picked = view.picked.as_deref() == Some(quest.name.as_str());
+                    let at = place(i);
                     let node = Node {
                         position_type: PositionType::Absolute,
-                        left: Val::Px(place[i].x),
-                        top: Val::Px(place[i].y),
+                        left: Val::Px(at.x),
+                        top: Val::Px(at.y),
                         width: Val::Px(SLOT),
                         height: Val::Px(SLOT),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
                     };
-                    let piece = match (picked, standing) {
-                        (true, _) => Piece::WellFocus,
-                        (_, Standing::Done) => Piece::Frame,
-                        _ => Piece::Well,
+                    // Gold when done, lit while open, plain and dim while waiting.
+                    let piece = match standing {
+                        Standing::Done => Piece::Frame,
+                        Standing::Open => Piece::WellFocus,
+                        Standing::Waiting => Piece::Well,
                     };
+                    let tint = if standing == Standing::Waiting || i >= ours { Color::srgba(1.0, 1.0, 1.0, 0.35) } else { Color::WHITE };
                     area.spawn((Button, crate::ui::widgets::HoverLight, QuestNode(quest.name.clone()), node, piece.image())).with_children(|cell| {
-                        let tint = match standing {
-                            Standing::Done | Standing::Open => Color::WHITE,
-                            Standing::Waiting => Color::srgba(1.0, 1.0, 1.0, 0.35),
-                        };
-                        cell.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::new(icon_of(quest_item(content, quest))).with_color(tint)));
+                        cell.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
+                        // The quest picked, ringed.
+                        if view.picked.as_deref() == Some(quest.name.as_str()) {
+                            let ring = Node { position_type: PositionType::Absolute, left: Val::Px(-2.0 * PX), top: Val::Px(-2.0 * PX), width: Val::Px(SLOT + 4.0 * PX), height: Val::Px(SLOT + 4.0 * PX), ..default() };
+                            cell.spawn((ring, Piece::Selection.image()));
+                        }
                     });
                 }
             });
         });
     }
-    // The picked quest: why first, then its routes and their goals, the rewards, and a pin.
+    // The picked quest: why first, what comes first, its routes and goals, its rewards.
     if let Ok(detail) = detail.single() {
         commands.entity(detail).despawn_children().with_children(|detail| {
-            let Some(quest) = view.picked.as_deref().and_then(|name| quests.iter().find(|q| q.name == name)) else {
+            let Some(quest) = view.picked.as_deref().and_then(|name| content.quests.get(name)) else {
                 detail.spawn((Localized("quest.pick"), text(font, "", BODY, MUTED)));
                 return;
             };
@@ -442,14 +590,22 @@ fn draw(
                     Standing::Waiting => (locale.get("quest.status.waiting").to_owned(), MUTED),
                 };
                 top.spawn((text(font, status.0, BODY, status.1), TightLine));
+                // Only an open quest is followed on screen.
                 let pinned = settings.pinned_quests.contains(&quest.name);
-                if standing != Standing::Done && (pinned || settings.pinned_quests.len() < PINS) {
-                    top.spawn(Node { width: Val::Px(44.0 * PX), flex_shrink: 0.0, ..default() }).with_children(|cell| {
+                if pinned || (standing == Standing::Open && settings.pinned_quests.len() < content.quests.tracker().pins) {
+                    top.spawn(Node { width: Val::Px(PIN), flex_shrink: 0.0, ..default() }).with_children(|cell| {
                         spawn_button(cell, font, if pinned { "quest.unpin" } else { "quest.pin" }, ButtonStyle::Secondary, PinButton);
                     });
                 }
             });
             detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, why(&locale, quest), BODY, SOFT)));
+            let firsts = before(content, quest);
+            if !firsts.is_empty() {
+                let names: Vec<String> = firsts.iter().map(|q| title(&locale, q)).collect();
+                let line = locale.format("quest.after", &[("list", &names.join(locale.get("language.comma")))]);
+                let color = if standing == Standing::Waiting { TEXT } else { MUTED };
+                detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, line, BODY, color)));
+            }
             if quest.tasks.len() > 1 {
                 detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized("quest.routes"), shadowed(font, "", BODY, ACCENT)));
             }
@@ -460,9 +616,13 @@ fn draw(
                 for (g, goal) in task.iter().enumerate() {
                     let progress = state.and_then(|s| s.tasks.get(t)?.get(g).copied()).unwrap_or((0, 1));
                     let met = progress.0 >= progress.1 || standing == Standing::Done;
-                    let words = goal_words(&locale, content, goal, progress);
-                    let mark = if met { "✓ " } else { "• " };
-                    detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, format!("{mark}{words}"), BODY, if met { GOLD } else { TEXT })));
+                    // Waiting, its goals are what is ahead, not progress under way.
+                    let color = match (standing, met) {
+                        (Standing::Waiting, _) => MUTED,
+                        (_, true) => GOLD,
+                        _ => TEXT,
+                    };
+                    detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, goal_line(&locale, content, quest, goal, progress, met), BODY, color)));
                 }
             }
             if !quest.rewards.is_empty() {
@@ -471,7 +631,7 @@ fn draw(
                     .iter()
                     .map(|reward| match reward {
                         Reward::Xp(skill, xp) => locale.format("quest.reward.xp", &[("xp", &(*xp as u32)), ("skill", &skill_words(&locale, content, skill))]),
-                        Reward::Item(item, count) => locale.format("quest.reward.item", &[("count", count), ("item", &item_words(&locale, content, item))]),
+                        Reward::Item(item, count) => locale.format("quest.reward.item", &[("count", count), ("item", &item_words(&locale, content, package(quest), item))]),
                     })
                     .collect();
                 detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized("quest.rewards"), shadowed(font, "", BODY, ACCENT)));
@@ -483,17 +643,20 @@ fn draw(
 
 /// The pinned quests at the right of the screen.
 #[derive(Component)]
-struct Tracker;
+pub struct Tracker;
 /// An × that unpins a quest from the tracker itself, while the pointer is free.
 #[derive(Component)]
 struct Unpin(String);
 
 fn spawn_tracker(mut commands: Commands) {
+    // High at the right, clear of the skill toasts and the level plate below it.
     let column = Node {
         position_type: PositionType::Absolute,
         right: Val::Px(space::SECTION),
-        top: Val::Percent(20.0),
+        top: Val::Percent(8.0),
         width: Val::Px(130.0 * PX),
+        max_height: Val::Percent(28.0),
+        overflow: Overflow::clip(),
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(space::GAP),
         ..default()
@@ -501,19 +664,26 @@ fn spawn_tracker(mut commands: Commands) {
     commands.spawn((column, Tracker, GlobalZIndex(0)));
 }
 
-/// When each pinned quest was seen done, to let it go a moment later.
+/// When each pinned quest was seen done, and how long it has shown so since.
 #[derive(Default)]
 struct Finished(Vec<(String, f32)>);
 
-/// Unpins a quest a moment after it is done.
-fn retire(time: Res<Time>, player: Res<LocalPlayer>, mut settings: ResMut<Settings>, mut finished: Local<Finished>) {
-    let now = time.elapsed_secs();
+/// Unpins a quest once it has shown done on screen for a moment.
+fn retire(time: Res<Time>, player: Res<LocalPlayer>, launch: Res<Launch>, tracker: Query<&Visibility, With<Tracker>>, mut settings: ResMut<Settings>, mut finished: Local<Finished>) {
+    let stays = launch.content.quests.tracker().done_stays;
+    let shown = tracker.iter().any(|v| *v != Visibility::Hidden);
     for name in &settings.pinned_quests {
         if state(&player, name).is_some_and(|s| s.done) && !finished.0.iter().any(|(n, _)| n == name) {
-            finished.0.push((name.clone(), now));
+            finished.0.push((name.clone(), 0.0));
         }
     }
-    let gone: Vec<String> = finished.0.iter().filter(|(_, at)| now - at > DONE_STAYS).map(|(n, _)| n.clone()).collect();
+    // Counting only while it can be seen.
+    if shown {
+        for (_, seen) in &mut finished.0 {
+            *seen += time.delta_secs();
+        }
+    }
+    let gone: Vec<String> = finished.0.iter().filter(|(_, seen)| *seen > stays).map(|(n, _)| n.clone()).collect();
     if !gone.is_empty() {
         settings.pinned_quests.retain(|p| !gone.contains(p));
         finished.0.retain(|(n, _)| !gone.contains(n));
@@ -534,11 +704,12 @@ fn track(
     tracker: Query<Entity, With<Tracker>>,
     mut visibility: Query<&mut Visibility, With<Tracker>>,
     unpins: Query<(&Unpin, &Interaction), Changed<Interaction>>,
-    mut drawn: Local<Option<(Vec<String>, Vec<QuestState>)>>,
+    mut drawn: Local<Option<(Vec<String>, u32)>>,
 ) {
+    let content = &launch.content;
     for (unpin, interaction) in &unpins {
         if *interaction == Interaction::Pressed {
-            toggle_pin(&mut settings, &unpin.0);
+            toggle_pin(&mut settings, content, &unpin.0);
         }
     }
     // Out of the way of a screen, but for the quest book itself.
@@ -546,36 +717,98 @@ fn track(
     if let Ok(mut shown) = visibility.single_mut() {
         shown.set_if_neq(if screen || settings.pinned_quests.is_empty() { Visibility::Hidden } else { Visibility::Inherited });
     }
-    let wanted = (settings.pinned_quests.clone(), player.quests.clone());
+    let wanted = (settings.pinned_quests.clone(), player.quests_rev);
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
         return;
     }
     *drawn = Some(wanted);
     let Ok(tracker) = tracker.single() else { return };
-    let content = &launch.content;
     let font = &font.0;
+    let backing = SHADOW.with_alpha(content.quests.tracker().backing_alpha);
     commands.entity(tracker).despawn_children().with_children(|tracker| {
         for name in &settings.pinned_quests {
             let Some(quest) = content.quests.get(name) else { continue };
             let state = state(&player, name);
             let done = state.is_some_and(|s| s.done);
-            // Each on a faint backing, so its words read over the world.
-            let card = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(PX), padding: UiRect::all(Val::Px(space::INNER)), ..default() };
-            tracker.spawn((card, BackgroundColor(SHADOW.with_alpha(0.35)))).with_children(|card| {
+            let card = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(PX), padding: UiRect::all(Val::Px(space::INNER)), flex_shrink: 0.0, ..default() };
+            tracker.spawn((card, BackgroundColor(backing))).with_children(|card| {
                 card.spawn(Node { justify_content: JustifyContent::SpaceBetween, column_gap: Val::Px(space::INNER), ..default() }).with_children(|top| {
                     top.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, shadowed(font, title(&locale, quest), BODY, GOLD)));
                     top.spawn((Button, Unpin(name.clone()), Node { padding: UiRect::horizontal(Val::Px(PX)), ..default() })).with_child((shadowed(font, "×", BODY, MUTED), TightLine));
                 });
                 if done {
-                    card.spawn(shadowed(font, locale.get("quest.tracker.done").to_owned(), BODY, GOLD));
+                    card.spawn((shadowed(font, locale.get("quest.tracker.done").to_owned(), BODY, GOLD), TrackerLine));
                     return;
                 }
                 for (goal, progress) in best_task(quest, state) {
                     let met = progress.0 >= progress.1;
-                    let mark = if met { "✓ " } else { "" };
-                    card.spawn(shadowed(font, format!("{mark}{}", goal_words(&locale, content, goal, progress)), BODY, if met { GOLD } else { TEXT }));
+                    card.spawn((shadowed(font, goal_line(&locale, content, quest, goal, progress, met), BODY, if met { GOLD } else { TEXT }), TrackerLine));
                 }
             });
         }
     });
+}
+
+/// A line of the tracker: a goal's progress, or a quest done (for the gate to read).
+#[derive(Component)]
+pub struct TrackerLine;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn content() -> Content {
+        voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap()
+    }
+
+    /// Every name a quest gives (items, creatures, structures, skills) is one the content
+    /// has, so no page falls back to a made-up name; and every quest has a picture.
+    #[test]
+    fn every_quest_names_what_the_content_has() {
+        let content = content();
+        let mut wrong = Vec::new();
+        for quest in content.quests.iter() {
+            let package = package(quest);
+            let item = |name: &str| name == "any" || name.starts_with("tag:") || item_id(&content, package, name).is_some();
+            for goal in quest.tasks.iter().flatten() {
+                let known = match goal {
+                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) => item(name),
+                    Goal::Catch(name, _) => name == "Kinds" || item(name),
+                    Goal::Kill(name, _) | Goal::Tame(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
+                    Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
+                    Goal::Level(skill, _) => skill_id(&content, skill).is_some(),
+                    _ => true,
+                };
+                if !known {
+                    wrong.push(format!("{}: {goal:?}", quest.name));
+                }
+            }
+            for reward in &quest.rewards {
+                let known = match reward {
+                    Reward::Xp(skill, _) => skill_id(&content, skill).is_some(),
+                    Reward::Item(name, _) => item(name),
+                };
+                if !known {
+                    wrong.push(format!("{}: {reward:?}", quest.name));
+                }
+            }
+            let pictured = quest.rewards.iter().any(|r| matches!(r, Reward::Item(..) | Reward::Xp(..)))
+                || quest.tasks.iter().flatten().any(|g| matches!(g, Goal::Craft(..) | Goal::Cook(..) | Goal::Have(..) | Goal::Pick(..) | Goal::Mine(..) | Goal::Catch(..) | Goal::Level(..)));
+            if !pictured {
+                wrong.push(format!("{}: nothing to draw it with", quest.name));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// Each chapter has a name in Japanese, and the tracker's numbers come from the data.
+    #[test]
+    fn chapters_are_named_and_the_tracker_is_data() {
+        let content = content();
+        let ja = Locale::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), "ja");
+        for age in chapters(&content) {
+            assert!(ja.find(&format!("quest.age.{age}")).is_some(), "no Japanese name for the {age} chapter");
+        }
+        assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5 });
+    }
 }
