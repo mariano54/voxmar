@@ -79,8 +79,8 @@
 //   `shrine`: the work or kind of building Shrine sends people to. `live`: how the server
 //   keeps them (blocks and seconds): alive within `active` of a player, gone past
 //   `release`, let go past `forget`; ways searched `margin` round the buildings, at most
-//   `search` cells a way and `search_per_tick` a tick, a place no way reached left alone
-//   `failed_for`; `stuck` without getting nearer, the way is found again, and with none,
+//   `search` cells a way and `search_per_tick` a tick, a way not found from one cell to
+//   another not searched again for `failed_for`; `stuck` without getting nearer, the way is found again, and with none,
 //   looked for again after `no_way_retry`; patrols stop `patrol_pause` at each stop.
 //   Guards within `help` of a villager struck come (looked for every `call_every`), find
 //   their way to the striker every `repath` and go straight at them within `handoff`; one

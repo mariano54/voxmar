@@ -51,8 +51,10 @@ pub struct Villagers {
     /// Cells searched for ways this tick, so a whole village waking at once spreads its
     /// ways over ticks.
     searched: u32,
-    /// Places no way reached, by settlement, and the tick they may be searched for again.
-    failed: FxHashMap<(u64, IVec3), u64>,
+    /// Ways not found, by settlement, from where and to where, and the tick they may be
+    /// searched for again: the same search from the same cell finds the same nothing, and
+    /// one from anywhere else (another person, or this one moved on) still looks.
+    failed: FxHashMap<(u64, IVec3, IVec3), u64>,
     /// Who died, by settlement and resident: kept whether or not the settlement is near
     /// anyone, and saved with the world.
     dead: BTreeMap<(u64, usize), Dead>,
@@ -518,7 +520,7 @@ impl Server {
     /// The way from `from` to `to` through settlement `town`, within this tick's search.
     fn find_way(&mut self, from: IVec3, to: IVec3, town: u64, live: &LiveDef) -> Way {
         let tick = self.tick;
-        if self.villagers.failed.get(&(town, to)).is_some_and(|&until| until > tick) {
+        if self.villagers.failed.get(&(town, from, to)).is_some_and(|&until| until > tick) {
             return Way::Unreached;
         }
         if self.villagers.searched + live.search > live.search_per_tick {
@@ -529,7 +531,7 @@ impl Server {
         match path {
             Some(path) => Way::Found(path),
             None => {
-                self.villagers.failed.insert((town, to), tick + ticks(live.failed_for));
+                self.villagers.failed.insert((town, from, to), tick + ticks(live.failed_for));
                 Way::Unreached
             }
         }

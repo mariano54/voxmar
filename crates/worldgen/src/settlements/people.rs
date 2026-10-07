@@ -282,7 +282,7 @@ pub struct LiveDef {
     /// Cells one way may search before it gives up, and all ways in a tick together.
     pub search: u32,
     pub search_per_tick: u32,
-    /// How long a place no way reached is not searched for again.
+    /// How long a way not found from one cell to another is not searched for again.
     pub failed_for: f32,
     /// Without getting nearer the next turn, finding the way again.
     pub stuck: f32,
