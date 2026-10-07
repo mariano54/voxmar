@@ -1702,10 +1702,13 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         1 => {
             gate.highest = gate.highest.max(position.y);
-            // Out of the water at the step's height, standing or mid-hop: with jump held, a
-            // frame on the ground is easy to miss on a loaded machine, and holding on walks
-            // the player off the test ground.
-            if position.y >= step_top - 0.01 && (on_ground || !in_water) {
+            // Out of the water at the step's height, jump is let go so the player lands on
+            // the step and stays: held, a frame on the ground is easy to miss on a loaded
+            // machine, and the player hopped on and off the test ground.
+            if !in_water && position.y >= step_top - 0.01 {
+                key(world, KeyCode::Space, false);
+            }
+            if on_ground && position.y >= step_top - 0.01 {
                 key(world, KeyCode::KeyW, false);
                 key(world, KeyCode::Space, false);
                 gate.check("swim", Ok(format!("climbed out of the water onto the step in {in_phase:.1}s")));
