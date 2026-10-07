@@ -38,6 +38,26 @@
                 "................",
             ]),
         ]),
+        // Old glass, from abandoned windows: a weathered lead frame round a cloudy, faintly
+        // green pane, uneven in thickness, with a crack across one corner.
+        "block/old_glass": (size: (32, 32), palettes: {"frame": ["#4a4e4c", "#6a706c", "#8c928c"], "pane": ["#b8c8b080", "#c8d6c090", "#d6e2cc98", "#e2ecdaa0"]}, layers: [
+            Paint(palette: "pane", base: 0.45, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.5), Noise(cells: (16, 16), amount: 0.3)], clean: true),
+            Paint(palette: "frame", base: 0.5, shade: [Border(width: 1, amount: 0.35, sides: (1.0, 0.0, 0.0, 1.0)), Border(width: 1, amount: -0.35, sides: (0.0, 1.0, 1.0, 0.0)), Noise(cells: (16, 16), amount: 0.3)], mask: [Border(width: 2, amount: 1.0)], above: 0.5),
+            Grid(legend: {'c': "#3a403cc0", 'l': "#f4f8eec0"}, rows: [
+                "................................",
+                "................................",
+                "......................c.........",
+                "......................c.........",
+                ".....................cl.........",
+                "....................c...........",
+                "...................cl...........",
+                "..................c.............",
+                "................cc..............",
+                "...............c................",
+                "..............c.................",
+                "..............l.................",
+            ], at: [(2, 0)]),
+        ]),
         "block/glowstone": (palettes: {"main": ["#6b4a1c", "#a8742c", "#d9a341", "#f2c766", "#ffe196", "#fff4cc"]}, layers: [
             Paint(palette: "main", base: 0.6, shade: [Cells(count: (4, 4), jitter: 1.0, value: 0.5, edge: -0.55, bevel: 0.35, warp: 1.0), Speckle(chance: 0.1, amount: 0.3)], clean: true),
         ]),
@@ -49,11 +69,11 @@
             ], clean: true),
         ]),
         // A torch at 32×32: a stick lit from the left, its head wrapped, charred and
-        // glowing, under a teardrop flame white-hot at its heart. Named `torch_lit` so a
+        // glowing, under a teardrop flame, deep yellow at its heart (near white glowed pink). Named `torch_lit` so a
         // Minecraft pack's torch, a different shape, never stands in for it. Four frames
         // down the strip, for when strips animate; the game draws the first.
         "block/torch_lit": (base: "shape/plant", size: (32, 128), layers: [
-            Grid(at: [(0, 0)], legend: {'W': "#ffeaa8", 'Y': "#ffc23e", 'y': "#f8901c", 'o': "#e05a10", 'r': "#b02a08", 'R': "#6a1406", 'k': "#4a3018", 'l': "#a07444", 'm': "#7a5430", 'c': "#2a1c12", 'n': "#5a4a3a", 'e': "#ff9a30"}, rows: [
+            Grid(at: [(0, 0)], legend: {'W': "#ffc84a", 'Y': "#f8a024", 'y': "#ec7412", 'o': "#e05a10", 'r': "#b02a08", 'R': "#6a1406", 'k': "#4a3018", 'l': "#a07444", 'm': "#7a5430", 'c': "#2a1c12", 'n': "#5a4a3a", 'e': "#ff9a30"}, rows: [
                 "................................",
                 "................................",
                 "................................",
@@ -87,7 +107,7 @@
                 "..............llmk..............",
                 "..............lmmk..............",
             ]),
-            Grid(at: [(0, 32)], legend: {'W': "#ffeaa8", 'Y': "#ffc23e", 'y': "#f8901c", 'o': "#e05a10", 'r': "#b02a08", 'R': "#6a1406", 'k': "#4a3018", 'l': "#a07444", 'm': "#7a5430", 'c': "#2a1c12", 'n': "#5a4a3a", 'e': "#ff9a30"}, rows: [
+            Grid(at: [(0, 32)], legend: {'W': "#ffc84a", 'Y': "#f8a024", 'y': "#ec7412", 'o': "#e05a10", 'r': "#b02a08", 'R': "#6a1406", 'k': "#4a3018", 'l': "#a07444", 'm': "#7a5430", 'c': "#2a1c12", 'n': "#5a4a3a", 'e': "#ff9a30"}, rows: [
                 "................................",
                 "................................",
                 "................r...............",
@@ -121,7 +141,7 @@
                 "..............llmk..............",
                 "..............lmmk..............",
             ]),
-            Grid(at: [(0, 64)], legend: {'W': "#ffeaa8", 'Y': "#ffc23e", 'y': "#f8901c", 'o': "#e05a10", 'r': "#b02a08", 'R': "#6a1406", 'k': "#4a3018", 'l': "#a07444", 'm': "#7a5430", 'c': "#2a1c12", 'n': "#5a4a3a", 'e': "#ff9a30"}, rows: [
+            Grid(at: [(0, 64)], legend: {'W': "#ffc84a", 'Y': "#f8a024", 'y': "#ec7412", 'o': "#e05a10", 'r': "#b02a08", 'R': "#6a1406", 'k': "#4a3018", 'l': "#a07444", 'm': "#7a5430", 'c': "#2a1c12", 'n': "#5a4a3a", 'e': "#ff9a30"}, rows: [
                 "................................",
                 "................................",
                 "................................",
@@ -155,7 +175,7 @@
                 "..............llmk..............",
                 "..............lmmk..............",
             ]),
-            Grid(at: [(0, 96)], legend: {'W': "#ffeaa8", 'Y': "#ffc23e", 'y': "#f8901c", 'o': "#e05a10", 'r': "#b02a08", 'R': "#6a1406", 'k': "#4a3018", 'l': "#a07444", 'm': "#7a5430", 'c': "#2a1c12", 'n': "#5a4a3a", 'e': "#ff9a30"}, rows: [
+            Grid(at: [(0, 96)], legend: {'W': "#ffc84a", 'Y': "#f8a024", 'y': "#ec7412", 'o': "#e05a10", 'r': "#b02a08", 'R': "#6a1406", 'k': "#4a3018", 'l': "#a07444", 'm': "#7a5430", 'c': "#2a1c12", 'n': "#5a4a3a", 'e': "#ff9a30"}, rows: [
                 "................................",
                 "................................",
                 "................................",

@@ -55,8 +55,10 @@ use crate::render::DayCycle;
 use crate::render::lod::Lod;
 use crate::world::ClientWorld;
 
-/// Height `--flight` climbs to before flying forward, above all but the highest peaks.
+/// Height `--flight` is teleported to before flying forward, above all but the highest peaks.
 const FLIGHT_HEIGHT: f32 = voxmar_worldgen::SEA_LEVEL as f32 + 106.0;
+/// How long the teleport up before a flight may go unanswered, in the server's seconds.
+const LIFT_WAIT: f32 = 3.0;
 
 pub struct CapturePlugin {
     pub path: PathBuf,
@@ -143,6 +145,7 @@ impl Plugin for CapturePlugin {
             path: self.path.clone(),
             pose: self.pose,
             flight: self.flight,
+            lift_asked: None,
             dig: self.dig,
             dig_started: None,
             wait: self.wait,
@@ -203,6 +206,8 @@ struct Capture {
     path: PathBuf,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    /// When (by the server's clock) the flight asked to be teleported to its height.
+    lift_asked: Option<f32>,
     dig: Option<f32>,
     dig_started: Option<f32>,
     wait: f32,
@@ -609,15 +614,14 @@ fn hold_time(state: Res<Capture>, time: Res<Time>, mut cycle: ResMut<DayCycle>) 
     }
 }
 
-/// Climbs straight up above the terrain, then flies forward at sprint-flight speed. Flying
-/// through the ground would have the server send the player back.
+/// Flies forward at sprint-flight speed (above the terrain: `capture` has teleported the
+/// player up first).
 fn fly(time: &Time, player: &mut LocalPlayer, sprint_speed: f32) {
     player.flying = true;
     let forward = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
-    let direction = if player.position.y < FLIGHT_HEIGHT { Vec3::Y } else { forward };
     // As fast as the player's fly speed setting makes it (an admin's, up to several times).
     let speed = sprint_speed * 0.9 * player.fly_speed;
-    player.position += direction * speed * time.delta_secs();
+    player.position += forward * speed * time.delta_secs();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -633,7 +637,7 @@ fn capture(
     lod: Res<Lod>,
     screen: Res<State<Screen>>,
     (weather, air, launch): (Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>, Res<crate::session::Launch>),
-    (ready, mut console): (Res<crate::weather::WeatherReady>, ResMut<crate::hud::console::Console>),
+    (ready, mut console, net): (Res<crate::weather::WeatherReady>, ResMut<crate::hud::console::Console>, Res<crate::net::Net>),
 ) {
     // Real time while `--flicker` stops the game's clock.
     let now = if state.flicker.is_some() { real.elapsed_secs() } else { time.elapsed_secs() };
@@ -690,6 +694,25 @@ fn capture(
     }
     // Frame times by the wall clock: the game's own clock caps a frame at 250 ms.
     let frame_ms = real.delta_secs() * 1000.0;
+    // A flight first goes above the terrain by teleport (a climb straight up is refused
+    // under a canopy or an overhang), and is timed only from there, so its frame times are
+    // the flight's and not the teleport's. A teleport the server never answers fails it.
+    if state.flight.is_some() && player.position.y < FLIGHT_HEIGHT - 1.0 {
+        player.flying = true;
+        let server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
+        match state.lift_asked {
+            None => {
+                net.command(&format!("tp {} {FLIGHT_HEIGHT} {}", player.position.x, player.position.z));
+                state.lift_asked = Some(server_now);
+            }
+            Some(asked) if server_now - asked > LIFT_WAIT => {
+                error!("flight: the teleport up was not answered in {LIFT_WAIT} s of the server's clock");
+                exit.write(AppExit::error());
+            }
+            Some(_) => {}
+        }
+        return;
+    }
     if let Some(duration) = state.flight
         && now - *state.flight_started.get_or_insert(now) < duration
     {

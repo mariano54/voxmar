@@ -1,0 +1,72 @@
+// Village furnishings (content/base/blocks_furnishings.ron) at 32×32 in vanilla's design
+// language, for this pack and Voxmar HD alike: a hay bale, a barrel, a sack, a bell, a
+// fishing net and hanging herbs.
+(
+    palettes: {
+        "hay_straw": ["#7a5a1c", "#9a7826", "#b8952e", "#cfae42", "#e2c45c", "#efd77a"],
+        "straw_tie": ["#4a3214", "#6a4a20", "#8a6430"],
+        "stave": ["#4e3420", "#66442a", "#7e5634", "#94673e", "#a87a4a"],
+        "hoop": ["#2a2a2e", "#3e3e44", "#5a5a62", "#7c7c86"],
+        "burlap": ["#8a7650", "#a08a60", "#b49e72", "#c6b084", "#d4c096"],
+        "burlap_tie": ["#5a4630", "#76603e"],
+    },
+    textures: {
+        // Straw lying along the bale, in clear streaks, bound by two dark ties.
+        "block/hay_bale_side": (size: (32, 32), palettes: {"main": "hay_straw", "tie": "straw_tie"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (2, 16), octaves: 2, amount: 0.45), Noise(cells: (8, 32), amount: 0.45)], clean: true),
+            Paint(palette: "tie", base: 0.5, shade: [Noise(cells: (4, 32), amount: 0.5)], mask: [Stripes(period: 16.0, width: 0.125, amount: 1.0, vertical: true, phase: 6.0)], above: 0.5),
+        ]),
+        // The cut ends of the straw, with the ties crossing them and a shadowed rim.
+        "block/hay_bale_top": (size: (32, 32), palettes: {"main": "hay_straw", "tie": "straw_tie"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (8, 8), amount: 0.35), Noise(cells: (32, 32), amount: 0.6), Border(width: 1, amount: -0.35)], clean: true),
+            Paint(palette: "tie", base: 0.5, mask: [Stripes(period: 16.0, width: 0.125, amount: 1.0, vertical: true, phase: 6.0)], above: 0.5),
+        ]),
+        // Four staves round, their seams dark, grain running up them, darker towards the
+        // edges where the barrel turns away, held by two iron hoops.
+        "block/barrel_side": (size: (32, 32), palettes: {"main": "stave", "hoop": "hoop"}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [
+                Noise(cells: (16, 2), octaves: 2, amount: 0.3), Noise(cells: (32, 8), amount: 0.3),
+                Stripes(period: 8.0, width: 0.125, amount: -0.45, vertical: true, phase: 7.0),
+                Border(width: 3, amount: -0.18, sides: (0.0, 1.0, 0.0, 1.0)),
+            ], clean: true),
+            Paint(palette: "hoop", base: 0.55, shade: [Gradient(from: 0.15, to: -0.15), Noise(cells: (32, 4), amount: 0.25)], mask: [Stripes(period: 16.0, width: 0.1875, amount: 1.0, phase: 4.0)], above: 0.5, shadow: -1, light: 1),
+        ]),
+        // The lid: boards across inside the iron rim.
+        "block/barrel_top": (size: (32, 32), palettes: {"main": "stave", "hoop": "hoop"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Boards(height: 8, seam: -0.45, joint: -0.2, value: 0.15, bevel: 0.1), Noise(cells: (2, 16), amount: 0.25), Noise(cells: (8, 32), amount: 0.25)], clean: true),
+            Paint(palette: "hoop", base: 0.55, mask: [Border(width: 2, amount: 1.0)], above: 0.5, light: 1),
+        ]),
+        // Coarse woven sacking with soft folds, tied off near the top.
+        "block/sack_side": (size: (32, 32), palettes: {"main": "burlap", "tie": "burlap_tie"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [
+                Stripes(period: 2.0, width: 0.5, amount: -0.12, vertical: true), Stripes(period: 2.0, width: 0.5, amount: 0.1),
+                Noise(cells: (4, 2), octaves: 2, amount: 0.35), Noise(cells: (16, 16), amount: 0.2),
+                Gradient(from: 0.1, to: -0.15),
+            ], clean: true),
+            Paint(palette: "tie", base: 0.5, mask: [Stripes(period: 32.0, width: 0.0625, amount: 1.0, phase: 4.0)], above: 0.5, shadow: -1),
+        ]),
+        // The gathered neck seen from above, the sacking puckered round it.
+        "block/sack_top": (size: (32, 32), palettes: {"main": "burlap", "tie": "burlap_tie"}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [
+                Stripes(period: 2.0, width: 0.5, amount: -0.1, vertical: true), Stripes(period: 2.0, width: 0.5, amount: 0.08),
+                Rings(spacing: 4.0, width: 0.3, amount: -0.2, wobble: 1.0, square: 0.2), Noise(cells: (16, 16), amount: 0.2),
+            ], clean: true),
+            Paint(palette: "tie", base: 0.3, mask: [Circle(radius: 3.5, rough: 0.8)], above: 0.5, light: 1),
+        ]),
+        // A bronze bell on its rope: a crown loop, the body flaring to a thick lip, lit from
+        // the left, and the clapper showing beneath.
+        "block/bell": (size: (32, 32), layers: [
+            Grid(legend: {'o': "#3a2410", 'd': "#7a4a18", 'm': "#a8702a", 'l': "#d09a40", 'h': "#f0cc70", 'r': "#6a5030"}, rows: ["...............rr...............", "...............rr...............", "...............rr...............", "...............rr...............", "...............rr...............", ".............oooooo.............", ".............oo..oo.............", "............ohloomdo............", "............ohllmmmo............", "...........ohhllmmmdo...........", "...........ohlllmmmdo...........", "...........ohlllmmmdo...........", "...........ohlllmmmdo...........", "..........ohhlllmmmddo..........", "..........ohhlllmmmddo..........", "..........ohhlllmmmmdo..........", "..........ohhlllmmmmdo..........", ".........ohhllllmmmmddo.........", ".........ohhllllmmmmddo.........", ".........ohhllllmmmmddo.........", ".........ohhllllmmmmddo.........", "........ohhhllllmmmmmddo........", ".......oddddddddddddddddo.......", "......ohhhhlllllmmmmmmdddo......", ".....ollllllllllddddddddddo.....", "....oooooooooooldooooooooooo....", "...............oo...............", "...............oo...............", "...............oo...............", "................................", "................................", "................................"]),
+        ]),
+        // A net hung to dry: diamond meshes of cord with darker knots, on a rope with
+        // three cork floats.
+        "block/fishing_net": (size: (32, 32), layers: [
+            Grid(legend: {'r': "#7a6040", 'c': "#a89068", 'k': "#6a5438", 'f': "#d08a40", 'g': "#9a5a28"}, rows: ["................................", "...ffff......ffff......ffff.....", "rrrffffrrrrrrffffrrrrrrffffrrrrr", "rrrggggrrrrrrggggrrrrrrggggrrrrr", "..cgggg.k.c..gggg...k.cgggg.c...", ".c...c.k...c.c...c.k...c.c...c.k", "c.....k.....c.....k.....c.....k.", ".c...k.c...c.c...k.c...c.c...k.c", "..c.k...c.c...c.k...c.c...c.k...", "...k.....c.....k.....c.....k....", "..k.c...c.c...k.c...c.c...k.c...", ".k...c.c...c.k...c.c...c.k...c.c", "k.....c.....k.....c.....k.....c.", ".c...c.c...k.c...c.c...k.c...c.c", "..c.c...c.k...c.c...c.k...c.c...", "...c.....k.....c.....k.....c....", "..c.c...k.c...c.c...k.c...c.c...", ".c...c.k...c.c...c.k...c.c...c.k", "c.....k.....c.....k.....c.....k.", ".c...k.c...c.c...k.c...c.c...k.c", "..c.k...c.c...c.k...c.c...c.k...", "...k.....c.....k.....c.....k....", "..k.c...c.c...k.c...c.c...k.c...", ".k...c.c...c.k...c.c...c.k...c.c", "k.....c.....k.....c.....k.....c.", ".c...c.c...k.c...c.c...k.c...c.c", "..c.c...c.k...c.c...c.k...c.c...", "...c.....k.....c.....k.....c....", "..c.c...k.c...c.c...k.c...c.c...", ".c...c.k...c.c...c.k...c.c...c.k", "c.....k.....c.....k.....c.....k.", "................................"]),
+        ]),
+        // Three bunches of herbs hung upside down from a string to dry, tied at the stems,
+        // the middle one in flower.
+        "block/hanging_herbs": (size: (32, 32), layers: [
+            Grid(legend: {'r': "#8a7050", 's': "#5a6a2e", 't': "#c0a060", 'a': "#4a6a2a", 'b': "#6a8a38", 'e': "#8aa848", 'p': "#8a6ac8", 'q': "#b49ae0"}, rows: ["................................", "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", ".....ss........ss........ss.....", ".....ss........ss........ss.....", ".....tt........tt........tt.....", ".....a.........a.........a......", "....asee.......sbe.......sbe....", "....abb........b........a.be....", "...a.bbe.....aabbee.....aebee...", "...aasbee....aa.bee...aaasbe.e..", "..aaabb.e...aaabbeee..aea.bbe...", "..aaabbbee..aaabbbee...a.bbbee..", "..aaasbeee...aasbbe...aaasbbe...", "..aaabbb.e...aa.bbee..aaaeebe...", "..aaebbbee...aab.be...aaebbbee..", "...aasebee...aqsbepp..aaesbbe...", "..aaabbbee..aapqqbee...eabbbe...", "..aaabeeee..pqpqb.ee...aabbee...", "...aasbe....aapsqppe...aes.ee...", "....aebe....appppeee....abb.....", "....a..e.....aabbee.....aaee....", ".....sb.......psbe........e.....", "..............apq.........e.....", ".....a........abp...............", "...............se...............", "................e...............", "...............ee...............", "................................", "................................", "................................", "................................", "................................"]),
+        ]),
+    },
+)

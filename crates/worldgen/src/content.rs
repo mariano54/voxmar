@@ -1429,8 +1429,9 @@ pub struct TreadDef {
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 15] = [
+pub(crate) const BASE_FILES: [(&str, &str); 16] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
+    ("crops.ron", include_str!("../../../assets/content/base/crops.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
     ("cave_biomes.ron", include_str!("../../../assets/content/base/cave_biomes.ron")),
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
@@ -1451,7 +1452,9 @@ impl WorldContent {
     /// The generator's definitions from loaded content packages, checked against their
     /// blocks.
     pub fn load(content: &Content) -> Result<Self, ContentError> {
-        Self::from_files(content.files.iter(), &content.blocks)
+        let world = Self::from_files(content.files.iter(), &content.blocks)?;
+        world.settlements.check_furnishings(&content.blocks)?;
+        Ok(world)
     }
 
     /// The base package's definitions alone.
@@ -1550,6 +1553,29 @@ impl WorldContent {
                 "land.ron" => land = Some(parse::<LandDef>(&at, &file.source)?),
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
                 "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
+                // Each crop's level, rarity and stages, so settlements keep to everyday crops
+                // and never grow them ripe.
+                "crops.ron" => {
+                    #[derive(serde::Deserialize)]
+                    struct Crop {
+                        name: String,
+                        #[serde(default)]
+                        level: u32,
+                        #[serde(default)]
+                        rarity: voxmar_engine::block::Rarity,
+                        #[serde(default)]
+                        stages: Vec<String>,
+                    }
+                    #[derive(serde::Deserialize)]
+                    struct Crops {
+                        crops: Vec<Crop>,
+                    }
+                    for c in parse::<Crops>(&at, &file.source)?.crops {
+                        let name = q(&c.name);
+                        let stages = if c.stages.is_empty() { (0..3).map(|i| format!("{name}_crop_{i}")).chain([format!("{name}_crop")]).collect() } else { c.stages.iter().map(|s| q(s)).collect() };
+                        settlements.crops.insert(name, crate::settlements::def::CropInfo { level: c.level, rarity: c.rarity, stages });
+                    }
+                }
                 "weather.ron" => weather.extend(&file.package, &file.source).map_err(|e| ContentError(e.0))?,
                 "decorations.ron" => decorations.extend(
                     parse::<DecorationFile>(&at, &file.source)?.decorations.into_iter().map(|d| qualify_decoration(&file.package, d)),
