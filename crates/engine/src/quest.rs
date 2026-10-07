@@ -43,6 +43,8 @@ pub enum Goal {
     Have(String, u32),
     /// Has a home (a lit hearth).
     Home,
+    /// Lit a multiblock (a crucible kiln) this many times.
+    Built(String, u32),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -129,6 +131,7 @@ impl Progress<'_> {
             Goal::Level(skill, n) => ((self.level)(skill) as u32, *n as u32),
             Goal::Have(item, n) => ((self.carried)(item), *n),
             Goal::Home => (u32::from(self.home), 1),
+            Goal::Built(structure, n) => (tally("built", structure), *n),
         }
     }
 

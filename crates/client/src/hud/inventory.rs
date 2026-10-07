@@ -90,6 +90,10 @@ struct LastClick {
 struct InventoryScreen;
 #[derive(Component)]
 struct InventorySlot(usize);
+/// A slot a screenshot shows the tooltip of, as if the pointer were over it (`--hover-slot`).
+#[derive(Resource)]
+pub struct HoverSlot(pub usize);
+
 /// The panel (and creative mode's catalogue beside it); clicks outside them throw the held
 /// stack.
 #[derive(Component)]
@@ -792,10 +796,11 @@ fn tooltip(
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
     mut japanese: Local<Option<Locale>>,
-    viewer: Res<super::recipes::RecipeViewer>,
+    (viewer, forced, places): (Res<super::recipes::RecipeViewer>, Option<Res<HoverSlot>>, Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>),
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let item = hovered(&slots)
+        .or(forced.as_ref().map(|f| f.0))
         .filter(|_| ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none())
         .and_then(|slot| player.inventory.get(slot))
         .map(|stack| stack.item)
@@ -859,7 +864,16 @@ fn tooltip(
         let top = (at.y - size.y - 2.0 * PX).max(2.0 * PX);
         node.left = Val::Px(left);
         node.top = Val::Px(top);
+    }    // Without a pointer, beside the slot a screenshot names.
+    else if let Some(slot) = forced.as_ref().map(|f| f.0)
+        && let Some((_, cell, place)) = places.iter().find(|(s, ..)| s.0 == slot)
+    {
+        let size = computed.size() * computed.inverse_scale_factor();
+        let at = (place.translation + cell.size() / 2.0) * cell.inverse_scale_factor();
+        node.left = Val::Px(at.x + 2.0 * PX);
+        node.top = Val::Px((at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
     }
+
 }
 
 #[cfg(test)]

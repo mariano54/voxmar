@@ -31,12 +31,17 @@ pub struct RecipeDef {
     pub level: u8,
     /// Experience for cooking one without burning it.
     pub xp: f32,
-    /// The level burning stops at; at `level` the chance is `BURN_AT_START`.
+    /// The level burning stops at; at `level` the chance is `BURN_AT_START`. 0 for what
+    /// never burns (metal, charcoal).
     #[serde(default)]
     pub stop_burning: Option<u8>,
     /// What burning it leaves; nothing (the food is lost) unless given.
     #[serde(default)]
     pub burnt: Option<String>,
+    /// The skill it trains and asks a level in: Cooking unless given (a kiln's pottery is
+    /// Crafting, a crucible's metal Engineering).
+    #[serde(default)]
+    pub skill: Option<String>,
 }
 
 fn campfire() -> String {
@@ -62,11 +67,15 @@ pub struct Recipe {
     pub def: RecipeDef,
     pub output: BlockId,
     pub burnt: Option<BlockId>,
+    pub skill: Option<SkillId>,
 }
 
 impl Recipe {
     /// The chance of burning it at `level`.
     pub fn burn_chance(&self, level: u8) -> f32 {
+        if self.def.stop_burning == Some(0) {
+            return 0.0;
+        }
         let start = self.def.level;
         let stop = self.def.stop_burning.unwrap_or(start.saturating_add(20)).max(start + 1);
         if level >= stop {
@@ -117,6 +126,10 @@ impl CookingRegistry {
             let block = |name: &str| blocks.id(name).ok_or_else(|| error(format!("no item `{name}`")));
             let output = block(&def.output)?;
             let burnt = def.burnt.as_deref().map(block).transpose()?;
+            let skill = match &def.skill {
+                Some(name) => Some(skills.id(name).ok_or_else(|| error(format!("no skill `{name}`")))?),
+                None => registry.skill,
+            };
             let inputs: Vec<BlockId> = match def.input.strip_prefix("tag:") {
                 Some(tag) => blocks.tagged(tag).collect(),
                 None => vec![block(&def.input)?],
@@ -128,7 +141,7 @@ impl CookingRegistry {
             for input in inputs {
                 registry.by_input.entry(input).or_default().push(index);
             }
-            registry.recipes.push(Recipe { def, output, burnt });
+            registry.recipes.push(Recipe { def, output, burnt, skill });
         }
         Ok(registry)
     }

@@ -137,8 +137,10 @@ pub struct SavedPlayer {
     pub skills: Vec<(String, u32)>,
     /// Effects food gave, by name, with seconds left.
     pub effects: Vec<(String, f32)>,
-    /// Where the player wakes after dying, if a bed or hearth set it.
+    /// Where the player wakes after dying, if a hearth set it, and the bed they last
+    /// slept in.
     pub home: Option<[f32; 3]>,
+    pub bed: Option<[f32; 3]>,
     /// Everything they have discovered.
     pub journal: Vec<voxmar_engine::journal::Entry>,
     /// Quests finished, and the tallies quests count.
@@ -162,6 +164,8 @@ struct PlayerFile {
     effects: Vec<(String, f32)>,
     #[serde(default)]
     home: Option<[f32; 3]>,
+    #[serde(default)]
+    bed: Option<[f32; 3]>,
     /// What pouches hold, by item name.
     #[serde(default)]
     pouched: Vec<(String, u16)>,
@@ -307,7 +311,7 @@ impl WorldSave {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -330,6 +334,7 @@ impl WorldSave {
             skills: player.skills.clone(),
             effects: player.effects.clone(),
             home: player.home,
+            bed: player.bed,
             pouched: held.pouched.iter().map(|&(item, count)| (registry.def(item).name.clone(), count)).collect(),
             journal: player.journal.clone(),
             quests: player.quests.clone(),
@@ -565,6 +570,7 @@ mod tests {
             skills: vec![("core:farming".into(), 1234)],
             effects: vec![("base:hearty".into(), 120.5)],
             home: Some([3.5, 70.0, -2.5]),
+            bed: Some([1.5, 64.0, 9.5]),
             journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
             quests: vec!["base:first_night".into()],
             tallies: vec![("crafted:base:torch".into(), 8)],

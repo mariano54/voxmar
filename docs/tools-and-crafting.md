@@ -104,6 +104,24 @@ clay, Crafting 3) two blocks tall at one corner. Right click the hearthstone
 (`base:light_hearth`): if the hearth stands, it is your home (`Player::home`, saved) and
 you wake on it after dying; if not, you are told what it needs.
 
+## Sleeping bags, kilns and bronze (the Nomad and Farm ages)
+
+A sleeping bag (three wool and two hide, four pelts, or feathers and two hide) is where
+you wake after dying until a hearth gives you a home: right click it to sleep
+(`base:sleep`, `Player::bed`, saved). A pit kiln (cobbles round a campfire) fires clay:
+shaped into pots and vials at the grid, or as it is into bricks (`cooking.ron` recipes at
+the `pit_kiln` station; a station recipe may name its own `skill`, here Crafting). Four
+fired bricks make kiln bricks. The Crucible Kiln, the Farm age's gate, is a multiblock:
+a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
+corner. A crucible smelts only in a standing kiln: copper ore and tin ore into ingots,
+and a bronze blend (three copper ingots and a tin ingot) into bronze, all Engineering,
+never burnt (`stop_burning: 0`). Right clicking the crucible with nothing it smelts
+lights the kiln, and quests count it (`Built("crucible_kiln")`).
+
+Multiblocks are lit generically (`base:light` on a block tagged `multiblock_core`): a
+multiblock with `home: true` becomes home, any other is just lit; one that does not
+stand yet says its `hint`. Wooden chests wait for a container screen.
+
 ## Dying
 
 Dying costs what you carried, not your skills (Mariano, 2026-10-06). You keep your three most

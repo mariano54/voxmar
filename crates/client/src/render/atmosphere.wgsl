@@ -481,8 +481,10 @@ fn cloud_seen(a: Atmosphere, eye: vec3<f32>, origin: vec3<f32>, direction: vec3<
     if alpha <= 0.0 {
         return vec4(0.0);
     }
+    // Lit as the sky draws a cloud's sunlit sides and underside together: brighter than the
+    // shaded underside alone, which mirrored grey-brown against blue water.
     let white = vec3(dot(sun, vec3(0.2126, 0.7152, 0.0722)));
-    let lit = (mix(sun, white, 0.5) * 0.4 + sky * 0.7) * (1.0 - 0.5 * a.cloud_shape.w);
+    let lit = (mix(sun, white, 0.5) * 0.8 + sky * 0.9) * (1.0 - 0.5 * a.cloud_shape.w);
     let air = air_along(a, origin, direction * across.y, to_sun);
     return vec4((lit * air.transmittance + air.light) * alpha, alpha);
 }

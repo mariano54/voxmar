@@ -23,6 +23,16 @@
     ],
     blocks: [
         (tags: ["ore", "alchemy:aether"], skill: "core:mining", level: 50, tool: "pickaxe", tier: 4, xp: 125.0),
+        // The ores of ores.ron's second part, by tag so their deepslate forms and surface
+        // samples follow. Gems each ahead of the general gem rule.
+        (tags: ["metal:aluminium"], skill: "core:mining", level: 50, tool: "pickaxe", tier: 4, xp: 100.0),
+        (tags: ["graphite"], skill: "core:mining", level: 45, tool: "pickaxe", tier: 4, xp: 90.0),
+        (tags: ["gem:emerald"], skill: "core:mining", level: 42, tool: "pickaxe", tier: 4, xp: 85.0),
+        (tags: ["magnetic"], skill: "core:mining", level: 40, tool: "pickaxe", tier: 4, xp: 75.0),
+        (tags: ["gem:ruby"], skill: "core:mining", level: 38, tool: "pickaxe", tier: 4, xp: 70.0),
+        (tags: ["gem:sapphire"], skill: "core:mining", level: 38, tool: "pickaxe", tier: 4, xp: 70.0),
+        (tags: ["metal:zinc"], skill: "core:mining", level: 20, tool: "pickaxe", tier: 2, xp: 30.0),
+        (tags: ["metal:lead"], skill: "core:mining", level: 20, tool: "pickaxe", tier: 2, xp: 30.0),
         (tags: ["ore", "gem"], skill: "core:mining", level: 45, tool: "pickaxe", tier: 4, xp: 100.0),
         (tags: ["ore", "metal:gold"], skill: "core:mining", level: 35, tool: "pickaxe", tier: 3, xp: 65.0),
         (tags: ["ore", "metal:silver"], skill: "core:mining", level: 30, tool: "pickaxe", tier: 3, xp: 40.0),
