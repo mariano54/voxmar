@@ -31,12 +31,24 @@ MATERIALS = {
     'green': ['#103a1a', '#1e6a2e', '#3aa04a', '#7ad87a'],
     'red': ['#4a0e0e', '#8a1e1a', '#c43a2e', '#ec6a50'],
     'glass': ['#24363e', '#3a5664', '#5e8090', '#9ab8c4'],
+    # Voltage tiers: not colours but palette slots, filled from the `tier_lv`, `tier_mv`
+    # and `tier_hv` palettes (default's machines.ron) so both packs code a tier alike.
+    'tier': ['tier:0', 'tier:1', 'tier:2'],
+    'high': ['high:0', 'high:1', 'high:2'],
 }
+TIERS = {'lv': 'tier_lv', 'mv': 'tier_mv', 'hv': 'tier_hv'}
 
 
 class Face:
     def __init__(self):
         self.px = [[None] * N for _ in range(N)]
+        self.palettes = {}
+
+    def tiers(self, tier, high=None):
+        self.palettes['tier'] = TIERS[tier]
+        if high:
+            self.palettes['high'] = TIERS[high]
+        return self
 
     def put(self, x, y, mat, shade):
         x, y = int(round(x)), int(round(y))
@@ -123,7 +135,10 @@ class Face:
             rows.append(row)
         leg = ", ".join(f"'{c}': \"{MATERIALS[m][s]}\"" for (m, s), c in legend.items())
         body = ",\n".join(f'            "{r}"' for r in rows)
-        return f"(size: (32, 32), layers: [Grid(legend: {{{leg}}}, rows: [\n{body},\n        ])])"
+        pal = ''
+        if self.palettes:
+            pal = ', palettes: {' + ', '.join(f'"{k}": "{v}"' for k, v in self.palettes.items()) + '}'
+        return f"(size: (32, 32){pal}, layers: [Grid(legend: {{{leg}}}, rows: [\n{body},\n        ])])"
 
 
 # Shared bodies ----------------------------------------------------------------------------
@@ -241,22 +256,6 @@ def wheel(f, cx, cy, r, spokes, mat='wood', rim='bronze', paddles=False):
     f.disc(cx, cy, 3, rim, 3, ring=1)
 
 
-def cable(f, mat, stripe, vertical=False):
-    for y in range(N):
-        for x in range(N):
-            u, v = (y, x) if vertical else (x, y)
-            if 10 <= v <= 21:
-                s = 3 if v in (11, 12) else 0 if v in (20, 21) else 2
-                f.put(x, y, mat, s)
-                if stripe and v in (15, 16) and (u // 4) % 2 == 0:
-                    f.put(x, y, stripe, len(MATERIALS[stripe]) - 1)
-
-
-def cable_end(f, mat, core='copper'):
-    f.disc(16, 16, 6.5, mat, 2, ring=0)
-    f.disc(16, 16, 3, core, 3)
-
-
 # Faces ----------------------------------------------------------------------------------
 
 FACES = {}
@@ -339,26 +338,6 @@ def _():
     return f
 
 
-@face('shaft_side')
-def _():
-    f = Face()
-    for y in range(10, 22):
-        for x in range(N):
-            f.put(x, y, 'wood', 3 if y < 13 else 1 if y > 19 else 2)
-    f.grain('wood', 9, 0.15)
-    for x0 in (4, 26):
-        f.rect(x0, 9, x0 + 2, 22, 'bronze', 3)
-    return f
-
-
-@face('shaft_end')
-def _():
-    f = Face()
-    f.disc(16, 16, 6.5, 'wood', 3, ring=1)
-    f.rect(14, 14, 17, 17, 'bronze', 2)
-    return f
-
-
 @face('trip_hammer_side')
 def _():
     f = wood_frame()
@@ -386,19 +365,6 @@ def _():
             if (x - 15.5) ** 2 / 49 + (y - 30) ** 2 / 256 <= 1:
                 f.put(x, y, 'glow', 4 - int((y - 14) / 5))
     f.outline(8, 13, 23, 30, 'brick', 0)
-    return f
-
-
-@face('bellows_side')
-def _():
-    f = Face()
-    f.rect(0, 0, 31, 7, 'wood', 3)
-    f.rect(0, 24, 31, 31, 'wood', 2)
-    for y in range(8, 24):
-        fold = (y - 8) % 4
-        for x in range(2, 30):
-            f.put(x, y, 'leather', 3 if fold == 0 else 2 if fold == 1 else 1)
-    f.rivets([(3, 3), (28, 3), (3, 27), (28, 27)], 'bronze')
     return f
 
 
@@ -455,26 +421,36 @@ def _():
 
 @face('hopper_side')
 def _():
-    f = iron_casing(seed=9)
+    # Planks only (recipes_machines.ron), so oak bound in bronze like the chest: a funnel of
+    # darker boards narrowing to the spout, lit along its left slope.
+    f = wood_frame(seed=9)
     for y in range(4, 28):
         half = 12 - (y - 4) // 2
         for x in range(16 - half, 16 + half):
-            f.put(x, y, 'iron', 2 if x < 16 else 1)
+            edge = x == 16 - half
+            f.put(x, y, 'wood', 4 if edge else 1 if x < 16 else 0)
+        for x in (16 - half - 1, 16 + half):
+            f.put(x, y, 'wood', 0)
+    f.rivets([(15, 25)], 'bronze')
     return f
 
 
 @face('hopper_top')
 def _():
-    f = iron_casing(seed=10)
-    f.rect(5, 5, 26, 26, 'iron', 0, bevel=False)
+    f = wood_frame(seed=10)
+    f.rect(5, 5, 26, 26, 'wood', 1, bevel=False)
+    f.outline(5, 5, 26, 26, 'wood', 0)
+    for i in range(5, 12):
+        f.outline(i, i, 31 - i, 31 - i, 'wood', 1 if i % 2 else 0)
     f.rect(12, 12, 19, 19, 'rubber', 0, bevel=False)
     return f
 
 
 @face('hopper_bottom')
 def _():
-    f = iron_casing(seed=11)
-    f.disc(16, 16, 4, 'rubber', 0)
+    f = wood_frame(seed=11)
+    f.disc(16, 16, 5, 'wood', 1, ring=0)
+    f.disc(16, 16, 3, 'rubber', 0)
     return f
 
 
@@ -492,46 +468,6 @@ def _():
     for x in range(N):
         f.put(x, 15, 'bronze', 1)
         f.put(x, 16, 'bronze', 3)
-    return f
-
-
-@face('chute_side')
-def _():
-    f = Face()
-    for y in range(6, 26):
-        for x in range(N):
-            f.put(x, y, 'iron', 4 if y < 9 else 1 if y > 22 else 3)
-    for x0 in (3, 27):
-        f.rect(x0, 5, x0 + 1, 26, 'iron', 4)
-    return f
-
-
-@face('chute_end')
-def _():
-    f = Face()
-    f.disc(16, 16, 10, 'iron', 3, ring=1)
-    f.disc(16, 16, 7, 'rubber', 0)
-    return f
-
-
-@face('conveyor_side')
-def _():
-    f = Face()
-    f.rect(0, 10, 31, 21, 'iron', 2)
-    for x in range(N):
-        f.put(x, 10, 'rubber', 2 if x % 4 < 2 else 3)
-        f.put(x, 11, 'rubber', 1)
-    for cx in (5, 16, 27):
-        f.disc(cx, 17, 3, 'iron', 4, ring=1)
-    return f
-
-
-@face('conveyor_end')
-def _():
-    f = Face()
-    f.rect(2, 10, 29, 21, 'iron', 2)
-    f.rect(2, 10, 29, 12, 'rubber', 2)
-    f.disc(16, 17, 3, 'iron', 4, ring=1)
     return f
 
 
@@ -556,26 +492,6 @@ def _():
     f = iron_casing(seed=15)
     f.disc(16, 16, 9, 'copper', 2, ring=0)
     f.disc(16, 16, 3, 'iron', 4, ring=1)
-    return f
-
-
-@face('steam_pipe_side')
-def _():
-    f = Face()
-    for y in range(10, 22):
-        for x in range(N):
-            f.put(x, y, 'copper', 4 if y < 12 else 1 if y > 19 else 2)
-    for x0 in (2, 28):
-        f.rect(x0, 8, x0 + 1, 23, 'iron', 4)
-    return f
-
-
-@face('steam_pipe_end')
-def _():
-    f = Face()
-    f.disc(16, 16, 8, 'iron', 4, ring=1)
-    f.disc(16, 16, 5.5, 'copper', 2, ring=0)
-    f.disc(16, 16, 3, 'rubber', 0)
     return f
 
 
@@ -630,45 +546,6 @@ def _():
     f.disc(16, 16, 9, 'copper', 3, ring=1)
     f.disc(16, 16, 3, 'iron', 4, ring=1)
     return f
-
-
-def cable_faces(prefix, mat, stripe):
-    @face(f'{prefix}_cable_side')
-    def _():
-        f = Face()
-        cable(f, mat, stripe)
-        return f
-
-    @face(f'{prefix}_cable_end')
-    def _():
-        f = Face()
-        cable_end(f, mat)
-        return f
-
-
-cable_faces('lv', 'rubber', 'red')
-cable_faces('mv', 'rubber', 'blue')
-cable_faces('hv', 'rubber', 'hazard')
-
-
-def bank_faces(prefix, terminal, charge):
-    @face(f'{prefix}_side')
-    def _():
-        f = iron_casing(seed=len(prefix))
-        cells(f, 5, 9, 4, 4, 17, terminal, charge)
-        return f
-
-    @face(f'{prefix}_top')
-    def _():
-        f = iron_casing(seed=len(prefix) + 1)
-        for x in (8, 15, 22):
-            f.disc(x + 1, 16, 2.5, terminal, 3, ring=1)
-        return f
-
-
-bank_faces('battery_bank', 'copper', 0.4)
-bank_faces('mv_battery_bank', 'iron', 0.6)
-bank_faces('hv_battery_bank', 'bronze', 0.85)
 
 
 @face('electric_furnace_side')
@@ -750,30 +627,283 @@ def _():
     return f
 
 
-def transformer_faces(prefix, frame, coil_mat):
-    @face(f'{prefix}_transformer_side')
+# Cables, shafts, pipes, chutes and conveyors are full cubes until Shapes gives them thin
+# models, and the opaque pass has no cutout: every texel of their faces is solid.
+
+def cable_faces(prefix):
+    # The jacket fills the face, banded in its tier's colour; HV's is armoured in dark steel.
+    jacket = 'steel' if prefix == 'hv' else 'rubber'
+
+    @face(f'{prefix}_cable_side')
     def _():
-        f = frame(seed=31 + len(prefix))
-        coil(f, 6, 8, 13, 25, coil_mat)
-        coil(f, 18, 8, 25, 25, coil_mat)
-        f.rect(6, 15, 25, 17, 'iron', 4)
+        f = Face().tiers(prefix)
+        for y in range(N):
+            for x in range(N):
+                lit = 3 if y < 6 else 2 if y < 22 else 1
+                if y in (0, 31):
+                    lit = 0
+                if x % 8 in (2, 3, 4) and 0 < y < 31:
+                    f.put(x, y, 'tier', 2 if y < 8 else 1 if y < 24 else 0)
+                else:
+                    f.put(x, y, jacket, lit - (1 if x % 8 == 5 else 0))
+        if jacket == 'steel':
+            for x in range(N):
+                if x % 8 in (6, 7):
+                    for y in (1, 30):
+                        f.put(x, y, 'steel', 5)
         return f
 
-    @face(f'{prefix}_transformer_top')
+    @face(f'{prefix}_cable_end')
     def _():
-        f = frame(seed=33 + len(prefix))
+        f = Face().tiers(prefix)
+        f.rect(0, 0, 31, 31, jacket, 2)
+        f.outline(0, 0, 31, 31, jacket, 0)
+        f.disc(16, 16, 12, 'tier', 1, ring=0)
+        f.disc(16, 16, 9, jacket, 1, ring=0)
+        f.disc(16, 16, 6.5, 'copper', 2, ring=0)
+        for cx, cy in ((13, 13), (19, 13), (16, 16), (13, 19), (19, 19), (16, 11), (16, 21), (11, 16), (21, 16)):
+            f.put(cx, cy, 'copper', 4)
+            f.put(cx + 1, cy + 1, 'copper', 1)
+        return f
+
+
+for tier in ('lv', 'mv', 'hv'):
+    cable_faces(tier)
+
+
+@face('shaft_side')
+def _():
+    f = Face()
+    for y in range(N):
+        for x in range(N):
+            f.put(x, y, 'wood', 0 if y in (0, 31) else 4 if y < 4 else 3 if y < 12 else 2 if y < 24 else 1)
+    f.grain('wood', 9, 0.18)
+    for x0 in (4, 25):
+        f.rect(x0, 0, x0 + 2, 31, 'bronze', 2)
+        f.rivets([(x0 + 1, 6), (x0 + 1, 24)], 'bronze')
+    return f
+
+
+@face('shaft_end')
+def _():
+    f = Face()
+    for y in range(N):
+        for x in range(N):
+            d = math.hypot(x + 0.5 - 16, y + 0.5 - 16)
+            f.put(x, y, 'wood', 3 if int(d) % 4 < 2 else 2)
+    f.outline(0, 0, 31, 31, 'wood', 0)
+    f.grain('wood', 19, 0.08)
+    f.rect(11, 11, 20, 20, 'bronze', 3)
+    f.rect(14, 14, 17, 17, 'rubber', 0, bevel=False)
+    f.rivets([(12, 12), (18, 12), (12, 18), (18, 18)], 'bronze')
+    return f
+
+
+@face('bellows_side')
+def _():
+    f = Face()
+    f.rect(0, 0, 31, 7, 'wood', 3)
+    f.rect(0, 24, 31, 31, 'wood', 2)
+    for y in range(8, 24):
+        fold = (y - 8) % 4
+        for x in range(N):
+            if x < 2 or x > 29:
+                f.put(x, y, 'wood', 1 if fold else 0)
+            else:
+                f.put(x, y, 'leather', 3 if fold == 0 else 2 if fold == 1 else 1)
+    f.rivets([(3, 3), (28, 3), (3, 27), (28, 27)], 'bronze')
+    return f
+
+
+@face('chute_side')
+def _():
+    # A plank trough (planks only, made four at a time): boards along its length, a lit lip,
+    # the dark inside showing over it, and battens nailed across.
+    f = Face()
+    for y in range(N):
+        for x in range(N):
+            f.put(x, y, 'wood', 2 + (y // 7) % 2 - (1 if y % 7 == 6 else 0))
+    f.grain('wood', 29, 0.15)
+    f.rect(0, 0, 31, 3, 'wood', 4)
+    f.rect(1, 4, 30, 9, 'wood', 0, bevel=False)
+    for x0 in (3, 26):
+        f.rect(x0, 10, x0 + 2, 31, 'wood', 3)
+        f.rivets([(x0 + 1, 13), (x0 + 1, 27)])
+    f.outline(0, 0, 31, 31, 'wood', 0)
+    return f
+
+
+@face('chute_end')
+def _():
+    # The trough seen end on: thick plank walls round a V-shaped dark channel.
+    f = Face()
+    for y in range(N):
+        for x in range(N):
+            f.put(x, y, 'wood', 3 if (x // 8) % 2 else 2)
+    f.grain('wood', 30, 0.15)
+    for y in range(4, 24):
+        half = 11 - max(0, y - 14)
+        for x in range(16 - half, 16 + half):
+            f.put(x, y, 'rubber', 1 if y < 7 else 0)
+        f.put(16 - half - 1, y, 'wood', 4)
+        f.put(16 + half, y, 'wood', 0)
+    f.outline(0, 0, 31, 31, 'wood', 0)
+    f.rivets([(3, 27), (27, 27), (3, 3), (27, 3)])
+    return f
+
+
+@face('conveyor_side')
+def _():
+    f = Face()
+    f.rect(0, 0, 31, 31, 'iron', 2)
+    f.outline(0, 0, 31, 31, 'iron', 0)
+    for x in range(N):
+        for y in range(0, 5):
+            f.put(x, y, 'rubber', 3 if y == 0 else 2 if x % 4 < 2 else 1)
+    f.rect(1, 5, 30, 18, 'iron', 1, bevel=False)
+    for cx in (5, 16, 27):
+        f.disc(cx, 11, 4.6, 'iron', 4, ring=2)
+        f.disc(cx, 11, 1.5, 'iron', 1)
+    f.rect(2, 20, 29, 29, 'iron', 3)
+    f.rivets([(4, 22), (27, 22), (4, 27), (27, 27)])
+    return f
+
+
+@face('conveyor_end')
+def _():
+    f = iron_casing(seed=31)
+    f.rect(1, 1, 30, 5, 'rubber', 2)
+    f.disc(16, 15, 6, 'iron', 4, ring=2)
+    f.disc(16, 15, 2, 'iron', 1)
+    return f
+
+
+@face('steam_pipe_side')
+def _():
+    f = Face()
+    for y in range(N):
+        for x in range(N):
+            f.put(x, y, 'copper', 0 if y in (0, 31) else 4 if y < 5 else 3 if y < 12 else 2 if y < 24 else 1)
+    f.grain('copper', 32, 0.05)
+    for x0 in (0, 28):
+        f.rect(x0, 0, x0 + 3, 31, 'iron', 3)
+        f.rivets([(x0 + 1, 4), (x0 + 1, 14), (x0 + 1, 25)])
+    for x in range(8, 24):
+        f.put(x, 7, 'copper', 4)
+    return f
+
+
+@face('steam_pipe_end')
+def _():
+    f = Face()
+    f.rect(0, 0, 31, 31, 'iron', 3)
+    f.outline(0, 0, 31, 31, 'iron', 0)
+    f.disc(16, 16, 12, 'copper', 3, ring=1)
+    f.disc(16, 16, 8, 'rubber', 0)
+    f.disc(14.5, 14.5, 3, 'rubber', 1)
+    f.rivets([(2, 2), (28, 2), (2, 28), (28, 28)])
+    return f
+
+
+def bank_faces(name, tier, casing, cell_count, charge, terminal):
+    @face(f'{name}_side')
+    def _():
+        f = casing(seed=len(name)).tiers(tier)
+        for x in range(2, 30):
+            for y in (5, 26):
+                f.put(x, y, 'tier', 2 if y == 5 else 1)
+                f.put(x, y + 1, 'tier', 0)
+        w = (24 - 2 * (cell_count - 1)) // cell_count
+        x0 = 16 - (cell_count * (w + 2) - 2) // 2
+        cells(f, x0, 11, cell_count, w, 14, terminal, charge)
+        return f
+
+    @face(f'{name}_top')
+    def _():
+        f = casing(seed=len(name) + 1).tiers(tier)
+        posts = min(cell_count - 1, 3)
+        spacing = 24 / posts
+        r = min(3.6, spacing / 2 - 0.9)
+        for i in range(posts):
+            x = 16 + (i - (posts - 1) / 2) * spacing
+            f.disc(x, 16, r, 'tier', 1, ring=0)
+            f.disc(x, 16, r * 0.45, terminal, 3)
+        return f
+
+
+bank_faces('battery_bank', 'lv', iron_casing, 3, 0.35, 'copper')
+bank_faces('mv_battery_bank', 'mv', iron_casing, 4, 0.6, 'copper')
+bank_faces('hv_battery_bank', 'hv', hv_casing, 5, 0.85, 'bronze')
+
+
+def transformer_faces(low, high, coil_mat):
+    # A transformer steps `low` up to `high`: its top carries the higher tier's terminals
+    # and colour, its bottom the lower's.
+    @face(f'{low}_transformer_side')
+    def _():
+        f = iron_casing(seed=31 + len(low)).tiers(low, high)
+        for x in range(2, 30):
+            f.put(x, 4, 'high', 2)
+            f.put(x, 5, 'high', 0)
+            f.put(x, 26, 'tier', 1)
+            f.put(x, 27, 'tier', 0)
+        coil(f, 6, 8, 13, 23, coil_mat)
+        coil(f, 18, 8, 25, 23, coil_mat)
+        f.rect(6, 14, 25, 16, 'iron', 4)
+        return f
+
+    @face(f'{low}_transformer_top')
+    def _():
+        f = iron_casing(seed=33 + len(low)).tiers(low, high)
         for x in (10, 21):
-            f.disc(x, 16, 3.5, 'canvas', 3, ring=1)
-            f.disc(x, 16, 1.5, 'copper', 3)
+            f.disc(x, 16, 4.5, 'high', 1, ring=0)
+            f.disc(x, 16, 2.6, 'canvas', 3)
+            f.disc(x, 16, 1.3, 'copper', 3)
         return f
 
-    @face(f'{prefix}_transformer_bottom')
+    @face(f'{low}_transformer_bottom')
     def _():
-        return frame(seed=35 + len(prefix))
+        f = iron_casing(seed=35 + len(low)).tiers(low, high)
+        f.rect(6, 12, 25, 19, 'rubber', 1)
+        for x in (10, 21):
+            f.disc(x, 16, 3, 'tier', 1, ring=0)
+            f.disc(x, 16, 1.3, 'copper', 3)
+        return f
 
 
-transformer_faces('lv', iron_casing, 'copper')
-transformer_faces('mv', iron_casing, 'bronze')
+transformer_faces('lv', 'mv', 'copper')
+transformer_faces('mv', 'hv', 'bronze')
+
+
+def straps(f, top=False):
+    """A locked chest: the plain chest bound in two iron straps."""
+    for x0 in (6, 23):
+        for y in range(N):
+            for x in range(x0, x0 + 3):
+                f.put(x, y, 'iron', 4 if x == x0 else 1 if x == x0 + 2 else 3)
+        f.rivets([(x0 + 1, 4), (x0 + 1, 26)])
+        if top:
+            for x in range(x0, x0 + 3):
+                f.put(x, 30, 'iron', 5)
+
+
+@face('treasure_chest_side')
+def _():
+    f = FACES['chest_side']()
+    straps(f)
+    f.rect(12, 9, 19, 20, 'iron', 2)
+    f.outline(12, 9, 19, 20, 'iron', 0)
+    f.rect(13, 10, 18, 15, 'bronze', 3)
+    f.rect(15, 12, 16, 17, 'rubber', 0, bevel=False)
+    return f
+
+
+@face('treasure_chest_top')
+def _():
+    f = FACES['chest_top']()
+    straps(f, top=True)
+    return f
+
 
 
 @face('processing_array_side')
