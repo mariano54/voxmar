@@ -321,7 +321,7 @@ pub fn admin_token_for(address: &str, tokens: &str) -> Option<String> {
     tokens
         .split([' ', ',', ';', '\n'])
         .filter_map(|entry| entry.split_once('='))
-        .find(|(server, _)| server.trim().eq_ignore_ascii_case(address.trim()))
+        .find(|(server, _)| crate::menu::join::with_port(server.trim()).eq_ignore_ascii_case(&crate::menu::join::with_port(address.trim())))
         .map(|(_, token)| token.trim().to_owned())
         .filter(|token| !token.is_empty())
 }
@@ -387,5 +387,9 @@ mod tests {
         assert_eq!(admin_token_for("play.example.org:25666", tokens), None, "another port is another server");
         assert_eq!(admin_token_for("evil.example.org:25665", tokens), None);
         assert_eq!(admin_token_for("play.example.org:25665", ""), None);
+        // An address typed without its port is the default port, on either side.
+        assert_eq!(admin_token_for("play.example.org", tokens).as_deref(), Some("open-sesame"));
+        assert_eq!(admin_token_for("192.168.1.4:25665", "192.168.1.4=bare").as_deref(), Some("bare"));
+        assert_eq!(admin_token_for("::1", "[::1]:25665=six").as_deref(), Some("six"));
     }
 }

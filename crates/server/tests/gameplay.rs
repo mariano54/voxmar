@@ -481,7 +481,9 @@ fn falling_hurts() {
             selected_slot: 0,
             flying: false,
         }));
-        std::thread::sleep(Duration::from_millis(60));
+        // A server tick on each step, so the fall is seen block by block however loaded the
+        // machine.
+        client.after_ticks(1);
     }
     client.pump_until(|c| c.health < 20);
     let expected = 20 - (height - 3) as u8;
@@ -1604,6 +1606,31 @@ fn nobody_hovers_over_a_ravine() {
         client.send_position(over, false);
         let next = ticks(&client) + 1;
         client.pump_until(|c| ticks(c) >= next);
+    }
+}
+
+#[test]
+fn going_silent_does_not_buy_more_time_hovering() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    client.fill(at, IVec3::new(3, -1, -3), IVec3::new(42, -1, 3), "air");
+    let over = start + Vec3::X * 3.0;
+    // Hovering a second and a half, a tick at a time...
+    for _ in 0..30 {
+        client.send_position(over, false);
+        client.after_ticks(1);
+    }
+    assert!(client.teleported.is_none(), "let down before the grace ran out");
+    // ...silent for two and a half (still alive to the server)...
+    client.after_ticks(50);
+    // ...and hovering on: the time aloft before the silence still counts, so they are let
+    // down well before a fresh grace and sink would allow.
+    let until = client.ticks() + 3 * TICKS_PER_SECOND as u64;
+    while !client.teleported.is_some_and(|to| to.y < over.y) {
+        assert!(client.ticks() < until, "hovered on after going silent");
+        client.send_position(over, false);
+        client.after_ticks(1);
     }
 }
 

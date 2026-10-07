@@ -50,7 +50,7 @@ pub fn connect(address: &str) -> Connecting {
 }
 
 /// `address` with the default port added if it has none.
-fn with_port(address: &str) -> String {
+pub(crate) fn with_port(address: &str) -> String {
     if address.parse::<SocketAddr>().is_ok() {
         return address.to_owned();
     }

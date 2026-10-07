@@ -535,11 +535,14 @@ impl Server {
                 None => player.support,
             }
         };
-        // The hover clock runs only while the player is seen off the ground: not across a
-        // gap in their inputs (a stalled connection, a hitch), and not while a hop has just
-        // touched down.
-        if gap > HOVER_GRACE || self.near_ground(from) {
+        // The hover clock runs only while the player is seen off the ground: it restarts
+        // when a hop has just touched down, and pauses across a gap in their inputs (a
+        // stalled connection, a hitch), so silence neither sinks them nor buys more time.
+        if self.near_ground(from) {
             support.at = Some(at);
+        } else if gap > HOVER_GRACE {
+            let paused = std::time::Duration::from_secs_f32(gap);
+            support.at = support.at.map(|then| (then + paused).min(at));
         }
         let delta = input.position - from;
         let cost = Budgets { across: delta.with_y(0.0).length(), rise: delta.y.max(0.0), fall: (-delta.y).max(0.0) };
