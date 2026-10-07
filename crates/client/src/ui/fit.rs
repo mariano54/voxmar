@@ -45,6 +45,14 @@ pub struct LineBreaksChecked {
     pub looks: usize,
 }
 
+impl LineBreaksChecked {
+    /// Whether a look since `before` was in a language with line rules and checked no
+    /// text's line breaks.
+    pub fn none_since(&self, before: &Self) -> bool {
+        self.looks > before.looks && self.checked == before.checked
+    }
+}
+
 impl std::fmt::Display for Spill {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let sides = ["left", "right", "top", "bottom"];
@@ -147,7 +155,14 @@ pub fn find(world: &mut World) -> Vec<Spill> {
     let rules = world.get_resource::<crate::lang::Locale>().map(|locale| voxmar_engine::lang::LineRules::of(locale)).unwrap_or_default();
     let mut checked = 0;
     for (_, text, layout, node, _, visible) in texts.iter(world) {
-        let Some(joined) = rules.join(&text.0).filter(|_| shown(text, layout, node, visible)) else { continue };
+        if rules.is_empty() || text.0.is_ascii() || !shown(text, layout, node, visible) {
+            continue;
+        }
+        // Nothing in it held together: wherever its lines break, they may.
+        let Some(joined) = rules.join(&text.0) else {
+            checked += 1;
+            continue;
+        };
         let chars: Vec<char> = joined.chars().collect();
         let joiner = |c: char| c == voxmar_engine::lang::WORD_JOINER;
         // Where the rules hold the text as written together, by each joined character.
@@ -339,8 +354,21 @@ mod tests {
         assert_eq!(look_at_node("クリックする", &bad, Vec2::ZERO, laid_out, InheritedVisibility::VISIBLE), (vec![], 0));
         assert_eq!(look_at_node("クリックする", &bad, Vec2::new(100.0, 0.0), laid_out, InheritedVisibility::VISIBLE), (vec![], 0));
         assert_eq!(look_at_node("クリックする", &bad, size, Vec2::ZERO, InheritedVisibility::VISIBLE), (vec![], 0));
+        // Nothing in it held together (kanji and hiragana only): checked, and fine however
+        // it breaks.
+        assert_eq!(look_at_node("木を切る", &[0, 1, 1, 2], size, laid_out, InheritedVisibility::VISIBLE), (vec![], 1));
         // Not laid out yet, with no glyphs: passed over, not failed as unchecked.
         assert_eq!(look_at_node("クリックする", &[], Vec2::ZERO, Vec2::ZERO, InheritedVisibility::VISIBLE), (vec![], 0));
+    }
+
+    /// A look in a language with line rules that checks nothing is told apart from one that
+    /// checks something and from one in a language without rules.
+    #[test]
+    fn a_look_that_checks_no_line_break_is_told() {
+        let before = LineBreaksChecked { checked: 5, looks: 2 };
+        assert!(LineBreaksChecked { checked: 5, looks: 3 }.none_since(&before));
+        assert!(!LineBreaksChecked { checked: 7, looks: 3 }.none_since(&before));
+        assert!(!before.none_since(&before));
     }
 
     #[test]
