@@ -1456,13 +1456,18 @@ fn snowy_villages_keep_their_built_stone() {
             if !snowy {
                 continue;
             }
+            // Every column over the village and 16 blocks round it, generated once with the
+            // blanket and once without, then borrowed.
             let plain = Overworld::with_content(seed, registry.clone(), &bare);
-            let (mut snowed, mut unsnowed) = (rustc_hash::FxHashMap::default(), rustc_hash::FxHashMap::default());
-            let mut both = |x: i32, z: i32| {
-                let pos = ColumnPos::of_block(IVec3::new(x, 0, z));
-                let with = snowed.entry(pos).or_insert_with(|| world.generate(pos)).clone();
-                let without = unsnowed.entry(pos).or_insert_with(|| plain.generate(pos)).clone();
-                (with, without)
+            let min = s.buildings.iter().fold(IVec2::splat(i32::MAX), |m, b| m.min(b.min)) - 16;
+            let max = s.buildings.iter().fold(IVec2::splat(i32::MIN), |m, b| m.max(b.max)) + 16;
+            let (first, last) = (ColumnPos::of_block(IVec3::new(min.x, 0, min.y)), ColumnPos::of_block(IVec3::new(max.x, 0, max.y)));
+            let size = (last.0 - first.0).max_element() + 1;
+            let (snowed, unsnowed) = (generate_area(&world, first, size), generate_area(&plain, first, size));
+            let both = |x: i32, z: i32| {
+                let at = ColumnPos::of_block(IVec3::new(x, 0, z)).0 - first.0;
+                let i = (at.y * size + at.x) as usize;
+                (&snowed[i], &unsnowed[i])
             };
             for b in &s.buildings {
                 for z in b.min.y..=b.max.y {
@@ -1482,8 +1487,6 @@ fn snowy_villages_keep_their_built_stone() {
             // The positive control: over the village and 16 blocks round it, natural stone
             // open to the sky without the blanket is snow with it, and grass roofs and
             // banks over the ground are snowy grass.
-            let min = s.buildings.iter().fold(IVec2::splat(i32::MAX), |m, b| m.min(b.min)) - 16;
-            let max = s.buildings.iter().fold(IVec2::splat(i32::MIN), |m, b| m.max(b.max)) + 16;
             for z in min.y..=max.y {
                 for x in min.x..=max.x {
                     let (with, without) = both(x, z);
