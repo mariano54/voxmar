@@ -463,6 +463,16 @@ pub struct LayerInfo {
     pub variety: voxmar_engine::block::TextureVariety,
     /// Its animation, if its texture is a strip of frames.
     pub animation: Option<Animation>,
+    /// The other drawings of it its pack gives, if any and it does not animate.
+    pub variants: Option<Variants>,
+}
+
+/// A layer's other drawings: `count` layers from `first`, one of which, or the layer
+/// itself, each block face shows, picked by its position.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Variants {
+    pub first: u16,
+    pub count: u8,
 }
 
 /// An animated layer's other frames: `frames - 1` layers from `first`, each shown for
@@ -476,26 +486,37 @@ pub struct Animation {
 
 /// The tint byte's bit (`layer_table`) for a layer that animates.
 const ANIMATED: u8 = 32;
+/// The tint byte's bit for a layer with other drawings.
+const VARIED: u8 = 16;
 
 /// Each block texture layer's `LayerInfo`, a column of two texels per layer. The first:
-/// red and green the overlay's layer plus one (0 for none), blue its tint in the low five
-/// bits, whether it animates (32), and whether the layer turns (64) and mirrors (128) from
-/// block to block, alpha the glow. The terrain shader adds the glow to the texels bright
-/// enough to be the glowing part (see voxel.wgsl). The second, read only for a layer that
-/// animates: red and green its second frame's layer, blue how many frames, alpha the
-/// twentieths of a second each shows.
+/// red and green the overlay's layer plus one (0 for none), blue its tint in the low four
+/// bits, whether it has other drawings (16), whether it animates (32), and whether the
+/// layer turns (64) and mirrors (128) from block to block, alpha the glow. The terrain
+/// shader adds the glow to the texels bright enough to be the glowing part (see
+/// voxel.wgsl). The second, read only for a layer that animates or has other drawings:
+/// red and green its second frame's (or first other drawing's) layer, blue how many frames
+/// (or drawings, itself included), alpha the twentieths of a second each frame shows.
 fn layer_table(layers: &[LayerInfo]) -> Image {
     let first = layers.iter().flat_map(|layer| {
         let (overlay, tint) = layer.overlay.map_or((0, 0), |(overlay, tint)| (overlay + 1, tint as u8));
         let [low, high] = overlay.to_le_bytes();
         let variety = (layer.variety.turn as u8) << 6 | (layer.variety.mirror as u8) << 7;
-        let animated = if layer.animation.is_some() { ANIMATED } else { 0 };
+        let animated = match (layer.animation, layer.variants) {
+            (Some(_), _) => ANIMATED,
+            (None, Some(_)) => VARIED,
+            (None, None) => 0,
+        };
         [low, high, tint | animated | variety, (layer.glow.clamp(0.0, 1.0) * 255.0).round() as u8]
     });
     let second = layers.iter().flat_map(|layer| {
-        let animation = layer.animation.unwrap_or_default();
-        let [low, high] = animation.first.to_le_bytes();
-        [low, high, animation.frames, animation.ticks.max(1)]
+        let (first, count, ticks) = match (layer.animation, layer.variants) {
+            (Some(animation), _) => (animation.first, animation.frames, animation.ticks),
+            (None, Some(variants)) => (variants.first, variants.count + 1, 1),
+            (None, None) => (0, 0, 1),
+        };
+        let [low, high] = first.to_le_bytes();
+        [low, high, count, ticks.max(1)]
     });
     let data: Vec<u8> = first.chain(second).collect();
     let mut image = Image::new(
@@ -956,22 +977,26 @@ mod tests {
     fn the_layer_table_keeps_tint_and_variety_apart() {
         use voxmar_engine::block::TextureVariety;
         let layers = [
-            LayerInfo { overlay: Some((300, Tint::Water)), glow: 1.0, variety: TextureVariety { turn: true, mirror: false }, animation: None },
+            LayerInfo { overlay: Some((300, Tint::Water)), glow: 1.0, variety: TextureVariety { turn: true, mirror: false }, ..default() },
             LayerInfo {
                 overlay: None,
                 glow: 0.0,
                 variety: TextureVariety { turn: false, mirror: true },
                 animation: Some(Animation { first: 700, frames: 4, ticks: 3 }),
+                variants: None,
             },
+            LayerInfo { variants: Some(Variants { first: 900, count: 2 }), ..default() },
         ];
         let table = layer_table(&layers);
         let data = table.data.unwrap();
         assert_eq!(data[..4], [45, 1, Tint::Water as u8 | 64, 255]);
         assert_eq!(data[4..8], [0, 0, 128 | ANIMATED, 0]);
-        // The second row: where the frames are, how many, and for how long.
-        assert_eq!(data[8..12], [0, 0, 0, 1]);
-        assert_eq!(data[12..16], [188, 2, 4, 3]);
-        assert!((Tint::Water as u8) < ANIMATED, "tints must fit under the animation and variety bits");
+        assert_eq!(data[8..12], [0, 0, VARIED, 0]);
+        // The second row: where the frames or drawings are, how many, and for how long.
+        assert_eq!(data[12..16], [0, 0, 0, 1]);
+        assert_eq!(data[16..20], [188, 2, 4, 3]);
+        assert_eq!(data[20..24], [132, 3, 3, 1]);
+        assert!((Tint::Water as u8) < VARIED, "tints must fit under the variant, animation and variety bits");
     }
 
     #[test]
