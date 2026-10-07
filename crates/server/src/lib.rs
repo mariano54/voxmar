@@ -771,4 +771,19 @@ mod tests {
         }
         assert_eq!(seen.len(), 81);
     }
+
+    /// Village furnishings give nothing when broken (design draft 80), and carry no tag that
+    /// regrowth or foraging reads, so a settlement is not a free store of goods.
+    #[test]
+    fn village_furnishings_drop_nothing() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content");
+        let blocks = &content.blocks;
+        for name in ["hay_bale", "barrel", "sack", "bell", "fishing_net", "hanging_herbs"] {
+            let id = blocks.expect(&format!("base:{name}"));
+            assert_eq!(blocks.info(id).drops, voxmar_engine::block::BlockId::AIR, "{name} drops something");
+            for tag in ["herb", "plant", "flower", "fungus", "berry", "forage"] {
+                assert!(!blocks.def(id).tags.iter().any(|t| t == tag), "{name} is tagged {tag}");
+            }
+        }
+    }
 }
