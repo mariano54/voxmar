@@ -109,8 +109,9 @@
         (
             name: "plains",
             tags: ["grassland", "temperate", "open"],
-            // Stones on gentle open ground: pale grey, moss on their tops, not the dark rock.
-            field_stones: [Name("stone", 3.0), Name("andesite", 1.5)],
+            // Stones on gentle open ground: grey stone mottled with pale diorite, moss on their
+            // tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("diorite", 1.5)],
             climate: [(
                 temperature: ("cool", "temperate"),
                 moisture: ("moderate", "moderate"),
@@ -152,8 +153,9 @@
             name: "forest_steppe",
             inherit: "plains",
             tags: ["grassland", "temperate", "open", "groves"],
-            // Stones on gentle open ground: pale grey, moss on their tops, not the dark rock.
-            field_stones: [Name("stone", 3.0), Name("andesite", 1.5)],
+            // Stones on gentle open ground: grey stone mottled with pale diorite, moss on their
+            // tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("diorite", 1.5)],
             flora: (
                 forest: 0.2,
                 trees: [Name("oak", 1.0), Name("birch", 1.0), Name("pine", 0.4), Name("shrub", 0.8), Name("pear_tree", 0.12), Name("wild_cherry", 0.12), Name("hazel", 0.3)],
@@ -166,8 +168,9 @@
             // Lush lowland grass, tall and deep, with old oaks standing alone.
             name: "meadow",
             tags: ["grassland", "temperate", "open", "lush"],
-            // Stones on gentle open ground: pale grey, moss on their tops, not the dark rock.
-            field_stones: [Name("stone", 3.0), Name("andesite", 1.5)],
+            // Stones on gentle open ground: grey stone mottled with pale diorite, moss on their
+            // tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("diorite", 1.5)],
             weight: 0.5,
             climate: [(temperature: ("temperate", "temperate"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (

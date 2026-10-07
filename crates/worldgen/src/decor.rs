@@ -646,11 +646,10 @@ impl Decor {
 
     /// An ellipsoid of rock, filling air and the top two blocks of the ground, so it rises
     /// out of the ground rather than sitting on it; in damp places, moss on the blocks of
-    /// its top and its north face.
+    /// its top and its north face. `stones` are its main stone and a second, about one
+    /// block in three, so a rock's face is mottled rather than one texture throughout (the
+    /// same stone twice where the palette has one).
     #[allow(clippy::too_many_arguments)]
-    /// `stones` are its main stone and a second, about one block in three, so a rock's
-    /// face is mottled rather than one texture throughout (the same stone twice where the
-    /// palette has one).
     fn rock(&self, area: &Area, centre: Vec3, radii: Vec3, stones: [BlockId; 2], moss: f32, seed: u64, blocks: &mut Blocks) {
         // Blocks are laid from the bottom up, so each can check what lies beneath it.
         let min = (centre - radii).floor().as_ivec3();
