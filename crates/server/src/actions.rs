@@ -478,7 +478,7 @@ impl Server {
     }
 
     /// Tells the client the truth about anything it may have predicted.
-    fn reject(&mut self, agent: PlayerId, target: ActionTarget) {
+    pub(crate) fn reject(&mut self, agent: PlayerId, target: ActionTarget) {
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.changed(traits::INVENTORY);
         if let ActionTarget::Block { block, face } = target {

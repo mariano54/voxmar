@@ -35,6 +35,9 @@ pub struct CropDef {
     /// It grows on a tree or bush, so the ground and water beneath don't matter to it.
     #[serde(default)]
     pub fruit: bool,
+    /// It grows only with water near (rice in its paddy): dry, it does not grow at all.
+    #[serde(default)]
+    pub water: bool,
     /// The blocks it grows through, from sprout to ripe; unless given, the crop
     /// template's `<name>_crop_0` to `_2` and the ripe `<name>_crop`.
     #[serde(default)]
@@ -73,6 +76,10 @@ pub struct CropDef {
     pub wild: Vec<String>,
     #[serde(default)]
     pub forage: Vec<Loot>,
+    /// The chance an unripe one nobody sowed (a village's field) gives what it would
+    /// unripe; unless the crop says, the file's `unsown`.
+    #[serde(default)]
+    pub unsown: Option<f32>,
 }
 
 fn yes() -> bool {
@@ -147,6 +154,10 @@ fn always() -> f32 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CropFile {
+    /// For every crop in the file that does not say: the chance an unripe crop nobody
+    /// sowed gives what it would unripe (its seed, or its produce for a root crop).
+    #[serde(default = "always")]
+    unsown: f32,
     crops: Vec<CropDef>,
 }
 
@@ -209,6 +220,7 @@ impl CropRegistry {
                 def.stages.iter_mut().for_each(qualify);
                 def.wild.iter_mut().for_each(qualify);
                 def.harvest.iter_mut().chain(&mut def.forage).for_each(|loot| qualify(&mut loot.item));
+                def.unsown.get_or_insert(file.unsown);
                 def
             })
             .collect())
@@ -301,16 +313,58 @@ const STALLED: f32 = 0.05;
 /// How fast a crop grows where it is, as a share of its best: 1 in a fertile, watered
 /// plot inside its comfort, less outside it, 0 when it cannot grow at all.
 pub fn rate(def: &CropDef, at: Conditions) -> f32 {
-    let fit = |value: f32, (low, high): (f32, f32), margin: f32| {
-        let outside = (low - value).max(value - high).max(0.0);
-        (1.0 - outside / margin).clamp(0.0, 1.0)
-    };
-    let climate = fit(at.temperature, def.comfort.temperature, TEMPERATURE_MARGIN) * fit(at.moisture, def.comfort.moisture, MOISTURE_MARGIN);
-    let light = if at.light >= def.light { 1.0 } else { 0.0 };
-    let soil = if at.fertile || def.fruit { 1.0 } else { 0.8 };
-    let water = if at.watered || def.fruit { 1.0 } else { 0.6 };
-    let rate = climate * light * soil * water;
+    let rate = factors(def, at).iter().map(|(_, f)| f).product::<f32>();
     if rate < STALLED { 0.0 } else { rate }
+}
+
+/// Why a crop cannot grow somewhere: what to tell a player who tries to sow it there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unsuited {
+    Cold,
+    Hot,
+    Dry,
+    Wet,
+    Dark,
+    /// It grows only with water near.
+    NoWater,
+}
+
+impl Unsuited {
+    /// The language key saying so (`farming.too_cold`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Unsuited::Cold => "farming.too_cold",
+            Unsuited::Hot => "farming.too_hot",
+            Unsuited::Dry => "farming.too_dry",
+            Unsuited::Wet => "farming.too_wet",
+            Unsuited::Dark => "farming.too_dark",
+            Unsuited::NoWater => "farming.needs_water",
+        }
+    }
+}
+
+/// What stops a crop growing at all where it is, if anything: the worst of what holds it
+/// back.
+pub fn unsuited(def: &CropDef, at: Conditions) -> Option<Unsuited> {
+    if rate(def, at) > 0.0 {
+        return None;
+    }
+    factors(def, at).into_iter().min_by(|a, b| a.1.total_cmp(&b.1)).and_then(|(why, _)| why)
+}
+
+/// Each thing that slows a crop where it is, as a share of its best, with what it says
+/// when it is the worst (soil only slows, so it never is).
+fn factors(def: &CropDef, at: Conditions) -> [(Option<Unsuited>, f32); 5] {
+    let fit = |value: f32, (low, high): (f32, f32), margin: f32, (below, above)| {
+        let outside = (low - value).max(value - high).max(0.0);
+        (Some(if value < low { below } else { above }), (1.0 - outside / margin).clamp(0.0, 1.0))
+    };
+    let temperature = fit(at.temperature, def.comfort.temperature, TEMPERATURE_MARGIN, (Unsuited::Cold, Unsuited::Hot));
+    let moisture = fit(at.moisture, def.comfort.moisture, MOISTURE_MARGIN, (Unsuited::Dry, Unsuited::Wet));
+    let light = (Some(Unsuited::Dark), if at.light >= def.light { 1.0 } else { 0.0 });
+    let soil = (None, if at.fertile || def.fruit { 1.0 } else { 0.8 });
+    let water = (Some(Unsuited::NoWater), if at.watered || def.fruit { 1.0 } else if def.water { 0.0 } else { 0.6 });
+    [temperature, moisture, light, soil, water]
 }
 
 /// How much more of uncommon and rarer finds a harvest gives at `level`, for a crop that
@@ -385,6 +439,44 @@ mod tests {
         assert_eq!(rate(&def, Conditions { light: 8, ..GOOD }), 0.0);
         // Dry, plain ground still grows, slower.
         assert!((rate(&def, Conditions { fertile: false, watered: false, ..GOOD }) - 0.48).abs() < 1e-4);
+        // Unless it is a crop that needs water.
+        let paddy = CropDef { water: true, ..def.clone() };
+        assert_eq!(rate(&paddy, Conditions { watered: false, ..GOOD }), 0.0);
+        assert_eq!(rate(&paddy, GOOD), 1.0);
+    }
+
+    #[test]
+    fn a_crop_that_cannot_grow_says_why() {
+        let def = def();
+        assert_eq!(unsuited(&def, GOOD), None);
+        assert_eq!(unsuited(&def, Conditions { temperature: 17.5, ..GOOD }), None, "slowed is not stopped");
+        assert_eq!(unsuited(&def, Conditions { temperature: -6.0, ..GOOD }), Some(Unsuited::Cold));
+        assert_eq!(unsuited(&def, Conditions { temperature: 25.0, ..GOOD }), Some(Unsuited::Hot));
+        assert_eq!(unsuited(&def, Conditions { moisture: 0.2, ..GOOD }), Some(Unsuited::Dry));
+        assert_eq!(unsuited(&def, Conditions { moisture: 2.5, ..GOOD }), Some(Unsuited::Wet));
+        assert_eq!(unsuited(&def, Conditions { light: 3, ..GOOD }), Some(Unsuited::Dark));
+        let paddy = CropDef { water: true, ..def };
+        assert_eq!(unsuited(&paddy, Conditions { watered: false, ..GOOD }), Some(Unsuited::NoWater));
+    }
+
+    #[test]
+    fn the_regional_crops_grow_fully_at_their_middle_and_not_beyond_their_margins() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base/crops.ron");
+        let crops = CropRegistry::read("base", &std::fs::read_to_string(dir).unwrap()).unwrap();
+        for name in ["rye", "chickpea", "rice", "taro"] {
+            let def = crops.iter().find(|c| c.name == format!("base:{name}")).unwrap();
+            let ((t0, t1), (m0, m1)) = (def.comfort.temperature, def.comfort.moisture);
+            let middle = Conditions { temperature: (t0 + t1) / 2.0, moisture: (m0 + m1) / 2.0, ..GOOD };
+            assert_eq!(rate(def, middle), 1.0, "{name} at the middle of its comfort");
+            for at in [
+                Conditions { temperature: t0 - TEMPERATURE_MARGIN - 0.1, ..middle },
+                Conditions { temperature: t1 + TEMPERATURE_MARGIN + 0.1, ..middle },
+                Conditions { moisture: m0 - MOISTURE_MARGIN - 0.01, ..middle },
+                Conditions { moisture: m1 + MOISTURE_MARGIN + 0.01, ..middle },
+            ] {
+                assert_eq!(rate(def, at), 0.0, "{name} beyond its margins at {at:?}");
+            }
+        }
     }
 
     #[test]

@@ -91,9 +91,9 @@
         (template: "drop", name: "stick", tags: ["stick", "wood", "fuel"], all: (color: (130, 95, 55))),
         // Charcoal: a log burnt at a campfire (cooking.ron), fuel and torches.
         // Pouches: one slot for many herbs, or many seeds (right click one to empty it).
-        (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
-        (template: "drop", name: "coin_purse", tags: ["pouch", "holds:currency"], all: (color: (140, 100, 60), action: Some("base:empty_pouch"))),
-        (template: "drop", name: "seed_pouch", tags: ["pouch", "holds:seed"], all: (color: (170, 140, 90), action: Some("base:empty_pouch"))),
+        (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb", "holds_each:1000"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
+        (template: "drop", name: "coin_purse", tags: ["pouch", "holds:currency", "holds_each:1000"], all: (color: (140, 100, 60), action: Some("base:empty_pouch"))),
+        (template: "drop", name: "seed_pouch", tags: ["pouch", "holds:seed", "holds_each:1000"], all: (color: (170, 140, 90), action: Some("base:empty_pouch"))),
         // Worn or carried when you die, it keeps a fourth item and holds the rest for an hour.
         (template: "drop", name: "grave_ward_amulet", tags: ["amulet", "grave_ward"], all: (color: (110, 80, 180), rarity: VeryRare)),
         // Pottery and metal for the Farm age: clay fired in a pit kiln, and bronze.
@@ -101,7 +101,7 @@
         (template: "drop", name: "vial", tags: ["vial", "container"], all: (color: (190, 120, 80))),
         (template: "drop", name: "fired_clay", tags: ["fired_clay", "brick"], all: (color: (170, 90, 60))),
         // Gold coins: what shops pay and charge (prices.ron, Settlements). Never placed.
-        (template: "drop", name: "gold_coin", tags: ["currency", "coin", "metal:gold"], all: (color: (230, 190, 60))),
+        (template: "drop", name: "gold_coin", tags: ["currency", "coin"], all: (color: (230, 190, 60))),
         // Flint: one gravel in eight breaks to it (tools.ron); arrowheads and spear points.
         (template: "drop", name: "flint", tags: ["flint", "sharp"], all: (color: (60, 60, 66))),
         (template: "drop", name: "bronze_blend", tags: ["alloy_blend", "metal:bronze"], all: (color: (190, 140, 80))),

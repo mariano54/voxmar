@@ -318,6 +318,16 @@ pub fn placed_block(ctx: &impl ActionContext, held: BlockId, block: IVec3, face:
     }
 }
 
+/// Whether the actor may harvest what is at `cell`: a ripe crop (or fruit) asks for its
+/// level; anything else is fine.
+pub fn crop_level_met(ctx: &impl ActionContext, cell: IVec3) -> bool {
+    let crops = ctx.crops();
+    ctx.block(cell).and_then(|b| crops.stage_of(b)).is_none_or(|(crop, stage)| {
+        let crop = crops.get(crop);
+        stage != crop.ripe_stage() || ctx.actor_level(crop.skill) >= crop.def.level
+    })
+}
+
 /// The blocks resting on `pos` that go when it is cleared: the plants standing on it (a
 /// flower, both halves of tall grass, a stalk of sugar cane), the column hanging from it
 /// (vines, roots, a stalactite) and what is fixed to its sides (wall torches).
@@ -413,11 +423,9 @@ impl ActionDef {
             }
             Requirement::CropLevel => {
                 let (block, _) = block_target()?;
-                let crops = ctx.crops();
-                ctx.block(block).and_then(|b| crops.stage_of(b)).is_none_or(|(crop, stage)| {
-                    let crop = crops.get(crop);
-                    stage != crop.ripe_stage() || ctx.actor_level(crop.skill) >= crop.def.level
-                })
+                // The target, and what stands on it: breaking the ground under a ripe crop
+                // harvests it too.
+                std::iter::once(block).chain(supported_by(ctx, block)).all(|cell| crop_level_met(ctx, cell))
             }
             Requirement::BlockLevel => {
                 let (block, _) = block_target()?;

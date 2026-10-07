@@ -1,25 +1,28 @@
 // Village furnishings (content/base/blocks_furnishings.ron) at 32×32 in vanilla's design
-// language, for this pack and Voxmar HD alike: a hay bale, a barrel, a sack, a bell, a
+// language, for this pack and Voxmar HD alike: a hay bale, a barrel, a crate, a sack, a bell, a
 // fishing net and hanging herbs.
 (
     palettes: {
         "hay_straw": ["#7a5a1c", "#9a7826", "#b8952e", "#cfae42", "#e2c45c", "#efd77a"],
-        "straw_tie": ["#4a3214", "#6a4a20", "#8a6430"],
+        "straw_tie": ["#6a5428", "#8e7438", "#b0944c"],
         "stave": ["#4e3420", "#66442a", "#7e5634", "#94673e", "#a87a4a"],
         "hoop": ["#2a2a2e", "#3e3e44", "#5a5a62", "#7c7c86"],
+        "crate_wood": ["#5a4024", "#76562e", "#937038", "#ad8846", "#c4a05a"],
+        "nail": ["#2a2a2e", "#5a5a62", "#8a8a94"],
         "burlap": ["#8a7650", "#a08a60", "#b49e72", "#c6b084", "#d4c096"],
         "burlap_tie": ["#5a4630", "#76603e"],
     },
     textures: {
-        // Straw lying along the bale, in clear streaks, bound by two dark ties.
+        // Straw lying along the bale: long fibres running one way in clear streaks, each
+        // broken at texel scale, bound by two cords that cross the fibres.
         "block/hay_bale_side": (size: (32, 32), palettes: {"main": "hay_straw", "tie": "straw_tie"}, layers: [
-            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (2, 16), octaves: 2, amount: 0.45), Noise(cells: (8, 32), amount: 0.45)], clean: true),
-            Paint(palette: "tie", base: 0.5, shade: [Noise(cells: (4, 32), amount: 0.5)], mask: [Stripes(period: 16.0, width: 0.125, amount: 1.0, vertical: true, phase: 6.0)], above: 0.5),
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (16, 2), octaves: 2, amount: 0.4), Noise(cells: (32, 4), amount: 0.45), Stripes(period: 3.0, width: 0.34, amount: -0.15)], clean: true),
+            Paint(palette: "tie", base: 0.5, shade: [Noise(cells: (32, 4), amount: 0.4)], mask: [Stripes(period: 16.0, width: 0.0625, amount: 1.0, vertical: true, phase: 7.0)], above: 0.5, shadow: -1),
         ]),
-        // The cut ends of the straw, with the ties crossing them and a shadowed rim.
+        // The cut ends of the straw, the cords crossing them and a shadowed rim.
         "block/hay_bale_top": (size: (32, 32), palettes: {"main": "hay_straw", "tie": "straw_tie"}, layers: [
             Paint(palette: "main", base: 0.55, shade: [Noise(cells: (8, 8), amount: 0.35), Noise(cells: (32, 32), amount: 0.6), Border(width: 1, amount: -0.35)], clean: true),
-            Paint(palette: "tie", base: 0.5, mask: [Stripes(period: 16.0, width: 0.125, amount: 1.0, vertical: true, phase: 6.0)], above: 0.5),
+            Paint(palette: "tie", base: 0.5, mask: [Stripes(period: 16.0, width: 0.0625, amount: 1.0, vertical: true, phase: 7.0)], above: 0.5, shadow: -1),
         ]),
         // Four staves round, their seams dark, grain running up them, darker towards the
         // edges where the barrel turns away, held by two iron hoops.
@@ -35,6 +38,29 @@
         "block/barrel_top": (size: (32, 32), palettes: {"main": "stave", "hoop": "hoop"}, layers: [
             Paint(palette: "main", base: 0.55, shade: [Boards(height: 8, seam: -0.45, joint: -0.2, value: 0.15, bevel: 0.1), Noise(cells: (2, 16), amount: 0.25), Noise(cells: (8, 32), amount: 0.25)], clean: true),
             Paint(palette: "hoop", base: 0.55, mask: [Border(width: 2, amount: 1.0)], above: 0.5, light: 1),
+        ]),
+        // A crate's side: four slats with dark gaps between them, nailed to a frame of
+        // corner posts and a diagonal brace, grain running along each board. Drawn as
+        // whole faces, so they still read on a shaped crate model.
+        "block/crate_side": (size: (32, 32), palettes: {"main": "crate_wood", "nail": "nail"}, layers: [
+            Paint(palette: "main", base: 0.58, shade: [
+                Boards(height: 8, seam: 0.0, joint: 0.0, value: 0.18, bevel: 0.12),
+                Stripes(period: 8.0, width: 0.25, amount: -1.0, phase: 6.0),
+                Noise(cells: (2, 16), amount: 0.25), Noise(cells: (8, 32), amount: 0.25),
+            ], clean: true),
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (16, 4), amount: 0.25), Border(width: 1, amount: -0.3, sides: (0.0, 1.0, 0.0, 0.0))], mask: [Border(width: 4, amount: 1.0, sides: (0.0, 1.0, 0.0, 1.0))], above: 0.5, shadow: -1, light: 1),
+            Paint(palette: "main", base: 0.42, shade: [Noise(cells: (8, 8), amount: 0.25)], mask: [Stripes(period: 32.0, width: 0.125, amount: 1.0, slope: 1.0, phase: 2.0), Border(width: 4, amount: -2.0, sides: (0.0, 1.0, 0.0, 1.0))], above: 0.5, shadow: -1),
+            Clusters(palette: "nail", count: 8, size: (1, 1), spacing: 6.0, margin: 1, seed: 3),
+        ]),
+        // The lid: slats across, gaps between them, a batten under each end.
+        "block/crate_top": (size: (32, 32), palettes: {"main": "crate_wood"}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [
+                Boards(height: 8, seam: 0.0, joint: 0.0, value: 0.18, bevel: 0.12),
+                Stripes(period: 8.0, width: 0.25, amount: -1.0, phase: 6.0),
+                Noise(cells: (2, 16), amount: 0.25), Noise(cells: (8, 32), amount: 0.25),
+                Border(width: 1, amount: -0.3),
+            ], clean: true),
+            Paint(palette: "main", base: 0.48, mask: [Border(width: 4, amount: 1.0, sides: (0.0, 1.0, 0.0, 1.0))], above: 0.5, shadow: -1, light: 1),
         ]),
         // Coarse woven sacking with soft folds, tied off near the top.
         "block/sack_side": (size: (32, 32), palettes: {"main": "burlap", "tie": "burlap_tie"}, layers: [
