@@ -3032,6 +3032,10 @@ struct FeelRun {
     bears: u32,
     /// The server's clock when the step began, for `FEEL_LIMIT`.
     started: f32,
+    /// The moment the answer's search is centred on, and how far round it the dodge's
+    /// search has gone (`after` is the moment tried next).
+    centre: f32,
+    probe: u32,
     /// The server's clock when the kill phase went looking for a bear out of view.
     looked: Option<f32>,
 }
@@ -3086,7 +3090,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             summon(world);
             let fighting = world.resource::<crate::fight::Fighting>();
-            gate.feel = FeelRun { after: (windup - 0.2).max(0.0), hurts: fighting.hurt_count, struck: fighting.struck_count, poked: f32::MIN, bears: 1, started: gate.server_now, ..default() };
+            gate.feel = FeelRun { after: (windup - 0.2).max(0.0), centre: (windup - 0.2).max(0.0), hurts: fighting.hurt_count, struck: fighting.struck_count, poked: f32::MIN, bears: 1, started: gate.server_now, ..default() };
             gate.advance(now);
         }
         1 => {
@@ -3165,17 +3169,24 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             gate.feel.tries += 1;
             // Guarded but not perfect: raised too soon. Landed (hit or turned by the roll)
-            // before any answer, or after a guard: too late. After a dodge: too soon or too
-            // late, so it tries either side in turn, further each time. Out of reach says
-            // nothing of the moment: the same again, closer.
+            // before any answer, or after a guard: too late, so the moment (the centre of
+            // the search) moves earlier. After a dodge it was too soon or too late: the next
+            // tries either side of the centre in turn, a step further each pair (+1, -1, +2,
+            // -2 steps). Out of reach says nothing of the moment: the same again, closer.
             let landed = matches!(defended, Defended::Hit | Defended::Missed);
-            let shift = match defended {
-                Defended::Blocked => FEEL_STEP,
-                _ if landed && (!answered || blocking) => -FEEL_STEP,
-                _ if landed => if gate.feel.tries % 2 == 1 { FEEL_STEP * gate.feel.tries as f32 } else { -FEEL_STEP * gate.feel.tries as f32 },
-                _ => 0.0,
-            };
-            gate.feel.after = (gate.feel.after + shift).clamp(0.0, windup);
+            match defended {
+                Defended::Blocked => gate.feel.centre += FEEL_STEP,
+                _ if landed && (!answered || blocking) => {
+                    gate.feel.centre -= FEEL_STEP;
+                    gate.feel.probe = 0;
+                }
+                _ if landed => gate.feel.probe += 1,
+                _ => {}
+            }
+            let k = gate.feel.probe;
+            let side = if k % 2 == 1 { 1.0 } else { -1.0 };
+            gate.feel.centre = gate.feel.centre.clamp(0.0, windup);
+            gate.feel.after = (gate.feel.centre + side * FEEL_STEP * k.div_ceil(2) as f32).clamp(0.0, windup);
             if gate.feel.tries >= FEEL_TRIES {
                 let outcomes = std::mem::take(&mut gate.feel.outcomes);
                 gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}")));
@@ -3213,8 +3224,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 } else {
                     // Too late for the window (a server far behind): block again.
                     gate.feel.tries += 1;
-                    gate.phase = 1;
-                    gate.advance(now);
+                    to_phase(gate, FEEL_BLOCK, now);
                 }
             } else if gate.server_in_phase() > UNANSWERED {
                 gate.check("counter", Err(format!("the server answered no blow for {UNANSWERED}s")));
@@ -3265,16 +3275,28 @@ fn to_dodge(gate: &mut Gate, windup: f32, now: f32) {
     gate.feel.seen = None;
     gate.feel.answered = false;
     gate.feel.after = (windup - 0.15).max(0.0);
-    gate.phase = 3;
-    gate.advance(now);
+    gate.feel.centre = gate.feel.after;
+    gate.feel.probe = 0;
+    to_phase(gate, FEEL_DODGE, now);
+}
+
+/// The feel step's phases that are jumped to.
+const FEEL_BLOCK: u32 = 2;
+const FEEL_DODGE: u32 = 4;
+const FEEL_KILL: u32 = 5;
+
+/// Straight to `phase` of the step.
+fn to_phase(gate: &mut Gate, phase: u32, now: f32) {
+    gate.phase = phase;
+    gate.phase_since = now;
+    gate.phase_server = gate.server_now;
 }
 
 /// On a failed check: on to killing the bears (phase 5), so none is left provoked for the
 /// steps after.
 fn clear_feel(gate: &mut Gate, now: f32) {
-    gate.phase = 4;
     gate.feel.bears = gate.feel.bears.max(1);
-    gate.advance(now);
+    to_phase(gate, FEEL_KILL, now);
 }
 
 /// Back to survival at the first levels with the hands free, on the test ground, for the
