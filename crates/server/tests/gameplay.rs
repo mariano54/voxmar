@@ -628,6 +628,13 @@ fn only_admins_run_admin_commands_and_everyone_chats() {
 }
 
 #[test]
+fn a_listed_admin_is_one_under_their_name_in_any_case() {
+    // A name is one player in any case, so the admin list folds case too.
+    let mut boss = Client::join_remote("BOSS", &["boss"]);
+    boss.ok("/time set noon");
+}
+
+#[test]
 fn players_are_told_the_weather() {
     let mut client = Client::join();
     client.pump_until(|c| c.weather.is_some());
@@ -1870,7 +1877,7 @@ fn a_leaver_back_under_their_name_in_another_case_is_who_they_were_and_one_name_
     machine_says(&mut bob, &at, "holds 54 items", 10);
     // He leaves while his file can't be written, so he is kept as he left...
     let before = saved_generation(&dir);
-    let blocked: Vec<_> = (before + 1..before + 40).map(|g| dir.join("players").join(format!("Bob.ron.{g}.new"))).collect();
+    let blocked: Vec<_> = (before + 1..before + 40).map(|g| dir.join("players").join(format!("bob.ron.{g}.new"))).collect();
     for path in &blocked {
         std::fs::create_dir_all(path).unwrap();
     }
@@ -1897,11 +1904,19 @@ fn a_leaver_back_under_their_name_in_another_case_is_who_they_were_and_one_name_
         }
     };
     assert!(format!("{reason:?}").contains("net.rejected.name_taken"), "{reason:?}");
-    drop(bob);
-    drop(client);
+    // Once a save holding him counts, he is his file, found as bob too.
     for path in &blocked {
         let _ = std::fs::remove_dir_all(path);
     }
+    drop(bob);
+    after_leave_saves(&mut client);
+    assert!(saved_generation(&dir) > before, "the save after BOB left did not count");
+    let mut bob = client.another("bob");
+    bob.ok("/seed");
+    let said = bob.ok(&format!("/machine {at}"));
+    assert_eq!(held(&bob) + items_held(&said), 64, "bob holds {}, the chest: {said}", held(&bob));
+    drop(bob);
+    drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
