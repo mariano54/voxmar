@@ -806,6 +806,7 @@
     "quest.base.first_ore.why": "銅は石のつるはしで掘れる最初の鉱石で、あらゆる金属の始まり。",
     "block.base.farmland": "耕地",
     "block.base.stick": "棒",
+    "block.base.dead_log": "枯れた原木",
     "block.base.copper_ingot": "銅のインゴット",
     "block.base.iron_ingot": "鉄のインゴット",
     "block.base.taming_treat": "手なずけのおやつ",

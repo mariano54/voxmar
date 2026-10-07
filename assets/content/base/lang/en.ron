@@ -809,6 +809,7 @@
     "quest.base.first_ore.why": "Copper is the first ore your stone pickaxe can take, and the start of every metal.",
     "block.base.farmland": "Farmland",
     "block.base.stick": "Stick",
+    "block.base.dead_log": "Dead Log",
     "block.base.copper_ingot": "Copper Ingot",
     "block.base.iron_ingot": "Iron Ingot",
     "block.base.taming_treat": "Taming Treat",
