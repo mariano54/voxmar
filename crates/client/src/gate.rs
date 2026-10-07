@@ -219,6 +219,8 @@ enum Step {
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
+    /// The journal key opens the journal, whose Plants page lists what there is to find.
+    Journal,
     /// In creative mode the inventory's catalogue finds an item by its English name and by
     /// its Japanese reading, and a click on it gives a stack; in survival it gives nothing.
     Catalogue,
@@ -868,6 +870,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
+        Step::Journal => journal(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
@@ -2180,7 +2183,7 @@ fn guides(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let skills = &world.resource::<Launch>().content.skills;
     let Some(farming) = skills.ids().find(|&id| skills.get(id).name.ends_with("farming")) else {
         gate.check("guides", Err("no Farming skill in the content".into()));
-        gate.next(Step::Catalogue, now);
+        gate.next(Step::Journal, now);
         return;
     };
     match gate.phase {
@@ -2215,6 +2218,31 @@ fn guides(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             *world.resource_mut::<GuideView>() = GuideView::default();
             world.resource_mut::<Guide>().0 = None;
             world.resource_mut::<UiState>().character_open = false;
+            gate.next(Step::Journal, now);
+        }
+    }
+}
+
+fn journal(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use voxmar_engine::journal::Page;
+    let key_code = world.resource::<crate::settings::Settings>().journal_key.0;
+    match gate.phase {
+        0 => {
+            let plants = Page::ALL.iter().position(|page| *page == Page::Plants).unwrap_or(0);
+            world.resource_mut::<crate::hud::journal::JournalView>().page = plants;
+            key(world, key_code, true);
+            gate.advance(now);
+        }
+        _ => {
+            key(world, key_code, false);
+            let open = world.resource::<UiState>().journal_open;
+            let cells = world.query_filtered::<(), With<Button>>().iter(world).count();
+            if !open && in_phase < 2.0 {
+                return;
+            }
+            let found = world.resource::<LocalPlayer>().journal.entries().count();
+            gate.check("journal", if open { Ok(format!("J opened the journal ({found} things found so far, {cells} buttons drawn)")) } else { Err("J did not open the journal".into()) });
+            world.resource_mut::<UiState>().journal_open = false;
             gate.next(Step::Catalogue, now);
         }
     }
@@ -2328,6 +2356,10 @@ fn screenshot(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// A screen or state the text-fit tour opens.
+/// The journal pages the text-fit tour opens: animals, plants and bosses (empty yet). The
+/// other pages are drawn the same way, and all fourteen would make the tour too slow.
+const FIT_JOURNAL: [usize; 3] = [0, 4, 2];
+
 #[derive(Clone, Copy, Debug)]
 enum View {
     /// The HUD alone, with experience, a refusal and a level-up showing.
@@ -2338,6 +2370,8 @@ enum View {
     Character,
     /// The character screen with one skill's guide open.
     Guide(usize),
+    /// The journal on one page.
+    Journal(usize),
     /// The menu on one settings tab.
     Menu(usize),
     /// Dead, waiting to respawn.
@@ -2373,6 +2407,8 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
+            // The journal's kinds of page: creatures, items, and one with nothing yet.
+            .chain(FIT_JOURNAL.map(View::Journal))
             .chain((0..crate::settings::TABS).map(View::Menu))
             .collect()
     };
@@ -2428,17 +2464,21 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         world.resource_mut::<crate::settings::Settings>().debug_overlay = debug;
     }
     let mut ui = world.resource_mut::<UiState>();
-    (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
+    (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open, ui.journal_open) = (false, false, false, false, false);
     match view {
         Some(View::Inventory) => ui.inventory_open = true,
         Some(View::Character | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
+        Some(View::Journal(_)) => ui.journal_open = true,
         Some(View::Console) => ui.console_open = true,
         Some(View::Recipes(_)) => (ui.inventory_open, ui.recipes_open) = (true, true),
         _ => {}
     }
     if !matches!(view, Some(View::Recipes(_))) {
         ui.recipes_open = false;
+    }
+    if let Some(View::Journal(page)) = view {
+        world.resource_mut::<crate::hud::journal::JournalView>().page = page;
     }
     let lookup = match view {
         Some(View::Recipes(index)) => {
