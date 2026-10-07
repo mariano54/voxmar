@@ -1838,7 +1838,7 @@ mod tests {
     fn meadows_are_carpeted_and_flowers_stay_sparse() {
         let registry = registry();
         let (grass, air) = (registry.expect("base:grass_block"), BlockId::AIR);
-        let (mut open, mut planted, mut flowers) = (0, 0, 0);
+        let (mut open, mut planted, mut flowers, mut implied) = (0, 0, 0, 0);
         for seed in [1, 42] {
             let world = Overworld::new(seed, registry.clone());
             let at = world.locate_biome("plains", IVec2::ZERO, 6000).unwrap();
@@ -1862,15 +1862,22 @@ mod tests {
                             planted += 1;
                             flowers += registry.def(above).has_tag("flower") as i32;
                         }
+                        // The flower the biome's data grows here, before anything else
+                        // claims the spot.
+                        if let Some(ecology::Plant::One(b) | ecology::Plant::Tall(b, _) | ecology::Plant::Stack(b, _)) = world.ecology.plant(&site, crate::content::Ground::Soil, wx, wz) {
+                            implied += registry.def(b).has_tag("flower") as i32;
+                        }
                     }
                 }
             }
         }
-        let (planted, flowers) = (planted as f32 / open as f32, flowers as f32 / open as f32);
-        println!("{open} open grass blocks, {planted:.2} planted, {flowers:.3} flowers");
-        // Two-sided: well carpeted but not crowded; flowers present but scarce (the plains'
-        // stray flowers since the flower cut are about one block in a thousand).
-        assert!(open > 1000 && (0.24..=0.36).contains(&planted) && (0.0005..=0.05).contains(&flowers), "{open} open, {planted} planted, {flowers} flowers");
+        let (planted, implied) = (planted as f32 / open as f32, implied as f32 / open as f32);
+        let flowers = flowers as f32 / open as f32;
+        println!("{open} open grass blocks, {planted:.2} planted, {flowers:.4} flowers ({implied:.4} by the biome's data)");
+        // Two-sided: well carpeted but not crowded; flowers scarce, yet at least half as
+        // many as the biome's data grows (nothing else crowds them out).
+        assert!(open > 1000 && (0.24..=0.36).contains(&planted), "{open} open, {planted} planted");
+        assert!(implied > 0.0 && flowers >= 0.5 * implied && flowers <= 0.05, "{flowers} flowers, {implied} by the data");
     }
 
     /// Small plants in 3×3 chunks of `biome` near the origin of `world`: how many in all,
