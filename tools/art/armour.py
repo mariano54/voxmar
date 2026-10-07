@@ -161,6 +161,27 @@ def _(s):
         s.put(23, y, 'strap', 1 if y % 2 else 0)
 
 
+@drawing('hide_hood', 'armour_hide', 'armour_leather', 'armour_leather')
+def _(s):
+    # A soft hood of hide, not a helm: a round crown with no ridge or rivets, a stitched
+    # seam over the top, folds at the sides, open at the face, a drawstring at the throat.
+    hood = ellipse(16, 15, 12.5, 12.5) & rect(0, 0, 31, 16) | mirror(poly([(3.5, 16), (11, 16), (12, 28), (2, 28)]))
+    face = ellipse(16, 18, 5, 6) | rect(11, 18, 20, 31)
+    hood -= face
+    s.fill(hood, 'metal')
+    for y in range(4, 12, 2):
+        s.put(16, y, 'strap', 0)
+    for x, y0 in ((7, 12), (24, 12)):
+        for y in range(y0, y0 + 9):
+            if (x, y) in hood:
+                s.put(x, y, 'metal', 0 if x > 16 else 1)
+    for x, y in (ellipse(16, 18, 6, 7) | rect(10, 18, 21, 31)) - face:
+        if (x, y) in hood:
+            s.put(x, y, 'trim', 2 if x < 16 else 1)
+    for x, y in ((12, 27), (19, 27), (12, 28), (19, 28)):
+        s.put(x, y, 'strap', 1)
+
+
 @drawing('chainmail_coif', 'armour_chain', 'armour_leather', 'armour_leather')
 def _(s):
     # A mail hood: a crown, long sides falling to the shoulders and flaring there, the
@@ -380,7 +401,8 @@ def main():
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
     out = ['''// Armour and shields at 32×32 (content: base/blocks_armour.ron), drawn by
 // tools/art/armour.py: one drawing per piece in default's `metal`, `trim` and `strap`
-// slots, so default's recolours take them in their own palettes. Regenerate with
+// slots, so default's recolours take them in their own palettes. The hide hood has its own
+// drawing, a soft hood rather than default's helmet in hide. Regenerate with
 // `python3 tools/art/armour.py`; edit the Python, not this file.
 (
     textures: {''']

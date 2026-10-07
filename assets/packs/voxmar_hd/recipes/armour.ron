@@ -1,6 +1,7 @@
 // Armour and shields at 32×32 (content: base/blocks_armour.ron), drawn by
 // tools/art/armour.py: one drawing per piece in default's `metal`, `trim` and `strap`
-// slots, so default's recolours take them in their own palettes. Regenerate with
+// slots, so default's recolours take them in their own palettes. The hide hood has its own
+// drawing, a soft hood rather than default's helmet in hide. Regenerate with
 // `python3 tools/art/armour.py`; edit the Python, not this file.
 (
     textures: {
@@ -36,6 +37,40 @@
             "......aaa.............ahaa......",
             "......................aia.......",
             ".......................a........",
+            "................................",
+        ])]),
+        "block/hide_hood": (size: (32, 32), palettes: {"metal": "armour_hide", "trim": "armour_leather", "strap": "armour_leather"}, layers: [Grid(legend: {'a': "#1a140e", 'b': "metal:2", 'c': "metal:1", 'd': "strap:0", 'e': "metal:0", 'f': "trim:2", 'g': "trim:1", 'h': "strap:1"}, rows: [
+            "................................",
+            "................................",
+            "...........aaaaaaaaaa...........",
+            ".........aabbbbbbbbbbaa.........",
+            "........abbcccccdccccbba........",
+            ".......abccccccccccccceba.......",
+            "......abccccccccdcccccceba......",
+            ".....abccccccccccccccccceba.....",
+            "....abccccccccccdcccccccceba....",
+            "....abccccccccccccccccccceea....",
+            "...abcccccccccccdccccccccceba...",
+            "...abcccccccccffggcccccccceea...",
+            "...abcccccccffaaaaggcccceceea...",
+            "...abccccccffa....aggccceceea...",
+            "...abcccccefa......agccceceea...",
+            "...abccccefa........agcceceea...",
+            "..abcccccefa........agccecceba..",
+            "..abcccccefa........agccecceea..",
+            "..abcccccefa........agccecceea..",
+            "..abcccccefa........agccecceea..",
+            "..abcccccefa........agccecceea..",
+            "..abcccccefa........agccccceea..",
+            "..abcccccefa........agccccceea..",
+            "..abcccccefa........agccccceea..",
+            ".abccccccefa........agcccccceba.",
+            ".abccccccefa........agcccccceea.",
+            ".abccccccefaa......aagcccccceea.",
+            ".abeeeeeeefaha....ahageeeeeeeea.",
+            "..aaaaaaaaaaha....ahaaaaaaaaaa..",
+            "............a......a............",
+            "................................",
             "................................",
         ])]),
         "block/chainmail_coif": (size: (32, 32), palettes: {"metal": "armour_chain", "trim": "armour_leather", "strap": "armour_leather"}, layers: [Grid(legend: {'a': "#1a140e", 'b': "metal:1", 'c': "metal:0", 'd': "metal:2", 'e': "trim:1", 'f': "trim:0"}, rows: [
