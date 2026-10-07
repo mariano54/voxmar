@@ -596,7 +596,7 @@ fn setup(
     launch: Res<Launch>,
 ) {
     let (registry, world_content) = (&registry.blocks, registry.world.clone());
-    let mut source = Source::discover(settings.textures);
+    let mut source = Source::discover(settings.textures, settings.minecraft_assets);
     let (size, mut block_textures, animations) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];
