@@ -237,6 +237,8 @@
     "rarity.very_rare": "Very rare",
     "rarity.legendary": "Legendary",
 
+    "package.base": "Voxmar",
+    "package.core": "Voxmar",
     "item.edible": "Edible",
     "item.fuel": "Fuel",
     "item.light": "Gives light",
