@@ -87,6 +87,12 @@ pub trait Land: Sync {
     fn gates(&self, _min: IVec2, _max: IVec2) -> Vec<IVec2> {
         Vec::new()
     }
+
+    /// The ground settlements' buildings take (each from its least corner to its most)
+    /// within or touching the box from `min` to `max`, which trails keep off.
+    fn built(&self, _min: IVec2, _max: IVec2) -> Vec<(IVec2, IVec2)> {
+        Vec::new()
+    }
 }
 
 /// How far from a settlement trails are laid: as far as a trail from its gate reaches,
@@ -303,7 +309,7 @@ impl Trails {
             for from in self.places(land, region).iter() {
                 let mut ends = self.places_near(land, from.at().as_vec2(), network::MAX_EDGE as f32);
                 ends.sort_by_key(|p| (p.cell.x, p.cell.y));
-                for to in ends.iter().filter(|to| from.below(to) && self.joins(from, to) && network::keep(from, to, &near)) {
+                for to in ends.iter().filter(|to| from.below(to) && self.joins(from, to) && network::keep(from, to, &near, &|a, b| self.joins(a, b))) {
                     let margin = (from.cell - to.cell).abs().max_element() / 3;
                     let margin = margin.clamp(6, 16);
                     let (min, max) = (from.cell.min(to.cell) - margin, from.cell.max(to.cell) + margin);
@@ -555,7 +561,7 @@ mod tests {
                             continue;
                         }
                         candidates += 1;
-                        if !network::keep(from, &to, &near) {
+                        if !network::keep(from, &to, &near, &|a, b| trails.joins(a, b)) {
                             continue;
                         }
                         kept += 1;

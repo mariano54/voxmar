@@ -28,6 +28,8 @@ pub struct Cell {
     /// The water surface over the ground, when it is submerged; the ground otherwise.
     pub water: i16,
     pub body: u8,
+    /// A settlement's building stands in it: trails go round.
+    pub built: bool,
 }
 
 impl Cell {
@@ -59,14 +61,24 @@ impl Weigh for Grid {
 
 impl Grid {
     pub fn new(land: &dyn Land, region: IVec2) -> Self {
-        let cells = land
+        let mut cells: Box<[Cell]> = land
             .grid(region * REGION, CELL, CELLS)
             .into_iter()
             .map(|g| {
                 let submerged = g.submerged();
-                Cell { height: g.height as i16, water: if submerged { g.water } else { g.height } as i16, body: g.body as u8 }
+                Cell { height: g.height as i16, water: if submerged { g.water } else { g.height } as i16, body: g.body as u8, built: false }
             })
             .collect();
+        // Cells whose ground a building takes, or comes within a block of.
+        let first = region * CELLS;
+        for (min, max) in land.built(region * REGION - CELL, region * REGION + REGION + CELL) {
+            let (lo, hi) = ((min - 1 + CELL / 2).div_euclid(IVec2::splat(CELL)), (max + 1 + CELL / 2).div_euclid(IVec2::splat(CELL)));
+            for cz in lo.y.max(first.y)..=hi.y.min(first.y + CELLS - 1) {
+                for cx in lo.x.max(first.x)..=hi.x.min(first.x + CELLS - 1) {
+                    cells[((cz - first.y) * CELLS + cx - first.x) as usize].built = true;
+                }
+            }
+        }
         Self(cells)
     }
 }
@@ -233,9 +245,9 @@ mod tests {
         let d = ((c - IVec2::new(40, 40)).as_vec2().length() * CELL as f32) as i32;
         let height = (SEA_LEVEL + 10 + (60 - d / 3).max(0)) as i16;
         if (c - IVec2::new(56, 40)).abs().max_element() <= 2 {
-            return Cell { height: height - 3, water: height + 1, body: Body::Lake as u8 };
+            return Cell { height: height - 3, water: height + 1, body: Body::Lake as u8, built: false };
         }
-        Cell { height, water: height, body: Body::Sea as u8 }
+        Cell { height, water: height, body: Body::Sea as u8, built: false }
     }
 
     #[test]
