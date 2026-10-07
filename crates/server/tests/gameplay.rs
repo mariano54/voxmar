@@ -1343,8 +1343,10 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     client.propose("core:craft", ActionTarget::Slot(0));
     let (table, stick) = (client.content.blocks.expect("base:crafting_table"), client.content.blocks.expect("base:stick"));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == table));
-    let wait = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > wait);
+    // The first table also finishes the Crafting Table quest, whose reward (18 Engineering)
+    // comes at the next quest check: wait for it, so both grants are counted exactly.
+    client.pump_until(|c| c.quests.iter().any(|q| q.name == "base:crafting_table" && q.done));
+    client.ok("/time");
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
-    assert_eq!(client.earned[earned..], [80], "one table's Engineering, once");
+    assert_eq!(client.earned[earned..], [80, 180], "one table's Engineering, once, then the quest's reward");
 }
