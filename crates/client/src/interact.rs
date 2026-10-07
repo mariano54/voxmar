@@ -113,12 +113,14 @@ fn pick_block(
     let holds = |slot: usize| player.inventory.get(slot).is_some_and(|s| s.item == item);
     if let Some(slot) = (0..HOTBAR_SLOTS).find(|&slot| holds(slot)) {
         player.selected = slot;
-    } else if let Some(slot) = (HOTBAR_SLOTS..SLOTS).find(|&slot| holds(slot)) {
+    } else if let Some(slot) = (HOTBAR_SLOTS..SLOTS).find(|&slot| holds(slot))
+        && let Some(transfer) = actions.named("core:transfer")
+    {
         let selected = player.selected;
         let count = player.inventory.get(slot).map_or(0, |s| s.count);
         if player.inventory.move_items(slot, selected, count) {
             let target = ActionTarget::Slots { from: slot as u8, to: selected as u8, count };
-            net.propose(actions.0.expect("core:transfer"), target);
+            net.propose(transfer, target);
         }
     }
 }
@@ -238,9 +240,10 @@ fn break_and_place(
         net.cancel();
     }
 
-    if let Some(hit) = mining {
-        let mine = actions.0.expect("core:mine");
-        let def = actions.0.get(mine).expect("core:mine is defined");
+    if let Some(hit) = mining
+        && let Some(mine) = actions.named("core:mine")
+        && let Some(def) = actions.0.get(mine)
+    {
         let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
         let context = ClientContext { world: &world, player: &player, content: &launch.content };
         match target.breaking {
@@ -347,7 +350,7 @@ fn break_and_place(
         let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
         // With a creature under the crosshair, a right click tends it instead (`creatures::aim`).
         if food && target.creature.is_none() && (hit.is_none() || !placeable) {
-            let eat = actions.0.expect("core:eat");
+            let Some(eat) = actions.named("core:eat") else { return };
             let context = ClientContext { world: &world, player: &player, content };
             match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {
                 Some(Ok(())) => {
@@ -396,6 +399,13 @@ fn break_and_place(
         // A ripe crop that fruits again is picked, whatever is in hand; an item with an
         // action of its own (a seed plants) does that; anything else is placed.
         let held = context.actor_held();
+        // A ripe crop above the player's Farming level says so, and is not built on.
+        if let Some(Some(Err(Rejection::Unmet(need @ Requirement::CropLevel)))) = actions.0.id("base:pick").map(valid) {
+            if let Some(words) = refusal(&world, content, &locale, hit.block, need) {
+                toasts.refused(words, time.elapsed_secs());
+            }
+            return;
+        }
         let pick = actions.0.id("base:pick").filter(|&id| valid(id).is_some_and(|v| v.is_ok()));
         // A seed pouch in hand sows on ground that takes its seeds, and empties elsewhere.
         let sow = actions.0.id("base:plant").filter(|&id| held.is_some_and(|h| world.registry.def(h).has_tag("pouch")) && valid(id).is_some_and(|v| v.is_ok()));
@@ -418,7 +428,7 @@ fn break_and_place(
             }
             return;
         }
-        let place = actions.0.expect("core:place");
+        let Some(place) = actions.named("core:place") else { return };
         let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
         if let Some(item) = held.filter(|_| allowed) {
             let cell = placement_cell(&context, hit.block, hit.face);

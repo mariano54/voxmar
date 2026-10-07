@@ -208,18 +208,22 @@ enum Move {
 
 /// Predicts a move and proposes it to the server, which checks it by the same rules.
 fn send(net: &Net, actions: &Actions, inventory: &mut Inventory, action: Move) {
-    let (moved, name, target) = match action {
-        Move::Items { from, to, count } => {
-            (inventory.move_items(from, to, count), "core:transfer", ActionTarget::Slots { from: from as u8, to: to as u8, count })
-        }
-        Move::Quick(slot) => (inventory.quick_move(slot), "core:quick_move", ActionTarget::Slot(slot as u8)),
-        Move::Stow => (inventory.stow_cursor(), "core:stow", ActionTarget::None),
-        Move::Throw { slot, count } => {
-            (inventory.take(slot, count).is_some(), "core:drop", ActionTarget::Stack { slot: slot as u8, count })
-        }
+    let name = match action {
+        Move::Items { .. } => "core:transfer",
+        Move::Quick(_) => "core:quick_move",
+        Move::Stow => "core:stow",
+        Move::Throw { .. } => "core:drop",
+    };
+    // Nothing is predicted for an action the content does not have.
+    let Some(id) = actions.named(name) else { return };
+    let (moved, target) = match action {
+        Move::Items { from, to, count } => (inventory.move_items(from, to, count), ActionTarget::Slots { from: from as u8, to: to as u8, count }),
+        Move::Quick(slot) => (inventory.quick_move(slot), ActionTarget::Slot(slot as u8)),
+        Move::Stow => (inventory.stow_cursor(), ActionTarget::None),
+        Move::Throw { slot, count } => (inventory.take(slot, count).is_some(), ActionTarget::Stack { slot: slot as u8, count }),
     };
     if moved {
-        net.propose(actions.0.expect(name), target);
+        net.propose(id, target);
     }
 }
 
@@ -302,11 +306,13 @@ fn craft(
         return;
     }
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let recipe = |grid: &[Option<voxmar_engine::block::BlockId>; GRID]| recipes.find(grid).filter(|r| allowed(r)).map(|r| (r.output, r.count));
+    let Some(craft) = actions.named("core:craft") else { return };
+    // As the server crafts all: only while the grid still makes the recipe it made first.
+    let first = found.filter(|r| allowed(r));
     let mut inventory = player.inventory.clone();
-    if inventory.craft(recipe, all) > 0 {
+    if inventory.craft(recipes.while_making(first), all) > 0 {
         player.inventory = inventory;
-        net.propose(actions.0.expect("core:craft"), ActionTarget::Slot(if all { 0 } else { 1 }));
+        net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
         sounds.write(UiSound::Click);
     }
 }

@@ -135,8 +135,9 @@ fn throw(keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, net: Res<Net>, actio
     let slot = player.selected;
     let Some(stack) = player.inventory.get(slot) else { return };
     let count = if whole { stack.count } else { 1 };
+    let Some(drop) = actions.named("core:drop") else { return };
     if player.inventory.take(slot, count).is_some() {
-        net.propose_from(&player, actions.0.expect("core:drop"), ActionTarget::Stack { slot: slot as u8, count });
+        net.propose_from(&player, drop, ActionTarget::Stack { slot: slot as u8, count });
     }
 }
 

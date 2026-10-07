@@ -581,6 +581,19 @@ struct Registry {
 #[derive(Resource)]
 pub struct Actions(pub Arc<ActionRegistry>);
 
+impl Actions {
+    /// The action called `name`, which the game asks for by name. Content that left it out
+    /// (a broken or partial mod) makes the gesture do nothing, with a warning, rather than
+    /// end the game.
+    pub fn named(&self, name: &str) -> Option<voxmar_engine::action::ActionId> {
+        let id = self.0.id(name);
+        if id.is_none() {
+            warn!("no package defines the action {name}, so it cannot be done");
+        }
+        id
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
