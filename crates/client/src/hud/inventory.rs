@@ -24,7 +24,7 @@ use bevy::window::PrimaryWindow;
 use voxmar_engine::action::ActionTarget;
 use voxmar_engine::block::{BlockDef, Rarity};
 use voxmar_engine::craft::GRID;
-use voxmar_engine::inventory::{CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, SLOTS};
+use voxmar_engine::inventory::{LAST, WORN, CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, SLOTS};
 
 use super::{SLOT, slot_contents};
 use crate::lang::{Locale, Localized, TightLine};
@@ -147,6 +147,16 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
             card.spawn(crafting).with_children(|row| {
+                // What is worn: head and body, legs and hands, feet and shield.
+                let worn = Node {
+                    display: Display::Grid,
+                    grid_template_columns: RepeatedGridTrack::px(2, SLOT),
+                    row_gap: Val::Px(PX),
+                    column_gap: Val::Px(PX),
+                    margin: UiRect::right(Val::Px(space::SECTION)),
+                    ..default()
+                };
+                row.spawn(worn).with_children(|grid| (WORN..=LAST).for_each(|slot| spawn_slot(grid, slot)));
                 let square = Node {
                     display: Display::Grid,
                     grid_template_columns: RepeatedGridTrack::px(2, SLOT),
@@ -733,6 +743,41 @@ fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, play
     lines
 }
 
+/// What a piece of armour or a shield is: its slot and the Defence level that wears it (red
+/// while the player is below it, with why it then gives nothing), its armour and weight,
+/// and the styles it is strong against.
+fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
+    let combat = &content.combat;
+    let defence = content.skills.ids().find(|&id| content.skills.get(id).name == "core:defence");
+    let level = defence.map_or(1, |id| content.skills.level(player.skills.xp(id)));
+    let slot_name = |key: &str| locale.get_or(&format!("item.slot.{key}"), key).to_owned();
+    let (slot, needs, armour, weight, resists) = if let Some(piece) = combat.piece(item) {
+        (piece.slot.key(), piece.level, piece.armour, Some(piece.weight), combat.set(piece.set).resists.clone())
+    } else if let Some(shield) = combat.shield(item) {
+        (voxmar_engine::combat::Slot::Shield.key(), shield.level, shield.armour, None, Vec::new())
+    } else {
+        return Vec::new();
+    };
+    let ready = level >= needs;
+    let mut lines = vec![(locale.format("item.armour", &[("slot", &slot_name(slot)), ("level", &needs)]), if ready { SOFT } else { ERROR })];
+    let weight = weight.map(|w| locale.get_or(&format!("item.weight.{}", w.key()), w.key()).to_owned());
+    lines.push((
+        match weight {
+            Some(weight) => locale.format("item.armour_value", &[("armour", &armour), ("weight", &weight)]),
+            None => locale.format("item.armour_shield", &[("armour", &armour)]),
+        },
+        SOFT,
+    ));
+    if !resists.is_empty() {
+        let styles: Vec<String> = resists.iter().map(|style| locale.get(&format!("item.style.{}", style.key())).to_owned()).collect();
+        lines.push((locale.format("item.armour_resists", &[("styles", &styles.join(locale.get("language.comma")))]), SOFT));
+    }
+    if !ready {
+        lines.push((locale.format("item.armour_low", &[("level", &needs)]), ERROR));
+    }
+    lines
+}
+
 /// What a pouch carries, a line a kind, and how to empty it.
 fn pouch_lines(locale: &Locale, registry: &voxmar_engine::block::BlockRegistry, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
     if !registry.def(item).has_tag("pouch") {
@@ -824,15 +869,27 @@ fn tooltip(
     (viewer, forced, places): (Res<super::recipes::RecipeViewer>, Option<Res<HoverSlot>>, Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>),
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
-    let item = hovered(&slots)
-        .or(forced.as_ref().map(|f| f.0))
-        .filter(|_| ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none())
+    let pointed = hovered(&slots).or(forced.as_ref().map(|f| f.0)).filter(|_| ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none());
+    // An empty worn slot says what goes in it.
+    let empty_worn = pointed.filter(|slot| (WORN..=LAST).contains(slot) && player.inventory.get(*slot).is_none());
+    let item = pointed
         .and_then(|slot| player.inventory.get(slot))
         .map(|stack| stack.item)
         .or(catalogue.hovered.filter(|_| ui.inventory_open && player.inventory.cursor.is_none()));
     let Some(item) = item else {
-        visibility.set_if_neq(Visibility::Hidden);
         *shown = None;
+        let Some(slot) = empty_worn else {
+            visibility.set_if_neq(Visibility::Hidden);
+            return;
+        };
+        let key = voxmar_engine::combat::Slot::ALL[slot - WORN].key();
+        let name = locale.get_or(&format!("item.slot.{key}"), key).to_owned();
+        commands.entity(entity).despawn_children().with_children(|lines| {
+            lines.spawn(shadowed(&font.0, name, BODY, TEXT));
+            lines.spawn(text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED));
+        });
+        visibility.set_if_neq(Visibility::Inherited);
+        place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
         return;
     };
     // Shift shows how the name reads: in Japanese, the kana over the name; in another
@@ -870,6 +927,7 @@ fn tooltip(
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
+                .chain(armour_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
                 .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
@@ -879,27 +937,27 @@ fn tooltip(
         });
     }
     visibility.set_if_neq(Visibility::Inherited);
-    if let Ok(window) = window.single()
+    place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
+}
+
+/// Puts the tooltip up and to the right of the pointer, kept on screen; without a pointer,
+/// beside the slot a screenshot names. The pointer is in the window's points, the
+/// interface laid out at its own scale.
+fn place_tip(node: &mut Node, computed: &ComputedNode, window: Option<&Window>, scale: f32, forced: Option<usize>, places: &Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>) {
+    let size = computed.size() * computed.inverse_scale_factor();
+    if let Some(window) = window
         && let Some(at) = window.cursor_position()
     {
-        // Up and to the right of the pointer, kept on screen; the pointer is in the
-        // window's points, the interface laid out at its own scale.
-        let (at, width) = (at / scale.0, window.width() / scale.0);
-        let size = computed.size() * computed.inverse_scale_factor();
-        let left = (at.x + 6.0 * PX).min(width - size.x - 2.0 * PX);
-        let top = (at.y - size.y - 2.0 * PX).max(2.0 * PX);
-        node.left = Val::Px(left);
-        node.top = Val::Px(top);
-    }    // Without a pointer, beside the slot a screenshot names.
-    else if let Some(slot) = forced.as_ref().map(|f| f.0)
+        let (at, width) = (at / scale, window.width() / scale);
+        node.left = Val::Px((at.x + 6.0 * PX).min(width - size.x - 2.0 * PX));
+        node.top = Val::Px((at.y - size.y - 2.0 * PX).max(2.0 * PX));
+    } else if let Some(slot) = forced
         && let Some((_, cell, place)) = places.iter().find(|(s, ..)| s.0 == slot)
     {
-        let size = computed.size() * computed.inverse_scale_factor();
         let at = (place.translation + cell.size() / 2.0) * cell.inverse_scale_factor();
         node.left = Val::Px(at.x + 2.0 * PX);
         node.top = Val::Px((at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
     }
-
 }
 
 #[cfg(test)]
