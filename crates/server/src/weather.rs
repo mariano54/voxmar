@@ -50,7 +50,7 @@ use voxmar_engine::world::Column;
 use voxmar_engine::field::Field;
 use voxmar_engine::glam::{DVec2, IVec2, IVec3, Vec2, Vec3};
 use voxmar_engine::schedule::Tier;
-use voxmar_engine::weather::{Input, Inputs, Preset, WeatherTable, advance_gusts, ramp};
+use voxmar_engine::weather::{Input, Inputs, Preset, SimulationTuning, WeatherTable, advance_gusts, ramp};
 use voxmar_worldgen::{Featured, Overworld, SEA_LEVEL, Tier as _};
 use voxmar_protocol::{Nearby, PlayerId, ServerMessage, THUNDER_HEARD, TICKS_PER_DAY, TICKS_PER_SECOND, WEATHER_CELL, Weather as LocalWeather};
 
@@ -59,46 +59,11 @@ use crate::process::Process;
 
 /// Blocks per weather cell.
 const CELL: i32 = WEATHER_CELL;
-/// Cells simulated around each player in every direction, enough to interpolate between.
-const RANGE: i32 = 2;
-/// Seconds a cell catches up on when it comes into range, in steps of `CATCH_UP_STEP`.
-const CATCH_UP: i64 = 600;
-const CATCH_UP_STEP: i64 = 5;
-/// Mean speed of the prevailing wind that carries air masses, in blocks per second.
-const MEAN_WIND: f64 = 3.0;
-/// A player's weather is sent when any value moves this much, or after `RESEND` ticks.
-const CHANGE: f32 = 0.02;
-const RESEND: u64 = 5 * TICKS_PER_SECOND as u64;
-/// Chance per second that a cell under the fiercest storm strikes the ground (it flashes
-/// within the cloud twice as often), and how far away, in blocks, players see and hear
-/// lightning. A player in the heart of a storm has the 25 cells around them flashing a few
-/// times a minute between them, a ground strike every half minute or so.
-const LIGHTNING: f32 = 0.0009;
-const LIGHTNING_REACH: f32 = 1500.0;
-/// Blocks above the ground (or the sea) a flash within a cloud lights it.
-const CLOUD_FLASH_HEIGHT: i32 = 160;
-/// Strikes per second near a player at full `lightning` from effects.
-const EFFECT_LIGHTNING: f32 = 1.0 / 15.0;
-/// Forced weather covers this many blocks around where it was asked for, then fades out
-/// over `FORCE_EDGE` more; when its time is up it fades over `FORCE_FADE` seconds.
-const FORCE_RADIUS: f32 = 1024.0;
-const FORCE_EDGE: f32 = 384.0;
-const FORCE_FADE: u64 = 60;
-/// For this many seconds after a command changes the weather, players there are told at
-/// once and change over quickly.
-const QUICK: u64 = 3;
-/// Blocks across the stretches of land an effect's rarity is drawn for.
-const REGION: f64 = 1500.0;
-/// Effects at least this strong are named to players and in `/weather`.
-const NAMED: f32 = 0.3;
-/// Seconds for wet ground to lose half its water, in mild, cloudy weather.
-const DRYING: f32 = 300.0;
+// The tunable values (how far around players the weather is simulated, how often it is
+// sent, lightning, forced weather, drying, lying snow, …) are data: `tuning: (simulation:
+// …)` in weather.ron, read as `SimulationTuning`.
 /// Places whose land is remembered, at 8-block resolution.
 const PLACES: usize = 4096;
-/// Columns whose lying snow is brought up to date per player each second, and blocks
-/// changed in one column at most.
-const SNOW_COLUMNS: usize = 2;
-const SNOW_CHANGES: usize = 256;
 
 /// Random streams, each mixed into the world seed.
 const AIR_MASS: u64 = 1;
@@ -253,9 +218,9 @@ struct Forcing {
 
 impl Forcing {
     /// How strongly the preset holds at `at`, 0..1.
-    fn weight(&self, at: Vec2, tick: u64) -> f32 {
-        let space = 1.0 - smoothstep(FORCE_RADIUS, FORCE_RADIUS + FORCE_EDGE, self.center.distance(at));
-        let over = tick.saturating_sub(self.until) as f32 / (FORCE_FADE * TICKS_PER_SECOND as u64) as f32;
+    fn weight(&self, at: Vec2, tick: u64, t: &SimulationTuning) -> f32 {
+        let space = 1.0 - smoothstep(t.force_radius, t.force_radius + t.force_edge, self.center.distance(at));
+        let over = tick.saturating_sub(self.until) as f32 / (t.force_fade * TICKS_PER_SECOND as u64) as f32;
         space * (1.0 - over).max(0.0)
     }
 }
@@ -269,8 +234,8 @@ struct Change {
 }
 
 impl Change {
-    fn covers(&self, at: Vec2) -> bool {
-        self.center.distance(at) < FORCE_RADIUS + FORCE_EDGE
+    fn covers(&self, at: Vec2, t: &SimulationTuning) -> bool {
+        self.center.distance(at) < t.force_radius + t.force_edge
     }
 }
 
@@ -302,6 +267,7 @@ impl WeatherState {
             sky: Sky {
                 seed: mix(world_seed ^ 0x0077_6561_7468_6572), // "weather"
                 prevailing: wind.as_dvec2().normalize_or(DVec2::X),
+                tuning: table.tuning().simulation.clone(),
             },
             land,
             places: FxHashMap::default(),
@@ -326,7 +292,7 @@ impl WeatherState {
     /// Holds `preset` over the land around `center` for `seconds`, replacing weather forced
     /// nearby before.
     pub fn force(&mut self, preset: Preset, center: Vec2, seconds: u32, tick: u64) {
-        self.forced.retain(|f| f.center.distance(center) > FORCE_RADIUS);
+        self.forced.retain(|f| f.center.distance(center) > self.sky.tuning.force_radius);
         let until = tick + seconds as u64 * TICKS_PER_SECOND as u64;
         self.forced.push(Forcing { preset, center, until });
         self.changes.push(Change { center, tick, release: false });
@@ -336,7 +302,7 @@ impl WeatherState {
     /// land around `center` for `seconds`, on top of whatever weather is forced there.
     pub fn force_wind(&mut self, wind: &Preset, center: Vec2, seconds: u32, tick: u64) {
         let until = tick + seconds as u64 * TICKS_PER_SECOND as u64;
-        let mut preset = match self.forced.iter().rev().find(|f| f.weight(center, tick) > 0.0 && tick < f.until) {
+        let mut preset = match self.forced.iter().rev().find(|f| f.weight(center, tick, &self.sky.tuning) > 0.0 && tick < f.until) {
             Some(forcing) => Preset { name: forcing.preset.name.clone(), ..forcing.preset.clone() },
             None => Preset { name: wind.name.clone(), ..Preset::default() },
         };
@@ -344,7 +310,7 @@ impl WeatherState {
         preset.gusts = wind.gusts.or(preset.gusts);
         preset.direction = wind.direction.or(preset.direction);
         let until = self.forced_at(center, tick).map_or(until, |(_, left)| until.max(tick + left * TICKS_PER_SECOND as u64));
-        self.forced.retain(|f| f.center.distance(center) > FORCE_RADIUS);
+        self.forced.retain(|f| f.center.distance(center) > self.sky.tuning.force_radius);
         self.forced.push(Forcing { preset, center, until });
         self.changes.push(Change { center, tick, release: false });
     }
@@ -353,14 +319,14 @@ impl WeatherState {
     /// Returns whether any was.
     pub fn release(&mut self, center: Vec2, tick: u64) -> bool {
         let before = self.forced.len();
-        self.forced.retain(|f| f.weight(center, tick) == 0.0);
+        self.forced.retain(|f| f.weight(center, tick, &self.sky.tuning) == 0.0);
         self.changes.push(Change { center, tick, release: true });
         self.forced.len() < before
     }
 
     /// The preset forced at `at`, and the seconds it has left, if one holds there.
     pub fn forced_at(&self, at: Vec2, tick: u64) -> Option<(&Preset, u64)> {
-        let forcing = self.forced.iter().rev().find(|f| f.weight(at, tick) > 0.0)?;
+        let forcing = self.forced.iter().rev().find(|f| f.weight(at, tick, &self.sky.tuning) > 0.0)?;
         Some((&forcing.preset, forcing.until.saturating_sub(tick) / TICKS_PER_SECOND as u64))
     }
 
@@ -406,14 +372,14 @@ impl WeatherState {
     /// Works out the hazards in every simulated cell from its weather now, and lets the
     /// memory of lightning there fade; `dt` seconds have passed since the last time.
     pub fn update_hazards(&mut self, temperature: &mut Field, tick: u64, day: f64, dt: f32) {
-        let fade = (1.0 - dt * LN_2 / LIGHTNING_MEMORY).max(0.0);
+        let fade = (1.0 - dt * LN_2 / self.sky.tuning.lightning_memory).max(0.0);
         let mut cells: Vec<IVec2> = self.active.iter().copied().collect();
         cells.sort_unstable_by_key(|c| (c.x, c.y));
         for cell in cells {
             let at = cell_center(cell);
             let weather = self.local(temperature, at.as_vec2(), tick, day).weather;
             let coast = self.place(at).coast;
-            let hazards = Hazards::of(&weather, coast);
+            let hazards = Hazards::of(&weather, coast, self.sky.tuning.hail_energy);
             let fields = &mut self.hazards;
             fields.hail.set(at.x, at.y, hazards.hail);
             fields.wind_load.set(at.x, at.y, hazards.wind_load);
@@ -441,7 +407,7 @@ impl WeatherState {
     fn forcing(&self, at: Vec2, tick: u64) -> Option<(&Preset, f32)> {
         self.forced
             .iter()
-            .map(|f| (&f.preset, f.weight(at, tick)))
+            .map(|f| (&f.preset, f.weight(at, tick, &self.sky.tuning)))
             .filter(|&(_, weight)| weight > 0.0)
             .max_by(|a, b| a.1.total_cmp(&b.1))
     }
@@ -461,7 +427,7 @@ impl WeatherState {
 
     /// Whether a command changed the weather at `at` in the last few seconds.
     fn recently_changed(&self, at: Vec2) -> bool {
-        self.changes.iter().any(|change| change.covers(at))
+        self.changes.iter().any(|change| change.covers(at, &self.sky.tuning))
     }
 
     /// The land at a block position, remembered at 8-block resolution.
@@ -498,6 +464,8 @@ struct Sky {
     seed: u64,
     /// Direction of the prevailing wind, fixed per world.
     prevailing: DVec2,
+    /// The simulation's tunable values, from weather.ron.
+    tuning: SimulationTuning,
 }
 
 /// The weather process.
@@ -541,6 +509,7 @@ impl Process for Weather {
             server.weather.update_hazards(&mut server.temperature, tick, day, dt);
         }
 
+        let tuning = server.weather.sky.tuning.clone();
         self.sent.retain(|id, _| server.players.contains_key(id));
         self.gusts.retain(|id, _| server.players.contains_key(id));
         for &(id, at) in &positions {
@@ -558,10 +527,10 @@ impl Process for Weather {
             let quick = server.weather.recently_changed(at);
             let due = quick
                 || self.sent.get(&id).is_none_or(|(last, sent_at)| {
-                    tick >= sent_at + RESEND || changed(&last.weather, &report.weather) || named(last) != named(&report)
+                    tick >= sent_at + tuning.resend * TICKS_PER_SECOND as u64 || changed(&last.weather, &report.weather, tuning.report_change) || named(last, tuning.named) != named(&report, tuning.named)
                 });
             if due {
-                let names = named(&report).into_iter().map(|i| server.weather.table.effects()[i].short_name().to_owned()).collect();
+                let names = named(&report, tuning.named).into_iter().map(|i| server.weather.table.effects()[i].short_name().to_owned()).collect();
                 let nearby = server.weather.nearby(at);
                 server.players[&id].connection.send(ServerMessage::Weather { weather: report.weather, effects: names, nearby, quick });
                 self.sent.insert(id, (report, tick));
@@ -571,13 +540,13 @@ impl Process for Weather {
         for Strike { at, seed, cloud } in strikes {
             let ground = server.weather.land.height(at.x.floor() as i32, at.y.floor() as i32) + 1;
             // A flash in the cloud lights it from inside, near its base.
-            let y = if cloud { ground.max(SEA_LEVEL) + CLOUD_FLASH_HEIGHT } else { ground };
+            let y = if cloud { ground.max(SEA_LEVEL) + server.weather.sky.tuning.cloud_flash_height } else { ground };
             let strike = Vec3::new(at.x, y as f32, at.y);
             if !cloud {
                 server.weather.struck(strike.floor().as_ivec3(), seed, tick);
             }
             for (id, player) in &positions {
-                if player.distance(at) < LIGHTNING_REACH {
+                if player.distance(at) < server.weather.sky.tuning.lightning_reach {
                     server.players[id].connection.send(ServerMessage::Lightning { at: strike, seed, cloud });
                 }
             }
@@ -598,8 +567,8 @@ fn forced_lift(lift: f32, forcing: Option<(&Preset, f32)>) -> f32 {
 }
 
 /// The effects to name to a player.
-fn named(report: &Report) -> Vec<usize> {
-    report.effects.iter().filter(|&&(_, strength)| strength >= NAMED).map(|&(i, _)| i).collect()
+fn named(report: &Report, named: f32) -> Vec<usize> {
+    report.effects.iter().filter(|&&(_, strength)| strength >= named).map(|&(i, _)| i).collect()
 }
 
 impl Weather {
@@ -622,8 +591,9 @@ impl Weather {
         }
         let snowy = snowy.clone();
         for (n, &at) in around.iter().enumerate() {
-            for k in 0..SNOW_COLUMNS {
-                let turn = (self.runs as usize * SNOW_COLUMNS + k + n * 7) % 25;
+            let columns = server.weather.sky.tuning.snow_columns;
+            for k in 0..columns {
+                let turn = (self.runs as usize * columns + k + n * 7) % 25;
                 let column = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(turn as i32 % 5 - 2, turn as i32 / 5 - 2);
                 settle_column(server, column, &snowy);
             }
@@ -654,7 +624,7 @@ fn settle_column(server: &mut Server, pos: ColumnPos, snowy: &[(BlockId, BlockId
                     && (0..CHUNK_SIZE).contains(&nz)
                     && tops[nz as usize * size + nx as usize].is_some_and(|(ny, _)| ny >= y + 2)
             });
-            let melts_at = depth - 0.1 - if shaded { SHADE_LINGERS } else { 0.0 };
+            let melts_at = depth - 0.1 - if shaded { server.weather.sky.tuning.shade_lingers } else { 0.0 };
             if let Some(&(_, white)) = snowy.iter().find(|&&(ground, _)| ground == top).filter(|_| cover > depth) {
                 changes.push((IVec3::new(wx, y, wz), white));
             } else if let Some(&(ground, _)) = snowy.iter().find(|&&(_, white)| white == top).filter(|_| cover < melts_at)
@@ -663,7 +633,7 @@ fn settle_column(server: &mut Server, pos: ColumnPos, snowy: &[(BlockId, BlockId
             {
                 changes.push((IVec3::new(wx, y, wz), ground));
             }
-            if changes.len() >= SNOW_CHANGES {
+            if changes.len() >= server.weather.sky.tuning.snow_changes {
                 break;
             }
         }
@@ -672,9 +642,6 @@ fn settle_column(server: &mut Server, pos: ColumnPos, snowy: &[(BlockId, BlockId
         server.set_block(at, block);
     }
 }
-
-/// How much less cover snow in shade still lies at.
-const SHADE_LINGERS: f32 = 0.25;
 
 /// The highest block in a column that rain or snow lands on, and its height: plants let
 /// it through to their ground. `x` and `z` are within the column.
@@ -700,25 +667,26 @@ impl WeatherState {
     /// ticks. Returns where lightning flashed.
     fn update(&mut self, temperature: &mut Field, around: &[IVec2], tick: u64, day: f64) -> Vec<Strike> {
         // Cells a command released go back to what nature would have made of them.
-        let quick = QUICK * TICKS_PER_SECOND as u64;
+        let quick = self.sky.tuning.command_quick * TICKS_PER_SECOND as u64;
         let released: Vec<Vec2> = self.changes.iter().filter(|c| c.release && c.tick + quick > tick).map(|c| c.center).collect();
         self.changes.retain(|c| c.tick + quick > tick && !c.release);
         let released: Vec<IVec2> = self
             .active
             .iter()
-            .filter(|cell| released.iter().any(|&center| Change { center, tick, release: true }.covers(cell_center(**cell).as_vec2())))
+            .filter(|cell| released.iter().any(|&center| Change { center, tick, release: true }.covers(cell_center(**cell).as_vec2(), &self.sky.tuning)))
             .copied()
             .collect();
         for cell in released {
             self.leave(cell, tick);
         }
-        self.forced.retain(|f| tick < f.until + FORCE_FADE * TICKS_PER_SECOND as u64);
+        self.forced.retain(|f| tick < f.until + self.sky.tuning.force_fade * TICKS_PER_SECOND as u64);
 
+        let SimulationTuning { range, catch_up: catch_up_for, catch_up_step, lying_kept, lying_catch_up, drying, .. } = self.sky.tuning;
         let mut cells = FxHashSet::default();
         for at in around {
             let center = at.div_euclid(IVec2::splat(CELL));
-            for dz in -RANGE..=RANGE {
-                for dx in -RANGE..=RANGE {
+            for dz in -range..=range {
+                for dx in -range..=range {
                     cells.insert(center + IVec2::new(dx, dz));
                 }
             }
@@ -726,13 +694,13 @@ impl WeatherState {
         // Normally a second has passed; after a long pause every cell catches up afresh.
         let elapsed = self.last.map_or(u64::MAX, |last| tick.saturating_sub(last));
         self.last = Some(tick);
-        let dt = (elapsed.max(1) as f32 / TICKS_PER_SECOND as f32).min(CATCH_UP_STEP as f32 * 6.0);
-        let stale = elapsed > CATCH_UP as u64 * TICKS_PER_SECOND as u64;
+        let dt = (elapsed.max(1) as f32 / TICKS_PER_SECOND as f32).min(catch_up_step as f32 * 6.0);
+        let stale = elapsed > catch_up_for as u64 * TICKS_PER_SECOND as u64;
         let gone: Vec<IVec2> = self.active.iter().filter(|&cell| stale || !cells.contains(cell)).copied().collect();
         for cell in gone {
             self.leave(cell, tick);
         }
-        self.lying.retain(|_, lying| tick.saturating_sub(lying.tick) < (LYING_KEPT * TICKS_PER_SECOND as i64) as u64);
+        self.lying.retain(|_, lying| tick.saturating_sub(lying.tick) < (lying_kept * TICKS_PER_SECOND as i64) as u64);
         let day_at = |t: i64| day_fraction(day - (tick as i64 - t) as f64);
         let mut strikes = Vec::new();
         let mut cells: Vec<IVec2> = cells.into_iter().collect();
@@ -748,7 +716,7 @@ impl WeatherState {
             let forcing = forcing.as_ref().map(|(preset, weight)| (preset, *weight));
             let mut state = if self.active.contains(&cell) {
                 let drivers = self.sky.drivers(at.as_dvec2(), tick as i64, day_at(tick as i64), climate.warmth());
-                let state = step(self.get(at), &drivers, &climate, day_at(tick as i64), forcing, dt);
+                let state = step(self.get(at), &drivers, &climate, day_at(tick as i64), forcing, dt, drying);
                 strikes.extend(self.sky.lightning(cell, state.precipitation, forced_lift(drivers.lift, forcing), tick));
                 state
             } else {
@@ -756,20 +724,20 @@ impl WeatherState {
                 // ground from when it was last simulated, melting and drying over the time
                 // since (up to `LYING_CATCH_UP`).
                 let mut state = climate.average();
-                let mut catch_up = CATCH_UP;
+                let mut catch_up = catch_up_for;
                 if let Some(lying) = self.lying.remove(&cell) {
                     state.snow_cover = state.snow_cover.max(lying.snow_cover);
                     state.wetness = lying.wetness;
                     let away = (tick.saturating_sub(lying.tick) / TICKS_PER_SECOND as u64) as i64;
-                    catch_up = away.clamp(CATCH_UP_STEP, LYING_CATCH_UP) / CATCH_UP_STEP * CATCH_UP_STEP;
+                    catch_up = away.clamp(catch_up_step, lying_catch_up) / catch_up_step * catch_up_step;
                 }
                 let start = tick as i64 - catch_up * TICKS_PER_SECOND as i64;
-                for i in 1..=catch_up / CATCH_UP_STEP {
-                    let t = start + i * CATCH_UP_STEP * TICKS_PER_SECOND as i64;
+                for i in 1..=catch_up / catch_up_step {
+                    let t = start + i * catch_up_step * TICKS_PER_SECOND as i64;
                     let drivers = self.sky.drivers(at.as_dvec2(), t, day_at(t), climate.warmth());
                     // Weather forced here meanwhile held it, as it would have.
                     let forced = self.forcing(at.as_vec2(), t.max(0) as u64).map(|(preset, weight)| (preset.clone(), weight));
-                    state = step(state, &drivers, &climate, day_at(t), forced.as_ref().map(|(p, w)| (p, *w)), CATCH_UP_STEP as f32);
+                    state = step(state, &drivers, &climate, day_at(t), forced.as_ref().map(|(p, w)| (p, *w)), catch_up_step as f32, drying);
                 }
                 state
             };
@@ -947,7 +915,7 @@ impl WeatherState {
         let salt = mix(self.sky.seed ^ OCCURRENCE ^ name_hash(&effect.name));
         // Each effect's lattice is offset, so stretches of different effects do not line up.
         let shift = DVec2::new(unit(salt), unit(mix(salt)));
-        let p = at.as_dvec2() / REGION + shift;
+        let p = at.as_dvec2() / self.sky.tuning.effect_region + shift;
         let t = seconds / (effect.minutes as f64 * 60.0) + unit(mix(mix(salt)));
         let (i, f) = (p.floor(), p - p.floor());
         let (it, ft) = (t.floor(), t - t.floor());
@@ -993,7 +961,7 @@ impl Sky {
     /// somewhere in the cell, drawn from the cell's own random stream, and twice that
     /// chance to flash inside the cloud instead. Steady rain never flashes.
     fn lightning(&self, cell: IVec2, rain: f32, lift: f32, tick: u64) -> Option<Strike> {
-        let chance = (LIGHTNING * smoothstep(0.4, 0.8, rain * smoothstep(0.3, 0.7, lift))) as f64;
+        let chance = (self.tuning.lightning * smoothstep(0.4, 0.8, rain * smoothstep(0.3, 0.7, lift))) as f64;
         let h = mix(mix(mix(self.seed ^ STRIKES ^ tick) ^ cell.x as u64) ^ cell.y as u64);
         let roll = unit(h);
         let place = Vec2::new(unit(mix(h)) as f32, unit(mix(mix(h))) as f32);
@@ -1006,14 +974,14 @@ impl Sky {
     /// thunder is heard (`protocol::THUNDER_HEARD`), so it is silent.
     fn effect_lightning(&self, player: PlayerId, at: Vec2, strength: f32, dry: bool, tick: u64) -> Option<Strike> {
         let h = mix(mix(self.seed ^ EFFECT_STRIKES ^ tick) ^ player as u64);
-        if unit(h) >= (EFFECT_LIGHTNING * strength) as f64 {
+        if unit(h) >= (self.tuning.effect_lightning * strength) as f64 {
             return None;
         }
         // A direction from a point on the unit square's edge, then a distance.
         let (a, b) = (unit(mix(h)) as f32 * 2.0 - 1.0, unit(mix(mix(h))) as f32 * 2.0 - 1.0);
         let direction = Vec2::new(a, b).normalize_or(Vec2::X);
         let far = unit(mix(mix(mix(h)))) as f32;
-        let distance = if dry { THUNDER_HEARD + 20.0 + (LIGHTNING_REACH - THUNDER_HEARD - 40.0) * far } else { 150.0 + 750.0 * far };
+        let distance = if dry { THUNDER_HEARD + 20.0 + (self.tuning.lightning_reach - THUNDER_HEARD - 40.0) * far } else { 150.0 + 750.0 * far };
         // Mostly strikes, some flashes within the cloud.
         Some(Strike { at: at + direction * distance, seed: (h >> 32) as u32, cloud: unit(mix(h ^ 0xc10d)) < 0.4 })
     }
@@ -1023,7 +991,7 @@ impl Sky {
     /// set how readily the ground heats air into updrafts.
     fn drivers(&self, at: DVec2, tick: i64, day: f64, temperature: f32) -> Drivers {
         let seconds = tick as f64 / TICKS_PER_SECOND as f64;
-        let p = at - self.prevailing * (MEAN_WIND * seconds);
+        let p = at - self.prevailing * (self.tuning.mean_wind * seconds);
         let air = 0.65 * self.noise(AIR_MASS, p / 3000.0, seconds / 2400.0)
             + 0.35 * self.noise(AIR_MASS + 16, p / 1100.0, seconds / 1000.0);
         let updraft = smoothstep(0.5, 0.75, self.noise(UPDRAFT, p / 700.0, seconds / 600.0) as f32);
@@ -1063,18 +1031,9 @@ struct Lying {
     tick: u64,
 }
 
-/// Seconds what lay on the ground of a cell is remembered after its players leave, and
-/// at most how many seconds of melting and drying it catches up on when they return.
-const LYING_KEPT: i64 = 3 * 3600;
-const LYING_CATCH_UP: i64 = 3600;
-
 /// Lightning strikes kept in `WeatherState::strikes`.
 const STRIKES_KEPT: usize = 64;
-/// Seconds over which the memory of a strike in a cell (`core:lightning`) halves.
-const LIGHTNING_MEMORY: f32 = 600.0;
 const LN_2: f32 = std::f32::consts::LN_2;
-/// Hail's impact at full strength (`hail` 1: golf-ball stones), J m⁻² s⁻¹.
-const HAIL_ENERGY: f32 = 4.0;
 /// Density of air, kg m⁻³, for the wind's pressure.
 const AIR_DENSITY: f32 = 1.225;
 
@@ -1112,7 +1071,9 @@ pub(crate) struct Hazards {
 
 impl Hazards {
     /// The hazards of `weather` at a place `coast` (1 at the sea) from the shore.
-    pub fn of(weather: &LocalWeather, coast: f32) -> Self {
+    /// `hail_energy` is hail's impact at full strength (`hail` 1: golf-ball stones),
+    /// J m⁻² s⁻¹.
+    pub fn of(weather: &LocalWeather, coast: f32, hail_energy: f32) -> Self {
         let t = weather.temperature;
         let gust_peak = weather.wind.length() * (1.0 + 0.75 * weather.gusts);
         let raining = weather.precipitation * (1.0 - weather.snow);
@@ -1122,7 +1083,7 @@ impl Hazards {
         let warmth = (1.0 + (t - 15.0) / 15.0).clamp(0.25, 3.0) * ramp(-4.0, 1.0, t);
         let frozen = 1.0 - ramp(-20.0, 0.0, t);
         Self {
-            hail: HAIL_ENERGY * weather.hail * weather.hail,
+            hail: hail_energy * weather.hail * weather.hail,
             wind_load: 0.5 * AIR_DENSITY * gust_peak * gust_peak,
             corrosion: wet * warmth * (1.0 + coast.clamp(0.0, 1.0)),
             frost: frozen.max(weather.frost),
@@ -1139,7 +1100,7 @@ pub(crate) struct HazardFields {
     pub frost: Field,
     pub heat: Field,
     /// `core:lightning`: ground strikes in the cell lately, each counting 1 and fading by
-    /// half every `LIGHTNING_MEMORY` seconds (a few in a thunderstorm's path).
+    /// half every `lightning_memory` seconds (weather.ron) (a few in a thunderstorm's path).
     pub lightning: Field,
 }
 
@@ -1227,7 +1188,8 @@ fn warmth(celsius: f32) -> f32 {
 
 /// One step of `dt` seconds of a cell's response to its drivers at time of day `day`,
 /// with `forcing` (a preset and its weight) if weather is forced there.
-fn step(cell: Cell, drivers: &Drivers, climate: &Climate, day: f64, forcing: Option<(&Preset, f32)>, dt: f32) -> Cell {
+/// Wet ground loses half its water every `drying` seconds in mild, cloudy weather.
+fn step(cell: Cell, drivers: &Drivers, climate: &Climate, day: f64, forcing: Option<(&Preset, f32)>, dt: f32, drying: f32) -> Cell {
     let rate = |seconds: f32| (dt / seconds).min(1.0);
     let temperature = climate.warmth();
     // Humidity follows the air mass, away from the climate's usual humidity.
@@ -1258,7 +1220,7 @@ fn step(cell: Cell, drivers: &Drivers, climate: &Climate, day: f64, forcing: Opt
         snow = mix(snowfall(air), preset.snow, weight);
     }
     let sunny = 1.0 - clouds;
-    let half_life = DRYING / (1.0 + sunny * smoothstep(5.0, 30.0, air));
+    let half_life = drying / (1.0 + sunny * smoothstep(5.0, 30.0, air));
     let wetness = cell.wetness * (1.0 - (dt / half_life * std::f32::consts::LN_2).min(1.0)) + falling * (1.0 - snow) * 0.01 * dt;
     // A deep cover takes several minutes to melt in mild sunshine, twice as long under
     // cloud, so it thins patch by patch rather than vanishing.
@@ -1276,10 +1238,10 @@ fn step(cell: Cell, drivers: &Drivers, climate: &Climate, day: f64, forcing: Opt
 
 /// Whether a player told `a` should now be told `b` (temperature counts in fives of
 /// degrees and wind in tens of blocks per second).
-fn changed(a: &LocalWeather, b: &LocalWeather) -> bool {
-    let fractions = a.fractions().into_iter().zip(b.fractions()).any(|((_, x), (_, y))| (x - y).abs() > CHANGE);
+fn changed(a: &LocalWeather, b: &LocalWeather, change: f32) -> bool {
+    let fractions = a.fractions().into_iter().zip(b.fractions()).any(|((_, x), (_, y))| (x - y).abs() > change);
     let others = [(a.temperature - b.temperature) / 5.0, (a.wind.x - b.wind.x) / 10.0, (a.wind.y - b.wind.y) / 10.0];
-    fractions || others.iter().any(|d| d.abs() > CHANGE) || (a.fog_top - b.fog_top).abs() > 1.0
+    fractions || others.iter().any(|d| d.abs() > change) || (a.fog_top - b.fog_top).abs() > 1.0
 }
 
 /// FNV-1a, for stable hashes of names.
@@ -1441,7 +1403,7 @@ mod tests {
                 let tick = step * 5 * SECOND as i64;
                 let day = day_fraction(tick as f64);
                 let drivers = weather.sky.drivers(at.as_dvec2(), tick, day, climate.warmth());
-                cell = super::step(cell, &drivers, &climate, day, None, 5.0);
+                cell = super::step(cell, &drivers, &climate, day, None, 5.0, weather.sky.tuning.drying);
                 rainy += (cell.precipitation > 0.1) as u32;
                 steps += 1;
             }
@@ -1505,7 +1467,7 @@ mod tests {
         assert!(near.iter().all(|s| (149.0..901.0).contains(&s.at.length())));
         // Heat lightning, with no storm overhead, flashes too far off to be heard.
         let dry: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, true, s * SECOND)).collect();
-        assert!(!dry.is_empty() && dry.iter().all(|s| (THUNDER_HEARD..LIGHTNING_REACH).contains(&s.at.length())));
+        assert!(!dry.is_empty() && dry.iter().all(|s| (THUNDER_HEARD..weather.sky.tuning.lightning_reach).contains(&s.at.length())));
     }
 
     #[test]
@@ -1550,22 +1512,22 @@ mod tests {
     #[test]
     fn hazards_have_their_magnitudes() {
         let calm = LocalWeather { temperature: 15.0, humidity: 0.5, wind: Vec2::new(1.0, 0.0), ..LocalWeather::NONE };
-        let none = Hazards::of(&calm, 0.0);
+        let none = Hazards::of(&calm, 0.0, 4.0);
         assert!(none.hail == 0.0 && none.corrosion == 0.0 && none.frost == 0.0 && none.heat == 0.0 && none.wind_load < 1.0, "{none:?}");
         // A gale of 18 blocks/s gusting hard: a few hundred pascals.
-        let gale = Hazards::of(&LocalWeather { wind: Vec2::new(18.0, 0.0), gusts: 0.8, ..calm }, 0.0);
+        let gale = Hazards::of(&LocalWeather { wind: Vec2::new(18.0, 0.0), gusts: 0.8, ..calm }, 0.0, 4.0);
         assert!((300.0..700.0).contains(&gale.wind_load), "{}", gale.wind_load);
         // Walnut hail, the hail effect at full.
-        let hail = Hazards::of(&LocalWeather { hail: 0.7, precipitation: 1.0, ..calm }, 0.0);
+        let hail = Hazards::of(&LocalWeather { hail: 0.7, precipitation: 1.0, ..calm }, 0.0, 4.0);
         assert!((1.5..2.5).contains(&hail.hail), "{}", hail.hail);
         // Rust: steady wet at 15 °C is 1, by the sea 2, frozen none.
         let wet = LocalWeather { wetness: 1.0, ..calm };
-        assert!((Hazards::of(&wet, 0.0).corrosion - 1.0).abs() < 1e-5 && (Hazards::of(&wet, 1.0).corrosion - 2.0).abs() < 1e-5);
-        assert_eq!(Hazards::of(&LocalWeather { temperature: -10.0, ..wet }, 1.0).corrosion, 0.0);
+        assert!((Hazards::of(&wet, 0.0, 4.0).corrosion - 1.0).abs() < 1e-5 && (Hazards::of(&wet, 1.0, 4.0).corrosion - 2.0).abs() < 1e-5);
+        assert_eq!(Hazards::of(&LocalWeather { temperature: -10.0, ..wet }, 1.0, 4.0).corrosion, 0.0);
         // Frost from the cold or from freezing rain; heat in a desert afternoon.
-        assert_eq!(Hazards::of(&LocalWeather { temperature: -25.0, ..calm }, 0.0).frost, 1.0);
-        assert_eq!(Hazards::of(&LocalWeather { frost: 1.0, temperature: 1.0, ..calm }, 0.0).frost, 1.0);
-        assert!(Hazards::of(&LocalWeather { temperature: 45.0, ..calm }, 0.0).heat > 0.8);
+        assert_eq!(Hazards::of(&LocalWeather { temperature: -25.0, ..calm }, 0.0, 4.0).frost, 1.0);
+        assert_eq!(Hazards::of(&LocalWeather { frost: 1.0, temperature: 1.0, ..calm }, 0.0, 4.0).frost, 1.0);
+        assert!(Hazards::of(&LocalWeather { temperature: 45.0, ..calm }, 0.0, 4.0).heat > 0.8);
     }
 
     #[test]
@@ -1592,7 +1554,8 @@ mod tests {
         assert_eq!(weather.strikes.back().unwrap().tick, 20_099);
         assert!(weather.strikes.iter().all(|s| (10.0..=200.0).contains(&s.current)));
         let remembered = weather.hazards.lightning.sample(x, z);
-        weather.update_hazards(&mut temperature, 20_100, 20_100.0, LIGHTNING_MEMORY);
+        let memory = weather.sky.tuning.lightning_memory;
+        weather.update_hazards(&mut temperature, 20_100, 20_100.0, memory);
         assert!((weather.hazards.lightning.sample(x, z) - remembered * (1.0 - LN_2)).abs() < 1e-3);
     }
 
@@ -1671,7 +1634,7 @@ mod tests {
             if step % 7 == 0 {
                 for at in &places {
                     for &(i, strength) in &weather.local(&mut temperature, at.as_vec2(), tick, tick as f64).effects {
-                        shown[i] += (strength >= NAMED) as u32;
+                        shown[i] += (strength >= weather.sky.tuning.named) as u32;
                     }
                     samples += 1;
                 }
@@ -1722,7 +1685,7 @@ mod tests {
                     let speed = w.wind.length();
                     wind[[2.0, 5.0, 9.0, 14.0, f32::MAX].iter().position(|&top| speed < top).unwrap()] += 1.0;
                     for &(i, strength) in &report.effects {
-                        shown[i] += (strength >= NAMED) as u8 as f32;
+                        shown[i] += (strength >= weather.sky.tuning.named) as u8 as f32;
                     }
                 }
             }

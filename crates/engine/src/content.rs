@@ -199,6 +199,9 @@ impl Content {
         }
         let blocks = BlockRegistry::expand(blocks)?;
         weather.validate()?;
+        if weather.try_tuning().is_none() {
+            return Err(RegistryError("no package's weather.ron sets its `tuning`".to_owned()));
+        }
         let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?;
         skills.validate()?;
         let blocks = BlockRegistry::new(blocks)?;
