@@ -3920,24 +3920,34 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let drawn = (shown.struck.len() + shown.hurt.len()) as u32 - gate.count_before;
             gate.check("damage numbers off", if drawn == 0 { Ok(format!("with damage numbers off, {} blows drew no splat", STRUCK_SHOWN.len() + HURT_SHOWN.len())) } else { Err(format!("with damage numbers off, {drawn} splats were drawn")) });
             world.resource_mut::<crate::settings::Settings>().damage_numbers = true;
+            // The sword guards only at the Attack level that wields it (the feel step left
+            // Attack at 1, where it is held as fists, which do not guard).
+            world.resource::<Net>().command(&format!("skill attack {WEAPON_LEVEL}"));
             gate.advance(now);
         }
-        // The guard on a toggle: one click up, the next down, the sword in hand and nothing
-        // under the crosshair, so the click is the guard's and nothing else's (the view
-        // turns until nothing is: the workshop's kiln hangs overhead).
+        // The guard on a toggle: one click up, the next down, the sword in hand at the level
+        // that guards with it and nothing under the crosshair, so the click is the guard's
+        // and nothing else's (the view turns until nothing is: the workshop's kiln hangs
+        // overhead).
         4 => {
             world.resource_mut::<crate::settings::Settings>().toggle_guard = true;
             let in_hand = select(world, WEAPON);
+            let guards = {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                let held = player.inventory.get(player.selected).map(|s| s.item);
+                launch.content.combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some()
+            };
             let clear = {
                 let target = world.resource::<crate::interact::Target>();
                 target.hit.is_none() && target.creature.is_none()
             };
-            if in_hand && clear && in_phase > 0.2 {
+            if in_hand && guards && clear && in_phase > 0.2 {
                 mouse(world, MouseButton::Right, true);
                 gate.advance(now);
             } else if gate.server_in_phase() > UNANSWERED {
-                gate.check("toggle guard", Err(format!("the sword in hand: {in_hand}; nothing under the crosshair: {clear}")));
+                gate.check("toggle guard", Err(format!("the sword in hand: {in_hand}; guarding with it: {guards}; nothing under the crosshair: {clear}")));
                 world.resource_mut::<crate::settings::Settings>().toggle_guard = false;
+                world.resource::<Net>().command("skill attack 1");
                 gate.next(Step::Cook, now);
             } else {
                 look(world, (in_phase * 90.0) % 360.0, 30.0);
@@ -3971,6 +3981,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 },
             );
             world.resource_mut::<crate::settings::Settings>().toggle_guard = false;
+            world.resource::<Net>().command("skill attack 1");
             gate.next(Step::Cook, now);
         }
     }
