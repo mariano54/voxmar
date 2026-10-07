@@ -27,6 +27,7 @@ pub struct JournalPlugin;
 impl Plugin for JournalPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<JournalView>()
+            .init_resource::<JournalDrawn>()
             .add_systems(PostStartup, (spawn, open_start_page))
             .add_systems(Update, (show, pick, draw).chain().after(ScreenSystems).run_if(in_state(Screen::InGame)));
     }
@@ -38,6 +39,11 @@ pub struct JournalView {
     pub page: usize,
     pub picked: Option<String>,
 }
+
+/// The page last drawn, and in which language (for the gate, which reads each page once
+/// it is there).
+#[derive(Resource, Default)]
+pub struct JournalDrawn(pub Option<(usize, String)>);
 
 /// A page to open at startup, by its name (`--journal plants`, for captures).
 #[derive(Resource)]
@@ -278,6 +284,7 @@ fn draw(
     mut buttons: Query<(Entity, &PageButton, Has<crate::ui::widgets::Selected>)>,
     mut counts: Query<(&PageCount, &mut Text)>,
     mut drawn: Local<Option<(JournalView, usize)>>,
+    mut done: ResMut<JournalDrawn>,
 ) {
     if !ui.journal_open {
         *drawn = None;
@@ -289,6 +296,7 @@ fn draw(
         return;
     }
     *drawn = Some(wanted);
+    done.0 = Some((view.page, locale.code().to_owned()));
     let biomes = biome_names(&generator);
     // Each page's count: found of how many.
     for (count, mut text) in &mut counts {

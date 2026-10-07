@@ -230,6 +230,9 @@ enum Step {
     /// Every in-game screen and state, in English and Japanese: no text reaches past the
     /// element it sits in.
     Fit,
+    /// Every journal page, in English and Japanese: no text reaches past the element it
+    /// sits in. Each page has the time a step has, to be drawn and read.
+    FitJournal,
     /// Leaving the world for the title screen.
     Leave,
     /// The title screen and every menu before a game, in English and Japanese: no text
@@ -555,7 +558,7 @@ fn run(world: &mut World) {
         gate.killed_on_purpose = false;
     }
     // (The text-fit steps put the player through the death screen on purpose.)
-    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitMenus | Step::Leave | Step::Done) {
+    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus | Step::Leave | Step::Done) {
         watch_health(world, &mut gate);
     }
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
@@ -651,7 +654,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Workshop => 220.0,
         _ => STEP_LIMIT,
     };
-    if now - gate.since > limit {
+    // The journal's tour is judged page by page.
+    let start = if gate.step == Step::FitJournal { gate.phase_since } else { gate.since };
+    if now - start > limit {
         return Err(format!("{:?} took longer than {limit}s", gate.step));
     }
     if let Some(observer) = &mut gate.observer
@@ -873,7 +878,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
-        Step::Fit => fit(world, gate, now, in_phase),
+        Step::Fit | Step::FitJournal => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
@@ -2359,9 +2364,6 @@ fn screenshot(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// A screen or state the text-fit tour opens.
-/// The journal pages the text-fit tour opens: animals, plants and bosses (empty yet). The
-/// other pages are drawn the same way, and all fourteen would make the tour too slow.
-const FIT_JOURNAL: [usize; 3] = [0, 4, 2];
 
 #[derive(Clone, Copy, Debug)]
 enum View {
@@ -2404,14 +2406,14 @@ const FIT_SETTLE: f32 = 0.4;
 /// `ui::fit`): one check for the lot, naming each.
 fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let skills = world.resource::<Launch>().content.skills.len();
-    let views: Vec<View> = if gate.step == Step::FitMenus {
+    let views: Vec<View> = if gate.step == Step::FitJournal {
+        (0..voxmar_engine::journal::Page::ALL.len()).map(View::Journal).collect()
+    } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
         [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
-            // The journal's kinds of page: creatures, items, and one with nothing yet.
-            .chain(FIT_JOURNAL.map(View::Journal))
             .chain((0..crate::settings::TABS).map(View::Menu))
             .collect()
     };
@@ -2424,10 +2426,11 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         } else {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };
-        gate.check(if menus { "text fits: menus" } else { "text fits" }, result);
+        let journal = gate.step == Step::FitJournal;
+        gate.check(if menus { "text fits: menus" } else if journal { "text fits: journal" } else { "text fits" }, result);
         show_view(world, None, now);
         set_language(world, "en");
-        gate.next(if menus { Step::Done } else { Step::Leave }, now);
+        gate.next(if menus { Step::Done } else if journal { Step::Leave } else { Step::FitJournal }, now);
         return;
     };
     if world.resource::<Locale>().code() != language {
@@ -2435,6 +2438,12 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
     show_view(world, Some(view), now);
     if in_phase < FIT_SETTLE {
+        return;
+    }
+    // A journal page is read once it is drawn, in this language, however long that takes.
+    if let View::Journal(page) = view
+        && world.resource::<crate::hud::journal::JournalDrawn>().0.as_ref() != Some(&(page, language.to_owned()))
+    {
         return;
     }
     for spill in crate::ui::fit::find(world) {
