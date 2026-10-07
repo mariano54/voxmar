@@ -1866,9 +1866,10 @@ pub(super) fn draw_prop(fixed: &Fixed, mats: &Mats, canvas: &mut Canvas, frame: 
             }
         }
         Prop::Crates => {
-            put(0, 1, 0, Put::Soft(mats.trim));
+            let block = fixed.crates.pick(u(0xc7)).unwrap_or(mats.trim);
+            put(0, 1, 0, Put::Soft(block));
             if u(3) < 0.4 {
-                put(0, 2, 0, Put::Soft(mats.trim));
+                put(0, 2, 0, Put::Soft(block));
             }
         }
         Prop::StonePile => {

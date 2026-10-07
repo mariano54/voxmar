@@ -565,6 +565,7 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
         hanging: palette(&f.hanging, &any),
         nets: palette(if f.nets.is_empty() { &f.hanging } else { &f.nets }, &any),
         sacks: palette(&f.sacks, &any),
+        crates: palette(&f.crates, &any),
         cloth: palette(&f.cloth, &any),
         plinth: def.rules.houses.plinth,
         moss: def.rules.houses.moss,

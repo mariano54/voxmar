@@ -118,6 +118,7 @@ pub struct Fixed {
     pub hanging: Palette,
     pub nets: Palette,
     pub sacks: Palette,
+    pub crates: Palette,
     pub cloth: Palette,
     pub dirt: BlockId,
     /// The chance of a stone lowest course, and old walls' share of weathered blocks.
@@ -1402,7 +1403,7 @@ fn well(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Can
     }
 }
 
-/// A wayside shrine: a stepped plinth, a pillar and a light.
+/// A wayside shrine: a stepped plinth, an altar, and a pillar and a light behind it.
 fn shrine(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Canvas) {
     let mut pen = Pen { frame, canvas, seed: spec.seed };
     let (w, d) = (spec.w, spec.d);
@@ -1414,9 +1415,18 @@ fn shrine(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut C
         }
     }
     let (cx, cz) = (w / 2, d / 2);
-    pen.ground(cx, 1, cz, Put::Set(mats.frame));
-    pen.ground(cx, 2, cz, Put::Set(mats.frame));
-    pen.ground(cx, 3, cz, Put::Set(fixed.torch));
+    // The altar in the middle and its lamp behind it; without one (or the room), the lamp
+    // alone.
+    let lamp = match fixed.altar {
+        Some(altar) if d - 1 > cz => {
+            pen.ground(cx, 1, cz, Put::Set(altar));
+            d - 1
+        }
+        _ => cz,
+    };
+    pen.ground(cx, 1, lamp, Put::Set(mats.frame));
+    pen.ground(cx, 2, lamp, Put::Set(mats.frame));
+    pen.ground(cx, 3, lamp, Put::Set(fixed.torch));
     for (x, z) in [(cx - 1, cz), (cx + 1, cz)] {
         if let Some(flower) = fixed.flowers.at(spec.seed ^ 0x5a, frame.at(x, 1, z)) {
             pen.ground(x, 1, z, Put::Soft(flower));

@@ -713,6 +713,8 @@ struct FurnishingsFile {
     hanging: Vec<Select>,
     nets: Vec<Select>,
     sacks: Vec<Select>,
+    #[serde(default)]
+    crates: Vec<Select>,
     cloth: Vec<Select>,
 }
 
@@ -741,6 +743,8 @@ pub struct FurnishingsDef {
     /// Nets hung to dry by water; `hanging` when left out.
     pub nets: Vec<Select>,
     pub sacks: Vec<Select>,
+    /// Crates stacked in yards; boards of the place's trim when left out.
+    pub crates: Vec<Select>,
     pub cloth: Vec<Select>,
 }
 
@@ -1334,6 +1338,7 @@ impl SettlementsDef {
             (&mut furnishings.hanging, f.hanging),
             (&mut furnishings.nets, f.nets),
             (&mut furnishings.sacks, f.sacks),
+            (&mut furnishings.crates, f.crates),
             (&mut furnishings.cloth, f.cloth),
         ] {
             if !theirs.is_empty() {
@@ -1774,7 +1779,9 @@ impl SettlementsDef {
             ("fruit", &f.fruit),
             ("hay", &f.hay),
             ("hanging", &f.hanging),
+            ("nets", &f.nets),
             ("sacks", &f.sacks),
+            ("crates", &f.crates),
             ("cloth", &f.cloth),
         ] {
             for select in list {

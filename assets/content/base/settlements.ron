@@ -191,8 +191,8 @@
     furnishings: (
         torch: "torch", campfire: "campfire", table: "crafting_table", farmland: "farmland",
         water: "water", dirt: "dirt", planter: "herb_planter", anvil: "polished_basalt",
-        // altar: a stand-in until gameplay's base:stone_altar lands; chapels' altars then restore prayer.
-        barrel: "barrel", bell: "bell", altar: "polished_calcite",
+        // altar: chapels' and shrines' altars, which restore prayer (blocks tagged `altar`).
+        barrel: "barrel", bell: "bell", altar: "stone_altar",
         flowers: [Tag("flower", 1)],
         bushes: [Tag("bush", 1)],
         canopies: [Name("red_terracotta", 1), Name("orange_terracotta", 1), Name("yellow_terracotta", 1), Name("white_terracotta", 1), Name("light_blue_terracotta", 1), Name("cyan_terracotta", 1), Name("lime_terracotta", 1), Name("magenta_terracotta", 1), Name("pink_terracotta", 1), Name("green_terracotta", 1), Name("blue_terracotta", 1)],
@@ -205,6 +205,7 @@
         hanging: [Name("hanging_herbs", 1)],
         nets: [Name("fishing_net", 1)],
         sacks: [Name("sack", 1)],
+        crates: [Name("crate", 1)],
         cloth: [Name("white_terracotta", 4), Name("light_blue_terracotta", 1), Name("red_terracotta", 1), Name("yellow_terracotta", 1), Name("pink_terracotta", 1), Name("light_gray_terracotta", 1)],
     ),
     avoid: ["no_settlement", "ocean", "water", "river", "peaks", "ice", "frozen", "fantastical", "giant"],

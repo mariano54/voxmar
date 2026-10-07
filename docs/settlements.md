@@ -128,10 +128,10 @@ The levers are correlated, so a place reads as a whole:
   table, farmland, water, dirt, planter, anvil, barrel, bell, altar) and the lists of
   flowers, bushes, stall canopies, compost, boulders, orchard fruit (in blossom or
   unripe, never the ripe leaves), hay, things hung to
-  dry, sacks and cloth. Hay, sacks and drying herbs stand in with terracotta and hanging
-  roots, the barrel with a stripped log and the altar with polished calcite, until the
-  pack and gameplay have blocks of their own (`base:stone_altar`). Every name must be a
-  block when the game loads its content.
+  dry, nets, sacks, crates and cloth. The altar (`base:stone_altar`) stands in chapels and
+  wayside shrines, where it restores prayer. Left out, the barrel is a log, crates are
+  the place's trim and a shrine has its light alone. Every name must be a block when the
+  game loads its content.
 
 A package adds to every list, and its `grid`, `site` and each furnishing it names replace
 earlier ones, so a mod can add a style, a name culture, a house type or a prop without

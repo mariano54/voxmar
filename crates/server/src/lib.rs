@@ -793,7 +793,7 @@ mod tests {
     /// Village furnishings give nothing when broken (design draft 80), and nothing about
     /// them lets them be picked for more: regrowth does not take them, and the journal does
     /// not log them as wild plants. The props are read from settlements.ron's furnishings
-    /// (barrel, bell, hay, sacks, hanging things, nets), so a mod's own props are held to it
+    /// (barrel, bell, hay, sacks, crates, hanging things, nets), so a mod's own props are held to it
     /// too.
     #[test]
     fn village_furnishings_drop_nothing() {
@@ -804,7 +804,7 @@ mod tests {
         let blocks = &content.blocks;
         let mut props: Vec<voxmar_engine::block::BlockId> = f.barrel.iter().chain(&f.bell).map(|name| blocks.expect(name)).collect();
         // A list may pick by tag: every block with the tag is a prop.
-        for list in [&f.hay, &f.sacks, &f.hanging, &f.nets] {
+        for list in [&f.hay, &f.sacks, &f.crates, &f.hanging, &f.nets] {
             for select in list {
                 match select {
                     Select::Name(name, _) => props.push(blocks.expect(name)),
