@@ -3873,6 +3873,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let language = if gate.phase == 1 { "en" } else { "ja" };
             if !missing.is_empty() {
                 gate.check("combat marks", Err(format!("{language}: no splat reads {missing:?}; drawn: {:?}", splats_drawn(world))));
+                world.resource_mut::<crate::settings::Settings>().language = "en".into();
                 set_language(world, "en");
                 gate.next(Step::Cook, now);
                 return;
@@ -3890,9 +3891,13 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check(&format!("combat marks: {language}"), result);
             gate.count_before = world.resource::<SplatsShown>().flashes;
             if gate.phase == 1 {
+                // The setting too, as a splat's words are fixed when it is drawn: a change
+                // to any setting meanwhile would load the setting's language again.
+                world.resource_mut::<crate::settings::Settings>().language = "ja".into();
                 set_language(world, "ja");
             } else {
                 // With damage numbers off, the same blows draw nothing.
+                world.resource_mut::<crate::settings::Settings>().language = "en".into();
                 set_language(world, "en");
                 world.resource_mut::<crate::settings::Settings>().damage_numbers = false;
                 let shown = world.resource::<SplatsShown>();
