@@ -876,7 +876,7 @@ fn plans_keep_to_their_squares_and_rules() {
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
 fn settlements_are_unchanged() {
-    const EXPECTED: u64 = 686260476592137545;
+    const EXPECTED: u64 = 13117089924478091730;
     let world = base_world(1);
     let mut text = String::new();
     for cz in -3..3 {
@@ -1082,6 +1082,49 @@ fn numbers_that_would_hang_planning_are_refused() {
     assert!(refused(&|d| d.sizes[0].lamps = 0.01), "a size's lamps 0.01");
 }
 
+/// Each number a mod could set that planning cannot work with is refused on load.
+#[test]
+fn numbers_planning_cannot_use_are_refused() {
+    use super::def::Form;
+    let registry = base_registry();
+    let mut def = super::SettlementsDef::default();
+    def.extend("base", "base", include_str!("../../../../assets/content/base/settlements.ron")).unwrap();
+    def.check(&registry).unwrap();
+    let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
+        let mut d = def.clone();
+        change(&mut d);
+        d.check(&registry).is_err()
+    };
+    let round = def.houses.iter().position(|h| h.form == Form::Round).unwrap();
+    let a_frame = def.houses.iter().position(|h| h.form == Form::AFrame).unwrap();
+    let courtyard = def.houses.iter().position(|h| h.form == Form::Courtyard).unwrap();
+    type Change<'a> = &'a dyn Fn(&mut super::SettlementsDef);
+    let cases: [(&str, Change); 17] = [
+        ("a round house of two storeys", &|d| d.houses[round].storeys = (1, 2)),
+        ("an A-frame of two storeys", &|d| d.houses[a_frame].storeys = (2, 2)),
+        ("a courtyard house of two storeys", &|d| d.houses[courtyard].storeys = (1, 2)),
+        ("a trader 7 to 5 across", &|d| d.rules.houses.trader.0 = (7, 5)),
+        ("a trader 3 across", &|d| d.rules.houses.trader.0 = (3, 6)),
+        ("a trader 20 deep", &|d| d.rules.houses.trader.1 = (5, 20)),
+        ("an inn of 4 storeys", &|d| d.rules.houses.inn.0 = 4),
+        ("an inn 13 across", &|d| d.rules.houses.inn.1 = 13),
+        ("an inn 17 deep", &|d| d.rules.houses.inn.2 = 17),
+        ("lots no gap apart", &|d| d.rules.lots.gap.0 = 0),
+        ("side lanes no width", &|d| d.rules.lanes.side = 0.0),
+        ("lanes no way apart", &|d| d.rules.lanes.apart = 0.0),
+        ("a green past 16", &|d| d.rules.lanes.green = (3.0, 4)),
+        ("water looked for 300 out", &|d| d.site.water = 300),
+        ("a riverside street looking 300 out", &|d| d.rules.lanes.riverside = 300),
+        ("levers steep at nothing", &|d| d.rules.levers.steep = 0.0),
+        ("fertility over 1", &|d| d.site.fertility = 1.5),
+    ];
+    for (what, change) in cases {
+        assert!(refused(change), "{what} is let through");
+    }
+    assert!(refused(&|d| { d.site.poor.insert("cold".into(), -0.2); }), "a poor fertility under nothing is let through");
+    assert!(refused(&|d| d.rules.houses.grand = 13), "an inn with no house grand enough is let through");
+}
+
 /// On a slope the ground is cut back level round a building and eased out beyond, so no
 /// wall stands buried: the land a block out from each building's box (porch, shed and eaves
 /// included) is at most a block over its floor, in the worlds as generated.
@@ -1122,4 +1165,64 @@ fn slopes_never_bury_walls() {
     }
     assert!(looked > 2000, "only {looked} columns round buildings");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Every storey but the top of every house of more than one has a stair up, round the
+/// walls clear of the door, a shop's counter and the chimney, whatever its size; an inn's
+/// stairs keep clear of both columns of its wide door.
+#[test]
+fn every_storey_has_a_stair_up() {
+    use super::def::{Extra, Form, Roof};
+    use super::house::{self, Kind, Spec};
+    let world = base_world(1);
+    let def = &world.settlements.def;
+    let mut flights = 0;
+    for h in def.houses.iter().filter(|h| h.storeys.1 >= 2) {
+        assert!(matches!(h.form, Form::Box | Form::ShopFront), "{} has storeys but no room for stairs", h.name);
+        for w in h.width.0..=h.width.1 {
+            for d in h.depth.0..=h.depth.1 {
+                for (kind, chimney) in [(Kind::House, false), (Kind::House, true), (Kind::Inn, true)] {
+                    let (w, d) = (w as i32, d as i32);
+                    let mut spec = Spec {
+                        kind, w, d, wall: h.walls.0 as i32, storeys: h.storeys.1 as i32, roof: Roof::Gable, pitch: 1, ridge_x: w > d,
+                        extras: if chimney { vec![Extra::Chimney] } else { Vec::new() }, door: w / 2, shed: 0, wing: None, stilts: 0,
+                        regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 1,
+                    };
+                    house::make_room_for_stairs(&mut spec);
+                    let door = spec.door.clamp(1, w - 2);
+                    let hearth = spec.chimney().map(|c| c.0);
+                    let up = house::stairs(&spec, door, hearth);
+                    assert_eq!(up.len() as i32, spec.storeys - 1, "{} {w} by {d}", h.name);
+                    for (storey, flight) in up.iter().enumerate() {
+                        let flight = flight.as_ref().unwrap_or_else(|| panic!("{} {w} by {d} ({kind:?}, chimney {chimney}): no stair up from storey {storey}", h.name));
+                        flights += 1;
+                        for &(x, z) in flight {
+                            assert!(Some((x, z)) != hearth, "{} {w} by {d}: its stair runs up the chimney", h.name);
+                            if storey == 0 {
+                                let wide = if kind == Kind::Inn { 1 } else { 0 };
+                                assert!(!(z <= 2 && x >= door && x <= door + wide), "{} {w} by {d}: its stair blocks the door", h.name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(flights > 50, "only {flights} flights");
+}
+
+/// A mod's partial `rules` replace only the sections it names.
+#[test]
+fn a_mods_rules_replace_only_their_sections() {
+    let mut def = super::SettlementsDef::default();
+    def.extend("base", "base", include_str!("../../../../assets/content/base/settlements.ron")).unwrap();
+    let base = def.clone();
+    def.extend("mod", "mod", "(rules: (lanes: (side: 1.25), specials: {\"field\": (width: (5, 7), depth: (5, 7), step: 2, slope: 2)}))").unwrap();
+    assert_eq!(def.rules.lanes.side, 1.25);
+    assert_eq!(def.rules.lots, base.rules.lots);
+    assert_eq!(def.rules.levers, base.rules.levers);
+    assert_eq!(def.rules.houses, base.rules.houses);
+    assert_eq!(def.rules.dressing, base.rules.dressing);
+    assert_eq!(def.rules.specials["field"].width, (5, 7));
+    assert_eq!(def.rules.specials["smithy"], base.rules.specials["smithy"]);
 }

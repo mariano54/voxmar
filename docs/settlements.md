@@ -126,7 +126,9 @@ The levers are correlated, so a place reads as a whole:
 
 A package adds to every list, and its `grid`, `site` and each furnishing it names replace
 earlier ones, so a mod can add a style, a name culture, a house type or a prop without
-code.
+code. Its `rules` replace section by section: a mod giving only `rules: (lanes: (...))`
+replaces the lanes (fields it leaves out take the code's defaults) and keeps every other
+section as earlier packages set it; each special size it names replaces that kind's.
 
 ## What else knows about them
 

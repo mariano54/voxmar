@@ -1633,7 +1633,7 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
             }
         }
     };
-    let spec = Spec {
+    let mut spec = Spec {
         kind,
         w,
         d,
@@ -1654,6 +1654,7 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
         centre: None,
         seed: rng.next_u64(),
     };
+    house::make_room_for_stairs(&mut spec);
     Some((spec, index))
 }
 

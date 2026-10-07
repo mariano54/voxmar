@@ -502,7 +502,7 @@ impl Default for LanesDef {
             wobble: 1.2,
             ring_rise: 6,
             terrace: (11.0, 4.0),
-            riverside: 144,
+            riverside: 48,
         }
     }
 }
@@ -933,12 +933,25 @@ struct StyleFile {
     log: Option<String>,
 }
 
+/// A package's `rules`: each section it names replaces the earlier one whole, each
+/// special size it names the earlier one of that kind; the rest stand.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+struct RulesFile {
+    levers: Option<LeversDef>,
+    lanes: Option<LanesDef>,
+    lots: Option<LotsDef>,
+    specials: BTreeMap<String, SpecialSize>,
+    houses: Option<BuildingDef>,
+    dressing: Option<DressingDef>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SettlementFile {
     grid: Option<GridDef>,
     site: Option<SiteDef>,
-    rules: Option<RulesDef>,
+    rules: Option<RulesFile>,
     #[serde(default)]
     furnishings: FurnishingsFile,
     #[serde(default)]
@@ -1158,7 +1171,23 @@ impl SettlementsDef {
             self.site = site;
         }
         if let Some(rules) = file.rules {
-            self.rules = rules;
+            let mine = &mut self.rules;
+            if let Some(levers) = rules.levers {
+                mine.levers = levers;
+            }
+            if let Some(lanes) = rules.lanes {
+                mine.lanes = lanes;
+            }
+            if let Some(lots) = rules.lots {
+                mine.lots = lots;
+            }
+            if let Some(houses) = rules.houses {
+                mine.houses = houses;
+            }
+            if let Some(dressing) = rules.dressing {
+                mine.dressing = dressing;
+            }
+            mine.specials.extend(rules.specials);
         }
         // Each furnishing a later package names replaces the earlier one; lists replace
         // lists.
@@ -1374,6 +1403,38 @@ impl SettlementsDef {
         if rules.lots.passes == 0 || rules.lots.tries == 0 || rules.lanes.step <= 0.0 || !(0.0..1.0).contains(&rules.lots.closer) {
             return fail("rules: lots need passes and tries, lanes a step, and `closer` in [0, 1)".into());
         }
+        let (lots, lanes, houses) = (&rules.lots, &rules.lanes, &rules.houses);
+        if lots.gap.0 < 1 || lots.gap.1 < 0.0 {
+            return fail(format!("rules: lots keep a gap of a block or more: {:?}", lots.gap));
+        }
+        if !(lanes.side > 0.0 && lanes.apart > 0.0) {
+            return fail(format!("rules: lanes need a side lane's half width and how far apart lanes keep, above nothing: side {}, apart {}", lanes.side, lanes.apart));
+        }
+        if lanes.green.0.is_nan() || lanes.green.0 < 0.0 || self.sizes.iter().any(|s| (s.square.1 as f32 * lanes.green.0) as i32 + lanes.green.1 > 16) {
+            return fail(format!("rules: a green {:?} makes some size's square wider than 16", lanes.green));
+        }
+        if !(0..=256).contains(&site.water) || !(0..=256).contains(&lanes.riverside) {
+            return fail(format!("fresh water is looked for at most 256 blocks out: site water {}, riverside {}", site.water, lanes.riverside));
+        }
+        if rules.levers.steep.is_nan() || rules.levers.steep <= 0.0 {
+            return fail(format!("rules: levers need `steep` above nothing: {}", rules.levers.steep));
+        }
+        if !(0.0..=1.0).contains(&site.fertility) || site.poor.values().any(|f| !(0.0..=1.0).contains(f)) {
+            return fail(format!("the site's fertility and its `poor` ones are each within 0 and 1: {}, {:?}", site.fertility, site.poor));
+        }
+        let ((w0, w1), (d0, d1)) = houses.trader;
+        if !(4 <= w0 && w0 <= w1 && w1 <= 12 && 4 <= d0 && d0 <= d1 && d1 <= 16) {
+            return fail(format!("rules: a trader's house is 4 to 12 across and 4 to 16 deep, low to high: {:?}", houses.trader));
+        }
+        if houses.inn.0 > 3 || houses.inn.1 > 12 || houses.inn.2 > 16 {
+            return fail(format!("rules: an inn has at most 3 storeys and is at most 12 across and 16 deep: {:?}", houses.inn));
+        }
+        for s in self.sizes.iter().filter(|s| s.always.contains(&Special::Inn)) {
+            let grand = |h: &&HouseDef| h.work.is_none() && h.form == Form::Box && h.width.1 >= houses.grand && (h.sizes.is_empty() || h.sizes.contains(&s.name));
+            if !self.houses.iter().any(|h| grand(&h)) {
+                return fail(format!("size `{}` always has an inn, but no home of four walls {} or more across is built at its size", s.name, houses.grand));
+            }
+        }
         // Lamps and props stand along lanes `every` blocks apart times a size's `lamps`:
         // at least a block, or laying them out would never end.
         let every = rules.dressing.every;
@@ -1407,6 +1468,9 @@ impl SettlementsDef {
             let round = h.form == Form::Round;
             if round && (h.width != h.depth || h.width.0 % 2 == 0 || h.width.1 % 2 == 0) {
                 return fail(format!("round house `{}` needs the same odd width and depth", h.name));
+            }
+            if matches!(h.form, Form::Round | Form::AFrame | Form::Courtyard) && h.storeys.1 > 1 {
+                return fail(format!("house `{}` is {:?}, which has one storey", h.name, h.form));
             }
             if h.form == Form::Courtyard && h.width.0.min(h.depth.0) < 11 {
                 return fail(format!("courtyard house `{}` needs a width and depth of 11 or more", h.name));

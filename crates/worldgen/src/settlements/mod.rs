@@ -92,6 +92,7 @@ pub struct Plan {
     /// Lanes' centre lines, for maps.
     pub lanes: Vec<Vec<Vec2>>,
     /// Each lane's half width, beside `lanes`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub lane_halves: Vec<f32>,
     /// The blocks the settlement touches, grading included.
     pub min: IVec2,

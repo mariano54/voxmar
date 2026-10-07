@@ -1028,7 +1028,16 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 /// walls, the first in the floor of the storey above (stepped up onto), the rest steps
 /// down to the floor. Clear of the door, the hearth, the shop's counter and the top of the
 /// stair below; none where no run fits (only four-walled houses have them).
-fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<Option<Vec<(i32, i32)>>> {
+/// A house too small for both its chimney and a stair up each storey goes without the
+/// chimney.
+pub fn make_room_for_stairs(spec: &mut Spec) {
+    let hearth = spec.chimney().map(|c| c.0);
+    if hearth.is_some() && stairs(spec, spec.door.clamp(1, spec.w - 2), hearth).iter().any(Option::is_none) {
+        spec.extras.retain(|e| *e != Extra::Chimney);
+    }
+}
+
+pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<Option<Vec<(i32, i32)>>> {
     let (w, d) = (spec.w, spec.d);
     let run = (spec.wall + 1) as usize;
     if spec.storeys < 2 || !matches!(spec.form, Form::Box | Form::ShopFront) || w < 4 || d < 4 {
@@ -1048,9 +1057,14 @@ fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<Option<Vec<
     }
     let mut flights = Vec::new();
     let mut below: Vec<(i32, i32)> = Vec::new();
-    for _ in 0..spec.storeys - 1 {
+    // An inn's door is two wide.
+    let wide = if spec.kind == Kind::Inn { 1 } else { 0 };
+    for storey in 0..spec.storeys - 1 {
+        // Clear of the way in and the shop's counter on the ground floor, of the chimney's
+        // flue on every floor, and of the holes the flight below comes up through.
         let banned = |&(x, z): &(i32, i32)| {
-            (x == door && z <= 2) || Some((x, z)) == hearth || (spec.form == Form::ShopFront && z <= 2) || below.contains(&(x, z))
+            let ground = storey == 0 && z <= 2 && ((x >= door && x <= door + wide) || spec.form == Form::ShopFront);
+            ground || Some((x, z)) == hearth || below.contains(&(x, z))
         };
         let n = ring.len();
         let found = (0..n).flat_map(|start| [1isize, -1].map(|dir| (start, dir))).find_map(|(start, dir)| {
