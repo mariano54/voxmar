@@ -558,6 +558,28 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A creature's loot waits for its body to fall; a server stopped in that moment saves it
+/// where it will drop. The server runs behind, so it stops well before the loot is due.
+#[test]
+fn loot_still_falling_when_the_server_stops_is_there_after_a_restart() {
+    let dir = world_dir("falling-loot");
+    let lag = voxmar_server::Lag { per_tick: Duration::from_millis(100), ..Default::default() };
+    let config = |lag| ServerConfig { view_distance: 2, world: Some(dir.clone()), lag, ..Default::default() };
+    let mut client = Client::join_with(config(lag));
+    let slime = client.content.blocks.id("base:lumen_slime").unwrap();
+    let snail = client.content.creatures.find("lumen_snail").unwrap();
+    client.ok("/summon lumen_snail 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == snail));
+    client.ok("/creatures kill");
+    assert!(!client.items.values().any(|i| i.stack.item == slime), "the loot dropped before the server stopped");
+    drop(client);
+
+    let mut client = Client::join_with(config(Default::default()));
+    client.pump_until(|c| c.items.values().any(|i| i.stack.item == slime));
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn game_mode_decides_flight_and_the_host_is_admin() {
     use voxmar_server::save::{GameMode, WorldMeta, WorldSave};

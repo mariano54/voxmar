@@ -633,7 +633,18 @@ impl Server {
     fn save_items(&self) {
         let Some(save) = &self.save else { return };
         let blocks = &self.content.blocks;
-        if let Err(e) = save.write_items(&self.items.saved(|item| blocks.def(item).name.clone())) {
+        let mut saved = self.items.saved(|item| blocks.def(item).name.clone());
+        // Loot still waiting for a creature's body to fall is saved as lying where it will
+        // drop, or a server stopped in that moment would lose it (the creature is gone).
+        saved.extend(self.creatures.falling_loot.iter().map(|(_, stack, body)| save::SavedItem {
+            item: blocks.def(stack.item).name.clone(),
+            count: stack.count,
+            position: body.position.to_array(),
+            age: 0.0,
+            owner: None,
+            lifetime: None,
+        }));
+        if let Err(e) = save.write_items(&saved) {
             tracing::error!("could not save dropped items: {e}");
         }
     }

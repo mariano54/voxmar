@@ -170,7 +170,7 @@ pub struct Creatures {
     /// Where each player settled and since when (RuneScape's tolerance).
     settled: FxHashMap<PlayerId, (Vec3, u64)>,
     /// Loot waiting for its body to finish falling: the tick it drops, and what.
-    falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
+    pub(crate) falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
 }
 
 impl Creatures {
