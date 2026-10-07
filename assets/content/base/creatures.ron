@@ -207,8 +207,8 @@
             ],
         ),
         (
-            name: "aurochs", title: "Aurochs", level: 6, health: 14, rarity: Uncommon,
-            attack: (damage: (2, 4), reach: 1.2, every: 1.6),
+            name: "aurochs", title: "Aurochs", level: 6, health: 14, rarity: Uncommon, weak: Some(Stab),
+            attack: (damage: (2, 4), reach: 1.2, every: 1.6, style: Crush),
             defence: 4,
             body: (
                 size: (1.1, 1.45),
@@ -278,8 +278,8 @@
             ],
         ),
         (
-            name: "fox", level: 4, health: 6, rarity: Uncommon,
-            attack: (damage: (1, 2), reach: 0.8, every: 1.0),
+            name: "fox", level: 4, health: 6, rarity: Uncommon, weak: Some(Crush),
+            attack: (damage: (1, 2), reach: 0.8, every: 1.0, style: Stab),
             body: (
                 size: (0.55, 0.6),
                 model: Quadruped(body: (0.28, 0.3, 0.6), head: (0.26, 0.22, 0.24), legs: 0.26, ears: (0.1, 0.15), ear_lean: 10.0, snout: (0.11, 0.09, 0.15), tail: (0.16, 0.16, 0.44), tail_droop: 25.0),
@@ -309,8 +309,8 @@
             loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
         ),
         (
-            name: "wolf", level: 12, health: 16, rarity: Uncommon,
-            attack: (damage: (2, 4), reach: 1.0, every: 1.1),
+            name: "wolf", level: 12, health: 16, rarity: Uncommon, weak: Some(Crush),
+            attack: (damage: (2, 4), reach: 1.0, every: 1.1, style: Stab),
             defence: 8,
             body: (
                 size: (0.7, 0.9),
@@ -347,8 +347,8 @@
             ],
         ),
         (
-            name: "brown_bear", level: 28, health: 40, rarity: Rare,
-            attack: (damage: (2, 6), reach: 1.4, every: 1.4),
+            name: "brown_bear", level: 28, health: 40, rarity: Rare, weak: Some(Stab),
+            attack: (damage: (2, 6), reach: 1.4, every: 1.4, style: Slash),
             defence: 20,
             body: (
                 size: (1.2, 1.4),
@@ -531,7 +531,7 @@
             loot: [(item: "raw_pork", count: (1, 2)), (item: "hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)])],
         ),
         (
-            name: "tortoise", level: 2, health: 10, defence: 12,
+            name: "tortoise", level: 2, health: 10, defence: 12, weak: Some(Crush),
             body: (
                 size: (0.5, 0.35),
                 model: Quadruped(body: (0.36, 0.14, 0.44), head: (0.13, 0.12, 0.16), legs: 0.1, neck: (0.06, 15.0), shell: (0.46, 0.22, 0.52), tail: (0.05, 0.05, 0.06), tail_droop: 40.0),
@@ -554,7 +554,7 @@
             loot: [(item: "scute", count: (1, 2)), (item: "raw_rabbit", chance: 0.5)],
         ),
         (
-            name: "shore_crab", level: 1, health: 3, defence: 3,
+            name: "shore_crab", level: 1, health: 3, defence: 3, weak: Some(Crush),
             body: (
                 size: (0.35, 0.18),
                 scale: 1.25,
@@ -606,8 +606,8 @@
             loot: [(item: "raw_mutton", count: (1, 2)), (item: "hide", chance: 0.7), (item: "horn", chance: 0.3, rarity: Uncommon)],
         ),
         (
-            name: "arctic_fox", title: "Arctic fox", level: 3, health: 5, rarity: Uncommon,
-            attack: (damage: (1, 2), reach: 0.8, every: 1.0),
+            name: "arctic_fox", title: "Arctic fox", level: 3, health: 5, rarity: Uncommon, weak: Some(Crush),
+            attack: (damage: (1, 2), reach: 0.8, every: 1.0, style: Stab),
             body: (
                 size: (0.5, 0.55),
                 model: Quadruped(body: (0.28, 0.28, 0.54), head: (0.26, 0.22, 0.22), legs: 0.2, ears: (0.09, 0.1), ear_lean: 18.0, snout: (0.1, 0.08, 0.12), tail: (0.18, 0.18, 0.4), tail_droop: 25.0),
@@ -630,8 +630,8 @@
             loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
         ),
         (
-            name: "lynx", level: 14, health: 18, rarity: Uncommon,
-            attack: (damage: (2, 4), reach: 0.9, every: 1.0),
+            name: "lynx", level: 14, health: 18, rarity: Uncommon, weak: Some(Crush),
+            attack: (damage: (2, 4), reach: 0.9, every: 1.0, style: Slash),
             defence: 9,
             body: (
                 size: (0.7, 0.75),
@@ -654,8 +654,8 @@
             loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]), (item: "fang", chance: 0.3, rarity: Uncommon)],
         ),
         (
-            name: "badger", level: 7, health: 12,
-            attack: (damage: (1, 3), reach: 0.9, every: 1.1),
+            name: "badger", level: 7, health: 12, weak: Some(Crush),
+            attack: (damage: (1, 3), reach: 0.9, every: 1.1, style: Slash),
             defence: 7,
             body: (
                 size: (0.6, 0.45),
@@ -679,8 +679,8 @@
         ),
         // --- Supernatural -------------------------------------------------------------------
         (
-            name: "ember_salamander", supernatural: true, level: 8, health: 9, rarity: Uncommon,
-            attack: (damage: (1, 3), reach: 0.8, every: 1.2),
+            name: "ember_salamander", supernatural: true, level: 8, health: 9, rarity: Uncommon, weak: Some(Crush),
+            attack: (damage: (1, 3), reach: 0.8, every: 1.2, style: Magic),
             defence: 5,
             body: (
                 size: (0.4, 0.25),
@@ -912,8 +912,8 @@
             loot: [(item: "raw_venison", count: (1, 2)), (item: "hide", tools: [(tag: "knife", chance: 1.0, extra: 1)]), (item: "antler", chance: 0.3, rarity: Uncommon)],
         ),
         (
-            name: "bison", title: "Bison", level: 10, health: 18, rarity: Uncommon,
-            attack: (damage: (2, 4), reach: 1.2, every: 1.6),
+            name: "bison", title: "Bison", level: 10, health: 18, rarity: Uncommon, weak: Some(Stab),
+            attack: (damage: (2, 4), reach: 1.2, every: 1.6, style: Crush),
             defence: 6,
             body: (
                 size: (1.0, 1.4),
@@ -971,8 +971,8 @@
             loot: [(item: "hide", count: (1, 2), tools: [(tag: "knife", chance: 1.0, extra: 1)]), (item: "horsehair", count: (1, 2))],
         ),
         (
-            name: "crocodile", level: 18, health: 26, rarity: Uncommon,
-            attack: (damage: (3, 6), reach: 1.2, every: 1.6),
+            name: "crocodile", level: 18, health: 26, rarity: Uncommon, weak: Some(Crush),
+            attack: (damage: (3, 6), reach: 1.2, every: 1.6, style: Stab),
             defence: 14,
             body: (
                 size: (1.0, 0.5),
@@ -1023,8 +1023,8 @@
             loot: [(item: "sunwing_feather", count: (1, 2)), (item: "aether_mote", chance: 0.25, rarity: Uncommon)],
         ),
         (
-            name: "frost_stag", supernatural: true, level: 20, health: 20, rarity: Rare,
-            attack: (damage: (2, 5), reach: 1.2, every: 1.4),
+            name: "frost_stag", supernatural: true, level: 20, health: 20, rarity: Rare, weak: Some(Slash),
+            attack: (damage: (2, 5), reach: 1.2, every: 1.4, style: Crush),
             defence: 12,
             body: (
                 size: (0.8, 1.6),
@@ -1118,8 +1118,8 @@
             loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
         ),
         (
-            name: "snow_leopard", level: 22, health: 26, rarity: Rare,
-            attack: (damage: (2, 5), reach: 1.0, every: 1.0),
+            name: "snow_leopard", level: 22, health: 26, rarity: Rare, weak: Some(Stab),
+            attack: (damage: (2, 5), reach: 1.0, every: 1.0, style: Slash),
             defence: 14,
             body: (
                 size: (0.7, 0.75),
@@ -1213,7 +1213,7 @@
             loot: [(item: "spore_cap", count: (1, 2)), (item: "aether_mote", chance: 0.15, rarity: Uncommon)],
         ),
         (
-            name: "crystal_beetle", supernatural: true, level: 7, health: 10, rarity: Uncommon, defence: 10,
+            name: "crystal_beetle", supernatural: true, level: 7, health: 10, rarity: Uncommon, defence: 10, weak: Some(Crush),
             body: (
                 size: (0.5, 0.3),
                 model: Crawler(body: (0.36, 0.2, 0.44), head: (0.22, 0.14, 0.14), legs: 0.3, pairs: 3),
@@ -1236,8 +1236,8 @@
         ),
         // --- Monsters: darkness only ---------------------------------------------------------
         (
-            name: "cave_crawler", kind: Monster, level: 6, health: 8,
-            attack: (damage: (1, 3), reach: 1.0, every: 1.0),
+            name: "cave_crawler", kind: Monster, level: 6, health: 8, weak: Some(Crush),
+            attack: (damage: (1, 3), reach: 1.0, every: 1.0, style: Stab),
             defence: 4,
             body: (
                 size: (0.9, 0.6),
@@ -1253,8 +1253,8 @@
             loot: [(item: "silk", count: (0, 2)), (item: "venom_sac", chance: 0.15, rarity: Uncommon)],
         ),
         (
-            name: "cave_bat", kind: Monster, level: 3, health: 4,
-            attack: (damage: (1, 1), reach: 0.6, every: 0.9),
+            name: "cave_bat", kind: Monster, level: 3, health: 4, weak: Some(Slash),
+            attack: (damage: (1, 1), reach: 0.6, every: 0.9, style: Stab),
             body: (
                 size: (0.4, 0.4),
                 model: Boxes([
@@ -1277,8 +1277,8 @@
             loot: [(item: "bat_wing", chance: 0.6)],
         ),
         (
-            name: "shambler", kind: Monster, supernatural: true, level: 5, health: 10,
-            attack: (damage: (1, 3), reach: 1.0, every: 1.3),
+            name: "shambler", kind: Monster, supernatural: true, level: 5, health: 10, weak: Some(Slash),
+            attack: (damage: (1, 3), reach: 1.0, every: 1.3, style: Crush),
             defence: 3,
             body: (
                 size: (0.6, 1.8),

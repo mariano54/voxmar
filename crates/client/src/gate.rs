@@ -197,6 +197,9 @@ enum Step {
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
     /// over picks up.
     Strike,
+    /// An iron sword in hand at Attack 20, a brown bear struck until it dies takes harder
+    /// blows than a fist could deal.
+    Weapon,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -651,7 +654,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area of the world to generate and mesh.
         Step::Gorge | Step::Ore => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
-        Step::Strike => STRIKE_LIMIT,
+        Step::Strike | Step::Weapon => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
         Step::Workshop => 220.0,
@@ -870,6 +873,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Sky => sky(world, gate, now, in_phase),
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
+        Step::Weapon => weapon(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
@@ -2884,11 +2888,96 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     Err(format!("no {CREATURE_DROP} picked up after the kill"))
                 };
                 gate.check("creature drops", result);
-                gate.next(Step::Cook, now);
+                gate.next(Step::Weapon, now);
             }
         }
         _ => {}
     }
+}
+
+/// The weapon the gate strikes with, and the level that wields it.
+const WEAPON: &str = "base:iron_sword";
+const WEAPON_LEVEL: u8 = 20;
+/// What it strikes: big enough to take several blows, in creative so its own pass by.
+const BEAR: &str = "base:brown_bear";
+
+/// An iron sword at Attack 20 against a brown bear on the pad: struck until it dies, some
+/// blow must do more than a bare fist's most at that level (1 + 20 / 8 = 3).
+fn weapon(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(BEAR) else {
+        gate.check("weapon", Err(format!("no `{BEAR}` in the content")));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let bear = |world: &World| world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
+    let fist = voxmar_engine::combat::Weapon::FISTS.max_hit(WEAPON_LEVEL);
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("skill attack {WEAPON_LEVEL}"));
+            net.command(&format!("give {} 1", WEAPON.trim_start_matches("base:")));
+            let pad = gate.feet + IVec3::new(0, 0, 14);
+            net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+            gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
+            gate.advance(now);
+        }
+        1 => {
+            // The sword in hand, at the level that wields it, and the bear in sight.
+            let ready = skill_level(world, "core:attack").0 >= WEAPON_LEVEL && bear(world).is_some();
+            if ready && select(world, WEAPON) {
+                gate.advance(now);
+            } else if in_phase > 10.0 {
+                gate.check("weapon", Err(format!("the sword, Attack {WEAPON_LEVEL} or the bear never came (bear seen: {})", bear(world).is_some())));
+                end_weapon(world, gate, now);
+            }
+        }
+        _ => {
+            let (blows, hardest) = {
+                let creatures = world.resource::<crate::creatures::Creatures>();
+                (creatures.blows, creatures.hardest)
+            };
+            if blows > gate.blows_seen {
+                gate.blows_seen = blows;
+                gate.phase_since = now;
+                gate.phase_server = gate.server_now;
+            }
+            let stalled = gate.server_in_phase() > UNANSWERED;
+            match bear(world) {
+                Some(view) if !stalled => {
+                    // Close in and strike a full charge apart, as a player swings.
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.4;
+                    key(world, KeyCode::KeyW, far);
+                    aim_at(world, view.position + Vec3::Y * 0.6);
+                    let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
+                    mouse(world, MouseButton::Left, swing);
+                }
+                Some(_) => {
+                    gate.check("weapon strikes", Err(format!("the server answered no blow for {UNANSWERED}s")));
+                    end_weapon(world, gate, now);
+                }
+                None => {
+                    let result = if hardest > fist {
+                        Ok(format!("the bear died; the hardest blow did {hardest}, a fist's most is {fist}"))
+                    } else {
+                        Err(format!("no blow did more than a fist's {fist} (the hardest did {hardest})"))
+                    };
+                    gate.check("weapon strikes", result);
+                    end_weapon(world, gate, now);
+                }
+            }
+        }
+    }
+}
+
+/// Back to survival with the hands free, for the steps after.
+fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Left, false);
+    key(world, KeyCode::KeyW, false);
+    let net = world.resource::<Net>();
+    net.command("gamemode survival");
+    net.command("skill attack 1");
+    gate.next(Step::Cook, now);
 }
 
 /// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
