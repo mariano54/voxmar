@@ -197,7 +197,7 @@
         // wood of any kind, so it never enters an inventory; breaking it gives a stick
         // instead (tools.ron), and no region's timber turns up where its trees do not grow.
         (
-            name: "dead_log", sound: Wood, textures: Column(end: "dead_log_top", side: "dead_log"),
+            name: "dead_log", sound: Wood, textures: All("dead_log"),
             hardness: 1.6, drops: "core:air", color: (128, 124, 116), tags: ["log", "natural", "snag"],
         ),
         (name: "powder_snow", texture_variety: (turn: true, mirror: true), sound: Snow, textures: All("powder_snow"), hardness: 0.25, color: (248, 253, 253), tags: ["snow", "cold", "natural", "surface"]),

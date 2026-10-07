@@ -22,7 +22,6 @@
         "jungle_wood": ["#74503a", "#855d42", "#966b4b", "#a67955", "#b48760", "#c1966c"],
         "acacia_bark": ["#3a3631", "#4a4540", "#5a544e", "#6a645c", "#7b746b", "#8c857b"],
         "dead_bark": ["#4f4c48", "#625f5a", "#77736d", "#8c8881", "#a19d95", "#b6b2aa"],
-        "dead_wood": ["#6e675d", "#827b70", "#968f83", "#aaa396", "#bdb6a9", "#cfc9bc"],
         "acacia_wood": ["#843f1f", "#9a4b26", "#ad572e", "#bd6437", "#ca7141", "#d67f4d"],
         "dark_oak_bark": ["#1a120a", "#24190e", "#2f2113", "#3a2a18", "#46331e", "#523d25"],
         "dark_oak_wood": ["#382512", "#432d18", "#4e361e", "#5a3f24", "#66492b", "#725333"],
@@ -205,18 +204,15 @@
             // Grey, coarse and blocky.
             Paint(palette: "bark", base: 0.55, shade: [Cells(count: (3, 3), jitter: 1.0, value: 0.4, edge: -0.7, bevel: 0.4, warp: 1.0, stretch: (1.0, 2.0)), Grain(0.3)], clean: true),
         ]),
-        // A long-dead trunk: the bark gone, the wood weathered silver-grey and split along
-        // the grain in long dark cracks, a knot here and there.
+        // A long-dead trunk: the bark gone, the wood weathered silver-grey, fibrous along
+        // the grain and split into long strips by dark cracks running up it.
         "block/dead_log": (palettes: {"bark": "dead_bark"}, layers: [
-            Paint(palette: "bark", base: 0.6, shade: [Noise(cells: (12, 2), octaves: 2, amount: 0.3), Grain(0.2)], clean: true),
-            Paint(palette: "bark", base: 0.12, shade: [Grain(0.3)], mask: [Ridge(cells: (4, 1), octaves: 2, width: 0.08, amount: 1.0)], above: 0.55),
-            Paint(palette: "bark", base: 0.25, mask: [Speckle(chance: 0.03, amount: 1.0)], above: 0.9),
-        ]),
-        // Its end: dry rings checked by radial cracks, under a thin grey rim.
-        "block/dead_log_top": (palettes: {"wood": "dead_wood", "bark": "dead_bark"}, layers: [
-            Paint(palette: "wood", base: 0.6, shade: [Rings(spacing: 2.4, width: 0.35, amount: -0.3, wobble: 0.6, square: 0.4), Grain(0.15)]),
-            Paint(palette: "bark", base: 0.2, mask: [Ridge(cells: (3, 3), width: 0.06, amount: 1.0)], above: 0.7),
-            Paint(palette: "bark", base: 0.5, shade: [Grain(0.4)], mask: [Border(width: 1, amount: 1.0)], above: 0.6),
+            Paint(palette: "bark", base: 0.62, shade: [
+                Cells(count: (4, 1), jitter: 0.8, value: 0.25, edge: -0.9, bevel: 0.25, warp: 0.8, stretch: (1.0, 5.0)),
+                Stripes(vertical: true, period: 3.0, width: 0.34, amount: -0.12, warp: 0.6),
+                Noise(cells: (16, 2), octaves: 2, amount: 0.2),
+                Grain(0.1),
+            ], clean: true),
         ]),
         "block/cherry_log": (palettes: {"bark": "cherry_bark"}, layers: [
             // Smooth and dark, with the pale horizontal lenticels cherries have.
