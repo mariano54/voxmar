@@ -150,6 +150,7 @@ fn notice(
 fn show_tip(
     time: Res<Time>,
     locale: Res<Locale>,
+    settings: Res<Settings>,
     mut tips: ResMut<Tips>,
     mut plate: Query<&mut Visibility, With<TipPlate>>,
     mut words: Query<&mut Text, With<TipWords>>,
@@ -182,18 +183,25 @@ fn show_tip(
     if let Some((name, _)) = tips.showing
         && let Ok(mut text) = words.single_mut()
     {
-        let wanted = locale.get(&format!("tip.{name}")).to_owned();
+        let keys = bound_keys(&settings).map(|(name, key)| (name, key.name(&locale)));
+        let args: Vec<(&str, &dyn std::fmt::Display)> = keys.iter().map(|(name, key)| (*name, key as &dyn std::fmt::Display)).collect();
+        let wanted = locale.format(&format!("tip.{name}"), &args);
         if text.0 != wanted {
             text.0 = wanted;
         }
     }
 }
 
+/// The keys a tip may name (`{character}` in its words), as bound.
+fn bound_keys(settings: &Settings) -> [(&'static str, crate::keys::Key); 3] {
+    [("character", settings.character_key), ("recipes", settings.recipes_key), ("uses", settings.uses_key)]
+}
+
 #[cfg(test)]
 mod tests {
     use crate::lang::Locale;
 
-    /// Every tip has its words in English and Japanese.
+    /// Every tip has its words in English and Japanese, naming only the keys it is given.
     #[test]
     fn every_tip_has_words() {
         // This checkout's own words, not the installed game's.
@@ -202,6 +210,14 @@ mod tests {
             let locale = Locale::load(&content, code);
             for name in super::TIPS.iter().map(|name| format!("tip.{name}")).chain(["tip.label".to_owned()]) {
                 assert!(locale.find(&name).is_some(), "{code}: no words for {name}");
+            }
+            // Each key a tip names is one it is given.
+            let given = super::bound_keys(&crate::settings::Settings::default()).map(|(name, _)| name);
+            for name in super::TIPS.iter().map(|name| format!("tip.{name}")) {
+                let words = locale.get(&name);
+                for placeholder in words.split('{').skip(1).filter_map(|part| part.split_once('}')).map(|(placeholder, _)| placeholder) {
+                    assert!(given.contains(&placeholder), "{code}: {name} names {{{placeholder}}}, which no tip is given (see bound_keys)");
+                }
             }
         }
     }
