@@ -778,7 +778,7 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
             assert!(client.damage.len() - start < 80, "{} blows landed {landed}", client.damage.len() - start);
             let at = client.creatures[&id].position;
             client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
-            client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+            client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
             std::thread::sleep(Duration::from_millis(650));
             let blows = client.blows;
             client.propose("core:attack", ActionTarget::Creature(id));

@@ -28,6 +28,9 @@
         (item: "copper_axe", class: "axe", level: 5, max_hit: 6),
         // A wolf's or a boar's fang on a haft, Attack 10.
         (item: "fang_dagger", class: "dagger", level: 10, max_hit: 5),
+        // Bronze, Attack 15: a sword, and a spear that reaches further.
+        (item: "bronze_sword", class: "sword", level: 15, max_hit: 7),
+        (item: "bronze_spear", class: "spear", level: 15, max_hit: 8),
         // Iron, Attack 20.
         (item: "iron_sword", class: "sword", level: 20, max_hit: 9),
         (item: "iron_axe", class: "axe", level: 20, max_hit: 11),

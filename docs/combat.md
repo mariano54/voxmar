@@ -31,9 +31,17 @@ and "Items" tabs); the code is `engine/src/combat.rs`, the data each package's
 | Copper sword | sword (slash) | Attack 5 | 5 | two copper ingots and a stick, Engineering 5 |
 | Copper axe | axe (slash) | Attack 5 | 6 | the tool |
 | Fang dagger | dagger (stab) | Attack 10 | 5 | a fang and a stick, Crafting 10 |
+| Bronze sword | sword (slash) | Attack 15 | 7 | two bronze ingots and a stick, Engineering 12 |
+| Bronze spear | spear (stab, reach) | Attack 15 | 8 | a bronze ingot on two sticks, Engineering 12 |
 | Iron sword | sword (slash) | Attack 20 | 9 | two iron ingots and a stick, Engineering 15 |
 | Iron axe | axe (slash) | Attack 20 | 11 | the tool |
 
-Still to come in phase 4, in order: bronze weapons and spears once bronze lands (P30);
-ranged weapons, ammunition and projectiles; armour slots and sets with resistances; the
+Creatures' styles and weaknesses (systems agreed them, 7 Oct): wolves, foxes, cave crawlers
+and crocodiles bite (stab) and are weak to crush; bears and snow leopards claw (slash),
+weak to stab; lynxes and badgers claw, weak to crush; aurochs and bison charge (crush),
+weak to stab; the frost stag crushes, weak to slash; the shambler crushes, weak to slash;
+the ember salamander burns (magic), weak to crush; cave bats bite, weak to slash. The
+armoured tortoise, shore crab and crystal beetle are weak to crush.
+
+Still to come in phase 4, in order: ranged weapons, ammunition and projectiles; armour slots and sets with resistances; the
 weapons' specials (bleed, stun, brace); then modifications (P42).

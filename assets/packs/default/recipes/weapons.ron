@@ -7,6 +7,7 @@
     palettes: {
         "weapon_stone": ["#4a4a50", "#7a7a82", "#a8a8b0"],
         "weapon_copper": ["#7a3a18", "#c06a38", "#f0a070"],
+        "weapon_bronze": ["#6e4418", "#b07a3a", "#e8b46a"],
         "weapon_iron": ["#5a5e66", "#a0a6b0", "#e2e6ee"],
         "weapon_bone": ["#a89878", "#d8ccb0", "#f4eedc"],
         "weapon_guard": ["#3a3430", "#5e5650", "#8a8078"],
@@ -35,6 +36,7 @@
             "..D.............",
         ])]),
         "block/copper_sword": (base: "block/stone_sword", palettes: {"blade": "weapon_copper", "guard": "weapon_guard", "grip": "weapon_leather"}),
+        "block/bronze_sword": (base: "block/stone_sword", palettes: {"blade": "weapon_bronze", "guard": "weapon_guard", "grip": "weapon_leather"}),
         "block/iron_sword": (base: "block/stone_sword", palettes: {"blade": "weapon_iron", "guard": "weapon_guard", "grip": "weapon_leather"}),
         // A club: a knob of bone on a haft.
         "block/bone_club": (base: "shape/plant", palettes: {"blade": "weapon_bone", "guard": "weapon_bone", "grip": "weapon_wood"}, layers: [Grid(rows: [
@@ -73,6 +75,25 @@
             "...D............",
             "................",
             "................",
+        ])]),
+        // A spear: a long haft, a binding and a leaf-shaped head.
+        "block/bronze_spear": (base: "shape/plant", palettes: {"blade": "weapon_bronze", "guard": "weapon_leather", "grip": "weapon_wood"}, layers: [Grid(rows: [
+            "..............D.",
+            "............DDcD",
+            "...........DccbD",
+            "..........DccbD.",
+            "..........DgbaD.",
+            ".........DghDD..",
+            "........DlkD....",
+            ".......DlkD.....",
+            "......DlkD......",
+            ".....DlkD.......",
+            "....DlkD........",
+            "...DlkD.........",
+            "..DlkD..........",
+            ".DlkD...........",
+            ".DkD............",
+            "..D.............",
         ])]),
     },
 )
