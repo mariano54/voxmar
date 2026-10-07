@@ -137,7 +137,8 @@ pub fn find(world: &mut World) -> Vec<Spill> {
     // Lines break only where the language lets them (kinsoku: never before a closing
     // bracket or small kana, after an opening bracket, or inside a katakana word). Text is
     // laid out joined (see `crate::lang::Joined`); each glyph is matched to a character of
-    // that, with or without the spaces and word joiners, as the layout gives them.
+    // that, with or without the spaces and word joiners, as the layout gives them. A line's
+    // end draws nothing.
     let rules = world.get_resource::<crate::lang::Locale>().map(|locale| voxmar_engine::lang::LineRules::of(locale)).unwrap_or_default();
     let mut checked = 0;
     for (_, text, layout, node, _, visible) in texts.iter(world) {
@@ -155,7 +156,8 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             |c| !c.is_whitespace() && c != voxmar_engine::lang::WORD_JOINER,
             |c| !c.is_whitespace(),
         ];
-        let Some(at) = mappings.iter().map(|keep| (0..chars.len()).filter(|&i| keep(chars[i])).collect::<Vec<usize>>()).find(|at| at.len() == layout.glyphs.len()) else {
+        let drawn = |c: char| !matches!(c, '\n' | '\r');
+        let Some(at) = mappings.iter().map(|keep| (0..chars.len()).filter(|&i| drawn(chars[i]) && keep(chars[i])).collect::<Vec<usize>>()).find(|at| at.len() == layout.glyphs.len()) else {
             found.push(Spill { text: text.0.clone(), past: [0.0; 4], own: true, size: Vec2::ZERO, lines: layout.size, over: None, broken: None, unmatched: Some((layout.glyphs.len(), chars.len())) });
             continue;
         };
@@ -308,6 +310,12 @@ mod tests {
         assert_eq!(look_at("アイ う", &[0, 0, 0, 1]), (vec![], 1));
         // A break at the space, misread as one inside アイ were the joiner taken as drawn.
         assert_eq!(look_at("アイ う", &[0, 0, 1, 1]), (vec![], 1));
+        // Lines of their own: ボ⁠タ⁠ン を押す\nク⁠リ⁠ッ⁠クする is drawn with no glyph for the line's
+        // end (13 glyphs, spaces kept), and breaks only where it may, or inside a word.
+        let two_lines = "ボタン を押す\nクリックする";
+        assert_eq!(look_at(two_lines, &[0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]), (vec![], 1));
+        let (found, checked) = look_at(two_lines, &[0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 2, 2, 2]);
+        assert!(checked == 1 && found.len() == 1 && found[0].contains("ク|リック"), "{found:?}");
         let (found, checked) = look(&[0, 0, 0]);
         assert!(checked == 0 && found.len() == 1 && found[0].contains("unchecked"), "{found:?}");
     }
