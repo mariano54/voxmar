@@ -21,7 +21,9 @@ creatures (their loot's `tools`), and shears wool.
 Block rules, first match wins, say what breaking a block takes and teaches: a level in a
 skill, a kind and tier of tool, and the experience. Ores ask for Mining levels as in
 RuneScape (copper 5, tin 10, iron 15, cobalt 25, silver 30, gold 35, diamond 45, aetherite
-50) and pickaxe tiers as in Minecraft (iron a stone pickaxe, gold and silver copper,
+50), teach more the higher they ask (stone 1, coal 13, copper 17.5, tin 25, iron 35 up to
+bauxite and aetherite 396, design draft 63, so stone alone no longer trains Mining) and
+pickaxe tiers as in Minecraft (iron a stone pickaxe, gold and silver copper,
 diamond iron). A click on a block that refuses says why: "Needs Mining 15", "Needs a stone
 pickaxe or better". Blocks players placed teach nothing (the world keeps where they put
 them, `WorldMeta::placed`).
@@ -68,9 +70,14 @@ biome tags, and when (day, night, rain). A cast (`base:fish`, five seconds, a ro
 water within nine blocks with open air above) lands something with a chance that starts at
 about a third for the water's best fish at its level and grows with each level above it
 and with the rod's tier, up to nine in ten; which fish is a weighted draw among those that
-can bite, rarer ones a little more often with a better rod's yield. Fish cook at a
-campfire (cooking.ron). Fishing tops out at level 75 for now (glimmer koi), with the cape
-perk at 80.
+can bite, rarer ones a little more often with a better rod's yield, and each fish bites
+twice as often, against those below it, for every 15 levels it asks (`outlevelled`). A
+fish's
+experience doubles every 10.5 levels, 10 × 2^((level − 1) ÷ 10.5): perch 18, cod 35, carp
+68, pike 131, tuna 254, sturgeon 353 (55), marlin 491 (60, deep ocean by day), deepwater
+lanternfish 951 (70, deep ocean at night), koi 1,323 (design draft 63). Fish cook at a
+campfire (cooking.ron) in two seconds, teaching what catching them does. Fishing tops out at level 75 for now (glimmer koi), with
+the cape perk at 80.
 
 ## Pouches
 

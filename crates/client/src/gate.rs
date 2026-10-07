@@ -3318,7 +3318,8 @@ fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
 }
 
 /// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
-/// comes back as cooked rabbit or, at a low Cooking level, sometimes burnt.
+/// comes back two seconds later as cooked rabbit or, at a low Cooking level, sometimes
+/// burnt. Waited for by the server's clock.
 fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
     match gate.phase {
@@ -3359,9 +3360,9 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("cook", Ok(format!("{} came back from the fire", cooked - gate.count_before)));
                 gate.advance(now);
-            } else if in_phase > 15.0 {
+            } else if gate.server_in_phase() > 15.0 {
                 mouse(world, MouseButton::Right, false);
-                gate.check("cook", Err("right clicks on the campfire cooked nothing".into()));
+                gate.check("cook", Err(format!("right clicks on the campfire cooked nothing in 15 server seconds ({in_phase:.1} game s)")));
                 gate.next(Step::Ore, now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
