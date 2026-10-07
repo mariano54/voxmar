@@ -72,7 +72,7 @@ impl Villagers {
         let trip = self.towns.get(&town)?.people[i].trip.as_ref()?;
         let to = *trip.path.get(trip.step)?;
         let last = trip.step + 1 >= trip.path.len();
-        Some(Errand { to: to.as_vec3() + Vec3::new(0.5, 0.0, 0.5), last, pose: trip.pose, face: trip.face })
+        Some(Errand { to: to.as_vec3() + Vec3::new(0.5, 0.0, 0.5), last, pose: trip.pose, face: trip.face, chase: trip.pursuit.is_some() })
     }
 }
 
@@ -194,6 +194,9 @@ impl Server {
         let today = days(self.day);
         let ids: Vec<u64> = self.villagers.towns.keys().copied().collect();
         for id in ids {
+            // Who died since the last look, before anyone is let go: a death is kept
+            // whether or not the players are still about.
+            self.note_deaths(id, today);
             let town = &self.villagers.towns[&id];
             let nearest = players.iter().map(|&p| town.distance(p)).fold(f32::MAX, f32::min);
             if nearest > FORGET {
@@ -208,24 +211,28 @@ impl Server {
                 }
                 continue;
             }
-            // Who died since the last look.
-            let town = self.villagers.towns.get_mut(&id).expect("listed");
-            town.alive = true;
-            let newcomer = self.overworld.settlement_people().newcomer as f64;
-            for (i, person) in town.people.iter_mut().enumerate() {
-                if let Some(c) = person.creature
-                    && !self.creatures.live.contains_key(&c)
-                {
-                    self.villagers.by_creature.remove(&c);
-                    person.creature = None;
-                    person.trip = None;
-                    person.generation += 1;
-                    person.away_until = today + newcomer;
-                    tracing::debug!(town = %town.info.name.0, person = i, "a villager died");
-                }
-            }
+            self.villagers.towns.get_mut(&id).expect("listed").alive = true;
             for i in 0..self.villagers.towns[&id].people.len() {
                 self.bring_out(id, i);
+            }
+        }
+    }
+
+    /// Notes who of settlement `id` died since the last look: each is gone until a
+    /// newcomer takes their place `newcomer` days on.
+    fn note_deaths(&mut self, id: u64, today: f64) {
+        let newcomer = self.overworld.settlement_people().newcomer as f64;
+        let Some(town) = self.villagers.towns.get_mut(&id) else { return };
+        for (i, person) in town.people.iter_mut().enumerate() {
+            if let Some(c) = person.creature
+                && !self.creatures.live.contains_key(&c)
+            {
+                self.villagers.by_creature.remove(&c);
+                person.creature = None;
+                person.trip = None;
+                person.generation += 1;
+                person.away_until = today + newcomer;
+                tracing::debug!(town = %town.info.name.0, person = i, "a villager died");
             }
         }
     }
@@ -393,7 +400,9 @@ impl Server {
         }
         self.villagers.ways += 1;
         let start = at.floor().as_ivec3();
-        let path = self.way(start, target, town).unwrap_or_else(|| vec![target]);
+        // No way there (they stand on a roof, past a wall): the guard holds where it is
+        // rather than walk into the wall, and looks again in two seconds.
+        let path = self.way(start, target, town).unwrap_or_else(|| vec![start]);
         let (place, slot, day) = (Place::Patrol, usize::MAX, 0);
         let trip = Trip { place, slot, day, path, step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, tick), retry: tick + 2 * TICKS_PER_SECOND as u64, pursuit: Some(player) };
         self.villagers.towns.get_mut(&town).expect("listed").people[i].trip = Some(trip);
@@ -560,8 +569,10 @@ impl Server {
     /// or down two.
     fn way(&self, from: IVec3, to: IVec3, town: u64) -> Option<Vec<IVec3>> {
         let t = &self.villagers.towns[&town];
-        let flat = IVec2::new(from.x, from.z);
-        let (min, max) = (t.min.min(flat) - 8, t.max.max(flat) + 8);
+        let (flat, goal) = (IVec2::new(from.x, from.z), IVec2::new(to.x, to.z));
+        // The settlement and a margin, stretched to take in both ends (a guard's quarry may
+        // stand outside it); `SEARCH` bounds the work whatever the box.
+        let (min, max) = (t.min.min(flat).min(goal) - 8, t.max.max(flat).max(goal) + 8);
         let start = [from, from + IVec3::Y, from - IVec3::Y].into_iter().find(|&c| self.stands(c)).unwrap_or(from);
         let h = |c: IVec3| {
             let d = (c - to).abs();

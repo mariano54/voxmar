@@ -94,6 +94,8 @@ pub struct Errand {
     pub pose: Pose,
     /// What they face once there.
     pub face: Option<Vec3>,
+    /// Whether it is a way after someone (a guard's pursuit) rather than the day's.
+    pub chase: bool,
 }
 
 /// What a creature senses this decision.
@@ -518,6 +520,32 @@ pub(super) mod tests {
         let far = Situation { position: Vec3::new(20.0, 0.0, 0.0), ..situation(&[]) };
         let decision = think(&snail, &mut mind, &far);
         assert_eq!((doing(&snail, &mind), decision.goal), ("return_home", Some(Vec3::ZERO)));
+    }
+
+    /// Someone the server sends about their day walks their errand however far it takes
+    /// them from home, and a guard after someone follows only a way found after them, not
+    /// the day's.
+    #[test]
+    fn errands_outrank_home_and_only_a_chase_leads_a_fight() {
+        let guard = species(&format!(
+            "(creatures: [(name: \"guard\", health: 10, leash: 8.0, {BODY}, attack: (damage: (1, 2)), behaviours: [(do: Routine), (do: Defend)])])"
+        ));
+        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: false };
+        let mut mind = Mind::new(&guard.def.temperament, 6);
+        let far = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&[]) };
+        let decision = think(&guard, &mut mind, &far);
+        assert_eq!((doing(&guard, &mind), decision.goal), ("routine", Some(work.to)));
+        // Struck by a player ten blocks off: straight at them while the errand is the day's,
+        // along the way found when it is a chase.
+        let near = [player(Vec3::new(20.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&guard.def.temperament, 6);
+        mind.hurt(&guard, Some(1), 1.0);
+        let at = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&near) };
+        let decision = think(&guard, &mut mind, &at);
+        assert_eq!((doing(&guard, &mind), decision.goal), ("defend", Some(near[0].position)));
+        let turn = Errand { to: Vec3::new(28.0, 0.0, 3.0), last: false, chase: true, ..work };
+        let decision = think(&guard, &mut mind, &Situation { errand: Some(turn), ..at });
+        assert_eq!(decision.goal, Some(turn.to));
     }
 
     #[test]

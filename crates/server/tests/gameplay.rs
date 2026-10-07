@@ -42,6 +42,8 @@ struct Client {
     chat: Vec<(ChatKind, String)>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
+    /// The server's tick, as last told (each second).
+    tick: u64,
     /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
@@ -114,6 +116,7 @@ impl Client {
             quick: false,
             chat: Vec::new(),
             day: None,
+            tick: 0,
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
@@ -186,7 +189,10 @@ impl Client {
                 self.quick = quick;
             }
             ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
-            ServerMessage::Time { day, day_speed, .. } => self.day = Some((day, day_speed)),
+            ServerMessage::Time { tick, day, day_speed } => {
+                self.day = Some((day, day_speed));
+                self.tick = tick;
+            }
             ServerMessage::Abilities { allow_flight, admin } => {
                 self.allow_flight = allow_flight;
                 self.admin = admin;
@@ -219,6 +225,14 @@ impl Client {
             }
             _ => {}
         }
+    }
+
+    /// Applies what the server sends until it tells of a tick at least `ticks` past the
+    /// last it told of, or `done`: a wait by the server's clock, which a busy machine
+    /// slows with it.
+    fn pump_ticks(&mut self, ticks: u64, done: impl Fn(&Self) -> bool) {
+        let until = self.tick + ticks;
+        self.pump_until(|c| c.tick >= until || done(c));
     }
 
     fn propose(&self, action: &str, target: ActionTarget) {
@@ -1280,12 +1294,9 @@ fn villagers_sleep_at_night_and_go_about_their_day() {
     let night: std::collections::HashMap<u32, Vec3> = people(&client).iter().map(|v| (v.id, v.position)).collect();
     // Morning: up and out.
     client.ok("/time set day");
-    let start = Instant::now();
-    client.pump_until(|c| {
-        let moved = people(c).iter().filter(|v| night.get(&v.id).is_some_and(|p| p.distance(v.position) > 4.0)).count();
-        moved >= 2 || start.elapsed() > Duration::from_secs(60)
-    });
-    let moved = people(&client).iter().filter(|v| night.get(&v.id).is_some_and(|p| p.distance(v.position) > 4.0)).count();
+    let moved = |c: &Client| people(c).iter().filter(|v| night.get(&v.id).is_some_and(|p| p.distance(v.position) > 4.0)).count();
+    client.pump_ticks(60 * TICKS_PER_SECOND as u64, |c| moved(c) >= 2);
+    let moved = moved(&client);
     assert!(moved >= 2, "only {moved} of {} people left their beds in the morning", night.len());
     assert!(asleep(&client) * 2 < people(&client).len(), "most still asleep by day");
     // Far away, they go.
@@ -1318,8 +1329,8 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     let villager = pick(&client).unwrap();
     client.ok(&format!("/tp {} {} {}", villager.position.x + 1.0, villager.position.y, villager.position.z));
     let full = client.health;
-    let start = Instant::now();
-    while client.health == full && start.elapsed() < Duration::from_secs(60) {
+    let until = client.tick + 60 * TICKS_PER_SECOND as u64;
+    while client.health == full && client.tick < until {
         if let Some(v) = client.creatures.get(&villager.id) {
             if v.position.distance(client.position) > 2.5 {
                 // It ran: follow it, as a player chasing it would.
@@ -1328,8 +1339,7 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
             }
             client.propose("core:attack", ActionTarget::Creature(villager.id));
         }
-        let asked = Instant::now();
-        client.pump_until(|_| asked.elapsed() > Duration::from_millis(400));
+        client.pump_ticks(TICKS_PER_SECOND as u64, |_| false);
     }
     assert!(client.health < full, "no guard struck back in a minute");
 }

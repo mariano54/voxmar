@@ -530,9 +530,9 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
     let mut decision = Decision { face: Some(p.position), ..Default::default() };
     let stalker = stalks && def.movement.style == Style::Stalker;
     if !close {
-        // Those with a way found for them (guards going after someone) follow it until the
-        // target is near.
-        decision.goal = Some(ctx.at.errand.filter(|_| d > 4.0).map_or(p.position, |e| e.to));
+        // Those with a way found after the target (guards going after someone) follow it
+        // until the target is near; the day's errands are no way to anyone.
+        decision.goal = Some(ctx.at.errand.filter(|e| e.chase && d > 4.0).map_or(p.position, |e| e.to));
         if stalker && d > 4.5 {
             decision.speed = walk(ctx) * 0.6;
             decision.pose = Pose::Crouched;
@@ -630,6 +630,10 @@ impl Module for ReturnHome {
     }
 
     fn want(&self, ctx: &Ctx) -> Option<Want> {
+        // Those the server sends about their day (villagers) go home when it says.
+        if ctx.at.errand.is_some() {
+            return None;
+        }
         let leash = if ctx.at.kept { ctx.creature.def.leash.min(super::super::husbandry::KEPT_LEASH) } else { ctx.creature.def.leash };
         let from_home = flat(ctx.at.position, ctx.at.home);
         // Once going, it keeps on until well inside.
