@@ -622,3 +622,29 @@ fn spawn_needs_only_so_much_planning() {
         assert!(made.0 <= streams && made.1 <= grids && made.2 <= squares, "seed {seed}: {made:?} river regions, trail grids and squares, over {:?}", (streams, grids, squares));
     }
 }
+
+/// Servers on one world share one generator (`Overworld::shared`): the second finds the
+/// land round spawn planned and plans nothing more; another seed gets a generator of its
+/// own, and once nothing holds a world it is let go.
+#[test]
+fn servers_on_one_world_share_its_planning() {
+    use crate::Generator;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let made = |world: &Overworld| (world.rivers.made(), world.trails.made(), world.settlements.made());
+    let first = Overworld::shared(0x5eed, &content, &world_content);
+    let spawn = ColumnPos::of_block(first.spawn_point());
+    let column = first.generate(spawn);
+    let planned = made(&first);
+    let second = Overworld::shared(0x5eed, &content, &world_content);
+    assert!(std::sync::Arc::ptr_eq(&first, &second));
+    assert_eq!(ColumnPos::of_block(second.spawn_point()), spawn);
+    assert_eq!(second.generate(spawn), column);
+    assert_eq!(made(&second), planned, "the second server planned more");
+    let other = Overworld::shared(0x5eee, &content, &world_content);
+    assert!(!std::sync::Arc::ptr_eq(&first, &other));
+    let held = std::sync::Arc::downgrade(&first);
+    drop((first, second));
+    assert!(held.upgrade().is_none(), "a world nothing holds is kept");
+}
