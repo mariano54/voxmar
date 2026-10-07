@@ -140,6 +140,26 @@ def pods(seed=0):
     return f
 
 
+def chickpea(seed=0):
+    """A bushy upright pulse: branching stems of tiny paired leaflets, a few small flowers
+    and plump, puffed pods (the wild form of the chickpea crop)."""
+    def f():
+        c = Canvas(); r = random.Random(seed)
+        for x0, xt in [(13, 7), (15, 12), (16, 17), (18, 22), (19, 26)]:
+            pts = curve(x0, 31, xt, 9 + r.randint(0, 5), r.uniform(-2, 2), 7); stem(c, pts, 2)
+            for k in range(1, 7):
+                x, y = pts[k]
+                for side in (-1, 1):
+                    leaf(c, x, y, -90 + side * (55 + r.uniform(-10, 10)), 2.4, 1.6, 3)
+                if k in (3, 5) and r.random() < 0.8:
+                    ex = x + r.choice((-2, 2))
+                    ellipse(c, ex, y + 1, 1.6, 1.2, 'F', 2)
+            xt2, yt = pts[-1]
+            c.put(xt2, yt - 1, 'P', 3); c.put(xt2 + 1, yt - 1, 'P', 2)
+        rim(c); return c
+    return f
+
+
 def bush(fruit=10, cluster=1, size=1, leaf_len=2.6, low=False, flowers=0, seed=0, spiky=False):
     """A rounded shrub of small leaves, with berries, fruit or flowers among them."""
     def f():
@@ -516,6 +536,7 @@ add('wild_corn', corn(), leaf='#5a9a3a', fruit='#f0c030', wood='#e8d890')
 add('wild_beans', pods(1), leaf='#4a8a2a', fruit='#5a9a2a', petal='#f0f0e8')
 add('wild_peas', pods(2), leaf='#5aa23a', fruit='#80c050', petal='#f0e4f0')
 add('wild_lentils', pods(3), leaf='#5a8a5a', fruit='#b0a050', petal='#d8d0f0')
+add('wild_chickpea', chickpea(5), leaf='#6a8e5a', fruit='#c4b878', petal='#d8a8c8')
 add('blueberry_bush', bush(14, 1, 1, seed=1), leaf='#3a6a3a', fruit='#3a58a8', wood='#5a4030')
 add('raspberry_bush', bush(10, 3, 1, leaf_len=3.2, seed=2), leaf='#4a7a2a', fruit='#d03050', wood='#6a4a30')
 add('elderberry_bush', bush(6, 4, 1, leaf_len=3.4, seed=3), leaf='#3e6a2e', fruit='#4a2050', wood='#6a5a4a')
