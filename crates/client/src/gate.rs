@@ -3780,9 +3780,9 @@ const STRUCK_SHOWN: [(u16, voxmar_engine::combat::Blow); 5] = {
     use voxmar_engine::combat::Blow;
     [(4, Blow::Plain), (6, Blow::Beat), (0, Blow::Plain), (7, Blow::Counter), (11, Blow::Flourish)]
 };
-const HURT_SHOWN: [(u16, voxmar_engine::combat::Defended); 6] = {
+const HURT_SHOWN: [(u16, voxmar_engine::combat::Defended); 7] = {
     use voxmar_engine::combat::Defended;
-    [(5, Defended::Hit), (0, Defended::Missed), (2, Defended::Blocked), (0, Defended::Perfect), (0, Defended::Dodged), (0, Defended::Evaded)]
+    [(5, Defended::Hit), (0, Defended::Missed), (2, Defended::Blocked), (0, Defended::Blocked), (0, Defended::Perfect), (0, Defended::Dodged), (0, Defended::Evaded)]
 };
 
 /// The splats drawn now, by their words and colour (without its fade).
@@ -3823,8 +3823,8 @@ fn splats_missing(world: &mut World) -> Vec<String> {
     let (locale, style) = (world.resource::<Locale>(), world.resource::<CombatStyle>());
     let wanted = STRUCK_SHOWN
         .iter()
-        .map(|&(damage, blow)| (struck_words(locale, damage, blow), if damage == 0 { style.defended(voxmar_engine::combat::Defended::Missed) } else { style.blow(blow) }))
-        .chain(HURT_SHOWN.iter().map(|&(damage, defended)| (hurt_words(locale, damage, defended), style.defended(defended))));
+        .map(|&(damage, blow)| (struck_words(locale, damage, blow), style.struck_look(damage, blow)))
+        .chain(HURT_SHOWN.iter().map(|&(damage, defended)| (hurt_words(locale, damage, defended), style.hurt_look(damage, defended))));
     wanted.filter(|(words, look)| !drawn.iter().any(|(text, color)| text == words && same_colour(*color, look.color.color()))).map(|(words, _)| words).collect()
 }
 
@@ -3843,13 +3843,23 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (fighting.struck_count, fighting.hurt_count)
             };
             let shown = world.resource::<SplatsShown>();
+            // A killing blow's splat stays over the falling body (the fights killed a snail
+            // and bears), drawn for several frames, not dropped with the creature.
+            const FALLEN_FRAMES: u32 = 3;
             let result = if !shown.meter {
                 Err("the meter never showed through the fights".to_owned())
-            } else if shown.struck.len() as u32 != struck || shown.hurt.len() as u32 != hurt {
-                Err(format!("{} splats for the player's {struck} blows, {} for the {hurt} at the player", shown.struck.len(), shown.hurt.len()))
+            } else if shown.struck != struck || shown.hurt != hurt {
+                Err(format!("{} splats drawn for the player's {struck} blows, {} for the {hurt} at the player", shown.struck, shown.hurt))
+            } else if shown.over_fallen < FALLEN_FRAMES {
+                Err(format!("no splat stayed over a creature killed in the fights for {FALLEN_FRAMES} frames (the most: {})", shown.over_fallen))
             } else {
-                let sample: Vec<&str> = shown.struck.iter().map(|s| s.2.as_str()).chain(shown.hurt.iter().map(|h| h.2.as_str())).take(8).collect();
-                Ok(format!("a splat for each of the player's {struck} blows and the {hurt} at them ({}), and the meter, up to {} pips", sample.join(", "), shown.pips))
+                let sample: Vec<&str> = shown.recent.iter().map(String::as_str).take(8).collect();
+                Ok(format!(
+                    "a splat drawn for each of the player's {struck} blows and the {hurt} at them ({}), the killing blows' over the falling bodies (up to {} frames), and the meter, up to {} pips",
+                    sample.join(", "),
+                    shown.over_fallen,
+                    shown.pips
+                ))
             };
             gate.check("combat marks: fights", result);
             let Some((id, feet)) = creature else {
@@ -3900,7 +3910,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 set_language(world, "en");
                 world.resource_mut::<crate::settings::Settings>().damage_numbers = false;
                 let shown = world.resource::<SplatsShown>();
-                gate.count_before = (shown.struck.len() + shown.hurt.len()) as u32;
+                gate.count_before = shown.struck + shown.hurt;
                 if let Some((id, _)) = creature {
                     tell_blows(world, id);
                 }
@@ -3933,7 +3943,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if in_phase < 0.25 || shown.seen() != told {
                 return;
             }
-            let drawn = (shown.struck.len() + shown.hurt.len()) as u32 - gate.count_before;
+            let drawn = shown.struck + shown.hurt - gate.count_before;
             gate.check("damage numbers off", if drawn == 0 { Ok(format!("with damage numbers off, {} blows drew no splat", STRUCK_SHOWN.len() + HURT_SHOWN.len())) } else { Err(format!("with damage numbers off, {drawn} splats were drawn")) });
             world.resource_mut::<crate::settings::Settings>().damage_numbers = true;
             // The sword guards only at the Attack level that wields it (the feel step left

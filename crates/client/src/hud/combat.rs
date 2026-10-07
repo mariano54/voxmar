@@ -1,15 +1,18 @@
 //! How a fight shows on screen, from [`crate::fight::Fighting`]: under the crosshair the
 //! swing meter, filling over the weapon's cooldown and lighting on the beat, with the
 //! rhythm pips beneath it (all lit, the next blow on the beat is a flourish); and
-//! hitsplats, the number each blow did rising and fading over the creature it struck, or
-//! above the hotbar for those that came at the player, coloured by what kind of blow it
-//! was or what came of it (a miss, a block, a perfect block, a dodge). A blow that hurts
-//! the player also flashes what the health bar lost. All of it follows the design wiki's
-//! combat feel (the meter, pips and hitsplats; damage numbers can be switched off, and the
-//! guard put on a toggle, in the settings).
+//! hitsplats, the number each blow did rising and fading over the body of the creature it
+//! struck (following it as it falls, so the killing blow shows too), or above the hotbar
+//! for those that came at the player, coloured by what kind of blow it was or what came of
+//! it (a miss, a block, a perfect block, a dodge), stacked newest lowest so quick blows
+//! never cover each other. A blow that hurts the player also flashes what the health bar
+//! lost. All of it follows the design wiki's combat feel (the meter, pips and hitsplats;
+//! damage numbers can be switched off, and the guard put on a toggle, in the settings).
 //!
-//! Sizes, colours and timings are the packages' (`combat_hud.ron`, in `core`); a later
-//! package changes what it gives.
+//! Sizes, colours and timings are the packages' (`combat_hud.ron`, in `core`), read and
+//! checked with the rest of the content at launch; a later package changes what it gives.
+
+use std::collections::VecDeque;
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -25,7 +28,7 @@ use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, font_size};
-use crate::ui::widgets::{Meter, TRAIL, UiFont, shadowed};
+use crate::ui::widgets::{Meter, SHADOW, TRAIL, UiFont, shadowed};
 
 pub struct CombatHudPlugin;
 
@@ -34,12 +37,16 @@ impl Plugin for CombatHudPlugin {
         app.init_resource::<SplatsShown>()
             .add_systems(PostStartup, spawn)
             .add_systems(Update, (meter, flash).run_if(in_state(Screen::InGame)))
-            .add_systems(PostUpdate, splats.after(TransformSystems::Propagate).run_if(in_state(Screen::InGame)));
+            .add_systems(PostUpdate, splats.after(TransformSystems::Propagate).run_if(in_state(Screen::InGame)))
+            .add_systems(OnExit(Screen::InGame), hide);
     }
 }
 
 /// The file a package styles fights' marks in.
 pub const FILE: &str = "combat_hud.ron";
+
+/// The splats' words kept for the gate to sample.
+const RECENT: usize = 16;
 
 /// An sRGB colour, 0 to 255 a channel.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -52,13 +59,15 @@ impl Rgb {
 }
 
 /// The swing meter under the crosshair: its size and place in interface pixels, its
-/// colours, and the seconds it stays after the last blow either way.
+/// colours (`frame` the pixel round it and its pips), and the seconds it stays after the
+/// last blow either way.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeterStyle {
     pub width: f32,
     pub height: f32,
     pub below: f32,
+    pub frame: Rgb,
     pub empty: Rgb,
     pub fill: Rgb,
     /// Lit while a blow would be on the beat.
@@ -86,12 +95,12 @@ pub struct PipStyle {
 #[serde(deny_unknown_fields)]
 pub struct Splat {
     pub color: Rgb,
-    #[serde(default = "body")]
+    #[serde(default = "heading")]
     pub scale: u32,
 }
 
-fn body() -> u32 {
-    2
+fn heading() -> u32 {
+    3
 }
 
 /// What a blow that hurts the player does to the health bar: what it lost shows in `color`
@@ -103,15 +112,19 @@ pub struct FlashStyle {
     pub seconds: f32,
 }
 
-/// Hitsplats: the seconds each shows and how far it rises meanwhile, the room between
-/// those stacked on one creature, how high over the hotbar the player's own stand, each
-/// kind's look by its name, and the health bar's flash when a blow hurts.
+/// Hitsplats: the seconds each shows, how far it rises meanwhile and the share of them it
+/// stays whole before fading, the room between those stacked on one creature and how many
+/// stand at most (the oldest goes early), how high over the bottom of the hotbar (wherever
+/// Raise HUD puts it) the player's own stand,
+/// each kind's look by its name, and the health bar's flash when a blow hurts.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SplatStyle {
     pub seconds: f32,
     pub rise: f32,
+    pub fade: f32,
     pub gap: f32,
+    pub most: usize,
     pub hurt_above: f32,
     pub blows: std::collections::BTreeMap<String, Splat>,
     pub defended: std::collections::BTreeMap<String, Splat>,
@@ -137,7 +150,8 @@ pub struct CombatStyle {
 }
 
 impl CombatStyle {
-    /// Reads every package's file in order, a later one changing what it gives.
+    /// Reads every package's file in order, a later one changing what it gives, and refuses
+    /// a style missing a kind or with a size or time that cannot be.
     pub fn load(files: &[ContentFile]) -> Result<Self, String> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let (mut meter, mut pips, mut splats): (Option<MeterStyle>, Option<PipStyle>, Option<SplatStyle>) = (None, None, None);
@@ -167,7 +181,38 @@ impl CombatStyle {
         for kind in DEFENDED.iter().map(|d| defended_name(*d)) {
             style.splats.defended.get(kind).ok_or(format!("{FILE}: no splat for a blow {kind}"))?;
         }
+        style.check()?;
         Ok(style)
+    }
+
+    /// Sizes and times that must be more than nothing, those that may be nothing but not
+    /// less, the fade's share, the stack's height and the splats' scales.
+    fn check(&self) -> Result<(), String> {
+        let (meter, pips, splats) = (&self.meter, &self.pips, &self.splats);
+        let positive = [("meter.width", meter.width), ("meter.height", meter.height), ("pips.size", pips.size), ("splats.seconds", splats.seconds), ("splats.flash.seconds", splats.flash.seconds)];
+        for (name, value) in positive {
+            if !(value > 0.0) {
+                return Err(format!("{FILE}: {name} must be more than 0, not {value}"));
+            }
+        }
+        let some = [("meter.below", meter.below), ("meter.linger", meter.linger), ("pips.gap", pips.gap), ("splats.rise", splats.rise), ("splats.gap", splats.gap), ("splats.hurt_above", splats.hurt_above)];
+        for (name, value) in some {
+            if !(value >= 0.0) {
+                return Err(format!("{FILE}: {name} may not be less than 0 ({value})"));
+            }
+        }
+        if !(0.0..1.0).contains(&splats.fade) {
+            return Err(format!("{FILE}: splats.fade is the share of a splat's time before it fades, from 0 to under 1, not {}", splats.fade));
+        }
+        if splats.most == 0 {
+            return Err(format!("{FILE}: splats.most must be at least 1"));
+        }
+        for (kind, splat) in splats.blows.iter().chain(&splats.defended) {
+            if !(2..=6).contains(&splat.scale) {
+                return Err(format!("{FILE}: the {kind} splat's scale must be from 2 to 6, not {}", splat.scale));
+            }
+        }
+        Ok(())
     }
 
     pub fn blow(&self, blow: Blow) -> Splat {
@@ -211,9 +256,28 @@ pub fn struck_words(locale: &Locale, damage: u16, blow: Blow) -> String {
     locale.format(&format!("combat.splat.blow.{}", blow_name(blow)), &[("damage", &damage)])
 }
 
-/// The words of a splat for a blow at the player.
+/// The words of a splat for a blow at the player: a block that stopped it all, or a hit
+/// the armour took whole, says so, with no "-0".
 pub fn hurt_words(locale: &Locale, damage: u16, defended: Defended) -> String {
-    locale.format(&format!("combat.splat.defended.{}", defended_name(defended)), &[("damage", &damage)])
+    match (defended, damage) {
+        (Defended::Blocked, 0) => locale.get("combat.splat.defended.blocked_all").to_owned(),
+        (Defended::Hit, 0) => locale.get("combat.splat.defended.unhurt").to_owned(),
+        _ => locale.format(&format!("combat.splat.defended.{}", defended_name(defended)), &[("damage", &damage)]),
+    }
+}
+
+impl CombatStyle {
+    /// How the splat for the player's blow looks: by its kind, or as a miss if it did
+    /// nothing (a bleed always did).
+    pub fn struck_look(&self, damage: u16, blow: Blow) -> Splat {
+        if damage == 0 && blow != Blow::Bleed { self.defended(Defended::Missed) } else { self.blow(blow) }
+    }
+
+    /// How the splat for a blow at the player looks: by what came of it, or as a miss if a
+    /// hit did no harm.
+    pub fn hurt_look(&self, damage: u16, defended: Defended) -> Splat {
+        if damage == 0 && defended == Defended::Hit { self.defended(Defended::Missed) } else { self.defended(defended) }
+    }
 }
 
 /// The meter and its pips.
@@ -223,8 +287,6 @@ pub struct MeterRoot;
 struct MeterFill;
 #[derive(Component)]
 struct MeterBuffer;
-#[derive(Component)]
-struct MeterTrack;
 #[derive(Component)]
 struct Pip(u8);
 /// Where splats are drawn.
@@ -238,19 +300,27 @@ pub struct HitSplat {
     pub at: f64,
     /// Its text's size, for stacking before it is laid out.
     size: f32,
+    /// The middle of the creature's body, kept once the body is gone.
+    anchor: Option<Vec3>,
+    /// Frames it was drawn over a body falling or gone.
+    over_fallen: u32,
 }
 
-/// The hitsplats drawn so far, ever, by what they said: for the gate to check against
-/// what the server told.
+/// What the splats have drawn so far: for the gate to check against what the server told.
 #[derive(Resource, Default)]
 pub struct SplatsShown {
-    pub struck: Vec<(u16, Blow, String)>,
-    pub hurt: Vec<(u16, Defended, String)>,
+    /// How many splats were drawn for the player's blows, and for blows at the player.
+    pub struck: u32,
+    pub hurt: u32,
+    /// The words of the last few drawn, newest last.
+    pub recent: VecDeque<String>,
     /// Whether the meter has shown in a fight, and the most pips it lit.
     pub meter: bool,
     pub pips: u8,
     /// How many blows that hurt the player have flashed the health bar.
     pub flashes: u32,
+    /// The most frames one splat was drawn over a body falling or gone: a killing blow's.
+    pub over_fallen: u32,
     struck_seen: u32,
     hurt_seen: u32,
     /// When the blow that last flashed the health bar came (app seconds).
@@ -262,16 +332,21 @@ impl SplatsShown {
     pub fn seen(&self) -> (u32, u32) {
         (self.struck_seen, self.hurt_seen)
     }
+
+    fn drew(&mut self, words: &str) {
+        if self.recent.len() == RECENT {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(words.to_owned());
+    }
 }
 
-fn spawn(mut commands: Commands, launch: Res<Launch>) {
-    let style = match CombatStyle::load(&launch.content.files) {
-        Ok(style) => style,
-        Err(e) => {
-            error!("combat marks: {e}");
-            return;
-        }
-    };
+/// A frame one interface pixel wide round what it holds.
+fn framed(frame: Rgb) -> (Node, BackgroundColor) {
+    (Node { padding: UiRect::all(Val::Px(PX)), ..default() }, BackgroundColor(frame.color()))
+}
+
+fn spawn(mut commands: Commands, launch: Res<Launch>, style: Res<CombatStyle>) {
     let (meter, pips) = (style.meter, style.pips);
     // Its top `below` under the middle of the screen, where the crosshair is.
     let column = Node {
@@ -285,22 +360,25 @@ fn spawn(mut commands: Commands, launch: Res<Launch>) {
     };
     let centred = UiTransform::from_translation(Val2::percent(-50.0, 0.0));
     commands.spawn((column, centred, MeterRoot, Visibility::Hidden, GlobalZIndex(0))).with_children(|column| {
-        let track = Node { width: Val::Px(meter.width * PX), height: Val::Px(meter.height * PX), ..default() };
-        column.spawn((track, BackgroundColor(meter.empty.color()), MeterTrack)).with_children(|track| {
-            let full = Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() };
-            track.spawn((full.clone(), BackgroundColor(meter.buffer.color()), MeterBuffer));
-            track.spawn((full, BackgroundColor(meter.fill.color()), MeterFill));
+        column.spawn(framed(meter.frame)).with_children(|frame| {
+            let track = Node { width: Val::Px(meter.width * PX), height: Val::Px(meter.height * PX), ..default() };
+            frame.spawn((track, BackgroundColor(meter.empty.color()))).with_children(|track| {
+                let full = Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() };
+                track.spawn((full.clone(), BackgroundColor(meter.buffer.color()), MeterBuffer));
+                track.spawn((full, BackgroundColor(meter.fill.color()), MeterFill));
+            });
         });
         let row = Node { column_gap: Val::Px(pips.gap * PX), margin: UiRect::top(Val::Px(pips.gap * PX)), ..default() };
         column.spawn(row).with_children(|row| {
             for i in 0..launch.content.combat.feel.pips {
-                row.spawn((Node { width: Val::Px(pips.size * PX), height: Val::Px(pips.size * PX), ..default() }, BackgroundColor(pips.off.color()), Pip(i)));
+                row.spawn(framed(meter.frame)).with_children(|frame| {
+                    frame.spawn((Node { width: Val::Px(pips.size * PX), height: Val::Px(pips.size * PX), ..default() }, BackgroundColor(pips.off.color()), Pip(i)));
+                });
             }
         });
     });
     let layer = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     commands.spawn((layer, SplatLayer, GlobalZIndex(0)));
-    commands.insert_resource(style);
 }
 
 /// The meter and pips, while a fight is on: a blow either way lately, a swing under way,
@@ -311,7 +389,7 @@ fn meter(
     ui: Res<UiState>,
     player: Res<LocalPlayer>,
     launch: Res<Launch>,
-    style: Option<Res<CombatStyle>>,
+    style: Res<CombatStyle>,
     fighting: Res<Fighting>,
     mut shown: ResMut<SplatsShown>,
     mut root: Query<&mut Visibility, With<MeterRoot>>,
@@ -319,7 +397,7 @@ fn meter(
     mut buffer: Query<&mut Node, (With<MeterBuffer>, Without<MeterFill>)>,
     mut pips: Query<(&Pip, &mut BackgroundColor), Without<MeterFill>>,
 ) {
-    let (Some(style), Ok(mut visibility)) = (style, root.single_mut()) else { return };
+    let Ok(mut visibility) = root.single_mut() else { return };
     let now = time.elapsed_secs_f64();
     let combat = &launch.content.combat;
     let held = player.inventory.get(player.selected).map(|s| s.item);
@@ -366,28 +444,36 @@ fn meter(
     }
 }
 
+/// The splats' working lists, kept from frame to frame so none is allocated anew.
+#[derive(Default)]
+struct Scratch {
+    entities: Vec<Entity>,
+    stack: Vec<(Option<u32>, f64, f32)>,
+    order: Vec<usize>,
+    lifted: Vec<Option<f32>>,
+}
+
 /// Spawns a splat for each blow the server answered since, moves each with what it
 /// marks, rises and fades it, and lets it go.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn splats(
     mut commands: Commands,
     time: Res<Time>,
-    ui: Res<UiState>,
-    player: Res<LocalPlayer>,
+    (ui, player): (Res<UiState>, Res<LocalPlayer>),
     launch: Res<Launch>,
-    locale: Res<Locale>,
-    font: Res<UiFont>,
-    style: Option<Res<CombatStyle>>,
+    (locale, font): (Res<Locale>, Res<UiFont>),
+    style: Res<CombatStyle>,
     fighting: Res<Fighting>,
     creatures: Res<Creatures>,
     scale: Res<UiScale>,
-    mut shown: ResMut<SplatsShown>,
     settings: Res<Settings>,
+    mut shown: ResMut<SplatsShown>,
+    mut scratch: Local<Scratch>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     layer: Query<(Entity, &ComputedNode), With<SplatLayer>>,
-    mut marks: Query<(Entity, &HitSplat, &ComputedNode, &mut Node, &mut TextColor, &mut Visibility)>,
+    mut marks: Query<(Entity, &mut HitSplat, &ComputedNode, &mut Node, &mut TextColor, &mut TextShadow, &mut Visibility)>,
 ) {
-    let (Some(style), Ok((layer, area))) = (style, layer.single()) else { return };
+    let Ok((layer, area)) = layer.single() else { return };
     let now = time.elapsed_secs_f64();
     let splat = &style.splats;
     // New since last time: the tails of what the server said.
@@ -400,101 +486,123 @@ fn splats(
     let add = |commands: &mut Commands, creature: Option<u32>, words: String, look: Splat, at: f64| {
         let node = Node { position_type: PositionType::Absolute, ..default() };
         let centred = UiTransform::from_translation(Val2::percent(-50.0, -100.0));
-        let size = font_size(look.scale.max(2));
-        let mark = HitSplat { creature, at, size };
+        let size = font_size(look.scale);
+        let mark = HitSplat { creature, at, size, anchor: None, over_fallen: 0 };
         commands.entity(layer).with_child((node, centred, shadowed(&font.0, words, size, look.color.color()), TightLine, mark, Visibility::Hidden));
     };
     for &(creature, damage, blow, at) in fighting.struck.iter().rev().take(new_struck).rev() {
         let words = struck_words(&locale, damage, blow);
-        shown.struck.push((damage, blow, words.clone()));
-        let look = if damage == 0 && blow != Blow::Bleed { style.defended(Defended::Missed) } else { style.blow(blow) };
-        add(&mut commands, Some(creature), words, look, at);
+        shown.struck += 1;
+        shown.drew(&words);
+        add(&mut commands, Some(creature), words, style.struck_look(damage, blow), at);
     }
     for &(_, damage, defended, at) in fighting.hurt.iter().rev().take(new_hurt).rev() {
         let words = hurt_words(&locale, damage, defended);
-        shown.hurt.push((damage, defended, words.clone()));
-        add(&mut commands, None, words, style.defended(defended), at);
+        shown.hurt += 1;
+        shown.drew(&words);
+        add(&mut commands, None, words, style.hurt_look(damage, defended), at);
     }
     let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
     let Ok((camera, eye)) = camera.single() else { return };
     let size = area.size() * area.inverse_scale_factor();
-    let stacked: Vec<(Entity, (Option<u32>, f64, f32))> =
-        marks.iter().map(|(entity, mark, laid, ..)| (entity, (mark.creature, mark.at, (laid.size().y * laid.inverse_scale_factor()).max(mark.size)))).collect();
-    let lifts: std::collections::HashMap<Entity, f32> =
-        stacked.iter().map(|(entity, _)| *entity).zip(lifts(stacked.iter().map(|(_, mark)| *mark), splat.gap * PX)).collect();
-    for (entity, mark, _, mut node, mut color, mut visibility) in &mut marks {
-        let age = (now - mark.at) as f32 / splat.seconds.max(1e-3);
-        if age >= 1.0 {
+    let hotbar = Vec2::new(size.x / 2.0, size.y - splat.hurt_above * PX - super::bottom_offset(&settings));
+    let Scratch { entities, stack, order, lifted } = &mut *scratch;
+    entities.clear();
+    stack.clear();
+    for (entity, mark, laid, ..) in &marks {
+        entities.push(entity);
+        stack.push((mark.creature, mark.at, (laid.size().y * laid.inverse_scale_factor()).max(mark.size)));
+    }
+    lifts(stack, splat.gap * PX, splat.most, order, lifted);
+    for (&entity, &lift) in entities.iter().zip(lifted.iter()) {
+        let Ok((_, mut mark, _, mut node, mut color, mut shadow, mut visibility)) = marks.get_mut(entity) else { continue };
+        let age = (now - mark.at) as f32 / splat.seconds;
+        // Gone with its time, or pushed off the top of a full stack.
+        let Some(lift) = lift.filter(|_| age < 1.0) else {
             commands.entity(entity).despawn();
             continue;
-        }
-        // Over the creature's head, or over the hotbar for the player's own.
-        let base = match mark.creature {
-            Some(id) => creatures.living().find(|(living, ..)| *living == id).and_then(|(_, kind, feet)| {
-                let head = feet + Vec3::Y * launch.content.creatures.get(kind).def.body.size.1;
-                camera.world_to_viewport(eye, head).ok().map(|at| at / scale.0)
-            }),
-            None => Some(Vec2::new(size.x / 2.0, size.y - splat.hurt_above * PX)),
+        };
+        // Over the middle of the creature's body, alive or falling (or where it last was),
+        // or over the hotbar for the player's own.
+        let (base, fallen) = match mark.creature {
+            Some(id) => {
+                let body = creatures.centre(&launch, id);
+                if let Some((centre, _)) = body {
+                    mark.anchor = Some(centre);
+                }
+                let at = mark.anchor.and_then(|anchor| camera.world_to_viewport(eye, anchor).ok()).map(|at| at / scale.0);
+                (at, body.is_none_or(|(_, falling)| falling))
+            }
+            None => (Some(hotbar), false),
         };
         let Some(base) = base.filter(|_| !screen) else {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
-        let lift = lifts.get(&entity).copied().unwrap_or_default();
         let at = base - Vec2::Y * (lift + age * splat.rise * PX);
         node.left = Val::Px(at.x);
         node.top = Val::Px(at.y);
-        // Full for the first half, then fading out.
-        let alpha = if age < 0.5 { 1.0 } else { 1.0 - (age - 0.5) * 2.0 };
+        // Whole for the first part of its time, then fading out, its shadow with it.
+        let alpha = if age < splat.fade { 1.0 } else { 1.0 - (age - splat.fade) / (1.0 - splat.fade) };
         let faded = color.0.with_alpha(alpha);
         if color.0 != faded {
             color.0 = faded;
+            shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
         }
         visibility.set_if_neq(Visibility::Inherited);
+        if fallen {
+            mark.over_fallen += 1;
+            shown.over_fallen = shown.over_fallen.max(mark.over_fallen);
+        }
     }
 }
 
-/// How far above its place each splat stands, for splats given as (whom, when, height):
-/// those on one creature (or on the player) stack upward, newest lowest and each older one
-/// its newer neighbour's height and `gap` higher, so blows close together never cover each
-/// other; as they all rise alike, an older one stays above a newer.
-pub fn lifts(splats: impl Iterator<Item = (Option<u32>, f64, f32)>, gap: f32) -> Vec<f32> {
-    let splats: Vec<_> = splats.collect();
-    let mut order: Vec<usize> = (0..splats.len()).collect();
+/// How far above its place each splat stands, for splats given as (whom, when, height),
+/// into `lifts` (with `order` to work in): those on one creature (or on the player) stack
+/// upward, newest lowest and each older one its newer neighbour's height and `gap` higher,
+/// so blows close together never cover each other; as they all rise alike, an older one
+/// stays above a newer. Past the `most` newest on one, a splat stands nowhere (None): the
+/// oldest leave early.
+pub fn lifts(splats: &[(Option<u32>, f64, f32)], gap: f32, most: usize, order: &mut Vec<usize>, lifts: &mut Vec<Option<f32>>) {
+    order.clear();
+    order.extend(0..splats.len());
     // By whom, then newest first (the later told first, of two told at once).
     order.sort_by(|&a, &b| splats[a].0.cmp(&splats[b].0).then(splats[b].1.total_cmp(&splats[a].1)).then(b.cmp(&a)));
-    let mut lifts = vec![0.0; splats.len()];
-    let mut above = (None, 0.0);
-    for i in order {
+    lifts.clear();
+    lifts.resize(splats.len(), None);
+    let mut above = (None, 0.0, 0);
+    for &i in order.iter() {
         let (whom, _, height) = splats[i];
         if above.0 != Some(whom) {
-            above = (Some(whom), 0.0);
+            above = (Some(whom), 0.0, 0);
         }
-        lifts[i] = above.1;
+        if above.2 < most {
+            lifts[i] = Some(above.1);
+        }
         above.1 += height + gap;
+        above.2 += 1;
     }
-    lifts
 }
 
 /// The health bar's colour for what was lost, `age` seconds after a blow hurt the player:
 /// the flash's at first, the bar's own once it is over.
 pub fn flash_colour(flash: &FlashStyle, age: f32) -> Color {
-    let share = (age / flash.seconds.max(1e-3)).clamp(0.0, 1.0);
+    let share = (age / flash.seconds).clamp(0.0, 1.0);
     Color::from(Srgba::from(flash.color.color()).mix(&Srgba::from(TRAIL), share))
 }
 
-/// A blow that hurt the player flashes what the health bar lost, then lets it drain as
-/// any loss does.
+/// A blow that hurt the player, a block that let some through too, flashes what the health
+/// bar lost, then lets it drain as any loss does.
 fn flash(
     time: Res<Time>,
-    style: Option<Res<CombatStyle>>,
+    style: Res<CombatStyle>,
     fighting: Res<Fighting>,
     mut shown: ResMut<SplatsShown>,
     health: Query<&Meter, With<HealthMeter>>,
     mut colours: Query<&mut BackgroundColor>,
 ) {
-    let (Some(style), Ok(meter)) = (style, health.single()) else { return };
-    let last = fighting.hurt.iter().filter(|h| h.2 == Defended::Hit && h.1 > 0).map(|h| h.3).reduce(f64::max);
+    let Ok(meter) = health.single() else { return };
+    let last = fighting.hurt.iter().filter(|h| h.1 > 0).map(|h| h.3).reduce(f64::max);
     if let Some(last) = last
         && shown.flashed_at.is_none_or(|was| last > was)
     {
@@ -505,6 +613,27 @@ fn flash(
     let colour = flash_colour(&style.splats.flash, age);
     if let Ok(mut background) = colours.get_mut(meter.trail()) {
         background.set_if_neq(BackgroundColor(colour));
+    }
+}
+
+/// Leaving the game: the meter hidden, the splats gone, the health bar's own colour back.
+fn hide(
+    mut commands: Commands,
+    mut root: Query<&mut Visibility, With<MeterRoot>>,
+    marks: Query<Entity, With<HitSplat>>,
+    health: Query<&Meter, With<HealthMeter>>,
+    mut colours: Query<&mut BackgroundColor>,
+) {
+    if let Ok(mut visibility) = root.single_mut() {
+        *visibility = Visibility::Hidden;
+    }
+    for mark in &marks {
+        commands.entity(mark).despawn();
+    }
+    if let Ok(meter) = health.single()
+        && let Ok(mut background) = colours.get_mut(meter.trail())
+    {
+        background.0 = TRAIL;
     }
 }
 
@@ -521,41 +650,79 @@ mod tests {
         content.files.iter().cloned().collect()
     }
 
+    /// A whole style but for `splats`, which is `(…)` around the given fields.
+    fn style_with(splats: &str) -> String {
+        format!(
+            r#"(meter: (width: 24, height: 3, below: 12, frame: (0,0,0), empty: (0,0,0), fill: (0,0,0), beat: (0,0,0), buffer: (0,0,0), linger: 3.0),
+            pips: (size: 3, gap: 2, off: (0,0,0), on: (0,0,0), ready: (0,0,0)),
+            splats: ({splats}))"#
+        )
+    }
+
+    const KINDS: &str = r#"blows: { "plain": (color: (0,0,0)), "beat": (color: (0,0,0)), "flourish": (color: (0,0,0)), "counter": (color: (0,0,0)), "bleed": (color: (0,0,0)) },
+        defended: { "hit": (color: (0,0,0)), "missed": (color: (0,0,0)), "blocked": (color: (0,0,0)), "perfect": (color: (0,0,0)), "dodged": (color: (0,0,0)), "evaded": (color: (0,0,0)) }"#;
+
     #[test]
     fn the_games_style_has_every_kind_and_a_later_package_changes_one() {
         let files = assets();
         let style = CombatStyle::load(&files).unwrap();
         assert!(style.meter.width > 0.0 && style.splats.seconds > 0.0);
         let mut modded = files.clone();
-        modded.push(file("mod", r#"(splats: (seconds: 2.0, rise: 30, gap: 1, hurt_above: 64, blows: { "flourish": (color: (1, 2, 3), scale: 4) }, defended: {}, flash: (color: (9, 9, 9), seconds: 1.0)))"#));
+        modded.push(file("mod", r#"(splats: (seconds: 2.0, rise: 30, fade: 0.25, gap: 1, most: 4, hurt_above: 64, blows: { "flourish": (color: (1, 2, 3), scale: 5) }, defended: {}, flash: (color: (9, 9, 9), seconds: 1.0)))"#));
         let changed = CombatStyle::load(&modded).unwrap();
-        assert_eq!(changed.blow(Blow::Flourish), Splat { color: Rgb(1, 2, 3), scale: 4 });
+        assert_eq!(changed.blow(Blow::Flourish), Splat { color: Rgb(1, 2, 3), scale: 5 });
         assert_eq!(changed.splats.flash, FlashStyle { color: Rgb(9, 9, 9), seconds: 1.0 });
         assert_eq!(changed.blow(Blow::Plain), style.blow(Blow::Plain), "kinds the mod does not give stay");
-        assert_eq!(changed.splats.seconds, 2.0);
+        assert_eq!((changed.splats.seconds, changed.splats.most), (2.0, 4));
         assert_eq!(changed.meter, style.meter);
     }
 
     #[test]
     fn a_style_missing_a_kind_is_refused() {
-        let source = r#"(meter: (width: 24, height: 3, below: 12, empty: (0,0,0), fill: (0,0,0), beat: (0,0,0), buffer: (0,0,0), linger: 3.0),
-            pips: (size: 3, gap: 2, off: (0,0,0), on: (0,0,0), ready: (0,0,0)),
-            splats: (seconds: 1.0, rise: 10, gap: 1, hurt_above: 60, blows: { "plain": (color: (0,0,0)) }, defended: {}, flash: (color: (0,0,0), seconds: 0.5)))"#;
-        let refused = CombatStyle::load(&[file("core", source)]).unwrap_err();
+        let source = style_with(r#"seconds: 1.0, rise: 10, fade: 0.5, gap: 1, most: 6, hurt_above: 60, blows: { "plain": (color: (0,0,0)) }, defended: {}, flash: (color: (0,0,0), seconds: 0.5)"#);
+        let refused = CombatStyle::load(&[file("core", &source)]).unwrap_err();
         assert!(refused.contains("no splat for a beat blow"), "{refused}");
     }
 
+    /// Times and sizes that cannot be are refused at load, naming what is wrong, rather than
+    /// clamped where they are used.
+    #[test]
+    fn a_style_with_impossible_numbers_is_refused() {
+        let good = "seconds: 0.9, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 70";
+        let with = |numbers: &str, flash: f32| style_with(&format!("{numbers}, {KINDS}, flash: (color: (0,0,0), seconds: {flash})"));
+        assert!(CombatStyle::load(&[file("core", &with(good, 0.6))]).is_ok());
+        for (bad, says) in [
+            ("seconds: 0.0, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 70", "splats.seconds"),
+            ("seconds: 0.9, rise: -1, fade: 0.5, gap: 1, most: 6, hurt_above: 70", "splats.rise"),
+            ("seconds: 0.9, rise: 14, fade: 1.0, gap: 1, most: 6, hurt_above: 70", "splats.fade"),
+            ("seconds: 0.9, rise: 14, fade: 0.5, gap: -2, most: 6, hurt_above: 70", "splats.gap"),
+            ("seconds: 0.9, rise: 14, fade: 0.5, gap: 1, most: 0, hurt_above: 70", "splats.most"),
+        ] {
+            let refused = CombatStyle::load(&[file("core", &with(bad, 0.6))]).unwrap_err();
+            assert!(refused.contains(says), "{bad}: {refused}");
+        }
+        assert!(CombatStyle::load(&[file("core", &with(good, 0.0))]).unwrap_err().contains("flash.seconds"));
+        let tiny = style_with(&format!("{good}, {}, flash: (color: (0,0,0), seconds: 0.6)", KINDS.replacen("\"plain\": (color: (0,0,0))", "\"plain\": (color: (0,0,0), scale: 1)", 1)));
+        assert!(CombatStyle::load(&[file("core", &tiny)]).unwrap_err().contains("plain splat's scale"));
+        let negative_linger = with(good, 0.6).replace("linger: 3.0", "linger: -1.0");
+        assert!(CombatStyle::load(&[file("core", &negative_linger)]).unwrap_err().contains("meter.linger"));
+    }
+
     /// Splats on one creature stack upward, newest lowest, apart from another creature's
-    /// and the player's own; two told at once still stand apart.
+    /// and the player's own; two told at once still stand apart; past the most, the oldest
+    /// stand nowhere.
     #[test]
     fn splats_on_one_creature_stack_newest_lowest() {
         let splats = [(Some(7), 1.0, 16.0), (Some(7), 1.2, 32.0), (None, 1.1, 16.0), (Some(7), 1.1, 16.0), (Some(9), 1.0, 16.0), (None, 1.1, 16.0)];
-        let lifts = lifts(splats.into_iter(), 2.0);
+        let (mut order, mut lifted) = (Vec::new(), Vec::new());
+        lifts(&splats, 2.0, 6, &mut order, &mut lifted);
         // Creature 7: newest (1.2, 32 high) at 0, then 1.1 above it, then 1.0 above that.
-        assert_eq!((lifts[1], lifts[3], lifts[0]), (0.0, 34.0, 52.0));
-        assert_eq!(lifts[4], 0.0, "another creature's stack starts on its own");
+        assert_eq!((lifted[1], lifted[3], lifted[0]), (Some(0.0), Some(34.0), Some(52.0)));
+        assert_eq!(lifted[4], Some(0.0), "another creature's stack starts on its own");
         // The player's two, told at once: the later told lowest.
-        assert_eq!((lifts[5], lifts[2]), (0.0, 18.0));
+        assert_eq!((lifted[5], lifted[2]), (Some(0.0), Some(18.0)));
+        lifts(&splats, 2.0, 2, &mut order, &mut lifted);
+        assert_eq!((lifted[1], lifted[3], lifted[0]), (Some(0.0), Some(34.0), None), "the oldest of three leaves a stack of two");
     }
 
     /// A blow that hurts shows the flash's colour on what the bar lost, fading to the bar's
@@ -573,7 +740,7 @@ mod tests {
     }
 
     /// Every blow and every outcome reads in each language, with its damage where it has
-    /// one.
+    /// one; a bleed says it is one, and a block that stopped it all shows no number.
     #[test]
     fn splats_have_words_in_every_language() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
@@ -583,10 +750,13 @@ mod tests {
                 let words = struck_words(&locale, 12, blow);
                 assert!(words.contains("12"), "{code}: {blow:?} reads {words:?}");
             }
+            assert_ne!(struck_words(&locale, 12, Blow::Bleed), struck_words(&locale, 12, Blow::Plain), "{code}: a bleed reads as a plain blow");
             assert!(!struck_words(&locale, 0, Blow::Plain).contains('0'), "{code}: a miss shows a number");
             for defended in DEFENDED {
-                let words = hurt_words(&locale, 7, defended);
-                assert!(!words.is_empty() && !words.contains("combat."), "{code}: {defended:?} reads {words:?}");
+                for damage in [0, 7] {
+                    let words = hurt_words(&locale, damage, defended);
+                    assert!(!words.is_empty() && !words.contains("combat.") && !words.contains("-0"), "{code}: {defended:?} for {damage} reads {words:?}");
+                }
             }
             assert!(hurt_words(&locale, 7, Defended::Hit).contains('7') && hurt_words(&locale, 7, Defended::Blocked).contains('7'));
         }

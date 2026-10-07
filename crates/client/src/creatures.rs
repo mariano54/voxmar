@@ -355,6 +355,14 @@ impl Creatures {
         self.shown.keys().filter_map(move |&id| self.aabb(launch, id))
     }
 
+    /// The middle of creature `id`'s body while it is shown, alive or falling, and whether
+    /// it is falling: for marks that follow a body to its end (the killing blow's hitsplat).
+    pub fn centre(&self, launch: &Launch, id: u32) -> Option<(Vec3, bool)> {
+        let shown = self.shown.get(&id)?;
+        let height = launch.content.creatures.get(shown.view.species).def.body.size.1 * shown.view.scale;
+        Some((shown.position + Vec3::Y * height * 0.5, shown.dying.is_some()))
+    }
+
     fn aabb(&self, launch: &Launch, id: u32) -> Option<Aabb> {
         let shown = self.shown.get(&id).filter(|s| s.dying.is_none())?;
         let size = launch.content.creatures.get(shown.view.species).def.body.size;
