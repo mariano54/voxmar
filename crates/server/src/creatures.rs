@@ -578,7 +578,7 @@ impl Server {
     }
 
     /// A creature dies: its loot pops out, its killer earns experience.
-    fn creature_dies(&mut self, id: u32) {
+    pub(crate) fn creature_dies(&mut self, id: u32) {
         let Some(creature) = self.creatures.live.remove(&id) else { return };
         self.creatures.gone.push(CreatureGone { id, died: true });
         let species = self.content.creatures.get(creature.species);

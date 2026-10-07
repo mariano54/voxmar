@@ -435,6 +435,28 @@ pub struct CreatureDef {
     /// Named breeds, by their genes.
     #[serde(default)]
     pub breeds: Vec<crate::genes::BreedDef>,
+    /// How it falls when it dies.
+    #[serde(default)]
+    pub death: Death,
+}
+
+/// How a creature falls when it dies, as the client draws it: it tips over onto its side
+/// (away from whoever watches) over the first half, then sinks into the ground.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Death {
+    /// Seconds from the blow to gone.
+    pub seconds: f32,
+    /// Degrees it rolls onto its side.
+    pub roll: f32,
+    /// How far it sinks, in its own heights.
+    pub sink: f32,
+}
+
+impl Default for Death {
+    fn default() -> Self {
+        Self { seconds: 0.9, roll: 90.0, sink: 1.0 }
+    }
 }
 
 fn first() -> u8 {

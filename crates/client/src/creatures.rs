@@ -50,9 +50,8 @@ use crate::world::ClientWorld;
 /// second, and the furthest it runs ahead of the server's last word, in seconds.
 const FOLLOW: f32 = 14.0;
 const AHEAD: f32 = 0.25;
-/// Seconds a struck creature flashes red, and a dead one takes to topple and go.
+/// Seconds a struck creature flashes red.
 const FLASH: f32 = 0.3;
-const DYING: f32 = 0.9;
 /// Hearts shown over a creature being tamed or ready to breed.
 const HEARTS: usize = 3;
 /// Blocks within which a creature turns its head to watch the player, and how far it turns.
@@ -186,8 +185,13 @@ struct Shown {
     /// Seconds until it may make an idle noise or call again.
     quiet: f32,
     flash: f32,
-    /// Seconds since it died, if it did.
+    /// Seconds since it died, if it did; the side it falls to (away from the eye), and
+    /// what its fall did, for the gate: how far it strayed in heights, whether the eye was
+    /// ever inside it.
     dying: Option<f32>,
+    fall_side: f32,
+    death_strayed: f32,
+    death_around_eye: bool,
     /// Whether we have struck at it, so the target readout shows its health.
     struck: bool,
     /// Smoothed head pitch and turn, and body crouch.
@@ -211,6 +215,8 @@ pub struct Creatures {
     waiting: Vec<CreatureView>,
     /// Creatures our blows landed on since the last frame, to cry out.
     cries: Vec<u32>,
+    /// How each creature seen to die fell, for the gate's check.
+    pub falls: Vec<Fall>,
     /// Each species' body, made when the first of it is seen.
     bodies: FxHashMap<CreatureId, SpeciesBody>,
     /// The skin a body wears until its own is painted (it is hidden meanwhile).
@@ -227,6 +233,14 @@ pub struct Creatures {
     fighting: Option<(u32, f32)>,
     /// Our own player's id, to know our kept creatures.
     pub me: Option<voxmar_protocol::PlayerId>,
+}
+
+/// How a dead creature's body fell: how far from where it stood, in its heights, and
+/// whether the eye was ever inside it (it is hidden then, never drawn around the camera).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fall {
+    pub strayed: f32,
+    pub around_eye: bool,
 }
 
 /// A creature as the target readout shows it.
@@ -413,6 +427,17 @@ struct Air<'w> {
     atmosphere: Res<'w, crate::render::atmosphere::SharedAtmosphere>,
 }
 
+/// How far a creature's body reaches from its centre, at its size: its head ahead, or half
+/// its width.
+fn species_reach(species: &creature::Creature, scale: f32) -> f32 {
+    species.reach.max(species.def.body.size.0 * 0.5) * scale
+}
+
+/// Keeps the furthest a dying body strayed.
+fn creatures_dying_check(furthest: &mut f32, strayed: f32) {
+    *furthest = furthest.max(strayed);
+}
+
 /// A sound a creature makes now.
 fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
     CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young }
@@ -572,6 +597,9 @@ fn show(
                 quiet: 2.0 + creature::unit_from(creature::mix(view.seed as u64, 77)) * 8.0,
                 flash: 0.0,
                 dying: None,
+                fall_side: 0.0,
+                death_strayed: 0.0,
+                death_around_eye: false,
                 struck: false,
                 nod: 0.0,
                 look: 0.0,
@@ -652,9 +680,20 @@ fn show(
             .with_scale(Vec3::splat(scale));
         if let Some(dying) = shown.dying.as_mut() {
             *dying += dt;
-            let t = (*dying / DYING).min(1.0);
-            root.rotation *= Quat::from_rotation_z(t.min(0.5) * 2.0 * std::f32::consts::FRAC_PI_2);
-            root.translation.y -= (t - 0.5).max(0.0) * height;
+            // It falls away from the eye: rolled toward the eye at melee range, its back
+            // came through the camera and showed the inside of the body.
+            if shown.fall_side == 0.0 {
+                let local = Quat::from_rotation_y(shown.yaw).inverse() * (eye - shown.position);
+                shown.fall_side = if local.x >= 0.0 { 1.0 } else { -1.0 };
+            }
+            let death = &def.death;
+            let t = (*dying / death.seconds.max(0.05)).min(1.0);
+            root.rotation *= Quat::from_rotation_z(shown.fall_side * (t * 2.0).min(1.0) * death.roll.to_radians());
+            root.translation.y -= (t * 2.0 - 1.0).max(0.0) * death.sink * height;
+            // How far it strays from where it stood, in heights, for the gate.
+            let middle = root.translation + root.rotation * Vec3::Y * height * 0.5;
+            let strayed = middle.distance(shown.position + Vec3::Y * height * 0.5) / height.max(0.1);
+            creatures_dying_check(&mut shown.death_strayed, strayed);
             if t >= 1.0 {
                 finished.push(id);
             }
@@ -709,8 +748,15 @@ fn show(
                 material.extension.skin = shown.skin.clone();
             }
         }
+        // Never drawn around the eye: inside a body only its inside shows. Hidden while the
+        // eye is within its reach (a fallen one's reach is its height, on its side).
+        let reach = species_reach(registry.get(shown.view.species), scale).max(if shown.dying.is_some() { height } else { 0.0 });
+        let around_eye = to_eye.with_y(0.0).length() < reach + 0.25 && (-0.2..height + 0.2).contains(&(eye.y - shown.position.y));
+        if around_eye && shown.dying.is_some() {
+            shown.death_around_eye = true;
+        }
         if let Ok(mut shows) = visible.get_mut(shown.body) {
-            let want = if far || shown.painting.is_some() { Visibility::Hidden } else { Visibility::Inherited };
+            let want = if far || around_eye || shown.painting.is_some() { Visibility::Hidden } else { Visibility::Inherited };
             if *shows != want {
                 *shows = want;
             }
@@ -767,6 +813,7 @@ fn show(
     }
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
+            creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye });
             despawn(&mut commands, &shown);
             if shown.painting.is_none() {
                 images.remove(&shown.skin);

@@ -294,6 +294,8 @@ struct Gate {
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
+    /// Whether the struck creature's fall was judged.
+    fall_judged: bool,
     /// Whether the loading cover was checked.
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
@@ -377,6 +379,7 @@ impl Gate {
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
+            fall_judged: false,
             cover_checked: false,
             spills: Vec::new(),
             font: None,
@@ -2872,6 +2875,25 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         1 => {
+            // How its body fell, once it has: over onto its side close to where it stood,
+            // and never drawn around the eye (from close up, its inside showed).
+            if !gate.fall_judged {
+                let fall = world.resource::<crate::creatures::Creatures>().falls.last().copied();
+                if let Some(fall) = fall {
+                    gate.fall_judged = true;
+                    let result = if fall.strayed > 1.5 {
+                        Err(format!("its body strayed {:.2} of its heights from where it died", fall.strayed))
+                    } else if fall.around_eye {
+                        Ok(format!("fell within {:.2} of its heights; the eye was inside it, and it was hidden", fall.strayed))
+                    } else {
+                        Ok(format!("fell within {:.2} of its heights, away from the eye", fall.strayed))
+                    };
+                    gate.check("creature falls", result);
+                } else if in_phase > 4.0 {
+                    gate.fall_judged = true;
+                    gate.check("creature falls", Err("its body never finished falling".into()));
+                }
+            }
             // Walk over where it died, as a player picks up loot.
             let feet = world.resource::<LocalPlayer>().position;
             let close = feet.xz().distance(gate.quarry.xz()) < 0.4;
