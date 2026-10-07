@@ -13,6 +13,11 @@
             name: "barrel", sound: Wood, textures: Column(end: "barrel_top", side: "barrel_side"),
             hardness: 2.0, color: (130, 90, 55), tags: ["barrel", "wood", "storage", "building"],
         ),
+        // A slatted crate: boards with gaps between them, braced at the corners.
+        (
+            name: "crate", sound: Wood, textures: Sides(top: "crate_top", bottom: "crate_top", side: "crate_side"),
+            hardness: 1.5, color: (160, 120, 70), tags: ["crate", "wood", "storage", "building"],
+        ),
         // A sack of grain, its neck tied off.
         (
             name: "sack", sound: Grass, textures: Sides(top: "sack_top", bottom: "sack_top", side: "sack_side"),
