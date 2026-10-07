@@ -45,7 +45,6 @@
         (template: "drop", name: "baked_potato", tags: ["root", "cooked", "edible", "food:5", "heal:3"], all: (color: (190, 140, 70))),
         (template: "drop", name: "roast_carrot", tags: ["root", "cooked", "edible", "food:4", "heal:2", "flavour:sweet"], all: (color: (220, 110, 30))),
         (template: "drop", name: "egg", tags: ["egg", "raw", "edible", "food:1"], all: (color: (240, 228, 200))),
-        (template: "drop", name: "duck_egg", tags: ["egg", "raw", "edible", "food:1"], all: (color: (200, 220, 210))),
         (template: "drop", name: "fried_egg", tags: ["egg", "cooked", "edible", "food:4", "heal:3"], all: (color: (250, 220, 120))),
         (template: "drop", name: "milk", tags: ["dairy", "drink", "edible", "food:3"], all: (color: (245, 245, 240))),
         // Fish (fishing.ron): raw ones barely fill, cooked ones heal well.
