@@ -2,6 +2,10 @@
 // language files work). A block made from a template is named by its member's name with
 // the family's filled in: `block.base.{name}_log` and `family.base.oak` make オークの原木.
 {
+    "armour_set.hide_wraps": "皮の防具",
+    "armour_set.copper": "銅",
+    "armour_set.bronze_scale": "青銅の鱗鎧",
+    "armour_set.chainmail": "鎖帷子",
     "effect.base.hearty": "滋養",
     "effect.base.hearty.description": "焼いた肉。続く間、体力の上限が4増える。",
     "effect.base.hunters_vigour": "狩人の活力",

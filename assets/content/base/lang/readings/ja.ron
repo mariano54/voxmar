@@ -3,6 +3,10 @@
 // template's reading fills `{name}` with its family's reading, or the family's name when
 // that has no kanji. A mod adds its own `lang/readings/ja.ron` beside its `lang/ja.ron`.
 {
+    "armour_set.hide_wraps": "かわのぼうぐ",
+    "armour_set.copper": "どう",
+    "armour_set.bronze_scale": "せいどうのうろこよろい",
+    "armour_set.chainmail": "くさりかたびら",
     "effect.base.hearty": "じよう",
     "effect.base.hunters_vigour": "かりゅうどのかつりょく",
     "effect.base.sustained": "はらもち",

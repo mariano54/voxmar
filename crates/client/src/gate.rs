@@ -205,7 +205,8 @@ enum Step {
     /// and a dodge as the next blow comes down lets it pass.
     Feel,
     /// A chainmail shirt and a wooden shield in hand, each right click puts one on in its
-    /// own worn slot, and with the shield on the guard is the shield's.
+    /// own worn slot, and with the shield on the guard is the shield's; the inventory
+    /// shows both in its worn wells, and their tooltips the armour lines.
     Wear,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
@@ -3269,7 +3270,9 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let guard = launch.content.combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill)));
                     let stop = guard.map_or(0.0, |g| g.stop);
                     gate.check("wear", if stop > 0.5 { Ok(format!("a chainmail shirt and a wooden shield on; the guard stops {:.0}%", stop * 100.0)) } else { Err(format!("with the shield on, the guard stops {:.0}%", stop * 100.0)) });
-                    end_wear(world, gate, now);
+                    // The inventory shows them worn.
+                    world.resource_mut::<UiState>().inventory_open = true;
+                    gate.advance(now);
                 } else {
                     gate.advance(now);
                 }
@@ -3278,8 +3281,46 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 end_wear(world, gate, now);
             }
         }
+        5 => {
+            if in_phase < 0.5 {
+                return;
+            }
+            gate.check("wear: worn slots", worn_drawn(world));
+            world.resource_mut::<UiState>().inventory_open = false;
+            end_wear(world, gate, now);
+        }
         _ => end_wear(world, gate, now),
     }
+}
+
+/// The inventory's six worn wells, the shirt and the shield drawn in theirs, and their
+/// tooltips' armour lines: the set, its weight and Defence level, its armour, and the
+/// shield's guard.
+fn worn_drawn(world: &mut World) -> Result<String, String> {
+    use crate::hud::SlotIcon;
+    use voxmar_engine::inventory::{LAST, WORN};
+    let icons: Vec<(usize, Handle<Image>, bool)> =
+        world.query::<(&SlotIcon, &ImageNode, &InheritedVisibility)>().iter(world).filter(|(slot, ..)| (WORN..=LAST).contains(&slot.0)).map(|(slot, image, shown)| (slot.0, image.image.clone(), shown.get())).collect();
+    let wells: std::collections::BTreeSet<usize> = icons.iter().map(|(slot, ..)| *slot).collect();
+    if wells.len() != LAST - WORN + 1 {
+        return Err(format!("{} worn wells drawn, not {}", wells.len(), LAST - WORN + 1));
+    }
+    let (registry, images) = (&world.resource::<ClientWorld>().registry, world.resource::<crate::hud::HudImages>());
+    for (name, at) in [WORN_SHIRT, WORN_SHIELD] {
+        let item = registry.id(name).ok_or(format!("no {name}"))?;
+        let want = images.icons.get(item.0 as usize).cloned().unwrap_or_default();
+        if !icons.iter().any(|(slot, image, shown)| *slot == WORN + at && *image == want && *shown) {
+            return Err(format!("the worn well {at} does not show {name}"));
+        }
+    }
+    let (locale, launch, player) = (world.resource::<Locale>(), world.resource::<Launch>(), world.resource::<LocalPlayer>());
+    let lines = |name: &str| registry.id(name).map(|item| crate::hud::inventory::armour_lines(locale, &launch.content, player, item)).unwrap_or_default();
+    let (shirt, shield) = (lines(WORN_SHIRT.0), lines(WORN_SHIELD.0));
+    if shirt.len() < 2 || shield.len() < 3 {
+        return Err(format!("the tooltips read {shirt:?} and {shield:?}"));
+    }
+    let words = |lines: &[(String, Color)]| lines.iter().map(|(line, _)| line.as_str()).collect::<Vec<_>>().join(" / ");
+    Ok(format!("six worn wells, the shirt and shield shown in theirs; tooltips \"{}\" and \"{}\"", words(&shirt), words(&shield)))
 }
 
 /// Takes it all off again, for the steps after.

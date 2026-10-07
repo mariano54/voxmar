@@ -746,28 +746,30 @@ fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, play
 /// What a piece of armour or a shield is: its slot and the Defence level that wears it (red
 /// while the player is below it, with why it then gives nothing), its armour and weight,
 /// and the styles it is strong against.
-fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
+pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
     let combat = &content.combat;
     let defence = content.skills.ids().find(|&id| content.skills.get(id).name == "core:defence");
     let level = defence.map_or(1, |id| content.skills.level(player.skills.xp(id)));
-    let slot_name = |key: &str| locale.get_or(&format!("item.slot.{key}"), key).to_owned();
-    let (slot, needs, armour, weight, resists) = if let Some(piece) = combat.piece(item) {
-        (piece.slot.key(), piece.level, piece.armour, Some(piece.weight), combat.set(piece.set).resists.clone())
+    // What it is and who wears it (red below the player's Defence), then what it stops.
+    let (head, needs, armour, guard, resists) = if let Some(piece) = combat.piece(item) {
+        let set = combat.set(piece.set);
+        let name = locale.get_or(&format!("armour_set.{}", set.name), &voxmar_engine::lang::title_from_id(&set.name)).to_owned();
+        let weight = locale.get_or(&format!("item.weight.{}", piece.weight.key()), piece.weight.key()).to_owned();
+        (locale.format("item.armour", &[("set", &name), ("weight", &weight), ("level", &piece.level)]), piece.level, piece.armour, None, set.resists.clone())
     } else if let Some(shield) = combat.shield(item) {
-        (voxmar_engine::combat::Slot::Shield.key(), shield.level, shield.armour, None, Vec::new())
+        (locale.format("item.armour_shield", &[("level", &shield.level)]), shield.level, shield.armour, Some(shield.guard), Vec::new())
     } else {
         return Vec::new();
     };
     let ready = level >= needs;
-    let mut lines = vec![(locale.format("item.armour", &[("slot", &slot_name(slot)), ("level", &needs)]), if ready { SOFT } else { ERROR })];
-    let weight = weight.map(|w| locale.get_or(&format!("item.weight.{}", w.key()), w.key()).to_owned());
-    lines.push((
-        match weight {
-            Some(weight) => locale.format("item.armour_value", &[("armour", &armour), ("weight", &weight)]),
-            None => locale.format("item.armour_shield", &[("armour", &armour)]),
-        },
-        SOFT,
-    ));
+    let mut lines = vec![(head, if ready { SOFT } else { ERROR })];
+    if armour > 0 {
+        lines.push((locale.format("item.armour_value", &[("armour", &armour)]), SOFT));
+    }
+    if let Some(guard) = guard {
+        let stop = (guard.stop * 100.0).round() as u32;
+        lines.push((locale.format("item.armour_guard", &[("stop", &stop), ("arc", &(guard.arc.round() as u32))]), SOFT));
+    }
     if !resists.is_empty() {
         let styles: Vec<String> = resists.iter().map(|style| locale.get(&format!("item.style.{}", style.key())).to_owned()).collect();
         lines.push((locale.format("item.armour_resists", &[("styles", &styles.join(locale.get("language.comma")))]), SOFT));
