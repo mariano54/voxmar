@@ -10,8 +10,9 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::glam::{IVec2, IVec3, Vec2};
 
 use super::canvas::{Canvas, Facing, Frame, Palette, Put, unit};
-use super::def::{Extra, Lean, Lever, Levers, Prop, PropKind, Roof, SettlementsDef, Shape, Special, StyleDef, fill};
+use super::def::{CentreKind, Extra, Form, Lever, Levers, Prop, PropKind, Roof, SettlementsDef, Shape, Special, Spot, StyleDef, fill};
 use super::house::{self, Fixed, Kind, Mats, Spec};
+use super::centre;
 use super::{Building, Plan, Raster};
 use crate::geology::GeoSample;
 use crate::rng::{Rng, hash3};
@@ -314,7 +315,12 @@ fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, rng: &mut Rng) -> Kit {
         hedge: Palette(resolve(&style.hedge.0)),
         weathered: Palette(resolve(&style.weathered.0)),
         crops,
-        roofs: style.roofs.clone(),
+        // The style's roofs, each weighed again by how the place leans.
+        roofs: style
+            .roofs
+            .iter()
+            .map(|&(shape, w)| (shape, w * ctx.def.roofs.iter().find(|r| r.shape == shape).map_or(1.0, |r| r.lean.weigh(r.weight, levers))))
+            .collect(),
         window: style.window.as_deref().and_then(|w| ctx.resolved.get(w)),
         wood,
     }
@@ -363,6 +369,10 @@ struct Lot {
     door: Option<(IVec2, Vec2)>,
     /// Blocks of yard kept clear around it.
     yard: i32,
+    /// Which of the `houses` it is.
+    house: Option<usize>,
+    /// Which of the `centrepieces` it is.
+    centre: Option<usize>,
 }
 
 /// Plans the settlement of the grid square `cell`, if it has one.
@@ -401,7 +411,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let sizes: Vec<(usize, f32)> = def.sizes.iter().enumerate().map(|(i, s)| (i, s.lean.weigh(s.weight, &levers))).collect();
     let size_index = pick(&mut rng, &sizes)?;
     let size = &def.sizes[size_index];
-    let layouts: Vec<(usize, f32)> = def.layouts.iter().enumerate().map(|(i, l)| (i, l.lean.weigh(l.weight, &levers))).collect();
+    let layouts: Vec<(usize, f32)> = def.layouts.iter().enumerate().filter(|(_, l)| fresh || !l.water).map(|(i, l)| (i, l.lean.weigh(l.weight, &levers))).collect();
     let layout_index = pick(&mut rng, &layouts)?;
     let shape = def.layouts[layout_index].shape;
     let kit = kit(ctx, style, &levers, &mut rng);
@@ -441,11 +451,20 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let crowding = levers.get(Lever::Crowding);
     let wealth = levers.get(Lever::Wealth);
     let village = size.always.contains(&Special::Inn);
-    let square = match shape {
+    let mut square = match shape {
         Shape::Scatter => 2,
         Shape::Green => between(&mut rng, size.square) * 3 / 2 + 2,
         _ => between(&mut rng, size.square),
     };
+    // The one great thing it is known by, if it has one: on the square, which grows to
+    // hold it and the well beside it, or out at the end of a lane.
+    let centres: Vec<(usize, f32)> = def.centrepieces.iter().enumerate().map(|(i, c)| (i, c.lean.weigh(c.weight, &levers))).collect();
+    let centrepiece = if rng.chance(size.centrepiece) { pick(&mut rng, &centres) } else { None };
+    let centre_spec = centrepiece.map(|i| centre_spec(def, i, &kit, &levers, &mut rng, style));
+    let on_square = centrepiece.is_some_and(|i| def.centrepieces[i].spot == Spot::Square);
+    if on_square && let Some(spec) = &centre_spec {
+        square = square.max(spec.w.max(spec.d) / 2 + 5).min(16);
+    }
     let bounds = Rect { min: cell * def.grid.spacing + def.grid.margin / 2, max: (cell + 1) * def.grid.spacing - def.grid.margin / 2 - 1 };
 
     // Lanes.
@@ -467,6 +486,30 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     };
     let ring = square as f32 + 0.5;
     let from_square = |angle: f32| centre.as_vec2() + Vec2::from_angle(angle) * ring;
+    // A straight lane, where the ground between its ends is firm.
+    let straight = |ground: &mut Ground, from: Vec2, to: Vec2, half: f32| -> Option<Lane> {
+        let n = (from.distance(to) / 2.0).ceil().max(1.0) as i32;
+        (0..=n).all(|i| firm(&ground.at(from.lerp(to, i as f32 / n as f32).round().as_ivec2()))).then(|| Lane { points: vec![from, to], half, paved: false, main: false })
+    };
+    // Side lanes off the lanes there are, `count` of them, on the side `away` points to if
+    // any.
+    let branch = |ground: &mut Ground, lanes: &mut Vec<Lane>, rng: &mut Rng, count: i32, away: Option<Vec2>| {
+        let street: Vec<Lane> = lanes.clone();
+        for k in 0..count {
+            let Some(lane) = street.get((k as usize) % street.len().max(1)) else { break };
+            let s = lane.length() * (0.35 + 0.4 * rng.unit());
+            let (p, dir) = lane.along(s);
+            let mut side = if k % 2 == 0 { 1.0 } else { -1.0 };
+            if let Some(away) = away
+                && Vec2::new(-dir.y, dir.x).dot(away) * side < 0.0
+            {
+                side = -side;
+            }
+            let angle = dir.to_angle() + side * std::f32::consts::FRAC_PI_2 + (rng.unit() - 0.5) * 0.4 * (1.0 - order);
+            let l = lane_length(rng) * 0.5;
+            walk_from(ground, lanes, rng, p, angle, l, side_half, false);
+        }
+    };
     match shape {
         Shape::Spokes | Shape::Green | Shape::Scatter => {
             for k in 0..lane_count {
@@ -515,15 +558,85 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
                 let l2 = lane_length(&mut rng) * 1.2;
                 walk_from(&mut ground, &mut lanes, &mut rng, from_square(back), back, l2, main_half, true);
                 // Side lanes off the street.
-                let street: Vec<Lane> = lanes.clone();
-                for k in 0..lane_count.saturating_sub(2) {
-                    let lane = &street[(k as usize) % street.len().max(1)];
-                    let s = lane.length() * (0.35 + 0.4 * rng.unit());
-                    let (p, dir) = lane.along(s);
-                    let side = if k % 2 == 0 { 1.0 } else { -1.0 };
-                    let angle = dir.to_angle() + side * std::f32::consts::FRAC_PI_2 + (rng.unit() - 0.5) * 0.4 * (1.0 - order);
-                    let l = lane_length(&mut rng) * 0.5;
-                    walk_from(&mut ground, &mut lanes, &mut rng, p, angle, l, side_half, false);
+                branch(&mut ground, &mut lanes, &mut rng, lane_count.saturating_sub(2), None);
+            }
+        }
+        Shape::Crossroads => {
+            // Four ways meeting square on, side lanes off them.
+            for k in 0..4 {
+                let angle = start_angle + k as f32 * std::f32::consts::FRAC_PI_2 + (rng.unit() - 0.5) * 0.2 * (1.0 - order);
+                let l = lane_length(&mut rng);
+                walk_from(&mut ground, &mut lanes, &mut rng, from_square(angle), angle, l, main_half, true);
+            }
+            branch(&mut ground, &mut lanes, &mut rng, lane_count.saturating_sub(3), None);
+        }
+        Shape::Ring => {
+            // A lane round the square at a house's depth or two, houses both sides of it,
+            // two paths in from the square and lanes leading out.
+            let radius = square as f32 + 10.0 + 4.0 * (1.0 - crowding);
+            let n = (radius * std::f32::consts::TAU / 3.0).ceil() as usize;
+            let wobble = 1.2 * (1.0 - order);
+            let mut points = Vec::with_capacity(n + 1);
+            let mut whole = true;
+            for k in 0..=n {
+                let a = start_angle + k as f32 * std::f32::consts::TAU / n as f32;
+                let r = radius + (unit(hash3(ctx.seed ^ 0x5149, cell.x, (k % n) as i32, cell.y)) - 0.5) * 2.0 * wobble;
+                let p = centre.as_vec2() + Vec2::from_angle(a) * r;
+                let g = ground.at(p.round().as_ivec2());
+                if !firm(&g) || (g.height - square_height).abs() > 6 {
+                    whole = false;
+                    break;
+                }
+                points.push(p);
+            }
+            let reach = if whole {
+                lanes.push(Lane { points, half: side_half + 0.2, paved: false, main: false });
+                for k in 0..2 {
+                    let a = start_angle + 0.4 + k as f32 * std::f32::consts::PI;
+                    if let Some(lane) = straight(&mut ground, from_square(a), centre.as_vec2() + Vec2::from_angle(a) * radius, side_half) {
+                        lanes.push(lane);
+                    }
+                }
+                radius
+            } else {
+                ring
+            };
+            let out = lane_count.max(2);
+            for k in 0..out {
+                let angle = start_angle + 1.2 + k as f32 * std::f32::consts::TAU / out as f32 + (rng.unit() - 0.5) * 0.3;
+                let l = lane_length(&mut rng) * 0.7;
+                walk_from(&mut ground, &mut lanes, &mut rng, centre.as_vec2() + Vec2::from_angle(angle) * reach, angle, l, main_half, true);
+            }
+        }
+        Shape::Riverside => {
+            // A street along the bank of the water near, lanes off it away from the water.
+            let toward = water_near(&mut ground, centre, 48);
+            let along = toward.map_or(start_angle, |t| t.to_angle() + std::f32::consts::FRAC_PI_2);
+            let l = lane_length(&mut rng) * 1.2;
+            walk_from(&mut ground, &mut lanes, &mut rng, from_square(along), along, l, main_half, true);
+            let back = along + std::f32::consts::PI;
+            let l2 = lane_length(&mut rng) * 1.2;
+            walk_from(&mut ground, &mut lanes, &mut rng, from_square(back), back, l2, main_half, true);
+            branch(&mut ground, &mut lanes, &mut rng, lane_count.saturating_sub(2), toward.map(|t| -t));
+        }
+        Shape::Terraces => {
+            // Streets along the slope, one above another, joined by paths up from the
+            // square.
+            let uphill = slope(&mut ground, centre).unwrap_or_else(|| Vec2::from_angle(start_angle));
+            let along = uphill.to_angle() + std::f32::consts::FRAC_PI_2;
+            for angle in [along, along + std::f32::consts::PI] {
+                let l = lane_length(&mut rng);
+                walk_from(&mut ground, &mut lanes, &mut rng, from_square(angle), angle, l, main_half, true);
+            }
+            let step = 11.0 + 4.0 * (1.0 - crowding);
+            for side in [-1.0f32, 1.0] {
+                let up = uphill * side;
+                let to = centre.as_vec2() + up * (ring + step);
+                let Some(path) = straight(&mut ground, centre.as_vec2() + up * ring, to, side_half) else { continue };
+                lanes.push(path);
+                for angle in [along, along + std::f32::consts::PI] {
+                    let l = lane_length(&mut rng) * 0.7;
+                    walk_from(&mut ground, &mut lanes, &mut rng, to, angle, l, side_half, false);
                 }
             }
         }
@@ -545,15 +658,29 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let square_rect = Rect { min: centre - square, max: centre + square };
     let gap = 1 + ((1.0 - crowding) * 3.0).round() as i32;
 
+    // A centrepiece on the square stands at its heart, the well beside it.
+    let mut well_at = centre;
+    if on_square
+        && let Some(spec) = centre_spec.clone()
+    {
+        let extent = IVec2::new(spec.w, spec.d);
+        let rect = Rect::new(centre - extent / 2, extent);
+        let mats = kit.mats(ctx, &mut rng);
+        let frame = Frame::fit(IVec2::ZERO, extent - 1, Facing::North, rect.min, square_height);
+        occupied.push(rect);
+        lots.push(Lot { spec, rect, frame, floor: square_height, mats, door: None, yard: 0, house: None, centre: centrepiece });
+        let side = [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y][rng.below(4) as usize];
+        well_at = centre + side * (extent.max_element() / 2 + 3);
+    }
     // The well at the heart.
     if wanted.contains(&Special::Well) {
         let size = if village && rng.chance(0.5) { 4 } else { 3 };
         let spec = special_spec(Kind::Well, size, size, &kit, &levers, &mut rng, style);
-        let rect = Rect::new(centre - size / 2, IVec2::splat(size));
+        let rect = Rect::new(well_at - size / 2, IVec2::splat(size));
         let mats = kit.mats(ctx, &mut rng);
         let frame = Frame::fit(IVec2::ZERO, IVec2::new(size - 1, size - 1), Facing::North, rect.min, square_height);
         occupied.push(rect);
-        lots.push(Lot { spec, rect, frame, floor: square_height, mats, door: None, yard: 0 });
+        lots.push(Lot { spec, rect, frame, floor: square_height, mats, door: None, yard: 0, house: None, centre: None });
     }
     // Stalls round the square, facing in.
     let stalls = wanted.iter().filter(|s| **s == Special::Stall).count();
@@ -571,7 +698,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         let mats = kit.mats(ctx, &mut rng);
         let frame = Frame::fit(low, high, facing, rect.min, square_height);
         occupied.push(rect);
-        lots.push(Lot { spec, rect, frame, floor: square_height, mats, door: None, yard: 0 });
+        lots.push(Lot { spec, rect, frame, floor: square_height, mats, door: None, yard: 0, house: None, centre: None });
     }
 
     // The rest go along the lanes: grand places nearest the square, houses after, and
@@ -600,6 +727,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         }
     }
 
+    let mut town = Town { ctx, kit: &kit, levers: &levers, style, size: &size.name, built: FxHashMap::default() };
     // On a green, houses first take the rim, facing in.
     if shape == Shape::Green {
         let rim = (square as f32 + 4.0 + gap as f32).max(8.0);
@@ -610,8 +738,9 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             angle += 0.45 + rng.unit() * 0.5;
             let p = centre.as_vec2() + Vec2::from_angle(angle) * rim;
             let kind = queue[0];
-            if let Some(lot) = place(ctx, &kit, &levers, style, &mut ground, &mut rng, kind, p, Facing::toward(centre.as_vec2() - p), &occupied, &lanes, &square_rect, gap, None) {
+            if let Some(lot) = place(&mut town, &mut ground, &mut rng, kind, None, p, Facing::toward(centre.as_vec2() - p), &occupied, &lanes, &square_rect, gap, None) {
                 occupied.extend(lot.taken());
+                town.count(&lot);
                 lots.push(lot);
                 queue.remove(0);
             }
@@ -633,8 +762,9 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
                 let kind = queue[0];
                 let setback = lane.half + 1.5 + ((1.0 - crowding) * 3.0 * rng.unit()).round();
                 let front = p + normal * setback;
-                if let Some(lot) = place(ctx, &kit, &levers, style, &mut ground, &mut rng, kind, front, Facing::toward(-normal), &occupied, &lanes, &square_rect, gap, Some(p)) {
+                if let Some(lot) = place(&mut town, &mut ground, &mut rng, kind, None, front, Facing::toward(-normal), &occupied, &lanes, &square_rect, gap, Some(p)) {
                     occupied.extend(lot.taken());
+                    town.count(&lot);
                     lots.push(lot);
                     queue.remove(0);
                     s += spacing * (0.6 + 0.8 * rng.unit());
@@ -649,8 +779,10 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         }
         spacing *= 0.7;
     }
-    // Out at the ends of the lanes.
-    for kind in outskirts {
+    // Out at the ends of the lanes, and a centrepiece that stands there.
+    let edge = centre_spec.filter(|_| !on_square);
+    let outskirts: Vec<(Kind, Option<Spec>)> = edge.into_iter().map(|s| (Kind::Centrepiece, Some(s))).chain(outskirts.into_iter().map(|k| (k, None))).collect();
+    for (kind, given) in outskirts {
         let mut placed = false;
         for _ in 0..10 {
             let lane = &lanes[rng.below(lanes.len() as u32) as usize];
@@ -660,7 +792,10 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
             let normal = Vec2::new(-dir.y, dir.x) * side;
             let front = p + normal * (lane.half + 2.0 + rng.unit() * 4.0);
-            if let Some(lot) = place(ctx, &kit, &levers, style, &mut ground, &mut rng, kind, front, Facing::toward(-normal), &occupied, &lanes, &square_rect, gap, None) {
+            if let Some(mut lot) = place(&mut town, &mut ground, &mut rng, kind, given.clone(), front, Facing::toward(-normal), &occupied, &lanes, &square_rect, gap, None) {
+                if kind == Kind::Centrepiece {
+                    lot.centre = centrepiece;
+                }
                 occupied.extend(lot.taken());
                 lots.push(lot);
                 placed = true;
@@ -673,11 +808,24 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         return None;
     }
 
-    // Props by the lanes and in the yards.
+    // Props by the lanes and in the yards, and by the water.
     let mut canvas = Canvas::default();
-    let mut props: Vec<(IVec2, usize)> = Vec::new();
-    let prop_weights: Vec<(usize, f32)> = def.props.iter().enumerate().map(|(i, p)| (i, p.lean.weigh(p.weight, &levers))).collect();
+    let mut props: Vec<(Rect, usize, Facing)> = Vec::new();
+    let prop_weights: Vec<(usize, f32)> = def.props.iter().enumerate().filter(|(_, p)| !p.water).map(|(i, p)| (i, p.lean.weigh(p.weight, &levers))).collect();
+    let water_weights: Vec<(usize, f32)> = def.props.iter().enumerate().filter(|(_, p)| p.water).map(|(i, p)| (i, p.lean.weigh(p.weight, &levers))).collect();
     let lamp = def.props.iter().position(|p| p.kind == PropKind::Drawn(Prop::Lamp));
+    // Where a prop would stand with its first block at `at`, if the ground there is free.
+    let fit = |ground: &mut Ground, occupied: &[Rect], prop: usize, at: IVec2, facing: Facing, clearance: f32| -> Option<Rect> {
+        let (low, high) = prop_box(&def.props[prop].kind);
+        let rect = match &def.props[prop].kind {
+            PropKind::Drawn(_) => Rect::new(at, Frame::extent(low, high, facing)),
+            PropKind::Blocks(..) => Rect { min: at + low, max: at + high },
+        };
+        let free = occupied.iter().all(|o| o.gap(&rect) >= 0)
+            && lanes.iter().all(|l| l.rect_distance(&rect) > l.half + clearance)
+            && [rect.min, rect.max, IVec2::new(rect.min.x, rect.max.y), IVec2::new(rect.max.x, rect.min.y)].iter().all(|&c| firm(&ground.at(c)));
+        free.then_some(rect)
+    };
     let mut lamps_every = 9.0 + 14.0 * (1.0 - wealth);
     if !village {
         lamps_every *= 1.5;
@@ -689,20 +837,19 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             let (p, dir) = lane.along(s);
             let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
             let at = (p + Vec2::new(-dir.y, dir.x) * side * (lane.half + 1.0)).round().as_ivec2();
-            let spot = Rect::new(at, IVec2::ONE);
-            let free = occupied.iter().all(|o| o.gap(&spot) >= 0) && lanes.iter().all(|l| l.distance(at.as_vec2()) > l.half + 0.4) && firm(&ground.at(at));
-            if free {
-                let prop = if rng.chance(0.5 + 0.4 * wealth) && lamp.is_some() { lamp } else { pick(&mut rng, &prop_weights) };
-                if let Some(prop) = prop {
-                    props.push((at, prop));
-                    occupied.push(spot);
-                }
+            let facing = Facing::toward(p - at.as_vec2());
+            let prop = if rng.chance(0.5 + 0.4 * wealth) && lamp.is_some() { lamp } else { pick(&mut rng, &prop_weights) };
+            if let Some(prop) = prop
+                && let Some(rect) = fit(&mut ground, &occupied, prop, at, facing, 0.4)
+            {
+                props.push((rect, prop, facing));
+                occupied.push(rect);
             }
             s += lamps_every * (0.7 + 0.6 * rng.unit());
         }
     }
     // A few more in yards.
-    let yard_props = (lots.len() as f32 * (0.4 + 0.8 * levers.get(Lever::Green)) * rng.unit()).round() as usize + 1;
+    let yard_props = (lots.len() as f32 * (0.5 + 1.0 * levers.get(Lever::Green)) * rng.unit()).round() as usize + 2;
     for _ in 0..yard_props * 3 {
         if props.len() > yard_props + lanes.len() * 6 {
             break;
@@ -718,24 +865,67 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             2 => IVec2::new(r.min.x, rng.range(r.min.y, r.max.y + 1)),
             _ => IVec2::new(r.max.x, rng.range(r.min.y, r.max.y + 1)),
         };
-        let spot = Rect::new(at, IVec2::ONE);
-        if occupied.iter().all(|o| o.gap(&spot) >= 0) && lanes.iter().all(|l| l.distance(at.as_vec2()) > l.half + 0.6) && firm(&ground.at(at))
-            && let Some(prop) = pick(&mut rng, &prop_weights)
+        let facing = [Facing::North, Facing::East, Facing::South, Facing::West][rng.below(4) as usize];
+        if let Some(prop) = pick(&mut rng, &prop_weights)
+            && let Some(rect) = fit(&mut ground, &occupied, prop, at, facing, 0.6)
         {
-            props.push((at, prop));
-            occupied.push(spot);
+            props.push((rect, prop, facing));
+            occupied.push(rect);
+        }
+    }
+    // Boats and nets on the bank of the water near.
+    if fresh && !water_weights.is_empty() {
+        let reach = lots.iter().map(|l| l.rect.distance(centre.as_vec2()) as i32).max().unwrap_or(0) + 8;
+        let mut banks = 1 + rng.below(3);
+        for spot in banks_near(&mut ground, centre, reach) {
+            if banks == 0 {
+                break;
+            }
+            let Some(prop) = pick(&mut rng, &water_weights) else { break };
+            let facing = Facing::toward(spot.1);
+            if let Some(rect) = fit(&mut ground, &occupied, prop, spot.0, facing, 0.6) {
+                props.push((rect, prop, facing));
+                occupied.push(rect);
+                banks -= 1;
+            }
         }
     }
 
     // Draw everything.
     for lot in &lots {
-        house::draw(&lot.spec, &lot.frame, &lot.mats, ctx.fixed, &mut canvas);
+        match (lot.spec.kind, lot.centre) {
+            (Kind::Centrepiece, Some(i)) => {
+                let c = &def.centrepieces[i];
+                let named = |part: &str| c.parts.iter().find(|(p, _)| p == part).and_then(|(_, name)| ctx.resolved.get(&fill(name, &kit.wood, &kit.wood)));
+                match &c.kind {
+                    CentreKind::Drawn(drawn) => {
+                        let parts = centre::Parts::new(&named, &lot.mats, ctx.fixed, lot.spec.seed);
+                        centre::draw(*drawn, &lot.spec, &lot.frame, &lot.mats, ctx.fixed, &parts, &mut canvas);
+                    }
+                    CentreKind::Blocks(_, blocks) => {
+                        let half = (lot.spec.w / 2, lot.spec.d / 2);
+                        for (offset, name) in blocks {
+                            if let Some(block) = ctx.resolved.get(name) {
+                                canvas.set(lot.frame.at(half.0 + offset.x, offset.y, half.1 + offset.z), block);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => house::draw(&lot.spec, &lot.frame, &lot.mats, ctx.fixed, &mut canvas),
+        }
     }
     let prop_mats = kit.mats(ctx, &mut rng);
-    for &(at, prop) in &props {
+    for &(rect, prop, facing) in &props {
         match &def.props[prop].kind {
-            PropKind::Drawn(drawn) => draw_prop(ctx, &prop_mats, &mut canvas, at, *drawn, hash3(ctx.seed ^ 0x9409, at.x, 0, at.y)),
+            PropKind::Drawn(drawn) => {
+                let (low, high) = prop_box(&def.props[prop].kind);
+                let frame = Frame::fit(low, high, facing, rect.min, 0);
+                draw_prop(ctx.fixed, &prop_mats, &mut canvas, &frame, *drawn, hash3(ctx.seed ^ 0x9409, rect.min.x, 0, rect.min.y));
+            }
             PropKind::Blocks(_, blocks) => {
+                let (low, _) = prop_box(&def.props[prop].kind);
+                let at = rect.min - low;
                 for (offset, name) in blocks {
                     if let Some(block) = ctx.resolved.get(name) {
                         canvas.on_ground(at.x + offset.x, at.y + offset.z, offset.y, Put::Set(block));
@@ -754,7 +944,10 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
                 let p = centre + IVec2::new(x, z);
                 let d = p.as_vec2().distance(centre.as_vec2());
                 let ragged = unit(hash3(seed ^ 0x5a, p.x, 0, p.y)) * 1.6 * (1.0 - order + 0.3);
+                // Not under a centrepiece, a pond or a fountain least of all.
+                let under = lots.iter().any(|l| l.spec.kind == Kind::Centrepiece && l.rect.distance(p.as_vec2()) < 0.5);
                 if d <= r - ragged
+                    && !under
                     && let Some(block) = kit.paving.at(seed, IVec3::new(p.x, 0, p.y))
                 {
                     canvas.on_ground(p.x, p.y, 0, Put::Set(block));
@@ -777,9 +970,9 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         min = min.min(lot.rect.min - (FALLOFF + 4).max(def.site.glade.1));
         max = max.max(lot.rect.max + (FALLOFF + 4).max(def.site.glade.1));
     }
-    for &(at, _) in &props {
-        min = min.min(at - 2);
-        max = max.max(at + 2);
+    for (rect, ..) in &props {
+        min = min.min(rect.min - 2);
+        max = max.max(rect.max + 2);
     }
     let mut raster = Raster::new(min, max);
     // The square: flat in the middle, easing out.
@@ -797,8 +990,19 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             min: lot.rect.min,
             max: lot.rect.max,
             floor: lot.floor + lot.spec.stilts,
-            door: lot.door.map(|(d, _)| IVec3::new(d.x, lot.floor + lot.spec.stilts + 1, d.y)),
+            // Two blocks out from the door, on the step below the top one when it stands
+            // on stilts.
+            door: lot.door.map(|(d, _)| IVec3::new(d.x, lot.floor + (lot.spec.stilts - 1).max(0) + 1, d.y)),
             facing: lot.frame.facing,
+            what: match (lot.house, lot.centre) {
+                (Some(i), _) => def.houses[i].name.clone(),
+                (_, Some(i)) => match &def.centrepieces[i].kind {
+                    CentreKind::Drawn(c) => format!("{c:?}"),
+                    CentreKind::Blocks(name, _) => name.clone(),
+                },
+                _ => lot.spec.kind.name().to_string(),
+            },
+            work: lot.house.and_then(|i| def.houses[i].work.clone()),
         });
     }
     raster.finish();
@@ -813,8 +1017,8 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             raster.lane(&path);
         }
     }
-    for &(at, _) in &props {
-        raster.clear_rect(&Rect::new(at, IVec2::ONE));
+    for (rect, ..) in &props {
+        raster.clear_rect(rect);
     }
     // A clearing in the woods, leafier where the place is green.
     let rects: Vec<Rect> = lots.iter().map(|l| l.rect).collect();
@@ -911,14 +1115,18 @@ fn walk(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f
 
 /// Rolls a special building's spec.
 fn special_spec(kind: Kind, w: i32, d: i32, kit: &Kit, levers: &Levers, rng: &mut Rng, style: &StyleDef) -> Spec {
-    let roofs: Vec<(Roof, f32)> = kit.roofs.clone();
+    let roof = match pick(rng, &kit.roofs).unwrap_or(Roof::Gable) {
+        Roof::HalfHip | Roof::Saltbox | Roof::Gambrel => Roof::Gable,
+        Roof::Conical => Roof::Hip,
+        other => other,
+    };
     Spec {
         kind,
         w,
         d,
         wall: 3,
         storeys: 1,
-        roof: pick(rng, &roofs).unwrap_or(Roof::Gable),
+        roof,
         pitch: 1,
         ridge_x: w > d,
         extras: Vec::new(),
@@ -928,23 +1136,146 @@ fn special_spec(kind: Kind, w: i32, d: i32, kit: &Kit, levers: &Levers, rng: &mu
         stilts: 0,
         regular: levers.get(Lever::Order) > 0.5,
         window_chance: style.window_chance,
+        form: Form::Box,
+        inside: Vec::new(),
+        centre: None,
         seed: rng.next_u64(),
     }
 }
 
-/// Rolls a house of the settlement's kinds, with its extras.
-fn house_spec(ctx: &Ctx, kind: Kind, kit: &Kit, levers: &Levers, rng: &mut Rng, style: &StyleDef) -> Spec {
-    let def = ctx.def;
-    let houses: Vec<(usize, f32)> = def.houses.iter().enumerate().map(|(i, h)| (i, h.lean.weigh(h.weight, levers))).collect();
-    let mut h = &def.houses[pick(rng, &houses).unwrap_or(0)];
+/// A centrepiece's spec: its size, and what the code draws.
+fn centre_spec(def: &SettlementsDef, index: usize, kit: &Kit, levers: &Levers, rng: &mut Rng, style: &StyleDef) -> Spec {
+    let (w, d, drawn) = match &def.centrepieces[index].kind {
+        CentreKind::Drawn(c) => {
+            let (w, d) = c.extent();
+            (w, d, Some(*c))
+        }
+        CentreKind::Blocks(_, blocks) => {
+            let half = blocks.iter().map(|(at, _)| at.x.abs().max(at.z.abs())).max().unwrap_or(0);
+            (half * 2 + 1, half * 2 + 1, None)
+        }
+    };
+    let mut spec = special_spec(Kind::Centrepiece, w, d, kit, levers, rng, style);
+    spec.centre = drawn;
+    spec
+}
+
+/// The direction of the nearest fresh water within `reach` blocks, if any.
+fn water_near(ground: &mut Ground, centre: IVec2, reach: i32) -> Option<Vec2> {
+    for r in (8..=reach).step_by(8) {
+        let mut sum = Vec2::ZERO;
+        for k in 0..24 {
+            let dir = Vec2::from_angle(k as f32 * std::f32::consts::TAU / 24.0);
+            let g = ground.at(centre + (dir * r as f32).round().as_ivec2());
+            if (g.submerged() || g.river > 0.5) && g.body != crate::Body::Sea {
+                sum += dir;
+            }
+        }
+        if sum != Vec2::ZERO {
+            return Some(sum.normalize_or(Vec2::X));
+        }
+    }
+    None
+}
+
+/// Uphill at `centre`, where the ground slopes at all.
+fn slope(ground: &mut Ground, centre: IVec2) -> Option<Vec2> {
+    let h = |ground: &mut Ground, dx: i32, dz: i32| ground.at(centre + IVec2::new(dx, dz)).height as f32;
+    let grad = Vec2::new(h(ground, 16, 0) - h(ground, -16, 0), h(ground, 0, 16) - h(ground, 0, -16));
+    (grad.length() >= 2.0).then(|| grad.normalize())
+}
+
+/// Firm spots on the bank of fresh water within `reach` of `centre`, nearest first, each
+/// with the way to the water.
+fn banks_near(ground: &mut Ground, centre: IVec2, reach: i32) -> Vec<(IVec2, Vec2)> {
+    let mut found = Vec::new();
+    for r in (10..=reach.max(12)).step_by(3) {
+        let n = (r as f32 * std::f32::consts::TAU / 4.0) as i32;
+        for k in 0..n {
+            let at = centre + (Vec2::from_angle(k as f32 * std::f32::consts::TAU / n as f32) * r as f32).round().as_ivec2();
+            if !firm(&ground.at(at)) {
+                continue;
+            }
+            for (dx, dz) in [(2, 0), (-2, 0), (0, 2), (0, -2)] {
+                let g = ground.at(at + IVec2::new(dx, dz));
+                if g.submerged() && g.body != crate::Body::Sea {
+                    found.push((at, Vec2::new(dx as f32, dz as f32)));
+                    break;
+                }
+            }
+        }
+        if found.len() >= 8 {
+            break;
+        }
+    }
+    found
+}
+
+/// A prop's own box, from its first block: (0, 0) to its extent less one for one the code
+/// draws, the bounds of its blocks for one of a package's own.
+fn prop_box(kind: &PropKind) -> (IVec2, IVec2) {
+    match kind {
+        PropKind::Drawn(p) => {
+            let (w, d) = p.extent();
+            (IVec2::ZERO, IVec2::new(w - 1, d - 1))
+        }
+        PropKind::Blocks(_, blocks) => {
+            let mut low = IVec2::ZERO;
+            let mut high = IVec2::ZERO;
+            for (at, _) in blocks {
+                low = low.min(IVec2::new(at.x, at.z));
+                high = high.max(IVec2::new(at.x, at.z));
+            }
+            (low, high)
+        }
+    }
+}
+
+/// What placing buildings needs to know of the settlement: its kit, levers and style, its
+/// size by name, and how many of each house it has built.
+struct Town<'a> {
+    ctx: &'a Ctx<'a>,
+    kit: &'a Kit,
+    levers: &'a Levers,
+    style: &'a StyleDef,
+    size: &'a str,
+    built: FxHashMap<usize, u32>,
+}
+
+impl Town<'_> {
+    fn count(&mut self, lot: &Lot) {
+        if let Some(i) = lot.house {
+            *self.built.entry(i).or_default() += 1;
+        }
+    }
+}
+
+/// Rolls a house of the settlement's kinds, with its extras: one the place's size builds,
+/// of which it has not built its most, beside water if it must be. Inns are the grandest
+/// homes of four walls; traders keep a modest home or a shop.
+fn house_spec(town: &Town, kind: Kind, rng: &mut Rng, near_water: bool) -> (Spec, usize) {
+    let (def, kit, levers, style) = (town.ctx.def, town.kit, town.levers, town.style);
+    let fits = |i: usize, h: &super::def::HouseDef| {
+        (h.sizes.is_empty() || h.sizes.iter().any(|s| s == town.size))
+            && h.most.is_none_or(|most| town.built.get(&i).copied().unwrap_or(0) < most)
+            && (!h.water || near_water)
+            && match kind {
+                Kind::Inn => h.work.is_none() && h.form == Form::Box,
+                Kind::Trader => h.work.is_none() && matches!(h.form, Form::Box | Form::ShopFront),
+                _ => true,
+            }
+    };
+    let houses: Vec<(usize, f32)> = def.houses.iter().enumerate().filter(|(i, h)| fits(*i, h)).map(|(i, h)| (i, h.lean.weigh(h.weight, levers))).collect();
+    let mut index = pick(rng, &houses).unwrap_or(0);
     // The inn is the grandest house in the place, the trader's a modest one.
     if kind == Kind::Inn {
-        h = def.houses.iter().filter(|h| h.width.1 >= 8).max_by_key(|h| h.width.1).unwrap_or(h);
+        index = def.houses.iter().enumerate().filter(|(i, h)| fits(*i, h) && h.width.1 >= 8).max_by_key(|(_, h)| h.width.1).map_or(index, |(i, _)| i);
     }
+    let h = &def.houses[index];
     let mut w = between(rng, h.width);
     let mut d = between(rng, h.depth);
     let mut storeys = between(rng, h.storeys);
-    let wall = between(rng, h.walls);
+    let mut wall = between(rng, h.walls);
     if kind == Kind::Inn {
         storeys = storeys.max(2);
         w = w.max(8);
@@ -960,23 +1291,76 @@ fn house_spec(ctx: &Ctx, kind: Kind, kit: &Kit, levers: &Levers, rng: &mut Rng, 
             extras.push(e.name);
         }
     }
+    for &e in &h.always {
+        if !extras.contains(&e) {
+            extras.push(e);
+        }
+    }
     if rng.chance(h.porch) {
         extras.push(Extra::Porch);
+    }
+    // What each form has no room for.
+    let unfit: &[Extra] = match h.form {
+        Form::Box => &[],
+        Form::Round => &[Extra::Porch, Extra::Shed, Extra::Wing, Extra::Balcony, Extra::OutsideStair, Extra::Dormer, Extra::Awning],
+        Form::Courtyard => &[Extra::Porch, Extra::Shed, Extra::Wing, Extra::Balcony, Extra::OutsideStair, Extra::Dormer],
+        Form::AFrame => &[Extra::Porch, Extra::Shed, Extra::Wing, Extra::Balcony, Extra::OutsideStair, Extra::Dormer, Extra::Awning, Extra::Shutters, Extra::HangingHerbs, Extra::SignBoard],
+        Form::ShopFront => &[Extra::Porch, Extra::Awning],
+    };
+    extras.retain(|e| !unfit.contains(e));
+    match h.form {
+        Form::Round => {
+            w -= 1 - w % 2;
+            d = w;
+        }
+        Form::Courtyard => {
+            w = w.max(11);
+            d = d.max(11);
+        }
+        Form::AFrame => {
+            storeys = 1;
+            wall = 0;
+        }
+        Form::ShopFront => storeys = storeys.max(2),
+        Form::Box => {}
+    }
+    if storeys < 2 {
+        extras.retain(|e| !matches!(e, Extra::Balcony | Extra::OutsideStair));
     }
     if kind == Kind::Inn {
         extras.retain(|e| *e != Extra::Porch);
         extras.push(Extra::Chimney);
     }
     if kind == Kind::Trader {
-        extras.retain(|e| *e != Extra::Porch);
+        extras.retain(|e| !matches!(e, Extra::Porch | Extra::Awning));
     }
-    let roof = pick(rng, &kit.roofs).unwrap_or(Roof::Gable);
-    // Low roofs where it is warm and the style is open; steep ones elsewhere.
-    let pitch = if roof != Roof::Flat && w.max(d) >= 8 && rng.chance(0.45) { 2 } else { 1 };
-    let wing = (rng.chance(h.wing) || extras.contains(&Extra::Wing)).then(|| (3 + rng.below(2), 3 + rng.below(3))).filter(|(ww, _)| *ww < w - 1);
-    let shed = if extras.contains(&Extra::Shed) && d >= 5 { 3 + rng.below((d - 4).min(3) as u32) } else { 0 };
-    let door = if levers.get(Lever::Order) > 0.6 { w / 2 } else { rng.range(1, w - 1) };
-    Spec {
+    let roofs = if h.roofs.is_empty() { &kit.roofs } else { &h.roofs };
+    let roof = match (h.form, pick(rng, roofs).unwrap_or(Roof::Gable)) {
+        (Form::Round | Form::Courtyard, Roof::Flat) => Roof::Flat,
+        (Form::Round, _) => Roof::Conical,
+        (Form::Courtyard, _) => Roof::Hip,
+        (Form::AFrame, _) => Roof::Gable,
+        (_, roof) => roof,
+    };
+    // Low roofs now and then on big houses; cones, barns and A-frames are steep.
+    let steep = matches!(roof, Roof::Flat | Roof::Conical | Roof::Gambrel) || h.form == Form::AFrame;
+    let pitch = if !steep && w.max(d) >= 8 && rng.chance(0.45) { 2 } else { 1 };
+    let boxy = matches!(h.form, Form::Box | Form::ShopFront);
+    let wing = (boxy && (rng.chance(h.wing) || extras.contains(&Extra::Wing))).then(|| (3 + rng.below(2), 3 + rng.below(3))).filter(|(ww, _)| *ww < w - 1);
+    let shed = if boxy && extras.contains(&Extra::Shed) && d >= 5 { 3 + rng.below((d - 4).min(3) as u32) } else { 0 };
+    let door = if levers.get(Lever::Order) > 0.6 || !boxy { w / 2 } else { rng.range(1, w - 1) };
+    let ridge_x = match (h.form, roof) {
+        (Form::AFrame, _) => false,
+        (_, Roof::Saltbox) => true,
+        _ => {
+            if rng.chance(0.85) {
+                w > d
+            } else {
+                w <= d
+            }
+        }
+    };
+    let spec = Spec {
         kind,
         w,
         d,
@@ -984,29 +1368,40 @@ fn house_spec(ctx: &Ctx, kind: Kind, kit: &Kit, levers: &Levers, rng: &mut Rng, 
         storeys,
         roof,
         pitch,
-        ridge_x: if rng.chance(0.85) { w > d } else { w <= d },
+        ridge_x,
         extras,
         door,
         shed,
         wing,
-        stilts: style.stilts as i32,
+        stilts: h.stilts.unwrap_or(style.stilts) as i32,
         regular: levers.get(Lever::Order) > 0.45,
         window_chance: (style.window_chance * (0.6 + 0.8 * levers.get(Lever::Wealth))).min(0.95),
+        form: h.form,
+        inside: h.inside.clone(),
+        centre: None,
         seed: rng.next_u64(),
-    }
+    };
+    (spec, index)
 }
 
-/// Tries to place a building of `kind` with its front at `front`, facing `facing`;
-/// `lane` is where its path joins the lane.
+/// Whether fresh water lies within a few blocks of `at`.
+fn wet(ground: &mut Ground, at: Vec2) -> bool {
+    let at = at.round().as_ivec2();
+    (0..8).any(|k| {
+        let g = ground.at(at + (Vec2::from_angle(k as f32 * std::f32::consts::FRAC_PI_4) * 7.0).round().as_ivec2());
+        (g.submerged() || g.river > 0.5) && g.body != crate::Body::Sea
+    })
+}
+
+/// Tries to place a building of `kind` (or `given`) with its front at `front`, facing
+/// `facing`; `lane` is where its path joins the lane.
 #[allow(clippy::too_many_arguments)]
 fn place(
-    ctx: &Ctx,
-    kit: &Kit,
-    levers: &Levers,
-    style: &StyleDef,
+    town: &mut Town,
     ground: &mut Ground,
     rng: &mut Rng,
     kind: Kind,
+    given: Option<Spec>,
     front: Vec2,
     facing: Facing,
     occupied: &[Rect],
@@ -1015,15 +1410,23 @@ fn place(
     gap: i32,
     lane: Option<Vec2>,
 ) -> Option<Lot> {
-    let spec = match kind {
-        Kind::House | Kind::Trader | Kind::Inn => house_spec(ctx, kind, kit, levers, rng, style),
-        Kind::Smithy => special_spec(Kind::Smithy, 6 + rng.below(3), 5 + rng.below(3), kit, levers, rng, style),
-        Kind::Field => special_spec(Kind::Field, 7 + rng.below(3) * 2, 7 + rng.below(7), kit, levers, rng, style),
-        Kind::Pen => special_spec(Kind::Pen, 6 + rng.below(5), 6 + rng.below(4), kit, levers, rng, style),
-        Kind::Orchard => special_spec(Kind::Orchard, 9 + rng.below(5), 9 + rng.below(5), kit, levers, rng, style),
-        Kind::Woodyard => special_spec(Kind::Woodyard, 4 + rng.below(3), 3 + rng.below(3), kit, levers, rng, style),
-        Kind::Shrine => special_spec(Kind::Shrine, 3, 3, kit, levers, rng, style),
-        Kind::Well | Kind::Stall => special_spec(kind, 3, 3, kit, levers, rng, style),
+    let (ctx, kit, levers, style) = (town.ctx, town.kit, town.levers, town.style);
+    let mut house = None;
+    let spec = match (given, kind) {
+        (Some(spec), _) => spec,
+        (None, Kind::House | Kind::Trader | Kind::Inn) => {
+            let near_water = ctx.def.houses.iter().any(|h| h.water) && wet(ground, front);
+            let (spec, index) = house_spec(town, kind, rng, near_water);
+            house = Some(index);
+            spec
+        }
+        (None, Kind::Smithy) => special_spec(Kind::Smithy, 6 + rng.below(3), 5 + rng.below(3), kit, levers, rng, style),
+        (None, Kind::Field) => special_spec(Kind::Field, 7 + rng.below(3) * 2, 7 + rng.below(7), kit, levers, rng, style),
+        (None, Kind::Pen) => special_spec(Kind::Pen, 6 + rng.below(5), 6 + rng.below(4), kit, levers, rng, style),
+        (None, Kind::Orchard) => special_spec(Kind::Orchard, 9 + rng.below(5), 9 + rng.below(5), kit, levers, rng, style),
+        (None, Kind::Woodyard) => special_spec(Kind::Woodyard, 4 + rng.below(3), 3 + rng.below(3), kit, levers, rng, style),
+        (None, Kind::Shrine) => special_spec(Kind::Shrine, 3, 3, kit, levers, rng, style),
+        (None, Kind::Well | Kind::Stall | Kind::Centrepiece) => special_spec(kind, 3, 3, kit, levers, rng, style),
     };
     let (low, high) = spec.envelope();
     let extent = Frame::extent(low, high, facing);
@@ -1061,7 +1464,7 @@ fn place(
     heights.sort_unstable();
     let range = heights[heights.len() - 1] - heights[0];
     let limit = match kind {
-        Kind::Field | Kind::Orchard => 3,
+        Kind::Field | Kind::Orchard | Kind::Centrepiece => 3,
         Kind::Pen | Kind::Woodyard | Kind::Shrine => 5,
         _ => 4 + spec.stilts,
     };
@@ -1080,82 +1483,213 @@ fn place(
         let outside = frame.at(spec.door, 0, -2);
         (IVec2::new(outside.x, outside.z), lane.unwrap_or(front - facing.step().as_vec2() * 2.0))
     });
-    let door = door.or_else(|| (kind == Kind::Smithy).then(|| {
-        let outside = frame.at(spec.w / 2, 0, -1);
-        (IVec2::new(outside.x, outside.z), lane.unwrap_or(front))
-    }));
+    let door = door.or_else(|| {
+        (kind == Kind::Smithy).then(|| {
+            let outside = frame.at(spec.w / 2, 0, -1);
+            (IVec2::new(outside.x, outside.z), lane.unwrap_or(front))
+        })
+    });
     let mats = kit.mats(ctx, rng);
     let yard = (1 + ((1.0 - levers.get(Lever::Crowding)) * 2.0) as i32).min(gap);
-    Some(Lot { spec, rect, frame, floor, mats, door, yard })
+    Some(Lot { spec, rect, frame, floor, mats, door, yard, house, centre: None })
 }
 
-/// Draws a prop at `at`, standing on the ground.
-fn draw_prop(ctx: &Ctx, mats: &Mats, canvas: &mut Canvas, at: IVec2, prop: Prop, seed: u64) {
-    let fixed = ctx.fixed;
-    let u = |salt: u64| unit(hash3(seed ^ salt, at.x, 0, at.y));
-    let mut put = |up: i32, put: Put| canvas.on_ground(at.x, at.y, up, put);
+/// Draws a prop in its frame, standing on the ground.
+pub(super) fn draw_prop(fixed: &Fixed, mats: &Mats, canvas: &mut Canvas, frame: &Frame, prop: Prop, seed: u64) {
+    let origin = frame.at(0, 0, 0);
+    let u = |salt: u64| unit(hash3(seed ^ salt, origin.x, 0, origin.z));
+    let mut put = |x: i32, up: i32, z: i32, put: Put| {
+        let p = frame.at(x, 0, z);
+        canvas.on_ground(p.x, p.z, up, put);
+    };
+    let cloth = |salt: u64| fixed.cloth.pick(u(salt)).or(fixed.canopies.pick(u(salt))).unwrap_or(mats.trim);
+    let barrel = fixed.barrel.unwrap_or(mats.log);
+    let hay = fixed.hay.pick(u(0x4a)).unwrap_or(mats.trim);
     match prop {
         Prop::Lamp => {
-            put(1, Put::Set(mats.frame));
-            put(2, Put::Set(mats.frame));
+            put(0, 1, 0, Put::Set(mats.frame));
+            put(0, 2, 0, Put::Set(mats.frame));
             if u(1) < 0.4 {
-                put(3, Put::Set(mats.frame));
-                put(4, Put::Set(fixed.torch));
+                put(0, 3, 0, Put::Set(mats.frame));
+                put(0, 4, 0, Put::Set(fixed.torch));
             } else {
-                put(3, Put::Set(fixed.torch));
+                put(0, 3, 0, Put::Set(fixed.torch));
             }
         }
         Prop::Woodpile => {
-            put(1, Put::Soft(mats.log));
+            put(0, 1, 0, Put::Soft(mats.log));
             if u(2) < 0.6 {
-                put(2, Put::Soft(mats.log));
+                put(0, 2, 0, Put::Soft(mats.log));
             }
         }
         Prop::Crates => {
-            put(1, Put::Soft(mats.trim));
+            put(0, 1, 0, Put::Soft(mats.trim));
             if u(3) < 0.4 {
-                put(2, Put::Soft(mats.trim));
+                put(0, 2, 0, Put::Soft(mats.trim));
             }
         }
         Prop::StonePile => {
             if let Some(b) = fixed.boulder.pick(u(4)) {
-                put(1, Put::Soft(b));
+                put(0, 1, 0, Put::Soft(b));
             }
         }
         Prop::FlowerBed => {
             if let Some(f) = fixed.flowers.pick(u(5)) {
-                put(1, Put::Soft(f));
+                put(0, 1, 0, Put::Soft(f));
             }
         }
         Prop::HerbPlanter => {
             if let Some(p) = fixed.planter {
-                put(1, Put::Soft(p));
+                put(0, 1, 0, Put::Soft(p));
             }
         }
-        Prop::Campfire => {
-            put(1, Put::Soft(fixed.campfire));
-        }
+        Prop::Campfire => put(0, 1, 0, Put::Soft(fixed.campfire)),
         Prop::Bush => {
             if let Some(b) = fixed.bushes.pick(u(6)).or(mats.hedge.pick(u(6))) {
-                put(1, Put::Soft(b));
+                put(0, 1, 0, Put::Soft(b));
             }
         }
         Prop::Compost => {
             if let Some(b) = fixed.compost.pick(u(7)) {
-                put(1, Put::Soft(b));
+                put(0, 1, 0, Put::Soft(b));
             }
         }
         Prop::Boulder => {
             if let Some(b) = fixed.boulder.pick(u(8)) {
-                put(1, Put::Soft(b));
+                put(0, 1, 0, Put::Soft(b));
                 if u(9) < 0.3 {
-                    put(2, Put::Soft(b));
+                    put(0, 2, 0, Put::Soft(b));
                 }
+            }
+        }
+        Prop::Cart => {
+            // Handles to the ground in front, wheels under the middle, a load on top.
+            put(0, 1, 0, Put::Set(mats.trim));
+            put(1, 1, 0, Put::Set(mats.trim));
+            for z in 1..=2 {
+                for x in 0..=1 {
+                    put(x, 2, z, Put::Set(mats.trim));
+                    put(x, 1, z, if z == 1 { Put::Set(mats.log) } else { Put::Clear });
+                }
+            }
+            let load = match (u(0xca) * 3.0) as i32 {
+                0 => Some(hay),
+                1 => fixed.sacks.pick(u(0xcb)),
+                _ => None,
+            };
+            if let Some(load) = load {
+                put(0, 3, 2, Put::Soft(load));
+                if u(0xcc) < 0.5 {
+                    put(1, 3, 1, Put::Soft(load));
+                }
+            }
+        }
+        Prop::Barrel => {
+            put(0, 1, 0, Put::Soft(barrel));
+            if u(0xba) < 0.3 {
+                put(0, 2, 0, Put::Soft(barrel));
+            }
+        }
+        Prop::HayBale => {
+            put(0, 1, 0, Put::Soft(hay));
+            if u(0x4b) < 0.4 {
+                put(0, 2, 0, Put::Soft(hay));
+            }
+        }
+        Prop::LaundryLine => {
+            for x in [0, 4] {
+                for up in 1..=3 {
+                    put(x, up, 0, Put::Set(mats.frame));
+                }
+            }
+            for x in 1..=3 {
+                if u(0x1a + x as u64) < 0.8 {
+                    put(x, 3, 0, Put::Set(cloth(0x1b + x as u64)));
+                    if u(0x1c + x as u64) < 0.35 {
+                        put(x, 2, 0, Put::Set(cloth(0x1b + x as u64)));
+                    }
+                }
+            }
+        }
+        Prop::FenceRun => {
+            for x in 0..4 {
+                let post = x == 0 || x == 3;
+                put(x, 1, 0, if post { Put::Set(mats.frame) } else { Put::Clear });
+                put(x, 2, 0, Put::Set(if post { mats.frame } else { mats.trim }));
+            }
+        }
+        Prop::Scarecrow => {
+            for up in 1..=3 {
+                put(1, up, 0, Put::Set(mats.frame));
+            }
+            put(0, 3, 0, Put::Set(mats.trim));
+            put(2, 3, 0, Put::Set(mats.trim));
+            put(1, 4, 0, Put::Set(hay));
+        }
+        Prop::Skep => {
+            put(0, 1, 0, Put::Set(mats.log));
+            put(0, 2, 0, Put::Set(hay));
+        }
+        Prop::Anvil => {
+            put(0, 1, 0, Put::Set(mats.log));
+            put(0, 2, 0, Put::Set(fixed.anvil));
+        }
+        Prop::Grindstone => {
+            put(0, 1, 0, Put::Set(mats.frame));
+            put(1, 1, 0, Put::Set(mats.stone()));
+            put(0, 2, 0, Put::Set(mats.trim));
+        }
+        Prop::Washtub => {
+            put(0, 0, 0, Put::Set(fixed.water));
+            put(1, 1, 0, Put::Soft(mats.trim));
+        }
+        Prop::Sacks => {
+            for x in 0..=1 {
+                if let Some(sack) = fixed.sacks.pick(u(0x5a + x as u64)) {
+                    put(x, 1, 0, Put::Soft(sack));
+                    if x == 0 && u(0x5c) < 0.4 {
+                        put(x, 2, 0, Put::Soft(sack));
+                    }
+                }
+            }
+        }
+        Prop::ChickenCoop => {
+            for (x, z) in [(0, 0), (0, 1), (1, 1)] {
+                put(x, 1, z, Put::Set(mats.trim));
+            }
+            put(1, 1, 0, Put::Clear);
+            for z in 0..=1 {
+                for x in 0..=1 {
+                    put(x, 2, z, Put::Set(mats.roof));
+                }
+            }
+        }
+        Prop::Signpost => {
+            put(0, 1, 0, Put::Set(mats.frame));
+            put(0, 2, 0, Put::Set(mats.frame));
+            put(0, 3, 0, Put::Set(mats.trim));
+        }
+        Prop::Boat => {
+            // Drawn up on the bank, its bow to the water.
+            for z in 0..4 {
+                for x in 0..=1 {
+                    put(x, 1, z, Put::Set(mats.trim));
+                }
+            }
+            put(0, 2, 3, Put::Set(mats.trim));
+            put(1, 2, 3, Put::Set(mats.trim));
+        }
+        Prop::Nets => {
+            for x in [0, 2] {
+                put(x, 1, 0, Put::Set(mats.frame));
+                put(x, 2, 0, Put::Set(mats.frame));
+            }
+            for x in 0..=2 {
+                put(x, 3, 0, Put::Set(mats.trim));
+            }
+            if let Some(net) = fixed.hanging.pick(u(0x4e)) {
+                put(1, 2, 0, Put::Set(net));
             }
         }
     }
 }
-
-// So `Lean` is used by name in docs.
-#[allow(dead_code)]
-fn _lean(_: &Lean) {}

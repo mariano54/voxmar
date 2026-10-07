@@ -93,6 +93,14 @@ pub enum Shape {
     Green,
     Scatter,
     Fork,
+    /// Four lanes meeting square on at the well.
+    Crossroads,
+    /// A lane round the well, houses facing in, a few lanes leading out.
+    Ring,
+    /// One street along the bank of the water nearby.
+    Riverside,
+    /// Streets along the slope, one above another.
+    Terraces,
 }
 
 /// Roofs.
@@ -102,6 +110,100 @@ pub enum Roof {
     Hip,
     Flat,
     Shed,
+    /// A gable with its ends hipped near the top.
+    HalfHip,
+    /// A gable whose ridge sits near the front: short in front, long behind.
+    Saltbox,
+    /// A barn's roof: steep low down, shallow up top.
+    Gambrel,
+    /// A cone over a round house (a pyramid over a square one).
+    Conical,
+}
+
+/// A house's outline.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub enum Form {
+    /// Four walls.
+    #[default]
+    Box,
+    /// A circle of wall under a cone.
+    Round,
+    /// All roof, down to the ground.
+    AFrame,
+    /// Rooms round an open court.
+    Courtyard,
+    /// A shop opening on the street, its counter under an awning, rooms above.
+    ShopFront,
+}
+
+/// What stands inside a working building.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub enum Fitting {
+    /// A stone oven round a fire.
+    Oven,
+    /// A millstone in the middle.
+    Millstone,
+    /// Vats of water let into the floor.
+    Vats,
+    /// Drying racks along the walls.
+    Racks,
+    /// Stalls for animals down both sides.
+    Stalls,
+    /// Bins and stacked stores.
+    Bins,
+    /// A smoking fire in the middle.
+    Smoke,
+    /// An altar at the back between two lights.
+    Altar,
+    /// Benches in rows, an aisle down the middle.
+    Pews,
+    /// A boat on the floor.
+    Boat,
+    /// A counter across the room.
+    Counter,
+}
+
+/// The one great thing a village is known by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub enum Centre {
+    GreatTree,
+    StoneCircle,
+    WatchtowerRuin,
+    Windmill,
+    BellFrame,
+    FallenStatue,
+    Maypole,
+    MarketCross,
+    Fountain,
+    Beacon,
+    StandingStone,
+    DuckPond,
+}
+
+impl Centre {
+    /// The blocks it stands on, across and deep, before it is turned.
+    pub fn extent(self) -> (i32, i32) {
+        match self {
+            Centre::GreatTree => (13, 13),
+            Centre::StoneCircle => (11, 11),
+            Centre::WatchtowerRuin | Centre::Fountain => (7, 7),
+            Centre::Windmill => (11, 7),
+            Centre::BellFrame => (5, 3),
+            Centre::FallenStatue => (11, 5),
+            Centre::Maypole | Centre::MarketCross | Centre::Beacon | Centre::StandingStone => (5, 5),
+            Centre::DuckPond => (11, 9),
+        }
+    }
+}
+
+/// Where a centrepiece stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub enum Spot {
+    /// On the square or green.
+    #[default]
+    Square,
+    /// Out at the end of a lane.
+    Edge,
 }
 
 /// What a house may have besides walls and a roof.
@@ -117,6 +219,26 @@ pub enum Extra {
     Woodpile,
     Moss,
     Wing,
+    /// A window standing out of the roof's front slope.
+    Dormer,
+    /// A balcony over the door, on the floor above.
+    Balcony,
+    /// A stair up the outside to the floor above.
+    OutsideStair,
+    /// Shutters beside the windows.
+    Shutters,
+    /// A cloth awning over the front.
+    Awning,
+    /// A board hung by the door.
+    SignBoard,
+    /// A barrel at a corner.
+    RainBarrel,
+    /// A vane on the roof's peak.
+    Weathervane,
+    /// A dovecote on a pole behind.
+    Dovecote,
+    /// Herbs hung to dry under the eaves.
+    HangingHerbs,
 }
 
 /// What stands in yards and by lanes.
@@ -132,6 +254,44 @@ pub enum Prop {
     Bush,
     Compost,
     Boulder,
+    /// A hand cart on two wheels.
+    Cart,
+    Barrel,
+    HayBale,
+    /// Washing hung on a line between two posts.
+    LaundryLine,
+    /// A few lengths of rail.
+    FenceRun,
+    Scarecrow,
+    /// A straw beehive on a stump.
+    Skep,
+    Anvil,
+    Grindstone,
+    Washtub,
+    Sacks,
+    ChickenCoop,
+    Signpost,
+    /// A boat drawn up on the bank (by water only).
+    Boat,
+    /// Nets hung to dry on posts (by water only).
+    Nets,
+}
+
+impl Prop {
+    /// The blocks it stands on, across and deep, before it is turned.
+    pub fn extent(self) -> (i32, i32) {
+        match self {
+            Prop::Cart => (2, 3),
+            Prop::LaundryLine => (5, 1),
+            Prop::FenceRun => (4, 1),
+            Prop::Scarecrow => (3, 1),
+            Prop::Grindstone | Prop::Sacks | Prop::Washtub => (2, 1),
+            Prop::ChickenCoop => (2, 2),
+            Prop::Boat => (2, 4),
+            Prop::Nets => (3, 1),
+            _ => (1, 1),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -189,12 +349,19 @@ struct FurnishingsFile {
     dirt: Option<String>,
     planter: Option<String>,
     anvil: Option<String>,
+    barrel: Option<String>,
+    bell: Option<String>,
+    altar: Option<String>,
     flowers: Vec<Select>,
     bushes: Vec<Select>,
     canopies: Vec<Select>,
     compost: Vec<Select>,
     boulders: Vec<Select>,
     fruit: Vec<Select>,
+    hay: Vec<Select>,
+    hanging: Vec<Select>,
+    sacks: Vec<Select>,
+    cloth: Vec<Select>,
 }
 
 /// [`FurnishingsFile`], its names qualified.
@@ -208,12 +375,19 @@ pub struct FurnishingsDef {
     pub dirt: Option<String>,
     pub planter: Option<String>,
     pub anvil: Option<String>,
+    pub barrel: Option<String>,
+    pub bell: Option<String>,
+    pub altar: Option<String>,
     pub flowers: Vec<Select>,
     pub bushes: Vec<Select>,
     pub canopies: Vec<Select>,
     pub compost: Vec<Select>,
     pub boulders: Vec<Select>,
     pub fruit: Vec<Select>,
+    pub hay: Vec<Select>,
+    pub hanging: Vec<Select>,
+    pub sacks: Vec<Select>,
+    pub cloth: Vec<Select>,
 }
 
 #[derive(Deserialize)]
@@ -231,6 +405,9 @@ struct SizeFile {
     always: Vec<Special>,
     #[serde(default)]
     sometimes: Vec<(Special, f32)>,
+    /// The chance it has a centrepiece.
+    #[serde(default)]
+    centrepiece: f32,
 }
 
 #[derive(Deserialize)]
@@ -239,6 +416,9 @@ struct LayoutFile {
     name: String,
     shape: Shape,
     weight: f32,
+    /// Only where there is fresh water near.
+    #[serde(default)]
+    water: bool,
     #[serde(default)]
     lean: BTreeMap<String, f32>,
 }
@@ -258,6 +438,61 @@ struct HouseFile {
     porch: f32,
     #[serde(default)]
     wing: f32,
+    #[serde(default)]
+    form: Form,
+    /// The work done in it (`bakery`, `mill`), for the people who will work there; none
+    /// for a home.
+    #[serde(default)]
+    work: Option<String>,
+    #[serde(default)]
+    inside: Vec<Fitting>,
+    /// Extras it always has.
+    #[serde(default)]
+    always: Vec<Extra>,
+    /// Its own roofs, in place of the style's.
+    #[serde(default)]
+    roofs: Vec<(Roof, f32)>,
+    /// The sizes (by name) that build it; all when empty.
+    #[serde(default)]
+    sizes: Vec<String>,
+    /// The most of it one settlement builds.
+    #[serde(default)]
+    most: Option<u32>,
+    /// Lifted on posts this many blocks, whatever the style.
+    #[serde(default)]
+    stilts: Option<u32>,
+    /// Only beside fresh water.
+    #[serde(default)]
+    water: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoofFile {
+    shape: Roof,
+    weight: f32,
+    #[serde(default)]
+    lean: BTreeMap<String, f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CentreFile {
+    /// One the code draws, or (with `blocks`) a name for one of one's own.
+    name: String,
+    weight: f32,
+    #[serde(default)]
+    lean: BTreeMap<String, f32>,
+    #[serde(default)]
+    spot: Spot,
+    /// Its own blocks: (x, y, z) from its spot, y 1 the block on the ground.
+    #[serde(default)]
+    blocks: Vec<((i32, i32, i32), String)>,
+    /// The blocks a drawn one is made of, by part (`log`, `leaves`, `stone`, `worn`, `water`,
+    /// `cloth`, `light`, `bell`), `{wood}` the settlement's wood; parts left out (or
+    /// missing for a wood) come from the settlement's style.
+    #[serde(default)]
+    parts: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -281,6 +516,9 @@ struct PropFile {
     blocks: Vec<((i32, i32, i32), String)>,
     #[serde(default)]
     lean: BTreeMap<String, f32>,
+    /// Only on the bank of fresh water.
+    #[serde(default)]
+    water: bool,
 }
 
 #[derive(Deserialize)]
@@ -368,6 +606,10 @@ struct SettlementFile {
     names: Vec<NamesFile>,
     #[serde(default)]
     styles: Vec<StyleFile>,
+    #[serde(default)]
+    roofs: Vec<RoofFile>,
+    #[serde(default)]
+    centrepieces: Vec<CentreFile>,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -384,6 +626,7 @@ pub struct SizeDef {
     pub square: (u32, u32),
     pub always: Vec<Special>,
     pub sometimes: Vec<(Special, f32)>,
+    pub centrepiece: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -392,6 +635,7 @@ pub struct LayoutDef {
     pub shape: Shape,
     pub weight: f32,
     pub lean: Lean,
+    pub water: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -405,6 +649,39 @@ pub struct HouseDef {
     pub storeys: (u32, u32),
     pub porch: f32,
     pub wing: f32,
+    pub form: Form,
+    pub work: Option<String>,
+    pub inside: Vec<Fitting>,
+    pub always: Vec<Extra>,
+    pub roofs: Vec<(Roof, f32)>,
+    pub sizes: Vec<String>,
+    pub most: Option<u32>,
+    pub stilts: Option<u32>,
+    pub water: bool,
+}
+
+/// A roof shape every style may weigh, and the levers it leans on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoofDef {
+    pub shape: Roof,
+    pub weight: f32,
+    pub lean: Lean,
+}
+
+/// A centrepiece: drawn by the code, or a package's own blocks.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CentreKind {
+    Drawn(Centre),
+    Blocks(String, Vec<(voxmar_engine::glam::IVec3, String)>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CentreDef {
+    pub kind: CentreKind,
+    pub weight: f32,
+    pub lean: Lean,
+    pub spot: Spot,
+    pub parts: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -419,6 +696,7 @@ pub struct PropDef {
     pub kind: PropKind,
     pub weight: f32,
     pub lean: Lean,
+    pub water: bool,
 }
 
 /// A prop the code draws, or one a package made of blocks.
@@ -479,6 +757,8 @@ pub struct SettlementsDef {
     pub props: Vec<PropDef>,
     pub names: Vec<NamesDef>,
     pub styles: Vec<StyleDef>,
+    pub roofs: Vec<RoofDef>,
+    pub centrepieces: Vec<CentreDef>,
 }
 
 fn names(package: &str, at: &str, selects: &[Select]) -> Result<Vec<(String, f32)>, ContentError> {
@@ -522,6 +802,9 @@ impl SettlementsDef {
         one(&mut furnishings.dirt, f.dirt);
         one(&mut furnishings.planter, f.planter);
         one(&mut furnishings.anvil, f.anvil);
+        one(&mut furnishings.barrel, f.barrel);
+        one(&mut furnishings.bell, f.bell);
+        one(&mut furnishings.altar, f.altar);
         let qualified = |list: Vec<Select>| -> Vec<Select> {
             list.into_iter()
                 .map(|s| match s {
@@ -537,6 +820,10 @@ impl SettlementsDef {
             (&mut furnishings.compost, f.compost),
             (&mut furnishings.boulders, f.boulders),
             (&mut furnishings.fruit, f.fruit),
+            (&mut furnishings.hay, f.hay),
+            (&mut furnishings.hanging, f.hanging),
+            (&mut furnishings.sacks, f.sacks),
+            (&mut furnishings.cloth, f.cloth),
         ] {
             if !theirs.is_empty() {
                 *mine = qualified(theirs);
@@ -555,10 +842,11 @@ impl SettlementsDef {
                 square: s.square,
                 always: s.always,
                 sometimes: s.sometimes,
+                centrepiece: s.centrepiece,
             });
         }
         for l in file.layouts {
-            self.layouts.push(LayoutDef { lean: Lean::parse(at, &l.lean)?, name: l.name, shape: l.shape, weight: l.weight });
+            self.layouts.push(LayoutDef { lean: Lean::parse(at, &l.lean)?, name: l.name, shape: l.shape, weight: l.weight, water: l.water });
         }
         for h in file.houses {
             self.houses.push(HouseDef {
@@ -571,7 +859,32 @@ impl SettlementsDef {
                 storeys: h.storeys,
                 porch: h.porch,
                 wing: h.wing,
+                form: h.form,
+                work: h.work,
+                inside: h.inside,
+                always: h.always,
+                roofs: h.roofs,
+                sizes: h.sizes,
+                most: h.most,
+                stilts: h.stilts,
+                water: h.water,
             });
+        }
+        for r in file.roofs {
+            self.roofs.push(RoofDef { lean: Lean::parse(at, &r.lean)?, shape: r.shape, weight: r.weight });
+        }
+        for c in file.centrepieces {
+            let kind = if c.blocks.is_empty() {
+                let drawn = ron::from_str::<Centre>(&c.name).map_err(|_| {
+                    ContentError(format!("{at}: no centrepiece is called `{}`; give it `blocks` to make one of your own", c.name))
+                })?;
+                CentreKind::Drawn(drawn)
+            } else {
+                let blocks = c.blocks.iter().map(|&((x, y, z), ref name)| (voxmar_engine::glam::IVec3::new(x, y, z), qualify(package, name))).collect();
+                CentreKind::Blocks(qualify(package, &c.name), blocks)
+            };
+            let parts = c.parts.iter().map(|(part, name)| (part.clone(), qualify(package, name))).collect();
+            self.centrepieces.push(CentreDef { lean: Lean::parse(at, &c.lean)?, kind, weight: c.weight, spot: c.spot, parts });
         }
         for e in file.extras {
             self.extras.push(ExtraDef { lean: Lean::parse(at, &e.lean)?, name: e.name, chance: e.chance });
@@ -586,7 +899,7 @@ impl SettlementsDef {
                 let blocks = p.blocks.iter().map(|&((x, y, z), ref name)| (voxmar_engine::glam::IVec3::new(x, y, z), qualify(package, name))).collect();
                 PropKind::Blocks(qualify(package, &p.name), blocks)
             };
-            self.props.push(PropDef { lean: Lean::parse(at, &p.lean)?, kind, weight: p.weight });
+            self.props.push(PropDef { lean: Lean::parse(at, &p.lean)?, kind, weight: p.weight, water: p.water });
         }
         for n in file.names {
             let prefixes = n
@@ -648,6 +961,38 @@ impl SettlementsDef {
         let site = &self.site;
         if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 {
             return fail(format!("the site needs ranges low to high and a glade of at most 48 blocks, its treeless ring the smaller: {site:?}"));
+        }
+        for c in &self.centrepieces {
+            if let CentreKind::Blocks(name, blocks) = &c.kind {
+                for (at, block) in blocks {
+                    if at.x.abs() > 6 || at.z.abs() > 6 || !(-3..=24).contains(&at.y) {
+                        return fail(format!("centrepiece `{name}` reaches past 6 blocks round its spot, 3 down or 24 up, at {at}"));
+                    }
+                    if registry.id(block).is_none() {
+                        return fail(format!("centrepiece `{name}` names `{block}`, which is no block"));
+                    }
+                }
+            }
+        }
+        for c in &self.centrepieces {
+            // Parts naming `{wood}` fall back to the style where a wood lacks one.
+            for (part, block) in c.parts.iter().filter(|(_, b)| !b.contains('{')) {
+                if registry.id(block).is_none() {
+                    return fail(format!("a centrepiece's part `{part}` names `{block}`, which is no block"));
+                }
+            }
+        }
+        for h in &self.houses {
+            let round = h.form == Form::Round;
+            if round && (h.width != h.depth || h.width.0 % 2 == 0 || h.width.1 % 2 == 0) {
+                return fail(format!("round house `{}` needs the same odd width and depth", h.name));
+            }
+            if h.form == Form::Courtyard && h.width.0.min(h.depth.0) < 11 {
+                return fail(format!("courtyard house `{}` needs a width and depth of 11 or more", h.name));
+            }
+            if h.sizes.iter().any(|s| !self.sizes.iter().any(|z| z.name == *s)) {
+                return fail(format!("house `{}` names a size there is none of", h.name));
+            }
         }
         for p in &self.props {
             if let PropKind::Blocks(name, blocks) = &p.kind {
@@ -746,6 +1091,25 @@ impl Resolved {
                 && let Some(id) = registry.id(window)
             {
                 map.insert(window.clone(), id);
+            }
+        }
+        for c in &def.centrepieces {
+            if let CentreKind::Blocks(_, blocks) = &c.kind {
+                for (_, name) in blocks {
+                    if let Some(id) = registry.id(name) {
+                        map.insert(name.clone(), id);
+                    }
+                }
+            }
+            for (_, name) in &c.parts {
+                for style in &def.styles {
+                    for (wood, _) in &style.woods {
+                        let name = fill(name, wood, wood);
+                        if let Some(id) = registry.id(&name) {
+                            map.insert(name, id);
+                        }
+                    }
+                }
             }
         }
         for p in &def.props {

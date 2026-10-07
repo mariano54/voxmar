@@ -2,18 +2,23 @@
 //! coordinates: the front at z = 0 looking towards −z, x across the front from 0 to
 //! `w − 1`, z to the back at `d − 1`, the floor at y = 0.
 //!
-//! Every house is rolled: its kind (`houses` in settlements.ron) sets its size, walls and
-//! storeys; its roof is the style's (gable, hipped, flat or a single slope, steep or low);
-//! its extras (a chimney with a hearth, a porch, a lean-to shed, a wing, flower boxes, a
-//! lamp, a woodpile, moss in old walls) each come by their own chance, leaning on the
-//! settlement's levers; its materials come from the few the settlement keeps of its
-//! style's. Windows fall in a regular rhythm in orderly places and anywhere in others.
+//! Every house is rolled: its kind (`houses` in settlements.ron) sets its size, walls,
+//! storeys and form (four walls, round, an A-frame, rooms round a court, a shop under
+//! rooms); its roof is one of the style's shapes (gable, hipped, half-hipped, saltbox,
+//! gambrel, conical, flat or a single slope), steep or low; its extras (a chimney with a
+//! hearth, a porch, a shed, a wing, dormers, a balcony, an outside stair, shutters, an
+//! awning, a sign, a rain barrel, a weathervane, a dovecote, herbs drying under the eaves,
+//! flower boxes, a lamp, a woodpile, moss in old walls) each come by their own chance,
+//! leaning on the settlement's levers; a working building has its fittings inside (an
+//! oven, a millstone, vats, racks, stalls, bins, a smoking fire, an altar and pews, a
+//! boat, a counter). Its materials come from the few the settlement keeps of its style's.
+//! Windows fall in a regular rhythm in orderly places and anywhere in others.
 
 use voxmar_engine::block::BlockId;
 use voxmar_engine::glam::IVec2;
 
 use super::canvas::{Canvas, Frame, Palette, Put, unit};
-use super::def::{Extra, Roof};
+use super::def::{Centre, Extra, Fitting, Form, Roof};
 use crate::rng::{Rng, hash3};
 
 /// What a building is for.
@@ -30,6 +35,8 @@ pub enum Kind {
     Pen,
     Orchard,
     Woodyard,
+    /// The one great thing a village is known by.
+    Centrepiece,
 }
 
 impl Kind {
@@ -46,6 +53,7 @@ impl Kind {
             Kind::Pen => "pen",
             Kind::Orchard => "orchard",
             Kind::Woodyard => "woodyard",
+            Kind::Centrepiece => "centrepiece",
         }
     }
 
@@ -71,6 +79,13 @@ pub struct Mats {
     pub crops: Vec<[BlockId; 4]>,
 }
 
+impl Mats {
+    /// The first stone of the foundation, for hearths, ovens and plinths.
+    pub fn stone(&self) -> BlockId {
+        self.foundation.0.first().map_or(self.wall, |b| b.0)
+    }
+}
+
 /// Blocks every settlement uses, whatever its style.
 #[derive(Clone, Debug)]
 pub struct Fixed {
@@ -81,12 +96,19 @@ pub struct Fixed {
     pub water: BlockId,
     pub planter: Option<BlockId>,
     pub anvil: BlockId,
+    pub barrel: Option<BlockId>,
+    pub bell: Option<BlockId>,
+    pub altar: Option<BlockId>,
     pub flowers: Palette,
     pub bushes: Palette,
     pub canopies: Palette,
     pub compost: Palette,
     pub boulder: Palette,
     pub fruit: Palette,
+    pub hay: Palette,
+    pub hanging: Palette,
+    pub sacks: Palette,
+    pub cloth: Palette,
     pub dirt: BlockId,
 }
 
@@ -113,6 +135,11 @@ pub struct Spec {
     /// Windows in a regular rhythm.
     pub regular: bool,
     pub window_chance: f32,
+    pub form: Form,
+    /// What stands inside a working building.
+    pub inside: Vec<Fitting>,
+    /// What a centrepiece is, when the code draws it.
+    pub centre: Option<Centre>,
     pub seed: u64,
 }
 
@@ -125,11 +152,17 @@ impl Spec {
     /// shed, wing, chimney, the lamp and step at its door.
     pub fn envelope(&self) -> (IVec2, IVec2) {
         match self.kind {
-            Kind::Well | Kind::Shrine | Kind::Stall => (IVec2::ZERO, IVec2::new(self.w - 1, self.d - 1)),
+            Kind::Well | Kind::Shrine | Kind::Stall | Kind::Centrepiece => (IVec2::ZERO, IVec2::new(self.w - 1, self.d - 1)),
             Kind::Field | Kind::Pen | Kind::Orchard | Kind::Woodyard => (IVec2::ZERO, IVec2::new(self.w - 1, self.d - 1)),
             Kind::Smithy => (IVec2::new(-1, -2), IVec2::new(self.w, self.d)),
             _ => {
-                let front = if self.has(Extra::Porch) || self.kind == Kind::Trader { -4 } else { -2 };
+                let front = if self.has(Extra::Porch) || (self.kind == Kind::Trader && self.form != Form::ShopFront) {
+                    -4
+                } else if self.form == Form::ShopFront {
+                    -3
+                } else {
+                    -2
+                };
                 let right = self.w + if self.shed > 0 { 3 } else { 0 };
                 let back = self.d + self.wing.map_or(0, |(_, wd)| wd);
                 let left = if self.has(Extra::Chimney) { -2 } else { -1 };
@@ -156,30 +189,32 @@ pub fn draw(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut
         Kind::Pen => pen(spec, frame, mats, fixed, canvas),
         Kind::Orchard => orchard(spec, frame, mats, fixed, canvas),
         Kind::Woodyard => woodyard(spec, frame, mats, fixed, canvas),
+        // The planner draws centrepieces, which need their parts.
+        Kind::Centrepiece => {}
     }
 }
 
 /// Puts blocks in a building's own coordinates.
-struct Pen<'a> {
-    frame: &'a Frame,
-    canvas: &'a mut Canvas,
-    seed: u64,
+pub(super) struct Pen<'a> {
+    pub frame: &'a Frame,
+    pub canvas: &'a mut Canvas,
+    pub seed: u64,
 }
 
 impl Pen<'_> {
-    fn set(&mut self, x: i32, y: i32, z: i32, block: BlockId) {
+    pub fn set(&mut self, x: i32, y: i32, z: i32, block: BlockId) {
         self.canvas.set(self.frame.at(x, y, z), block);
     }
 
-    fn put(&mut self, x: i32, y: i32, z: i32, put: Put) {
+    pub fn put(&mut self, x: i32, y: i32, z: i32, put: Put) {
         self.canvas.put(self.frame.at(x, y, z), put);
     }
 
-    fn clear(&mut self, x: i32, y: i32, z: i32) {
+    pub fn clear(&mut self, x: i32, y: i32, z: i32) {
         self.put(x, y, z, Put::Clear);
     }
 
-    fn pal(&mut self, x: i32, y: i32, z: i32, palette: &Palette) {
+    pub fn pal(&mut self, x: i32, y: i32, z: i32, palette: &Palette) {
         let pos = self.frame.at(x, y, z);
         if let Some(block) = palette.at(self.seed, pos) {
             self.canvas.set(pos, block);
@@ -187,24 +222,227 @@ impl Pen<'_> {
     }
 
     /// On the ground of the column under (x, z), `up` over its top.
-    fn ground(&mut self, x: i32, up: i32, z: i32, put: Put) {
+    pub fn ground(&mut self, x: i32, up: i32, z: i32, put: Put) {
         let p = self.frame.at(x, 0, z);
         self.canvas.on_ground(p.x, p.z, up, put);
     }
 
-    fn roll(&self, x: i32, y: i32, z: i32, salt: u64) -> f32 {
+    pub fn roll(&self, x: i32, y: i32, z: i32, salt: u64) -> f32 {
         let p = self.frame.at(x, y, z);
         unit(hash3(self.seed ^ salt, p.x, p.y, p.z))
     }
 }
 
+/// How far in from the edge a courtyard house's court begins.
+const COURT: i32 = 4;
+
+const SIDES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+
+/// Which columns of its box a building stands on.
+#[derive(Clone, Copy, Debug)]
+struct Foot {
+    x0: i32,
+    z0: i32,
+    w: i32,
+    d: i32,
+    form: Form,
+}
+
+impl Foot {
+    fn boxed(x0: i32, z0: i32, w: i32, d: i32) -> Self {
+        Foot { x0, z0, w, d, form: Form::Box }
+    }
+
+    fn inside(&self, x: i32, z: i32) -> bool {
+        let (x, z) = (x - self.x0, z - self.z0);
+        if x < 0 || z < 0 || x >= self.w || z >= self.d {
+            return false;
+        }
+        match self.form {
+            Form::Round => {
+                let c = self.w / 2;
+                let (dx, dz) = (x - c, z - c);
+                ((dx * dx + dz * dz) as f32) <= (c as f32 + 0.5).powi(2)
+            }
+            Form::Courtyard => !(x >= COURT && x < self.w - COURT && z >= COURT && z < self.d - COURT),
+            _ => true,
+        }
+    }
+
+    /// Whether (x, z) is in its walls: inside, beside a column outside.
+    fn wall(&self, x: i32, z: i32) -> bool {
+        self.inside(x, z) && SIDES.iter().any(|&(dx, dz)| !self.inside(x + dx, z + dz))
+    }
+
+    /// Whether (x, z) is where two walls meet.
+    fn corner(&self, x: i32, z: i32) -> bool {
+        self.wall(x, z) && (!self.inside(x - 1, z) || !self.inside(x + 1, z)) && (!self.inside(x, z - 1) || !self.inside(x, z + 1))
+    }
+
+    /// Whether (x, z) is a floor to stand on, clear of the walls.
+    fn room(&self, x: i32, z: i32) -> bool {
+        self.inside(x, z) && !self.wall(x, z)
+    }
+}
+
+/// The height of a roof over each column it covers, its eaves one column out.
+pub(super) struct Heights {
+    x0: i32,
+    z0: i32,
+    w: i32,
+    d: i32,
+    h: Vec<Option<i32>>,
+}
+
+impl Heights {
+    fn new(foot: &Foot) -> Self {
+        Heights { x0: foot.x0, z0: foot.z0, w: foot.w, d: foot.d, h: vec![None; ((foot.w + 2) * (foot.d + 2)) as usize] }
+    }
+
+    fn index(&self, x: i32, z: i32) -> Option<usize> {
+        let (i, j) = (x - self.x0 + 1, z - self.z0 + 1);
+        (i >= 0 && j >= 0 && i < self.w + 2 && j < self.d + 2).then(|| (j * (self.w + 2) + i) as usize)
+    }
+
+    pub fn at(&self, x: i32, z: i32) -> Option<i32> {
+        self.index(x, z).and_then(|i| self.h[i])
+    }
+
+    fn put(&mut self, x: i32, z: i32, y: i32) {
+        if let Some(i) = self.index(x, z) {
+            self.h[i] = Some(y);
+        }
+    }
+
+    /// The highest column nearest the middle, and its height.
+    pub fn peak(&self) -> Option<(i32, i32, i32)> {
+        let (cx, cz) = (self.x0 * 2 + self.w - 1, self.z0 * 2 + self.d - 1);
+        let mut best: Option<(i32, i32, i32, i32)> = None;
+        for z in self.z0 - 1..=self.z0 + self.d {
+            for x in self.x0 - 1..=self.x0 + self.w {
+                if let Some(y) = self.at(x, z) {
+                    let off = (2 * x - cx).abs() + (2 * z - cz).abs();
+                    if best.is_none_or(|b| y > b.2 || (y == b.2 && off < b.3)) {
+                        best = Some((x, z, y, off));
+                    }
+                }
+            }
+        }
+        best.map(|(x, z, y, _)| (x, z, y))
+    }
+}
+
+/// A roof over the walls of `foot`, whose walls top out at `top`: the roof block over
+/// every column it covers, the walls carried up under it, the loft within cleared, and
+/// `windows` rows of window in the middle of each gable end.
+#[allow(clippy::too_many_arguments)]
+fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x: bool, shape: Roof, block: BlockId, windows: i32) -> Heights {
+    let pitch = spec.pitch.max(1);
+    let Foot { x0, z0, w, d, .. } = *foot;
+    let flat = shape == Roof::Flat;
+    let roofed = |x: i32, z: i32| if flat { foot.inside(x, z) } else { (-1..=1).any(|dz| (-1..=1).any(|dx| foot.inside(x + dx, z + dz))) };
+    let (span, run) = if ridge_x { (d, w) } else { (w, d) };
+    // Hipped: the steps in from the nearest eave.
+    let hip = |x: i32, z: i32| -> i32 {
+        let mut best = i32::MAX;
+        for zz in z0 - 2..=z0 + d + 1 {
+            for xx in x0 - 2..=x0 + w + 1 {
+                if !roofed(xx, zz) {
+                    best = best.min((xx - x).abs().max((zz - z).abs()));
+                }
+            }
+        }
+        best - 1
+    };
+    let mut heights = Heights::new(foot);
+    for z in z0 - 1..=z0 + d {
+        for x in x0 - 1..=x0 + w {
+            if !roofed(x, z) {
+                continue;
+            }
+            let (s, r) = if ridge_x { (z - z0, x - x0) } else { (x - x0, z - z0) };
+            let across = (s + 1).min(span - s);
+            let along = (r + 1).min(run - r);
+            let up = match shape {
+                Roof::Flat => 0,
+                // Highest over the front, falling to the back.
+                Roof::Shed => (z0 + d - z) / (pitch + 1),
+                Roof::Gable => across / pitch,
+                // A gable whose ends hip back near the ridge.
+                Roof::HalfHip => (across / pitch).min(((span + 1) / 2 / pitch / 2).max(1) + along / pitch),
+                // The ridge near the front: short and steep before, long and low behind.
+                Roof::Saltbox => ((s + 1) / pitch).min((span - s) / (pitch + 1)),
+                // Steep low down, low up top.
+                Roof::Gambrel => {
+                    let knee = ((span + 1) / 4).max(1);
+                    if across <= knee { across * 2 } else { knee * 2 + (across - knee) / 2 }
+                }
+                Roof::Hip => hip(x, z) / pitch,
+                Roof::Conical if foot.form == Form::Round => {
+                    let (cx, cz) = (x0 + w / 2, z0 + d / 2);
+                    let e = (((x - cx).pow(2) + (z - cz).pow(2)) as f32).sqrt();
+                    ((w / 2) as f32 + 1.5 - e).max(0.0) as i32
+                }
+                // Over four walls, a pyramid.
+                Roof::Conical => hip(x, z),
+            };
+            heights.put(x, z, top + 1 + up);
+        }
+    }
+    let gabled = matches!(shape, Roof::Gable | Roof::HalfHip | Roof::Saltbox | Roof::Gambrel);
+    for z in z0 - 1..=z0 + d {
+        for x in x0 - 1..=x0 + w {
+            let Some(h) = heights.at(x, z) else { continue };
+            // Down to one over the lowest beside it, so steep slopes have no holes.
+            let mut lo = h;
+            for (dx, dz) in SIDES {
+                if let Some(n) = heights.at(x + dx, z + dz) {
+                    lo = lo.min(n + 1);
+                }
+            }
+            for y in lo..=h {
+                pen.set(x, y, z, block);
+            }
+            if !foot.inside(x, z) {
+                continue;
+            }
+            let wall = foot.wall(x, z);
+            let (s, r) = if ridge_x { (z - z0, x - x0) } else { (x - x0, z - z0) };
+            let end = gabled && (r == 0 || r == run - 1) && s == span / 2;
+            for y in top + 1..lo {
+                if !wall {
+                    pen.clear(x, y, z);
+                } else if end && y >= top + 2 && y < top + 2 + windows && y < lo - 1 {
+                    match mats.window {
+                        Some(glass) => pen.set(x, y, z, glass),
+                        None => pen.clear(x, y, z),
+                    }
+                } else {
+                    pen.set(x, y, z, mats.wall);
+                }
+            }
+            if flat && wall && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
+                pen.set(x, top + 2, z, mats.trim);
+            }
+        }
+    }
+    if shape == Roof::Conical
+        && let Some((x, z, y)) = heights.peak()
+    {
+        pen.set(x, y + 1, z, mats.frame);
+    }
+    heights
+}
+
 fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Canvas) {
     let (w, d) = (spec.w, spec.d);
     let lift = spec.stilts;
+    let foot = Foot { x0: 0, z0: 0, w, d, form: spec.form };
     let mut pen = Pen { frame, canvas, seed: spec.seed };
     let mut rng = Rng::new(spec.seed, 0x40e5, 0, 0);
     let top = spec.top() + lift;
     let moss = spec.has(Extra::Moss);
+    let canopy = fixed.canopies.pick(unit(hash3(spec.seed, 7, 7, 7))).unwrap_or(mats.trim);
     // The wall block at a place: old walls take moss and cracks here and there.
     let wall_at = |pen: &Pen, x: i32, y: i32, z: i32| -> BlockId {
         if moss && pen.roll(x, y, z, 0x3055) < 0.22 {
@@ -217,14 +455,17 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     // Foundation and floor; stilts lift the floor on posts.
     for z in 0..d {
         for x in 0..w {
-            let edge = x == 0 || z == 0 || x == w - 1 || z == d - 1;
+            if !foot.inside(x, z) {
+                continue;
+            }
+            let edge = foot.wall(x, z);
             if lift > 0 {
                 pen.set(x, lift, z, if edge { mats.frame } else { mats.floor });
                 for y in 1..lift {
                     pen.clear(x, y, z);
                 }
                 let post = (x == 0 || x == w - 1 || x == w / 2) && (z == 0 || z == d - 1 || z == d / 2);
-                if post {
+                if post || (spec.form != Form::Box && foot.corner(x, z)) {
                     pen.put(x, lift - 1, z, Put::Down(mats.log));
                 }
             } else {
@@ -241,18 +482,20 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 
     // Walls, storey by storey, with corner posts and beams between storeys.
     let plinth = mats.wall != mats.frame && rng.chance(0.35);
+    let hatch = if spec.form == Form::Round { (w / 2 + 1, d / 2 + 1) } else { (w - 2, d - 2) };
     for storey in 0..spec.storeys {
         let base = lift + storey * (spec.wall + 1);
         for y in base + 1..=base + spec.wall {
             for z in 0..d {
                 for x in 0..w {
-                    let edge = x == 0 || z == 0 || x == w - 1 || z == d - 1;
-                    if !edge {
+                    if !foot.inside(x, z) {
+                        continue;
+                    }
+                    if !foot.wall(x, z) {
                         pen.clear(x, y, z);
                         continue;
                     }
-                    let corner = (x == 0 || x == w - 1) && (z == 0 || z == d - 1);
-                    let block = if corner {
+                    let block = if foot.corner(x, z) {
                         mats.frame
                     } else if plinth && y == lift + 1 && storey == 0 {
                         mats.foundation.at(spec.seed, frame.at(x, y, z)).unwrap_or(mats.wall)
@@ -268,23 +511,52 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             let y = base + spec.wall + 1;
             for z in 0..d {
                 for x in 0..w {
-                    let edge = x == 0 || z == 0 || x == w - 1 || z == d - 1;
-                    pen.set(x, y, z, if edge { mats.frame } else { mats.floor });
+                    if foot.inside(x, z) {
+                        pen.set(x, y, z, if foot.wall(x, z) { mats.frame } else { mats.floor });
+                    }
                 }
             }
             // A hatch where a ladder will go.
-            pen.clear(w - 2, y, d - 2);
+            pen.clear(hatch.0, y, hatch.1);
         }
-        windows(spec, &mut pen, mats, base, storey, &mut rng);
+        match spec.form {
+            Form::Box | Form::ShopFront => windows(spec, &mut pen, mats, base, storey, &mut rng),
+            Form::AFrame => {}
+            _ => ring_windows(spec, &foot, &mut pen, mats, base, storey, &mut rng),
+        }
     }
 
-    // The door, a lintel over it, and a step or stair to it.
+    // A shop's front: a counter open to the street under an awning.
     let door = spec.door.clamp(1, w - 2);
-    let wide = spec.kind == Kind::Inn && door + 1 < w - 1;
+    if spec.form == Form::ShopFront {
+        for x in 1..w - 1 {
+            if x == door {
+                continue;
+            }
+            pen.set(x, lift + 1, 0, mats.trim);
+            for y in lift + 2..lift + spec.wall {
+                pen.clear(x, y, 0);
+            }
+            if spec.wall >= 3 {
+                pen.set(x, lift + spec.wall, 0, mats.frame);
+            }
+        }
+        for x in 0..w {
+            pen.set(x, lift + spec.wall + 1, -1, canopy);
+            pen.set(x, lift + spec.wall, -2, canopy);
+        }
+    }
+
+    let gable_windows = if spec.form == Form::AFrame { 3 } else { 1 };
+    let heights = roof(spec, &mut pen, mats, top, &foot, spec.ridge_x, spec.roof, mats.roof, gable_windows);
+
+    // The door, a lintel over it, and a step or stair to it; barns, boathouses and inns
+    // have wide doors.
+    let wide = (spec.kind == Kind::Inn || spec.inside.iter().any(|f| matches!(f, Fitting::Boat | Fitting::Stalls))) && door + 1 < w - 1;
     for dx in 0..=wide as i32 {
         pen.clear(door + dx, lift + 1, 0);
         pen.clear(door + dx, lift + 2, 0);
-        if spec.wall >= 3 {
+        if spec.wall >= 3 && spec.form != Form::AFrame {
             pen.set(door + dx, lift + 3, 0, mats.trim);
         }
         pen.ground(door + dx, 1, -1, Put::Clear);
@@ -299,7 +571,41 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
         }
     }
 
-    roof(spec, &mut pen, mats, top, 0, 0, w, d, spec.ridge_x, mats.roof);
+    // Through the front rooms to the court, where something grows.
+    if spec.form == Form::Courtyard {
+        pen.clear(door, lift + 1, COURT - 1);
+        pen.clear(door, lift + 2, COURT - 1);
+        let (cx, cz) = (w / 2, d / 2);
+        for z in COURT..d - COURT {
+            for x in COURT..w - COURT {
+                for y in 1..=top - lift + 1 {
+                    pen.ground(x, y, z, Put::Clear);
+                }
+                if (x, z) != (cx, cz)
+                    && pen.roll(x, 1, z, 0xc0) < 0.3
+                    && let Some(flower) = fixed.flowers.at(spec.seed ^ 0xc1, frame.at(x, 1, z))
+                {
+                    pen.ground(x, 1, z, Put::Set(flower));
+                }
+            }
+        }
+        match fixed.fruit.pick(unit(hash3(spec.seed, 0xc2, 0, 0))) {
+            Some(leaves) if w - 2 * COURT >= 3 && d - 2 * COURT >= 3 => {
+                for up in 1..=3 {
+                    pen.ground(cx, up, cz, Put::Set(mats.log));
+                }
+                for (dx, dz) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    pen.ground(cx + dx, 4, cz + dz, Put::Set(leaves));
+                }
+                pen.ground(cx, 5, cz, Put::Set(leaves));
+            }
+            _ => {
+                if let Some(planter) = fixed.planter {
+                    pen.ground(cx, 1, cz, Put::Set(planter));
+                }
+            }
+        }
+    }
 
     // A wing behind, on the right, under its own roof.
     if let Some((ww, wd)) = spec.wing {
@@ -337,7 +643,13 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
                 pen.clear(x0 + ww / 2, lift + 2, d + wd - 1);
             }
         }
-        roof(spec, &mut pen, mats, lift + wall, x0, d, ww, wd, false, mats.roof);
+        // The wing's roof is a plain one of the house's.
+        let shape = match spec.roof {
+            Roof::HalfHip | Roof::Saltbox | Roof::Gambrel => Roof::Gable,
+            Roof::Conical => Roof::Hip,
+            other => other,
+        };
+        roof(spec, &mut pen, mats, lift + wall, &Foot::boxed(x0, d, ww, wd), false, shape, mats.roof, 1);
     }
 
     // A lean-to shed on the right.
@@ -349,7 +661,7 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
                 pen.put(x, lift - 1, z, Put::Down(mats.foundation.at(spec.seed, frame.at(x, -1, z)).unwrap_or(mats.wall)));
                 let edge = x == w + 1 || z == z0 || z == z0 + spec.shed - 1;
                 for y in lift + 1..=lift + 2 {
-                    if edge && !(z == z0 + spec.shed / 2 && x == w + 1 && y <= lift + 2 && rng.chance(0.0)) {
+                    if edge {
                         pen.set(x, y, z, if (z == z0 || z == z0 + spec.shed - 1) && x == w + 1 { mats.frame } else { mats.trim });
                     } else {
                         pen.clear(x, y, z);
@@ -371,20 +683,45 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     let mut lit = false;
     if spec.has(Extra::Chimney) {
         let z = d / 2;
-        let peak = top + (w.max(d) + 3) / 2 + 2;
+        let peak = heights.peak().map_or(top + 3, |p| p.2) + 2;
         for y in lift..=peak {
             pen.pal(-1, y, z, &mats.foundation);
         }
-        pen.put(-1, lift - 1, z, Put::Down(mats.foundation.0.first().map_or(mats.wall, |b| b.0)));
-        pen.set(0, lift + 1, z, mats.foundation.0.first().map_or(mats.wall, |b| b.0));
+        pen.put(-1, lift - 1, z, Put::Down(mats.stone()));
+        pen.set(0, lift + 1, z, mats.stone());
         pen.set(1, lift + 1, z, fixed.campfire);
         lit = true;
     }
 
-    // Inside: a table, a light, sometimes a planter.
-    if d >= 5 && w >= 4 {
+    // Inside: a working building's fittings, or a table, a light and sometimes a planter.
+    // The first free floor near a place.
+    let free = |x: i32, z: i32| -> (i32, i32) {
+        let ok = |x: i32, z: i32| foot.room(x, z) && !(x == door && z <= 1) && (x, z) != hatch;
+        if ok(x, z) {
+            return (x, z);
+        }
+        for r in 1..w.max(d) {
+            for dz in -r..=r {
+                for dx in -r..=r {
+                    if ok(x + dx, z + dz) {
+                        return (x + dx, z + dz);
+                    }
+                }
+            }
+        }
+        (x, z)
+    };
+    if !spec.inside.is_empty() {
+        fittings(spec, &mut pen, mats, fixed, lift, door);
+        if !lit {
+            let (x, z) = free(1, 1);
+            pen.set(x, lift + 1, z, fixed.torch);
+            lit = true;
+        }
+    } else if d >= 5 && w >= 4 {
         let (tx, tz) = if rng.chance(0.5) { (w - 2, d - 2) } else { (w - 2, 1) };
         let (tx, tz) = if tx == door && tz == 1 { (1, d - 2) } else { (tx, tz) };
+        let (tx, tz) = free(tx, tz);
         if !(spec.shed > 0 && tx == w - 2) || rng.chance(0.5) {
             pen.set(tx, lift + 1, tz, fixed.table);
             if !lit {
@@ -395,11 +732,13 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
         if let Some(planter) = fixed.planter
             && rng.chance(0.3)
         {
-            pen.set(1, lift + 1, d - 2, planter);
+            let (px, pz) = free(1, d - 2);
+            pen.set(px, lift + 1, pz, planter);
         }
     }
     if !lit {
-        pen.set(1, lift + 1, 1, fixed.torch);
+        let (x, z) = free(1, 1);
+        pen.set(x, lift + 1, z, fixed.torch);
     }
     if spec.kind == Kind::Inn {
         // Tables down the room.
@@ -432,8 +771,7 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             }
         }
     }
-    if spec.kind == Kind::Trader {
-        let canopy = fixed.canopies.pick(unit(hash3(spec.seed, 7, 7, 7))).unwrap_or(mats.trim);
+    if spec.kind == Kind::Trader && spec.form != Form::ShopFront {
         let (a, b) = (1, w - 2);
         for x in a..=b {
             if x != door {
@@ -451,21 +789,29 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
         }
         pen.set(b, lift + 2, -2, fixed.torch);
     }
-    if spec.has(Extra::Lamp) || spec.kind == Kind::Inn {
+    let balcony = spec.has(Extra::Balcony) && spec.storeys >= 2 && !spec.has(Extra::Porch);
+    if (spec.has(Extra::Lamp) || spec.kind == Kind::Inn) && !balcony {
         let sides: &[i32] = if spec.kind == Kind::Inn { &[-1, 2] } else { &[if rng.chance(0.5) { -1 } else { 1 }] };
         for &side in sides {
             let x = (door + side).clamp(-1, w);
             let x = if x == door { door - 1 } else { x };
-            let z = if spec.has(Extra::Porch) { -4 } else { -2 };
+            let z = if spec.has(Extra::Porch) {
+                -4
+            } else if spec.form == Form::ShopFront {
+                -3
+            } else {
+                -2
+            };
             lamp(&mut pen, x, z, lift, mats.frame, fixed.torch);
         }
     }
     if spec.has(Extra::FlowerBoxes) && lift == 0 {
-        for x in 1..w - 1 {
-            if (x - door).abs() >= 2 && pen.roll(x, 1, -1, 0xf10) < 0.75 {
-                pen.ground(x, 1, -1, Put::Soft(mats.trim));
-                if let Some(flower) = fixed.flowers.at(spec.seed ^ 0xf1, frame.at(x, 2, -1)) {
-                    pen.ground(x, 2, -1, Put::Soft(flower));
+        for x in 0..w {
+            let Some(zf) = (0..d).find(|&z| foot.inside(x, z)) else { continue };
+            if (x - door).abs() >= 2 && !foot.corner(x, zf) && pen.roll(x, 1, zf - 1, 0xf10) < 0.75 {
+                pen.ground(x, 1, zf - 1, Put::Soft(mats.trim));
+                if let Some(flower) = fixed.flowers.at(spec.seed ^ 0xf1, frame.at(x, 2, zf - 1)) {
+                    pen.ground(x, 2, zf - 1, Put::Soft(flower));
                 }
             }
         }
@@ -483,6 +829,240 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             }
         }
     }
+
+    // Dormers stand out of the front slope of a roof whose ridge runs across the front.
+    let gabled = matches!(spec.roof, Roof::Gable | Roof::HalfHip | Roof::Saltbox | Roof::Gambrel);
+    if spec.has(Extra::Dormer) && gabled && spec.ridge_x && d >= 6 && matches!(spec.form, Form::Box | Form::ShopFront) {
+        let at: &[i32] = if w >= 9 { &[w / 3, w - 1 - w / 3] } else { &[w / 2] };
+        let y0 = top + 2;
+        for &x in at {
+            let Some(zf) = (0..d / 2).find(|&z| heights.at(x, z).is_some_and(|h| h >= y0)) else { continue };
+            for dx in -1..=1 {
+                for z in zf - 1..=zf + 2 {
+                    if heights.at(x + dx, z).is_some_and(|h| h <= y0 + 1) {
+                        pen.set(x + dx, y0 + 1, z, mats.roof);
+                    }
+                }
+            }
+            pen.set(x - 1, y0, zf, mats.wall);
+            pen.set(x + 1, y0, zf, mats.wall);
+            match mats.window {
+                Some(glass) => pen.set(x, y0, zf, glass),
+                None => pen.clear(x, y0, zf),
+            }
+            for z in zf + 1..zf + 3 {
+                if heights.at(x, z).is_some_and(|h| h <= y0) {
+                    pen.clear(x, y0, z);
+                }
+            }
+        }
+    }
+    // A balcony over the door, on the floor above, on two posts.
+    if balcony {
+        let b = lift + spec.wall + 1;
+        for x in door - 2..=door + 2 {
+            for z in -2..=-1 {
+                pen.set(x, b, z, mats.trim);
+                pen.clear(x, b + 2, z);
+            }
+            pen.set(x, b + 1, -2, if x == door - 2 || x == door + 2 { mats.frame } else { mats.trim });
+        }
+        for x in [door - 2, door + 2] {
+            pen.set(x, b + 1, -1, mats.frame);
+            pen.put(x, b - 1, -2, Put::Down(mats.frame));
+        }
+        pen.clear(door, b + 1, 0);
+        pen.clear(door, b + 2, 0);
+        pen.clear(door, b + 1, -1);
+    }
+    // A stair up the right side to a door on the floor above.
+    let stair = spec.has(Extra::OutsideStair) && spec.storeys >= 2 && spec.shed == 0 && d >= spec.wall + 4;
+    if stair {
+        let n = spec.wall + 1;
+        for k in 1..=n + 1 {
+            let z = k;
+            let y = lift + k.min(n);
+            pen.set(w, y, z, mats.trim);
+            pen.put(w, y - 1, z, Put::Down(mats.trim));
+            for up in 1..=3 {
+                pen.clear(w, y + up, z);
+            }
+        }
+        pen.clear(w - 1, lift + n + 1, n + 1);
+        pen.clear(w - 1, lift + n + 2, n + 1);
+    }
+    // Shutters beside the windows are drawn with them; an awning over the front windows.
+    if spec.has(Extra::Awning) && spec.form == Form::Box && !spec.has(Extra::Porch) && spec.kind != Kind::Trader && spec.wall >= 3 {
+        for x in 1..w - 1 {
+            pen.set(x, lift + spec.wall, -1, canopy);
+        }
+    }
+    // A sign by the door.
+    if spec.has(Extra::SignBoard) && spec.wall >= 3 && spec.form != Form::AFrame {
+        let x = if door + 1 < w - 1 { door + 1 } else { door - 1 };
+        let board = fixed.canopies.pick(unit(hash3(spec.seed, 5, 1, 9))).unwrap_or(mats.trim);
+        pen.set(x, lift + 3, -1, board);
+    }
+    // A barrel at a front corner.
+    if spec.has(Extra::RainBarrel)
+        && lift == 0
+        && let Some(barrel) = fixed.barrel
+    {
+        let x = if stair || spec.shed > 0 { -1 } else { w };
+        pen.ground(x, 1, 0, Put::Soft(barrel));
+    }
+    // A vane on the peak.
+    if spec.has(Extra::Weathervane)
+        && spec.roof != Roof::Flat
+        && let Some((x, z, y)) = heights.peak()
+    {
+        pen.set(x, y + 1, z, mats.frame);
+        pen.set(x, y + 2, z, mats.trim);
+    }
+    // A dovecote on a pole behind.
+    if spec.has(Extra::Dovecote) {
+        let x = if spec.wing.is_some() { 1 } else { w - 2 };
+        for up in 1..=3 {
+            pen.ground(x, up, d, Put::Set(mats.frame));
+        }
+        pen.ground(x, 4, d, Put::Set(mats.trim));
+        pen.ground(x, 5, d, Put::Set(mats.roof));
+    }
+    // Herbs hung under the front eaves.
+    if spec.has(Extra::HangingHerbs) && spec.wall >= 3 {
+        for x in 0..w {
+            if (x - door).abs() >= 1
+                && heights.at(x, -1) == Some(top + 1)
+                && pen.roll(x, top, -1, 0x4e7) < 0.45
+                && let Some(herbs) = fixed.hanging.at(spec.seed ^ 0x4e8, frame.at(x, top, -1))
+            {
+                pen.set(x, top, -1, herbs);
+            }
+        }
+    }
+}
+
+/// What stands inside a working building, on its ground floor.
+fn fittings(spec: &Spec, pen: &mut Pen, mats: &Mats, fixed: &Fixed, lift: i32, door: i32) {
+    let (w, d) = (spec.w, spec.d);
+    let y = lift + 1;
+    let (cx, cz) = (w / 2, d / 2);
+    let stone = mats.stone();
+    let wall_top = lift + spec.wall;
+    for &fitting in &spec.inside {
+        match fitting {
+            Fitting::Oven => {
+                // Stone round a fire, against the back wall on the left.
+                for x in 1..=3.min(w - 2) {
+                    pen.set(x, y + 1, d - 2, stone);
+                    pen.set(x, y, d - 2, if x == 2 { fixed.campfire } else { stone });
+                }
+            }
+            Fitting::Millstone => {
+                for (x, z) in [(cx, cz), (cx - 1, cz), (cx, cz - 1), (cx - 1, cz - 1)] {
+                    pen.set(x, y, z, stone);
+                }
+                for yy in y + 1..=wall_top {
+                    pen.set(cx, yy, cz, mats.log);
+                }
+            }
+            Fitting::Vats => {
+                if lift == 0 {
+                    for z in (2..d - 2).step_by(3) {
+                        for x in (2..w - 2).step_by(3) {
+                            if x != door {
+                                pen.set(x, 0, z, fixed.water);
+                            }
+                        }
+                    }
+                }
+            }
+            Fitting::Racks => {
+                if spec.wall >= 3 {
+                    for z in (2..d - 1).step_by(2) {
+                        for x in [1, w - 2] {
+                            pen.set(x, wall_top, z, mats.trim);
+                            if let Some(h) = fixed.hanging.at(spec.seed ^ 0x7ac, pen.frame.at(x, wall_top - 1, z)) {
+                                pen.set(x, wall_top - 1, z, h);
+                            }
+                        }
+                    }
+                }
+            }
+            Fitting::Stalls => {
+                for z in (2..d - 1).step_by(3) {
+                    for x in [2, w - 3] {
+                        pen.set(x, y, z, mats.frame);
+                    }
+                    for x in [1, w - 2] {
+                        if let Some(hay) = fixed.hay.at(spec.seed ^ 0x4a, pen.frame.at(x, y, z + 1)) {
+                            pen.set(x, y, (z + 1).min(d - 2), hay);
+                        }
+                    }
+                }
+            }
+            Fitting::Bins => {
+                for x in 1..w - 1 {
+                    pen.set(x, y, d - 2, mats.trim);
+                    if pen.roll(x, y + 1, d - 2, 0xb1) < 0.6 {
+                        pen.set(x, y + 1, d - 2, mats.trim);
+                    }
+                    if d >= 6
+                        && pen.roll(x, y, d - 3, 0xb2) < 0.4
+                        && let Some(sack) = fixed.sacks.at(spec.seed ^ 0xb3, pen.frame.at(x, y, d - 3))
+                    {
+                        pen.set(x, y, d - 3, sack);
+                    }
+                }
+            }
+            Fitting::Smoke => {
+                pen.set(cx, y, cz, fixed.campfire);
+                for x in 1..w - 1 {
+                    for z in [cz - 1, cz + 1] {
+                        pen.set(x, wall_top, z, mats.trim);
+                        if x != cx
+                            && let Some(h) = fixed.hanging.at(spec.seed ^ 0x5e0, pen.frame.at(x, wall_top - 1, z))
+                        {
+                            pen.set(x, wall_top - 1, z, h);
+                        }
+                    }
+                }
+            }
+            Fitting::Altar => {
+                pen.set(cx, y, d - 2, fixed.altar.unwrap_or(stone));
+                let off = if w >= 7 { 2 } else { 1 };
+                for x in [cx - off, cx + off] {
+                    pen.set(x, y, d - 2, mats.frame);
+                    pen.set(x, y + 1, d - 2, fixed.torch);
+                }
+            }
+            Fitting::Pews => {
+                for z in (3..d - 3).step_by(2) {
+                    for x in 1..w - 1 {
+                        if (x - cx).abs() >= 1 && x != door {
+                            pen.set(x, y, z, mats.trim);
+                        }
+                    }
+                }
+            }
+            Fitting::Boat => {
+                // A hull on the floor, bow to the door.
+                for z in 2..(d - 1).min(7) {
+                    for x in [cx - 1, cx + 1] {
+                        pen.set(x, y, z, mats.trim);
+                    }
+                }
+                pen.set(cx, y, 2, mats.trim);
+                pen.set(cx, y, (d - 2).min(6), mats.trim);
+            }
+            Fitting::Counter => {
+                let z = d - 3;
+                for x in 1..w - 2 {
+                    pen.set(x, y, z, mats.trim);
+                }
+            }
+        }
+    }
 }
 
 /// A lamp post: a post with a torch on top.
@@ -493,17 +1073,19 @@ fn lamp(pen: &mut Pen, x: i32, z: i32, lift: i32, post: BlockId, torch: BlockId)
     pen.ground(x, 3, z, Put::Set(torch));
 }
 
-/// Windows on every wall of one storey.
+/// Windows on every wall of one storey of four walls, with shutters where it has them.
 fn windows(spec: &Spec, pen: &mut Pen, mats: &Mats, base: i32, storey: i32, rng: &mut Rng) {
     let (w, d) = (spec.w, spec.d);
     let y = base + if spec.wall >= 3 { 2 } else { 1 };
     let chance = spec.window_chance;
     let phase = rng.below(2);
-    let place = |pen: &mut Pen, x: i32, z: i32, along: i32, rng: &mut Rng| {
+    let mut placed: Vec<(i32, i32)> = Vec::new();
+    let mut place = |pen: &mut Pen, x: i32, z: i32, along: i32, rng: &mut Rng| {
         let wanted = if spec.regular { (along + phase) % 2 == 0 && rng.chance(chance + 0.3) } else { rng.chance(chance * 0.7) };
         if !wanted {
             return;
         }
+        placed.push((x, z));
         match mats.window {
             Some(glass) => pen.set(x, y, z, glass),
             None => pen.clear(x, y, z),
@@ -533,99 +1115,40 @@ fn windows(spec: &Spec, pen: &mut Pen, mats: &Mats, base: i32, storey: i32, rng:
             place(pen, w - 1, z, z, rng);
         }
     }
+    if spec.has(Extra::Shutters) && mats.window.is_some() {
+        for &(x, z) in &placed {
+            let along: [(i32, i32); 2] = if z == 0 || z == d - 1 { [(x - 1, z), (x + 1, z)] } else { [(x, z - 1), (x, z + 1)] };
+            for (sx, sz) in along {
+                let corner = (sx == 0 || sx == w - 1) && (sz == 0 || sz == d - 1);
+                let by_door = storey == 0 && sz == 0 && sx == spec.door;
+                if !corner && !by_door && !placed.contains(&(sx, sz)) {
+                    pen.set(sx, y, sz, mats.trim);
+                }
+            }
+        }
+    }
 }
 
-/// A roof over the walls of the box from (x0, z0), `w` by `d`, whose walls top out at
-/// `top`.
+/// Windows round the walls of a house of another form, by chance.
 #[allow(clippy::too_many_arguments)]
-fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, x0: i32, z0: i32, w: i32, d: i32, ridge_x: bool, block: BlockId) {
-    let pitch = spec.pitch.max(1);
-    match spec.roof {
-        Roof::Flat => {
-            for z in z0..z0 + d {
-                for x in x0..x0 + w {
-                    pen.set(x, top + 1, z, block);
-                    let edge = x == x0 || z == z0 || x == x0 + w - 1 || z == z0 + d - 1;
-                    if edge && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
-                        pen.set(x, top + 2, z, mats.trim);
-                    }
-                }
+fn ring_windows(spec: &Spec, foot: &Foot, pen: &mut Pen, mats: &Mats, base: i32, storey: i32, rng: &mut Rng) {
+    let y = base + if spec.wall >= 3 { 2 } else { 1 };
+    for z in 0..spec.d {
+        for x in 0..spec.w {
+            if !foot.wall(x, z) || foot.corner(x, z) {
+                continue;
             }
-        }
-        Roof::Shed => {
-            // Highest over the front, falling to the back.
-            let height = |z: i32| top + 1 + (z0 + d - z) / (pitch + 1);
-            for z in z0 - 1..=z0 + d {
-                let y = height(z);
-                for x in x0 - 1..=x0 + w {
-                    pen.set(x, y, z, block);
-                }
-                // The side walls rise to meet it, the front wall too.
-                for yy in top + 1..y {
-                    if (z0..z0 + d).contains(&z) {
-                        for x in [x0, x0 + w - 1] {
-                            pen.set(x, yy, z, mats.wall);
-                        }
-                        for x in x0 + 1..x0 + w - 1 {
-                            if z == z0 {
-                                pen.set(x, yy, z, mats.wall);
-                            } else {
-                                pen.clear(x, yy, z);
-                            }
-                        }
-                    }
-                }
+            if storey == 0 && (x - spec.door).abs() <= 1 && z <= COURT {
+                continue;
             }
-        }
-        Roof::Gable => {
-            // Across the span, inwards from the eaves; along the ridge, one over at each end.
-            let (span, run) = if ridge_x { (d, w) } else { (w, d) };
-            let at = |s: i32, r: i32| if ridge_x { (x0 + r, z0 + s) } else { (x0 + s, z0 + r) };
-            let (mut lo, mut hi, mut y) = (-1, span, top + 1);
-            while lo <= hi {
-                for s in (lo..lo + pitch).chain(hi + 1 - pitch..=hi) {
-                    if s < lo || s > hi {
-                        continue;
-                    }
-                    for r in -1..=run {
-                        let (x, z) = at(s, r);
-                        pen.set(x, y, z, block);
-                    }
-                }
-                // The gable ends between, and the loft within.
-                for s in lo + pitch..=hi - pitch {
-                    for r in 0..run {
-                        let (x, z) = at(s, r);
-                        if r == 0 || r == run - 1 {
-                            pen.set(x, y, z, if s == span / 2 && (r == 0 || r == run - 1) && y == top + 2 { mats.window.unwrap_or(mats.trim) } else { mats.wall });
-                        } else {
-                            pen.clear(x, y, z);
-                        }
-                    }
-                }
-                lo += pitch;
-                hi -= pitch;
-                y += 1;
+            if spec.has(Extra::Chimney) && x == 0 && z == spec.d / 2 {
+                continue;
             }
-        }
-        Roof::Hip => {
-            let (mut lx, mut hx, mut lz, mut hz, mut y) = (x0 - 1, x0 + w, z0 - 1, z0 + d, top + 1);
-            while lx <= hx && lz <= hz {
-                for z in lz..=hz {
-                    for x in lx..=hx {
-                        let ring = x < lx + pitch || x > hx - pitch || z < lz + pitch || z > hz - pitch;
-                        if ring {
-                            pen.set(x, y, z, block);
-                        } else {
-                            pen.clear(x, y, z);
-                        }
-                    }
+            if rng.chance(spec.window_chance * 0.6) {
+                match mats.window {
+                    Some(glass) => pen.set(x, y, z, glass),
+                    None => pen.clear(x, y, z),
                 }
-                lx += pitch;
-                hx -= pitch;
-                lz += pitch;
-                hz -= pitch;
-                y += 1;
             }
         }
     }
@@ -654,9 +1177,9 @@ fn smithy(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut C
             }
         }
     }
-    roof(spec, &mut pen, mats, spec.wall, 0, 0, w, d, spec.ridge_x, mats.roof);
+    roof(spec, &mut pen, mats, spec.wall, &Foot::boxed(0, 0, w, d), spec.ridge_x, spec.roof, mats.roof, 0);
     // The forge in a back corner.
-    let stone = mats.foundation.0.first().map_or(mats.wall, |b| b.0);
+    let stone = mats.stone();
     for (x, z) in [(1, d - 2), (2, d - 2), (1, d - 3)] {
         pen.set(x, 1, z, stone);
     }

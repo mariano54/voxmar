@@ -26,6 +26,15 @@ impl Area {
         ((0..self.size).contains(&cx) && (0..self.size).contains(&cz)).then(|| &self.columns[(cz * self.size + cx) as usize])
     }
 
+}
+
+/// Blocks to look at, from generated columns or a model.
+trait Look {
+    fn block(&self, p: IVec3) -> BlockId;
+    fn color(&self, registry: &BlockRegistry, p: IVec3) -> Vec3;
+}
+
+impl Look for Area {
     fn block(&self, p: IVec3) -> BlockId {
         match self.column(p.x, p.z) {
             Some(c) if (0..WORLD_HEIGHT).contains(&p.y) => c.block(IVec3::new(p.x & 31, p.y, p.z & 31)),
@@ -81,7 +90,7 @@ fn top_down(area: &Area, registry: &BlockRegistry, min: IVec2, max: IVec2, scale
 /// The box from `min` to `max`, from `low` to `high`, in an isometric view from the
 /// south-east, `a` pixels a block, as `forest_preview` draws.
 #[allow(clippy::too_many_arguments)]
-fn isometric(area: &Area, registry: &BlockRegistry, min: IVec2, max: IVec2, low: i32, high: i32, a: f32, path: &str) {
+fn isometric(area: &impl Look, registry: &BlockRegistry, min: IVec2, max: IVec2, low: i32, high: i32, a: f32, path: &str) {
     let project = |p: Vec3| Vec2::new((p.x - p.z) * a, (p.x + p.z) * a * 0.5 - p.y * a);
     let quads = [
         [Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.0, 1.0, 1.0)],
@@ -180,7 +189,7 @@ fn settlement_preview() {
             if !(named || names.is_none() && i < count) {
                 continue;
             }
-            let kinds: Vec<&str> = p.buildings.iter().map(|b| b.kind.name()).collect();
+            let kinds: Vec<&str> = p.buildings.iter().map(|b| b.what.as_str()).collect();
             println!("    {}", kinds.join(", "));
             let (min, max) = (p.min - 6, p.max + 6);
             let start = std::time::Instant::now();
@@ -208,6 +217,25 @@ fn settlement_preview() {
             let low = p.height - 12;
             let high = (p.height + 28).min(WORLD_HEIGHT - 1);
             isometric(&area, &registry, min, max, low, high, scale, &format!("{dir}/settlement_{seed}_{i}_iso.ppm"));
+        }
+        // `FOCUS=bakery,Windmill` (or `all`) draws the first of each such building close
+        // up, to `target/building_SEED_WHAT.ppm`.
+        if let Some(focus) = env("FOCUS") {
+            let wanted: Vec<&str> = focus.split(',').collect();
+            let mut drawn: Vec<String> = Vec::new();
+            let dir = format!("{}/../../target", env!("CARGO_MANIFEST_DIR"));
+            for p in &plans {
+                for b in &p.buildings {
+                    if drawn.contains(&b.what) || !(wanted.contains(&"all") || wanted.contains(&b.what.as_str())) {
+                        continue;
+                    }
+                    drawn.push(b.what.clone());
+                    let (min, max) = (b.min - 3, b.max + 3);
+                    let area = Area::new(&world, min, max);
+                    isometric(&area, &registry, min, max, b.floor - 3, (b.floor + 22).min(WORLD_HEIGHT - 1), 9.0, &format!("{dir}/building_{seed}_{}.ppm", b.what));
+                }
+            }
+            println!("  drew {}", drawn.join(", "));
         }
     }
 }
@@ -306,5 +334,202 @@ fn settlement_at() {
     let world = base_world(env("SEED").unwrap_or(1) as u64);
     for s in world.settlements_near(IVec2::new(env("X").unwrap(), env("Z").unwrap()), env("R").unwrap_or(300)) {
         println!("{} {} {} at {} min {:?}", s.name.0, s.size, s.style, s.centre, s.buildings.iter().map(|b| (b.kind.name(), b.min)).collect::<Vec<_>>());
+    }
+}
+
+
+/// A canvas laid on flat grass at y = 0, as generation would lay it.
+struct Model {
+    blocks: rustc_hash::FxHashMap<IVec3, BlockId>,
+}
+
+impl Model {
+    fn new(canvas: super::canvas::Canvas, registry: &BlockRegistry, min: IVec2, max: IVec2) -> Self {
+        use super::canvas::Put;
+        let id = |n: &str| registry.id(n).unwrap();
+        let mut blocks: rustc_hash::FxHashMap<IVec3, BlockId> = Default::default();
+        for z in min.y..=max.y {
+            for x in min.x..=max.x {
+                blocks.insert(IVec3::new(x, 0, z), id("base:grass_block"));
+                blocks.insert(IVec3::new(x, -1, z), id("base:dirt"));
+            }
+        }
+        let soft = |blocks: &rustc_hash::FxHashMap<IVec3, BlockId>, p: IVec3| {
+            blocks.get(&p).is_none_or(|&b| b.is_air() || !registry.def(b).solid || registry.def(b).render == RenderKind::Leaves)
+        };
+        for v in canvas.into_columns().into_values().flatten() {
+            let pos = v.pos;
+            match v.put {
+                Put::Set(b) => {
+                    blocks.insert(pos, b);
+                }
+                Put::Clear => {
+                    blocks.remove(&pos);
+                }
+                Put::Soft(b) => {
+                    if soft(&blocks, pos) {
+                        blocks.insert(pos, b);
+                    }
+                }
+                Put::Down(b) => {
+                    let mut p = pos;
+                    for _ in 0..10 {
+                        if !soft(&blocks, p) {
+                            break;
+                        }
+                        blocks.insert(p, b);
+                        p.y -= 1;
+                    }
+                }
+            }
+        }
+        Model { blocks }
+    }
+}
+
+impl Look for Model {
+    fn block(&self, p: IVec3) -> BlockId {
+        self.blocks.get(&p).copied().unwrap_or(BlockId::AIR)
+    }
+
+    fn color(&self, registry: &BlockRegistry, p: IVec3) -> Vec3 {
+        let def = registry.def(self.block(p));
+        match def.tint {
+            Tint::Foliage => Vec3::new(70.0, 120.0, 45.0),
+            Tint::Grass => Vec3::new(105.0, 150.0, 70.0),
+            Tint::Water => Vec3::new(60.0, 100.0, 200.0),
+            Tint::None => Vec3::new(def.color[0] as f32, def.color[1] as f32, def.color[2] as f32),
+        }
+    }
+}
+
+/// `cargo test --profile iter -p voxmar_worldgen house_catalogue -- --ignored --nocapture`
+/// draws every house in settlements.ron, and every roof and extra on some house, on flat
+/// grass in rows, fronts and then backs to the south-east, to
+/// `target/houses_{front,back}_ROW_N.ppm`: for judging the drawing of each piece.
+#[test]
+#[ignore]
+fn house_catalogue() {
+    use super::def::{Extra, Form, Roof};
+    use super::house::{self, Kind, Mats, Spec};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let def = &world_content.settlements;
+    let fixed = super::fixed(&registry, &def.furnishings).unwrap();
+    let id = |n: &str| registry.id(&format!("base:{n}")).unwrap();
+    let palette = |n: &str| super::canvas::Palette(vec![(id(n), 1.0)]);
+    let mats = Mats {
+        foundation: palette("cobblestone"),
+        floor: id("spruce_planks"),
+        wall: id("polished_calcite"),
+        frame: id("dark_oak_log"),
+        roof: id("dark_oak_planks"),
+        trim: id("spruce_planks"),
+        window: Some(id("glass")),
+        weathered: palette("mossy_cobblestone"),
+        hedge: palette("oak_leaves"),
+        log: id("oak_log"),
+        crops: Vec::new(),
+    };
+    // Each house with the roof and extras it is shown with.
+    use Extra::*;
+    let shown: Vec<(&str, Option<Roof>, Vec<Extra>)> = vec![
+        ("cottage", Some(Roof::Gable), vec![Chimney, Dormer, Shutters, FlowerBoxes, Lamp]),
+        ("cottage", Some(Roof::HalfHip), vec![Weathervane, RainBarrel, HangingHerbs, Woodpile]),
+        ("town_house", Some(Roof::Saltbox), vec![Balcony, Shutters, SignBoard]),
+        ("farm_house", Some(Roof::Gambrel), vec![OutsideStair, Dovecote, Awning]),
+        ("hall", Some(Roof::Hip), vec![Chimney, Dormer, Moss, Porch]),
+        ("wing_house", Some(Roof::Gable), vec![Wing, Shed]),
+        ("tower_house", Some(Roof::Conical), vec![Weathervane]),
+        ("hut", Some(Roof::Shed), vec![Woodpile]),
+        ("long_house", Some(Roof::Flat), vec![Chimney]),
+        ("roundhouse", None, vec![Chimney]),
+        ("a_frame", None, vec![Chimney]),
+        ("courtyard_house", None, vec![Chimney]),
+        ("shop_house", Some(Roof::Gable), vec![Dormer, SignBoard]),
+    ];
+    let mut rows: Vec<Vec<(String, Option<Roof>, Vec<Extra>)>> = vec![shown.iter().map(|(n, r, e)| (n.to_string(), *r, e.clone())).collect()];
+    rows.push(def.houses.iter().filter(|h| h.work.is_some()).map(|h| (h.name.clone(), None, Vec::new())).collect());
+    let out = format!("{}/../../target", env!("CARGO_MANIFEST_DIR"));
+    // Every prop the code draws in a row, then every centrepiece.
+    {
+        use super::def::{CentreKind, PropKind};
+        let mut canvas = super::canvas::Canvas::default();
+        let mut x = 0;
+        for p in &def.props {
+            if let PropKind::Drawn(prop) = p.kind {
+                let (w, d) = prop.extent();
+                let frame = super::canvas::Frame::fit(IVec2::ZERO, IVec2::new(w - 1, d - 1), super::canvas::Facing::North, IVec2::new(x, 0), 0);
+                super::plan::draw_prop(&fixed, &mats, &mut canvas, &frame, prop, x as u64);
+                x += w + 2;
+            }
+        }
+        let (min, max) = (IVec2::new(-2, -2), IVec2::new(x, 5));
+        isometric(&Model::new(canvas, &registry, min, max), &registry, min, max, -2, 8, 12.0, &format!("{out}/props.ppm"));
+        for (k, c) in def.centrepieces.iter().enumerate() {
+            let CentreKind::Drawn(centre) = c.kind else { continue };
+            let mut canvas = super::canvas::Canvas::default();
+            let (w, d) = centre.extent();
+            let spec = Spec {
+                kind: Kind::Centrepiece, w, d, wall: 3, storeys: 1, roof: Roof::Gable, pitch: 1, ridge_x: false, extras: Vec::new(), door: 0, shed: 0,
+                wing: None, stilts: 0, regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: Some(centre), seed: k as u64,
+            };
+            let frame = super::canvas::Frame::fit(IVec2::ZERO, IVec2::new(w - 1, d - 1), super::canvas::Facing::South, IVec2::ZERO, 0);
+            let named = |part: &str| c.parts.iter().find(|(p, _)| p == part).and_then(|(_, n)| registry.id(&super::def::fill(n, "oak", "oak")));
+            let parts = super::centre::Parts::new(&named, &mats, &fixed, 1);
+            super::centre::draw(centre, &spec, &frame, &mats, &fixed, &parts, &mut canvas);
+            let (min, max) = (IVec2::splat(-2), IVec2::new(w + 1, d + 1));
+            isometric(&Model::new(canvas, &registry, min, max), &registry, min, max, -3, 20, 12.0, &format!("{out}/centre_{centre:?}.ppm"));
+        }
+    }
+    for (side, facing) in [("front", super::canvas::Facing::South), ("back", super::canvas::Facing::North)] {
+        for (n, row) in rows.iter().enumerate() {
+            for (k, (name, roof, extras)) in row.iter().enumerate() {
+                let mut canvas = super::canvas::Canvas::default();
+                let h = def.houses.iter().find(|h| h.name == *name).unwrap();
+                let mut w = h.width.1 as i32;
+                let d = if h.form == Form::Round { w } else { h.depth.1 as i32 };
+                if h.form == Form::Round && w % 2 == 0 {
+                    w -= 1;
+                }
+                let mut extras = extras.clone();
+                extras.extend(h.always.iter().copied());
+                let roof = roof.unwrap_or_else(|| match h.form {
+                    Form::Round => Roof::Conical,
+                    Form::Courtyard => Roof::Hip,
+                    _ => h.roofs.first().map_or(Roof::Gable, |r| r.0),
+                });
+                let spec = Spec {
+                    kind: Kind::House,
+                    w,
+                    d,
+                    wall: if h.form == Form::AFrame { 0 } else { h.walls.1 as i32 },
+                    storeys: if h.form == Form::AFrame { 1 } else { h.storeys.1 as i32 },
+                    roof,
+                    pitch: 1,
+                    ridge_x: h.form != Form::AFrame && (roof == Roof::Saltbox || w > d || matches!(extras.first(), Some(Dormer))),
+                    door: w / 2,
+                    shed: if extras.contains(&Shed) { 3 } else { 0 },
+                    wing: extras.contains(&Wing).then_some((3, 4)),
+                    stilts: h.stilts.unwrap_or(0) as i32,
+                    extras,
+                    regular: true,
+                    window_chance: 0.6,
+                    form: h.form,
+                    inside: h.inside.clone(),
+                    centre: None,
+                    seed: k as u64 + 1,
+                };
+                let (low, high) = spec.envelope();
+                let frame = super::canvas::Frame::fit(low, high, facing, IVec2::ZERO, 0);
+                house::draw(&spec, &frame, &mats, &fixed, &mut canvas);
+                let extent = super::canvas::Frame::extent(low, high, facing);
+                let (min, max) = (IVec2::splat(-3), extent + 2);
+                let model = Model::new(canvas, &registry, min, max);
+                isometric(&model, &registry, min, max, -2, 24, 12.0, &format!("{out}/houses_{side}_{n}_{k}.ppm"));
+            }
+        }
     }
 }

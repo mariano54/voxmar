@@ -24,6 +24,7 @@
 //! thread came first.
 
 mod canvas;
+mod centre;
 pub mod def;
 mod house;
 mod plan;
@@ -62,9 +63,14 @@ pub struct Building {
     pub max: IVec2,
     /// The height of its floor.
     pub floor: i32,
-    /// The block just outside its door, at the height of the doorway's foot.
+    /// Where its path leaves the door, two blocks out, at the height of a foot standing there.
     pub door: Option<IVec3>,
     pub facing: Facing,
+    /// What it is in the lists: a house's name (`cottage`, `bakery`), a centrepiece's
+    /// (`GreatTree`), or else the kind's.
+    pub what: String,
+    /// The work done in it (`bakery`, `mill`, `shrine`), for the people who work there.
+    pub work: Option<String>,
 }
 
 /// A planned settlement.
@@ -465,6 +471,9 @@ fn fixed(registry: &BlockRegistry, f: &FurnishingsDef) -> Option<Fixed> {
         water: id(&f.water)?,
         planter: id(&f.planter),
         anvil: id(&f.anvil).unwrap_or(BlockId::AIR),
+        barrel: id(&f.barrel),
+        bell: id(&f.bell),
+        altar: id(&f.altar),
         dirt,
         flowers: palette(&f.flowers, &small_plant),
         bushes: palette(&f.bushes, &small_plant),
@@ -472,5 +481,9 @@ fn fixed(registry: &BlockRegistry, f: &FurnishingsDef) -> Option<Fixed> {
         compost: palette(&f.compost, &any),
         boulder: palette(&f.boulders, &any),
         fruit: palette(&f.fruit, &any),
+        hay: palette(&f.hay, &any),
+        hanging: palette(&f.hanging, &any),
+        sacks: palette(&f.sacks, &any),
+        cloth: palette(&f.cloth, &any),
     })
 }
