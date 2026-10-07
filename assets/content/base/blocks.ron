@@ -460,6 +460,9 @@
         (template: "flower", name: "sorrel", tags: ["herb", "meadow", "temperate", "edible", "flavour:sour"], all: (color: (90, 140, 50))),
         (template: "flower", name: "ginseng", tags: ["herb", "root", "forest_floor", "shade", "cold", "alchemy:energising", "alchemy:regeneration"], all: (color: (80, 130, 60), rarity: Rare)),
         (template: "plant", name: "mandrake", tags: ["herb", "root", "forest_floor", "shade", "alchemy:sleep", "alchemy:poison"], all: (color: (70, 110, 50), rarity: VeryRare)),
+        // Windroot: a wiry high-mountain herb the wind combs flat; the elixir of swiftness
+        // wants it. Rocky peaks and alpine meadows only (plants.ron, biomes.ron).
+        (template: "plant", name: "windroot", tags: ["herb", "root", "alpine", "mountain", "cold", "windswept", "alchemy:swiftness", "forage"], all: (model: Bush, color: (170, 190, 150), rarity: Rare)),
         (template: "flower", name: "wild_carrot", tags: ["herb", "root", "meadow", "temperate", "edible", "flavour:sweet"], all: (color: (230, 230, 220))),
         (template: "flower", name: "wild_wheat", tags: ["grass", "grain", "steppe", "meadow", "edible", "fibre"], all: (model: Hash, color: (210, 180, 90))),
         (template: "flower", name: "chili", tags: ["herb", "spice", "savanna", "tropical", "hot", "flavour:spicy", "dye:red", "alchemy:warming"], all: (model: Bush, color: (200, 40, 30), rarity: Uncommon)),

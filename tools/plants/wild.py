@@ -420,6 +420,43 @@ def rosette_berries(seed=0):
     return f
 
 
+def windswept(seed=0):
+    """A wiry mountain herb the wind has combed over (windroot): a gnarled pale root crown
+    half out of the ground, wiry stems fanning up from it and curling over downwind, fine
+    needle leaves streaming off them, and small pale flower tufts at the tips."""
+    def f():
+        c = Canvas(); r = random.Random(seed)
+        tips = []
+        # (start angle, length): steep ones curl over the most.
+        for a0, length in ((-112, 22), (-98, 25), (-86, 21), (-72, 17), (-58, 14), (-124, 15), (-45, 11)):
+            a = math.radians(a0 + r.uniform(-4, 4)); x, y = 11 + r.uniform(-1, 1), 28.0
+            pts = [(x, y)]
+            n = int(length)
+            for i in range(n):
+                # The wind turns every stem a little more downwind as it rises.
+                a += math.radians(3.2 + 2.8 * i / n)
+                x += math.cos(a); y += math.sin(a)
+                pts.append((x, y))
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                line(c, ax, ay, bx, by, 'L', 1)
+            for k in range(5, len(pts) - 1, 4):
+                px, py = pts[k]
+                ang = math.degrees(a) * 0.3 + r.uniform(-10, 15)
+                blade_leaf(c, px, py, ang, r.uniform(2.6, 3.8), 0.9, 3 + k % 2, droop=0.3)
+            tips.append(pts[-1])
+        # Tufts of tiny pale flowers at the tips of the tallest stems.
+        for x, y in sorted(tips, key=lambda p: p[1])[:3]:
+            for dx, dy, sh in ((0, 0, 3), (1, 0, 4), (1, 1, 2), (0, -1, 4), (2, 0, 3)):
+                c.put(x + dx, y + dy, 'P', sh)
+        # The root crown: gnarled, pale, roots twisting into the ground.
+        ellipse(c, 11, 29.5, 3.6, 1.8, 'W', 2, jag=0.6, seed=seed)
+        for ax, bx in ((9, 6), (13, 16)):
+            line(c, ax, 30, bx, 31, 'W', 1)
+        c.put(10, 28, 'W', 3); c.put(11, 28, 'W', 3)
+        rim(c); return c
+    return f
+
+
 def moss_carpet(seed=0, sparkle=False):
     def f():
         c = Canvas(); r = random.Random(seed)
@@ -480,6 +517,7 @@ add('mint', herb(4, 4.2, 3.0, 3, 'leaf', 1), leaf='#4aa04a')
 add('basil', herb(3, 5, 3.6, 3, 'leaf', 2), leaf='#3e9a2e')
 add('parsley', fern(9, 15, 3), leaf='#3e8a2a')
 add('sage', herb(4, 5, 2.6, 3, 'flower', 4, droop=0.5), leaf='#7a9a7a', petal='#9a7ac8')
+add('windroot', windswept(3), leaf='#8aa48c', petal='#f0e6b8', wood='#d8c8a0')
 add('wormwood', herb(5, 4, 1.6, 3, 'leaf', 5), leaf='#a4b4ac')
 add('sorrel', herb(3, 6, 2.4, 2, 'flower', 6, droop=0.6), leaf='#5a9a3a', petal='#b03a3a')
 add('nettle', herb(5, 4.2, 2.6, 3, 'leaf', 7), leaf='#3a7a2a')
