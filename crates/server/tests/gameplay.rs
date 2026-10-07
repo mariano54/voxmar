@@ -994,24 +994,37 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     let hold = |client: &Client, slot: u8| {
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
+    // How long a break takes, in server ticks, with the pickaxe and by hand: a refusal
+    // waits that long and more before it says nothing broke.
+    let hardness = client.content.blocks.info(iron).hardness;
+    let pickaxe = client.content.blocks.expect("base:stone_pickaxe");
+    let ticks = |speed: f32| (hardness / speed * TICKS_PER_SECOND as f32).ceil() as u64;
+    let (with_pickaxe, by_hand) = (ticks(client.content.tools.speed(Some(pickaxe), iron)), ticks(client.content.tools.speed(None, iron)));
     // At Mining 1, even with the pickaxe: refused.
     hold(&client, 4);
     mine(&client);
     client.settle();
+    client.after_ticks(with_pickaxe + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke at Mining 1");
     // At Mining 15 with a bare hand: refused too.
     client.ok("/skill mining 15");
     hold(&client, 5);
     mine(&client);
     client.settle();
+    client.after_ticks(by_hand + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke without a pickaxe");
-    // At Mining 15 with the stone pickaxe: broken, quicker than by hand, teaching Mining (35).
+    // At Mining 15 with the stone pickaxe: broken, quicker than by hand (by the server's
+    // clock, told once a second), teaching Mining (35).
     hold(&client, 4);
-    let started = Instant::now();
+    let told = client.server_tick;
+    client.pump_until(|c| c.server_tick > told);
+    let started = client.server_tick;
     mine(&client);
     client.pump_until(|c| c.world.block(ore) == Some(BlockId::AIR) && c.earned.contains(&350));
-    let hardness = client.content.blocks.info(iron).hardness;
-    assert!(started.elapsed().as_secs_f32() < hardness * 0.5, "a stone pickaxe should mine iron ore at four times a hand's speed");
+    let seen = client.server_tick;
+    client.pump_until(|c| c.server_tick > seen);
+    let took = client.server_tick - started;
+    assert!(took < by_hand, "a stone pickaxe took {took} ticks to mine iron ore, a hand's {by_hand}");
 }
 
 #[test]
