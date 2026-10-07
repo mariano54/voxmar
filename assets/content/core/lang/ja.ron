@@ -4,6 +4,11 @@
     // Kanji fill their whole box, so lines of them need a little more room than letters.
     "language.line_height": "1.4",
     "language.tight_line": "1.1",
+    // 禁則処理: 行頭に来ない文字、行末に来ない文字、分けないカタカナ語 (この文字数まで)。
+    "language.line_start_forbidden": "。、，．・：；？！ー…‥々ゝゞヽヾ」』）］｝〕〉》ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ｡､｣･ｰｧｨｩｪｫｬｭｮｯ)]}?!:;,.",
+    "language.line_end_forbidden": "「『（［｛〔〈《｢([{",
+    "language.unbroken": "ァアィイゥウェエォオカガキギクグケゲコゴサザシジスズセゼソゾタダチヂッツヅテデトドナニヌネノハバパヒビピフブプヘベペホボポマミムメモャヤュユョヨラリルレロヮワヰヱヲンヴヵヶヷヸヹヺーｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ",
+    "language.unbroken_longest": "12",
     // Between items in a line: a middle dot never starts a line in Japanese.
     "language.dot": "・",
 

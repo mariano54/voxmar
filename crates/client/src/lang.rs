@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy::text::{FontCx, FontSmoothing, LineHeight};
 use voxmar_engine::block::{BlockDef, BlockRegistry};
 use voxmar_engine::creature::CreatureDef;
-use voxmar_engine::lang::{ENGLISH, Lang, Language, def_key, languages, title_from_id};
+use voxmar_engine::lang::{ENGLISH, Lang, Language, LineRules, def_key, languages, title_from_id};
 use voxmar_engine::skill::SkillDef;
 use voxmar_engine::effect::EffectDef;
 
@@ -28,6 +28,7 @@ pub struct LangPlugin;
 impl Plugin for LangPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SmoothFonts>()
+            .init_resource::<Joined>()
             .add_systems(Startup, load_smooth_fonts)
             .add_systems(Update, switch.run_if(resource_changed::<Settings>))
             .add_systems(
@@ -38,6 +39,10 @@ impl Plugin for LangPlugin {
                         .chain()
                         .after(bevy::text::load_font_assets_into_font_collection)
                         .before(bevy::ui::UiSystems::Prepare),
+                    // Text is laid out joined where the language keeps characters together,
+                    // and is as written again right after.
+                    join_for_layout.in_set(bevy::ui::UiSystems::Content).before(bevy::ui::widget::measure_text_system),
+                    unjoin_after_layout.in_set(bevy::ui::UiSystems::Content).after(bevy::ui::widget::measure_text_system),
                 ),
             );
     }
@@ -220,6 +225,59 @@ fn localize(
 /// CJK scripts, from radicals and punctuation on.
 fn drawn_smooth(c: char) -> bool {
     c as u32 >= 0x2E80 && !(0xE000..0xF900).contains(&(c as u32))
+}
+
+/// The texts the language keeps characters of together, as they are laid out (see
+/// [`LineRules`]): each swapped into its `Text` just before text is measured and out again
+/// just after, so all that reads text between frames (what writes it, compares it, copies
+/// or searches it) sees it as written. One place for every wrapped text in the game.
+#[derive(Resource, Default)]
+struct Joined {
+    rules: LineRules,
+    /// By text, its other form: the joined one between frames, as written while measured.
+    texts: bevy::platform::collections::HashMap<Entity, String>,
+}
+
+fn join_for_layout(locale: Res<Locale>, mut joined: ResMut<Joined>, mut texts: Query<(Entity, Mut<Text>)>, mut gone: RemovedComponents<Text>) {
+    let joined = &mut *joined;
+    for entity in gone.read() {
+        joined.texts.remove(&entity);
+    }
+    let rules_changed = locale.is_changed() && {
+        let rules = LineRules::of(&locale);
+        let changed = rules != joined.rules;
+        joined.rules = rules;
+        changed
+    };
+    for (entity, mut text) in &mut texts {
+        if text.is_changed() || rules_changed {
+            match joined.rules.join(&text.0) {
+                Some(laid_out) => {
+                    let written = std::mem::replace(&mut text.bypass_change_detection().0, laid_out);
+                    joined.texts.insert(entity, written);
+                    // Measured again, joined, though the words are the same.
+                    if rules_changed {
+                        text.set_changed();
+                    }
+                }
+                None => {
+                    if joined.texts.remove(&entity).is_some() && rules_changed {
+                        text.set_changed();
+                    }
+                }
+            }
+        } else if let Some(other) = joined.texts.get_mut(&entity) {
+            std::mem::swap(&mut text.bypass_change_detection().0, other);
+        }
+    }
+}
+
+fn unjoin_after_layout(mut joined: ResMut<Joined>, mut texts: Query<&mut Text>) {
+    for (&entity, other) in joined.texts.iter_mut() {
+        if let Ok(mut text) = texts.get_mut(entity) {
+            std::mem::swap(&mut text.bypass_change_detection().0, other);
+        }
+    }
 }
 
 /// Puts a font rebuilt into a handle that already had one (the interface font, when the
@@ -775,16 +833,20 @@ mod tests {
         assert!(unused.is_empty(), "{} keys nothing uses (drop them from every language, or use them):\n{}", unused.len(), unused.join("\n"));
     }
 
-    /// Every character anything on screen writes: every language's strings and names, and
-    /// the characters the client's own string literals hold (symbols, markers), from the
-    /// lines that aren't comments.
+    /// Every character anything on screen writes: every language's strings and names (as
+    /// they are laid out, joined, too), and the characters the client's own string literals
+    /// hold (symbols, markers), from the lines that aren't comments.
     fn every_text_written() -> Vec<String> {
         let loaded = voxmar_server::load_content(&assets()).unwrap();
         let mut texts: Vec<String> = Vec::new();
         for language in languages(&content()) {
             let locale = Locale::load(&content(), &language.code);
+            let start = texts.len();
             texts.extend(locale.keys().map(|key| locale.get(key).to_owned()));
             texts.extend(definition_names(&loaded, &locale).into_iter().map(|(_, name)| name));
+            let rules = LineRules::of(&locale);
+            let joined: Vec<String> = texts[start..].iter().filter_map(|text| rules.join(text)).collect();
+            texts.extend(joined);
         }
         let mut sources = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
         while let Some(path) = sources.pop() {
@@ -857,6 +919,88 @@ mod tests {
             }
             assert!(missing.is_empty(), "{file}: missing glyphs: {}", missing.into_iter().collect::<Vec<_>>().join("; "));
         }
+    }
+
+    /// Text is joined only while it is laid out: before and after, and to anything that
+    /// writes or reads it, it is as written, and it is joined again when it changes or the
+    /// language does.
+    #[test]
+    fn text_is_joined_only_while_laid_out() {
+        #[derive(Resource, Default)]
+        struct Seen(Vec<String>);
+        let mut app = App::new();
+        app.insert_resource(Locale::load(&content(), "ja")).init_resource::<Joined>().init_resource::<Seen>();
+        app.add_systems(Update, (join_for_layout, |texts: Query<&Text>, mut seen: ResMut<Seen>| seen.0.extend(texts.iter().map(|text| text.0.clone())), unjoin_after_layout).chain());
+        let text = app.world_mut().spawn(Text::new("クリック。")).id();
+        let j = voxmar_engine::lang::WORD_JOINER;
+        let frame = |app: &mut App| {
+            app.update();
+            let seen = std::mem::take(&mut app.world_mut().resource_mut::<Seen>().0);
+            (seen, app.world().get::<Text>(text).unwrap().0.clone())
+        };
+        assert_eq!(frame(&mut app), (vec![format!("ク{j}リ{j}ッ{j}ク{j}。")], "クリック。".to_owned()));
+        assert_eq!(frame(&mut app), (vec![format!("ク{j}リ{j}ッ{j}ク{j}。")], "クリック。".to_owned()), "joined again on a frame it does not change");
+        app.world_mut().get_mut::<Text>(text).unwrap().0 = "ボタン".into();
+        assert_eq!(frame(&mut app).0, vec![format!("ボ{j}タ{j}ン")]);
+        // English has no rules: as written throughout.
+        *app.world_mut().resource_mut::<Locale>() = Locale::load(&content(), "en");
+        assert_eq!(frame(&mut app), (vec!["ボタン".to_owned()], "ボタン".to_owned()));
+    }
+
+    /// Japanese text wraps as kinsoku wants at every width: no line starts with closing
+    /// punctuation or a small kana, none ends with an opening bracket, and no katakana word
+    /// splits, while a line still breaks between any two other kanji or kana. Laid out as
+    /// the game lays it out (joined, see [`Joined`]) in the CJK fonts, from Japanese's
+    /// own strings and names.
+    #[test]
+    fn japanese_wraps_where_kinsoku_allows() {
+        use parley::fontique::{Blob, FontInfoOverride};
+        use parley::{FontFamily, StyleProperty};
+        let fonts = assets().join("ui/fonts");
+        let mut cx = parley::FontContext::default();
+        let data = crate::ui::skin::smooth_fallbacks(&fonts).into_iter().next().expect("a CJK font");
+        cx.collection.register_fonts(Blob::from(data), Some(FontInfoOverride { family_name: Some("cjk"), ..Default::default() }));
+        let locale = Locale::load(&content(), "ja");
+        let rules = LineRules::of(&locale);
+        assert!(!rules.is_empty(), "Japanese gives no line rules");
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let mut texts: Vec<String> = locale.keys().filter(|key| !key.starts_with("language.")).map(|key| locale.get(key).to_owned()).collect();
+        texts.extend(definition_names(&loaded, &locale).into_iter().map(|(_, name)| name));
+        texts.retain(|text| text.chars().any(drawn_smooth) && rules.join(text).is_some());
+        texts.sort();
+        texts.dedup();
+        let mut layouts = parley::LayoutContext::<()>::new();
+        // Where `text` breaks into lines `width` wide: the index in it, as written, of each
+        // character starting a line after the first.
+        let mut breaks = |text: &str, width: f32| -> Vec<usize> {
+            let mut builder = layouts.ranged_builder(&mut cx, text, 1.0, true);
+            builder.push_default(StyleProperty::FontFamily(FontFamily::named("cjk")));
+            builder.push_default(StyleProperty::FontSize(16.0));
+            let mut layout = builder.build(text);
+            layout.break_all_lines(Some(width));
+            let written = |end: usize| text[..end].chars().filter(|&c| c != voxmar_engine::lang::WORD_JOINER).count();
+            layout.lines().skip(1).map(|line| written(line.text_range().start)).collect()
+        };
+        let widths = [48.0, 80.0, 120.0, 176.0, 260.0];
+        let mut wrong = BTreeSet::new();
+        let mut unjoined = 0;
+        for text in &texts {
+            let (joined, chars) = (rules.join(text).unwrap(), text.chars().collect::<Vec<_>>());
+            let held = rules.held(&chars);
+            let shown = |at: usize| format!("{}|{}", chars[..at].iter().collect::<String>(), chars[at..].iter().collect::<String>());
+            for width in widths {
+                wrong.extend(breaks(&joined, width).into_iter().filter(|&at| held.get(at) == Some(&true)).map(|at| format!("{} ({width} wide)", shown(at))));
+                unjoined += breaks(text, width).into_iter().filter(|&at| held.get(at) == Some(&true)).count();
+            }
+        }
+        // The check sees the breaks joining keeps out.
+        assert!(texts.len() > 200 && unjoined > 0, "the check sees no breaks to keep ({} texts)", texts.len());
+        assert!(wrong.is_empty(), "{} Japanese lines break where kinsoku forbids:\n{}", wrong.len(), wrong.into_iter().take(40).collect::<Vec<_>>().join("\n"));
+        // And a line still breaks between kanji and kana mid-sentence, not only at punctuation.
+        let sentence: Vec<char> = "経験値は行動ごとに入り、レベルが上がるほど手に入るものが増えていきます。".chars().collect();
+        let joined = rules.join(&sentence.iter().collect::<String>()).unwrap();
+        let at = breaks(&joined, 120.0);
+        assert!(at.iter().any(|&at| sentence[at - 1].is_alphabetic() && sentence[at].is_alphabetic()), "no break between kanji or kana: {at:?}");
     }
 
     /// Every Japanese name with kanji (blocks and items, creatures, skills, conditions) has

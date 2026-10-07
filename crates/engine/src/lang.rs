@@ -237,6 +237,91 @@ impl Lang {
     }
 }
 
+/// Where a language lets a line of wrapped text break, beyond what Unicode's line breaking
+/// already does: its own rules, from its language file, so a mod or another language
+/// replaces them. Japanese (kinsoku) keeps closing punctuation and small kana off the start
+/// of a line, opening brackets off its end, and katakana words whole; between any two other
+/// kanji or kana a line may break, and a Latin word stays whole as Unicode keeps it.
+///
+/// Text is laid out with a word joiner (U+2060) wherever a break is forbidden (see
+/// [`LineRules::join`]); everything else (what is stored, compared, searched or copied)
+/// sees the text as written.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LineRules {
+    /// Characters no line may start with (`language.line_start_forbidden`).
+    no_start: Vec<char>,
+    /// Characters no line may end with (`language.line_end_forbidden`).
+    no_end: Vec<char>,
+    /// Characters whose runs stay on one line (`language.unbroken`): a run longer than
+    /// `longest` (`language.unbroken_longest`) may still break, rather than spill out of
+    /// its box.
+    unbroken: Vec<char>,
+    longest: usize,
+}
+
+/// The character that keeps the two either side of it on one line.
+pub const WORD_JOINER: char = '\u{2060}';
+
+impl LineRules {
+    /// The rules language `lang` gives; none for a language that gives none (English).
+    pub fn of(lang: &Lang) -> Self {
+        let chars = |key: &str| -> Vec<char> { lang.find(key).map(|text| text.chars().filter(|c| !c.is_whitespace()).collect()).unwrap_or_default() };
+        let longest = lang.find("language.unbroken_longest").and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+        LineRules { no_start: chars("language.line_start_forbidden"), no_end: chars("language.line_end_forbidden"), unbroken: chars("language.unbroken"), longest }
+    }
+
+    /// Whether the rules forbid nothing, so text lays out as written.
+    pub fn is_empty(&self) -> bool {
+        self.no_start.is_empty() && self.no_end.is_empty() && self.unbroken.is_empty()
+    }
+
+    /// For each character of `chars`, whether a line may not break just before it (false
+    /// for the first). Whitespace and word joiners are left to Unicode.
+    pub fn held(&self, chars: &[char]) -> Vec<bool> {
+        let mut held = vec![false; chars.len()];
+        if self.is_empty() {
+            return held;
+        }
+        // The length of the unbroken run each character is in, 0 outside one.
+        let mut run = vec![0; chars.len()];
+        let mut start = 0;
+        for i in 0..=chars.len() {
+            if i == chars.len() || !self.unbroken.contains(&chars[i]) {
+                run[start..i].fill(i - start);
+                start = i + 1;
+            }
+        }
+        let apart = |c: char| c.is_whitespace() || c == WORD_JOINER;
+        for i in 1..chars.len() {
+            let (before, c) = (chars[i - 1], chars[i]);
+            let whole = run[i] > 1 && run[i] <= self.longest && run[i - 1] > 0;
+            held[i] = !apart(before) && !apart(c) && (self.no_start.contains(&c) || self.no_end.contains(&before) || whole);
+        }
+        held
+    }
+
+    /// `text` as it is laid out: a word joiner before each character a line may not break
+    /// before. None when it needs none.
+    pub fn join(&self, text: &str) -> Option<String> {
+        if self.is_empty() || text.is_ascii() {
+            return None;
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let held = self.held(&chars);
+        if !held.contains(&true) {
+            return None;
+        }
+        let mut out = String::with_capacity(text.len() + 3 * held.iter().filter(|&&h| h).count());
+        for (&c, &held) in chars.iter().zip(&held) {
+            if held {
+                out.push(WORD_JOINER);
+            }
+            out.push(c);
+        }
+        Some(out)
+    }
+}
+
 /// Whether `text` holds kanji, which a reading spells out.
 pub fn has_kanji(text: &str) -> bool {
     text.chars().any(|c| matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}' | '々'))
@@ -429,6 +514,21 @@ fn read_files(content_dir: &Path, sub: &str, wanted: impl Fn(&str) -> bool) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Kinsoku: no line starts with 。 or a small kana or ends with 「, katakana words hold
+    /// together up to the longest, and anything else (spaces, Latin) is left to Unicode.
+    #[test]
+    fn line_rules_join_what_may_not_break() {
+        let rules = LineRules { no_start: "。」ょ".chars().collect(), no_end: "「".chars().collect(), unbroken: "クリッ".chars().collect(), longest: 4 };
+        let j = WORD_JOINER;
+        assert_eq!(rules.join("見た。「きょう」"), Some(format!("見た{j}。「{j}き{j}ょう{j}」")));
+        assert_eq!(rules.join("クリック"), Some(format!("ク{j}リ{j}ッ{j}ク")));
+        // Longer than the longest, a run may break (rather than spill out of its box).
+        assert_eq!(rules.join("クリッククリック"), None);
+        assert_eq!(rules.join("ク リ"), None);
+        assert_eq!(rules.join("Shift click"), None);
+        assert_eq!(LineRules::default().join("見た。"), None);
+    }
 
     const EN: &str = r#"{ "language.name": "English", "menu.play": "Play", "hud.plants": "Plants {crop} at level {level}", "only.en": "Only" }"#;
     const JA: &str = r#"{ "language.name": "日本語", "menu.play": "プレイ", "hud.plants": "{crop}を植える(レベル{level})" }"#;

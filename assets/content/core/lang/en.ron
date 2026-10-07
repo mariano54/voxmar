@@ -11,6 +11,12 @@
     // How tall a line of wrapped text is, in font sizes.
     "language.line_height": "1.2",
     "language.tight_line": "1.0",
+    // Where wrapped lines may not break (none in English): characters no line starts with,
+    // characters no line ends with, and characters whose runs stay whole, up to so many.
+    "language.line_start_forbidden": "",
+    "language.line_end_forbidden": "",
+    "language.unbroken": "",
+    "language.unbroken_longest": "",
     // Between items in a line: "Farming 3 · Mining 5".
     "language.dot": " · ",
 
