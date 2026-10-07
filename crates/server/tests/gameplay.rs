@@ -1262,3 +1262,30 @@ fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
     }
     assert_eq!(count(&client, dust), 2);
 }
+
+#[test]
+fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
+    let mut client = Client::join();
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in [
+        "/clear",
+        "/fill ~3 ~ ~-1 ~5 ~2 ~1 air",
+        "/fill ~3 ~ ~-1 ~5 ~ ~1 kiln_bricks",
+        "/setblock ~4 ~ ~ crucible",
+        "/setblock ~3 ~1 ~-1 kiln_bricks",
+        "/setblock ~5 ~1 ~-1 kiln_bricks",
+        "/setblock ~3 ~1 ~1 kiln_bricks",
+        "/setblock ~5 ~1 ~1 kiln_bricks",
+        "/give copper_dust 2",
+        "/skill engineering 20",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (crucible, dust, ingot) = (blocks.expect("base:crucible"), blocks.expect("base:copper_dust"), blocks.expect("base:copper_ingot"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks") && count(c, dust) == 2);
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    client.pump_until(|c| count(c, ingot) == 1 && count(c, dust) == 1);
+}

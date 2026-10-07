@@ -1,0 +1,9 @@
+// Smelted at stations (cooking.ron says how a line reads): what machines make that a
+// station finishes. Dust from a crusher smelts in the Crucible Kiln like the ore it came
+// from, so crushing first doubles the metal.
+(
+    recipes: [
+        (input: "copper_dust", output: "copper_ingot", station: "crucible", skill: "core:engineering", level: 5, xp: 8.0, stop_burning: 0),
+        (input: "iron_dust", output: "iron_ingot", station: "crucible", skill: "core:engineering", level: 15, xp: 12.0, stop_burning: 0),
+    ],
+)

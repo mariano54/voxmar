@@ -133,7 +133,8 @@ impl Content {
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "cooking.ron" => {
+                    // `cooking.ron`, and `cooking_<topic>.ron` for what a system smelts (machines).
+                    topic if topic.starts_with("cooking") => {
                         cooking.extend(CookingRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
