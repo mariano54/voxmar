@@ -143,6 +143,7 @@ impl Plugin for CapturePlugin {
             path: self.path.clone(),
             pose: self.pose,
             flight: self.flight,
+            flight_lifted: false,
             dig: self.dig,
             dig_started: None,
             wait: self.wait,
@@ -203,6 +204,8 @@ struct Capture {
     path: PathBuf,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    /// Whether the flight has asked the server to lift the player to its height.
+    flight_lifted: bool,
     dig: Option<f32>,
     dig_started: Option<f32>,
     wait: f32,
@@ -609,15 +612,22 @@ fn hold_time(state: Res<Capture>, time: Res<Time>, mut cycle: ResMut<DayCycle>) 
     }
 }
 
-/// Climbs straight up above the terrain, then flies forward at sprint-flight speed. Flying
-/// through the ground would have the server send the player back.
-fn fly(time: &Time, player: &mut LocalPlayer, sprint_speed: f32) {
+/// Goes above the terrain by teleport (a climb straight up is refused under a canopy or an
+/// overhang, and flying through the ground would have the server send the player back),
+/// then flies forward at sprint-flight speed.
+fn fly(time: &Time, player: &mut LocalPlayer, sprint_speed: f32, net: &crate::net::Net, lifted: &mut bool) {
     player.flying = true;
+    if player.position.y < FLIGHT_HEIGHT - 1.0 {
+        if !*lifted {
+            net.command(&format!("tp {} {FLIGHT_HEIGHT} {}", player.position.x, player.position.z));
+            *lifted = true;
+        }
+        return;
+    }
     let forward = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
-    let direction = if player.position.y < FLIGHT_HEIGHT { Vec3::Y } else { forward };
     // As fast as the player's fly speed setting makes it (an admin's, up to several times).
     let speed = sprint_speed * 0.9 * player.fly_speed;
-    player.position += direction * speed * time.delta_secs();
+    player.position += forward * speed * time.delta_secs();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -633,7 +643,7 @@ fn capture(
     lod: Res<Lod>,
     screen: Res<State<Screen>>,
     (weather, air, launch): (Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>, Res<crate::session::Launch>),
-    (ready, mut console): (Res<crate::weather::WeatherReady>, ResMut<crate::hud::console::Console>),
+    (ready, mut console, net): (Res<crate::weather::WeatherReady>, ResMut<crate::hud::console::Console>, Res<crate::net::Net>),
 ) {
     // Real time while `--flicker` stops the game's clock.
     let now = if state.flicker.is_some() { real.elapsed_secs() } else { time.elapsed_secs() };
@@ -693,7 +703,7 @@ fn capture(
     if let Some(duration) = state.flight
         && now - *state.flight_started.get_or_insert(now) < duration
     {
-        fly(&time, &mut player, launch.content.movement.fly_sprint_speed);
+        fly(&time, &mut player, launch.content.movement.fly_sprint_speed, &net, &mut state.flight_lifted);
         state.frame_times.push(frame_ms);
         return;
     }

@@ -3233,20 +3233,23 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let at = light_on_screen(world);
             gate.check("sky: sun", disc(&shot, at, "sun"));
             gate.check("sky: day", gradient(&shot));
-            // Up above the top of the world, as a flying player can go.
+            // Up above the top of the world, as a flying player can go: by teleport, for the
+            // server refuses a move that jumps hundreds of blocks in one step.
+            let feet = gate.feet;
             let mut player = world.resource_mut::<LocalPlayer>();
             player.flying = true;
-            player.position.y = ABOVE_THE_WORLD;
             player.pitch = 0.2;
+            world.resource::<Net>().command(&format!("tp {} {ABOVE_THE_WORLD} {}", feet.x as f32 + 0.5, feet.z as f32 + 0.5));
             gate.advance(now);
         }
-        3 if in_phase > 0.5 => {
+        3 if in_phase > 0.5 && world.resource::<LocalPlayer>().position.y > ABOVE_THE_WORLD - 1.0 => {
             let Some(shot) = gate.shot(world, "above the world") else { return };
             gate.check("sky: above the world", sky_lit(&shot));
-            let mut player = world.resource_mut::<LocalPlayer>();
-            player.position.y = gate.feet.y as f32;
-            player.flying = false;
-            world.resource::<Net>().command(&format!("time set {SUNSET}"));
+            let feet = gate.feet;
+            world.resource_mut::<LocalPlayer>().flying = false;
+            let net = world.resource::<Net>();
+            net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+            net.command(&format!("time set {SUNSET}"));
             gate.advance(now);
         }
         // At sunset, the sky above the horizon towards the sun, then away from it.
