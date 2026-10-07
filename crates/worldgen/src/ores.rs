@@ -63,7 +63,7 @@ pub struct OresDef {
 
 impl Default for OresDef {
     fn default() -> Self {
-        Self { grid: GridDef { spacing: 112, slots: 2, chance: 0.8 }, veins: Vec::new() }
+        Self { grid: GridDef { spacing: 112, slots: 2, chance: 0.7 }, veins: Vec::new() }
     }
 }
 
@@ -218,10 +218,14 @@ impl OresDef {
                     return fail(format!("vein `{name}`: ore `{}` needs a positive share and a band within 0..1", ore.block));
                 }
             }
-            if let Some(sample) = &vein.sample
-                && registry.id(sample).is_none()
-            {
-                return fail(format!("vein `{name}`: no sample block `{sample}`"));
+            // The surface is how players learn what lies below: every vein shows samples.
+            match &vein.sample {
+                None => return fail(format!("vein `{name}` needs a `sample`, the block that lies on the ground above it")),
+                Some(sample) if registry.id(sample).is_none() => return fail(format!("vein `{name}`: no sample block `{sample}`")),
+                Some(_) => {}
+            }
+            if vein.samples.0 == 0 {
+                return fail(format!("vein `{name}`: at least one sample must lie above it"));
             }
             if vein.samples.0 > vein.samples.1 || vein.samples.1 > 16 {
                 return fail(format!("vein `{name}`: samples are a range, least first, up to 16"));

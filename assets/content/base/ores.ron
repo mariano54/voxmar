@@ -1,7 +1,9 @@
 // Ore veins (crates/worldgen/src/ores.rs). Ore lies only in large veins of a few ores that
 // belong together, placed on a coarse grid, after GregTech's veins as StaTech Industry plays
 // them (the idea alone; see INSPIRATIONS.md). Each square of the grid, `spacing` blocks
-// across, holds up to `slots` veins at different heights, each there by `chance`.
+// across, holds up to `slots` veins at different heights, each there by `chance`: with two
+// slots at 0.7, about one square in eleven holds no vein at all, so not every patch of
+// ground has ore under it. Every vein shows samples of its ore on the ground above it.
 //
 // `title` is what players call it in English (Japanese and other languages in lang files,
 // `vein.<package>.<name>`). A vein is drawn by `weight` times its rarity's (Uncommon 0.3, Rare 0.08, VeryRare 0.015)
@@ -15,7 +17,7 @@
 // `sample` lies on the ground over the vein, `samples` of it at most (fewer where the
 // ground is not open), so a sample always has its vein below.
 (
-    grid: (spacing: 112, slots: 2, chance: 0.8),
+    grid: (spacing: 112, slots: 2, chance: 0.7),
     veins: [
         // Coal in seams in the bedded rocks, shallow: the first vein most players find.
         (
@@ -45,6 +47,21 @@
             ],
             provinces: {"granite": 2.5, "igneous": 1.4, "sedimentary": 0.6},
             sample: "copper_ore_sample",
+        ),
+        // Tin lodes in granite, with a little copper: tin as common as copper.
+        (
+            name: "tin_lode",
+            title: "tin lode",
+            weight: 14,
+            height: (-50, 10),
+            radius: (12, 18),
+            thickness: (4, 7),
+            ores: [
+                (block: "tin_ore", share: 5),
+                (block: "copper_ore", share: 1, within: (0.6, 1.0)),
+            ],
+            provinces: {"granite": 2.5, "igneous": 1.5, "sedimentary": 0.6},
+            sample: "tin_ore_sample",
         ),
         // Banded iron in old metamorphic and sedimentary beds, broad and plain.
         (
