@@ -110,9 +110,12 @@ def coin_purse():
         for y in range(6, 10):
             if s.px[y][x] is not None:
                 s.put(x, y, LEATHER[1])
-    # Gold glinting in the gaping mouth.
-    for x, c in ((13, GOLD[2]), (14, GOLD[3]), (15, GOLD[4]), (16, '#ffffff'), (17, GOLD[3]), (18, GOLD[2])):
+    # Gold heaped in the gaping mouth, two rows of it with a bright glint, so the purse
+    # still reads as full of coins at slot size.
+    for x, c in ((13, GOLD[2]), (14, GOLD[3]), (15, GOLD[4]), (16, '#ffffff'), (17, GOLD[4]), (18, GOLD[3])):
         s.put(x, 5, c)
+    for x, c in ((14, GOLD[3]), (15, '#ffffff'), (16, GOLD[4]), (17, GOLD[3])):
+        s.put(x, 6, c)
     # The cord, wound round the neck and tied, its two ends hanging.
     for y, c in ((11, TWINE[2]), (12, TWINE[1])):
         for x in range(12, 21):
