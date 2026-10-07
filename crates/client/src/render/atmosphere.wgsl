@@ -395,6 +395,9 @@ fn cloud_edge(a: Atmosphere) -> f32 {
     return mix(5.0, 9.0, a.clouds.w);
 }
 
+// Blocks over which the low cloud's underside thickens from clear to its full density.
+const CLOUD_BASE_SOFTNESS: f32 = 8.0;
+
 // How dense the low cloud is at `p`, 0..1, for the eye at `eye` (see `cloud_core`).
 // `billows` (0..1, for samples near enough to show them) lets 3D puffs eat into its edges
 // and tops, so heaped cloud is lumpy rather than smooth.
@@ -417,7 +420,10 @@ fn cloud_density(a: Atmosphere, p: vec3<f32>, eye: vec3<f32>, billows: f32) -> f
         let bite = mix(0.15, 0.35, a.clouds.w) * mix(0.6, 1.2, h) * (1.0 - 0.6 * saturate(core * 2.0));
         core -= (1.0 - puff) * bite * billows;
     }
-    return saturate(core * cloud_edge(a));
+    // The underside thickens over its last few blocks rather than at once, so flying up
+    // into a cloud is a gradual whiteout, not a wall (Mariano's playtest, 2026-10-06).
+    let soft_base = smoothstep(0.0, CLOUD_BASE_SOFTNESS / max(a.cloud_shape.y - a.cloud_shape.x, 1.0), h);
+    return saturate(core * cloud_edge(a)) * soft_base;
 }
 
 // The low cloud through the middle of its layer at `offset` (x, z) from the eye, where
