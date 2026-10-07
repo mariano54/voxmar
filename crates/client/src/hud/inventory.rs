@@ -822,19 +822,19 @@ pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Co
     let combat = &content.combat;
     let defence = content.skills.ids().find(|&id| content.skills.get(id).name == "core:defence");
     let level = defence.map_or(1, |id| content.skills.level(player.skills.xp(id)));
-    // What it is and who wears it (red below the player's Defence), then what it stops.
+    // What it is, the Defence it needs (red above the player's), then what it stops.
     let (head, needs, armour, guard, resists) = if let Some(piece) = combat.piece(item) {
         let set = combat.set(piece.set);
         let name = locale.get_or(&format!("armour_set.{}", set.name), &voxmar_engine::lang::title_from_id(&set.name)).to_owned();
         let weight = locale.get_or(&format!("item.weight.{}", piece.weight.key()), piece.weight.key()).to_owned();
-        (locale.format("item.armour", &[("set", &name), ("weight", &weight), ("level", &piece.level)]), piece.level, piece.armour, None, set.resists.clone())
+        (locale.format("item.armour", &[("set", &name), ("weight", &weight)]), piece.level, piece.armour, None, set.resists.clone())
     } else if let Some(shield) = combat.shield(item) {
-        (locale.format("item.armour_shield", &[("level", &shield.level)]), shield.level, shield.armour, Some(shield.guard), Vec::new())
+        (locale.get("item.armour_shield").to_owned(), shield.level, shield.armour, Some(shield.guard), Vec::new())
     } else {
         return Vec::new();
     };
     let ready = level >= needs;
-    let mut lines = vec![(head, if ready { SOFT } else { ERROR })];
+    let mut lines = vec![(head, SOFT), (locale.format("item.armour_needs", &[("level", &needs)]), if ready { SOFT } else { ERROR })];
     if armour > 0 {
         lines.push((locale.format("item.armour_value", &[("armour", &armour)]), SOFT));
     }
@@ -865,7 +865,9 @@ fn pouch_lines(locale: &Locale, registry: &voxmar_engine::block::BlockRegistry, 
         .map(|&(held, count)| (locale.format("pouch.holds", &[("count", &count), ("item", &locale.block(registry.def(held)))]), SOFT))
         .collect();
     let empty = carried.is_empty().then(|| (locale.get("pouch.nothing").to_owned(), MUTED));
-    carried.into_iter().chain(empty).chain([(locale.get("pouch.hint").to_owned(), MUTED)]).collect()
+    // Empty, it says what fills it: what it holds (`holds:<kind>`), picked up.
+    let fills = carried.is_empty().then(|| registry.def(item).tags.iter().find_map(|tag| tag.strip_prefix("holds:")).and_then(|kind| locale.find(&format!("pouch.fills.{kind}"))).map(|words| (words.to_owned(), MUTED))).flatten();
+    carried.into_iter().chain(empty).chain(fills).chain([(locale.get("pouch.hint").to_owned(), MUTED)]).collect()
 }
 
 /// The mouse and key moves the inventory takes, as key caps with what each does, two to a

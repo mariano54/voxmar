@@ -5,6 +5,10 @@
 // by its member's name with the family's filled in: `block.base.{name}_log` and
 // `family.base.oak` make Oak Log.
 {
+    "armour_set.hide_wraps": "Hide wraps",
+    "armour_set.copper": "Copper",
+    "armour_set.bronze_scale": "Bronze scale",
+    "armour_set.chainmail": "Chainmail",
     "effect.base.hearty": "Hearty",
     "effect.base.hearty.description": "Cooked meat: 4 more health while it lasts.",
     "effect.base.hunters_vigour": "Hunter's vigour",

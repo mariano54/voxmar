@@ -413,6 +413,13 @@ mod tests {
         // The weather's channels in `/weather` and the F3 screen, and what falls.
         let channels = voxmar_engine::weather::Weather::default().channels().map(|(name, _)| name);
         keys.extend(channels.chain(["rain", "snow"]).map(|name| format!("weather.channel.{name}")));
+        // Armour sets by name, and what each kind of pouch holds, in item tooltips.
+        for id in (0..blocks.len()).map(|i| BlockId(i as u16)).filter(|&id| first_party(&blocks.def(id).name)) {
+            if let Some(piece) = content.combat.piece(id) {
+                keys.insert(format!("armour_set.{}", content.combat.set(piece.set).name));
+            }
+            keys.extend(blocks.def(id).tags.iter().filter_map(|tag| tag.strip_prefix("holds:")).map(|kind| format!("pouch.fills.{kind}")));
+        }
         // What each first-party package is called, at the foot of every item's tooltip.
         keys.extend(FIRST_PARTY.iter().map(|package| format!("package.{package}")));
         // The quest book's chapters, one per age the first-party quests name.
