@@ -39,7 +39,7 @@ Everything a mod might want to change is in that data, not in code.
 | Age | Power | Machines |
 | --- | --- | --- |
 | Bronze | Rotation: water wheel, windmill, treadwheel (walked by a kept aurochs, horse, camel or bison beside it), shafts, bellows | Trip hammer (plates); the Bellows Bloomery (a multiblock: two iron ore and a fuel into an iron bloom, which a trip hammer beats into three ingots, a crafting table into two) |
-| Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore) |
+| Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore); the Coke Oven (a multiblock of kiln bricks three on a side round a hollow middle: coal into coke by its own heat, 30 s); the Blast Furnace (the bloomery's ring four high, on rotation: two iron ore and a coke into four ingots, two an ore, ore only); sawmill (on rotation: a log into six planks of its wood on average, half again an axe's) |
 | LV | Dynamo (rotation to LV), LV cable, battery bank | Electric furnace, macerator (2 dust, twice as fast), ore washer (3 dust, half as fast, needs water beside it) |
 | MV | Steam turbine (steam to MV), MV cable, MV battery bank, LV transformer (MV in on top, LV out of the other faces) | LV machines through a transformer |
 

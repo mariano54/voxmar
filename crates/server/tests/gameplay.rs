@@ -1470,6 +1470,72 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
 }
 
 #[test]
+fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two_ingots_an_ore() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    // The coke oven: a chamber of kiln bricks three on a side round a hollow middle, the
+    // oven in the middle of its south face.
+    let oven = start + IVec3::new(-3, 1, 3);
+    // The blast furnace: the bloomery's ring four high, bellows in it, blown by an aurochs
+    // on a treadwheel out east.
+    let furnace = start + IVec3::new(4, 0, 0);
+    for line in [
+        "/clear",
+        "/fill ~-5 ~ ~ ~8 ~4 ~5 air",
+        "/fill ~-4 ~ ~1 ~-2 ~2 ~3 kiln_bricks",
+        "/setblock ~-3 ~1 ~2 air",
+        "/setblock ~-3 ~1 ~3 coke_oven",
+        "/fill ~3 ~ ~-1 ~5 ~3 ~1 kiln_bricks",
+        "/fill ~4 ~1 ~ ~4 ~3 ~ air",
+        "/setblock ~4 ~ ~ blast_furnace",
+        "/setblock ~5 ~ ~ bellows",
+        "/setblock ~6 ~ ~ shaft",
+        "/setblock ~7 ~ ~ treadwheel",
+        "/summon aurochs 1 ~7 ~ ~2",
+        "/creatures tame aurochs",
+        "/creatures hold aurochs",
+        "/give coal_ore 1",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, coke, ore, ingot) = (blocks.expect("base:coal_ore"), blocks.expect("base:coke"), blocks.expect("base:iron_ore"), blocks.expect("base:iron_ingot"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| count(c, coal) == 1 && c.world.block(oven) == c.content.blocks.id("base:coke_oven") && c.world.block(furnace + IVec3::X) == c.content.blocks.id("base:bellows"));
+    // The coal goes in, and the oven bakes it by its own heat.
+    use_machine(&mut client, oven);
+    client.pump_until(|c| count(c, coal) == 0);
+    machine_says(&mut client, &format!("{} {} {}", oven.x, oven.y, oven.z), "making Coke", 10);
+    // Taken out once baked (each `/seed` answer comes after the server dealt with the take).
+    let started = client.tick;
+    while count(&client, coke) == 0 {
+        assert!(server_seconds(&client, started) < 60, "the coke oven baked no coke: {}", client.ok(&format!("/machine {} {} {}", oven.x, oven.y, oven.z)));
+        std::thread::sleep(Duration::from_millis(500));
+        use_machine(&mut client, oven);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, coke), 1);
+    // Two ore and the coke into the blast furnace: four ingots.
+    client.ok("/give iron_ore 2");
+    client.pump_until(|c| count(c, ore) == 2);
+    for item in [ore, coke] {
+        let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == item)).expect("held") as u8;
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: furnace, face: Face::NegX });
+        client.pump_until(|c| count(c, item) == 0);
+    }
+    let started = client.tick;
+    while count(&client, ingot) == 0 {
+        assert!(server_seconds(&client, started) < 60, "the blast furnace made no iron: {}", client.ok(&format!("/machine {} {} {}", furnace.x, furnace.y, furnace.z)));
+        std::thread::sleep(Duration::from_millis(500));
+        client.ok("/creatures hold aurochs");
+        use_machine(&mut client, furnace);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, ingot), 4, "two ore and a coke, four ingots");
+}
+
+#[test]
 fn a_hopper_feeds_a_crusher_by_conveyor_and_a_chest_above_collects_its_dust() {
     let mut client = Client::join();
     let start = client.position.floor().as_ivec3();
