@@ -35,6 +35,10 @@ pub struct MusicRules {
     pub gap: (f32, f32),
     /// Seconds a track takes to fade out when the player starts or leaves a game.
     pub fade_out: f32,
+    /// Seconds before another pick when a borrowed track cannot be read or decoded.
+    pub retry_after: f32,
+    /// Seconds before a track when music is turned back on with `M`.
+    pub resume_after: f32,
     /// The chance a pick is one of Voxmar's own tracks while borrowed ones suit too.
     pub own_share: f32,
     /// Where Voxmar's own tracks play.
@@ -60,7 +64,8 @@ pub struct Underground {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
-    /// Patterns of locations, `*` standing for anything: `*music/menu/*`.
+    /// Patterns of paths, the location less its namespace, `*` standing for anything:
+    /// `*music/menu/*`.
     pub paths: Vec<String>,
     /// A name for the log.
     pub category: String,
@@ -84,6 +89,8 @@ struct File {
     first_menu_delay: Option<(f32, f32)>,
     gap: Option<(f32, f32)>,
     fade_out: Option<f32>,
+    retry_after: Option<f32>,
+    resume_after: Option<f32>,
     own_share: Option<f32>,
     own_contexts: Option<Vec<Context>>,
     recent: Option<usize>,
@@ -101,6 +108,8 @@ impl Default for MusicRules {
             first_menu_delay: (2.0, 6.0),
             gap: (180.0, 420.0),
             fade_out: 1.5,
+            retry_after: 2.0,
+            resume_after: 2.0,
             own_share: 1.0,
             own_contexts: vec![Context::Menu, Context::Game, Context::Underground],
             recent: 0,
@@ -120,15 +129,17 @@ impl MusicRules {
             macro_rules! replace {
                 ($($field:ident),*) => {$(if let Some(value) = read.$field { rules.$field = value; })*};
             }
-            replace!(volume, borrowed_volume, first_menu_delay, gap, fade_out, own_share, own_contexts, recent, underground, prism);
+            replace!(volume, borrowed_volume, first_menu_delay, gap, fade_out, retry_after, resume_after, own_share, own_contexts, recent, underground, prism);
             rules.rules.splice(0..0, read.rules);
         }
         Ok(rules)
     }
 
-    /// The rule a borrowed track's location matches, if any.
+    /// The rule a borrowed track's location matches by its path, if any. The namespace is
+    /// left out, so a mod named `nethertools` is not taken for the Nether.
     pub fn rule(&self, location: &str) -> Option<&Rule> {
-        self.rules.iter().find(|rule| rule.paths.iter().any(|pattern| glob(pattern, location)))
+        let path = location.split_once(':').map_or(location, |(_, path)| path);
+        self.rules.iter().find(|rule| rule.paths.iter().any(|pattern| glob(pattern, path)))
     }
 }
 
@@ -179,6 +190,8 @@ mod tests {
         assert_eq!((menu.category.as_str(), menu.contexts.as_slice(), menu.weight), ("menu", [Context::Menu].as_slice(), 2.0));
         assert_eq!(rules.rule("minecraft:music/game/calm1").unwrap().weight, 1.0);
         assert!(rules.rule("minecraft:dig/grass1").is_none());
+        // Patterns see the path, not the namespace.
+        assert!(rules.rule("musicmod:dig/grass1").is_none());
         assert!(MusicRules::load(&[package("bad", "(loudness: 2.0)")]).unwrap_err().contains("bad/music.ron"));
     }
 
@@ -211,6 +224,9 @@ mod tests {
             ("horizonmelodies:music_and_melody/music/menu/a", &[Menu]),
             ("horizonmelodies:music_and_melody/music/misc/a", &[Game, Underground]),
             ("horizonmelodies:music_and_melody/loose_track", &[Game, Underground]),
+            // A mod's namespace says nothing about where its tracks play.
+            ("nethercreativeboss:music/calm", &[Game, Underground]),
+            ("endermenu:music/overworld/a", &[Game, Underground]),
         ] {
             let rule = rules.rule(location).unwrap_or_else(|| panic!("{location} has no rule"));
             assert_eq!(rule.contexts, contexts, "{location} ({})", rule.category);

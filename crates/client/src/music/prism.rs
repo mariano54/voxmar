@@ -15,18 +15,20 @@
 //! A track is known by its location, `<namespace>:<path under sounds/>` without the
 //! extension (`minecraft:music/game/calm1`), which the rules in `music.ron` match to
 //! choose where it plays. Packs repeat each other's tracks (a resource pack shipping the
-//! same files as a music mod), so a file name found in an earlier place is skipped later.
+//! same files as a music mod), so a file found earlier, the same size and checksum, is
+//! skipped later; every skip is kept, with the track it repeats, for the log.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
+use zip::ZipArchive;
 
 use super::rules::glob;
 
 /// Where to look in a Prism Launcher instance, and what counts as music there.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Discovery {
     /// Instances whose folder or display name contains one of these, any case; the most
@@ -39,6 +41,25 @@ pub struct Discovery {
     /// Sound events whose files are music by the event's name (`record*`) or category.
     pub music_events: Vec<String>,
     pub music_categories: Vec<String>,
+    /// The most bytes one file (a track, a `sounds.json`) is read to; a bigger one is
+    /// passed over with a warning.
+    pub max_bytes: u64,
+    /// How many folders deep a pack that is a folder is looked through.
+    pub folder_depth: u32,
+}
+
+impl Default for Discovery {
+    fn default() -> Self {
+        Self {
+            instances: Vec::new(),
+            sources: Vec::new(),
+            music_paths: Vec::new(),
+            music_events: Vec::new(),
+            music_categories: Vec::new(),
+            max_bytes: 64 << 20,
+            folder_depth: 12,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -66,6 +87,19 @@ pub struct Track {
     /// `<namespace>:<path under sounds/>`, without the extension.
     pub location: String,
     pub file: TrackFile,
+    /// The place it was found (`horizonmelodies/Soundtrack.zip`).
+    pub place: String,
+    /// The file's size and CRC-32, which say two copies are the same file.
+    pub size: u64,
+    pub crc: u32,
+}
+
+/// A track skipped as a copy of one found earlier.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Repeat {
+    pub track: Track,
+    /// The location of the track it repeats.
+    pub of: String,
 }
 
 /// Where a track's bytes are.
@@ -78,18 +112,50 @@ pub enum TrackFile {
 }
 
 impl TrackFile {
-    /// The encoded track (Ogg Vorbis).
-    pub fn read(&self) -> std::io::Result<Vec<u8>> {
+    /// The file's bytes (a track is Ogg Vorbis), if it has at most `max`.
+    pub fn read(&self, max: u64) -> std::io::Result<Vec<u8>> {
+        let too_big = |size: u64| std::io::Error::other(format!("{size} bytes, more than the {max} music.ron allows"));
+        let mut bytes = Vec::new();
         match self {
-            TrackFile::Loose(path) => std::fs::read(path),
+            TrackFile::Loose(path) => {
+                let file = std::fs::File::open(path)?;
+                let size = file.metadata()?.len();
+                if size > max {
+                    return Err(too_big(size));
+                }
+                file.take(max + 1).read_to_end(&mut bytes)?;
+            }
             TrackFile::Zipped { archive, entry } => {
-                let mut archive = zip::ZipArchive::new(std::fs::File::open(archive)?).map_err(std::io::Error::other)?;
-                let mut file = archive.by_name(entry).map_err(std::io::Error::other)?;
-                let mut bytes = Vec::with_capacity(file.size() as usize);
-                file.read_to_end(&mut bytes)?;
-                Ok(bytes)
+                let mut archive = ZipArchive::new(std::fs::File::open(archive)?).map_err(std::io::Error::other)?;
+                let file = archive.by_name(entry).map_err(std::io::Error::other)?;
+                if file.size() > max {
+                    return Err(too_big(file.size()));
+                }
+                bytes.reserve(file.size() as usize);
+                file.take(max + 1).read_to_end(&mut bytes)?;
             }
         }
+        // A file that grew, or a zip entry bigger than it says.
+        if bytes.len() as u64 > max {
+            return Err(too_big(bytes.len() as u64));
+        }
+        Ok(bytes)
+    }
+}
+
+/// The size and CRC-32 of a file, read a piece at a time.
+fn checksum(path: &Path) -> Option<(u64, u32)> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = crc32fast::Hasher::new();
+    let mut buffer = vec![0; 1 << 16];
+    let mut size = 0;
+    loop {
+        let read = file.read(&mut buffer).ok()?;
+        if read == 0 {
+            return Some((size, hasher.finalize()));
+        }
+        hasher.update(&buffer[..read]);
+        size += read as u64;
     }
 }
 
@@ -100,6 +166,11 @@ pub struct Found {
     pub tracks: Vec<Track>,
     /// How many tracks each place added, for the log.
     pub counts: Vec<(String, usize)>,
+    /// Tracks skipped as copies of ones found earlier.
+    pub repeats: Vec<Repeat>,
+    /// What went wrong, for the log: a launcher or instance named in the settings that is
+    /// not there.
+    pub problems: Vec<String>,
 }
 
 /// Prism Launcher's standard data folders, the first existing one being used.
@@ -119,16 +190,25 @@ fn launcher_folders() -> Vec<PathBuf> {
 /// Finds the instance and its tracks. Only the launcher's `instances` and `assets` folders
 /// are read.
 pub fn discover(place: &Place, rules: &Discovery) -> Found {
+    let problem = |problem: String| Found { problems: vec![problem], ..Found::default() };
     let launcher = if place.launcher.is_empty() {
         launcher_folders().into_iter().find(|folder| folder.join("instances").is_dir())
     } else {
-        Some(PathBuf::from(&place.launcher))
+        let folder = PathBuf::from(&place.launcher);
+        if !folder.join("instances").is_dir() {
+            return problem(format!("no Prism Launcher folder with instances at {} (prism_folder in the settings)", folder.display()));
+        }
+        Some(folder)
     };
     let Some(launcher) = launcher else { return Found::default() };
     let instance = if place.instance.is_empty() {
         newest_instance(&launcher.join("instances"), &rules.instances)
     } else {
-        Some(launcher.join("instances").join(&place.instance)).filter(|path| path.is_dir())
+        let folder = launcher.join("instances").join(&place.instance);
+        if !folder.is_dir() {
+            return problem(format!("no instance {} in {} (prism_instance in the settings)", place.instance, launcher.join("instances").display()));
+        }
+        Some(folder)
     };
     let Some(instance) = instance else { return Found::default() };
     let mut found = search(&launcher.join("assets"), &instance, rules);
@@ -165,17 +245,27 @@ fn game_folder(instance: &Path) -> PathBuf {
 /// The instance's tracks: the asset store's for its Minecraft version, then the packs'.
 pub fn search(assets: &Path, instance: &Path, rules: &Discovery) -> Found {
     let mut found = Found::default();
-    let mut names = FxHashSet::default();
+    // The first track found of each size and checksum.
+    let mut seen: FxHashMap<(u64, u32), String> = FxHashMap::default();
     let mut add = |found: &mut Found, label: String, tracks: Vec<Track>| {
-        // Within one place every track counts, even two of one name in different folders.
-        let fresh: Vec<Track> = tracks.into_iter().filter(|t| !names.contains(file_name(&t.location))).collect();
-        names.extend(fresh.iter().map(|t| file_name(&t.location).to_owned()));
-        found.counts.push((label, fresh.len()));
-        found.tracks.extend(fresh);
+        let mut added = 0;
+        for track in tracks {
+            match seen.get(&(track.size, track.crc)) {
+                Some(of) => found.repeats.push(Repeat { of: of.clone(), track }),
+                None => {
+                    seen.insert((track.size, track.crc), track.location.clone());
+                    found.tracks.push(track);
+                    added += 1;
+                }
+            }
+        }
+        found.counts.push((label, added));
     };
     if let Some(version) = minecraft_version(instance) {
         let index = assets.join("indexes").join(format!("{version}.json"));
-        add(&mut found, format!("assets {version}"), store_tracks(&index, &assets.join("objects"), rules));
+        let label = format!("assets {version}");
+        let tracks = store_tracks(&index, &assets.join("objects"), &label, rules);
+        add(&mut found, label, tracks);
     }
     let game = game_folder(instance);
     for source in &rules.sources {
@@ -183,23 +273,16 @@ pub fn search(assets: &Path, instance: &Path, rules: &Discovery) -> Found {
         let Ok(entries) = std::fs::read_dir(&folder) else { continue };
         let mut packs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
         packs.sort();
-        for pack in packs {
-            let tracks = match Pack::open(&pack) {
-                Some(pack) => pack.tracks(source.all_music, rules),
-                None => continue,
-            };
+        for path in packs {
+            let Some(mut pack) = Pack::open(&path, rules.folder_depth) else { continue };
+            let label = format!("{}/{}", source.folder, path.file_name().unwrap_or_default().to_string_lossy());
+            let tracks = pack.tracks(source.all_music, &label, rules);
             if !tracks.is_empty() {
-                let label = format!("{}/{}", source.folder, pack.file_name().unwrap_or_default().to_string_lossy());
                 add(&mut found, label, tracks);
             }
         }
     }
     found
-}
-
-/// The last part of a location: `calm1` of `minecraft:music/game/calm1`.
-fn file_name(location: &str) -> &str {
-    location.rsplit(['/', ':']).next().unwrap_or(location)
 }
 
 /// The instance's Minecraft version, from the components Prism keeps in `mmc-pack.json`.
@@ -221,7 +304,7 @@ fn minecraft_version(instance: &Path) -> Option<String> {
 
 /// The music files an asset index names (`minecraft/sounds/music/game/calm1.ogg`) whose
 /// objects are in the store.
-fn store_tracks(index: &Path, objects: &Path, rules: &Discovery) -> Vec<Track> {
+fn store_tracks(index: &Path, objects: &Path, place: &str, rules: &Discovery) -> Vec<Track> {
     #[derive(Deserialize)]
     struct Index {
         objects: FxHashMap<String, Object>,
@@ -239,8 +322,12 @@ fn store_tracks(index: &Path, objects: &Path, rules: &Discovery) -> Vec<Track> {
         .filter_map(|(name, object)| {
             let (namespace, path) = name.split_once("/sounds/")?;
             let location = format!("{namespace}:{}", path.strip_suffix(".ogg")?);
+            if !is_music_path(&location, rules) {
+                return None;
+            }
             let file = objects.join(object.hash.get(..2)?).join(&object.hash);
-            (is_music_path(&location, rules) && file.is_file()).then_some(Track { location, file: TrackFile::Loose(file) })
+            let (size, crc) = checksum(&file)?;
+            Some(Track { location, file: TrackFile::Loose(file), place: place.to_owned(), size, crc })
         })
         .collect();
     tracks.sort_by(|a, b| a.location.cmp(&b.location));
@@ -254,24 +341,36 @@ fn is_music_path(location: &str, rules: &Discovery) -> bool {
 
 /// A resource-pack-shaped zip, jar or folder.
 enum Pack {
-    Zipped { archive: PathBuf, names: Vec<String> },
+    Zipped { path: PathBuf, archive: ZipArchive<std::fs::File>, names: Vec<String> },
     Folder { root: PathBuf, names: Vec<String> },
 }
 
 impl Pack {
-    fn open(path: &Path) -> Option<Self> {
+    fn open(path: &Path, depth: u32) -> Option<Self> {
         if path.is_dir() {
             let mut names = Vec::new();
-            list(path, "", 0, &mut names);
+            list(path, "", depth, &mut names);
             return Some(Pack::Folder { root: path.to_owned(), names });
         }
         let extension = path.extension()?.to_str()?.to_ascii_lowercase();
         if extension != "zip" && extension != "jar" {
             return None;
         }
-        let archive = zip::ZipArchive::new(std::fs::File::open(path).ok()?).ok()?;
+        let archive = ZipArchive::new(std::fs::File::open(path).ok()?).ok()?;
         let names = archive.file_names().map(str::to_owned).collect();
-        Some(Pack::Zipped { archive: path.to_owned(), names })
+        Some(Pack::Zipped { path: path.to_owned(), archive, names })
+    }
+
+    /// A file's size and CRC-32: from a zip's directory, or read from a folder.
+    fn checksum(&mut self, name: &str) -> Option<(u64, u32)> {
+        match self {
+            Pack::Zipped { archive, .. } => {
+                let index = archive.index_for_name(name)?;
+                let file = archive.by_index_raw(index).ok()?;
+                Some((file.size(), file.crc32()))
+            }
+            Pack::Folder { root, .. } => checksum(&root.join(name)),
+        }
     }
 
     fn names(&self) -> &[String] {
@@ -282,21 +381,21 @@ impl Pack {
 
     fn file(&self, name: &str) -> TrackFile {
         match self {
-            Pack::Zipped { archive, .. } => TrackFile::Zipped { archive: archive.clone(), entry: name.to_owned() },
+            Pack::Zipped { path, .. } => TrackFile::Zipped { archive: path.clone(), entry: name.to_owned() },
             Pack::Folder { root, .. } => TrackFile::Loose(root.join(name)),
         }
     }
 
     /// The pack's music: every sound file if `all_music`, else those whose path, or the
     /// sound event naming them, says they are music.
-    fn tracks(&self, all_music: bool, rules: &Discovery) -> Vec<Track> {
-        let mut sounds: Vec<(String, &String)> = self
+    fn tracks(&mut self, all_music: bool, place: &str, rules: &Discovery) -> Vec<Track> {
+        let mut sounds: Vec<(String, String)> = self
             .names()
             .iter()
             .filter_map(|name| {
                 let (namespace, path) = name.strip_prefix("assets/")?.split_once("/sounds/")?;
                 let path = path.strip_suffix(".ogg").or_else(|| path.strip_suffix(".OGG"))?;
-                (!namespace.contains('/')).then(|| (format!("{namespace}:{path}"), name))
+                (!namespace.contains('/')).then(|| (format!("{namespace}:{path}"), name.clone()))
             })
             .collect();
         if sounds.is_empty() {
@@ -305,7 +404,13 @@ impl Pack {
         let named = if all_music { FxHashSet::default() } else { self.event_music(rules) };
         sounds.retain(|(location, _)| all_music || named.contains(location) || is_music_path(location, rules));
         sounds.sort();
-        sounds.into_iter().map(|(location, name)| Track { file: self.file(name), location }).collect()
+        sounds
+            .into_iter()
+            .filter_map(|(location, name)| {
+                let (size, crc) = self.checksum(&name)?;
+                Some(Track { file: self.file(&name), location, place: place.to_owned(), size, crc })
+            })
+            .collect()
     }
 
     /// Locations of the files of every music event in the pack's `sounds.json` files.
@@ -316,7 +421,7 @@ impl Pack {
             if namespace.contains('/') {
                 continue;
             }
-            let Some(bytes) = self.read(name) else { continue };
+            let Some(bytes) = self.file(name).read(rules.max_bytes).ok() else { continue };
             let Ok(events) = serde_json::from_slice::<FxHashMap<String, Event>>(&bytes) else { continue };
             for (event, definition) in events {
                 let by_category = definition.category.as_ref().is_some_and(|c| rules.music_categories.contains(c));
@@ -335,11 +440,6 @@ impl Pack {
             }
         }
         music
-    }
-
-    /// A small file of the pack (its `sounds.json`).
-    fn read(&self, name: &str) -> Option<Vec<u8>> {
-        self.file(name).read().ok()
     }
 }
 
@@ -363,16 +463,14 @@ enum Sound {
     },
 }
 
-/// Every file under `folder`, as paths relative to the pack's root with `/` between parts.
+/// Every file under `folder`, `depth` folders deep at most, as paths relative to the
+/// pack's root with `/` between parts.
 fn list(folder: &Path, prefix: &str, depth: u32, names: &mut Vec<String>) {
-    if depth > 12 {
-        return;
-    }
     let Ok(entries) = std::fs::read_dir(folder) else { return };
     for entry in entries.flatten() {
         let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
         match entry.file_type() {
-            Ok(kind) if kind.is_dir() => list(&entry.path(), &format!("{name}/"), depth + 1, names),
+            Ok(kind) if kind.is_dir() && depth > 0 => list(&entry.path(), &format!("{name}/"), depth - 1, names),
             Ok(kind) if kind.is_file() => names.push(name),
             _ => {}
         }
@@ -380,13 +478,13 @@ fn list(folder: &Path, prefix: &str, depth: u32, names: &mut Vec<String>) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::io::Write;
 
     use super::*;
 
     /// A fresh empty folder for one test.
-    fn scratch(name: &str) -> PathBuf {
+    pub fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("voxmar-prism-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -399,11 +497,11 @@ mod tests {
     }
 
     /// Stand-in track bytes: an Ogg page header and a name, not real audio.
-    fn ogg(name: &str) -> Vec<u8> {
+    pub fn ogg(name: &str) -> Vec<u8> {
         [b"OggS\0\x02".as_slice(), name.as_bytes()].concat()
     }
 
-    fn zip(path: &Path, files: &[(&str, Vec<u8>)]) {
+    pub fn zip(path: &Path, files: &[(&str, Vec<u8>)]) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut writer = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
         let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
@@ -414,7 +512,7 @@ mod tests {
         writer.finish().unwrap();
     }
 
-    fn rules() -> Discovery {
+    pub fn rules() -> Discovery {
         Discovery {
             instances: vec!["gt new horizons".into(), "gt_new_horizons".into()],
             sources: vec![
@@ -425,6 +523,7 @@ mod tests {
             music_paths: vec!["*music/*".into(), "*records/*".into()],
             music_events: vec!["record*".into(), "*music*".into()],
             music_categories: vec!["music".into(), "record".into()],
+            ..Discovery::default()
         }
     }
 
@@ -464,20 +563,26 @@ mod tests {
             &game.join("soundtrack/Soundtrack.zip"),
             &[
                 ("assets/melodies/sounds.json", br#"{"track.0123": {"sounds": [{"name": "melodies:minecraft/music/game/calm1", "stream": true}]}}"#.to_vec()),
-                ("assets/melodies/sounds/minecraft/music/game/calm1.ogg", ogg("calm1 again")),
+                // The very file the store has.
+                ("assets/melodies/sounds/minecraft/music/game/calm1.ogg", ogg("calm1")),
+                // Another menu1: a different file of the same name.
+                ("assets/melodies/sounds/minecraft/music/menu/menu1.ogg", ogg("menu1, newer")),
                 ("assets/melodies/sounds/statech/overworld/forest_dawn.ogg", ogg("forest_dawn")),
                 ("assets/melodies/sounds/statech/caves/deep_hum.ogg", ogg("deep_hum")),
                 ("assets/melodies/sounds/statech/end/theme.ogg", ogg("end theme")),
                 ("assets/melodies/sounds/statech/nether/theme.ogg", ogg("nether theme")),
             ],
         );
-        // A resource pack repeating one of the soundtrack's files, and adding one.
+        // A resource pack repeating one of the soundtrack's files under another name, adding
+        // one, and holding an empty and a garbled track.
         zip(
             &game.join("resourcepacks/StaTech-Music.zip"),
             &[
                 ("pack.mcmeta", b"{}".to_vec()),
-                ("assets/st/sounds/music/overworld/forest_dawn.ogg", ogg("forest_dawn copy")),
+                ("assets/st/sounds/music/overworld/forest_dawn_1.ogg", ogg("forest_dawn")),
                 ("assets/st/sounds/music/overworld/meadow.ogg", ogg("meadow")),
+                ("assets/st/sounds/music/broken/empty.ogg", Vec::new()),
+                ("assets/st/sounds/music/broken/garbled.ogg", b"not audio at all".to_vec()),
             ],
         );
         // A folder resource pack.
@@ -498,12 +603,19 @@ mod tests {
         zip(&game.join("mods/old.jar.disabled"), &[("assets/old/sounds/music/old.ogg", ogg("old"))]);
     }
 
-    #[test]
-    fn finds_every_track_of_the_newest_matching_instance_once() {
-        let root = scratch("find");
+    /// The launcher folder `launcher` makes, with its instance's tracks found.
+    pub fn found(name: &str) -> (PathBuf, Found) {
+        let root = scratch(name);
         launcher(&root);
         let found = discover(&Place { launcher: root.to_string_lossy().into_owned(), instance: String::new() }, &rules());
+        (root, found)
+    }
+
+    #[test]
+    fn finds_every_track_of_the_newest_matching_instance_once() {
+        let (root, found) = found("find");
         assert_eq!(found.instance, Some(root.join("instances/GT_New_Horizons_2.9.0-beta-3_Java_17-26")));
+        assert!(found.problems.is_empty());
         let locations: Vec<&str> = found.tracks.iter().map(|t| t.location.as_str()).collect();
         assert_eq!(
             locations,
@@ -512,13 +624,17 @@ mod tests {
                 "minecraft:music/game/calm1",
                 "minecraft:music/menu/menu1",
                 "minecraft:records/cat",
-                // The soundtrack, less calm1, found already; both `theme`s, in different folders.
+                // The soundtrack, less the store's calm1; its own menu1 and both `theme`s
+                // count, being different files.
+                "melodies:minecraft/music/menu/menu1",
                 "melodies:statech/caves/deep_hum",
                 "melodies:statech/end/theme",
                 "melodies:statech/nether/theme",
                 "melodies:statech/overworld/forest_dawn",
-                // Packs in name order: the folder pack, then the zip's new track only.
+                // Packs in name order: the folder pack, then the zip's new files only.
                 "loose:music/rain_walk",
+                "st:music/broken/empty",
+                "st:music/broken/garbled",
                 "st:music/overworld/meadow",
                 // The mod's disc, by its event; not its block sound or a disabled mod.
                 "discs:disc/sky",
@@ -529,23 +645,44 @@ mod tests {
             counts,
             [
                 ("assets 1.7.10", 3),
-                ("soundtrack/Soundtrack.zip", 4),
+                ("soundtrack/Soundtrack.zip", 5),
                 ("resourcepacks/Loose", 1),
-                ("resourcepacks/StaTech-Music.zip", 1),
+                ("resourcepacks/StaTech-Music.zip", 3),
                 ("mods/discs.jar", 1)
             ]
         );
+        // Each copy skipped says which track it repeats.
+        let repeats: Vec<(&str, &str, &str)> =
+            found.repeats.iter().map(|r| (r.track.place.as_str(), r.track.location.as_str(), r.of.as_str())).collect();
+        assert_eq!(
+            repeats,
+            [
+                ("soundtrack/Soundtrack.zip", "melodies:minecraft/music/game/calm1", "minecraft:music/game/calm1"),
+                ("resourcepacks/StaTech-Music.zip", "st:music/overworld/forest_dawn_1", "melodies:statech/overworld/forest_dawn"),
+            ]
+        );
         // Each reads back as its own bytes, from the store, a zip or a folder.
-        let read = |location: &str| found.tracks.iter().find(|t| t.location == location).unwrap().file.read().unwrap();
+        let track = |location: &str| found.tracks.iter().find(|t| t.location == location).unwrap();
+        let read = |location: &str| track(location).file.read(1 << 20).unwrap();
         assert_eq!(read("minecraft:records/cat"), ogg("cat"));
         assert_eq!(read("melodies:statech/end/theme"), ogg("end theme"));
         assert_eq!(read("loose:music/rain_walk"), ogg("rain_walk"));
         assert_eq!(read("discs:disc/sky"), ogg("sky"));
+        assert_eq!(read("st:music/broken/empty"), Vec::<u8>::new());
+        // Sizes and checksums are the files' own, whether a zip says them or they are read.
+        for location in ["minecraft:records/cat", "melodies:statech/end/theme", "loose:music/rain_walk"] {
+            let bytes = read(location);
+            assert_eq!((track(location).size, track(location).crc), (bytes.len() as u64, crc32fast::hash(&bytes)), "{location}");
+        }
+        // Nothing is read past the limit, from a loose file or a zip.
+        let limit = ogg("cat").len() as u64 - 1;
+        assert!(track("minecraft:records/cat").file.read(limit).unwrap_err().to_string().contains("more than"));
+        assert!(track("melodies:statech/end/theme").file.read(4).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn a_named_instance_wins_and_nothing_is_found_without_one() {
+    fn a_named_instance_wins_and_a_missing_one_is_reported() {
         let root = scratch("named");
         launcher(&root);
         let launcher = root.to_string_lossy().into_owned();
@@ -553,11 +690,28 @@ mod tests {
         assert_eq!(named.instance, Some(root.join("instances/GT_New_Horizons_2.8.0")));
         // That instance has only the store's tracks.
         assert_eq!(named.tracks.len(), 3);
-        assert!(discover(&Place { launcher: launcher.clone(), instance: "Nope".into() }, &rules()).tracks.is_empty());
+        let missing = discover(&Place { launcher: launcher.clone(), instance: "Nope".into() }, &rules());
+        assert!(missing.tracks.is_empty() && missing.instance.is_none());
+        assert!(missing.problems.len() == 1 && missing.problems[0].contains("no instance Nope"), "{:?}", missing.problems);
         let no_match = Discovery { instances: vec!["skyblock".into()], ..rules() };
         assert_eq!(discover(&Place { launcher, instance: String::new() }, &no_match).instance, None);
-        let missing = discover(&Place { launcher: root.join("nowhere").to_string_lossy().into_owned(), instance: String::new() }, &rules());
+        let nowhere = root.join("nowhere").to_string_lossy().into_owned();
+        let missing = discover(&Place { launcher: nowhere, instance: String::new() }, &rules());
         assert!(missing.instance.is_none() && missing.tracks.is_empty());
+        assert!(missing.problems.len() == 1 && missing.problems[0].contains("nowhere"), "{:?}", missing.problems);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn folder_packs_are_looked_through_only_so_deep() {
+        let root = scratch("deep");
+        write(&root.join("assets/deep/sounds/music/a/b/c.ogg"), &ogg("c"));
+        let names = |depth| {
+            let Some(Pack::Folder { names, .. }) = Pack::open(&root, depth) else { panic!("a folder pack") };
+            names
+        };
+        assert_eq!(names(6), ["assets/deep/sounds/music/a/b/c.ogg"]);
+        assert!(names(5).is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

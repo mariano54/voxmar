@@ -9,9 +9,12 @@
 //! player's own Prism Launcher instance join them (`prism`), each read from where it is
 //! as it is about to play. Each track suits some moments (the menus, the world above,
 //! deep underground), as `music.ron` says (`rules`); a pick is among those suiting the
-//! moment, passing over the ones played lately.
+//! moment, passing over the ones played lately. A borrowed track is checked to decode
+//! before it plays; one that does not (empty, cut short, another codec) leaves the
+//! rotation.
 
 use std::collections::VecDeque;
+use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,9 +34,6 @@ use self::rules::{Context, MusicRules};
 
 pub mod prism;
 pub mod rules;
-
-/// Seconds before another pick when a borrowed track could not be read.
-const RETRY_AFTER: f32 = 2.0;
 
 pub struct MusicPlugin;
 
@@ -86,7 +86,7 @@ struct Music {
     /// Borrowed tracks still being looked for.
     found: Option<Receiver<Found>>,
     /// A borrowed track being read, to play once it is.
-    loading: Option<(usize, Receiver<std::io::Result<Vec<u8>>>)>,
+    loading: Option<(usize, Receiver<Result<AudioSource, String>>)>,
 }
 
 impl Music {
@@ -168,6 +168,9 @@ fn receive_found(mut music: ResMut<Music>) {
         }
     };
     music.found = None;
+    for problem in &found.problems {
+        warn!("music: {problem}");
+    }
     let Some(instance) = &found.instance else {
         info!("music: no Prism Launcher instance found");
         return;
@@ -191,7 +194,28 @@ fn receive_found(mut music: ResMut<Music>) {
         places.join(", "),
         categories.join(", ")
     );
+    // Every copy skipped, so a place adding none is explained.
+    let mut places: Vec<&str> = found.repeats.iter().map(|r| r.track.place.as_str()).collect();
+    places.dedup();
+    for place in places {
+        let repeats: Vec<String> =
+            found.repeats.iter().filter(|r| r.track.place == place).map(|r| format!("{} = {}", r.track.location, r.of)).collect();
+        info!("music: {place}: {} copies of tracks found earlier: {}", repeats.len(), repeats.join(", "));
+    }
     music.tracks.extend(added);
+}
+
+/// Reads a borrowed track and checks it decodes, as Bevy will decode it (`AudioSource`'s
+/// decoder panics on a file it cannot open), off the main thread.
+fn read_track(file: &TrackFile, max_bytes: u64) -> Result<AudioSource, String> {
+    let source = AudioSource { bytes: Arc::from(file.read(max_bytes).map_err(|e| e.to_string())?) };
+    let mut decoder = rodio::Decoder::builder()
+        .with_byte_len(source.bytes.len() as u64)
+        .with_data(Cursor::new(source.clone()))
+        .build()
+        .map_err(|e| format!("does not decode: {e}"))?;
+    decoder.next().ok_or("has no sound")?;
+    Ok(source)
 }
 
 /// Cheap varied number in `range` from the clock; music timing needs no determinism.
@@ -298,9 +322,9 @@ fn schedule_music(
         Source::Borrowed(ref file) => {
             // Read off the main thread: a track is several megabytes, perhaps out of a big zip.
             let (tx, rx) = bounded(1);
-            let file = file.clone();
+            let (file, max_bytes) = (file.clone(), music.rules.prism.max_bytes);
             std::thread::spawn(move || {
-                let _ = tx.send(file.read());
+                let _ = tx.send(read_track(&file, max_bytes));
             });
             music.loading = Some((index, rx));
         }
@@ -324,18 +348,21 @@ fn start_loaded(
     let read = match rx.try_recv() {
         Ok(read) => read,
         Err(TryRecvError::Empty) => return,
-        Err(TryRecvError::Disconnected) => Err(std::io::Error::other("reader stopped")),
+        Err(TryRecvError::Disconnected) => Err("its reader stopped".to_owned()),
     };
     music.loading = None;
     match read {
-        Ok(bytes) => {
-            let source = sources.add(AudioSource { bytes: Arc::from(bytes) });
+        Ok(source) => {
+            let source = sources.add(source);
             let entity = spawn_track(&mut commands, source, false, music.level(&settings, false));
             music.playing = Some(entity);
         }
         Err(e) => {
-            warn!("music: cannot read {}: {e}", music.tracks[index].name);
-            music.next_at = Some(time.elapsed() + Duration::from_secs_f32(RETRY_AFTER));
+            // It leaves the rotation, so the next pick is another track.
+            let track = &mut music.tracks[index];
+            warn!("music: {} cannot play, left out: {e}", track.name);
+            track.contexts.clear();
+            music.next_at = Some(time.elapsed() + Duration::from_secs_f32(music.rules.retry_after));
         }
     }
 }
@@ -405,7 +432,7 @@ fn toggle_music(
         commands.entity(entity).despawn();
     }
     // When turned back on, start a track soon rather than after a long gap.
-    music.next_at = Some(time.elapsed() + Duration::from_secs(2));
+    music.next_at = Some(time.elapsed() + Duration::from_secs_f32(music.rules.resume_after));
 }
 
 #[cfg(test)]
@@ -450,30 +477,72 @@ mod tests {
         assert_eq!(pick(&[track(false, &[Game], 1.0)], Underground, &none, 0.25, [0.5, 0.5]), Some(0));
     }
 
+    /// A borrowed file that is empty or not audio is refused before it reaches Bevy's
+    /// decoder (which would panic), and one that decodes is handed on.
+    #[test]
+    fn only_tracks_that_decode_are_played() {
+        let (root, found) = prism::tests::found("decode");
+        for location in ["st:music/broken/empty", "st:music/broken/garbled"] {
+            let track = found.tracks.iter().find(|t| t.location == location).unwrap();
+            let refused = read_track(&track.file, 1 << 20).map(|_| ()).unwrap_err();
+            assert!(refused.contains("decode") || refused.contains("sound"), "{location}: {refused}");
+        }
+        let wav = root.join("tone.wav");
+        let tone: Vec<f32> = (0..4410).map(|i| (i as f32 * 0.06).sin() * 0.3).collect();
+        std::fs::write(&wav, crate::sfx::wav(&tone)).unwrap();
+        let played = read_track(&TrackFile::Loose(wav.clone()), 1 << 20).unwrap();
+        assert_eq!(played.bytes.len() as u64, std::fs::metadata(&wav).unwrap().len());
+        assert!(read_track(&TrackFile::Loose(wav), 16).unwrap_err().contains("more than"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// `cargo test --profile iter -p voxmar_client prism_music_decodes -- --ignored
     /// --nocapture` finds the music of the Prism Launcher instance on this machine as the
-    /// game does, counts it by place and category, and checks every track decodes.
+    /// game does and proves every track of it plays: it lists each place's count, and for
+    /// the 1.21 and StaTech resource packs every candidate (location, size, CRC-32) with the
+    /// track it repeats; it checks each candidate is kept or a copy of a kept track, that
+    /// HorizonMelodies adds tracks, and that every kept track has a rule placing it and
+    /// decodes.
     #[test]
     #[ignore]
     fn prism_music_decodes() {
-        use bevy::audio::Decodable;
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
         let rules = MusicRules::load(&content.files).unwrap();
         let found = prism::discover(&Place::default(), &rules.prism);
+        assert!(found.problems.is_empty(), "{:?}", found.problems);
         let instance = found.instance.clone().expect("a Prism Launcher instance");
         println!("instance {}", instance.display());
         for (place, count) in &found.counts {
-            println!("  {place}: {count}");
+            println!("  {place}: {count} kept");
         }
+        let kept: std::collections::HashSet<&str> = found.tracks.iter().map(|t| t.location.as_str()).collect();
+        let places: std::collections::BTreeSet<&str> =
+            found.tracks.iter().chain(found.repeats.iter().map(|r| &r.track)).map(|t| t.place.as_str()).collect();
+        for place in places.iter().filter(|p| p.starts_with("resourcepacks/") && (p.contains("1.21") || p.to_lowercase().contains("statech"))) {
+            println!("{place}:");
+            for track in found.tracks.iter().filter(|t| t.place == *place) {
+                println!("  kept   {} {} {:08x}", track.location, track.size, track.crc);
+            }
+            for repeat in found.repeats.iter().filter(|r| r.track.place == *place) {
+                let track = &repeat.track;
+                println!("  copy   {} {} {:08x} = {}", track.location, track.size, track.crc, repeat.of);
+                assert!(kept.contains(repeat.of.as_str()), "{} repeats {}, which was not kept", track.location, repeat.of);
+            }
+        }
+        let melodies = found.counts.iter().filter(|(place, _)| place.starts_with("horizonmelodies/")).map(|(_, n)| n).sum::<usize>();
+        assert!(melodies > 0, "HorizonMelodies adds no tracks");
         let mut categories: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut failed = Vec::new();
         for track in &found.tracks {
             let rule = rules.rule(&track.location).unwrap_or_else(|| panic!("{} has no rule", track.location));
+            assert!(!rule.contexts.is_empty(), "{} ({}) plays nowhere", track.location, rule.category);
             *categories.entry(rule.category.clone()).or_default() += 1;
-            let source = AudioSource { bytes: Arc::from(track.file.read().unwrap_or_else(|e| panic!("{}: {e}", track.location))) };
-            assert!(source.decoder().take(1000).count() == 1000, "{} does not decode", track.location);
+            if let Err(e) = read_track(&track.file, rules.prism.max_bytes) {
+                failed.push(format!("{}: {e}", track.location));
+            }
         }
         println!("{categories:?}");
-        println!("{} tracks decoded", found.tracks.len());
-        assert!(!found.tracks.is_empty());
+        println!("{} tracks kept, {} copies skipped", found.tracks.len(), found.repeats.len());
+        assert!(failed.is_empty(), "tracks that do not play:\n{}", failed.join("\n"));
     }
 }

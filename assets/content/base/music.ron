@@ -13,6 +13,10 @@
     gap: (180.0, 420.0),
     // Seconds a track takes to fade out when a game starts or ends.
     fade_out: 1.5,
+    // Seconds before another pick when a borrowed track cannot be read or played, and
+    // before a track when music is turned back on with M.
+    retry_after: 2.0,
+    resume_after: 2.0,
     // The chance a pick is one of Voxmar's own tracks while borrowed ones suit too.
     own_share: 0.25,
     own_contexts: [Menu, Game, Underground],
@@ -40,11 +44,15 @@
         music_paths: ["*music/*", "*records/*", "*record/*", "*music_disc*"],
         music_events: ["music*", "*.music*", "record*", "*.record*", "music_disc*", "*.music_disc*"],
         music_categories: ["music", "record"],
+        // The most bytes a file is read to (64 MiB); a bigger one is passed over.
+        max_bytes: 67108864,
+        // How many folders deep a resource pack that is a folder is looked through.
+        folder_depth: 12,
     ),
 
-    // Where each borrowed track plays, by its location: `<namespace>:<path>`, such as
-    // `minecraft:music/game/calm1` or
-    // `horizonmelodies:music_and_melody/music/overworld/<name>`. The first match decides.
+    // Where each borrowed track plays, by its path in its pack, less the namespace: for
+    // `minecraft:music/game/calm1`, `music/game/calm1`; for HorizonMelodies' StaTech
+    // tracks, `music_and_melody/music/overworld/<name>`. The first match decides.
     rules: [
         (category: "menu", paths: ["*music/menu/*", "*end/credits*"], contexts: [Menu]),
         // The unsettling discs only below.
