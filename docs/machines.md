@@ -73,10 +73,14 @@ Each factory step (every 4 server ticks) every network shares out its power:
 4. Every consumer gets the same share of what it asked. A weak network slows its machines
    rather than stopping one of them.
 
-A machine fast enough to finish its work more than once a step does, while it has the
-inputs and the room, so a recipe costs the same power at any speed. HV processors trade
+Every machine carries what is left of a step's progress into its next work, and one fast
+enough to finish its work more than once a step does, while it has the inputs and the room,
+so a recipe costs the same power at any speed. (Before, a recipe ended its step: an
+electric furnace on iron is 4% faster for 4% less power an ingot since, and a weak network
+no longer loses part of a step on every item.) HV processors trade
 space for speed, never power or yield: a dust costs a processing array what it costs a
 macerator. The array crushes about five copper ore a second, more than one conveyor carries.
+Arrays built side by side may share a face of casing, as turbine halls may.
 
 Fuel burns only as fast as its power is used. A boiler nobody draws on keeps its coal.
 Converters give on the next step what they were given on this one, so a chain of them
@@ -131,6 +135,10 @@ watches it).
 
 A multiblock machine's core block must be tagged `multiblock_core` (the registry refuses one
 that is not), or it would run whether or not its structure stands.
+
+Every number in `machines.ron` and `processing.ron` is checked as it loads: speeds, power,
+rates, capacities and seconds above 0 and finite, yields 0 or more, electricity at a tier of
+1 or more. A package with one that is not is refused, with the machine named.
 
 Machines are saved in the world folder's `machines.ron`, by block and item names, so a
 pack that renames or drops a machine loses only that machine. A machine remembers who
