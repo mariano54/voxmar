@@ -274,6 +274,8 @@ struct Gate {
     /// it was first lit.
     kiln: IVec3,
     kiln_since: f32,
+    /// When (server seconds) the kiln was last asked to light.
+    kiln_asked: f32,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -364,6 +366,7 @@ impl Gate {
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
             kiln_since: 0.0,
+            kiln_asked: f32::MIN,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -1630,7 +1633,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.kiln_since == 0.0 {
                 gate.kiln_since = gate.server_now;
             }
-            if gate.frames % 30 == 0 {
+            // Asked again only every few server seconds: each ask may stall the lagging
+            // server (`SERVER_LAG`), and asked every few frames it never got to a tick.
+            if gate.server_now - gate.kiln_asked >= 3.0 {
+                gate.kiln_asked = gate.server_now;
                 let actions = world.resource::<crate::Actions>().0.clone();
                 world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
             }
