@@ -61,9 +61,10 @@
     // takes an item counts.
     // How the world drives machines: wind (blocks a second) under which windmills stall and
     // at which they give all they can, the heights between which they catch from a third
-    // of it to all, and how near (across and up or down) a kept animal walks a treadwheel.
+    // of it to all, how near (across and up or down) a kept animal walks a treadwheel, and
+    // the least and most of its power a treadwheel gives by how well kept its walker is.
     // A later package's `sources` replaces these.
-    sources: Some((wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 0.333, walk_reach: 3.0, walk_height: 2.0)),
+    sources: Some((wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 0.333, walk_reach: 3.0, walk_height: 2.0, walk_share: (0.5, 1.2))),
     // Kept animals that walk a treadwheel: the big, steady grazers.
     walkers: ["aurochs", "wild_horse", "camel", "bison"],
     fuels: [

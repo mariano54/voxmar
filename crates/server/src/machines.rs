@@ -91,7 +91,7 @@ impl Server {
             }
         }
         if self.factory.insert(pos, new, &machines) {
-            self.survey_machine(pos);
+            self.survey_machine(pos, 0.0);
         }
     }
 
@@ -99,18 +99,21 @@ impl Server {
     fn survey_machines(&mut self) {
         let positions: Vec<IVec3> = self.factory.iter().map(|(pos, ..)| pos).collect();
         for pos in positions {
-            self.survey_machine(pos);
+            self.survey_machine(pos, 1.0);
         }
     }
 
     /// What the world lets the machine at `pos` do, if its land is loaded: flowing water
     /// beside a water wheel, the wind at a windmill (more up high), the structure round a
     /// multiblock's core.
-    fn survey_machine(&mut self, pos: IVec3) {
+    /// `seconds` is how long since the last look, counted as work for an animal walking a
+    /// wheel that is giving power.
+    fn survey_machine(&mut self, pos: IVec3, seconds: f32) {
         if !self.world.contains(ColumnPos::of_block(pos)) {
             return;
         }
-        let Some((block, _)) = self.factory.get(pos) else { return };
+        let Some((block, state)) = self.factory.get(pos) else { return };
+        let giving = state.status == Status::Generating;
         let Some(machine) = self.content.machines.get(block) else { return };
         let condition = match machine.role {
             Role::Generator { source: Source::FlowingWater, .. } => {
@@ -126,11 +129,9 @@ impl Server {
                 let (tick, day) = (self.tick, self.day);
                 let rules = self.content.machines.sources;
                 let wind = self.weather.local(&mut self.temperature, at, tick, day).weather.wind.length();
-                let strength = ((wind - rules.wind_stall) / (rules.wind_full - rules.wind_stall).max(0.01)).clamp(0.0, 1.0);
-                let height = ((pos.y as f32 - rules.wind_low) / (rules.wind_high - rules.wind_low).max(1.0)).clamp(rules.wind_low_share, 1.0);
                 // Open air around the sails, or nothing turns them.
                 let open = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y].into_iter().all(|d| !self.is_solid(pos + d));
-                if open { strength * height } else { 0.0 }
+                if open { rules.wind_share(wind, pos.y as f32) } else { 0.0 }
             }
             Role::Generator { source: Source::Walked, .. } => {
                 // A kept animal of a walking kind within reach of the wheel, and walking this
@@ -149,14 +150,21 @@ impl Server {
                     .filter(|(_, b, _)| machines.get(*b).is_some_and(|m| matches!(m.role, Role::Generator { source: Source::Walked, .. })))
                     .map(|(p, ..)| p)
                     .collect();
-                let walked = self.creatures.live.values().any(|c| {
+                let walker = self.creatures.live.values().find(|c| {
                     let at = c.body.position;
                     let Some(here) = reach(pos, at) else { return false };
                     // Nearer wheels, or as near and first in order, take the animal.
                     let taken = wheels.iter().any(|&other| other != pos && reach(other, at).is_some_and(|d| d < here || (d == here && (other.x, other.y, other.z) < (pos.x, pos.y, pos.z))));
                     c.owner.is_some() && !taken && machines.walks(&creatures.get(c.species).def.name)
                 });
-                if walked { 1.0 } else { 0.0 }
+                // How well kept the walker is: every animal counts as ordinary (1) until kept
+                // creatures have a condition of their own. Its time at work is kept for its
+                // keeping (a long day at the wheel wears it).
+                let walker = walker.and_then(|c| self.creatures.live.iter().find(|(_, l)| std::ptr::eq(*l, c)).map(|(&id, _)| id));
+                if let Some(id) = walker.filter(|_| giving && seconds > 0.0) {
+                    self.factory.add_walked(id, seconds);
+                }
+                walker.map_or(0.0, |_| rules.walk_share(1.0))
             }
             Role::Processor { water: true, .. } => {
                 let blocks = &self.content.blocks;

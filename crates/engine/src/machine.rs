@@ -184,11 +184,30 @@ pub struct SourceRules {
     /// up or down.
     pub walk_reach: f32,
     pub walk_height: f32,
+    /// What a treadwheel gives, as a share of its power, from its walker's condition: no
+    /// less than the first, no more than the second (a fine animal turns it faster).
+    pub walk_share: (f32, f32),
 }
 
 impl Default for SourceRules {
     fn default() -> Self {
-        Self { wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 1.0 / 3.0, walk_reach: 3.0, walk_height: 2.0 }
+        Self { wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 1.0 / 3.0, walk_reach: 3.0, walk_height: 2.0, walk_share: (0.5, 1.2) }
+    }
+}
+
+impl SourceRules {
+    /// The share of its power a windmill gives in `wind` (blocks a second) at height `y`:
+    /// nothing in calm air, all of it in a gale up high.
+    pub fn wind_share(&self, wind: f32, y: f32) -> f32 {
+        let strength = ((wind - self.wind_stall) / (self.wind_full - self.wind_stall).max(0.01)).clamp(0.0, 1.0);
+        let height = ((y - self.wind_low) / (self.wind_high - self.wind_low).max(1.0)).clamp(self.wind_low_share, 1.0);
+        strength * height
+    }
+
+    /// The share of its power a treadwheel gives with a walker in `condition` (1 is an
+    /// ordinary animal).
+    pub fn walk_share(&self, condition: f32) -> f32 {
+        condition.clamp(self.walk_share.0, self.walk_share.1.max(self.walk_share.0))
     }
 }
 
@@ -543,5 +562,23 @@ mod tests {
             top = top.max(most);
         }
         assert!((top - 3.0).abs() < 1e-4, "the ladder's top, washing, gives {top}");
+    }
+
+    #[test]
+    fn windmills_stall_in_calm_air_and_give_all_in_a_gale_up_high() {
+        let rules = SourceRules::default();
+        assert_eq!(rules.wind_share(0.5, 180.0), 0.0, "calm air");
+        assert_eq!(rules.wind_share(12.0, 180.0), 1.0, "a gale up high");
+        assert!((rules.wind_share(12.0, 64.0) - 1.0 / 3.0).abs() < 1e-5, "a gale low down gives a third");
+        let breeze = rules.wind_share(5.5, 180.0);
+        assert!(breeze > 0.4 && breeze < 0.6, "a breeze gives about half: {breeze}");
+    }
+
+    #[test]
+    fn a_treadwheel_gives_more_for_a_better_kept_walker_within_bounds() {
+        let rules = SourceRules::default();
+        assert_eq!(rules.walk_share(1.0), 1.0);
+        assert_eq!(rules.walk_share(0.1), 0.5, "a poor animal still walks it at half");
+        assert_eq!(rules.walk_share(3.0), 1.2, "a fine one at most 1.2");
     }
 }

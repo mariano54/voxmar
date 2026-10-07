@@ -146,6 +146,9 @@ pub struct Factory {
     runs: Vec<Run>,
     /// Run of each chute.
     run_of: FxHashMap<IVec3, usize>,
+    /// Seconds each animal (by creature id) has walked a wheel giving power, for its
+    /// keeping: the creatures' side reads it and takes it back when the animal rests.
+    walked: FxHashMap<u32, f32>,
     dirty: bool,
 }
 
@@ -226,16 +229,32 @@ impl Factory {
         self.nodes.is_empty()
     }
 
+    /// Counts `seconds` of work for the animal `creature` walking a wheel.
+    pub fn add_walked(&mut self, creature: u32, seconds: f32) {
+        *self.walked.entry(creature).or_default() += seconds;
+    }
+
+    /// Seconds the animal has walked a wheel since it last rested.
+    pub fn walked(&self, creature: u32) -> f32 {
+        self.walked.get(&creature).copied().unwrap_or(0.0)
+    }
+
+    /// The animal rested (or is gone): its seconds of work, which start again from nothing.
+    pub fn rested(&mut self, creature: u32) -> f32 {
+        self.walked.remove(&creature).unwrap_or(0.0)
+    }
+
     /// Every machine, by position.
     pub fn iter(&self) -> impl Iterator<Item = (IVec3, BlockId, &MachineState)> {
         self.nodes.iter().map(|(&pos, n)| (pos, n.block, &n.state))
     }
 
-    /// Sets what the world lets the generator at `pos` give, 0 to 1, or whether the
-    /// processor there may work.
+    /// Sets what the world lets the generator at `pos` give, as a share of its power (above
+    /// 1 for one driven harder than usual: a fine animal on a treadwheel), or whether the
+    /// processor there may work (0 or 1).
     pub fn set_condition(&mut self, pos: IVec3, condition: f32) {
         if let Some(node) = self.nodes.get_mut(&pos) {
-            node.state.condition = condition.clamp(0.0, 1.0);
+            node.state.condition = condition.max(0.0);
         }
     }
 
