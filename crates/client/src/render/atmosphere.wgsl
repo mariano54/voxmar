@@ -78,6 +78,16 @@ struct Atmosphere {
     // A rainbow (see `rainbow`): xyz the direction to the sun, w how strong (above 0.75 a
     // double one), 0 for none.
     bow: vec4<f32>,
+    // The shader pack's fire (pack.rs `FireLook`). rgb: a flame's hot core, w: levels of
+    // block light a lit particle loses for each block it travels.
+    fire: vec4<f32>,
+    // x: a flame's brightness added over what is behind, y: drawn solid, z: the brightest
+    // a glowing block's brightest channel may be (`glow_peak`).
+    fire_glow: vec4<f32>,
+    // The shader pack's wet ground at full wetness (`WetLook`). x: how much darker, y: its
+    // gloss against its own colour, z: how much more saturated, w: how much of the sky a
+    // puddle mirrors.
+    wet: vec4<f32>,
 };
 
 // At full dusk or dawn, how much more red, green and blue the side of the sky towards the

@@ -304,7 +304,8 @@ pub struct Emission {
     /// `Cutout` particle is solid where it shows, as a piece of a broken block is.
     pub blend: Option<ParticleBlend>,
     /// How much of what lies behind a particle that adds light it hides, 0..1, instead of
-    /// the style's own: a spark is solid and hides it all; a flame's tongue hides some.
+    /// what the shader pack gives its style (a spark is solid and hides it all; a flame's
+    /// tongue hides some).
     pub hides: Option<f32>,
 }
 
@@ -323,17 +324,6 @@ pub enum ParticleBlend {
 }
 
 impl ParticleStyle {
-    /// How much of what lies behind it a particle of the style hides when it adds light,
-    /// unless an emission says otherwise (`Emission::hides`): embers and sparks are solid
-    /// specks, so over a bright day sky they stay their colour instead of a salmon tint.
-    pub fn hides(self) -> f32 {
-        match self {
-            ParticleStyle::Flame => 0.6,
-            ParticleStyle::Ember | ParticleStyle::Spark => 1.0,
-            ParticleStyle::Smoke => 0.0,
-        }
-    }
-
     /// How the style is drawn unless an emission says otherwise.
     pub fn blend(self) -> ParticleBlend {
         match self {

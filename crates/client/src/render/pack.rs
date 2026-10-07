@@ -68,6 +68,10 @@ pub struct ShaderPack {
     pub cloud_shadows: f32,
     /// How brightly blocks that give off light glow by themselves.
     pub glow: f32,
+    /// The brightest a glowing block's brightest channel may be, keeping its colour: a
+    /// little past where the display transform starts rolling it towards white, which
+    /// turned a torch's orange core pale peach.
+    pub glow_peak: f32,
     /// How much rain darkens and wets the ground and fills puddles, and how much frost and
     /// lying snow whiten it, relative to the weather's own.
     pub wet_ground: f32,
@@ -86,6 +90,87 @@ pub struct ShaderPack {
     /// How strongly cracks show over a block being mined, 0..1.
     pub cracks: f32,
     pub water: WaterLook,
+    pub fire: FireLook,
+    pub wet: WetLook,
+}
+
+/// How fire looks (render/particles.wgsl). Its defaults are the look the game was tuned to.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct FireLook {
+    /// A flame's hot core, linear (about 255, 200, 80 on screen): a deep yellow, as a
+    /// near-white core turned fire peach once the display transform rolled its
+    /// overlapping tongues towards white.
+    pub core: Vec3,
+    /// How bright a flame is against its sprite: added over what is behind (a share of
+    /// light that builds up where tongues overlap, low enough that a crowd of them stays
+    /// orange) and drawn solid.
+    pub glow_added: f32,
+    pub glow_solid: f32,
+    /// Levels of block light a lit particle (smoke over a fire) loses for each block it
+    /// travels from where it was given off, so smoke at night is lit only just above the
+    /// flames.
+    pub smoke_falloff: f32,
+    /// How much of what lies behind it a particle that adds light hides, by style, unless
+    /// its emission says otherwise (`Emission::hides`).
+    pub hides: ParticleHides,
+}
+
+impl Default for FireLook {
+    fn default() -> Self {
+        Self { core: Vec3::new(1.0, 0.58, 0.08), glow_added: 1.3, glow_solid: 1.25, smoke_falloff: 6.0, hides: ParticleHides::default() }
+    }
+}
+
+/// See [`FireLook::hides`]: embers and sparks are solid specks, so over a bright day sky
+/// they stay their colour instead of a salmon tint; a flame's tongue hides some.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct ParticleHides {
+    pub flame: f32,
+    pub ember: f32,
+    pub spark: f32,
+    pub smoke: f32,
+}
+
+impl Default for ParticleHides {
+    fn default() -> Self {
+        Self { flame: 0.6, ember: 1.0, spark: 1.0, smoke: 0.0 }
+    }
+}
+
+impl ParticleHides {
+    pub fn of(&self, style: voxmar_engine::block::ParticleStyle) -> f32 {
+        use voxmar_engine::block::ParticleStyle;
+        match style {
+            ParticleStyle::Flame => self.flame,
+            ParticleStyle::Ember => self.ember,
+            ParticleStyle::Spark => self.spark,
+            ParticleStyle::Smoke => self.smoke,
+        }
+    }
+}
+
+/// How rain-wet ground looks (render/lighting.wgsl `weathered` and `wet_sheen`), at full
+/// wetness. Its defaults are the look the game was tuned to: darker and glossier, never
+/// paler.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct WetLook {
+    /// How much darker soaked ground is (its albedo times one less this).
+    pub darkening: f32,
+    /// How bright the gloss it lays in the ground's own colour is, against the colour.
+    pub gloss: f32,
+    /// How much more saturated soaked ground is before its gloss.
+    pub saturation: f32,
+    /// How much of the sky a puddle mirrors at a glancing angle.
+    pub puddle_mirror: f32,
+}
+
+impl Default for WetLook {
+    fn default() -> Self {
+        Self { darkening: 0.3, gloss: 1.15, saturation: 0.3, puddle_mirror: 0.6 }
+    }
 }
 
 /// How water looks (see `render::water`). Each strength scales the renderer's own, so 1
@@ -139,6 +224,7 @@ impl Default for ShaderPack {
             subsurface: 0.0,
             cloud_shadows: 0.6,
             glow: 1.0,
+            glow_peak: 1.15,
             wet_ground: 1.0,
             frost: 1.0,
             exposure: 1.0,
@@ -150,6 +236,8 @@ impl Default for ShaderPack {
             particles: 1.0,
             cracks: 1.0,
             water: WaterLook::default(),
+            fire: FireLook::default(),
+            wet: WetLook::default(),
         }
     }
 }
@@ -264,6 +352,7 @@ const LOCAL_WARMTH: f32 = 0.08;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use voxmar_engine::block::ParticleStyle;
 
     fn named(name: &str) -> ShaderPack {
         ShaderPack { name: name.into(), ..default() }
@@ -316,5 +405,25 @@ mod tests {
         let real = ShaderPacks::load(&assets);
         let shipped: Vec<&str> = real.0.iter().filter(|p| p.shipped && p.keyed).map(|p| p.name.as_str()).collect();
         assert_eq!(shipped, ["Classic", "Verdant"]);
+    }
+
+    /// Fire's and wet ground's look numbers came out of the shaders at the values they were
+    /// tuned to: Verdant lists them, Classic and any pack that leaves them out keep them,
+    /// and a pack can change any one.
+    #[test]
+    fn fire_and_wet_ground_look_as_tuned_and_a_pack_can_change_them() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let packs = ShaderPacks::load(&assets);
+        let pack = |name: &str| packs.0.iter().find(|p| p.name == name).expect(name).clone();
+        let (classic, verdant) = (pack("Classic"), pack("Verdant"));
+        for look in [&classic, &verdant] {
+            assert_eq!(look.fire, FireLook { core: Vec3::new(1.0, 0.58, 0.08), glow_added: 1.3, glow_solid: 1.25, smoke_falloff: 6.0, hides: default() });
+            assert_eq!(look.wet, WetLook { darkening: 0.3, gloss: 1.15, saturation: 0.3, puddle_mirror: 0.6 });
+            assert_eq!(look.glow_peak, 1.15);
+        }
+        assert_eq!((verdant.fire.hides.of(ParticleStyle::Ember), verdant.fire.hides.of(ParticleStyle::Flame)), (1.0, 0.6));
+        let changed: ShaderPack = ron::from_str("(name: \"Soaked\", wet: (darkening: 0.5), fire: (hides: (flame: 0.2)))").unwrap();
+        assert_eq!((changed.wet.darkening, changed.wet.gloss), (0.5, 1.15));
+        assert_eq!((changed.fire.hides.flame, changed.fire.hides.spark), (0.2, 1.0));
     }
 }

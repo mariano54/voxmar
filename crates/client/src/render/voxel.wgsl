@@ -22,7 +22,7 @@
 @group(0) @binding(1) var<uniform> globals: Globals;
 #else
 #import bevy_pbr::mesh_view_bindings::{view, globals, fog}
-#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow, weathered, wet_sheen, self_glow}
+#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow, weathered, wet_sheen, self_glow, glow_peak}
 #ifdef TRANSLUCENT
 #import voxmar::water_surface::shade_water
 #endif
@@ -45,9 +45,6 @@
 // pack gives other drawings of.
 const ANIMATED: u32 = 32u;
 const VARIED: u32 = 16u;
-// How bright a glowing block's brightest channel gets: the display transform rolls off
-// gently up to here, and turns colours white past it.
-const GLOW_PEAK: f32 = 1.15;
 #endif
 @group(3) @binding(0) var<storage, read> vertex_chunks: array<u32>;
 
@@ -851,7 +848,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
         // transform starts rolling it towards white (display.wgsl), which turned a torch's
         // orange core pale peach.
         let peak = max(color.r, max(color.g, color.b));
-        color *= min(1.0, GLOW_PEAK / max(peak, 1e-4));
+        color *= min(1.0, glow_peak() / max(peak, 1e-4));
     }
     var alpha = albedo.a;
 

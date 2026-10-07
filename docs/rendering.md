@@ -926,7 +926,14 @@ cheaper.
 
 **Shader packs** gained `sun_tint`, `shadow_softness`, `sky_falloff`, `ambient_occlusion`,
 `subsurface`, `cloud_shadows`, `glow`, `rays`, `mist`, `fog`, `wet_ground`, `frost` and
-`local_air`; Classic keeps the plain look (no volumetric light).
+`local_air`; Classic keeps the plain look (no volumetric light). Later (2026-10-08) the
+look numbers fire and wet ground were tuned to moved out of the shaders into the pack, at
+the same values: `glow_peak`, the brightest a glowing block's brightest channel gets;
+`fire` (pack.rs `FireLook`: a flame's hot `core`, `glow_added` and `glow_solid`, smoke's
+`smoke_falloff`, and how much each particle style `hides` of what is behind it, which an
+emission may still override); and `wet` (`WetLook`: `darkening`, `gloss`, `saturation` and
+`puddle_mirror`). They reach the shaders through the atmosphere uniform (`fire`,
+`fire_glow`, `wet`), so a pack can retune them as it can everything else.
 
 **Dusk and dawn** (Mariano's playtest: "dusk and morning should have different lighting
 whether close or far to the sun"). The low sun warms one side of the sky: towards it the

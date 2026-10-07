@@ -110,6 +110,9 @@ pub struct Atmosphere {
     pub dusk: Vec4,
     pub cloud_flash: Vec4,
     pub bow: Vec4,
+    pub fire: Vec4,
+    pub fire_glow: Vec4,
+    pub wet: Vec4,
 }
 
 impl Default for Atmosphere {
@@ -198,6 +201,9 @@ impl Atmosphere {
         let View { distance: view_distance, eye_height, underwater } = view;
         let shadow = Vec4::new(quality.shadows.taps() as f32, pack.shadow_softness, NORMAL_OFFSET, MAX_PENUMBRA);
         let surface = Vec4::new(pack.sky_falloff, pack.ambient_occlusion, pack.subsurface, pack.glow * GLOW);
+        let fire = pack.fire.core.extend(pack.fire.smoke_falloff);
+        let fire_glow = Vec4::new(pack.fire.glow_added, pack.fire.glow_solid, pack.glow_peak, 0.0);
+        let wet = Vec4::new(pack.wet.darkening, pack.wet.gloss, pack.wet.saturation, pack.wet.puddle_mirror);
         if let Some(water) = underwater {
             // No air: the water between the eye and everything takes its place.
             return Self {
@@ -222,6 +228,9 @@ impl Atmosphere {
                 dusk: Vec4::ZERO,
                 cloud_flash: Vec4::ZERO,
                 bow: Vec4::ZERO,
+                fire,
+                fire_glow,
+                wet,
             };
         }
 
@@ -278,6 +287,9 @@ impl Atmosphere {
             dusk: light.dusk.extend(0.0),
             cloud_flash: Vec4::ZERO,
             bow: Vec4::ZERO,
+            fire,
+            fire_glow,
+            wet,
         }
     }
 

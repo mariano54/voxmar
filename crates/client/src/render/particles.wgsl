@@ -4,7 +4,7 @@
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
 #import bevy_pbr::view_transformations::{depth_ndc_to_view_z, position_world_to_view}
-#import voxmar::lighting::{shade_normal, apply_fog, air_between}
+#import voxmar::lighting::{shade_normal, apply_fog, air_between, flame_core, flame_glow, smoke_falloff}
 
 struct Particle {
     origin: vec3<f32>,
@@ -65,14 +65,10 @@ const SOFT_DEPTH: f32 = 0.4;
 // What a cooling particle's colour is multiplied by at the end of its life: dimmer, and
 // redder, as blue and green go first.
 const COOLED: vec3<f32> = vec3(0.5, 0.2, 0.05);
-// A flame's hot core, a deep yellow (about 255, 200, 80 on screen), and what its edge is
-// multiplied by: hue-shifted towards red. A near-white core turned fire peach once the
-// display transform rolled its overlapping tongues towards white.
-const CORE: vec3<f32> = vec3(1.0, 0.58, 0.08);
+// What a flame's edge is multiplied by: hue-shifted towards red. Its hot core, how bright
+// it is and how far smoke carries its light come from the shader pack (`flame_core`,
+// `flame_glow`, `smoke_falloff`).
 const EDGE: vec3<f32> = vec3(0.75, 0.32, 0.16);
-// Levels of block light a lit particle loses for each block it travels from where it
-// was given off.
-const SMOKE_FALLOFF: f32 = 6.0;
 // Of the speed a particle hits the floor with, how much it hops back up.
 const BOUNCE: f32 = 0.35;
 // How quickly a particle that has touched the floor slows, per second.
@@ -82,14 +78,16 @@ const FADE: f32 = 0.35;
 // Brightness of a glowing particle against a sunlit block.
 const GLOW: f32 = 2.5;
 // Fire is less bright, so its oranges and reds hold rather than washing out to white: as
-// bright as the fire's own sprite.
+// bright as the fire's own sprite. Added, a flame is a share of light that builds up where
+// tongues overlap: low enough that a crowd of them stays orange rather than burning out to
+// white.
+fn fire_glow() -> f32 {
 #ifdef BLEND_ADD
-// Added, a flame is a share of light that builds up where tongues overlap: low enough that
-// a crowd of them stays orange rather than burning out to white.
-const FIRE_GLOW: f32 = 1.3;
+    return flame_glow().x;
 #else
-const FIRE_GLOW: f32 = 1.25;
+    return flame_glow().y;
 #endif
+}
 
 const CORNERS = array<vec2<f32>, 6>(
     vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
@@ -213,7 +211,7 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     // fire, not bathed in its light. Sky light is as before, so by day it stays grey.
     let block_level = f32((p.surface >> 24u) & 15u);
     out.hides = f32(p.seed & 255u) / 255.0;
-    out.block_light = max(block_level - SMOKE_FALLOFF * distance(center, p.origin), 0.0) / 15.0;
+    out.block_light = max(block_level - smoke_falloff() * distance(center, p.origin), 0.0) / 15.0;
     let color = unpack4x8unorm(p.color);
     var linear = srgb_to_linear(color.rgb);
     if (out.flags & FLAG_COOLS) != 0u {
@@ -267,12 +265,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let glow = saturate(heat * 1.6);
         coverage = glow * glow * (3.0 - 2.0 * glow);
         albedo = mix(albedo * EDGE, albedo, smoothstep(0.0, 0.5, heat));
-        albedo = mix(albedo, CORE, 0.7 * smoothstep(0.55, 1.0, heat));
+        albedo = mix(albedo, flame_core(), 0.7 * smoothstep(0.55, 1.0, heat));
 #else
         // Fire is drawn in bands, as pixel art is: a white-yellow core, the particle's own
         // colour, and an edge turned towards deep red, cooling with it as it ages.
         albedo = select(albedo * EDGE, albedo, heat > 0.3);
-        albedo = select(albedo, mix(albedo, CORE, 0.7), heat > 0.7);
+        albedo = select(albedo, mix(albedo, flame_core(), 0.7), heat > 0.7);
 #endif
     } else if !crisp {
         // Smoke is a little darker at its thin edge than in its body.
@@ -305,7 +303,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 #endif
-    var color = albedo * select(GLOW, FIRE_GLOW, (in.flags & FLAG_COOLS) != 0u);
+    var color = albedo * select(GLOW, fire_glow(), (in.flags & FLAG_COOLS) != 0u);
     if (in.flags & FLAG_GLOW) == 0u {
         let sky = f32(in.surface >> 28u) / 15.0;
         let block = in.block_light;

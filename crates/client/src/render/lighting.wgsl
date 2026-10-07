@@ -131,11 +131,10 @@ fn shade_normal(
     return albedo * light;
 }
 
-// How much darker soaked ground is than dry (it reads darker and a little glossier, never
-// paler).
-const WET_DARKENING: f32 = 0.3;
-// How much brighter than the soaked ground its gloss may make it, at most.
-const WET_GLOSS: f32 = 1.15;
+// How soaked ground looks comes from the shader pack (pack.rs `WetLook`, `atmosphere.wet`):
+// how much darker than dry (it reads darker and a little glossier, never paler), how much
+// brighter than the soaked ground its gloss may make it at most, how much more saturated
+// it is before the gloss, and how much of the sky a puddle mirrors.
 
 // A surface after the weather: darker where rain has wet it, darker still in puddles on
 // open level ground (which rise and dry with the wetness), whitened by frost, and dusted
@@ -158,9 +157,9 @@ fn weathered(albedo: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, sky: f32) -
     }
     // Wet ground is darker, as soaked soil, sand and stone are (the saturation lift here
     // goes back into the gloss `wet_sheen` lays in the ground's own colour).
-    var color = albedo * (1.0 - WET_DARKENING * min(wet, 1.0));
+    var color = albedo * (1.0 - atmosphere.wet.x * min(wet, 1.0));
     let grey = dot(color, vec3(0.2126, 0.7152, 0.0722));
-    color = max(mix(vec3(grey), color, 1.0 + 0.3 * min(wet, 1.0)), vec3(0.0));
+    color = max(mix(vec3(grey), color, 1.0 + atmosphere.wet.z * min(wet, 1.0)), vec3(0.0));
     if frost > 0.0 {
         let rime = frost * exposed * saturate(normal.y * 0.8 + 0.2) * smoothstep(0.35, 0.6, value_noise(world.xz * 1.7 + world.y));
         color = mix(color, vec3(0.78, 0.84, 0.9), rime * 0.6);
@@ -204,11 +203,11 @@ fn wet_sheen(color: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, wet: f32, sk
     let luminance = vec3(0.2126, 0.7152, 0.0722);
     let in_own_colour = dot(reflection, luminance) * color / max(dot(color, luminance), 1e-4);
     reflection = mix(in_own_colour, reflection, 0.5 * puddle);
-    let sheened = mix(color, reflection * smoothstep(0.5, 0.9, sky), fresnel * mix(0.35 * wet, 0.6, puddle));
+    let sheened = mix(color, reflection * smoothstep(0.5, 0.9, sky), fresnel * mix(0.35 * wet, atmosphere.wet.w, puddle));
     // Never pale: a glancing sheen of bright sky over sand or gravel read as frost. What it
     // mirrors still shows, as a gloss a little brighter than the soaked ground, which keeps
     // its colour.
-    let soaked = dot(color, vec3(0.2126, 0.7152, 0.0722)) * WET_GLOSS;
+    let soaked = dot(color, vec3(0.2126, 0.7152, 0.0722)) * atmosphere.wet.y;
     let bright = dot(sheened, vec3(0.2126, 0.7152, 0.0722));
     return sheened * min(1.0, soaked / max(bright, 1e-4));
 }
@@ -228,6 +227,27 @@ fn raindrop_rings(xz: vec2<f32>, rain: f32) -> vec2<f32> {
     let r = length(d);
     let ring = sin((r - t * 0.45) * 40.0) * smoothstep(0.08, 0.0, abs(r - t * 0.45)) * (1.0 - t);
     return select(vec2(0.0), d / max(r, 1e-3) * ring * 0.25 * rain, h < rain);
+}
+
+// How bright a glowing block's brightest channel gets: the display transform rolls off
+// gently up to here, and turns colours white past it (the shader pack's `glow_peak`).
+fn glow_peak() -> f32 {
+    return atmosphere.fire_glow.z;
+}
+
+// The shader pack's fire (pack.rs `FireLook`): a flame's hot core; its brightness added
+// over what is behind (x) and drawn solid (y); and the levels of block light a lit
+// particle loses for each block it travels from where it was given off.
+fn flame_core() -> vec3<f32> {
+    return atmosphere.fire.rgb;
+}
+
+fn flame_glow() -> vec2<f32> {
+    return atmosphere.fire_glow.xy;
+}
+
+fn smoke_falloff() -> f32 {
+    return atmosphere.fire.w;
 }
 
 // Light a glowing block gives off by itself (`glow` 0..1, from its light level): its bright

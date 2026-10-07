@@ -167,6 +167,7 @@ fn emit(
     weather: Res<ClientWeather>,
     mut particles: ResMut<Particles>,
     mut emitters: ResMut<Emitters>,
+    pack: Res<crate::render::pack::ActivePack>,
 ) {
     let Ok(camera) = camera.single() else { return };
     if !emitters.registry.as_ref().is_some_and(|r| Arc::ptr_eq(r, &world.registry)) {
@@ -202,7 +203,8 @@ fn emit(
             let owed = emission.rate.max(0.0) * dt * amount * emitter.share + emitters.roll();
             for _ in 0..owed as u32 {
                 for _ in 0..emission.count.max(1) {
-                    let particle = particle(emission, &emitter, light, wind, &mut emitters);
+                    let mut particle = particle(emission, &emitter, light, wind, &mut emitters);
+                    particle.hides = emission.hides.unwrap_or(pack.0.fire.hides.of(emission.style));
                     particles.spawn(&particle);
                     if emitters.watch == Some(emitter.pos) {
                         emitters.watched += 1;
@@ -293,7 +295,6 @@ fn particle(emission: &Emission, emitter: &Emitter, light: u8, wind: Vec3, dice:
         },
     };
     particle.blend = emission.blend.unwrap_or(emission.style.blend());
-    particle.hides = emission.hides.unwrap_or(emission.style.hides());
     // Added light builds up where flames overlap: each gives a share, so a crowd of
     // tongues glows as one fire instead of burning out to white.
     if emission.style == ParticleStyle::Flame && particle.blend == ParticleBlend::Add {
