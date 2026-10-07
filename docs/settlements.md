@@ -27,6 +27,12 @@ them must average `site.fertility` (0.3; 0.15 in cold and desert biomes, `site.p
 These are design's numbers (wiki, settlements, draft 60). With them about one square in
 seven holds a settlement, four hamlets to every village.
 
+A new player finds one within `rules.spawn_settlement_within` (1024) blocks of where they
+spawn: where no square near is settled within that reach anyway, the nearest square in
+reach that can hold one always does, its climate ruling no spot out and its next best
+spot tried where one cannot be laid out. Where no spot in reach will do (a strip of coast
+under mountains), none is promised. A player never spawns inside a settlement.
+
 ## The levers
 
 Every settlement draws five levers, each 0 to 1, and every list entry may lean on them:
@@ -99,7 +105,8 @@ The levers are correlated, so a place reads as a whole:
   draft 64): rye by log cabins and turf houses, chickpea in sandstone, mudbrick and
   villa country, rice on stilts in wetlands and jungles, taro in jungles, wheat, carrot
   and potato elsewhere. A size's fields grow only crops up to its `crop_level` (hamlets 5:
-  wheat, carrot, rye; villages 12: the rest), by weight, always growing, never ripe; loading fails on a crop rarer than
+  wheat, carrot, rye; villages 12: the rest), by weight, always growing (any stage but the
+  last of its `stages` in crops.ron), never ripe; loading fails on a crop rarer than
   uncommon, above every size's level, or a style with nothing a hamlet may grow. Orchards
   grow only fruit up to the same level. A settlement keeps one to three entries of each
   list, fewer where it is orderly. Where two styles fit a biome, either may be
@@ -109,11 +116,13 @@ The levers are correlated, so a place reads as a whole:
   how often each is used (`small_chance`, `prefix_chance`).
 - `kana`: how the Japanese parts join where the English runs a consonant into a vowel:
   Sab + ir is Sabir, so サブ + イル is サビル, not サブイル (Glenach グレナック, Oasis オアシス).
-- `rules`: every other number planning reads, documented in the file: how levers are
-  drawn, how lanes are walked (width, bends, steps, greens, rings, terraces), how lots
-  are laid along them (gaps, setbacks, the steepest ground), the sizes of fields, pens,
-  orchards, smithies and the rest, the inn's and trader's sizes, windows, plinths and
-  moss, and how props are spaced.
+- `rules`: every other number planning reads, documented in the file: the settlement
+  promised near spawn, how levers are drawn, how lanes are walked (width, bends, steps,
+  greens, rings, terraces, side lanes grown, the square round a centrepiece and the well
+  beside it, a green's rim), how lots are laid along them (gaps, setbacks, the steepest
+  ground, field or pen, the outskirts), the sizes of fields, pens, orchards, smithies and
+  the rest, the inn's and trader's sizes, windows, plinths and moss, and how props are
+  spaced. Loading refuses numbers planning cannot use or that would never finish.
 - `site`: where a settlement stands (see above), and the glade it opens in the woods.
 - `furnishings`: the blocks every settlement uses whatever its style (torch, campfire,
   table, farmland, water, dirt, planter, anvil, barrel, bell, altar) and the lists of
@@ -133,8 +142,13 @@ section as earlier packages set it; each special size it names replaces that kin
 ## What else knows about them
 
 - Trails join settlements' gates (the ends of their main lanes) to each other and to
-  landmarks within reach, and route round their buildings, never through them.
-- The snow blanket stops at roofs, so no snow lies inside a building.
+  landmarks within reach, and route round their buildings, never through them. Every
+  settlement with somewhere to go is joined at a gate; two gates towards one place share
+  the shorter trail. A place no trail may run through (a settlement's other gate, a second
+  viewpoint beside the first) stands in no trail's way.
+- The snow blanket stops at roofs, however tall, so no snow lies inside a building.
+- Every storey can be walked to: each stair's top three steps open to the floor above,
+  so each step is jumped with room overhead.
 - Servers on one world in one process share its generator (`Overworld::shared`), so the
   settlements, trails and rivers round spawn are planned once.
 - Trees and decorations keep out of buildings, lanes and a glade round the houses.

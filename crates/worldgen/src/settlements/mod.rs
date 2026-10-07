@@ -298,6 +298,9 @@ pub struct Settlements {
     /// None where the content lacks a block every settlement needs; then there are none.
     fixed: Option<Fixed>,
     plans: Cache<IVec2, Arc<Slot>>,
+    /// Near where a new player spawns (see `Overworld::spawn_estimate`), and the square
+    /// settled for them there, if none was already within reach.
+    spawn: std::sync::OnceLock<Option<(IVec2, IVec2)>>,
     id: u64,
 }
 
@@ -310,6 +313,7 @@ impl Settlements {
             resolved: Resolved::new(def, registry),
             fixed: fixed(registry, def),
             plans: Cache::new(32 * MB),
+            spawn: std::sync::OnceLock::new(),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -345,7 +349,9 @@ impl Settlements {
                 return Arc::new(Slot(None));
             }
             let land = world.land();
-            let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed };
+            let spawn = *self.spawn.get_or_init(|| self.spawn_square(world, fixed));
+            let spawn = spawn.filter(|&(_, square)| square == cell).map(|(at, _)| at);
+            let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn };
             Arc::new(Slot(plan::plan(&ctx, cell)))
         });
         RECENT.with(|recent| {
@@ -391,18 +397,24 @@ impl Settlements {
 
     /// Builds what settlements drew into the column at `pos`. `ground` gives the height of
     /// a column's top ground block.
-    pub fn build(&self, world: &Overworld, pos: ColumnPos, blocks: &mut Blocks, ground: &dyn Fn(i32, i32) -> i32) {
+    /// Returns the highest block it set, if any, so the snow blanket looks down from over
+    /// the tallest roof.
+    pub fn build(&self, world: &Overworld, pos: ColumnPos, blocks: &mut Blocks, ground: &dyn Fn(i32, i32) -> i32) -> Option<i32> {
         let origin = pos.origin();
         let key = IVec2::new(origin.x, origin.z).div_euclid(IVec2::splat(CHUNK_SIZE));
         // The squares the column touches (it lies in one; a square's settlement never
         // reaches past it).
         let slot = self.slot(world, self.cell_of(origin.x, origin.z));
-        let Some(plan) = &slot.0 else { return };
-        let Some(voxels) = plan.voxels.get(&key) else { return };
+        let plan = slot.0.as_ref()?;
+        let voxels = plan.voxels.get(&key)?;
+        let mut top = None;
         for v in voxels {
             let pos = if v.ground { IVec3::new(v.pos.x, ground(v.pos.x, v.pos.z) + v.pos.y, v.pos.z) } else { v.pos };
             if !blocks.contains(pos) {
                 continue;
+            }
+            if !matches!(v.put, Put::Clear) {
+                top = top.max(Some(pos.y));
             }
             match v.put {
                 Put::Set(block) => blocks.set(pos, block),
@@ -424,6 +436,7 @@ impl Settlements {
                 }
             }
         }
+        top
     }
 
     /// The settlements whose squares lie within `radius` blocks of `centre`.
@@ -444,6 +457,43 @@ impl Settlements {
 
     /// Whether any settlement's gate lies within `reach` blocks of the box from `min` to
     /// `max`.
+    /// Where a new player will spawn, and the square settled for them within
+    /// `spawn_settlement_within` of it: none where a square near is settled anyway within
+    /// reach; else the nearest square that can be, trying the squares in reach nearest
+    /// first. Planned once per world, before any square, so every square's plan is the
+    /// same whichever is asked for first.
+    fn spawn_square(&self, world: &Overworld, fixed: &Fixed) -> Option<(IVec2, IVec2)> {
+        let within = self.def.rules.spawn_settlement_within;
+        if within <= 0 {
+            return None;
+        }
+        let at = world.spawn_estimate();
+        let (grid, land) = (&self.def.grid, world.land());
+        let inner = |cell: IVec2| (cell * grid.spacing + grid.margin, (cell + 1) * grid.spacing - grid.margin);
+        let reach = |cell: IVec2| {
+            let (lo, hi) = inner(cell);
+            at.clamp(lo, hi).as_vec2().distance(at.as_vec2())
+        };
+        let (first, last) = (self.cell_of(at.x - within, at.y - within), self.cell_of(at.x + within, at.y + within));
+        let mut cells: Vec<IVec2> = (first.y..=last.y).flat_map(|z| (first.x..=last.x).map(move |x| IVec2::new(x, z))).filter(|&c| reach(c) <= within as f32).collect();
+        cells.sort_by(|a, b| reach(*a).total_cmp(&reach(*b)).then((a.x, a.y).cmp(&(b.x, b.y))));
+        let plan = |cell: IVec2, spawn: Option<IVec2>| {
+            let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn };
+            plan::plan(&ctx, cell)
+        };
+        let near = |p: &Plan| p.centre.as_vec2().distance(at.as_vec2()) <= within as f32;
+        if cells.iter().any(|&c| plan(c, None).is_some_and(|p| near(&p))) {
+            return None;
+        }
+        cells.into_iter().find(|&c| plan(c, Some(at)).is_some()).map(|c| (at, c))
+    }
+
+    /// Whether (x, z) lies within a settlement's bounds, a few blocks round included.
+    pub fn covers(&self, world: &Overworld, x: i32, z: i32) -> bool {
+        let p = IVec2::new(x, z);
+        self.slot(world, self.cell_of(x, z)).0.as_ref().is_some_and(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all())
+    }
+
     pub fn any_near(&self, world: &Overworld, min: IVec2, max: IVec2, reach: i32) -> bool {
         let centre = (min + max) / 2;
         let radius = (max - min).max_element() / 2 + reach;
@@ -495,17 +545,9 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
         canopies: palette(&f.canopies, &any),
         compost: palette(&f.compost, &any),
         boulder: palette(&f.boulders, &any),
-        // Each tree's fruit's level, its leaves' name less the growing stage (`apple_leaves_2`
-        // bears `apple`); none known, none needed.
-        fruit: palette(&f.fruit, &any)
-            .0
-            .into_iter()
-            .map(|(b, w)| {
-                let name = &registry.def(b).name;
-                let leaves = name.rsplit_once('_').filter(|(_, n)| n.parse::<u8>().is_ok()).map_or(name.as_str(), |(l, _)| l);
-                (b, w, def.crops.get(leaves.trim_end_matches("_leaves")).map_or(0, |c| c.0))
-            })
-            .collect(),
+        // Each tree's fruit's level, from the crop its leaves are a stage of (crops.ron);
+        // none known, none needed.
+        fruit: palette(&f.fruit, &any).0.into_iter().map(|(b, w)| (b, w, def.stage_of(&registry.def(b).name).map_or(0, |(_, c, _)| c.level))).collect(),
         hay: palette(&f.hay, &any),
         hanging: palette(&f.hanging, &any),
         sacks: palette(&f.sacks, &any),

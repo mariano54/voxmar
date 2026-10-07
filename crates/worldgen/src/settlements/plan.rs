@@ -49,6 +49,9 @@ pub struct Ctx<'a> {
     pub resolved: &'a super::def::Resolved,
     pub fixed: &'a Fixed,
     pub seed: u64,
+    /// Near where a new player spawns, in the square settled for them: it is always
+    /// settled, within `spawn_settlement_within` of this.
+    pub spawn: Option<IVec2>,
 }
 
 /// Picks from `items` by weight; `None` when every weight is nothing.
@@ -222,7 +225,9 @@ fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 /// The ground round the middle (`firm`) must be dry; water further out, within `water`,
 /// is wanted (and required where `water` is above nothing), and buildings keep off it as
 /// they are placed.
-fn site(ctx: &Ctx, cell: IVec2) -> Option<(IVec2, bool)> {
+/// In the square a new player spawns in (`spawn`), only spots within the promised reach of
+/// them are looked at, their climate rules none out, and several are kept, best first.
+fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, bool)> {
     let (grid, site) = (&ctx.def.grid, &ctx.def.site);
     let step = site.step;
     let first = cell * grid.spacing + grid.margin;
@@ -235,7 +240,7 @@ fn site(ctx: &Ctx, cell: IVec2) -> Option<(IVec2, bool)> {
     let mut candidates: Vec<(f32, IVec2, bool)> = Vec::new();
     for j in (reach..size - reach).step_by(2) {
         for i in (reach..size - reach).step_by(2) {
-            let centre = at(i, j)?;
+            let Some(centre) = at(i, j) else { continue };
             let mut heights = Vec::with_capacity(32);
             let mut bad = false;
             for dj in -reach..=reach {
@@ -269,18 +274,26 @@ fn site(ctx: &Ctx, cell: IVec2) -> Option<(IVec2, bool)> {
             candidates.push((score, first + IVec2::new(i, j) * step, fresh));
         }
     }
+    if let Some(spawn) = spawn {
+        let within = ctx.def.rules.spawn_settlement_within as f32;
+        candidates.retain(|c| c.1.as_vec2().distance(spawn.as_vec2()) <= within);
+    }
+    // The spawn's square looks further down its list, and keeps every spot that will do
+    // so the planner may try the next where one cannot be laid out.
+    let tries = if spawn.is_some() { site.tries * SPAWN_TRIES } else { site.tries };
     candidates.sort_by(|a, b| b.0.total_cmp(&a.0).then((a.1.x, a.1.y).cmp(&(b.1.x, b.1.y))));
     // Where water is required, a closer look round the best spots finds the creeks the
     // samples missed; the first `tries` with water near go on.
     if candidates.is_empty() {
-        return give_up(10);
+        give_up::<()>(10);
+        return Vec::new();
     }
     if site.water > 0 {
-        let close = (step / 4).max(2);
+        let close = site.creek;
         let n = site.water * 2 / close + 1;
         candidates = candidates
             .into_iter()
-            .take(site.tries * 6)
+            .take(tries.saturating_mul(site.look))
             .filter_map(|(score, at, fresh)| {
                 let near = fresh || {
                     let first = at - site.water;
@@ -294,7 +307,8 @@ fn site(ctx: &Ctx, cell: IVec2) -> Option<(IVec2, bool)> {
             })
             .collect();
     }
-    for &(_, at, fresh) in candidates.iter().take(site.tries) {
+    let mut found = Vec::new();
+    for &(_, at, fresh) in candidates.iter().take(tries) {
         if !habitable(ctx, at) {
             continue;
         }
@@ -303,15 +317,31 @@ fn site(ctx: &Ctx, cell: IVec2) -> Option<(IVec2, bool)> {
             continue;
         }
         // Fewer where it is cold or hot: as likely as anywhere in mild land, a `taper` of
-        // that at the edges, none past them.
+        // that at the edges, none past them. The roll is the square's, made once on its best
+        // site: a miss leaves the square empty rather than trying a milder spot, which would
+        // lift the rate in cold and hot land above `taper`.
         let climate = site.climate(ctx.world.site(at.x, at.y).temperature);
-        if unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
-            return give_up(2);
+        if spawn.is_none() {
+            if unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
+                give_up::<()>(2);
+                return Vec::new();
+            }
+            return vec![(at, fresh)];
         }
-        return Some((at, fresh));
+        found.push((at, fresh));
+        if found.len() >= SPAWN_TRIES {
+            break;
+        }
     }
-    give_up(if candidates.is_empty() { 0 } else { 1 })
+    if found.is_empty() {
+        give_up::<()>(if candidates.is_empty() { 0 } else { 1 });
+    }
+    found
 }
+
+/// How many times more spots the square a new player spawns in looks at, and how many
+/// it tries laying out, before it is left empty.
+const SPAWN_TRIES: usize = 8;
 
 /// Whether a settlement may stand at `at`: in no biome it avoids, and within its
 /// temperatures.
@@ -355,7 +385,7 @@ struct Kit {
     hedge: Palette,
     weathered: Palette,
     chimney: Vec<(BlockId, f32)>,
-    crops: Vec<([BlockId; 4], f32)>,
+    crops: Vec<(Vec<BlockId>, f32)>,
     fruit: Palette,
     roofs: Vec<(Roof, f32)>,
     window: Option<BlockId>,
@@ -384,11 +414,9 @@ fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, crop_level: u32, rng: &mut 
     let crops = style
         .crops
         .iter()
-        .filter(|(crop, w)| *w > 0.0 && ctx.def.crops.get(crop).is_none_or(|&(level, _)| level <= crop_level))
-        .filter_map(|(crop, w)| {
-            let stage = |s: &str| ctx.resolved.get(&format!("{crop}{s}"));
-            Some(([stage("_crop_0")?, stage("_crop_1")?, stage("_crop_2")?, stage("_crop")?], *w))
-        })
+        .filter(|(crop, w)| *w > 0.0 && ctx.def.crops.get(crop).is_none_or(|c| c.level <= crop_level))
+        .filter_map(|(crop, w)| Some((ctx.def.stages(crop).iter().map(|s| ctx.resolved.get(s)).collect::<Option<Vec<_>>>()?, *w)))
+        .filter(|(stages, _)| stages.len() >= 2)
         .collect();
     Kit {
         foundation: Palette(resolve(&style.foundation.0)),
@@ -471,10 +499,19 @@ struct Lot {
 pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let def = ctx.def;
     let mut rng = Rng::new(ctx.seed, 0x5e771e, cell.x, cell.y);
-    if !rng.chance(def.grid.chance) {
+    // The square settled for a new player always is, near enough to them.
+    let spawn = ctx.spawn;
+    if !rng.chance(def.grid.chance) && spawn.is_none() {
         return None;
     }
-    let (centre, fresh) = site(ctx, cell)?;
+    // Where one spot cannot be laid out (too few homes fit, no level ground for the well),
+    // the spawn's square tries its next; any other square has the one.
+    site(ctx, cell, spawn).into_iter().find_map(|(centre, fresh)| lay_out(ctx, cell, centre, fresh, rng.clone()))
+}
+
+/// Lays out the settlement of the square `cell` round `centre`, if it can.
+fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng) -> Option<Plan> {
+    let def = ctx.def;
     let levers = levers(ctx, centre, fresh, &mut rng);
     let biome = ctx.world.biome_at(centre.x, centre.y);
     // Styles weigh by how many of their tags the biome has, so where two fit (a cool
@@ -566,7 +603,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         }
     }
     if on_square && let Some(spec) = &centre_spec {
-        square = square.max(spec.w.max(spec.d) / 2 + 5).min(16);
+        square = square.max(spec.w.max(spec.d) / 2 + lanes_def.centre.0).min(lanes_def.centre.1);
     }
     // Lanes lead off the square and never back across it.
     let square_rect = Rect { min: centre - square, max: centre + square };
@@ -760,7 +797,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     // Every place keeps animals or grows food: a field where it has neither, or a pen
     // where it is not green.
     if !wanted.iter().any(|s| matches!(s, Special::Field | Special::Pen)) {
-        wanted.push(if rng.chance(0.25 + 0.5 * levers.get(Lever::Green)) { Special::Field } else { Special::Pen });
+        wanted.push(if rng.chance(rules.lots.field.0 + rules.lots.field.1 * levers.get(Lever::Green)) { Special::Field } else { Special::Pen });
     }
     let homes = between(&mut rng, size.houses);
     let workshops = between(&mut rng, size.workshops);
@@ -783,7 +820,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         kept.push(rect);
         lots.push(Lot { spec, rect, frame, floor: square_height, mats, door: None, yard: 0, house: None, centre: centrepiece });
         let side = [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y][rng.below(4) as usize];
-        well_at = centre + side * (extent.max_element() / 2 + 3);
+        well_at = centre + side * (extent.max_element() / 2 + lanes_def.well.0);
     }
     // The well at the heart, or as near it as the ground is firm and level; a place that
     // must have one and has nowhere for it is not built.
@@ -798,7 +835,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             if occupied.iter().any(|o| o.gap(&rect) < 1) || lanes.iter().any(|l| l.rect_distance(&rect.grow(RING)) < l.half + 0.5) {
                 continue;
             }
-            if level(&mut ground, &rect, def.site.bank, 1).is_none_or(|(low, high)| high - low > 1 || (low - square_height).abs() > 1) {
+            if level(&mut ground, &rect, def.site.bank, 1).is_none_or(|(low, high)| high - low > lanes_def.well.1 || (low - square_height).abs() > lanes_def.well.1) {
                 continue;
             }
             let mats = kit.mats(ctx, &mut rng);
@@ -869,11 +906,11 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let mut town = Town { ctx, kit: &kit, levers: &levers, style, size: &size.name, built: FxHashMap::default(), bounds, square: square_rect, gap };
     // On a green, houses first take the rim, facing in.
     if shape == Shape::Green {
-        let rim = (square as f32 + 4.0 + gap as f32).max(8.0);
+        let rim = (square as f32 + lanes_def.rim.0 + gap as f32).max(lanes_def.rim.1);
         let mut angle = start_angle;
         let mut tries = 0;
         let rim_houses = homes as usize / 2;
-        while tries < 24 && queue.len() > rim_houses {
+        while tries < lanes_def.rim.2 && queue.len() > rim_houses {
             tries += 1;
             angle += 0.45 + rng.unit() * 0.5;
             let p = centre.as_vec2() + Vec2::from_angle(angle) * rim;
@@ -902,12 +939,12 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             walked = lanes.len();
             // Side lanes off the lanes there are, round the buildings already standing.
             let street = lanes.clone();
-            for k in 0..4 {
+            for k in 0..lanes_def.growth.0 {
                 let lane = &street[rng.below(street.len() as u32) as usize];
                 let (p, dir) = lane.along(lane.length() * (0.2 + 0.7 * rng.unit()));
                 let side = if k % 2 == 0 { 1.0 } else { -1.0 };
                 let angle = dir.to_angle() + side * std::f32::consts::FRAC_PI_2 + (rng.unit() - 0.5) * 0.4 * (1.0 - order);
-                let length = between(&mut rng, size.lane_length) as f32 * 0.6;
+                let length = between(&mut rng, size.lane_length) as f32 * lanes_def.growth.1;
                 let start = p + Vec2::from_angle(angle) * (lane.half + 0.5);
                 let avoid: Vec<(Rect, f32)> = occupied.iter().map(|r| (*r, CLEAR)).chain(kept.iter().map(|r| (*r, side_half + RING as f32 + 0.5))).chain([(square_rect, CLEAR)]).collect();
                 let points = walk(&mut ground, &lanes, &mut rng, start, angle, length, wiggle, &bounds, lanes_def, &avoid);
@@ -973,7 +1010,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         // The field or pen a place must have is looked for harder, anywhere along its lanes.
         let farmed = lots.iter().any(|l| matches!(l.spec.kind, Kind::Field | Kind::Pen));
         let must = !farmed && matches!(kind, Kind::Field | Kind::Pen);
-        let (tries, from) = if must { (lot_rules.tries * 5, 0.2) } else { (lot_rules.tries, 0.55) };
+        let (tries, from, back) = if must { (lot_rules.tries * lot_rules.farm.0, lot_rules.farm.1, lot_rules.farm.2) } else { (lot_rules.tries, lot_rules.outskirts.0, lot_rules.outskirts.1) };
         for _ in 0..tries {
             let lane = &lanes[rng.below(lanes.len() as u32) as usize];
             let total = lane.length();
@@ -981,7 +1018,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             let (p, dir) = lane.along(s);
             let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
             let normal = Vec2::new(-dir.y, dir.x) * side;
-            let front = p + normal * (lane.half + 2.0 + rng.unit() * if must { 8.0 } else { 4.0 });
+            let front = p + normal * (lane.half + 2.0 + rng.unit() * back);
             if let Some(mut lot) = place(&mut town, &mut ground, &mut rng, &Want::Kind(kind), given.clone(), front, Facing::toward(-normal), &occupied, &lanes, None) {
                 if kind == Kind::Centrepiece {
                     lot.centre = centrepiece;
@@ -1339,7 +1376,7 @@ fn walk(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f
                 continue;
             }
             // Not into another lane, past its first few blocks.
-            if walked > 6.0 && lanes.iter().any(|l| l.distance(next) < l.half + rules.apart) {
+            if walked > rules.leave && lanes.iter().any(|l| l.distance(next) < l.half + rules.apart) {
                 continue;
             }
             let cost = rise as f32 * 1.5 + turn.abs() * 1.2;

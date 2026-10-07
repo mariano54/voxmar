@@ -392,17 +392,9 @@ fn settlement_wells_hold_water_and_crops_are_everyday() {
                         for y in b.floor - 1..=b.floor + 6 {
                             let name = registry.def(block(IVec3::new(x, y, z))).name.clone();
                             let bare = name.split_once(':').map_or(name.as_str(), |(_, n)| n);
-                            // A ripe crop is `<crop>_crop`, a ripe fruit tree `<fruit>_leaves`;
-                            // growing ones end in their stage.
-                            let unstaged = bare.rsplit_once('_').filter(|(_, n)| n.parse::<u8>().is_ok()).map_or(bare, |(b, _)| b);
-                            let (crop, ripe) = match bare.rsplit_once("_crop") {
-                                Some((crop, stage)) => (crop, stage.is_empty()),
-                                None => match unstaged.strip_suffix("_leaves") {
-                                    Some(fruit) => (fruit, unstaged == bare),
-                                    None => continue,
-                                },
-                            };
-                            let Some(&(need, rarity)) = def.crops.get(&format!("base:{crop}")) else { continue };
+                            // Every crop's stages are in crops.ron, the last ripe.
+                            let Some((_, crop, stage)) = def.stage_of(&name) else { continue };
+                            let (need, rarity, ripe) = (crop.level, crop.rarity, stage + 1 == crop.stages.len());
                             // Sown crops are the fields'; wild ones (plants.ron) may stand ripe by a house.
                             if bare.contains("_crop") && b.kind.name() != "field" {
                                 continue;
@@ -761,8 +753,10 @@ fn spawn_needs_only_so_much_planning() {
     let content = voxmar_engine::content::Content::load(&dir).unwrap();
     let world_content = crate::content::WorldContent::load(&content).unwrap();
     // Seed, then the most stream-tier river regions, trail grids and settlement squares:
-    // the server's default seed has trails laid at spawn, 0 has none.
-    for (seed, streams, grids, squares) in [(0x5eed, 36, 60, 25), (0, 8, 0, 12)] {
+    // the server's default seed has trails laid at spawn, 0 has none. Seed 0 plans the
+    // squares in reach of spawn first, for the settlement promised there (rules,
+    // `spawn_settlement_within`), which reads one river region more.
+    for (seed, streams, grids, squares) in [(0x5eed, 36, 60, 25), (0, 9, 0, 12)] {
         let world = Overworld::with_content(seed, content.blocks.clone(), &world_content);
         world.generate(ColumnPos::of_block(world.spawn_point()));
         let made = (world.rivers.made().1, world.trails.made().0, world.settlements.made());
@@ -1225,4 +1219,208 @@ fn a_mods_rules_replace_only_their_sections() {
     assert_eq!(def.rules.dressing, base.rules.dressing);
     assert_eq!(def.rules.specials["field"].width, (5, 7));
     assert_eq!(def.rules.specials["smithy"], base.rules.specials["smithy"]);
+}
+
+/// Every settlement round spawn is joined to the trails at one of its gates (where a main
+/// lane leads out) when it has somewhere to go, and every gate on dry ground is a place
+/// trails may set out from. Not every gate gets one: two gates towards the same viewpoint
+/// share the shorter trail, so trails never web the land.
+#[test]
+fn every_settlement_is_joined_to_the_trails() {
+    let mut failures = Vec::new();
+    let mut joined = 0;
+    for seed in [1u64, 42, 7] {
+        let world = base_world(seed);
+        let spawn = world.spawn_point();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000).iter().take(3) {
+            let centre = IVec2::new(s.centre.x, s.centre.z);
+            let (lines, places) = world.trails_in(centre - 256, centre + 256);
+            let somewhere = places.iter().any(|p| p.kind != crate::PlaceKind::Settlement && s.gates.iter().any(|g| p.at().as_vec2().distance(g.as_vec2()) < 300.0));
+            let at_gate = s.gates.iter().any(|g| lines.iter().flatten().any(|(at, _)| at.distance(g.as_vec2()) <= 12.0));
+            if somewhere && !at_gate {
+                failures.push(format!("seed {seed} {}: no trail sets out from any of its gates {:?}", s.name.0, s.gates));
+            }
+            joined += at_gate as i32;
+            for gate in &s.gates {
+                let cell = gate.div_euclid(IVec2::splat(8));
+                let dry = !world.geo(cell.x * 8, cell.y * 8).submerged();
+                if dry && !places.iter().any(|p| p.kind == crate::PlaceKind::Settlement && p.cell == cell) {
+                    failures.push(format!("seed {seed} {}: its gate at {gate} is no place trails set out from", s.name.0));
+                }
+            }
+        }
+    }
+    assert!(joined >= 7, "only {joined} settlements joined");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Where snow lies round a house, none lies inside it: the blanket stops at roofs,
+/// however tall the house.
+#[test]
+fn no_snow_falls_indoors() {
+    use super::house::Kind;
+    let registry = base_registry();
+    let snowy = |b: BlockId| registry.def(b).name.contains("snow");
+    let boxy = ["cottage", "long_house", "town_house", "farm_house", "hall", "tower_house", "wing_house"];
+    let (mut failures, mut looked) = (Vec::new(), 0);
+    'seeds: for seed in [1u64, 42, 7, 3, 11] {
+        let world = Overworld::new(seed, registry.clone());
+        for cz in -4..4 {
+            for cx in -4..4 {
+                let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
+                let Some(plan) = &slot.0 else { continue };
+                if !["log_cabin", "turf_house", "stone_cottage"].iter().any(|s| plan.style.ends_with(s)) {
+                    continue;
+                }
+                for b in plan.buildings.iter().filter(|b| b.kind == Kind::House && boxy.contains(&b.what.as_str())) {
+                    let area = Area::new(&world, b.min - 2, b.max + 2);
+                    // Snow on the open ground round it.
+                    let ring = (b.min.x - 2..=b.max.x + 2).flat_map(|x| [IVec2::new(x, b.min.y - 2), IVec2::new(x, b.max.y + 2)]);
+                    let outside = ring.filter(|p| (b.floor - 4..b.floor + 4).any(|y| snowy(area.block(IVec3::new(p.x, y, p.y))))).count();
+                    if outside < 4 {
+                        continue;
+                    }
+                    looked += 1;
+                    for z in b.min.y + 1..b.max.y {
+                        for x in b.min.x + 1..b.max.x {
+                            for y in b.floor + 1..=b.floor + 2 {
+                                if snowy(area.block(IVec3::new(x, y, z))) {
+                                    failures.push(format!("seed {seed} {}: snow in the {} at {x} {y} {z}", plan.name.0, b.what));
+                                }
+                            }
+                        }
+                    }
+                    if looked >= 12 {
+                        break 'seeds;
+                    }
+                }
+            }
+        }
+    }
+    assert!(looked >= 4, "only {looked} houses in snow");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// From the lane, through the door and up the stairs, every storey of every house of more
+/// than one can be walked to, at its least and greatest size, with a chimney and without,
+/// and as an inn: a step up at a time, with room overhead.
+#[test]
+fn every_storey_can_be_walked_to() {
+    use super::canvas::{Facing, Frame};
+    use super::def::{Extra, Roof};
+    use super::house::{self, Kind, Mats, Spec};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let def = &world_content.settlements;
+    let fixed = super::fixed(&registry, def).unwrap();
+    let id = |n: &str| registry.id(&format!("base:{n}")).unwrap();
+    let palette = |n: &str| super::canvas::Palette(vec![(id(n), 1.0)]);
+    let mats = Mats {
+        foundation: palette("cobblestone"), floor: id("spruce_planks"), wall: id("polished_calcite"), frame: id("dark_oak_log"),
+        roof: id("dark_oak_planks"), trim: id("spruce_planks"), window: Some(id("old_glass")), weathered: palette("mossy_cobblestone"),
+        hedge: palette("oak_leaves"), log: id("oak_log"), chimney: id("cobblestone"), crops: Vec::new(), fruit: palette("apple_leaves_2"),
+    };
+    let solid = |b: BlockId| registry.def(b).solid;
+    let mut walked = 0;
+    for h in def.houses.iter().filter(|h| h.storeys.1 >= 2) {
+        for (w, d) in [(h.width.0, h.depth.0), (h.width.1, h.depth.1)] {
+            for (kind, chimney) in [(Kind::House, false), (Kind::House, true), (Kind::Inn, true)] {
+                let (w, d) = (w as i32, d as i32);
+                let wall = h.walls.1 as i32;
+                let mut spec = Spec {
+                    kind, w, d, wall, storeys: h.storeys.1 as i32, roof: Roof::Gable, pitch: 1, ridge_x: w > d,
+                    extras: if chimney { vec![Extra::Chimney] } else { Vec::new() }, door: w / 2, shed: 0, wing: None, stilts: 0,
+                    regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 3,
+                };
+                house::make_room_for_stairs(&mut spec);
+                let (low, high) = spec.envelope();
+                let frame = Frame::fit(low, high, Facing::South, IVec2::ZERO, 0);
+                let mut canvas = super::canvas::Canvas::default();
+                house::draw(&spec, &frame, &mats, &fixed, &mut canvas);
+                let extent = Frame::extent(low, high, Facing::South);
+                let (min, max) = (IVec2::splat(-3), extent + 2);
+                let model = Model::new(canvas, &registry, min, max);
+                let stands = |p: IVec3| solid(model.block(p - IVec3::Y)) && !solid(model.block(p)) && !solid(model.block(p + IVec3::Y));
+                // Walk from everywhere round the edge of the ground.
+                let mut seen: rustc_hash::FxHashSet<IVec3> = Default::default();
+                let mut queue: Vec<IVec3> = (min.x..=max.x).flat_map(|x| [IVec3::new(x, 1, min.y), IVec3::new(x, 1, max.y)]).filter(|&p| stands(p)).collect();
+                seen.extend(queue.iter().copied());
+                while let Some(p) = queue.pop() {
+                    for step in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z] {
+                        for rise in [1, 0, -1, -2, -3] {
+                            let q = p + step + IVec3::Y * rise;
+                            if q.x < min.x || q.x > max.x || q.z < min.y || q.z > max.y || seen.contains(&q) || !stands(q) {
+                                continue;
+                            }
+                            // Up a step needs room overhead to climb; down, room to fall past.
+                            let clear = if rise > 0 { !solid(model.block(p + IVec3::Y * 2)) } else { (rise + 1..=0).all(|r| !solid(model.block(p + step + IVec3::Y * (r + 1)))) };
+                            if clear {
+                                seen.insert(q);
+                                queue.push(q);
+                            }
+                        }
+                    }
+                }
+                // The ground floor is where one stands just inside the door.
+                let interior: Vec<(i32, i32)> = (1..w - 1).flat_map(|x| (1..d - 1).map(move |z| (x, z))).collect();
+                let ground = (0..8).find(|&y| interior.iter().any(|&(x, z)| seen.contains(&frame.at(x, y, z))));
+                let ground = ground.unwrap_or_else(|| panic!("{} {w} by {d} ({kind:?}): its ground floor cannot be walked to", h.name));
+                for storey in 1..spec.storeys {
+                    let y = ground + storey * (spec.wall + 1);
+                    let inside = interior.iter().any(|&(x, z)| seen.contains(&frame.at(x, y, z)));
+                    assert!(inside, "{} {w} by {d} ({kind:?}, chimney {}): storey {storey} cannot be walked to", h.name, spec.has(Extra::Chimney));
+                    walked += 1;
+                }
+            }
+        }
+    }
+    assert!(walked > 20, "only {walked} storeys walked to");
+}
+
+/// A new player finds a settlement within `spawn_settlement_within` of where they spawn
+/// (rules), and never spawns inside one. Seed 7 is left out: it spawns on a strip of coast
+/// under mountains, where no spot within reach is the dry, firm, gentle ground away from
+/// the sea that a settlement needs (`site`), so none can be promised there.
+#[test]
+fn a_settlement_stands_near_spawn() {
+    let mut far = Vec::new();
+    for seed in [1u64, 42, 3, 11, 99] {
+        let world = base_world(seed);
+        let within = world.settlements.def.rules.spawn_settlement_within as f32;
+        let spawn = world.spawn_point();
+        let at = IVec2::new(spawn.x, spawn.z);
+        assert!(!world.settlements.covers(&world, spawn.x, spawn.z), "seed {seed}: spawn at {spawn} is inside a settlement");
+        let nearest = world.settlements_near(at, 2048).iter().map(|s| IVec2::new(s.centre.x, s.centre.z).as_vec2().distance(at.as_vec2())).fold(f32::MAX, f32::min);
+        // The spawn may move a step off the spot settlements planned by, off a trail.
+        if nearest > within + 64.0 {
+            far.push(format!("seed {seed}: the nearest settlement is {nearest:.0} blocks from spawn at {spawn}"));
+        }
+    }
+    assert!(far.is_empty(), "{}", far.join("\n"));
+}
+
+/// Loading refuses ripe or rare fruit wherever a settlement puts leaves: orchards' fruit by
+/// name or by tag, and centrepieces' leaves in any wood a style picks.
+#[test]
+fn ripe_or_rare_fruit_is_refused() {
+    use crate::content::Select;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let base = crate::content::WorldContent::load(&content).unwrap().settlements;
+    let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
+        let mut def = base.clone();
+        change(&mut def);
+        def.check_furnishings(&content.blocks).is_err()
+    };
+    assert!(!refused(&|_| {}));
+    assert!(refused(&|d| d.furnishings.fruit = vec![Select::Name("base:apple_leaves".into(), 1.0)]));
+    assert!(refused(&|d| d.furnishings.fruit = vec![Select::Tag("fruit_leaves".into(), 1.0)]), "the tag holds ripe and legendary leaves");
+    assert!(refused(&|d| d.furnishings.fruit = vec![Select::Name("base:golden_apple_leaves_2".into(), 1.0)]));
+    assert!(refused(&|d| d.centrepieces[0].parts = vec![("leaves".into(), "base:plum_leaves".into())]));
+    assert!(refused(&|d| {
+        d.centrepieces[0].parts = vec![("leaves".into(), "base:{wood}_leaves".into())];
+        d.styles[0].woods.push(("apple".into(), 1.0));
+    }));
 }

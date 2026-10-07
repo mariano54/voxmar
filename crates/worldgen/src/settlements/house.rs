@@ -79,7 +79,7 @@ pub struct Mats {
     /// Its chimney, one block all the way up.
     pub chimney: BlockId,
     /// The crops its fields grow, by weight: their stages, the last ripe.
-    pub crops: Vec<([BlockId; 4], f32)>,
+    pub crops: Vec<(Vec<BlockId>, f32)>,
     /// The fruit trees it grows: only those of its size's crop level or below.
     pub fruit: Palette,
 }
@@ -567,14 +567,15 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
                 }
             }
             // The stair: a step up each block from the floor to the storey above, its
-            // top two under a hole in that storey's floor.
+            // top three under a hole in that storey's floor, so each is climbed with a
+            // jump's headroom (three blocks of air over where it is jumped from).
             if let Some(flight) = flights.get(storey as usize).and_then(|f| f.as_ref()) {
                 for (k, &(x, z)) in flight.iter().enumerate().skip(1) {
                     let step = y - k as i32;
                     for up in base + 1..=step {
                         pen.set(x, up, z, mats.floor);
                     }
-                    if k <= 2 {
+                    if k <= STAIRWELL {
                         pen.clear(x, y, z);
                     }
                 }
@@ -1029,13 +1030,20 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 /// down to the floor. Clear of the door, the hearth, the shop's counter and the top of the
 /// stair below; none where no run fits (only four-walled houses have them).
 /// A house too small for both its chimney and a stair up each storey goes without the
-/// chimney.
+/// chimney, and one too small for its stairwells with tall walls has walls of three.
 pub fn make_room_for_stairs(spec: &mut Spec) {
-    let hearth = spec.chimney().map(|c| c.0);
-    if hearth.is_some() && stairs(spec, spec.door.clamp(1, spec.w - 2), hearth).iter().any(Option::is_none) {
+    let fits = |spec: &Spec| !stairs(spec, spec.door.clamp(1, spec.w - 2), spec.chimney().map(|c| c.0)).iter().any(Option::is_none);
+    if spec.chimney().is_some() && !fits(spec) {
         spec.extras.retain(|e| *e != Extra::Chimney);
     }
+    while spec.wall > 3 && !fits(spec) {
+        spec.wall -= 1;
+    }
 }
+
+/// Steps of a stair under the hole in the floor above: a player jumps a block with three
+/// blocks of air overhead, so every step within three of the floor above opens to it.
+const STAIRWELL: usize = 3;
 
 pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<Option<Vec<(i32, i32)>>> {
     let (w, d) = (spec.w, spec.d);
@@ -1071,7 +1079,7 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
             let flight: Vec<(i32, i32)> = (0..run).map(|k| ring[(start as isize + dir * k as isize).rem_euclid(n as isize) as usize]).collect();
             (!flight.iter().any(banned)).then_some(flight)
         });
-        below = found.as_ref().map_or_else(Vec::new, |f| f[..3.min(f.len())].to_vec());
+        below = found.as_ref().map_or_else(Vec::new, |f| f[..(STAIRWELL + 1).min(f.len())].to_vec());
         flights.push(found);
     }
     flights
@@ -1423,7 +1431,7 @@ fn field(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     let crop = mats.crops.iter().find(|c| {
         roll -= c.1;
         roll <= 0.0
-    }).or(mats.crops.last()).map(|c| c.0);
+    }).or(mats.crops.last()).map(|c| &c.0[..]);
     // How far grown the whole field is, give or take.
     let growth = rng.unit();
     let ditch = w / 2;
@@ -1446,9 +1454,11 @@ fn field(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             pen.put(x, -1, z, Put::Down(fixed.dirt));
             match crop {
                 Some(stages) => {
-                    // Growing, never ripe: what a field gives is its grower's.
-                    let u = (growth * 2.5 + rng.unit() * 1.2 - 0.4).clamp(0.0, 2.0) as usize;
-                    pen.set(x, 1, z, stages[u.min(2)]);
+                    // Growing, never ripe: what a field gives is its grower's. Each of the
+                    // growing stages (all but the last) by how far grown the field is.
+                    let last = (stages.len() - 2) as f32;
+                    let u = ((growth * 2.5 + rng.unit() * 1.2 - 0.4) * last / 2.0).clamp(0.0, last) as usize;
+                    pen.set(x, 1, z, stages[u]);
                 }
                 None => pen.clear(x, 1, z),
             }

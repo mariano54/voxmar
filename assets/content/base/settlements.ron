@@ -75,7 +75,8 @@
     //     it keeps from sinkholes and ravines.
     //   step: blocks between the spots weighed in its square; tries: how many of the best
     //     are tried; score: what a spot scores (luck, less its spread and relief, more for
-    //     water, less per block over sea level).
+    //     water, less per block over sea level); where water is needed, a closer look for
+    //     creeks goes through `look` times `tries` of the best, sampling every `creek` blocks.
     //   glade: no trees within glade.0 blocks of a house, fewer out to glade.1, glade_trees.0
     //     of them left past the treeless ring and glade_trees.1 more where it is green.
     site: (
@@ -83,10 +84,14 @@
         water: 48, bank: 3,
         fertility: 0.3, poor: {"cold": 0.15, "desert": 0.15},
         height: (3, 90), relief: 14, reach: 48, firm: 24, caves: 150,
-        step: 16, tries: 6, score: (luck: 3.0, spread: 1.2, relief: 0.25, water: 3.0, height: 0.02),
+        step: 16, tries: 6, look: 6, creek: 4, score: (luck: 3.0, spread: 1.2, relief: 0.25, water: 3.0, height: 0.02),
         glade: (5, 16), glade_trees: (0.08, 0.3),
     ),
     // rules: the rest of the numbers planning reads.
+    //   spawn_settlement_within: a new player finds a settlement within this many blocks of
+    //     where they spawn: of the squares in reach, the nearest that can hold one always
+    //     does, unless one already stands in reach (design, 7 Oct: P21's early quests send
+    //     them there). 0 promises none.
     //   levers: how each lever is drawn: `luck` times the mean of `rolls` rolls, plus shares
     //     of fertility, fresh water near, flat ground (flat below `steep`), the wealth drawn
     //     first, and forest (undergrowth counting `undergrowth` of it); clamped to 0 ..= 1.
@@ -95,11 +100,21 @@
     //     green's radius (square times green.0, plus green.1); a scattered place's square
     //     and how often its paths branch; a ring lane's distance past the square (and more
     //     where not crowded), its wobble and the most it rises; a terrace's step up; how far
-    //     a riverside street looks for its water.
+    //     a riverside street looks for its water; `leave`: blocks a lane walks before it
+    //     keeps `apart` from others; `growth`: side lanes grown when homes are still wanted
+    //     after every pass, and their share of a lane's length; `centre`: the square grows
+    //     to half a centrepiece plus centre.0, at most centre.1; `well`: blocks it stands past
+    //     a centrepiece, and the most its ground rises, falls or stands off the square's;
+    //     `rim`: a green's houses stand rim.0 past its square (and the gap), at least rim.1
+    //     from its middle, in up to rim.2 tries.
     //   lots: blocks between buildings (and up to more where not crowded); spacing along a
     //     lane, tightened by `closer` each of `passes` passes; setback from the lane; yard
     //     kept clear; the most a floor stands off its lane (`road`); tries for each outlying
-    //     building; the most the ground under a house rises and falls (more on stilts).
+    //     building; the most the ground under a house rises and falls (more on stilts);
+    //     `field`: where a place rolled neither field nor pen, the chance of a field (and more
+    //     where green), else a pen; `outskirts`: outlying buildings stand past that share of a
+    //     lane, up to that many blocks back; `farm`: the field or pen a place must have is
+    //     looked for farm.0 times harder, past farm.1 of a lane, up to farm.2 back.
     //   specials: each special building's size, across and deep (every `step`), and the
     //     most its ground may rise and fall.
     //   houses: the inn's least storeys, width and depth, from houses `grand` wide; the
@@ -113,6 +128,7 @@
     //     yards per building, the most per lane, boats and nets on the bank, and how far
     //     props keep from lanes (by a lane, in a yard).
     rules: (
+        spawn_settlement_within: 1024,
         levers: (
             wealth: (luck: 0.45, fertility: 0.25, water: 0.2, flat: 0.1),
             age: (luck: 1.0, rolls: 2),
@@ -125,8 +141,12 @@
             side: 0.8, wiggle: (0.06, 0.32), step: 3.0, rise: 2, apart: 3.5,
             green: (1.5, 2), scatter: 2, branch: 0.6,
             ring: (10.0, 4.0), wobble: 1.2, ring_rise: 6, terrace: (11.0, 4.0), riverside: 48,
+            leave: 6.0, growth: (4, 0.6), centre: (5, 16), well: (3, 1), rim: (4.0, 8.0, 24),
         ),
-        lots: (gap: (1, 3.0), spacing: (7.0, 6.0), closer: 0.7, passes: 3, setback: (1.5, 3.0), yard: (1, 2.0), road: 3, tries: 10, slope: 4),
+        lots: (
+            gap: (1, 3.0), spacing: (7.0, 6.0), closer: 0.7, passes: 3, setback: (1.5, 3.0), yard: (1, 2.0), road: 3, tries: 10, slope: 4,
+            field: (0.25, 0.5), outskirts: (0.55, 4.0), farm: (5, 0.2, 8.0),
+        ),
         specials: {
             "smithy": (width: (6, 8), depth: (5, 7), slope: 4),
             "field": (width: (7, 11), depth: (7, 13), step: 2, slope: 3),

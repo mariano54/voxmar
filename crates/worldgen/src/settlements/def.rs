@@ -347,6 +347,10 @@ pub struct SiteDef {
     pub reach: i32,
     pub firm: i32,
     pub tries: usize,
+    /// Where water is needed, the closer look for creeks goes through `look` times
+    /// `tries` of the best spots, sampling every `creek` blocks.
+    pub look: usize,
+    pub creek: i32,
     /// What a spot scores: luck, less how uneven and how steep it is, more for fresh
     /// water, less for every block over sea level.
     pub score: ScoreDef,
@@ -371,6 +375,8 @@ impl Default for SiteDef {
             reach: 48,
             firm: 24,
             tries: 6,
+            look: 6,
+            creek: 4,
             score: ScoreDef::default(),
         }
     }
@@ -485,6 +491,20 @@ pub struct LanesDef {
     pub terrace: (f32, f32),
     /// How far a riverside street looks for its water.
     pub riverside: i32,
+    /// Blocks a lane walks before it must keep `apart` from the others.
+    pub leave: f32,
+    /// Where homes are still wanted after every pass, `growth.0` side lanes grow off the
+    /// lanes, each `growth.1` of a lane's length.
+    pub growth: (u32, f32),
+    /// The square grows to hold a centrepiece: half its size plus `centre.0`, to at most
+    /// `centre.1`.
+    pub centre: (i32, i32),
+    /// The well stands `well.0` blocks past a centrepiece on the square, its ground rising
+    /// and falling at most `well.1`, and at most that off the square's.
+    pub well: (i32, i32),
+    /// Houses on a green take its rim first: `rim.0` blocks past the square (and the gap
+    /// between buildings), at least `rim.1` from its middle, in up to `rim.2` tries.
+    pub rim: (f32, f32, u32),
 }
 
 impl Default for LanesDef {
@@ -503,6 +523,11 @@ impl Default for LanesDef {
             ring_rise: 6,
             terrace: (11.0, 4.0),
             riverside: 48,
+            leave: 6.0,
+            growth: (4, 0.6),
+            centre: (5, 16),
+            well: (3, 1),
+            rim: (4.0, 8.0, 24),
         }
     }
 }
@@ -529,11 +554,32 @@ pub struct LotsDef {
     pub passes: u32,
     /// The most the ground under a house may rise and fall (more on stilts).
     pub slope: i32,
+    /// Where a place rolled neither field nor pen, the chance it farms a field, and more
+    /// where green (else it keeps a pen).
+    pub field: (f32, f32),
+    /// Outlying buildings stand past `outskirts.0` of a lane's length, up to `outskirts.1`
+    /// blocks back from it; the field or pen a place must have is looked for `farm.0` times
+    /// harder, past `farm.1` of a lane, up to `farm.2` back.
+    pub outskirts: (f32, f32),
+    pub farm: (u32, f32, f32),
 }
 
 impl Default for LotsDef {
     fn default() -> Self {
-        Self { gap: (1, 3.0), spacing: (7.0, 6.0), closer: 0.7, setback: (1.5, 3.0), yard: (1, 2.0), road: 3, tries: 10, passes: 3, slope: 4 }
+        Self {
+            gap: (1, 3.0),
+            spacing: (7.0, 6.0),
+            closer: 0.7,
+            setback: (1.5, 3.0),
+            yard: (1, 2.0),
+            road: 3,
+            tries: 10,
+            passes: 3,
+            slope: 4,
+            field: (0.25, 0.5),
+            outskirts: (0.55, 4.0),
+            farm: (5, 0.2, 8.0),
+        }
     }
 }
 
@@ -610,9 +656,13 @@ impl Default for DressingDef {
 }
 
 /// The numbers planning reads besides the site's.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct RulesDef {
+    /// A new player finds a settlement within this many blocks of where they first
+    /// spawn: the square of the grid they spawn in always holds one, standing within
+    /// that reach (none promised at 0).
+    pub spawn_settlement_within: i32,
     pub levers: LeversDef,
     pub lanes: LanesDef,
     pub lots: LotsDef,
@@ -621,6 +671,20 @@ pub struct RulesDef {
     pub specials: BTreeMap<String, SpecialSize>,
     pub houses: BuildingDef,
     pub dressing: DressingDef,
+}
+
+impl Default for RulesDef {
+    fn default() -> Self {
+        Self {
+            spawn_settlement_within: 1024,
+            levers: LeversDef::default(),
+            lanes: LanesDef::default(),
+            lots: LotsDef::default(),
+            specials: BTreeMap::new(),
+            houses: BuildingDef::default(),
+            dressing: DressingDef::default(),
+        }
+    }
 }
 
 /// Blocks every settlement furnishes itself with whatever its style: a name each, or a
@@ -938,6 +1002,7 @@ struct StyleFile {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields, default)]
 struct RulesFile {
+    spawn_settlement_within: Option<i32>,
     levers: Option<LeversDef>,
     lanes: Option<LanesDef>,
     lots: Option<LotsDef>,
@@ -1141,9 +1206,32 @@ pub struct SettlementsDef {
     pub styles: Vec<StyleDef>,
     pub roofs: Vec<RoofDef>,
     pub centrepieces: Vec<CentreDef>,
-    /// Every crop's Farming level and rarity, by its full name (from `crops.ron`), so
-    /// settlements grow only everyday crops a newcomer may harvest.
-    pub crops: BTreeMap<String, (u32, voxmar_engine::block::Rarity)>,
+    /// Every crop by its full name (from `crops.ron`), so settlements grow only everyday
+    /// crops a newcomer may harvest, and never ripe.
+    pub crops: BTreeMap<String, CropInfo>,
+}
+
+/// A crop as settlements see it: its Farming level, its rarity and the blocks it grows
+/// through, the last ripe.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CropInfo {
+    pub level: u32,
+    pub rarity: voxmar_engine::block::Rarity,
+    pub stages: Vec<String>,
+}
+
+impl SettlementsDef {
+    /// The blocks `crop` grows through, the last ripe: its `stages` in crops.ron, or the
+    /// crop template's `<name>_crop_0` to `_2` and `<name>_crop` where it has none given
+    /// (or crops.ron is not read).
+    pub fn stages(&self, crop: &str) -> Vec<String> {
+        self.crops.get(crop).map(|c| c.stages.clone()).unwrap_or_else(|| (0..3).map(|i| format!("{crop}_crop_{i}")).chain([format!("{crop}_crop")]).collect())
+    }
+
+    /// The crop `block` is a stage of, and which stage.
+    pub fn stage_of(&self, block: &str) -> Option<(&str, &CropInfo, usize)> {
+        self.crops.iter().find_map(|(name, c)| c.stages.iter().position(|s| s == block).map(|i| (name.as_str(), c, i)))
+    }
 }
 
 fn names(package: &str, at: &str, selects: &[Select]) -> Result<Vec<(String, f32)>, ContentError> {
@@ -1172,6 +1260,9 @@ impl SettlementsDef {
         }
         if let Some(rules) = file.rules {
             let mine = &mut self.rules;
+            if let Some(within) = rules.spawn_settlement_within {
+                mine.spawn_settlement_within = within;
+            }
             if let Some(levers) = rules.levers {
                 mine.levers = levers;
             }
@@ -1416,6 +1507,29 @@ impl SettlementsDef {
         if !(0..=256).contains(&site.water) || !(0..=256).contains(&lanes.riverside) {
             return fail(format!("fresh water is looked for at most 256 blocks out: site water {}, riverside {}", site.water, lanes.riverside));
         }
+        if !(0..=4096).contains(&rules.spawn_settlement_within) {
+            return fail(format!("rules: a settlement is promised within 0 to 4096 blocks of spawn: {}", rules.spawn_settlement_within));
+        }
+        if site.look == 0 || site.creek < 1 {
+            return fail(format!("the site's closer look for creeks needs `look` and `creek` of 1 or more: {}, {}", site.look, site.creek));
+        }
+        let unit = |x: f32| (0.0..=1.0).contains(&x);
+        let some = |x: f32| x.is_finite() && x >= 0.0;
+        if !some(lanes.leave) || lanes.growth.0 > 16 || !some(lanes.growth.1) {
+            return fail(format!("rules: lanes need `leave` and a growth length of nothing or more, and at most 16 lanes grown at a time: {}, {:?}", lanes.leave, lanes.growth));
+        }
+        if lanes.centre.0 < 0 || !(1..=16).contains(&lanes.centre.1) || lanes.well.0 < 0 || lanes.well.1 < 0 {
+            return fail(format!("rules: a square grows by nothing or more to at most 16, and the well stands nothing or more off: centre {:?}, well {:?}", lanes.centre, lanes.well));
+        }
+        if !some(lanes.rim.0) || !some(lanes.rim.1) || lanes.rim.2 > 256 {
+            return fail(format!("rules: a green's rim lies nothing or more out, in at most 256 tries: {:?}", lanes.rim));
+        }
+        if !some(lots.field.0) || !some(lots.field.1) || !unit(lots.field.0 + lots.field.1) {
+            return fail(format!("rules: the chance of a field, and more where green, are nothing or more and at most 1 together: {:?}", lots.field));
+        }
+        if !(0.0..1.0).contains(&lots.outskirts.0) || !some(lots.outskirts.1) || !(1..=20).contains(&lots.farm.0) || !(0.0..1.0).contains(&lots.farm.1) || !some(lots.farm.2) {
+            return fail(format!("rules: outlying buildings stand past a share of a lane in [0, 1), nothing or more back, and the farm is looked for 1 to 20 times harder: {:?}, {:?}", lots.outskirts, lots.farm));
+        }
         if rules.levers.steep.is_nan() || rules.levers.steep <= 0.0 {
             return fail(format!("rules: levers need `steep` above nothing: {}", rules.levers.steep));
         }
@@ -1539,10 +1653,10 @@ impl SettlementsDef {
         if !self.crops.is_empty() {
             let everyday = |crop: &str, most: u32| match self.crops.get(crop) {
                 None => Err(format!("`{crop}` is no crop in crops.ron")),
-                Some(&(level, rarity)) if rarity > voxmar_engine::block::Rarity::Uncommon || level > most => {
-                    Err(format!("`{crop}` (level {level}, {rarity:?}) is too rare or high for a settlement"))
+                Some(c) if c.rarity > voxmar_engine::block::Rarity::Uncommon || c.level > most => {
+                    Err(format!("`{crop}` (level {}, {:?}) is too rare or high for a settlement", c.level, c.rarity))
                 }
-                Some(&(level, _)) => Ok(level),
+                Some(c) => Ok(c.level),
             };
             let highest = self.sizes.iter().map(|s| s.crop_level).max().unwrap_or(1);
             let lowest = self.sizes.iter().map(|s| s.crop_level).min().unwrap_or(1);
@@ -1555,13 +1669,18 @@ impl SettlementsDef {
                     return fail(format!("style `{}` has no crop of level {lowest} or below for its hamlets", style.name));
                 }
             }
+            // Fruit named outright: a growing stage of an everyday crop. Those of a tag, and
+            // centrepieces' leaves, are checked against the whole content's blocks (in
+            // `check_furnishings`).
             for select in &self.furnishings.fruit {
                 let Select::Name(name, _) = select else { continue };
-                let unripe = name.rsplit_once('_').filter(|(_, n)| n.parse::<u8>().is_ok());
-                let Some((leaves, _)) = unripe else {
-                    return fail(format!("fruit `{name}` is ripe: name a growing stage (`_1`, `_2`)"));
-                };
-                everyday(leaves.trim_end_matches("_leaves"), highest).map_err(|e| ContentError(format!("settlements.ron: {e}")))?;
+                match self.stage_of(name) {
+                    Some((_, c, i)) if i + 1 == c.stages.len() => return fail(format!("fruit `{name}` is ripe: name a growing stage")),
+                    Some((crop, ..)) => {
+                        everyday(crop, highest).map_err(|e| ContentError(format!("settlements.ron: {e}")))?;
+                    }
+                    None => return fail(format!("fruit `{name}` is no stage of a crop in crops.ron")),
+                }
             }
         }
         Ok(())
@@ -1574,11 +1693,38 @@ impl SettlementsDef {
         let fail = |what: String| Err(ContentError(format!("settlements.ron: {what}")));
         for style in &self.styles {
             for (crop, _) in &style.crops {
-                for stage in ["_crop_0", "_crop_1", "_crop_2", "_crop"] {
-                    if registry.id(&format!("{crop}{stage}")).is_none() {
-                        return fail(format!("style `{}`'s crop `{crop}` has no `{crop}{stage}` block", style.name));
+                for stage in self.stages(crop) {
+                    if registry.id(&stage).is_none() {
+                        return fail(format!("style `{}`'s crop `{crop}` grows through `{stage}`, which is no block", style.name));
                     }
                 }
+            }
+        }
+        // No ripe fruit anywhere a settlement puts leaves: its orchards and courtyard trees
+        // (furnishings' fruit, by name or tag) and its centrepieces' leaves in every wood a
+        // style may pick, so a village is no free harvest.
+        let fruit = self.furnishings.fruit.iter().flat_map(|select| match select {
+            Select::Name(name, _) => vec![name.clone()],
+            Select::Tag(tag, _) => registry.tagged(tag).map(|b| registry.def(b).name.clone()).collect(),
+        });
+        let leaves = self.centrepieces.iter().flat_map(|c| c.parts.iter()).flat_map(|(_, name)| {
+            let woods = self.styles.iter().flat_map(|s| s.woods.iter().map(|(w, _)| w.clone()));
+            if name.contains('{') { woods.map(|w| fill(name, &w, &w)).collect() } else { vec![name.clone()] }
+        });
+        let fruit: Vec<String> = fruit.collect();
+        for name in fruit.iter().cloned().chain(leaves) {
+            if let Some((crop, c, i)) = self.stage_of(&name)
+                && i + 1 == c.stages.len()
+            {
+                return fail(format!("`{name}` is ripe `{crop}`: a settlement may only grow it in blossom or unripe"));
+            }
+        }
+        // And only everyday fruit, as fields grow only everyday crops.
+        for name in &fruit {
+            if let Some((crop, c, _)) = self.stage_of(name)
+                && c.rarity > voxmar_engine::block::Rarity::Uncommon
+            {
+                return fail(format!("fruit `{name}` bears `{crop}`, which is {:?}: too rare for a settlement", c.rarity));
             }
         }
         let f = &self.furnishings;
@@ -1658,8 +1804,7 @@ impl Resolved {
                 }
             }
             for (crop, _) in &style.crops {
-                for stage in ["_crop_0", "_crop_1", "_crop_2", "_crop"] {
-                    let name = format!("{crop}{stage}");
+                for name in def.stages(crop) {
                     if let Some(id) = registry.id(&name) {
                         map.insert(name, id);
                     }
