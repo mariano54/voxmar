@@ -1917,22 +1917,43 @@ fn say_hello(connection: &ClientConnection, name: &str, content: &Content) {
     connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: None });
 }
 
+/// A name already playing is turned away, in any case, when it comes from anywhere else.
+/// From where that player plays it is them coming back: a game that froze or lost its
+/// network without closing its socket still looks joined until it has been quiet too long.
+/// The earlier connection is told why and leaves, saved; the new one joins as anyone
+/// joining would, with what the save holds and no admin rights it was given (`/op`).
 #[test]
-fn a_name_already_playing_is_turned_away_in_any_case() {
+fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_the_same_place() {
     let dir = world_dir("names");
-    let client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
-    for name in ["test", "TeSt"] {
+    let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
+    let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    host.connection.send(ClientMessage::Command { line: "/op guest".into() });
+    guest.pump_until(|c| c.admin);
+    guest.ok("/skill mining 7");
+    // In process is not where either plays.
+    for name in ["guest", "GuEsT", "host"] {
         let (connection, server_side) = local_pair();
-        client._server.as_ref().unwrap().connections().send(server_side).unwrap();
-        say_hello(&connection, name, &client.content);
-        let reason = turned_away(&connection, &client.content);
+        host._server.as_ref().unwrap().connections().send(server_side).unwrap();
+        say_hello(&connection, name, &host.content);
+        let reason = turned_away(&connection, &host.content);
         assert!(reason.contains("already playing"), "{name}: {reason}");
     }
-    drop(client);
+    // The guest's game stops reading with its socket open, and they join again from the
+    // same address.
+    let mining = host.content.skills.id("core:mining").unwrap();
+    let again = Client::greet(tcp::connect(addr).unwrap(), "GuEsT", None);
+    assert!(!again.admin, "admin rights given for a session lasted into the next");
+    assert_eq!(again.content.skills.level(again.skills.xp(mining)), 7, "joined again without what the earlier connection had");
+    let reason = turned_away(&guest.connection, &guest.content);
+    assert!(reason.contains("joined again"), "{reason}");
+    // The same holds in process: the integrated server's own player coming back.
+    let first = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    let second = first.another("test");
+    assert!(second.admin, "the integrated server's own player is its admin");
+    assert!(turned_away(&first.connection, &first.content).contains("joined again"));
+    drop((again, guest, host, second, first));
     // One file for the name in any case (macOS and Windows would not tell them apart).
-    assert!(dir.join("players/test.ron").is_file());
-    let joined_as = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
-    drop(joined_as);
+    assert!(dir.join("players/guest.ron").is_file());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

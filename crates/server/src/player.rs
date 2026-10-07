@@ -328,9 +328,21 @@ impl Server {
         });
     }
 
+    /// Whether two connections come from one place: both in process, or both from one
+    /// address as the limits count them (`Limits::address_key`).
+    fn same_place(&self, a: PlayerId, b: PlayerId) -> bool {
+        let (a, b) = (&self.players[&a].connection, &self.players[&b].connection);
+        let key = |ip| self.config.limits.address_key(ip);
+        match (a.peer(), b.peer()) {
+            (Some(x), Some(y)) => key(x) == key(y),
+            (None, None) => a.is_local() && b.is_local(),
+            _ => false,
+        }
+    }
+
     fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
         let fingerprint = self.content.fingerprint();
-        let blocks = &self.content.blocks;
+        let blocks = self.content.blocks.clone();
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
         let name: String = name.chars().filter(|c| !c.is_control()).take(self.config.limits.name_length).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
@@ -338,14 +350,19 @@ impl Server {
             return;
         }
         // One player per name: a second login would load the same save twice, so whatever
-        // either carried would be doubled and their saves would overwrite each other.
+        // either carried would be doubled and their saves would overwrite each other. Unless
+        // it comes from where the first did: a client that crashed or lost its network
+        // without closing its socket still looks joined until it is idle too long, and its
+        // player coming back is them, so the old connection leaves (saved) and this one joins.
+        let earlier = self.players.iter().find(|(_, p)| p.joined && same_name(&p.name, &name)).map(|(&earlier, _)| earlier);
+        let again = earlier.filter(|earlier| self.same_place(*earlier, id));
         let reason = if protocol != PROTOCOL_VERSION {
             Some(Words::key("net.rejected.protocol").with("theirs", Words::text(protocol)).with("ours", Words::text(PROTOCOL_VERSION)))
         } else if content != fingerprint {
             Some(Words::key("net.rejected.content"))
-        } else if self.players.values().any(|p| p.joined && same_name(&p.name, &name)) {
+        } else if earlier.is_some() && again.is_none() {
             Some(Words::key("net.rejected.name_taken").with("name", name.as_str()))
-        } else if self.players.values().filter(|p| p.joined).count() >= self.config.max_players {
+        } else if again.is_none() && self.players.values().filter(|p| p.joined).count() >= self.config.max_players {
             Some(Words::key("net.rejected.full"))
         } else {
             None
@@ -354,10 +371,15 @@ impl Server {
             self.players[&id].connection.send(ServerMessage::Rejected { reason });
             return;
         }
+        if let Some(earlier) = again {
+            tracing::info!("{name} joined again from the same address; the earlier connection leaves");
+            self.players[&earlier].connection.send(ServerMessage::Rejected { reason: Words::key("net.rejected.joined_again") });
+            self.leave(earlier);
+        }
         // A save that is not a player file is moved aside rather than replaced by a new
         // player's at the next save. One that could not be read at all (no permission, a
         // failing disk), or cannot be moved, turns the player away.
-        let (saved, set_aside) = match self.save.as_ref().map(|save| (save, save.read_player(&name, blocks))) {
+        let (saved, set_aside) = match self.save.as_ref().map(|save| (save, save.read_player(&name, &blocks))) {
             None => (None, None),
             Some((_, Ok(saved))) => (saved, None),
             Some((_, Err(e))) if e.kind() != std::io::ErrorKind::InvalidData => {
