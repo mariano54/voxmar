@@ -136,12 +136,12 @@ impl Piece {
             Piece::Heart => ("ui/heart", (9, 9), None),
             Piece::HeartHalf => ("ui/heart_half", (9, 9), None),
             Piece::HeartEmpty => ("ui/heart_empty", (9, 9), None),
-            Piece::WornHead => ("ui/worn_head", (16, 16), None),
-            Piece::WornBody => ("ui/worn_body", (16, 16), None),
-            Piece::WornLegs => ("ui/worn_legs", (16, 16), None),
-            Piece::WornHands => ("ui/worn_hands", (16, 16), None),
-            Piece::WornFeet => ("ui/worn_feet", (16, 16), None),
-            Piece::WornShield => ("ui/worn_shield", (16, 16), None),
+            Piece::WornHead => ("ui/slot/helm", (16, 16), None),
+            Piece::WornBody => ("ui/slot/chest", (16, 16), None),
+            Piece::WornLegs => ("ui/slot/legs", (16, 16), None),
+            Piece::WornHands => ("ui/slot/gloves", (16, 16), None),
+            Piece::WornFeet => ("ui/slot/boots", (16, 16), None),
+            Piece::WornShield => ("ui/slot/shield", (16, 16), None),
         }
     }
 

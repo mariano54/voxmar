@@ -96,14 +96,55 @@ struct WornGlyph(usize);
 
 /// The mark for worn slot `slot`, if it is one, by `combat::Slot`'s order.
 fn worn_glyph(slot: usize) -> Option<Piece> {
-    let at = slot.checked_sub(WORN).filter(|&i| slot <= LAST)?;
+    let at = slot.checked_sub(WORN).filter(|_| slot <= LAST)?;
     [Piece::WornHead, Piece::WornBody, Piece::WornLegs, Piece::WornHands, Piece::WornFeet, Piece::WornShield].get(at).copied()
 }
 
-/// Each worn well's mark shows while nothing is worn there.
-fn show_worn_glyphs(shown: Res<ShownInventory>, mut glyphs: Query<(&WornGlyph, &mut Visibility)>) {
-    for (glyph, mut visibility) in &mut glyphs {
+/// What packages restyle of the interface (`interface.ron`, in `core`); a later package
+/// changes what it gives.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct InterfaceStyle {
+    /// How strongly an empty worn well shows what it takes, 0 to 1.
+    pub worn_glyph_alpha: f32,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct InterfaceFile {
+    worn_glyph_alpha: Option<f32>,
+}
+
+impl InterfaceStyle {
+    pub const FILE: &str = "interface.ron";
+
+    pub fn load(files: &[voxmar_engine::content::ContentFile]) -> Result<Self, String> {
+        let mut alpha = None;
+        for file in files.iter().filter(|f| f.name == Self::FILE) {
+            let given: InterfaceFile = ron::from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
+            alpha = given.worn_glyph_alpha.or(alpha);
+        }
+        let worn_glyph_alpha = alpha.ok_or(format!("no package's {} gives worn_glyph_alpha", Self::FILE))?;
+        if !(0.0..=1.0).contains(&worn_glyph_alpha) {
+            return Err(format!("{}: worn_glyph_alpha {worn_glyph_alpha} is not from 0 to 1", Self::FILE));
+        }
+        Ok(InterfaceStyle { worn_glyph_alpha })
+    }
+}
+
+/// Each worn well's mark shows, faintly, while nothing is worn there.
+fn show_worn_glyphs(shown: Res<ShownInventory>, launch: Res<Launch>, mut style: Local<Option<f32>>, mut glyphs: Query<(&WornGlyph, &mut Visibility, &mut ImageNode)>) {
+    let alpha = *style.get_or_insert_with(|| {
+        InterfaceStyle::load(&launch.content.files).map(|s| s.worn_glyph_alpha).unwrap_or_else(|e| {
+            error!("interface style: {e}");
+            0.0
+        })
+    });
+    for (glyph, mut visibility, mut image) in &mut glyphs {
         visibility.set_if_neq(if shown.0.get(glyph.0).is_some() { Visibility::Hidden } else { Visibility::Inherited });
+        let faint = Color::WHITE.with_alpha(alpha);
+        if image.color != faint {
+            image.color = faint;
+        }
     }
 }
 
@@ -995,6 +1036,18 @@ mod tests {
     use voxmar_engine::block::BlockId;
 
     use super::*;
+
+    #[test]
+    fn the_interface_style_comes_from_data_and_a_later_package_changes_it() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let mut files: Vec<_> = content.files.iter().cloned().collect();
+        assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.25);
+        let file = |source: &str| voxmar_engine::content::ContentFile { package: "mod".into(), name: InterfaceStyle::FILE.into(), source: source.into() };
+        files.push(file("(worn_glyph_alpha: 0.5)"));
+        assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.5);
+        files.push(file("(worn_glyph_alpha: 2.0)"));
+        assert!(InterfaceStyle::load(&files).is_err());
+    }
 
     fn held(count: u8) -> Inventory {
         let mut inventory = Inventory::default();
