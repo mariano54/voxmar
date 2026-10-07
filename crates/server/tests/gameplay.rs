@@ -8,6 +8,7 @@ use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, Face};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::ItemStack;
+use voxmar_engine::machine::Role;
 use voxmar_engine::world::VoxelWorld;
 use voxmar_protocol::{
     ChatKind, ClientConnection, ClientMessage, ItemView, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND,
@@ -1748,9 +1749,16 @@ fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformer
     let after = client.tick - broken;
     assert!(after <= 2 * TICKS_PER_SECOND as u64, "the macerator ran on for {after} ticks");
     machine_says(&mut client, &at(core), "not complete", 1);
-    // Nor does it make any more: the ore is still there, with no dust, after longer than
-    // a crush takes (processing.ron: 6 seconds, which the macerator halves) at full power.
-    wait_server(&mut client, 7);
+    // Nor does it make any more: the ore is still there, with no dust, a second after a
+    // powered macerator would have finished it (its recipe's seconds over its speed).
+    let crush_seconds = {
+        let machines = &client.content.machines;
+        let machine = machines.get(client.content.blocks.expect("base:macerator")).expect("a macerator is a machine");
+        let Role::Processor { speed, .. } = &machine.role else { panic!("a macerator is a processor") };
+        let crush = machine.processes.iter().map(|&id| machines.process(id)).find(|p| p.inputs.iter().any(|(accepts, _)| accepts.contains(&ore))).expect("the macerator crushes copper ore");
+        crush.seconds / speed
+    };
+    wait_server(&mut client, crush_seconds.ceil() as u64 + 1);
     let said = machine_says(&mut client, &at(macerator), "no power", 1);
     use_machine(&mut client, macerator);
     // What it gave reaches the client with the next tick's state, after the chat line.
