@@ -1135,7 +1135,7 @@ fn slopes_never_bury_walls() {
     let registry = base_registry();
     let mut failures = Vec::new();
     let mut looked = 0;
-    for seed in [1u64, 42, 7] {
+    for seed in [0u64, 1, 42, 7] {
         let world = Overworld::new(seed, registry.clone());
         let spawn = world.spawn_point();
         let mut columns: rustc_hash::FxHashMap<ColumnPos, Column> = Default::default();
@@ -1154,10 +1154,7 @@ fn slopes_never_bury_walls() {
                             let d = registry.def(col.block(IVec3::new(x & 31, y, z & 31)));
                             d.solid && (d.has_tag("soil") || d.has_tag("surface") || (d.has_tag("stone") && d.has_tag("natural") && !d.has_tag("building")))
                         };
-                        // Snow is land only on land: the snow blanket also caps a prop's
-                        // stone (climate.ron, `blanket`).
-                        let snow = |y: i32| registry.def(col.block(IVec3::new(x & 31, y, z & 31))).has_tag("snow");
-                        let Some(top) = (b.floor - 12..=b.floor + 8).rev().find(|&y| land(y) && (!snow(y) || land(y - 1))) else { continue };
+                        let Some(top) = (b.floor - 12..=b.floor + 8).rev().find(|&y| land(y)) else { continue };
                         looked += 1;
                         if top > b.floor + 1 {
                             failures.push(format!("seed {seed} {}: the {}'s walls are buried {} deep at {x}, {z}", s.name.0, b.what, top - b.floor));
