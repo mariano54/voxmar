@@ -1466,7 +1466,7 @@ fn a_wild_ripe_crop_forages_at_its_level_and_a_field_stage_rolls() {
     for _ in 0..3 {
         client.settle();
     }
-    // One seed a success: about 4 of 28 at 0.15; 13 or more is a one-in-100,000 chance.
+    // One seed a success: about 4 of 28 at 0.15; 13 or more is a one-in-13,000 chance.
     let found = seeds_had(&client).saturating_sub(before);
     assert!(found <= 12, "a field stage nobody sowed gave {found} seeds from {} crops", field.len());
     assert_eq!(client.earned.len(), earned, "breaking a field stage nobody sowed paid experience");
