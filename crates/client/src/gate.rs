@@ -2424,7 +2424,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.check("quests: pinned", Ok(format!("pinned, the tracker reads {words:?}")));
-            if !lay_and_craft(world, &[(0, "base:charcoal"), (2, "base:stick")]) {
+            if !lay_and_craft(world, &[(0, "base:charcoal"), (3, "base:stick")]) {
                 return quit(world, gate, "quests: torches", "the charcoal or the stick went missing".into());
             }
             gate.quests_rev = world.resource::<LocalPlayer>().quests_rev;
