@@ -2139,6 +2139,8 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// The plot `refusal` sows, on the test ground's dirt within reach of the player and more
 /// than four blocks from its pool (x 3 to 5), so nothing waters it.
 const DRY_PLOT: IVec3 = IVec3::new(-2, -1, 2);
+/// Server seconds the refusal may take to come, inside the step's own limit.
+const REFUSAL_WAIT: f32 = 8.0;
 
 /// Rice (which grows only with water near) sown on a dry plot: the server refuses it and
 /// says why as a refusal, which shows by the hotbar with the others.
@@ -2167,20 +2169,23 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         1 => {
             let farmland = world.resource::<ClientWorld>().registry.id("base:farmland");
             let tilled = farmland.is_some() && world.resource::<ClientWorld>().block(plot) == farmland;
-            match (tilled, in_hotbar(world, &mut gate.food_moved, rice)) {
+            // Rice takes Farming 10: below it the client refuses it itself, for the level.
+            let level = skill_level(world, "core:farming").0 >= 10;
+            match (tilled && level, in_hotbar(world, &mut gate.food_moved, rice)) {
                 (true, Some(slot)) => {
                     world.resource_mut::<LocalPlayer>().selected = slot;
                     gate.advance(now);
                 }
                 _ if gate.server_in_phase() > UNANSWERED => {
-                    gate.check("refusal", Err(format!("the farmland ({tilled}) or rice in the hotbar never came")));
+                    gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came")));
                     gate.next(Step::Effects, now);
                 }
                 _ => {}
             }
         }
         2 => {
-            aim_at(world, plot.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            // Just under the farmland's top, so the ray meets its top face.
+            aim_at(world, plot.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
             let name = {
                 let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
                 locale.block(launch.content.blocks.def(crop))
@@ -2190,9 +2195,13 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("refusal", Ok(format!("sowing rice on a dry plot was refused: \"{said}\"")));
                 gate.advance(now);
-            } else if gate.server_in_phase() > UNANSWERED {
+            } else if gate.server_in_phase() > REFUSAL_WAIT {
                 mouse(world, MouseButton::Right, false);
-                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name}")));
+                let (target, held) = {
+                    let (target, player) = (world.resource::<crate::interact::Target>(), world.resource::<LocalPlayer>());
+                    (target.hit.as_ref().map(|hit| (hit.block - gate.feet, hit.face)), player.inventory.get(player.selected).map(|s| s.item))
+                };
+                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name} (aimed at {target:?} from the feet, holding {held:?})")));
                 gate.advance(now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
