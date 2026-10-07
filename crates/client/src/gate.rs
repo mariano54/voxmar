@@ -3517,23 +3517,31 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         4 => {
-            // Looking closely at it with nothing it eats in hand: a newly tamed one is in good
-            // condition.
-            let good = world.resource::<crate::lang::Locale>().get("condition.good").to_owned();
-            let replied = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|line| line.contains(&good));
-            if replied {
+            // Looking closely at it with nothing it eats in hand: a newly tamed one reads in good
+            // condition (improving, holding or getting worse).
+            let lines: Vec<String> = {
+                let locale = world.resource::<crate::lang::Locale>();
+                let good = locale.get("condition.good").to_owned();
+                ["inspect.kept", "inspect.kept_improving", "inspect.kept_worsening"].map(|key| locale.format(key, &[("state", &good)])).into()
+            };
+            let replied = world.resource::<crate::hud::console::Console>().since(gate.phase_since).find(|line| lines.iter().any(|l| line.contains(l.as_str()))).map(str::to_owned);
+            if let Some(line) = replied {
                 mouse(world, MouseButton::Right, false);
-                gate.check("condition", Ok(format!("looking closely read \"{good}\" after {in_phase:.1}s")));
+                gate.check("condition", Ok(format!("looking closely read \"{line}\" after {in_phase:.1}s")));
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if gate.server_in_phase() > 3.0 {
                 mouse(world, MouseButton::Right, false);
-                gate.check("condition", Err(format!("3 seconds of looking closely at our junglefowl said nothing with \"{good}\"")));
+                gate.check("condition", Err(format!("3 server seconds of looking closely at our junglefowl read none of {lines:?}")));
                 gate.next(Step::Ore, now);
             } else if let Some(view) = hen(world) {
-                let wheat = world.resource::<ClientWorld>().registry.id("base:wheat");
+                // A hotbar slot holding nothing it eats: an empty one first.
                 let free = {
+                    let launch = world.resource::<Launch>();
+                    let species = launch.content.creatures.get(view.species);
+                    let eats = |item: BlockId| species.tame_food.contains(&item) || species.breed_food.contains(&item) || launch.content.blocks.def(item).tags.iter().any(|t| t == "breeding_feed");
                     let player = world.resource::<LocalPlayer>();
-                    (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none_or(|stack| Some(stack.item) != wheat))
+                    let slots = 0..voxmar_engine::inventory::HOTBAR_SLOTS;
+                    slots.clone().find(|&s| player.inventory.get(s).is_none()).or_else(|| slots.into_iter().find(|&s| player.inventory.get(s).is_some_and(|stack| !eats(stack.item))))
                 };
                 if let Some(slot) = free {
                     world.resource_mut::<LocalPlayer>().selected = slot;

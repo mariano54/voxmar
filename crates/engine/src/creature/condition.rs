@@ -254,10 +254,11 @@ pub fn shelter(wants_roof: bool, wet: Option<bool>, roof: bool, hardy: bool) -> 
     }
 }
 
-/// Its condition in a word, for players: `poor`, `fair`, `good` or `excellent`.
-pub fn word(condition: f32) -> &'static str {
+/// Its condition in a word, for players: `poor` (too poorly kept to breed, at or below
+/// `breed`), `fair`, `good` or `excellent`.
+pub fn word(condition: f32, breed: f32) -> &'static str {
     match condition {
-        c if c < 0.4 => "poor",
+        c if c <= breed => "poor",
         c if c < 0.6 => "fair",
         c if c < 0.85 => "good",
         _ => "excellent",
@@ -335,7 +336,8 @@ mod tests {
         assert!(needs.shelter() && needs.company(0.6) && !needs.company(0.3));
         let duck = NeedsDef { shelter: Some(false), space: Some(2.0), company: Some(true) };
         assert!(!duck.shelter() && duck.company(0.0) && duck.space(5.0) == 2.0);
-        assert_eq!([0.2, 0.5, 0.7, 0.9].map(word), ["poor", "fair", "good", "excellent"]);
+        // Poor is too poorly kept to breed: at or below the breeding line.
+        assert_eq!([0.2, 0.5, 0.55, 0.7, 0.9].map(|c| word(c, rules.breed)), ["poor", "poor", "fair", "good", "excellent"]);
         // Dry, under a roof or minding no rain: met. Rain in the open: partly. Snow in the
         // open: unmet, but partly for a kind made for the cold.
         assert_eq!(shelter(true, None, false, false), Met::Yes);

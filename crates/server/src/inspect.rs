@@ -50,8 +50,8 @@ impl Server {
         // A kept one's condition in a word for anyone, exactly at Farming 30, which way it
         // is heading, and what it wants.
         if creature.owner.is_some() {
-            let state = Words::key(&format!("condition.{}", condition::word(creature.condition)));
             let rules = self.content.creatures.condition();
+            let state = Words::key(&format!("condition.{}", condition::word(creature.condition, rules.breed)));
             let target = rules.target(&creature.needs, (creature.health as u32) * 2 < def.health as u32);
             let (kept, exactly) = match condition::trend(creature.condition, target) {
                 Some(true) => ("inspect.kept_improving", "inspect.kept_exactly_improving"),
