@@ -418,6 +418,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .insert_resource(settings)
     .insert_resource(Registry { blocks: registry, world: world_content })
     .add_systems(Startup, setup);
+    // The weather's easing and the land's air as content tunes them (weather.ron).
+    let tuning = content_weather.tuning();
+    app.world_mut().resource_mut::<weather::ClientWeather>().tune(weather::Easing::new(&tuning.shown));
+    app.world_mut().resource_mut::<weather::atmosphere::ClientAtmosphere>().tune(tuning.air.clone());
     if let Some(forced) = options.weather.as_deref().map(|name| weather::preset(&content_weather, name)).transpose()? {
         app.world_mut().resource_mut::<weather::ClientWeather>().force(forced);
     }
@@ -592,7 +596,7 @@ fn setup(
     launch: Res<Launch>,
 ) {
     let (registry, world_content) = (&registry.blocks, registry.world.clone());
-    let mut source = Source::discover(settings.textures);
+    let mut source = Source::discover(settings.textures, settings.minecraft_assets);
     let (size, mut block_textures, animations) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];
