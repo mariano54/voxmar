@@ -31,7 +31,8 @@ use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::traits;
-use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_engine::lang::Words;
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 
@@ -101,6 +102,10 @@ impl ActionContext for Context<'_> {
         self.server.check_level(self.agent, skill)
     }
 
+    fn actor_own_level(&self, skill: SkillId) -> u8 {
+        self.server.content.skills.level(self.server.players[&self.agent].skills.xp(skill))
+    }
+
     fn actor_eye(&self) -> Vec3 {
         self.server.players[&self.agent].eye()
     }
@@ -145,6 +150,10 @@ impl ActionContext for Context<'_> {
     fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
         self.server.creatures.reach_box(id)
     }
+
+    fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
+        Some(&self.server.content.combat)
+    }
 }
 
 impl Server {
@@ -166,7 +175,8 @@ impl Server {
             self.supersede_action(agent, at);
         }
         let context = Context { server: self, agent };
-        if def.validate(&context, target).is_err() {
+        if let Err(why) = def.validate(&context, target) {
+            tracing::debug!("player {agent}: {} refused at {target:?}: {why:?}", def.name);
             self.reject(agent, target);
         } else if !timed {
             self.commit(agent, &def, target);
@@ -264,9 +274,10 @@ impl Server {
                         self.discover_broken(agent, broken);
                     }
                     self.picked(agent, block);
-                    self.reward_break(agent, block);
+                    let instead = self.reward_break(agent, block);
                     let plants = supported_by(&Context { server: self, agent }, block);
-                    let cells: Vec<IVec3> = std::iter::once(block).chain(plants).collect();
+                    // A block that gave something else instead (gravel's flint) drops nothing of its own.
+                    let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
                     self.drop_loot(agent, &cells);
                 }
                 (Effect::Throw, ActionTarget::Stack { slot, count }) => self.throw(agent, slot as usize, count),
@@ -313,9 +324,10 @@ impl Server {
                     }
                 }
                 (Effect::Respawn, _) => {
-                    // Home, if the player has one, else world spawn.
+                    // Home, if the player has one, else the bed they last slept in, else
+                    // world spawn.
                     let player = self.players.get_mut(&agent).unwrap();
-                    let spawn = player.home.unwrap_or(self.spawn);
+                    let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     player.position = spawn;
@@ -338,7 +350,13 @@ impl Server {
                         player.changed(traits::INVENTORY);
                     }
                 }
-                (Effect::ClaimHome, ActionTarget::Block { block, .. }) => self.claim_home(agent, block),
+                (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
+                (Effect::Sleep, ActionTarget::Block { block, .. }) => {
+                    let player = self.players.get_mut(&agent).unwrap();
+                    player.bed = Some(block.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+                    let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
+                    player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key(key) });
+                }
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);
                 }
@@ -401,14 +419,15 @@ impl Server {
     /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:
     /// more often with the skill's level above what the block asks and a better tool. A
     /// block a player placed teaches nothing and gives nothing extra.
-    fn reward_break(&mut self, agent: PlayerId, pos: IVec3) {
-        let Some(block) = self.block(pos) else { return };
+    /// Returns whether it gave something else instead of the block's own drop.
+    fn reward_break(&mut self, agent: PlayerId, pos: IVec3) -> bool {
+        let Some(block) = self.block(pos) else { return false };
         let tools = self.content.tools.clone();
-        let Some(rule) = tools.rule(block) else { return };
+        let Some(rule) = tools.rule(block) else { return false };
         if self.placed.remove(&pos) {
-            return;
+            return false;
         }
-        let Some(player) = self.players.get(&agent) else { return };
+        let Some(player) = self.players.get(&agent) else { return false };
         let held = player.held();
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block);
@@ -421,6 +440,15 @@ impl Server {
         }
         if let Some(skill) = rule.skill.filter(|_| rule.xp > 0.0) {
             self.grant_xp(agent, skill, rule.xp);
+        }
+        let [other, ..] = crate::items::random3(self.tick, pos, agent ^ 0x1257);
+        match rule.instead {
+            Some((item, chance)) if other < chance => {
+                let body = voxmar_engine::dropped::popped(pos, [kick, other, roll]);
+                self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+                true
+            }
+            _ => false,
         }
     }
 

@@ -227,6 +227,11 @@ pub struct WorldGenerator {
 }
 
 impl WorldGenerator {
+    /// What the worlds are made from: biomes, trees, plants.
+    pub fn content(&self) -> &WorldContent {
+        &self.content
+    }
+
     pub fn new(content: Arc<WorldContent>) -> Self {
         Self { content, current: None }
     }

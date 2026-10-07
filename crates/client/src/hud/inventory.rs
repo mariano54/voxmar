@@ -90,6 +90,10 @@ struct LastClick {
 struct InventoryScreen;
 #[derive(Component)]
 struct InventorySlot(usize);
+/// A slot a screenshot shows the tooltip of, as if the pointer were over it (`--hover-slot`).
+#[derive(Resource)]
+pub struct HoverSlot(pub usize);
+
 /// The panel (and creative mode's catalogue beside it); clicks outside them throw the held
 /// stack.
 #[derive(Component)]
@@ -704,6 +708,31 @@ fn seed_line(
     Some((words, if ready { SOFT } else { ERROR }))
 }
 
+/// How a weapon fights: its class, style and the level that wields it (red while the
+/// player's is short of it), then its max hit at their level and how often it strikes.
+fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
+    let Some(weapon) = content.combat.weapon(item) else { return Vec::new() };
+    let (Some(class), Some(skill)) = (weapon.class, weapon.skill) else { return Vec::new() };
+    let class = content.combat.class(class);
+    let level = content.skills.level(player.skills.xp(skill));
+    let ready = level >= weapon.level;
+    let what = locale.format(
+        "item.weapon",
+        &[
+            ("class", &locale.get_or(&format!("item.class.{}", class.name), &class.name)),
+            ("style", &locale.get(&format!("item.style.{}", weapon.style.key()))),
+            ("skill", &locale.skill(content.skills.get(skill))),
+            ("level", &weapon.level),
+        ],
+    );
+    let hit = locale.format("item.weapon_hit", &[("hit", &weapon.max_hit(level)), ("seconds", &format!("{:.1}", weapon.cooldown))]);
+    let mut lines = vec![(what, if ready { SOFT } else { ERROR }), (hit, SOFT)];
+    if weapon.reach > 0.0 {
+        lines.push((locale.get("item.weapon_reach").to_owned(), SOFT));
+    }
+    lines
+}
+
 /// What a pouch carries, a line a kind, and how to empty it.
 fn pouch_lines(locale: &Locale, registry: &voxmar_engine::block::BlockRegistry, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
     if !registry.def(item).has_tag("pouch") {
@@ -792,10 +821,11 @@ fn tooltip(
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
     mut japanese: Local<Option<Locale>>,
-    viewer: Res<super::recipes::RecipeViewer>,
+    (viewer, forced, places): (Res<super::recipes::RecipeViewer>, Option<Res<HoverSlot>>, Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>),
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let item = hovered(&slots)
+        .or(forced.as_ref().map(|f| f.0))
         .filter(|_| ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none())
         .and_then(|slot| player.inventory.get(slot))
         .map(|stack| stack.item)
@@ -839,6 +869,7 @@ fn tooltip(
             let book = viewer.book().map(|book| origins_and_uses(&locale, &launch.content, book, item)).unwrap_or_default();
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
+                .chain(weapon_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
                 .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
@@ -859,7 +890,16 @@ fn tooltip(
         let top = (at.y - size.y - 2.0 * PX).max(2.0 * PX);
         node.left = Val::Px(left);
         node.top = Val::Px(top);
+    }    // Without a pointer, beside the slot a screenshot names.
+    else if let Some(slot) = forced.as_ref().map(|f| f.0)
+        && let Some((_, cell, place)) = places.iter().find(|(s, ..)| s.0 == slot)
+    {
+        let size = computed.size() * computed.inverse_scale_factor();
+        let at = (place.translation + cell.size() / 2.0) * cell.inverse_scale_factor();
+        node.left = Val::Px(at.x + 2.0 * PX);
+        node.top = Val::Px((at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
     }
+
 }
 
 #[cfg(test)]

@@ -118,6 +118,25 @@ into the code under test. Each check gives a reason when it fails. Keep the sess
 (about half a minute now): poll for what a step waits on rather than sleeping, and never
 add a fixed wait of more than a second.
 
+The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loaded, so:
+
+- Wait on the server by its own clock, `gate.server_now` and `gate.server_in_phase()`
+  (its ticks, `ServerHandle::ticks`), never by the game's seconds: anything the server
+  does once a second (effects, quests, vitals, cooking) takes longer on a busy machine.
+  Fail on no progress for a while by that clock, not on a total.
+- Propose actions (clicks that ask the server for something) at most every few server
+  seconds while waiting, or once and then wait: `SERVER_LAG` stalls 600 ms on every other
+  proposal, so a step proposing every 30 frames starves the server of ticks and the
+  thing it waits for never comes (the kiln check once hung this way).
+- Judge an event by its state, not by catching a single frame: a check that needed the
+  one frame the player was on the ground missed it under load, and the player hopped off
+  the test ground and died.
+- Let go of every key and button a step holds before it ends, pass or fail, and leave the
+  player standing on the test ground; the health watch fails the session if the player
+  dies (the workshop's own `/kill` sets `killed_on_purpose`).
+- `VOXMAR_GATE_STALL=1` with `--server-lag 150` runs the session as a machine loaded far
+  past its cores would: a new step should pass that way too.
+
 ## The FPS benchmark: `tools/bench fps`
 
 For optimising frame rate, and for anyone (Mariano included) who wants to know where it

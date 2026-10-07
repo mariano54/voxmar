@@ -17,30 +17,7 @@
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
 #import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, sun_unclouded, air_between, reflected_cloud, glow_below_surface, horizon_along}
-#import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
-
-struct Water {
-    // Wave layers (water/waves.rs): cos and sin of the layer's turn, 1 / its size in
-    // blocks, and its weight.
-    layers: array<vec4<f32>, 4>,
-    // xy: the texture coordinates of `origin` in each layer.
-    phases: array<vec4<f32>, 4>,
-    // xz: where wave positions are measured from; y: how windy it is, 0..1; w: how high the
-    // waves are on open water (the pack's strength times the wind's).
-    origin: vec4<f32>,
-    // xz: where flowing water's waves are measured from (snapped more coarsely).
-    flow_origin: vec4<f32>,
-    zenith: vec4<f32>,
-    horizon: vec4<f32>,
-    // xyz: towards the sun, w: daylight 0..1
-    sun: vec4<f32>,
-    // x: absorption, y: scattering, z: refraction (the pack's), w: 1 with the eye under water
-    optics: vec4<f32>,
-    // x: reflections, y: foam (the pack's), z: 1 for pixelated water, w: waves (the pack's)
-    strengths: vec4<f32>,
-    // x: wave layers, y: steps of the reflection march, z: halvings that refine a hit
-    budget: vec4<u32>,
-};
+#import voxmar::water::{Water, WAVE_TEXELS, absorption, scattering, transmittance, inscattered, fresnel, sky_gradient, wind_wave_slope, mirrored_sky}
 
 #ifdef MULTISAMPLED
 @group(4) @binding(0) var scene_depth: texture_depth_multisampled_2d;
@@ -56,9 +33,6 @@ struct Water {
 @group(4) @binding(5) var wave_texture: texture_2d<f32>;
 @group(4) @binding(6) var wave_sampler: sampler;
 
-// Texels along a side of the wave texture, and the waves' steepest slope at full height.
-const WAVE_TEXELS: f32 = 256.0;
-const WAVE_SLOPE: f32 = 0.16;
 // How high waves are on water with hardly any open water around it (a puddle, a sheltered
 // pool), as a fraction of those on open water.
 const SHELTERED: f32 = 0.06;
@@ -189,28 +163,10 @@ fn swell(uv: vec2<f32>, texels: f32) -> vec3<f32> {
     return textureSampleLevel(wave_texture, wave_sampler, uv, log2(max(texels, 1.0))).xyz;
 }
 
-// The slope of the wind's waves on still water at `xz` (d height / d xz), at full height,
-// from the first `count` layers. `footprint` is the blocks a pixel spans there. Pixelated
-// water (a shader pack's choice, after Complementary's Reimagined style) takes one slope per
-// texel of the block textures, so the surface glitters in little squares, until texels are
-// smaller than pixels.
+// The slope of the wind's waves on still water at `xz`: real water's and the distant
+// sheet's alike (`voxmar::water::wind_wave_slope`).
 fn wave_slope(xz: vec2<f32>, footprint: f32, count: u32) -> vec2<f32> {
-    var at = xz;
-    if water.strengths.z > 0.5 && footprint < 1.0 / TEXELS {
-        at = (floor(xz * TEXELS) + 0.5) / TEXELS;
-    }
-    let p = at - water.origin.xz;
-    var slope = vec2(0.0);
-    var weights = 0.0;
-    for (var i = 0u; i < count; i++) {
-        let layer = water.layers[i];
-        let turned = vec2(layer.x * p.x - layer.y * p.y, layer.y * p.x + layer.x * p.y);
-        let g = swell(turned * layer.z + water.phases[i].xy, footprint * layer.z * WAVE_TEXELS).xy;
-        // Back from the layer's turned axes to x and z.
-        slope += vec2(layer.x * g.x + layer.y * g.y, layer.x * g.y - layer.y * g.x) * layer.w;
-        weights += layer.w;
-    }
-    return slope * (WAVE_SLOPE / max(weights, 1e-3));
+    return wind_wave_slope(wave_texture, wave_sampler, water, xz, footprint, count);
 }
 
 // The slope of flowing water's streaks at `xz`, for a flow of `speed` blocks per second
@@ -473,8 +429,9 @@ fn shade_water(
         r = normalize(r + normal * (0.02 - rise));
     }
     let reflectance = fresnel(facing) * water.strengths.x * edge;
-    let cloud = reflected_cloud(world, r);
-    let sky_color = sky_gradient(r, water.zenith.rgb, horizon_along(water.horizon.rgb, r)) * (1.0 - cloud.a) + cloud.rgb;
+    let up = mirrored_sky(to_eye, waves, normal, footprint);
+    let cloud = reflected_cloud(world, up);
+    let sky_color = sky_gradient(up, water.zenith.rgb, horizon_along(water.horizon.rgb, up)) * (1.0 - cloud.a) + cloud.rgb;
     var reflected = mix(seen, sky_color * air.through + air.light, open);
     if reflectance > MIN_REFLECTION {
         let hit = trace(world + normal * 0.02, r);
