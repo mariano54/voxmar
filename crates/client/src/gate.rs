@@ -2163,7 +2163,8 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 "give rice 2".to_owned(),
                 format!("fill {} {} {} {} {} {} dirt", low.x, low.y, low.z, high.x, high.y, high.z),
                 format!("setblock {} {} {} farmland", plot.x, plot.y, plot.z),
-                format!("fill {} {} {} {} {} {} air", plot.x, plot.y + 1, plot.z, plot.x, plot.y + 2, plot.z),
+                // Nothing between the eye and the plot (earlier steps place blocks here).
+                format!("fill {} {} {} {} {} {} air", plot.x, plot.y + 1, gate.feet.z, gate.feet.x, plot.y + 3, plot.z),
             ] {
                 net.command(&line);
             }
