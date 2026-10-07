@@ -376,7 +376,8 @@ fn wear(
     use voxmar_engine::inventory::{WORN, worn_slot};
     let ticks = net.server().map_or(0, |server| server.ticks());
     let id = |name: &str| world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}")));
-    for name in state.wear.iter().filter(|name| !asked.iter().any(|(n, ..)| n == *name)) {
+    let new: Vec<String> = state.wear.iter().filter(|name| !asked.iter().any(|(n, ..)| n == *name)).cloned().collect();
+    for name in &new {
         let Some(item) = id(name) else { continue };
         let (Some(from), Some(at)) = ((0..WORN).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == item)), worn_slot(item)) else { continue };
         let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (WORN + at) as u8, count: 1 };

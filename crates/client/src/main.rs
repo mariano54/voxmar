@@ -200,6 +200,7 @@ fn parse_options() -> Result<Options, String> {
         clip_commands: Vec::new(),
         press: None,
         hold: None,
+        wear: Vec::new(),
         repeat: false,
         face_creature: false,
         size: UVec2::new(1920, 1080),
