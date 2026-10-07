@@ -673,8 +673,9 @@ fn capture(
         || world.voxels.len() < 9
         || lod_tiles < lod_wanted;
     // Flying and digging keep the world busy streaming and remeshing; once started they
-    // run their course.
-    let flying = state.flight_started.is_some() || state.dig_started.is_some();
+    // run their course. A flight starts with its teleport up: the land it lands among
+    // streams in, and waiting for that to settle would wait out the teleport's own deadline.
+    let flying = state.flight_started.is_some() || state.dig_started.is_some() || state.lift_asked.is_some();
     // A mined block's pieces are caught in the air, while its column remeshes.
     let broken = state.broken_at.map(|at| now - at);
     let patience = if state.flicker.is_some() { 300.0 } else { 60.0 };
@@ -711,7 +712,11 @@ fn capture(
         let server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
         match state.lift_asked {
             None => {
-                net.command(&format!("tp {} {FLIGHT_HEIGHT} {}", player.position.x, player.position.z));
+                // `VOXMAR_CAPTURE_DROP_LIFT` asks for nothing, as if the teleport were lost: to
+                // show that an unanswered one fails the capture.
+                if std::env::var_os("VOXMAR_CAPTURE_DROP_LIFT").is_none() {
+                    net.command(&format!("tp {} {FLIGHT_HEIGHT} {}", player.position.x, player.position.z));
+                }
                 state.lift_asked = Some(server_now);
             }
             Some(asked) if server_now - asked > LIFT_WAIT => {
