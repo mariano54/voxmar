@@ -567,6 +567,41 @@ mod tests {
         assert!(wrong.is_empty(), "{} language keys out of step:\n{}", wrong.len(), wrong.join("\n"));
     }
 
+    /// Every translation of English that lives in a definition (guide lines, help, titles)
+    /// was made from the English there now: each package's `lang/pins/<code>.ron` keeps,
+    /// by key, the English its translation followed. So a line inserted into a skill's
+    /// guide (which shifts every later line's key) or English reworded fails here until
+    /// the language follows and its pin is updated, instead of showing the wrong line.
+    #[test]
+    fn every_translation_follows_its_english() {
+        use std::collections::BTreeMap;
+        let read = |path: &std::path::Path| -> Option<BTreeMap<String, String>> {
+            let source = std::fs::read_to_string(path).ok()?;
+            Some(ron::from_str(&source).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
+        };
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let own: BTreeMap<String, String> = english_in_definitions(&loaded).into_iter().collect();
+        let mut wrong = Vec::new();
+        for language in languages(&content()).into_iter().filter(|language| language.code != ENGLISH) {
+            let code = &language.code;
+            for package in FIRST_PARTY {
+                let Some(strings) = read(&content().join(package).join(format!("lang/{code}.ron"))) else { continue };
+                let pins_path = content().join(package).join(format!("lang/pins/{code}.ron"));
+                let pins = read(&pins_path).unwrap_or_default();
+                let file = format!("{package}/lang/pins/{code}.ron");
+                for (key, english) in own.iter().filter(|(key, _)| strings.contains_key(*key)) {
+                    match pins.get(key) {
+                        Some(pin) if pin == english => {}
+                        Some(pin) => wrong.push(format!("`{key}` in {package}/lang/{code}.ron follows {pin:?}, but English now says {english:?}: change it, then its pin in {file}")),
+                        None => wrong.push(format!("{file} lacks the English `{key}` follows: {key:?}: {english:?},")),
+                    }
+                }
+                wrong.extend(pins.keys().filter(|key| !own.contains_key(*key) || !strings.contains_key(*key)).map(|key| format!("{file} pins `{key}`, which {code} no longer translates")));
+            }
+        }
+        assert!(wrong.is_empty(), "{} translations out of step with their English:\n{}", wrong.len(), wrong.join("\n"));
+    }
+
     /// Every character anything on screen writes: every language's strings and names, and
     /// the characters the client's own string literals hold (symbols, markers), from the
     /// lines that aren't comments.
