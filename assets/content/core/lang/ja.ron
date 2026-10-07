@@ -436,7 +436,7 @@
     "inventory.craft": "クラフト",
     "inventory.craft.take": "クリックで1つ、Shift+クリックで全部作る",
     "inventory.craft.nothing": "作れるものがない",
-    "inventory.craft.lookup": "アイテムの上で{key}を押すとレシピが見られる",
+    "inventory.craft.lookup": "アイテムの上で{key}を押すと\nレシピが見られる",
     "skills.full": "体力は満タン",
     "effect.core.by_the_fire": "焚き火のそば",
     "effect.core.by_the_fire.description": "近くの火や松明で温まっている。",
