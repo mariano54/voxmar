@@ -17,9 +17,9 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::dropped;
 use voxmar_engine::factory::{MachineState, MachineView, Status};
-use voxmar_engine::glam::{IVec3, Vec2};
+use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::inventory::ItemStack;
-use voxmar_engine::lang::Words;
+use voxmar_engine::lang::{Words, def_key};
 use voxmar_engine::machine::{Role, Source};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits;
@@ -28,13 +28,6 @@ use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 use crate::Server;
 use crate::items::random3;
 use crate::process::Process;
-
-/// Wind (blocks a second) under which a windmill stalls, and at which it gives all it can.
-const WIND_STALL: f32 = 1.0;
-const WIND_FULL: f32 = 10.0;
-/// Heights between which a windmill catches more wind, from a third of it to all.
-const WIND_LOW: f32 = 96.0;
-const WIND_HIGH: f32 = 176.0;
 
 /// Runs the factory.
 pub(crate) struct Machines;
@@ -128,12 +121,27 @@ impl Server {
             Role::Generator { source: Source::Wind, .. } => {
                 let at = Vec2::new(pos.x as f32 + 0.5, pos.z as f32 + 0.5);
                 let (tick, day) = (self.tick, self.day);
+                let rules = self.content.machines.sources;
                 let wind = self.weather.local(&mut self.temperature, at, tick, day).weather.wind.length();
-                let strength = ((wind - WIND_STALL) / (WIND_FULL - WIND_STALL)).clamp(0.0, 1.0);
-                let height = ((pos.y as f32 - WIND_LOW) / (WIND_HIGH - WIND_LOW)).clamp(1.0 / 3.0, 1.0);
+                let strength = ((wind - rules.wind_stall) / (rules.wind_full - rules.wind_stall).max(0.01)).clamp(0.0, 1.0);
+                let height = ((pos.y as f32 - rules.wind_low) / (rules.wind_high - rules.wind_low).max(1.0)).clamp(rules.wind_low_share, 1.0);
                 // Open air around the sails, or nothing turns them.
                 let open = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y].into_iter().all(|d| !self.is_solid(pos + d));
                 if open { strength * height } else { 0.0 }
+            }
+            Role::Generator { source: Source::Walked, .. } => {
+                // A kept animal of a walking kind within reach of the wheel.
+                let (machines, creatures) = (&self.content.machines, &self.content.creatures);
+                let rules = machines.sources;
+                let centre = pos.as_vec3() + Vec3::splat(0.5);
+                let walked = self.creatures.live.values().any(|c| {
+                    let at = c.body.position;
+                    c.owner.is_some()
+                        && Vec2::new(at.x - centre.x, at.z - centre.z).length() <= rules.walk_reach
+                        && (at.y - centre.y).abs() <= rules.walk_height
+                        && machines.walks(&creatures.get(c.species).def.name)
+                });
+                if walked { 1.0 } else { 0.0 }
             }
             Role::Processor { water: true, .. } => {
                 let blocks = &self.content.blocks;
@@ -189,7 +197,19 @@ impl Server {
         }
         let Some(view) = self.factory.view(pos, &machines) else { return };
         let mut lines: Vec<Words> = moved.into_iter().collect();
-        lines.push(self.machine_words(&view));
+        // A multiblock's core says what its structure still needs, or counts it built.
+        let multiblocks = self.content.multiblocks.clone();
+        let structure = multiblocks.with_core(view.block).next();
+        match structure {
+            Some(structure) if !self.station_stands(pos) => {
+                lines.push(Words::Own(format!("{}.hint", def_key("multiblock", &structure.name)), structure.hint.clone()));
+            }
+            Some(structure) => {
+                self.tally(agent, "built", &structure.name, 1);
+                lines.push(self.machine_words(&view));
+            }
+            None => lines.push(self.machine_words(&view)),
+        }
         let player = &self.players[&agent];
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::Lines(lines) });
     }
@@ -225,6 +245,7 @@ impl Server {
             (Status::NoFuel, _) => key("machine.no_fuel"),
             (Status::NoSource, _) if source == Some(Source::Wind) => key("machine.no_wind"),
             (Status::NoSource, _) if washer => key("machine.needs_water"),
+            (Status::NoSource, _) if source == Some(Source::Walked) => key("machine.no_walker"),
             (Status::NoSource, _) => key("machine.no_water"),
             (Status::Full, _) => key("machine.full"),
             (Status::TooHigh, _) => key("machine.too_high"),

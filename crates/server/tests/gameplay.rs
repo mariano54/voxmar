@@ -1372,3 +1372,64 @@ fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
     }
     assert_eq!(count(&client, dust), 3);
 }
+
+#[test]
+fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom() {
+    let mut client = Client::join();
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~3 ~ ~-1 ~8 ~2 ~3 air", "/setblock ~4 ~ ~ bloomery"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (ore, coal, bloom) = (blocks.expect("base:iron_ore"), blocks.expect("base:coal_ore"), blocks.expect("base:iron_bloom"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.world.block(core) == c.content.blocks.id("base:bloomery") && c.inventory.slots.iter().all(Option::is_none));
+    // Alone, the bloomery says what its structure needs.
+    use_at(&mut client, core);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("needs kiln bricks")));
+    // The shaft round it, bellows in its ring, a shaft out to a treadwheel, and an aurochs,
+    // tamed and held, beside the wheel.
+    for line in [
+        "/fill ~3 ~ ~-1 ~5 ~2 ~1 kiln_bricks",
+        "/fill ~4 ~1 ~ ~4 ~2 ~ air",
+        "/setblock ~4 ~ ~ bloomery",
+        "/setblock ~5 ~ ~ bellows",
+        "/setblock ~6 ~ ~ shaft",
+        "/setblock ~7 ~ ~ treadwheel",
+        "/summon aurochs 1 ~7 ~ ~2",
+        "/creatures tame",
+        "/creatures hold",
+        "/give iron_ore 2",
+        "/give coal_ore 1",
+    ] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(core + IVec3::X) == c.content.blocks.id("base:bellows") && count(c, ore) == 2 && count(c, coal) == 1);
+    use_at(&mut client, core);
+    client.pump_until(|c| count(c, ore) == 0);
+    // The coal is in the next slot now selected... put it in from wherever it lies.
+    client.ok("/clear");
+    client.ok("/give coal_ore 1");
+    client.pump_until(|c| count(c, coal) == 1 && c.inventory.get(0).is_some_and(|s| s.item == coal));
+    use_at(&mut client, core);
+    client.pump_until(|c| count(c, coal) == 0 && c.chat.iter().any(|(_, t)| t.contains("making")));
+    client.ok("/clear");
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+    // Twenty seconds of work at the bellows: an empty hand takes the bloom.
+    let started = Instant::now();
+    while count(&client, bloom) == 0 {
+        if started.elapsed() > Duration::from_secs(60) {
+            let wheel = client.ok("/machine ~7 ~ ~");
+            panic!("the bloomery made no bloom: {:?}; the wheel: {wheel}", client.chat);
+        }
+        std::thread::sleep(Duration::from_millis(1000));
+        use_at(&mut client, core);
+        client.pump_until(|c| !c.chat.is_empty());
+    }
+    assert_eq!(count(&client, bloom), 1);
+}

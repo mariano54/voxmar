@@ -156,7 +156,8 @@ impl Content {
                         quests.push(crate::quest::QuestRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "multiblocks.ron" => {
+                    // `multiblocks.ron`, and `multiblocks_<topic>.ron` for a system's own (machines).
+                    topic if topic.starts_with("multiblocks") => {
                         multiblocks.push(crate::multiblock::MultiblockRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
@@ -219,6 +220,9 @@ impl Content {
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
+        if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
+            return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
+        }
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks));
         Ok(Self {

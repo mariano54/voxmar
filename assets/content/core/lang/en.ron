@@ -297,6 +297,7 @@
     "machine.no_wind": "{machine}: no wind. Build it higher, in open air.",
     "machine.no_water": "{machine}: needs flowing water beside or below it.",
     "machine.needs_water": "{machine}: needs water beside it.",
+    "machine.no_walker": "{machine}: needs a kept animal beside it to walk it.",
     "machine.full": "{machine}: full. Take out what it made.",
     "machine.too_high": "{machine}: the voltage is too high for it. It needs a transformer.",
     "machine.overloaded": "{machine}: a cable on this network is too weak for its voltage.",

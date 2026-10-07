@@ -53,6 +53,9 @@ pub enum Source {
     FlowingWater,
     /// The wind where it stands, stronger in a gale and higher up; nothing in calm air.
     Wind,
+    /// A kept animal of a kind that walks it (`walkers` in `machines.ron`) beside it: a
+    /// treadwheel.
+    Walked,
     /// Power of another kind it draws from its other neighbours, converting this much of
     /// it to each unit it gives (a dynamo's 1.25: four fifths come out).
     Converts { from: Carrier, ratio: f32 },
@@ -144,6 +147,35 @@ pub struct MachineFile {
     pub machines: Vec<MachineDef>,
     #[serde(default)]
     pub fuels: Vec<FuelDef>,
+    /// The creatures that, kept, walk a treadwheel (`Walked`), by species name.
+    #[serde(default)]
+    pub walkers: Vec<String>,
+    /// How the world drives wind and walked machines; a later package's replaces it.
+    #[serde(default)]
+    pub sources: Option<SourceRules>,
+}
+
+/// How the world drives the machines it powers (`sources` in `machines.ron`).
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SourceRules {
+    /// Wind (blocks a second) under which a windmill stalls, and at which it gives all it can.
+    pub wind_stall: f32,
+    pub wind_full: f32,
+    /// Heights between which a windmill catches more wind, from `wind_low_share` of it to all.
+    pub wind_low: f32,
+    pub wind_high: f32,
+    pub wind_low_share: f32,
+    /// How near a kept animal must stand to walk a treadwheel: across, from its centre, and
+    /// up or down.
+    pub walk_reach: f32,
+    pub walk_height: f32,
+}
+
+impl Default for SourceRules {
+    fn default() -> Self {
+        Self { wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 1.0 / 3.0, walk_reach: 3.0, walk_height: 2.0 }
+    }
 }
 
 /// A recipe a processor works, as `processing.ron` gives it.
@@ -271,6 +303,9 @@ pub struct MachineRegistry {
     by_block: FxHashMap<BlockId, usize>,
     fuels: Vec<(Accepts, f32)>,
     processes: Vec<Process>,
+    walkers: Vec<String>,
+    /// How the world drives wind and walked machines.
+    pub sources: SourceRules,
 }
 
 impl MachineRegistry {
@@ -282,6 +317,9 @@ impl MachineRegistry {
         }
         for fuel in &mut file.fuels {
             qualify(namespace, &mut fuel.item);
+        }
+        for walker in &mut file.walkers {
+            qualify(namespace, walker);
         }
         Ok(file)
     }
@@ -333,6 +371,10 @@ impl MachineRegistry {
             for fuel in file.fuels {
                 registry.fuels.push((accepts(&fuel.item, blocks)?, fuel.seconds.max(0.0)));
             }
+            registry.walkers.extend(file.walkers);
+            if let Some(sources) = file.sources {
+                registry.sources = sources;
+            }
         }
         Ok(registry)
     }
@@ -352,6 +394,16 @@ impl MachineRegistry {
 
     pub fn processes(&self) -> impl Iterator<Item = (ProcessId, &Process)> {
         self.processes.iter().enumerate().map(|(i, p)| (ProcessId(i as u16), p))
+    }
+
+    /// The species that walk treadwheels, by name.
+    pub fn walkers(&self) -> &[String] {
+        &self.walkers
+    }
+
+    /// Whether a kept creature of this species (by name) walks a treadwheel.
+    pub fn walks(&self, species: &str) -> bool {
+        self.walkers.iter().any(|w| w == species)
     }
 
     /// How long one of `item` burns at full output, if it burns: the first fuel that takes it.

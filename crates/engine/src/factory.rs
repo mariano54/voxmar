@@ -539,7 +539,7 @@ fn work(
                         _ => Status::Idle,
                     };
                 }
-                Some(Source::FlowingWater | Source::Wind) => {
+                Some(Source::FlowingWater | Source::Wind | Source::Walked) => {
                     state.status = if state.condition <= 0.0 { Status::NoSource } else if used > 0.0 { Status::Generating } else { Status::Idle };
                 }
                 // A converter or transformer: the share of its input it got, it gives next step.

@@ -14,12 +14,26 @@
             hardness: 2.5, color: (200, 190, 170), tags: ["machine", "wood", "building"],
         ),
         (
+            name: "treadwheel", sound: Wood, textures: Sides(top: "treadwheel_top", bottom: "treadwheel_top", side: "treadwheel_side"),
+            hardness: 2.5, color: (140, 105, 70), tags: ["machine", "wood", "building"],
+        ),
+        (
             name: "shaft", sound: Wood, textures: Column(end: "shaft_end", side: "shaft_side"),
             hardness: 1.5, color: (150, 115, 70), tags: ["machine", "wood", "building"],
         ),
         (
             name: "trip_hammer", sound: Stone, textures: Sides(top: "trip_hammer_top", bottom: "cobblestone", side: "trip_hammer_side"),
             hardness: 3.0, color: (130, 110, 90), tags: ["machine", "building"],
+        ),
+        // The Bronze age's gate: a bloomery at the foot of a kiln-brick shaft, blown by
+        // powered bellows (multiblocks_machines.ron), smelts iron ore into blooms.
+        (
+            name: "bloomery", sound: Stone, textures: Sides(top: "kiln_bricks", bottom: "kiln_bricks", side: "bloomery_side"),
+            hardness: 3.0, color: (160, 80, 50), light: 10, tags: ["machine", "multiblock_core", "heat", "building"],
+        ),
+        (
+            name: "bellows", sound: Wood, textures: Sides(top: "bellows_top", bottom: "bellows_top", side: "bellows_side"),
+            hardness: 1.5, color: (120, 85, 55), tags: ["machine", "wood", "building"],
         ),
         // The Iron and Steam ages: boilers make steam, pipes carry it, engines turn it back
         // into rotation and steam machines work with it directly.
@@ -85,6 +99,8 @@
         ),
     ],
     families: [
+        // An iron bloom from the bloomery: spongy iron and slag, hammered into ingots.
+        (template: "drop", name: "iron_bloom", tags: ["bloom", "metal:iron"], all: (color: (110, 90, 80))),
         // Crushed ore: twice the metal from an ore, smelted like the ore.
         (template: "drop", name: "copper_dust", tags: ["dust", "metal:copper"], all: (color: (200, 120, 80))),
         (template: "drop", name: "iron_dust", tags: ["dust", "metal:iron"], all: (color: (150, 140, 135))),

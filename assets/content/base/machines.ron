@@ -18,8 +18,14 @@
         // Bronze: rotation.
         (block: "water_wheel", role: Generator(carrier: Rotation, power: 8.0, source: FlowingWater)),
         (block: "windmill", role: Generator(carrier: Rotation, power: 16.0, source: Wind)),
+        // A treadwheel, walked by a kept animal standing beside it (`walkers`).
+        (block: "treadwheel", role: Generator(carrier: Rotation, power: 8.0, source: Walked)),
         (block: "shaft", role: Conduit(carrier: Rotation)),
         (block: "trip_hammer", role: Processor(kinds: ["hammer"], power: Some((Rotation, 6.0)))),
+        // The Bellows Bloomery: the bellows carry rotation to the bloomery, which works only
+        // inside its standing shaft (multiblocks_machines.ron).
+        (block: "bellows", role: Conduit(carrier: Rotation)),
+        (block: "bloomery", role: Processor(kinds: ["bloom"], power: Some((Rotation, 6.0)))),
         // Iron and Steam: steam.
         (block: "boiler", role: Generator(carrier: Steam, power: 24.0, source: Fuel)),
         (block: "steam_pipe", role: Conduit(carrier: Steam)),
@@ -42,6 +48,13 @@
     ],
     // What burns, and for how many seconds at a generator's full output; the first that
     // takes an item counts.
+    // How the world drives machines: wind (blocks a second) under which windmills stall and
+    // at which they give all they can, the heights between which they catch from a third
+    // of it to all, and how near (across and up or down) a kept animal walks a treadwheel.
+    // A later package's `sources` replaces these.
+    sources: Some((wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 0.333, walk_reach: 3.0, walk_height: 2.0)),
+    // Kept animals that walk a treadwheel: the big, steady grazers.
+    walkers: ["aurochs", "wild_horse", "camel", "bison"],
     fuels: [
         (item: "coal_ore|charcoal", seconds: 80.0),
         (item: "tag:log", seconds: 15.0),

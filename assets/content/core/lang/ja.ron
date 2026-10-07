@@ -285,6 +285,7 @@
     "machine.no_wind": "{machine}：風がない。もっと高く、開けた場所に建てよう。",
     "machine.no_water": "{machine}：横か下に流れる水が必要。",
     "machine.needs_water": "{machine}：横に水が必要。",
+    "machine.no_walker": "{machine}：歩かせる飼っている動物が横に必要。",
     "machine.full": "{machine}：いっぱいだ。作った物を取り出そう。",
     "machine.too_high": "{machine}：電圧が高すぎる。変圧器が必要。",
     "machine.overloaded": "{machine}：この回路の電線が電圧に耐えられない。",

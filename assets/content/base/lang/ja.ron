@@ -948,4 +948,10 @@
     "block.base.mv_cable": "中圧ケーブル",
     "block.base.lv_transformer": "低圧変圧器",
     "block.base.mv_battery_bank": "中圧蓄電池",
+    "block.base.treadwheel": "踏み車",
+    "block.base.bloomery": "塊鉄炉",
+    "block.base.bellows": "ふいご",
+    "block.base.iron_bloom": "鉄塊",
+    "multiblock.base.bellows_bloomery": "ふいご付き塊鉄炉",
+    "multiblock.base.bellows_bloomery.hint": "塊鉄炉には、ふいごを含む窯レンガの囲いと、その上に2ブロック高い窯レンガの中空の煙突が必要です。",
 }
