@@ -131,8 +131,10 @@ impl Server {
             self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
             return;
         }
-        // Nor is a kept one readied to breed when no young could come of it.
+        // Nor is a kept one readied to breed when no young could come of it. One that walks a
+        // treadwheel still eats, to keep it fed (it is told so after eating, below).
         if let Some(keeper) = creature.owner.as_deref()
+            && !self.content.machines.walks(&species.def.name)
             && self.birth_room(keeper) == 0
         {
             self.tell(Source::Player(player), ChatKind::Info, self.no_room_for_young(keeper));
@@ -178,6 +180,12 @@ impl Server {
         let day = self.day;
         self.creatures.live.get_mut(&id).expect("checked").fed = day;
         let creature = &self.creatures.live[&id];
+        if let Some(keeper) = creature.owner.as_deref()
+            && self.birth_room(keeper) == 0
+        {
+            self.tell(Source::Player(player), ChatKind::Info, self.no_room_for_young(keeper));
+            return;
+        }
         let breeding_food = tags.iter().any(|t| t == "breeding_feed") || species.breed_food.contains(&item);
         let Some(breeding) = species.def.breeding.clone().filter(|_| breeding_food && creature.grows_up.is_none()) else { return };
         if self.skill_level(player, "core:farming") < breeding.level || self.tick < creature.breeds_again {
@@ -655,6 +663,35 @@ mod tests {
         let tamed = [wild, other].iter().filter(|id| server.creatures.live[id].owner.is_some()).count();
         assert_eq!(tamed, 1);
         assert_eq!(server.kept_by("test"), kept_each);
+    }
+
+    #[test]
+    fn a_treadwheel_animal_eats_at_the_keepers_cap_but_is_not_readied() {
+        let mut server = test_server();
+        let (player, client) = keeper(&mut server);
+        server.command(player, "skill farming 15");
+        let species = server.content.creatures.id("base:aurochs").expect("aurochs");
+        assert!(server.content.machines.walks("base:aurochs"));
+        let food = server.content.creatures.get(species).breed_food[0];
+        server.players.get_mut(&player).unwrap().inventory.add(food, 10);
+        assert_eq!(server.players[&player].held(), Some(food));
+        let in_hand = |server: &Server| server.players[&player].inventory.get(0).map_or(0, |stack| stack.count);
+        // A kept aurochs long unfed, and its keeper at their cap: one kept here, the rest
+        // waiting.
+        let aurochs = server.spawn_creature(species, server.spawn, 2).expect("room");
+        let day = server.day;
+        let kept = server.creatures.live.get_mut(&aurochs).unwrap();
+        (kept.owner, kept.owner_id, kept.fed) = (Some("test".into()), Some(player), day - 1.0e6);
+        let kept_each = server.content.creatures.limits().kept_each;
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        server.creatures.unplaced = (0..kept_each - 1).map(|_| rabbit(far)).collect();
+        told(&client);
+        // It eats one, and its fed clock starts again, but no young could come of it.
+        server.tend(player, aurochs);
+        assert_eq!(in_hand(&server), 9, "a treadwheel animal at the keeper's cap was not fed");
+        assert_eq!(server.creatures.live[&aurochs].fed, server.day);
+        assert_eq!(server.creatures.live[&aurochs].ready_until, 0, "readied to breed with no room for young");
+        assert_eq!(told(&client), ["husbandry.no_room_to_breed"]);
     }
 
     #[test]

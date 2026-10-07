@@ -636,6 +636,13 @@ fn run(world: &mut World) {
     world.insert_resource(gate);
 }
 
+/// Whether this is `tools/gate --full`, which sets `VOXMAR_GATE_FULL=1`: the steps too long
+/// for every landing (the workshop's later machine phases) play only then.
+fn full_gate() -> bool {
+    static FULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FULL.get_or_init(|| std::env::var("VOXMAR_GATE_FULL").is_ok_and(|v| v == "1"))
+}
+
 /// With `VOXMAR_GATE_STALL` set, every frame of the session stalls as a machine loaded far
 /// past its cores makes it: 80 to 320 ms every fifth frame or so. Steps that pass only on an
 /// idle machine (a fixed number of frames, a wait in seconds of game time that a stall
@@ -1340,6 +1347,17 @@ fn select(world: &mut World, name: &str) -> bool {
     true
 }
 
+/// Selects an empty hotbar slot, to use a machine with an empty hand (which takes out what
+/// it made); false while none is free. Not the whole pack emptied: fuel a machine taken down
+/// let fall (`Server::machine_changed`) may be picked up on the way, and must not hold the
+/// step up.
+fn empty_hand(world: &mut World) -> bool {
+    let player = world.resource::<LocalPlayer>();
+    let Some(slot) = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none()) else { return false };
+    world.resource_mut::<LocalPlayer>().selected = slot;
+    true
+}
+
 /// The level of a skill, as the client was last told.
 fn skill_level(world: &World, name: &str) -> (u8, u32) {
     let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -1737,7 +1755,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            let (coal, ore, dust) = (holding(world, "coal_ore").0, holding(world, "copper_ore").0, holding(world, "copper_dust").0);
+            let (coal, ore, dust) = (holding(world, "base:coal_ore").0, holding(world, "base:copper_ore").0, holding(world, "base:copper_dust").0);
             // Each stage is done by what the player holds, as the server says it: what goes in
             // must first be seen in hand (it comes a few frames after it is given), then gone
             // after the machine was used.
@@ -1749,8 +1767,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.machines_seen |= held > 0;
             let put_in = gate.machines_seen && held == 0 && gate.machines_asked > f32::MIN;
             let (done, target, holds) = match gate.machines_stage {
-                0 => (put_in, boiler, Some("coal_ore")),
-                1 => (put_in, crusher, Some("copper_ore")),
+                0 => (put_in, boiler, Some("base:coal_ore")),
+                1 => (put_in, crusher, Some("base:copper_ore")),
                 _ => (dust >= 2, crusher, None),
             };
             if done {
@@ -1762,6 +1780,21 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 if gate.machines_stage == 2 {
                     gate.check("workshop: machines", Ok(format!("coal fired the boiler, its steam crushed one copper ore, and an empty hand took out {dust} dust")));
+                    // The landing gate stays quick: the boiler and crusher are its machines
+                    // check, and the MV, bloomery and iron-age phases play only in the full
+                    // gate. Taken down here, with the kit back for the steps after.
+                    if !full_gate() {
+                        let (a, b) = (gate.kiln - IVec3::Z, gate.kiln + IVec3::new(3, 1, 1));
+                        let net = world.resource::<Net>();
+                        for line in [format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                            net.command(&line);
+                        }
+                        for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
+                            net.command(line);
+                        }
+                        end_workshop(world, gate, now);
+                        return;
+                    }
                     // In their place, MV: a boiler and turbine over a transformer, an ore
                     // washer beside it, and a dry glass basin beside that for its water.
                     let k = gate.kiln;
@@ -1798,7 +1831,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Waits for what it holds to arrive before using the machine with it.
             let ready = match holds {
                 Some(name) => select(world, name),
-                None => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
+                None => empty_hand(world),
             };
             // Used only every few server seconds (see the kiln above); the crusher takes a
             // few of them to work the ore.
@@ -1841,7 +1874,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            let (coal, ore, dust) = (holding(world, "coal_ore").0, holding(world, "copper_ore").0, holding(world, "copper_dust").0);
+            let (coal, ore, dust) = (holding(world, "base:coal_ore").0, holding(world, "base:copper_ore").0, holding(world, "base:copper_dust").0);
             let content = world.resource::<Launch>().content.clone();
             let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
             let dry = gate.observer.as_ref().is_some_and(|o| o.replies.iter().map(english).any(|r| r.contains("needs water")));
@@ -1908,9 +1941,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Used (or asked about) only every few server seconds, as the kiln is.
             if gate.server_now - gate.machines_asked >= 3.0 {
                 let ready = match gate.machines_stage {
-                    0 => select(world, "coal_ore"),
-                    1 => select(world, "copper_ore"),
-                    _ => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
+                    0 => select(world, "base:coal_ore"),
+                    1 => select(world, "base:copper_ore"),
+                    _ => empty_hand(world),
                 };
                 if ready {
                     gate.machines_asked = gate.server_now;
@@ -1972,7 +2005,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            let (ore, coal, copper, bloom) = (holding(world, "iron_ore").0, holding(world, "coal_ore").0, holding(world, "copper_ore").0, holding(world, "iron_bloom").0);
+            let (ore, coal, copper, bloom) = (holding(world, "base:iron_ore").0, holding(world, "base:coal_ore").0, holding(world, "base:copper_ore").0, holding(world, "base:iron_bloom").0);
             // Each stage is done by what the player holds, first seen in hand and then gone
             // after the machine was used (as in the steps before), or what the server says.
             let held = match stage {
@@ -2067,10 +2100,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Used (or asked about) only every few server seconds, as the kiln is.
             if gate.server_now - gate.machines_asked >= 3.0 {
                 let ready = match stage {
-                    0 => select(world, "iron_ore"),
-                    1 | 3 => select(world, "coal_ore"),
-                    4 => select(world, "copper_ore"),
-                    _ => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
+                    0 => select(world, "base:iron_ore"),
+                    1 | 3 => select(world, "base:coal_ore"),
+                    4 => select(world, "base:copper_ore"),
+                    _ => empty_hand(world),
                 };
                 if ready {
                     gate.machines_asked = gate.server_now;
@@ -2135,7 +2168,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            let (coal, ore, coke) = (holding(world, "coal_ore").0, holding(world, "iron_ore").0, holding(world, "coke").0);
+            let (coal, ore, coke) = (holding(world, "base:coal_ore").0, holding(world, "base:iron_ore").0, holding(world, "base:coke").0);
             // Put in: first seen in hand, then gone after the machine was used. Working: what
             // the server says when asked.
             let held = match stage {
@@ -2190,9 +2223,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Used (or asked about) only every few server seconds, as the kiln is.
             if gate.server_now - gate.machines_asked >= 3.0 {
                 let ready = match stage {
-                    0 => select(world, "coal_ore"),
-                    2 => select(world, "iron_ore"),
-                    3 => select(world, "coke"),
+                    0 => select(world, "base:coal_ore"),
+                    2 => select(world, "base:iron_ore"),
+                    3 => select(world, "base:coke"),
                     _ => true,
                 };
                 if ready {
@@ -3848,7 +3881,8 @@ fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
 }
 
 /// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
-/// comes back as cooked rabbit or, at a low Cooking level, sometimes burnt.
+/// comes back two seconds later as cooked rabbit or, at a low Cooking level, sometimes
+/// burnt. Waited for by the server's clock.
 fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
     match gate.phase {
@@ -3889,9 +3923,9 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("cook", Ok(format!("{} came back from the fire", cooked - gate.count_before)));
                 gate.advance(now);
-            } else if in_phase > 15.0 {
+            } else if gate.server_in_phase() > 15.0 {
                 mouse(world, MouseButton::Right, false);
-                gate.check("cook", Err("right clicks on the campfire cooked nothing".into()));
+                gate.check("cook", Err(format!("right clicks on the campfire cooked nothing in 15 server seconds ({in_phase:.1} game s)")));
                 gate.next(Step::Ore, now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
