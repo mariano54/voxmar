@@ -186,6 +186,7 @@ impl Server {
                 Some(what) => self.creatures_command(id, what),
             },
             Run::Skill => self.skill_command(id, args),
+            Run::Machine => self.machine_command(id, args),
         };
         let (Ok(text) | Err(text)) = &reply;
         tracing::debug!("/{}: {}", def.short_name(), self.english(text));
@@ -699,6 +700,13 @@ impl Server {
     }
 
     /// The online player called `name`, ignoring case if no name matches exactly.
+    /// `/machine <x> <y> <z>`: how the machine there is doing.
+    fn machine_command(&mut self, source: Source, args: &[String]) -> Reply {
+        let [x, y, z] = args else { return Err(Words::key("command.error.which_block_where")) };
+        let at = self.block_position(source, [x, y, z])?;
+        self.machine_status(at).ok_or_else(|| Words::key("command.machine.none").with("place", format!("{} {} {}", at.x, at.y, at.z)))
+    }
+
     fn set_block_command(&mut self, source: Source, args: &[String]) -> Reply {
         let [x, y, z, name] = args else { return Err(Words::key("command.error.which_block_where")) };
         let at = self.block_position(source, [x, y, z])?;

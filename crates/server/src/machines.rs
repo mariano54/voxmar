@@ -194,6 +194,12 @@ impl Server {
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::Lines(lines) });
     }
 
+    /// How the machine at `pos` is doing, in a line, if there is one (`/machine`).
+    pub(crate) fn machine_status(&self, pos: IVec3) -> Option<Words> {
+        let view = self.factory.view(pos, &self.content.machines)?;
+        Some(self.machine_words(&view))
+    }
+
     /// How a machine is doing, in a line.
     fn machine_words(&self, view: &MachineView) -> Words {
         let def = self.content.blocks.def(view.block);

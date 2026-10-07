@@ -632,6 +632,7 @@
     "command.creatures.admins_only": "Only admins may tame, ready, hasten or hold creatures with a command.",
     "command.creatures.what": "Tame, ready, hasten or hold?",
     "command.creatures.done": "Done, for {count} creatures within 8 blocks.",
+    "command.machine.none": "There is no machine at {place}.",
     "command.skill.what": "Which skill, and what level?",
     "command.skill.unknown": "There is no skill called `{name}`.",
     "command.skill.level": "The level must be from 1 to the highest.",

@@ -1708,15 +1708,30 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 if gate.machines_stage == 2 {
                     gate.check("workshop: machines", Ok(format!("coal fired the boiler, its steam crushed one copper ore, and an empty hand took out {dust} dust")));
-                    let (a, b) = (boiler, crusher);
+                    // In their place, MV: a boiler and turbine over a transformer, an ore
+                    // washer beside it, and a dry glass basin beside that for its water.
+                    let k = gate.kiln;
+                    let at = |d: IVec3| { let p = k + d; format!("{} {} {}", p.x, p.y, p.z) };
                     let net = world.resource::<Net>();
-                    for line in [format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                    for line in [
+                        format!("fill {} {} air", at(IVec3::new(0, 0, -1)), at(IVec3::new(3, 1, 1))),
+                        "clear".to_owned(),
+                        format!("setblock {} lv_transformer", at(IVec3::ZERO)),
+                        format!("setblock {} steam_turbine", at(IVec3::Y)),
+                        format!("setblock {} boiler", at(IVec3::new(1, 1, 0))),
+                        format!("setblock {} ore_washer", at(IVec3::X)),
+                        format!("setblock {} glass", at(IVec3::new(2, -1, 0))),
+                        format!("setblock {} glass", at(IVec3::new(3, 0, 0))),
+                        format!("setblock {} glass", at(IVec3::new(2, 0, -1))),
+                        format!("setblock {} glass", at(IVec3::new(2, 0, 1))),
+                        "give coal_ore 4".to_owned(),
+                    ] {
                         net.command(&line);
                     }
-                    for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
-                        net.command(line);
-                    }
-                    end_workshop(world, gate, now);
+                    gate.machines_stage = 0;
+                    gate.machines_since = gate.server_now;
+                    gate.machines_asked = f32::MIN;
+                    gate.advance(now);
                     return;
                 }
                 gate.machines_stage += 1;
@@ -1742,6 +1757,89 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 fail(world, gate, "machines", format!("{what} ({:.1} server s, {:.1} game s): holding coal {coal}, ore {ore}, dust {dust}", waited.0, waited.1));
                 let (a, b) = (boiler, crusher);
                 world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z));
+            }
+        }
+        // MV: the turbine's power comes down through the transformer to the washer, which
+        // takes the ore but waits, saying it needs water, until water lies beside it; then
+        // an empty hand takes out three dust for the one ore.
+        17 => {
+            let k = gate.kiln;
+            let (boiler, washer, basin) = (k + IVec3::new(1, 1, 0), k + IVec3::X, k + IVec3::new(2, 0, 0));
+            let teardown = move |world: &mut World| {
+                let (a, b) = (k + IVec3::new(0, -1, -1), k + IVec3::new(3, 1, 1));
+                let net = world.resource::<Net>();
+                for line in [format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                    net.command(&line);
+                }
+                for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
+                    net.command(line);
+                }
+            };
+            let client = world.resource::<ClientWorld>();
+            if client.block(washer) != client.registry.id("base:ore_washer") || client.block(boiler) != client.registry.id("base:boiler") {
+                if in_phase > WORKSHOP_WAIT {
+                    teardown(world);
+                    fail(world, gate, "MV machines", "the turbine, transformer and washer never came".into());
+                }
+                return;
+            }
+            let (coal, ore, dust) = (holding(world, "coal_ore").0, holding(world, "copper_ore").0, holding(world, "copper_dust").0);
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
+            let dry = gate.observer.as_ref().is_some_and(|o| o.replies.iter().map(english).any(|r| r.contains("needs water")));
+            // Each stage is done by what the player holds, or what the server says of the
+            // washer (asked by the observer: `/machine`).
+            let done = match gate.machines_stage {
+                0 => coal == 0,
+                1 => ore == 0,
+                2 => dry,
+                _ => dust >= 3,
+            };
+            if done {
+                let net = world.resource::<Net>();
+                match gate.machines_stage {
+                    0 => net.command("give copper_ore 1"),
+                    1 => net.command("clear"),
+                    2 => net.command(&format!("setblock {} {} {} water", basin.x, basin.y, basin.z)),
+                    _ => {
+                        gate.check("workshop: MV machines", Ok(format!("a turbine on steam powered an ore washer through a transformer; dry it said it needs water, wet it gave {dust} dust for one ore")));
+                        teardown(world);
+                        end_workshop(world, gate, now);
+                        return;
+                    }
+                }
+                gate.machines_stage += 1;
+                gate.machines_since = gate.server_now;
+                gate.machines_asked = f32::MIN;
+                return;
+            }
+            // Used (or asked about) only every few server seconds, as the kiln is.
+            if gate.server_now - gate.machines_asked >= 3.0 {
+                let ready = match gate.machines_stage {
+                    0 => select(world, "coal_ore"),
+                    1 => select(world, "copper_ore"),
+                    _ => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
+                };
+                if ready {
+                    gate.machines_asked = gate.server_now;
+                    if gate.machines_stage == 2 {
+                        if let Some(observer) = gate.observer.as_mut() {
+                            observer.replies.clear();
+                            observer.connection.send(ClientMessage::Command { line: format!("machine {} {} {}", washer.x, washer.y, washer.z) });
+                        }
+                    } else {
+                        let target = if gate.machines_stage == 0 { boiler } else { washer };
+                        let actions = world.resource::<crate::Actions>().0.clone();
+                        world.resource::<Net>().propose(actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
+                    }
+                }
+            }
+            if gate.server_now - gate.machines_since > 40.0 || in_phase > 120.0 {
+                let what = ["the boiler never took the coal", "the washer never took the ore", "the dry washer never said it needs water", "the wet washer never gave back three dust"][gate.machines_stage.min(3) as usize];
+                let waited = (gate.server_now - gate.machines_since, in_phase);
+                let said: Vec<String> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
+                teardown(world);
+                fail(world, gate, "MV machines", format!("{what} ({:.1} server s, {:.1} game s): holding coal {coal}, ore {ore}, dust {dust}; /machine said {said:?}", waited.0, waited.1));
             }
         }
         _ => {}

@@ -1359,6 +1359,8 @@ fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
             break;
         }
     }
+    // `/machine` tells the same.
+    assert!(client.ok("/machine ~4 ~ ~").contains("needs water"));
     // Water beside it: three dust for the one ore.
     client.ok("/setblock ~5 ~ ~ water");
     let started = Instant::now();
