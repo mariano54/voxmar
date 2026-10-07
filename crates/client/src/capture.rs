@@ -699,6 +699,15 @@ fn capture(
     // the flight's and not the teleport's. A teleport the server never answers fails it.
     if state.flight.is_some() && player.position.y < FLIGHT_HEIGHT - 1.0 {
         player.flying = true;
+        // Once flying, a drop below the height (a correction from the server) fails the
+        // flight rather than being taken for a teleport not yet answered.
+        if state.flight_started.is_some() {
+            error!("flight: fell to y {:.1}, below its height of {FLIGHT_HEIGHT}", player.position.y);
+            exit.write(AppExit::error());
+            return;
+        }
+        // The server's clock when the server is this process's own; for a remote join, the
+        // client's (whose frames count for at most 250 ms each).
         let server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
         match state.lift_asked {
             None => {
