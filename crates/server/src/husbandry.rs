@@ -377,3 +377,61 @@ fn yielded(count: u8, yield_: f32, roll: f32) -> u8 {
     let exact = count as f32 * yield_.max(0.0);
     (exact.floor() + if roll.fract() < exact.fract() { 1.0 } else { 0.0 }).clamp(1.0, 64.0) as u8
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Server, ServerConfig, load_content, open_world};
+
+    fn server() -> Server {
+        let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+        let mut config = ServerConfig::default();
+        let (save, meta) = open_world(&mut config).expect("no save to open");
+        let (_, incoming) = crossbeam_channel::unbounded();
+        let (_, console) = crossbeam_channel::unbounded();
+        Server::new(config, meta, save, content, incoming, console)
+    }
+
+    fn rabbit(at: Vec3) -> SavedCreature {
+        let at = at.to_array();
+        SavedCreature {
+            species: "base:rabbit".into(),
+            position: at,
+            home: at,
+            yaw: 0.0,
+            health: 3,
+            owner: "test".into(),
+            seed: 7,
+            scale: 1.0,
+            grows_in: None,
+            products_in: Vec::new(),
+            genome: None,
+        }
+    }
+
+    #[test]
+    fn a_waiting_animal_comes_back_once_its_place_is_loaded() {
+        let mut server = server();
+        // One waits where the world is loaded (spawn), one far off where it is not.
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        server.creatures.unplaced.push(rabbit(server.spawn));
+        server.creatures.unplaced.push(rabbit(far));
+        // No player keeps columns loaded here, so step to the tick before the next try and
+        // load the spawn column by hand, as a player standing there would.
+        let every = 10 * TICKS_PER_SECOND as u64;
+        server.tick = server.tick.next_multiple_of(every) + every - 1;
+        let at = server.spawn.floor().as_ivec3();
+        server.load_area(at, at);
+        server.tick();
+        let kept: Vec<_> = server.creatures.live.values().filter(|c| c.owner.as_deref() == Some("test")).collect();
+        assert_eq!(kept.len(), 1, "the one whose place is loaded is back");
+        assert_eq!(server.content.creatures.get(kept[0].species).def.name, "base:rabbit");
+        assert_eq!(server.creatures.unplaced.len(), 1, "the far one still waits");
+        assert_eq!(server.creatures.unplaced[0].position, far.to_array());
+        // The save holds each exactly once: the one back with its genes, the far one as it was.
+        let saved = server.saved_creatures();
+        assert_eq!(saved.len(), 2, "{saved:?}");
+        assert_eq!(saved.iter().filter(|s| s.genome.is_some()).count(), 1);
+        assert_eq!(saved.iter().filter(|s| s.position == far.to_array()).count(), 1);
+    }
+}

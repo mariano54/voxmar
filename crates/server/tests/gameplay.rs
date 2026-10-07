@@ -1400,13 +1400,24 @@ fn a_kept_animal_whose_species_is_gone_waits_in_the_save() {
     let dir = world_dir("unplaced");
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let client = Client::join_with(config());
+    let spawn = client.position;
     drop(client);
+    // Beside it, a rabbit whose species is here, at spawn: the control that the save was
+    // read and written again, not merely left alone.
     let path = dir.join("creatures.ron");
-    let ghost = r#"[(species: "lostmod:ghost_cat", position: (0.5, 70.0, 0.5), home: (0.5, 70.0, 0.5), yaw: 0.0, health: 5, owner: "test", seed: 7, scale: 1.0, grows_in: None, products_in: [])]"#;
-    std::fs::write(&path, ghost).unwrap();
+    let kept = |species: &str, seed: u32| {
+        let at = format!("({}, {}, {})", spawn.x, spawn.y, spawn.z);
+        format!("(species: \"{species}\", position: {at}, home: {at}, yaw: 0.0, health: 3, owner: \"test\", seed: {seed}, scale: 1.0, grows_in: None, products_in: [])")
+    };
+    let written = format!("[{}, {}]", kept("lostmod:ghost_cat", 7), kept("base:rabbit", 8));
+    std::fs::write(&path, &written).unwrap();
     let client = Client::join_with(config());
     drop(client);
     let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(saved.contains("lostmod:ghost_cat"), "the kept animal was lost from the save: {saved}");
+    assert_ne!(saved, written, "the save was not written again");
+    assert_eq!(saved.matches("lostmod:ghost_cat").count(), 1, "the waiting animal is in the save once: {saved}");
+    assert_eq!(saved.matches("base:rabbit").count(), 1, "the rabbit is in the save once: {saved}");
+    // The rabbit came back into the world, so it is saved with the genes it was given there.
+    assert_eq!(saved.replace(' ', "").matches("genome:Some").count(), 1, "only the rabbit came back with genes: {saved}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
