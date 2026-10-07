@@ -480,6 +480,43 @@ fn leash() -> f32 {
 #[serde(deny_unknown_fields)]
 struct CreatureFile {
     creatures: Vec<CreatureDef>,
+    #[serde(default)]
+    limits: Option<Limits>,
+}
+
+/// How many creatures the world holds. One package's `creatures.ron` sets them (`limits`),
+/// as one sets movement; without any, these defaults.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    /// Most alive at once, whatever the players. Wild ones leave room for kept animals
+    /// still waiting in the save, so those always come back.
+    pub most: usize,
+    /// At most this many animals, and this many monsters, near each player.
+    pub animals_near: usize,
+    pub monsters_near: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { most: 512, animals_near: 6, monsters_near: 6 }
+    }
+}
+
+impl Limits {
+    /// Whether these limits can hold: room for one, and for what one player draws near.
+    pub fn check(&self) -> Result<(), RegistryError> {
+        if self.most == 0 {
+            return Err(RegistryError("creature limits: `most` must be at least 1".into()));
+        }
+        if self.animals_near + self.monsters_near > self.most {
+            return Err(RegistryError(format!(
+                "creature limits: {} animals and {} monsters near one player are more than `most` ({})",
+                self.animals_near, self.monsters_near, self.most
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// A species with its names resolved.
@@ -521,11 +558,13 @@ impl Creature {
 pub struct CreatureRegistry {
     creatures: Vec<Creature>,
     by_name: FxHashMap<String, CreatureId>,
+    limits: Limits,
 }
 
 impl CreatureRegistry {
-    /// Reads a package's `creatures.ron`, qualifying names with its namespace.
-    pub fn read(namespace: &str, source: &str) -> Result<Vec<CreatureDef>, RegistryError> {
+    /// Reads a package's `creatures.ron`, qualifying names with its namespace: its species,
+    /// and the limits if it sets them.
+    pub fn read(namespace: &str, source: &str) -> Result<(Vec<CreatureDef>, Option<Limits>), RegistryError> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let file: CreatureFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/creatures.ron: {e}")))?;
         let qualify = |name: &mut String| {
@@ -533,7 +572,8 @@ impl CreatureRegistry {
                 *name = format!("{namespace}:{name}");
             }
         };
-        Ok(file
+        let limits = file.limits;
+        let defs = file
             .creatures
             .into_iter()
             .map(|mut def| {
@@ -558,12 +598,14 @@ impl CreatureRegistry {
                 }
                 def
             })
-            .collect())
+            .collect();
+        Ok((defs, limits))
     }
 
     /// Resolves species against the blocks (items) and skills.
-    pub fn new(defs: Vec<CreatureDef>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
-        let mut registry = Self::default();
+    pub fn new(defs: Vec<CreatureDef>, limits: Limits, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
+        limits.check()?;
+        let mut registry = Self { limits, ..Self::default() };
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
@@ -641,6 +683,11 @@ impl CreatureRegistry {
 
     pub fn get(&self, id: CreatureId) -> &Creature {
         &self.creatures[id.0 as usize]
+    }
+
+    /// How many creatures the world holds.
+    pub fn limits(&self) -> Limits {
+        self.limits
     }
 
     pub fn id(&self, name: &str) -> Option<CreatureId> {
@@ -763,8 +810,8 @@ mod tests {
             BlockDef { name: "base:carrot".into(), ..Default::default() },
         ])
         .unwrap();
-        let defs = CreatureRegistry::read("base", RABBIT).unwrap();
-        CreatureRegistry::new(defs, &blocks, &SkillRegistry::default()).unwrap()
+        let (defs, _) = CreatureRegistry::read("base", RABBIT).unwrap();
+        CreatureRegistry::new(defs, Limits::default(), &blocks, &SkillRegistry::default()).unwrap()
     }
 
     #[test]
@@ -805,8 +852,22 @@ mod tests {
             BlockDef { name: "base:carrot".into(), ..Default::default() },
         ])
         .unwrap();
-        let defs = CreatureRegistry::read("base", &source).unwrap();
-        assert!(CreatureRegistry::new(defs, &blocks, &SkillRegistry::default()).is_err());
+        let (defs, _) = CreatureRegistry::read("base", &source).unwrap();
+        assert!(CreatureRegistry::new(defs, Limits::default(), &blocks, &SkillRegistry::default()).is_err());
+    }
+
+    #[test]
+    fn limits_load_from_the_file_and_are_checked() {
+        let source = RABBIT.replacen("(creatures:", "(limits: (most: 40, animals_near: 4, monsters_near: 3), creatures:", 1);
+        let (_, limits) = CreatureRegistry::read("base", &source).unwrap();
+        assert_eq!(limits, Some(Limits { most: 40, animals_near: 4, monsters_near: 3 }));
+        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().1, None, "a file without limits leaves them to another");
+        assert!(Limits::default().check().is_ok());
+        // Room for none, or less room than one player's surroundings draw, will not load.
+        for bad in [Limits { most: 0, animals_near: 0, monsters_near: 0 }, Limits { most: 10, animals_near: 6, monsters_near: 6 }] {
+            let blocks = BlockRegistry::new(vec![]).unwrap();
+            assert!(CreatureRegistry::new(Vec::new(), bad, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
+        }
     }
 
     #[test]

@@ -37,6 +37,18 @@ From the design philosophy, applied here:
 
 Every file is optional in a package; any package can add to any of them.
 
+One package's `creatures.ron` also sets how many creatures the world holds, as one sets
+movement (a second package setting them fails to load):
+
+```ron
+limits: (most: 512, animals_near: 6, monsters_near: 6),
+```
+
+`most` is the most alive at once, whatever the players. Wild ones (spawned or summoned)
+stop short of it by the kept animals still waiting in the save, so those always have room
+to come back. `animals_near` and `monsters_near` cap each kind within 64 blocks of a
+player. Without any package's limits, these numbers are the defaults.
+
 ## A creature
 
 ```ron
@@ -207,7 +219,9 @@ Content fails to load, with the file and a reason, when:
 - a creature drops nothing any action uses, or an item is produced by nothing ("dead ends
   fail", design philosophy);
 - a level, chance or count is out of range, or a loot table references itself;
-- a supernatural species has no aether minimum.
+- a supernatural species has no aether minimum;
+- the limits leave no room (`most` 0), or one player's `animals_near` and `monsters_near`
+  together are more than `most`.
 
 Test-time checks (in `cargo test`): every species can be spawned and survives a simulated
 day in the sandbox; the supernatural share of species is 15–30% and of encounters, over a
