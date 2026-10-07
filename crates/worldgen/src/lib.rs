@@ -37,6 +37,7 @@ mod ores;
 mod rng;
 mod rocks;
 mod router;
+mod settlements;
 mod shapes;
 mod stage;
 mod surface;
@@ -67,6 +68,7 @@ pub use geology::Form;
 pub use rocks::ProvinceId;
 pub use shapes::ShapeId;
 pub use trails::{Kind as PlaceKind, Poi, TrailMark};
+pub use settlements::{Building as SettlementBuilding, Facing as SettlementFacing, Kind as BuildingKind};
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
@@ -236,6 +238,7 @@ pub struct Overworld {
     geology: Geology,
     rivers: water::Rivers,
     trails: trails::Trails,
+    settlements: settlements::Settlements,
     ecology: Ecology,
     decor: decor::Decor,
     biomes: Biomes,
@@ -297,6 +300,7 @@ impl Overworld {
             ecology,
             decor,
             trails: trails::Trails::new(stream, content.trails.laid),
+            settlements: settlements::Settlements::new(stream, &content.settlements, &registry),
             caves: caves::Caves::new(stream, &dials),
             underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
@@ -450,7 +454,8 @@ impl Overworld {
             self.ground(x, z)
         };
         let _stage = stage::enter(Stage::Trails);
-        self.trails.apply(&self.land(), sample, x, z)
+        let sample = self.trails.apply(&self.land(), sample, x, z);
+        self.settlements.apply(self, sample, x, z)
     }
 
     /// The ground over the `size`×`size` positions from (x, z), row by row.
@@ -462,14 +467,37 @@ impl Overworld {
         };
         let _stage = stage::enter(Stage::Trails);
         for (i, sample) in area.iter_mut().enumerate() {
-            *sample = self.trails.apply(&land, *sample, x + i as i32 % size, z + i as i32 / size);
+            let (sx, sz) = (x + i as i32 % size, z + i as i32 / size);
+            *sample = self.settlements.apply(self, self.trails.apply(&land, *sample, sx, sz), sx, sz);
         }
         area
     }
 
     /// The land trails are planned over: the ground with its rivers and lakes.
     fn land(&self) -> RiverLand<'_> {
-        RiverLand { rivers: &self.rivers, stages: self.stages() }
+        RiverLand { rivers: &self.rivers, stages: self.stages(), world: self }
+    }
+
+    /// The settlements whose squares lie within `radius` blocks of `centre`: their names
+    /// (English and Japanese), sizes, middles and buildings.
+    pub fn settlements_near(&self, centre: IVec2, radius: i32) -> Vec<SettlementInfo> {
+        self.settlements
+            .near(self, centre, radius)
+            .iter()
+            .filter_map(|slot| slot.0.as_ref())
+            .map(|p| SettlementInfo {
+                id: p.id,
+                name: p.name.clone(),
+                size: p.size.clone(),
+                style: p.style.clone(),
+                layout: p.layout.clone(),
+                centre: IVec3::new(p.centre.x, p.height, p.centre.y),
+                buildings: p.buildings.clone(),
+                gates: p.gates.clone(),
+                lanes: p.lanes.clone(),
+                levers: p.levers.0,
+            })
+            .collect()
     }
 
     /// What is built beside trails within the blocks from `min` to `max`.
@@ -557,6 +585,7 @@ pub(crate) fn steepness(height: impl Fn(i32, i32) -> i32) -> f32 {
 struct RiverLand<'a> {
     rivers: &'a water::Rivers,
     stages: water::Stages<'a>,
+    world: &'a Overworld,
 }
 
 impl trails::Land for RiverLand<'_> {
@@ -567,6 +596,44 @@ impl trails::Land for RiverLand<'_> {
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
         self.rivers.grid(self.stages, origin, step, size)
     }
+
+    fn settled(&self, min: IVec2, max: IVec2, reach: i32) -> bool {
+        self.world.settlements.any_near(self.world, min, max, reach)
+    }
+
+    fn gates(&self, min: IVec2, max: IVec2) -> Vec<IVec2> {
+        let centre = (min + max) / 2;
+        let radius = (max - min).max_element() / 2 + 1;
+        self.world
+            .settlements
+            .near(self.world, centre, radius)
+            .iter()
+            .filter_map(|slot| slot.0.as_ref())
+            .flat_map(|p| p.gates.iter().copied())
+            .filter(|g| g.cmpge(min).all() && g.cmple(max).all())
+            .collect()
+    }
+}
+
+/// A settlement, as gameplay and tools see it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettlementInfo {
+    pub id: u64,
+    /// In English and in Japanese.
+    pub name: (String, String),
+    /// `hamlet` or `village` (the size's name in settlements.ron), and its style and
+    /// layout.
+    pub size: String,
+    pub style: String,
+    pub layout: String,
+    /// The middle of its square or green, on the ground.
+    pub centre: IVec3,
+    pub buildings: Vec<SettlementBuilding>,
+    /// Where its lanes leading out end.
+    pub gates: Vec<IVec2>,
+    pub lanes: Vec<Vec<voxmar_engine::glam::Vec2>>,
+    /// Wealth, age, order, crowding and green, each 0 ..= 1.
+    pub levers: [f32; 5],
 }
 
 /// Samples sites over an area, computing the regional climate once per lattice point.
@@ -1613,6 +1680,93 @@ mod tests {
             println!("{name} ({areas} areas): ground {:?}", top(&ground, 6));
             println!("  on the ground {:.0}/area: {:?}", per(&above), top(&above, 8));
             println!("  lone cubes {:.0}/area: {:?}", per(&lone), top(&lone, 8));
+        }
+    }
+
+    /// Where the rare herbs grow: samples sites over a wide square (no chunks generated),
+    /// asks the ecology for the plant on soil, sand and snow, and counts each rare herb by
+    /// biome, per million samples: `cargo test --profile iter -p voxmar_worldgen
+    /// rare_herb_census -- --ignored --nocapture` (SEEDS=7,1, SPAN=24000, STEP=6; BIOMES=a,b
+    /// samples around the nearest place of each of those biomes instead).
+    #[test]
+    #[ignore]
+    fn rare_herb_census() {
+        use crate::content::Ground;
+        use crate::ecology::Plant;
+        let registry = registry();
+        let herbs = ["windroot", "edelweiss", "ginseng", "mandrake", "heartbloom", "starlily", "thunderbloom", "ember_pepper", "sky_lotus", "silvermint"];
+        let ids: Vec<Option<BlockId>> = herbs.iter().map(|h| registry.id(&format!("base:{h}"))).collect();
+        let seeds: Vec<u64> = std::env::var("SEEDS").unwrap_or_else(|_| "7,1".into()).split(',').filter_map(|s| s.parse().ok()).collect();
+        let span: i32 = std::env::var("SPAN").ok().and_then(|s| s.parse().ok()).unwrap_or(24000);
+        let step: i32 = std::env::var("STEP").ok().and_then(|s| s.parse().ok()).unwrap_or(6);
+        let mut found = vec![std::collections::BTreeMap::<String, u32>::new(); herbs.len()];
+        let mut biome_samples = std::collections::BTreeMap::<String, u32>::new();
+        let mut samples = 0u64;
+        for &seed in &seeds {
+            let world = Overworld::new(seed, registry.clone());
+            let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
+            // With BIOMES set, squares of `span` around the nearest place of each of those
+            // biomes (for the rare ones a wide square never meets); else one square at the
+            // origin.
+            let centres: Vec<IVec2> = match std::env::var("BIOMES") {
+                Ok(names) => names.split(',').filter_map(|n| world.locate_biome(n, IVec2::ZERO, 60000)).collect(),
+                Err(_) => vec![IVec2::ZERO],
+            };
+            let rows: Vec<(i32, i32)> = centres.iter().flat_map(|c| (-span / 2..span / 2).step_by(step as usize).map(move |z| (c.x, c.y + z))).collect();
+            let parts: Vec<_> = std::thread::scope(|scope| {
+                let handles: Vec<_> = rows
+                    .chunks(rows.len().div_ceil(threads))
+                    .map(|rows| {
+                        let (world, ids) = (&world, &ids);
+                        scope.spawn(move || {
+                            let mut found = vec![std::collections::BTreeMap::<String, u32>::new(); ids.len()];
+                            let mut seen = std::collections::BTreeMap::<String, u32>::new();
+                            let mut samples = 0u64;
+                            for &(cx, z) in rows {
+                                for x in (cx - span / 2..cx + span / 2).step_by(step as usize) {
+                                    let site = world.site(x, z);
+                                    if site.height < site.water {
+                                        continue;
+                                    }
+                                    samples += 1;
+                                    let biome = world.biomes.get(site.biome).name.trim_start_matches("base:").to_owned();
+                                    *seen.entry(biome.clone()).or_default() += 1;
+                                    for ground in [Ground::Soil, Ground::Sand, Ground::Snow] {
+                                        let block = match world.ecology.plant(&site, ground, x, z) {
+                                            Some(Plant::One(b) | Plant::Tall(b, _) | Plant::Stack(b, _)) => b,
+                                            None => continue,
+                                        };
+                                        if let Some(i) = ids.iter().position(|&id| id == Some(block)) {
+                                            *found[i].entry(biome.clone()).or_default() += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            (found, seen, samples)
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            for (part, seen, n) in parts {
+                samples += n;
+                for (b, c) in seen {
+                    *biome_samples.entry(b).or_default() += c;
+                }
+                for (i, map) in part.into_iter().enumerate() {
+                    for (b, c) in map {
+                        *found[i].entry(b).or_default() += c;
+                    }
+                }
+            }
+        }
+        println!("{samples} land samples over seeds {seeds:?}, span {span}, step {step}");
+        for (i, herb) in herbs.iter().enumerate() {
+            let total: u32 = found[i].values().sum();
+            let mut by: Vec<_> = found[i].iter().map(|(b, n)| (b.clone(), *n)).collect();
+            by.sort_by_key(|e| std::cmp::Reverse(e.1));
+            let shown: Vec<String> = by.iter().map(|(b, n)| format!("{b} {n} ({:.0}/M of it)", *n as f64 * 1e6 / biome_samples[b] as f64)).collect();
+            println!("{herb}: {total} ({:.1}/M) in {} biomes: {}", total as f64 * 1e6 / samples as f64, by.len(), shown.join(", "));
         }
     }
 
@@ -2948,6 +3102,7 @@ mod tests {
                     PlaceKind::Waterfall => [30, 90, 255],
                     PlaceKind::Viewpoint => [255, 230, 40],
                     PlaceKind::Trailhead => [60, 220, 60],
+                    PlaceKind::Settlement => [255, 90, 200],
                 };
                 paint(place.at().as_vec2(), rgb, 2);
             }

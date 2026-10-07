@@ -601,7 +601,12 @@ impl Ecology {
             .iter()
             .enumerate()
             .filter_map(|(i, plant)| {
-                let weight = selected(selects, &[], &plant.name, content.plant_tags(plant, registry)) * self.rarity[i];
+                let tags = content.plant_tags(plant, registry);
+                // Rare herbs keep to the biomes that name them (see `Flora::new`).
+                if tags.clone().any(|t| t == "rare_herb") && !selects.iter().any(|s| matches!(s, Select::Name(n, _) if *n == plant.name)) {
+                    return None;
+                }
+                let weight = selected(selects, &[], &plant.name, tags) * self.rarity[i];
                 (weight > 0.0).then_some((PlantId(i as u16), weight))
             })
             .collect()
@@ -693,6 +698,24 @@ impl Flora {
         for (i, plant) in content.plants.iter().enumerate() {
             let tags = content.plant_tags(plant, registry);
             let id = PlantId(i as u16);
+            // A rare herb (tagged `rare_herb`) grows only in the biomes that name it, in
+            // their plants or wonders: never through a tag, the forage sweep or the wonders
+            // every biome takes by default, so each keeps to its one or two biomes.
+            if tags.clone().any(|t| t == "rare_herb") {
+                let named = |list: &[Select]| list.iter().find_map(|s| matches!(s, Select::Name(n, _) if *n == plant.name).then(|| s.weight())).unwrap_or(0.0);
+                let wonder = def.wonders.as_deref().map_or(0.0, named) * plant_rarity[i];
+                let weight = named(&def.plants) * plant_rarity[i];
+                if wonder > 0.0 {
+                    flora.wonder_plants.push((id, wonder));
+                } else if weight > 0.0 {
+                    match plant.spread {
+                        Spread::Cover => flora.carpet.push((id, weight)),
+                        Spread::Drifts => flora.drifts.push((id, weight)),
+                        Spread::Alone => flora.alone.push((id, weight)),
+                    }
+                }
+                continue;
+            }
             let wonder = selected(&wonders, &def.exclude, &plant.name, tags.clone()) * plant_rarity[i] * contrast(&plant.block);
             if wonder > 0.0 {
                 flora.wonder_plants.push((id, wonder));
@@ -772,6 +795,32 @@ mod tests {
             .chain(extra.iter().map(|(name, source)| ContentFile { package: "mod".into(), name: (*name).into(), source: (*source).into() }))
             .collect();
         WorldContent::from_files(files.iter(), registry).unwrap()
+    }
+
+    /// Each rare herb grows in the one or two biomes that name it and nowhere else: not
+    /// through a tag, the forage sweep or the wonders every biome takes by default.
+    #[test]
+    fn rare_herbs_keep_to_the_biomes_that_name_them() {
+        let registry = registry();
+        let content = content(&[], &registry);
+        let ecology = Ecology::new(1, &WorldDials::sample(1), &content, &registry);
+        let rare: Vec<usize> = content.plants.iter().enumerate().filter(|(_, p)| content.plant_tags(p, &registry).any(|t| t == "rare_herb")).map(|(i, _)| i).collect();
+        assert!(rare.len() >= 10, "the ten rare herbs are tagged");
+        for &i in &rare {
+            let plant = &content.plants[i];
+            let names = |list: &[Select]| list.iter().any(|s| matches!(s, Select::Name(n, _) if *n == plant.name));
+            let mut grows_in = Vec::new();
+            for (b, biome) in content.biomes.iter().enumerate() {
+                let flora = &ecology.flora[b];
+                let listed = [&flora.carpet, &flora.drifts, &flora.alone, &flora.wonder_plants].iter().any(|l| l.iter().any(|(p, _)| p.0 as usize == i));
+                let named = names(&biome.flora.plants) || biome.flora.wonders.as_deref().is_some_and(names);
+                assert_eq!(listed, named, "{} in {}: listed {listed}, named {named}", plant.name, biome.name);
+                if listed {
+                    grows_in.push(biome.name.clone());
+                }
+            }
+            assert!((1..=2).contains(&grows_in.len()), "{} grows in {grows_in:?}", plant.name);
+        }
     }
 
     #[test]
