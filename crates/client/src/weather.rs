@@ -9,7 +9,7 @@
 //! lightning bolt. docs/weather-effects.md says how each is meant to look.
 
 use bevy::prelude::*;
-use voxmar_engine::weather::{GUST_WRAP, WeatherTable, advance_gusts, gust, parse_intensity, pcg};
+use voxmar_engine::weather::{Ease as EaseData, GUST_WRAP, ShownTuning, WeatherTable, advance_gusts, gust, parse_intensity, pcg};
 use voxmar_protocol::{Nearby, THUNDER_HEARD, TICKS_PER_SECOND, WEATHER_CELL, Weather};
 
 use crate::menu::Screen;
@@ -70,6 +70,8 @@ pub struct ClientWeather {
     tick: u64,
     told_at: f64,
     strikes: Vec<Strike>,
+    /// How the shown weather follows the reports, from content.
+    easing: std::sync::Arc<Easing>,
 }
 
 /// The wind, for anything that sways or drifts with it: grass and leaves, particles,
@@ -127,48 +129,64 @@ impl Wind {
 pub const DRIFT_WRAP: f32 = 1_048_576.0;
 /// Blocks sound travels per second.
 const SOUND_SPEED: f32 = 343.0;
-/// Seconds after a command changed the weather during which the shown weather changes
-/// over at the quick pace (`QUICK`), long enough for a whole change to finish at it.
-const QUICK_FOR: f32 = 10.0;
-/// How each fraction of `Weather::fractions` follows the report (see `Ease`): cloud
-/// builds and clears over a minute, rain and hail set in and stop over twenty seconds or
-/// so, fog gathers and lifts over half a minute, lightning comes and goes within seconds.
-/// The fastest any of them changes is a full swing over `full` seconds, so even a
-/// downpour stopping at once on the server fades out here.
-const EASE: [Ease; 24] = [
-    Ease::new(20.0, 60.0), // cover
-    Ease::new(20.0, 40.0), // convection
-    Ease::new(25.0, 60.0), // cirrus
-    Ease::new(15.0, 40.0), // humidity
-    Ease::new(4.0, 10.0),  // gusts
-    Ease::new(8.0, 25.0),  // precipitation
-    Ease::new(8.0, 20.0),  // snow
-    Ease::new(8.0, 20.0),  // drizzle
-    Ease::new(4.0, 12.0),  // hail
-    Ease::new(6.0, 20.0),  // sleet
-    Ease::new(12.0, 35.0), // fog
-    Ease::new(15.0, 40.0), // ground fog
-    Ease::new(8.0, 20.0),  // dust
-    Ease::new(10.0, 40.0), // wetness
-    Ease::new(20.0, 80.0), // snow cover
-    Ease::new(25.0, 80.0), // frost
-    Ease::new(3.0, 8.0),   // lightning
-    Ease::new(6.0, 15.0),  // rainbow
-    Ease::new(10.0, 25.0), // halo
-    Ease::new(15.0, 40.0), // aurora
-    Ease::new(8.0, 20.0),  // heat haze
-    Ease::new(5.0, 15.0),  // wisps
-    Ease::new(6.0, 15.0),  // motes
-    Ease::new(8.0, 20.0),  // falling stars
-];
-/// After a command: every fraction swings fully within six seconds, still never at once.
-const QUICK: Ease = Ease { settle: 1.0, most: 1.0 / 6.0, ramp: 0.5 };
-/// The temperature (°C), the top of a layer of ground fog (blocks) and each component of
-/// the mean wind (blocks per second), with the most each changes per second.
-const TEMPERATURE: Ease = Ease { settle: 20.0, most: 0.5, ramp: 2.0 };
-const FOG_TOP: Ease = Ease { settle: 10.0, most: 3.0, ramp: 2.0 };
-const WIND: Ease = Ease { settle: 8.0, most: 1.5, ramp: 2.0 };
-const QUICK_WIND: Ease = Ease { settle: 1.0, most: 4.0, ramp: 0.5 };
+/// How the shown weather follows the server's, from `tuning: (shown: …)` in weather.ron
+/// (`voxmar_engine::weather::ShownTuning`): cloud builds and clears over a minute, rain
+/// and hail set in and stop over twenty seconds or so, fog gathers and lifts over half a
+/// minute, and for `command_for` seconds after a command everything changes over within
+/// several seconds, never at once.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Easing {
+    /// Each fraction of `Weather::fractions`.
+    fractions: [Ease; 24],
+    /// The least quick a fraction is after a command, and for how long after it.
+    command: Ease,
+    command_for: f32,
+    /// The temperature (°C), the top of a layer of ground fog (blocks) and each component
+    /// of the mean wind (blocks per second), and the wind after a command.
+    temperature: Ease,
+    fog_top: Ease,
+    wind: Ease,
+    command_wind: Ease,
+    /// Seconds after the weather's first report that readiness waits at most for the
+    /// land's air: its generator is built off the main thread, and a slow build must not
+    /// hold the game up.
+    ready_wait: f32,
+    /// Seconds a bolt stays visible.
+    bolt_life: f32,
+}
+
+impl Easing {
+    pub fn new(t: &ShownTuning) -> Self {
+        let ease = |e: EaseData| Ease { settle: e.settle, most: e.most, ramp: e.ramp };
+        Self {
+            fractions: t.swings().map(|s| Ease { settle: s.settle, most: 1.0 / s.full, ramp: t.fraction_ramp }),
+            command: Ease { settle: t.command.settle, most: 1.0 / t.command.full, ramp: t.command_ramp },
+            command_for: t.command_for,
+            temperature: ease(t.temperature),
+            fog_top: ease(t.fog_top),
+            wind: ease(t.wind),
+            command_wind: ease(t.command_wind),
+            ready_wait: t.ready_wait,
+            bolt_life: t.bolt_life,
+        }
+    }
+
+    /// The base package's, until content says otherwise: the menus run before it loads.
+    fn base() -> Self {
+        static BASE: std::sync::LazyLock<Easing> = std::sync::LazyLock::new(|| {
+            let table = WeatherTable::from_ron("base", include_str!("../../../assets/content/base/weather.ron")).expect("base weather.ron");
+            Easing::new(&table.tuning().shown)
+        });
+        BASE.clone()
+    }
+
+    /// The most the shown fraction `i` (in the order of `Weather::fractions`) changes per
+    /// second, even just after a command.
+    pub fn fastest(&self, i: usize) -> f32 {
+        self.fractions[i].quicker(self.command).most
+    }
+}
+
 /// Longest step easing is worked out in: a longer frame is split into steps this long,
 /// so the shown weather is the same at any frame rate.
 const EASE_STEP: f32 = 1.0 / 30.0;
@@ -185,11 +203,6 @@ struct Ease {
 }
 
 impl Ease {
-    /// For a fraction: settles over `settle` seconds and swings fully over at least `full`.
-    const fn new(settle: f32, full: f32) -> Self {
-        Self { settle, most: 1.0 / full, ramp: 2.0 }
-    }
-
     /// The quicker of this and `other`, for changes a command made.
     fn quicker(self, other: Ease) -> Self {
         Self { settle: self.settle.min(other.settle), most: self.most.max(other.most), ramp: self.ramp.min(other.ramp) }
@@ -213,12 +226,6 @@ impl Ease {
     }
 }
 
-/// The most the shown fraction `i` (in the order of `Weather::fractions`) changes per
-/// second, even just after a command.
-pub fn fastest(i: usize) -> f32 {
-    EASE[i].quicker(QUICK).most
-}
-
 /// How fast each eased value of the shown weather is changing.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Speeds {
@@ -230,24 +237,23 @@ struct Speeds {
 
 /// Moves `shown` (and `mean_wind`, the mean wind shown) towards `target` over `dt`
 /// seconds, quickly after a command. Pure, and the same however `dt` is split up.
-fn approach(shown: &mut Weather, mean_wind: &mut Vec2, speeds: &mut Speeds, target: &Weather, mut dt: f32, quick: bool) {
+fn approach(easing: &Easing, shown: &mut Weather, mean_wind: &mut Vec2, speeds: &mut Speeds, target: &Weather, mut dt: f32, quick: bool) {
+    let quicken = |ease: Ease| if quick { ease.quicker(easing.command) } else { ease };
     let goals = target.fractions();
     while dt > 0.0 {
         let step = dt.min(EASE_STEP);
         dt -= step;
         for (i, value) in shown.fractions_mut().into_iter().enumerate() {
-            let ease = if quick { EASE[i].quicker(QUICK) } else { EASE[i] };
-            ease.step(value, &mut speeds.fractions[i], goals[i].1, step);
+            quicken(easing.fractions[i]).step(value, &mut speeds.fractions[i], goals[i].1, step);
         }
-        let ease = |ease: Ease| if quick { ease.quicker(QUICK) } else { ease };
-        ease(TEMPERATURE).step(&mut shown.temperature, &mut speeds.temperature, target.temperature, step);
+        quicken(easing.temperature).step(&mut shown.temperature, &mut speeds.temperature, target.temperature, step);
         // A layer of fog appearing forms at its own height rather than sinking from the last.
         if shown.ground_fog < 0.01 {
             shown.fog_top = target.fog_top;
             speeds.fog_top = 0.0;
         }
-        ease(FOG_TOP).step(&mut shown.fog_top, &mut speeds.fog_top, target.fog_top, step);
-        let wind = if quick { WIND.quicker(QUICK_WIND) } else { WIND };
+        quicken(easing.fog_top).step(&mut shown.fog_top, &mut speeds.fog_top, target.fog_top, step);
+        let wind = if quick { easing.wind.quicker(easing.command_wind) } else { easing.wind };
         wind.step(&mut mean_wind.x, &mut speeds.wind.x, target.wind.x, step);
         wind.step(&mut mean_wind.y, &mut speeds.wind.y, target.wind.y, step);
     }
@@ -261,10 +267,6 @@ fn approach(shown: &mut Weather, mean_wind: &mut Vec2, speeds: &mut Speeds, targ
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WeatherReady(pub bool);
 
-/// Seconds after the weather's first report that readiness waits at most for the land's
-/// air: its generator is built off the main thread, and a slow build must not hold the
-/// game up.
-const AIR_WAIT: f32 = 5.0;
 /// The menus' sky, and what the game shows until the server reports: a fair day.
 const FAIR: Weather = Weather {
     cover: 0.35,
@@ -275,8 +277,6 @@ const FAIR: Weather = Weather {
     gusts: 0.2,
     ..Weather::NONE
 };
-/// Seconds a bolt stays visible.
-const BOLT_LIFE: f32 = 0.45;
 
 /// A lightning strike: seen at once, heard later.
 struct Strike {
@@ -332,6 +332,7 @@ impl Default for ClientWeather {
             tick: 0,
             told_at: 0.0,
             strikes: Vec::new(),
+            easing: std::sync::Arc::new(Easing::base()),
         }
     }
 }
@@ -355,7 +356,7 @@ impl ClientWeather {
             self.speeds = Speeds::default();
         }
         if quick {
-            self.quick_until = now + QUICK_FOR;
+            self.quick_until = now + self.easing.command_for;
         }
         // Bring the gusts round to the server's over a second or so, the short way round.
         let half = Vec2::splat(GUST_WRAP / 2.0);
@@ -412,7 +413,7 @@ impl ClientWeather {
     /// about 160 blocks over the ground) and how bright, 0..1. For the renderer; see
     /// docs/weather-effects.md.
     pub fn cloud_flashes(&self) -> impl Iterator<Item = (Vec3, f32)> + '_ {
-        self.strikes.iter().filter(|s| s.cloud && s.age < BOLT_LIFE * 2.0).map(|s| (s.at, pulses(s.age).min(1.0)))
+        self.strikes.iter().filter(|s| s.cloud && s.age < self.easing.bolt_life * 2.0).map(|s| (s.at, pulses(s.age).min(1.0)))
     }
 
     /// How hard it rains or snows in each weather cell around (`WEATHER_CELL` blocks
@@ -428,7 +429,7 @@ impl ClientWeather {
 
     /// The lightning bolts to draw now.
     pub fn bolts(&self) -> impl Iterator<Item = Bolt> + '_ {
-        self.strikes.iter().filter(|s| !s.cloud && s.age < BOLT_LIFE).map(|s| {
+        self.strikes.iter().filter(|s| !s.cloud && s.age < self.easing.bolt_life).map(|s| {
             let (channel, branches) = bolt_shape(s.at, s.seed);
             Bolt { channel, branches, brightness: pulses(s.age).min(1.0) }
         })
@@ -437,10 +438,20 @@ impl ClientWeather {
     /// Back to the menus' fair sky, unless a fixed weather was asked for.
     fn leave(&mut self) {
         if !self.forced {
-            *self = Self::default();
+            *self = Self { easing: self.easing.clone(), ..Self::default() };
         }
         self.shown_since = None;
         self.settled = false;
+    }
+
+    /// Eases the shown weather as content says.
+    pub fn tune(&mut self, easing: Easing) {
+        self.easing = std::sync::Arc::new(easing);
+    }
+
+    /// How the shown weather follows the reports.
+    pub fn easing(&self) -> &Easing {
+        &self.easing
     }
 
     /// Shows `weather` from now on, ignoring the server.
@@ -528,7 +539,7 @@ fn ease(
     }
     weather.strikes.retain(|s| !s.heard || s.age < 1.0);
     if let Some(target) = weather.target {
-        approach(&mut weather.current, &mut weather.mean_wind, &mut weather.speeds, &target, dt, quick);
+        approach(&weather.easing, &mut weather.current, &mut weather.mean_wind, &mut weather.speeds, &target, dt, quick);
     }
     let correction = weather.gust_error * (dt / 1.2).min(1.0);
     weather.gust_error -= correction;
@@ -555,7 +566,7 @@ fn ready(time: Res<Time>, mut weather: ResMut<ClientWeather>, air: Res<atmospher
     }
     let now = time.elapsed_secs();
     let since = *weather.shown_since.get_or_insert(now);
-    if air.sampled() || now - since >= AIR_WAIT {
+    if air.sampled() || now - since >= weather.easing.ready_wait {
         ready.0 = true;
         weather.settled = true;
         info!("weather: ready, showing {}", weather.current.summary());
@@ -608,6 +619,7 @@ mod tests {
     /// checking no frame changes any fraction faster than it may; returns the shown weather
     /// at each whole second.
     fn ease_over(from: Weather, to: Weather, seconds: f32, quick: bool, frame: impl Fn(usize) -> f32) -> Vec<Weather> {
+        let easing = Easing::base();
         let (mut shown, mut wind, mut speeds) = (from, from.wind, Speeds::default());
         let (mut t, mut n, mut seconds_out) = (0.0, 0, vec![shown]);
         while t < seconds - 1e-4 {
@@ -616,9 +628,9 @@ mod tests {
             let next_second = (t + 1e-4).floor() + 1.0;
             dt = dt.min(next_second - t);
             let before = shown.fractions();
-            approach(&mut shown, &mut wind, &mut speeds, &to, dt, quick);
+            approach(&easing, &mut shown, &mut wind, &mut speeds, &to, dt, quick);
             for (i, ((name, was), (_, now))) in before.iter().zip(shown.fractions()).enumerate() {
-                let most = if quick { fastest(i) } else { EASE[i].most };
+                let most = if quick { easing.fastest(i) } else { easing.fractions[i].most };
                 assert!((now - was).abs() <= most * dt + 1e-5, "{name} jumped by {} in {dt}s", now - was);
             }
             t += dt;
