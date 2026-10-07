@@ -82,7 +82,7 @@ fn blur(
     let wanted = match screen.get() {
         Screen::Worlds | Screen::CreateWorld | Screen::Join | Screen::Settings => 1.0,
         Screen::InGame if ui.menu_open => 1.0,
-        Screen::InGame if ui.inventory_open || ui.character_open || ui.journal_open => INVENTORY,
+        Screen::InGame if ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open => INVENTORY,
         _ => 0.0,
     };
     let step = time.delta_secs() / EASE;
