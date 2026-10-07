@@ -1352,3 +1352,18 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
     assert_eq!(client.earned[earned..], [80, 180], "one table's Engineering, once, then the quest's reward");
 }
+
+/// A server started on a world another server holds open answers its first player: the
+/// land round spawn, with its rivers, trails and settlements, is planned once per process
+/// (`Overworld::shared`, whose sharing worldgen's `servers_on_one_world_share_its_planning`
+/// proves), so both stand their players on the same spot. The time is only a backstop: a
+/// busy machine stretches it.
+#[test]
+fn a_second_server_on_the_same_world_answers_a_join() {
+    let first = Client::join();
+    let started = Instant::now();
+    let second = Client::join();
+    let took = started.elapsed();
+    assert!(took < Duration::from_secs(10), "joining a second server on the same world took {took:?}");
+    assert_eq!(first.position, second.position);
+}
