@@ -85,7 +85,7 @@ for "Armour ×", and "Combat feel" for shields and dodges by weight). Data in `c
 
 | Set | Weight | Defence | Material × | Whole set | Made from |
 | --- | --- | --- | --- | --- | --- |
-| Hide wraps (hood, tunic, trousers, gloves, boots) | Light | 1 | 0.5 | 18 | 25 hide, Crafting 1 |
+| Hide wraps (hood, tunic, trousers, gloves, boots) | Light | 1 | 0.5 | 19 (3 + 7 + 5 + 2 + 2, each piece rounded) | 25 hide, Crafting 1 |
 | Copper (helmet, chestplate, leggings, gauntlets, boots) | Medium | 10 | 0.7 | 25 | 25 copper ingots, Engineering 5 |
 | Bronze scale (helmet, scale shirt, leggings, gauntlets, boots) | Medium | 15 | 1.0 | 36 | 25 bronze ingots, Engineering 12 |
 | Chainmail (coif, shirt, leggings, gloves, boots) | Medium, resists slash | 20 | 1.2 | 44 | 25 iron ingots, Engineering 15 |

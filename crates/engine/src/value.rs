@@ -7,7 +7,7 @@
 //! (`server::death`); shops price by it (P51). Every number is content: each package's
 //! `value.ron`, field by field, the last package's winning.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::Deserialize;
 
@@ -25,8 +25,13 @@ pub struct Value {
     pub step: u32,
     /// Each rarity's factor, Common to Legendary.
     pub rarity: [u32; 5],
-    /// A made thing is worth at least this many times what went into one of it.
+    /// A made thing is worth at least this many times what went into one of it, a raw
+    /// material in it (nothing makes, wears or wields it) counting `raw` coins times its
+    /// rarity's factor (the wiki, P51 draft 73).
     pub crafted: f32,
+    pub raw: f32,
+    /// Things worth a set number of coins whatever their level (a gold coin is one).
+    pub fixed: BTreeMap<String, u32>,
     /// What dying keeps.
     pub death: Death,
 }
@@ -51,7 +56,7 @@ impl Default for Death {
 
 impl Default for Value {
     fn default() -> Self {
-        Self { base: 2.0, growth: 2.5, per: 15.0, round_above: 100, step: 5, rarity: [1, 2, 5, 12, 30], crafted: 1.25, death: Death::default() }
+        Self { base: 2.0, growth: 2.5, per: 15.0, round_above: 100, step: 5, rarity: [1, 2, 5, 12, 30], crafted: 1.25, raw: 0.5, fixed: BTreeMap::new(), death: Death::default() }
     }
 }
 
@@ -66,6 +71,8 @@ pub struct ValueFile {
     pub step: Option<u32>,
     pub rarity: Option<RarityFactors>,
     pub crafted: Option<f32>,
+    pub raw: Option<f32>,
+    pub fixed: BTreeMap<String, u32>,
     pub death: Option<Death>,
 }
 
@@ -99,6 +106,8 @@ impl Value {
                 value.rarity = [r.common, r.uncommon, r.rare, r.very_rare, r.legendary];
             }
             value.crafted = file.crafted.unwrap_or(value.crafted).max(0.0);
+            value.raw = file.raw.unwrap_or(value.raw).max(0.0);
+            value.fixed.extend(file.fixed);
             value.death = file.death.unwrap_or(value.death);
         }
         value
@@ -116,8 +125,9 @@ impl Value {
     }
 }
 
-/// What one of `item` is worth: its level's price times its rarity's factor, and for a
-/// made thing at least `crafted` times what goes into one of it by its cheapest recipe.
+/// What one of `item` is worth: what `fixed` says, or its level's price times its rarity's
+/// factor, and for a made thing at least `crafted` times what goes into one of it by its
+/// cheapest recipe.
 pub fn worth(content: &crate::content::Content, item: BlockId) -> u32 {
     worth_in(content, item, &mut HashMap::new())
 }
@@ -129,20 +139,36 @@ pub fn worth_in(content: &crate::content::Content, item: BlockId, known: &mut Ha
         return coins;
     }
     let value = &content.value;
+    if let Some(&coins) = value.fixed.get(&content.blocks.def(item).name) {
+        known.insert(item, coins);
+        return coins;
+    }
     let curve = value.of(level_of(content, item), content.blocks.def(item).rarity);
     known.insert(item, curve);
     let mut made: Option<u32> = None;
     for recipe in content.recipes.iter().filter(|r| r.output == item && r.count > 0) {
-        let mut inputs = 0u64;
+        let mut inputs = 0.0f32;
         for cell in recipe.alternatives().into_iter().flatten() {
-            inputs += cell.iter().map(|&i| worth_in(content, i, known)).min().unwrap_or(0) as u64;
+            let input = |i: BlockId, known: &mut HashMap<BlockId, u32>| match raw(content, i) {
+                true => value.raw * value.rarity[content.blocks.def(i).rarity as usize] as f32,
+                false => worth_in(content, i, known) as f32,
+            };
+            inputs += cell.iter().map(|&i| input(i, known)).reduce(f32::min).unwrap_or(0.0);
         }
-        let each = (inputs as f32 / recipe.count as f32 * value.crafted).round() as u32;
+        let each = (inputs / recipe.count as f32 * value.crafted).round() as u32;
         made = Some(made.map_or(each, |m| m.min(each)));
     }
     let coins = curve.max(made.unwrap_or(0));
     known.insert(item, coins);
     coins
+}
+
+/// Whether `item` is a raw material: worth no set price, and nothing makes, wears or wields it.
+fn raw(content: &crate::content::Content, item: BlockId) -> bool {
+    !content.value.fixed.contains_key(&content.blocks.def(item).name)
+        && content.combat.wear_level(item).is_none()
+        && content.combat.weapon(item).is_none()
+        && !content.recipes.iter().any(|r| r.output == item)
 }
 
 /// The level of `item` for its worth: the most of what wears or wields it, and the least
@@ -180,12 +206,16 @@ mod tests {
         let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
         let id = |name: &str| content.blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("{name}"));
         let of = |name: &str| worth(&content, id(name));
-        for name in ["dirt", "stick", "iron_ingot", "iron_pickaxe", "iron_sword", "chainmail_shirt", "wooden_shield", "bread"] {
+        for name in ["dirt", "stick", "iron_ingot", "iron_pickaxe", "iron_sword", "chainmail_shirt", "wooden_shield", "bread", "hearthstone"] {
             println!("{name}: level {} worth {}", level_of(&content, id(name)), of(name));
         }
         assert!(of("iron_pickaxe") > 3 * of("iron_ingot"), "a pickaxe is worth more than its three ingots");
         assert!(of("iron_sword") >= content.value.of(20, Rarity::Common), "a sword is worth at least the level that wields it");
         assert!(of("chainmail_shirt") > of("bread") && of("chainmail_shirt") > of("dirt"));
+        assert_eq!(of("gold_coin"), 1, "a coin is worth itself");
+        // The wiki's P51 (draft 73): raw materials count 0.5 each inside a made thing.
+        let pinned = ["hearthstone", "iron_ingot", "iron_sword", "iron_pickaxe", "chainmail_shirt", "bread"].map(of);
+        assert_eq!(pinned, [5, 5, 15, 24, 50, 2], "hearthstone, ingot, sword, pickaxe, chainmail shirt, bread");
         // Every item has a worth, and none is worth nothing.
         let mut known = HashMap::new();
         for item in (0..content.blocks.len() as u16).map(BlockId) {

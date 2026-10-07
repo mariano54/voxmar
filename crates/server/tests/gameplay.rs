@@ -30,6 +30,8 @@ struct Client {
     allow_flight: bool,
     /// The last position the server corrected us to.
     teleported: Option<Vec3>,
+    /// Teleports the server sent, ever.
+    teleports: u32,
     health: u8,
     max_health: u8,
     vitals: voxmar_engine::vitals::Vitals,
@@ -112,6 +114,7 @@ impl Client {
             admin: false,
             allow_flight: false,
             teleported: None,
+            teleports: 0,
             health: 0,
             max_health: 0,
             vitals: Default::default(),
@@ -175,6 +178,7 @@ impl Client {
             ServerMessage::Teleport { position } => {
                 self.position = position;
                 self.teleported = Some(position);
+                self.teleports += 1;
             }
             ServerMessage::Column { pos, column } => self.world.insert(pos, column),
             ServerMessage::BlockChanged { pos, block } => {
@@ -1376,6 +1380,17 @@ fn a_swing_is_dropped_when_its_weapon_leaves_the_hand() {
     client.pump_until(|c| c.blows == 1);
 }
 
+/// Whether a dodge proposed now is taken: a second one at once must then be refused by its
+/// cooldown, so exactly one Teleport comes back (two: the first was refused too; none: the
+/// cooldown did not hold).
+fn dodge_taken(client: &mut Client) -> bool {
+    let before = client.teleports;
+    client.propose("core:dodge", ActionTarget::None);
+    client.propose("core:dodge", ActionTarget::None);
+    client.wait_server(1);
+    client.teleports - before == 1
+}
+
 #[test]
 fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
     let mut client = Client::join();
@@ -1395,16 +1410,11 @@ fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
     let landed = client.position - Vec3::Y;
     client.connection.send(ClientMessage::Input(PlayerInput { position: landed, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.position = landed;
-    client.propose("core:dodge", ActionTarget::None);
-    client.wait_server(1);
-    assert_eq!(client.teleported, None, "a dodge as the player landed was refused");
-    // On the ground it is taken: nothing puts us back.
+    assert!(dodge_taken(&mut client), "a dodge as the player landed was refused");
+    // On the ground it is taken.
     client.ok("/tp ~ ~ ~");
-    client.wait_server(1);
-    client.teleported = None;
-    client.propose("core:dodge", ActionTarget::None);
-    client.wait_server(1);
-    assert_eq!(client.teleported, None, "a dodge on the ground was refused");
+    client.wait_server(2);
+    assert!(dodge_taken(&mut client), "a dodge on the ground was refused");
 }
 
 #[test]
@@ -1687,15 +1697,17 @@ fn a_dodge_waits_longer_in_heavier_armour() {
     // less the 0.1 a client's clock may run ahead) the second is taken; in chainmail
     // (medium, 1.2 s less 0.1) it is refused and puts us back.
     let twice = |client: &mut Client| {
-        client.teleported = None;
+        let before = client.teleports;
         client.propose("core:dodge", ActionTarget::None);
         let first = Instant::now();
-        client.pump_until(|_| first.elapsed() > Duration::from_millis(1000));
+        // One at once is refused by the first's cooldown: the first was taken.
         client.propose("core:dodge", ActionTarget::None);
-        client.wait_server(1);
-        let refused = client.teleported.is_some();
+        client.pump_until(|c| c.teleports > before);
+        client.pump_until(|_| first.elapsed() > Duration::from_millis(1000));
+        let refused = !dodge_taken(client);
+        assert_eq!(client.teleports - before, if refused { 3 } else { 2 }, "the first dodge was refused");
         // Past any cooldown before the next pair.
-        client.wait_server(1);
+        client.wait_server(2);
         refused
     };
     assert!(!twice(&mut client), "unarmoured, a dodge 1.0 s after the last was refused");

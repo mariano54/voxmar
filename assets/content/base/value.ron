@@ -3,7 +3,7 @@
 // the nearest `step` above `round_above`, times the rarity's factor. A thing's level is what
 // it takes to use it: the Defence that wears it, the level that wields it, or the lowest
 // level of a recipe that makes it; a made thing is worth at least `crafted` times what goes
-// into one of it, by its cheapest recipe. Death keeps the `kept` units worth most (`warded` with a
+// into one of it, by its cheapest recipe, raw materials counting `raw` each. Death keeps the `kept` units worth most (`warded` with a
 // grave-ward amulet, kept besides), counted one at a time, so a stack or a purse keeps one;
 // the rest lies `grave` seconds where they fell, theirs alone (`warded_grave` warded).
 (
@@ -14,5 +14,10 @@
     step: 5,
     rarity: (common: 1, uncommon: 2, rare: 5, very_rare: 12, legendary: 30),
     crafted: 1.25,
+    // A raw material (nothing makes, wears or wields it) counts this many coins times its
+    // rarity's factor inside a made thing (P51, draft 73); its own price is the curve's.
+    raw: 0.5,
+    // Worth a set number of coins whatever their level.
+    fixed: {"base:gold_coin": 1},
     death: (kept: 3, warded: 4, grave: 1800.0, warded_grave: 3600.0),
 )
