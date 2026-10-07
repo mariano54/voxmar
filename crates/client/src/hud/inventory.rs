@@ -49,7 +49,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, fit_grid, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item).after(InventorySystems))
+                ((toggle, fit_grid, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -90,6 +90,23 @@ struct LastClick {
 struct InventoryScreen;
 #[derive(Component)]
 struct InventorySlot(usize);
+/// The faint mark in an empty worn well of what it takes.
+#[derive(Component)]
+struct WornGlyph(usize);
+
+/// The mark for worn slot `slot`, if it is one, by `combat::Slot`'s order.
+fn worn_glyph(slot: usize) -> Option<Piece> {
+    let at = slot.checked_sub(WORN).filter(|&i| slot <= LAST)?;
+    [Piece::WornHead, Piece::WornBody, Piece::WornLegs, Piece::WornHands, Piece::WornFeet, Piece::WornShield].get(at).copied()
+}
+
+/// Each worn well's mark shows while nothing is worn there.
+fn show_worn_glyphs(shown: Res<ShownInventory>, mut glyphs: Query<(&WornGlyph, &mut Visibility)>) {
+    for (glyph, mut visibility) in &mut glyphs {
+        visibility.set_if_neq(if shown.0.get(glyph.0).is_some() { Visibility::Hidden } else { Visibility::Inherited });
+    }
+}
+
 /// A slot a screenshot shows the tooltip of, as if the pointer were over it (`--hover-slot`).
 #[derive(Resource)]
 pub struct HoverSlot(pub usize);
@@ -143,8 +160,15 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             };
             let spawn_slot = |grid: &mut ChildSpawnerCommands, slot: usize| {
                 let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
-                grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image()))
-                    .with_children(|cell| slot_contents(cell, font, slot));
+                grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image())).with_children(|cell| {
+                    // A worn well shows faintly what it takes, under the piece worn in it.
+                    if let Some(glyph) = worn_glyph(slot) {
+                        let inset = (SLOT - 16.0 * PX) / 2.0;
+                        let at = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
+                        cell.spawn((at, glyph.image(), WornGlyph(slot)));
+                    }
+                    slot_contents(cell, font, slot)
+                });
             };
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
