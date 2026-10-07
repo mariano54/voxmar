@@ -25,8 +25,8 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-// 27: armour (PR #10) takes 26 and lands first.
-pub const PROTOCOL_VERSION: u32 = 27;
+// 28: teleports are numbered (27 is the server hardening, 26 armour).
+pub const PROTOCOL_VERSION: u32 = 28;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -80,6 +80,9 @@ pub struct PlayerInput {
     pub pitch: f32,
     pub selected_slot: u8,
     pub flying: bool,
+    /// The `seq` of the last `Teleport` the client applied: an input sent before the client
+    /// saw a teleport is stale, and the server drops it rather than undo the teleport.
+    pub teleport: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -107,8 +110,9 @@ pub enum ServerMessage {
     PlayerState { health: Health, inventory: Inventory, skills: Skills, vitals: Vitals },
     /// The player earned `tenths` of experience in `skill`, for the interface to show.
     Xp { skill: SkillId, tenths: u32 },
-    /// Authoritative position, after a rejected move or a respawn.
-    Teleport { position: Vec3 },
+    /// Authoritative position, after a rejected move, a command or a respawn; `seq` counts
+    /// the player's teleports, for `PlayerInput::teleport`.
+    Teleport { position: Vec3, seq: u32 },
     Players { players: Vec<PlayerView> },
     /// The clocks, every second and whenever a command changes them: `tick` counts
     /// simulation ticks since the world began, at `TICKS_PER_SECOND`, and `day` is the

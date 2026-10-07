@@ -30,6 +30,8 @@ struct Client {
     allow_flight: bool,
     /// The last position the server corrected us to.
     teleported: Option<Vec3>,
+    /// The last teleport applied, which inputs echo.
+    teleports: u32,
     health: u8,
     max_health: u8,
     vitals: voxmar_engine::vitals::Vitals,
@@ -116,6 +118,7 @@ impl Client {
             admin: false,
             allow_flight: false,
             teleported: None,
+            teleports: 0,
             health: 0,
             max_health: 0,
             vitals: Default::default(),
@@ -172,8 +175,9 @@ impl Client {
                 self.admin = admin;
                 self.allow_flight = allow_flight;
             }
-            ServerMessage::Teleport { position } => {
+            ServerMessage::Teleport { position, seq } => {
                 self.position = position;
+                self.teleports = seq;
                 self.teleported = Some(position);
             }
             ServerMessage::Column { pos, column } => self.world.insert(pos, column),
@@ -264,7 +268,7 @@ impl Client {
     }
 
     fn send_position(&self, position: Vec3, flying: bool) {
-        self.connection.send(ClientMessage::Input(PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }));
+        self.connection.send(ClientMessage::Input(PlayerInput { teleport: self.teleports, position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }));
     }
 
     /// Runs a command and returns the console lines it answers with.
@@ -320,7 +324,7 @@ fn break_and_place_blocks() {
 
     // Place the first hotbar item back on the block underneath the hole.
     let item = client.inventory.get(0).unwrap();
-    client.connection.send(ClientMessage::Input(PlayerInput {
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports,
         position: client.position,
         yaw: 0.0,
         pitch: 0.0,
@@ -373,7 +377,7 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     let farmland = blocks.expect("base:farmland");
     assert_eq!(client.inventory.get(0).map(|s| s.item), blocks.id("base:wheat_seeds"));
     let hold = |client: &Client, slot: u8| {
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
 
     // Seeds go on farmland only: sowing on dirt is refused, and a hoe tills it.
@@ -478,7 +482,7 @@ fn falling_hurts() {
     // A tick or two up there, so the fall is counted from the top.
     client.after_ticks(2);
     for y in (0..height).rev() {
-        client.connection.send(ClientMessage::Input(PlayerInput {
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports,
             position: start + Vec3::Y * y as f32,
             yaw: 0.0,
             pitch: 0.0,
@@ -832,7 +836,7 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
             assert!(client.damage.len() - start < 80, "{} blows landed {landed}", client.damage.len() - start);
             let at = client.creatures[&id].position;
             client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
-            client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+            client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
             std::thread::sleep(Duration::from_millis(650));
             let blows = client.blows;
             client.propose("core:attack", ActionTarget::Creature(id));
@@ -859,7 +863,7 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
     client.ok("/give wheat 64");
     client.pump_until(|c| c.creatures.values().filter(|v| v.species == hen).count() == 2 && c.inventory.get(0).is_some_and(|s| s.item == wheat));
     // Hold the wheat.
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let hens: Vec<u32> = client.creatures.iter().filter(|(_, v)| v.species == hen).map(|(&id, _)| id).collect();
     // Feed each until it is ours: three to five feedings at level 1.
     for &id in &hens {
@@ -1020,7 +1024,7 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     let by_hand = (client.content.blocks.info(iron).hardness * TICKS_PER_SECOND as f32) as u64 + 2;
     let mine = |client: &Client| client.propose("core:mine", ActionTarget::Block { block: ore, face: Face::PosY });
     let hold = |client: &Client, slot: u8| {
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
     // At Mining 1, even with the pickaxe: refused.
     hold(&client, 0);
@@ -1091,7 +1095,7 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
         client.ok(line);
     }
     client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(0).is_some_and(|s| s.item == c.content.blocks.expect("base:fishing_rod")));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
     // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
     for _ in 0..6 {
@@ -1118,7 +1122,7 @@ fn a_seed_pouch_carries_seeds_in_one_slot_and_sows_from_it() {
     client.pump_until(|c| c.inventory.pouched(seeds) == 100 && c.world.block(ground) == c.content.blocks.id("base:farmland"));
     assert!(client.inventory.slots.iter().flatten().all(|s| s.item != seeds), "seeds took slots with a pouch carried");
     // The pouch in hand sows its seeds.
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && c.inventory.pouched(seeds) == 99);
     // Right click empties it into the pack.
@@ -1254,7 +1258,7 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     client.pump_until(|c| c.world.block(core) == Some(crucible) && c.inventory.get(0).is_some_and(|s| s.item == ore && s.count == 2));
     let smelt = |client: &mut Client| {
         client.chat.clear();
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
         client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
     };
     // A crucible alone smelts nothing, and says what the kiln needs.
@@ -1301,7 +1305,7 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     let (gravel, flint) = (client.content.blocks.expect("base:gravel"), client.content.blocks.expect("base:flint"));
     let shovel = client.content.blocks.expect("base:iron_shovel");
     client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == shovel));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     // One break in eight gives flint: in sixty, all but certainly some.
     let mut flints = 0;
     for _ in 0..60 {
@@ -1617,6 +1621,28 @@ fn nobody_hovers_over_a_ravine() {
         let next = ticks(&client) + 1;
         client.pump_until(|c| ticks(c) >= next);
     }
+}
+
+#[test]
+fn a_move_sent_before_a_teleport_does_not_undo_it() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let to = start + Vec3::X * 5.0;
+    // The command and a step from where they stood, sent together: the step was made
+    // before the client knew of the teleport, and is well within a burst back from it.
+    client.connection.send(ClientMessage::Command { line: format!("/tp {} {} {}", to.x, to.y, to.z) });
+    client.send_position(start + Vec3::X * 0.1, false);
+    client.pump_until(|c| c.position == to);
+    client.after_ticks(2);
+    // Where the server has them: a teleport to where they are says.
+    client.teleported = None;
+    client.connection.send(ClientMessage::Command { line: "/tp ~ ~ ~".into() });
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported, Some(to), "the stale step undid the teleport");
+    // Moves sent after it count as ever.
+    client.teleported = None;
+    client.send_position(to + Vec3::X * 0.2, false);
+    assert!(client.all_accepted(), "{:?}", client.teleported);
 }
 
 #[test]
@@ -2010,7 +2036,7 @@ fn breaking_a_sprout_teaches_nothing_and_sowing_pays_at_harvest() {
     }
     let (seeds, sprout) = (client.content.blocks.expect("base:wheat_seeds"), client.content.blocks.expect("base:wheat_crop_0"));
     client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == seeds) && c.world.block(ground) == c.content.blocks.id("base:farmland"));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let earned = client.earned.len();
     for _ in 0..3 {
         client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
@@ -2031,7 +2057,7 @@ fn a_placed_wild_flower_gives_itself_back_and_no_forage() {
     }
     let moonbloom = client.content.blocks.expect("base:moonbloom");
     client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == moonbloom) && c.world.block(ground) == c.content.blocks.id("base:grass_block"));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(moonbloom));
     let earned = client.earned.len();

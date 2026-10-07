@@ -82,6 +82,8 @@ pub struct LocalPlayer {
     pub journal: voxmar_engine::journal::Journal,
     /// Every quest's state, as the server tells it (the quest book's data).
     pub quests: Vec<voxmar_engine::quest::QuestState>,
+    /// The last teleport applied, which inputs echo (`PlayerInput::teleport`).
+    pub teleports: u32,
 }
 
 impl Default for LocalPlayer {
@@ -114,6 +116,7 @@ impl Default for LocalPlayer {
             seed: 0,
             journal: Default::default(),
             quests: Vec::new(),
+            teleports: 0,
         }
     }
 }

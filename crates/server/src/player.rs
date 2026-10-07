@@ -122,6 +122,9 @@ pub struct Player {
     /// or a respawn, starts afresh); the height they last stood, swam or flew at, which on
     /// foot they may rise above by a jump only, whether that was in water, and when.
     pub accepted: Vec3,
+    /// How many times the server has moved the player (`Player::teleport`); inputs that
+    /// do not echo it are stale.
+    pub teleports: u32,
     pub support: Support,
     /// The last place they stood on ground out of lava: where a death in the void or in
     /// lava leaves their things (`Server::grave_site`).
@@ -183,6 +186,7 @@ impl Player {
             budgets: Budgets::default(),
             budget_at: None,
             accepted: spawn,
+            teleports: 0,
             support: Support { y: spawn.y, fluid: false, at: None },
             last_ground: None,
             connected_tick: tick,
@@ -223,6 +227,14 @@ impl Player {
         if !self.dirty.iter().any(|d| d.name == decl.name) {
             self.dirty.push(decl);
         }
+    }
+
+    /// Moves the player to `position` and tells their client, numbering the teleport so
+    /// inputs they sent before seeing it are dropped (`PlayerInput::teleport`).
+    pub fn teleport(&mut self, position: Vec3) {
+        self.position = position;
+        self.teleports = self.teleports.wrapping_add(1);
+        self.connection.send(ServerMessage::Teleport { position, seq: self.teleports });
     }
 
     /// Whether a player playing from elsewhere has sent nothing, not even the keepalive
@@ -523,6 +535,11 @@ impl Server {
         if !player.health.alive() || !input.position.is_finite() || !input.yaw.is_finite() || !input.pitch.is_finite() {
             return;
         }
+        // Sent before the client saw the server move them: judged from where they were
+        // moved to, it could undo a short teleport, so it counts for nothing.
+        if input.teleport != player.teleports {
+            return;
+        }
         // Quicker on foot as their effects say, as the client moves them.
         let tuning = &self.content.movement.on_foot(player.modifiers.speed.max(1.0));
         let flying = input.flying && player.allow_flight;
@@ -604,10 +621,10 @@ impl Server {
         } else {
             player.budgets = budgets;
             if let_down && lowered != from {
-                player.position = lowered;
                 player.accepted = lowered;
             }
-            player.connection.send(ServerMessage::Teleport { position: player.position });
+            let back = if let_down { lowered } else { player.position };
+            player.teleport(back);
         }
     }
 

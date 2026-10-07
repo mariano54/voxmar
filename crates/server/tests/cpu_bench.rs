@@ -39,7 +39,7 @@ fn streaming_at_four_times_flight_speed() {
     let mut position = None;
     let mut columns = 0usize;
     let speed = content.movement.fly_sprint_speed * 4.0 * 0.9;
-    let (mut started, mut last_input) = (None::<Instant>, Instant::now());
+    let (mut started, mut last_input, mut teleports) = (None::<Instant>, Instant::now(), 0);
     loop {
         while let Ok(Some(message)) = connection.try_recv() {
             match message {
@@ -51,6 +51,8 @@ fn streaming_at_four_times_flight_speed() {
                 ServerMessage::Unload { pos } => {
                     world.remove(pos);
                 }
+                // Flying on regardless, as before, but echoing it so the inputs count.
+                ServerMessage::Teleport { seq, .. } => teleports = seq,
                 _ => {}
             }
         }
@@ -64,7 +66,7 @@ fn streaming_at_four_times_flight_speed() {
         if dt >= 0.05 {
             *at += Vec3::X * speed * dt;
             last_input = Instant::now();
-            connection.send(ClientMessage::Input(PlayerInput { position: *at, yaw: -std::f32::consts::FRAC_PI_2, pitch: 0.0, selected_slot: 0, flying: true }));
+            connection.send(ClientMessage::Input(PlayerInput { position: *at, yaw: -std::f32::consts::FRAC_PI_2, pitch: 0.0, selected_slot: 0, flying: true, teleport: teleports }));
         }
         std::thread::sleep(Duration::from_millis(1));
     }

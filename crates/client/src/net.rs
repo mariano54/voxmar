@@ -246,8 +246,9 @@ pub(crate) fn receive(
                     player.dead = false;
                 }
             }
-            ServerMessage::Teleport { position } => {
+            ServerMessage::Teleport { position, seq } => {
                 player.position = position;
+                player.teleports = seq;
                 player.velocity = Vec3::ZERO;
             }
             ServerMessage::Players { players } => {
@@ -334,6 +335,7 @@ fn input(player: &LocalPlayer) -> PlayerInput {
         pitch: player.pitch,
         selected_slot: player.selected as u8,
         flying: player.flying,
+        teleport: player.teleports,
     }
 }
 

@@ -491,6 +491,8 @@ struct Observer {
     moved: bool,
     /// Where the server says the other players are.
     others: FxHashMap<PlayerId, Vec3>,
+    /// The last teleport applied, which its inputs echo.
+    teleports: u32,
     /// What the server answered the observer's commands.
     replies: Vec<voxmar_engine::lang::Words>,
 }
@@ -501,7 +503,7 @@ impl Observer {
         net.server()?.connections().send(server_side).ok()?;
         connection.send(ClientMessage::Hello { name: "gate-observer".into(), protocol: PROTOCOL_VERSION, content, admin_token: None });
         connection.send(ClientMessage::Settings { view_distance: 2, fly_speed: 1.0 });
-        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), replies: Vec::new() })
+        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), teleports: 0, replies: Vec::new() })
     }
 
     /// Applies what the server sent, and keeps the observer floating where it was put.
@@ -513,7 +515,10 @@ impl Observer {
                         self.id = Some(player);
                         self.position = Some(position);
                     }
-                    ServerMessage::Teleport { position } => self.position = Some(position),
+                    ServerMessage::Teleport { position, seq } => {
+                        self.position = Some(position);
+                        self.teleports = seq;
+                    }
                     ServerMessage::Column { pos, column } => self.world.insert(pos, column),
                     ServerMessage::Unload { pos } => {
                         self.world.remove(pos);
@@ -537,7 +542,7 @@ impl Observer {
             }
         }
         if let Some(position) = self.position {
-            let input = PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: true };
+            let input = PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: true, teleport: self.teleports };
             self.connection.send(ClientMessage::Input(input));
         }
         Ok(())
