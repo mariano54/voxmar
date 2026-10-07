@@ -5,4 +5,7 @@
     "block.base.mv_cable": "MV cable",
     "block.base.lv_transformer": "LV transformer",
     "block.base.mv_battery_bank": "MV battery bank",
+    "block.base.hv_cable": "HV cable",
+    "block.base.mv_transformer": "MV transformer",
+    "block.base.hv_battery_bank": "HV battery bank",
 }

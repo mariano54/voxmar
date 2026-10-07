@@ -186,11 +186,11 @@ pub struct MachineView {
 }
 
 impl Factory {
-    /// Adds a machine at `pos` if `block` is one; returns whether it was. A processor
-    /// starts able to work, a generator that needs the world (water, wind) unable until
-    /// told otherwise ([`Factory::set_condition`]).
+    /// Adds a machine at `pos` if `block` is one; returns whether it was. A processor or a
+    /// converter starts able to work, a generator that needs the world (water, wind) unable
+    /// until told otherwise ([`Factory::set_condition`]).
     pub fn insert(&mut self, pos: IVec3, block: BlockId, machines: &MachineRegistry) -> bool {
-        let condition = if machines.get(block).is_some_and(Machine::is_processor) { 1.0 } else { 0.0 };
+        let condition = if machines.get(block).is_some_and(|m| m.is_processor() || m.converts()) { 1.0 } else { 0.0 };
         self.insert_state(pos, block, MachineState { condition, ..MachineState::default() }, machines)
     }
 
@@ -756,6 +756,13 @@ fn work(
                 Some(Source::FlowingWater | Source::Wind | Source::Walked) => {
                     state.status = if state.condition <= 0.0 { Status::NoSource } else if used > 0.0 { Status::Generating } else { Status::Idle };
                 }
+                // A converter whose structure is not standing (a turbine hall's) neither takes
+                // nor gives.
+                _ if state.condition <= 0.0 => {
+                    state.status = Status::Incomplete;
+                    state.load = 0.0;
+                    state.supplied = 0.0;
+                }
                 // A converter or transformer: the share of its input it got, it gives next step.
                 _ => {
                     state.supplied = value(1).max(0.0);
@@ -1124,6 +1131,27 @@ mod tests {
         let (_, boiler) = factory.get(IVec3::ZERO).unwrap();
         assert_eq!(boiler.fuel.map(|f| f.count), Some(3), "with nothing to crush, nothing burns");
         assert_eq!(boiler.status, Status::Idle);
+    }
+
+    #[test]
+    fn a_converter_whose_structure_is_down_neither_takes_nor_gives() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["boiler", "pipe", "engine", "shaft", "mill"]);
+        factory.put(IVec3::ZERO, ItemStack { item: t.id("log"), count: 4 }, &t.machines);
+        feed(&t, &mut factory, 4, "ore", 1);
+        // An engine stands able, as a converter needs nothing of the world.
+        assert_eq!(factory.get(IVec3::new(2, 0, 0)).unwrap().1.condition, 1.0);
+        // Told its structure is down (a turbine hall's), it gives nothing and burns nothing.
+        factory.set_condition(IVec3::new(2, 0, 0), 0.0);
+        run(&t, &mut factory, 3.0);
+        assert_eq!(factory.get(IVec3::new(2, 0, 0)).unwrap().1.status, Status::Incomplete);
+        assert_eq!(made(&t, &factory, 4, "dust"), 0);
+        assert_eq!(factory.get(IVec3::ZERO).unwrap().1.fuel.map(|f| f.count), Some(3), "one log lit, none burnt for nothing");
+        // Standing again, it turns the mill.
+        factory.set_condition(IVec3::new(2, 0, 0), 1.0);
+        run(&t, &mut factory, 6.0);
+        assert_eq!(made(&t, &factory, 4, "dust"), 1);
     }
 
     #[test]

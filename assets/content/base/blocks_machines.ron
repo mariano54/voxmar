@@ -131,6 +131,28 @@
             name: "mv_battery_bank", sound: Stone, textures: Sides(top: "mv_battery_bank_top", bottom: "iron_casing", side: "mv_battery_bank_side"),
             hardness: 4.0, color: (100, 80, 110), tags: ["machine", "building"],
         ),
+        // The HV age: a turbine hall (a multiblock of turbine casing round its core) gives HV
+        // from steam; HV cable and banks carry and keep it; MV transformers step it down.
+        (
+            name: "turbine_casing", sound: Stone, textures: All("turbine_casing"),
+            hardness: 4.0, color: (90, 100, 115), tags: ["building"],
+        ),
+        (
+            name: "turbine_hall", sound: Stone, textures: Sides(top: "turbine_hall_top", bottom: "turbine_casing", side: "turbine_hall_side"),
+            hardness: 4.5, color: (90, 105, 125), tags: ["machine", "multiblock_core", "building"],
+        ),
+        (
+            name: "hv_cable", sound: Wood, textures: Column(end: "hv_cable_end", side: "hv_cable_side"),
+            hardness: 1.0, color: (90, 80, 40), tags: ["machine", "building"],
+        ),
+        (
+            name: "mv_transformer", sound: Stone, textures: Sides(top: "mv_transformer_top", bottom: "mv_transformer_bottom", side: "mv_transformer_side"),
+            hardness: 4.0, color: (80, 90, 110), tags: ["machine", "building"],
+        ),
+        (
+            name: "hv_battery_bank", sound: Stone, textures: Sides(top: "hv_battery_bank_top", bottom: "iron_casing", side: "hv_battery_bank_side"),
+            hardness: 4.5, color: (110, 100, 70), tags: ["machine", "building"],
+        ),
     ],
     families: [
         // Coke: coal baked in a coke oven, which a blast furnace needs; it burns as long as

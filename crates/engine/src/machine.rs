@@ -400,6 +400,12 @@ impl Machine {
         matches!(self.role, Role::Processor { .. })
     }
 
+    /// Whether it turns power of one network into another's (a converting generator or a
+    /// transformer): it needs nothing of the world, unless it is a multiblock's core.
+    pub fn converts(&self) -> bool {
+        matches!(self.role, Role::Generator { source: Source::Converts { .. }, .. } | Role::Transformer { .. })
+    }
+
     /// The stacks it holds of what goes in and of what it made, if it is a processor.
     pub fn slots(&self) -> (usize, usize) {
         match self.role {

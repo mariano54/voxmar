@@ -45,6 +45,7 @@ Everything a mod might want to change is in that data, not in code.
 | Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore); the Coke Oven (a multiblock of kiln bricks three on a side round a hollow middle: coal into coke by its own heat, 30 s); the Blast Furnace (the bloomery's ring four high, on rotation: two iron ore and a coke into four ingots, two an ore, ore only); sawmill (on rotation: a log into six planks of its wood on average, half again an axe's) |
 | LV | Dynamo (rotation to LV), LV cable, battery bank | Electric furnace, macerator (2 dust, twice as fast), ore washer (3 dust, half as fast, needs water beside it) |
 | MV | Steam turbine (steam to MV), MV cable, MV battery bank, LV transformer (MV in on top, LV out of the other faces) | LV machines through a transformer |
+| HV | The Turbine Hall (a multiblock of turbine casing five long, three wide and three high, hollow in the middle, its core in the front face: steam to HV, 128 a step from 128 steam), HV cable, HV battery bank, MV transformer (HV in on top, MV out of the other faces) | MV and LV machines through transformers |
 
 ## How power moves
 
@@ -75,6 +76,8 @@ Each factory step (every 4 server ticks) every network shares out its power:
 Fuel burns only as fast as its power is used. A boiler nobody draws on keeps its coal.
 Converters give on the next step what they were given on this one, so a chain of them
 lags by a step each.
+A converter that is a multiblock's core (the Turbine Hall) neither takes nor gives while its
+structure is unfinished or broken; it says its structure is unfinished.
 
 ## How items move
 
@@ -120,6 +123,9 @@ watches it).
 3. A recipe in `recipes_machines.ron` with an Engineering level.
 4. Its textures in `assets/packs/default/recipes/machines.ron`, and its Japanese name in
    `base/lang/ja.ron` (with a reading in `readings/ja.ron` if it has kanji).
+
+A multiblock machine's core block must be tagged `multiblock_core` (the registry refuses one
+that is not), or it would run whether or not its structure stands.
 
 Machines are saved in the world folder's `machines.ron`, by block and item names, so a
 pack that renames or drops a machine loses only that machine. A machine remembers who

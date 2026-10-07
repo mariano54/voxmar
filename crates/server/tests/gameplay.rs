@@ -1619,8 +1619,73 @@ fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> Stri
             return said;
         }
         assert!(server_seconds(client, started) < seconds, "/machine {at} never said `{want}`: {said}");
-        std::thread::sleep(Duration::from_millis(300));
+        wait_server(client, 1);
     }
+}
+
+#[test]
+fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformers_bring_it_to_lv() {
+    let mut client = Client::join();
+    let p = client.position.floor().as_ivec3();
+    let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
+    // The hall's corner; its core at the top of its near end, steam from a boiler above it,
+    // HV out of its end into a cable on an MV transformer, on an LV transformer beside a
+    // macerator.
+    let hall = p + IVec3::new(4, 0, 2);
+    let core = hall + IVec3::new(0, 2, 1);
+    let boiler = core + IVec3::Y;
+    let cable = core - IVec3::X;
+    let mv = cable - IVec3::Y;
+    let lv = mv - IVec3::Y;
+    let macerator = lv - IVec3::X;
+    let far = hall + IVec3::new(4, 2, 2);
+    for line in [
+        "/clear".to_owned(),
+        format!("/fill {} {} air", at(hall - IVec3::new(3, 0, 1)), at(far + IVec3::new(1, 2, 1))),
+        format!("/setblock {} turbine_hall", at(core)),
+        format!("/setblock {} boiler", at(boiler)),
+        format!("/setblock {} hv_cable", at(cable)),
+        format!("/setblock {} mv_transformer", at(mv)),
+        format!("/setblock {} lv_transformer", at(lv)),
+        format!("/setblock {} macerator", at(macerator)),
+    ] {
+        client.ok(&line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(macerator) == c.content.blocks.id("base:macerator") && c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give coal_ore 4");
+    client.pump_until(|c| count(c, coal) == 4);
+    use_machine(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0);
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_machine(&mut client, macerator);
+    client.pump_until(|c| count(c, ore) == 0);
+    // The core alone is no turbine: it says so, and the macerator has no power.
+    machine_says(&mut client, &at(core), "not complete", 10);
+    machine_says(&mut client, &at(macerator), "no power", 10);
+    // The hall of casing round it, hollow along its middle.
+    for line in [
+        format!("/fill {} {} turbine_casing", at(hall), at(far)),
+        format!("/fill {} {} air", at(hall + IVec3::new(1, 1, 1)), at(hall + IVec3::new(3, 1, 1))),
+        format!("/setblock {} turbine_hall", at(core)),
+    ] {
+        client.ok(&line);
+    }
+    machine_says(&mut client, &at(macerator), "making", 20);
+    let started = client.tick;
+    while count(&client, dust) < 2 {
+        assert!(server_seconds(&client, started) < 30, "the macerator made {} dust: {}", count(&client, dust), client.ok(&format!("/machine {}", at(macerator))));
+        wait_server(&mut client, 1);
+        use_machine(&mut client, macerator);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, dust), 2, "a macerator makes two dust an ore");
+    // A casing broken out of the hall: the turbine stops.
+    client.ok(&format!("/setblock {} air", at(hall + IVec3::new(2, 0, 0))));
+    machine_says(&mut client, &at(core), "not complete", 10);
 }
 
 #[test]
