@@ -176,7 +176,7 @@ fn prepare(mut air: ResMut<ClientAtmosphere>, launch: Res<Launch>) {
     let (sender, receiver) = bounded(1);
     rayon::spawn(move || match WorldContent::load(&content) {
         Ok(world) => {
-            let _ = sender.send(Arc::new(Overworld::with_content(seed, content.blocks.clone(), &world)));
+            let _ = sender.send(Overworld::shared(seed, &content, &world));
         }
         Err(e) => tracing::error!("cannot sample the air: {e}"),
     });

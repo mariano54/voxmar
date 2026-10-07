@@ -68,6 +68,9 @@
             Clusters(palette: "main", count: 8, size: (1, 3), spacing: 6.0, shade: 0, seed: 3),
             Clusters(palette: "main", count: 8, size: (1, 2), spacing: 6.0, shade: 5, seed: 4),
         ]),
+        // Two more drawings of stone for Voxmar HD's variants.ron, from seeds of their own.
+        "block/stone_4": (base: "block/stone", seed: 303),
+        "block/stone_5": (base: "block/stone", seed: 404),
         // Ores in vanilla's design language, our own drawing: eight irregular clumps of
         // mineral four to eight texels across in four speckled shades with dark edge
         // texels, drawn over the rock they lie in (their block's `host`). The ores keep
