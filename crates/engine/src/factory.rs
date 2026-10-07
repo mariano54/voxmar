@@ -327,7 +327,9 @@ impl Factory {
     pub fn take_outputs_into(&mut self, pos: IVec3, mut take: impl FnMut(ItemStack) -> u8) {
         let Some(node) = self.nodes.get_mut(&pos) else { return };
         let state = &mut node.state;
-        let idle = state.process.is_none();
+        // Inputs come out only of a machine with nothing to do: a full one keeps them for
+        // when its outputs are taken.
+        let idle = state.process.is_none() && state.status != Status::Full;
         let inputs = state.inputs.iter_mut().filter(|_| idle);
         for slot in state.outputs.iter_mut().chain(state.bin.iter_mut()).chain(inputs) {
             if let Some(stack) = slot.take() {
@@ -653,10 +655,20 @@ fn prepare(node: &mut Node, machine: &Machine, machines: &MachineRegistry) {
         Role::Processor { tier, extra, .. } => {
             if state.process.is_none() {
                 state.progress = 0.0;
-                state.process = machine.processes.iter().copied().find(|&p| {
-                    let process = machines.process(p);
-                    process.tier <= *tier && inputs_hold(&state.inputs, process) && outputs_fit(&state.outputs, process, *extra)
-                });
+                let possible = |p: &ProcessId| {
+                    let process = machines.process(*p);
+                    process.tier <= *tier && inputs_hold(&state.inputs, process)
+                };
+                state.process = machine.processes.iter().copied().filter(possible).find(|&p| outputs_fit(&state.outputs, machines.process(p), *extra));
+                // Work it could do but has no room for: full, not idle, until outputs are taken.
+                if state.process.is_none() {
+                    let full = machine.processes.iter().any(possible);
+                    if full {
+                        state.status = Status::Full;
+                    } else if state.status == Status::Full {
+                        state.status = Status::Idle;
+                    }
+                }
             }
             // What it holds may have changed: the work it picked must still be possible.
             if let Some(p) = state.process {
@@ -758,7 +770,9 @@ fn work(
         }
         Role::Processor { speed, extra, burns, water, .. } => {
             let Some(process) = state.process.map(|p| machines.process(p)) else {
-                state.status = Status::Idle;
+                if state.status != Status::Full {
+                    state.status = Status::Idle;
+                }
                 state.supplied = 0.0;
                 return;
             };
@@ -845,15 +859,14 @@ fn fill_within(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8, ro
         stack.count += moved;
         count -= moved;
     }
-    let mut held = slots.iter().flatten().filter(|s| same(s.item)).count();
-    for slot in slots.iter_mut().filter(|s| s.is_none()) {
-        if count == 0 || held >= room {
+    let held = slots.iter().flatten().filter(|s| same(s.item)).count();
+    for slot in slots.iter_mut().filter(|s| s.is_none()).take(room.saturating_sub(held)) {
+        if count == 0 {
             break;
         }
         let moved = count.min(max_stack(item));
         *slot = Some(ItemStack { item, count: moved });
         count -= moved;
-        held += 1;
     }
     count
 }
@@ -1160,6 +1173,28 @@ mod tests {
         run(&t, &mut factory, 2.2);
         assert_eq!(made(&t, &factory, 4, "dust"), 2);
         assert!(factory.get(IVec3::new(3, 0, 0)).unwrap().1.energy < stored);
+    }
+
+    #[test]
+    fn a_kiln_with_no_room_says_full_and_keeps_its_inputs_when_its_outputs_are_taken() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["kiln"]);
+        let ingot = t.id("ingot");
+        let stack = ItemStack { item: ingot, count: max_stack(ingot) };
+        factory.state_mut(IVec3::ZERO).unwrap().outputs.fill(Some(stack));
+        feed(&t, &mut factory, 0, "ore", 2);
+        feed(&t, &mut factory, 0, "log", 1);
+        run(&t, &mut factory, 1.0);
+        let (_, kiln) = factory.get(IVec3::ZERO).unwrap();
+        assert_eq!(kiln.status, Status::Full, "work it could do but has no room for");
+        // An empty hand takes what it made, not what it has yet to work.
+        let taken = factory.take_outputs(IVec3::ZERO);
+        assert!(taken.iter().all(|s| s.item == ingot), "{taken:?}");
+        assert_eq!(taken.len(), 3);
+        run(&t, &mut factory, 2.4);
+        assert_eq!(made(&t, &factory, 0, "ingot"), 1, "with room again it fires what it kept");
+        assert_eq!(factory.get(IVec3::ZERO).unwrap().1.status, Status::Idle);
     }
 
     #[test]
