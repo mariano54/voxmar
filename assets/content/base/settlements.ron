@@ -64,7 +64,7 @@
     furnishings: (
         torch: "torch", campfire: "campfire", table: "crafting_table", farmland: "farmland",
         water: "water", dirt: "dirt", planter: "herb_planter", anvil: "polished_basalt",
-        barrel: "stripped_spruce_log", altar: "polished_calcite",
+        barrel: "barrel", bell: "bell", altar: "polished_calcite",
         flowers: [Tag("flower", 1)],
         bushes: [Tag("bush", 1)],
         canopies: [Name("red_terracotta", 1), Name("orange_terracotta", 1), Name("yellow_terracotta", 1), Name("white_terracotta", 1), Name("light_blue_terracotta", 1), Name("cyan_terracotta", 1), Name("lime_terracotta", 1), Name("magenta_terracotta", 1), Name("pink_terracotta", 1), Name("green_terracotta", 1), Name("blue_terracotta", 1)],
@@ -73,10 +73,10 @@
         // Fruit trees in blossom or unripe (a growing stage, never the ripe leaves), so an orchard
         // gives nothing until it grows: what it bears is its grower's.
         fruit: [Name("apple_leaves_1", 1), Name("apple_leaves_2", 2), Name("pear_leaves_1", 1), Name("pear_leaves_2", 1), Name("plum_leaves_2", 1), Name("hazelnut_leaves_2", 1)],
-        // Stand-ins until the pack has hay bales, sacks and drying herbs of their own.
-        hay: [Name("yellow_terracotta", 1)],
-        hanging: [Name("hanging_roots", 1)],
-        sacks: [Name("white_terracotta", 2), Name("light_gray_terracotta", 1)],
+        hay: [Name("hay_bale", 1)],
+        hanging: [Name("hanging_herbs", 1)],
+        nets: [Name("fishing_net", 1)],
+        sacks: [Name("sack", 1)],
         cloth: [Name("white_terracotta", 4), Name("light_blue_terracotta", 1), Name("red_terracotta", 1), Name("yellow_terracotta", 1), Name("pink_terracotta", 1), Name("light_gray_terracotta", 1)],
     ),
     avoid: ["no_settlement", "ocean", "water", "river", "peaks", "ice", "frozen", "fantastical", "giant"],
