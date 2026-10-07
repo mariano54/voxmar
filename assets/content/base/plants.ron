@@ -187,6 +187,9 @@
         (name: "wild_beans", block: "wild_beans", spread: Drifts, habitat: Anywhere, comfort: (temperature: (12.0, 30.0), moisture: (0.60, 1.80)), tags: ["wild_crop"], properties: (nutrition: 2.5)),
         (name: "wild_peas", block: "wild_peas", spread: Drifts, habitat: Open, comfort: (temperature: (2.0, 22.0), moisture: (0.50, 1.60)), tags: ["wild_crop"], properties: (nutrition: 2.0)),
         (name: "wild_lentils", block: "wild_lentils", spread: Drifts, habitat: Open, comfort: (temperature: (8.0, 30.0), moisture: (0.25, 1.00)), tags: ["wild_crop"], properties: (nutrition: 2.5)),
+        // Chickpeas gone wild, in patches on warm, dry ground: where the chickpea crop's
+        // seed comes from before a warm village's field (design draft 75).
+        (name: "wild_chickpea", block: "wild_chickpea", spread: Drifts, habitat: Open, comfort: (temperature: (16.0, 32.0), moisture: (0.10, 0.70)), tags: ["wild_crop"], properties: (nutrition: 2.5)),
         (name: "cranberry_bush", block: "cranberry_bush", spread: Alone, habitat: Water, comfort: (temperature: (-8.0, 14.0)), properties: (nutrition: 2.0)),
         (name: "lingonberry_bush", block: "lingonberry_bush", spread: Alone, habitat: Understory, comfort: (temperature: (-12.0, 10.0), moisture: (0.50, 2.50)), properties: (nutrition: 2.0)),
         (name: "cloudberry", block: "cloudberry", spread: Alone, habitat: Open, comfort: (temperature: (-14.0, 6.0), moisture: (0.80, 8.0)), properties: (nutrition: 3.0)),
