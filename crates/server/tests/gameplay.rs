@@ -532,8 +532,8 @@ fn commands_set_the_time_and_the_weather() {
     let (before, _) = client.day.unwrap();
     assert!(client.ok("/time set noon").contains("12:00"));
     let (day, speed) = client.day.unwrap();
-    // A day at normal speed takes the content's 25 minutes, so its ticks run at 0.8.
-    assert_eq!((day % TICKS_PER_DAY, speed), (8000, 0.8));
+    // A day at normal speed takes the content's 30 minutes, so its ticks run at 20 / 30.
+    assert_eq!((day % TICKS_PER_DAY, speed), (8000, 20.0 / 30.0));
     assert!(day >= before && day < before + TICKS_PER_DAY);
     client.ok("/night");
     assert_eq!(client.day.unwrap().0 % TICKS_PER_DAY, 17_000);
@@ -542,7 +542,7 @@ fn commands_set_the_time_and_the_weather() {
     assert!((client.day.unwrap().0 % TICKS_PER_DAY).abs_diff(19_000) < 40, "{:?}", client.day);
     assert!(client.ok("/time freeze").contains("frozen"));
     assert_eq!(client.day.unwrap().1, 0.0);
-    assert!(client.ok("/time speed 10").contains("2.5 minutes per day"));
+    assert!(client.ok("/time speed 10").contains("3.0 minutes per day"));
     assert_eq!(client.command("/time speed -1")[0].0, ChatKind::Error);
 
     // Forced weather arrives quickly, and stays.
