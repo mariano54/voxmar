@@ -16,9 +16,11 @@ use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
-use voxmar_protocol::{PlayerId, TICKS_PER_SECOND};
+use voxmar_engine::lang::Words;
+use voxmar_protocol::{ChatKind, PlayerId, TICKS_PER_SECOND};
 
 use crate::Server;
+use crate::commands::Source;
 use crate::creatures::product_ticks;
 use crate::items::random3;
 
@@ -115,6 +117,20 @@ impl Server {
                 }
             }
             self.grant(player, farming, xp);
+            return;
+        }
+        // A wild one past its would-be keeper's cap is not taken in: taming waits for room,
+        // and the food stays in hand.
+        let kept_each = self.content.creatures.limits().kept_each;
+        if creature.owner.is_none() && self.player_name(player).is_some_and(|name| self.kept_by(&name) >= kept_each) {
+            self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
+            return;
+        }
+        // Nor is a kept one readied to breed when no young could come of it.
+        if let Some(keeper) = creature.owner.as_deref()
+            && self.birth_room(keeper) == 0
+        {
+            self.tell(Source::Player(player), ChatKind::Info, self.no_room_for_young(keeper));
             return;
         }
         // Food: one is eaten.
@@ -251,22 +267,33 @@ impl Server {
             (parent.species, parent.body.position, parent.owner.clone(), parent.seed ^ self.creatures.live[&b].seed)
         };
         let Some(breeding) = self.content.creatures.get(species).def.breeding.clone() else { return };
-        let again = self.tick + (breeding.cooldown * 60.0 * TICKS_PER_SECOND as f32) as u64;
         for id in [a, b] {
             let parent = self.creatures.live.get_mut(&id).expect("a parent");
             parent.ready_until = 0;
-            parent.breeds_again = again;
             parent.changed = true;
         }
+        // Young take room under their keeper's own cap and under the world's total. Room
+        // may have gone since the parents were readied (another tamed, a waiting one back).
+        let room = owner.as_deref().map_or(0, |keeper| self.birth_room(keeper));
+        let player = self.players.values().find(|p| Some(&p.name) == owner.as_ref()).map(|p| p.id);
+        if room == 0 {
+            // No birth: the parents may try again as soon as there is room, at no cost.
+            if let (Some(player), Some(keeper)) = (player, owner.as_deref()) {
+                self.tell(Source::Player(player), ChatKind::Info, self.no_room_for_young(keeper));
+            }
+            return;
+        }
         let (low, high) = breeding.litter;
-        let count = low + ((unit_from(mix(seed, self.tick)) * (high - low + 1) as f32) as u8).min(high - low);
+        let count = (low + ((unit_from(mix(seed, self.tick)) * (high - low + 1) as f32) as u8).min(high - low)).max(1).min(room.min(u8::MAX as usize) as u8);
         let grows = self.tick + (breeding.growth * 60.0 * TICKS_PER_SECOND as f32) as u64;
         let (mother, father) = (self.creatures.live[&a].genome.clone(), self.creatures.live[&b].genome.clone());
         // Mutations are likelier where aether is high (docs/breeding.md, "Mutation").
         let aether = self.overworld.site(at.x.floor() as i32, at.z.floor() as i32).aether;
         let mutation = genes::MUTATION * (1.0 + 4.0 * aether.clamp(0.0, 1.0));
-        for i in 0..count.max(1) {
+        let mut born = 0;
+        for i in 0..count {
             let Some(id) = self.spawn_creature(species, at + Vec3::new(0.3 * i as f32, 0.0, 0.3), seed ^ self.tick ^ i as u64) else { continue };
+            born += 1;
             let def = &self.content.creatures.get(species).def;
             let young = self.creatures.live.get_mut(&id).expect("just made");
             young.genome = genes::inherit(&def.genes, &mother, &father, young.seed, mutation);
@@ -281,14 +308,34 @@ impl Server {
             young.scale = young.adult_scale * YOUNG_SCALE;
             young.body.size = (def.body.size.0 * young.scale, def.body.size.1 * young.scale);
         }
+        // A birth costs the parents their rest and pays the keeper; none costs nothing.
+        if born == 0 {
+            return;
+        }
+        let again = self.tick + (breeding.cooldown * 60.0 * TICKS_PER_SECOND as f32) as u64;
+        for id in [a, b] {
+            if let Some(parent) = self.creatures.live.get_mut(&id) {
+                parent.breeds_again = again;
+            }
+        }
         // Experience to the owner, if they are here, by their Farming level over the
         // species' (more for a harder breed, as crops do).
-        let player = self.players.values().find(|p| Some(&p.name) == owner.as_ref()).map(|p| p.id);
         if let Some(player) = player {
             let farming = self.content.skills.id("core:farming");
             let level = self.skill_level(player, "core:farming");
             let bonus = 1.0 + level_bonus(level, breeding.level, self.content.skills.max_level());
             self.grant(player, farming, breeding.xp * bonus);
+        }
+    }
+
+    /// Why a keeper's animals can have no young now: the keeper's own cap, or a world that
+    /// holds all the creatures it can.
+    fn no_room_for_young(&self, keeper: &str) -> Words {
+        let kept_each = self.content.creatures.limits().kept_each;
+        if self.kept_by(keeper) >= kept_each {
+            Words::key("husbandry.no_room_to_breed").with("count", Words::text(kept_each))
+        } else {
+            Words::key("husbandry.world_full")
         }
     }
 
@@ -382,6 +429,7 @@ fn yielded(count: u8, yield_: f32, roll: f32) -> u8 {
 mod tests {
     use super::*;
     use crate::{Server, ServerConfig, load_content, open_world};
+    use voxmar_engine::glam::IVec3;
 
     fn server() -> Server {
         let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
@@ -433,5 +481,205 @@ mod tests {
         assert_eq!(saved.len(), 2, "{saved:?}");
         assert_eq!(saved.iter().filter(|s| s.genome.is_some()).count(), 1);
         assert_eq!(saved.iter().filter(|s| s.position == far.to_array()).count(), 1);
+    }
+
+    #[test]
+    fn wild_creatures_leave_room_for_animals_waiting_in_the_save() {
+        let mut server = server();
+        let most = server.content.creatures.limits().most;
+        // Waiting animals far off fill all but two places.
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        let waiting = most - server.creatures.live.len() - 2;
+        server.creatures.unplaced = (0..waiting).map(|_| rabbit(far)).collect();
+        assert_eq!(server.wild_room(), 2);
+        let wild = |server: &Server| server.creatures.live.values().filter(|c| c.owner.is_none()).count();
+        server.console("summon rabbit 4");
+        assert_eq!(wild(&server), 2, "wild ones took the waiting animals' room");
+        assert_eq!(server.wild_room(), 0);
+        server.console("summon rabbit 1");
+        assert_eq!(wild(&server), 2, "a full world summoned more");
+        // The room was kept: a waiting one whose place loads still comes back into it.
+        server.creatures.unplaced[0] = rabbit(server.spawn);
+        let every = 10 * TICKS_PER_SECOND as u64;
+        server.tick = server.tick.next_multiple_of(every) + every - 1;
+        let at = server.spawn.floor().as_ivec3();
+        server.load_area(at, at);
+        server.tick();
+        assert_eq!(server.creatures.live.values().filter(|c| c.owner.is_some()).count(), 1);
+        assert_eq!(server.creatures.unplaced.len(), waiting - 1);
+    }
+
+    /// A kept rabbit of "test" at spawn, in loaded land.
+    fn kept_rabbit(server: &mut Server, salt: u64) -> u32 {
+        let at = server.spawn.floor().as_ivec3();
+        server.load_area(at, at);
+        let species = server.content.creatures.id("base:rabbit").expect("rabbits");
+        let id = server.spawn_creature(species, server.spawn, salt).expect("room");
+        server.creatures.live.get_mut(&id).unwrap().owner = Some("test".into());
+        id
+    }
+
+    #[test]
+    fn kept_animals_leave_the_wild_budget_alone() {
+        let mut server = server();
+        let limits = server.content.creatures.limits();
+        assert_eq!(server.wild_room(), limits.wild_most);
+        // A rancher's herd, however big, takes nothing from the wild ones.
+        for salt in 0..40 {
+            kept_rabbit(&mut server, salt);
+        }
+        assert_eq!(server.wild_room(), limits.wild_most);
+        assert_eq!(server.kept_by("test"), 40);
+        // Waiting animals count toward their keeper too.
+        server.creatures.unplaced.push(rabbit(server.spawn));
+        assert_eq!(server.kept_by("test"), 41);
+        // Wild ones take from it.
+        server.console("summon rabbit 3");
+        assert_eq!(server.wild_room(), limits.wild_most - 3);
+    }
+
+    #[test]
+    fn a_birth_needs_room_and_costs_only_when_young_come() {
+        let mut server = server();
+        // The keeper is here, to be paid for births.
+        let (player, _client) = keeper(&mut server);
+        let farming = server.content.skills.id("core:farming").expect("Farming");
+        let xp = |server: &Server| server.players[&player].skills.xp(farming);
+        let (a, b) = (kept_rabbit(&mut server, 1), kept_rabbit(&mut server, 2));
+        let kept_each = server.content.creatures.limits().kept_each;
+        // The keeper is at their cap, counting animals waiting in the save.
+        server.creatures.unplaced = (0..kept_each - 2).map(|_| rabbit(server.spawn + Vec3::new(4000.0, 0.0, 0.0))).collect();
+        for id in [a, b] {
+            server.creatures.live.get_mut(&id).unwrap().ready_until = server.tick + 100;
+        }
+        let before = xp(&server);
+        server.breed(a, b);
+        assert_eq!(server.creatures.live.len(), 2, "young were born past the cap");
+        assert_eq!(xp(&server), before, "a refused birth paid Farming xp");
+        for id in [a, b] {
+            let parent = &server.creatures.live[&id];
+            assert_eq!((parent.ready_until, parent.breeds_again), (0, 0), "no birth cost the parents their rest");
+        }
+        // Room for one: one is born, whatever the litter, and the parents rest.
+        server.creatures.unplaced.pop();
+        server.breed(a, b);
+        assert_eq!(server.creatures.live.len(), 3);
+        assert!(server.creatures.live[&a].breeds_again > server.tick);
+        assert!(xp(&server) > before, "a birth paid no Farming xp");
+        // The world full counts too, kept cap or not.
+        server.creatures.unplaced.clear();
+        let room = server.room_left();
+        server.creatures.unplaced = (0..room).map(|_| SavedCreature { owner: "someone".into(), ..rabbit(server.spawn) }).collect();
+        for id in [a, b] {
+            server.creatures.live.get_mut(&id).unwrap().breeds_again = 0;
+        }
+        let before = xp(&server);
+        server.breed(a, b);
+        assert_eq!(server.creatures.live.len(), 3, "a birth took the room kept for waiting animals");
+        assert_eq!(xp(&server), before, "a birth refused in a full world paid Farming xp");
+    }
+
+    /// "test", joined and an admin, standing at spawn with the land around loaded, and their
+    /// end of the connection.
+    fn keeper(server: &mut Server) -> (PlayerId, voxmar_protocol::ClientConnection) {
+        let (client, connection) = voxmar_protocol::local_pair();
+        let id = 1;
+        let mut player = crate::player::Player::new(id, connection, server.spawn, 2);
+        (player.joined, player.admin, player.name) = (true, true, "test".into());
+        server.players.insert(id, player);
+        let at = server.spawn.floor().as_ivec3();
+        server.load_area(at - IVec3::new(64, 0, 64), at + IVec3::new(64, 0, 64));
+        (id, client)
+    }
+
+    /// The keys of what a player has been told since last asked; for a command refused,
+    /// the key of why.
+    fn told(client: &voxmar_protocol::ClientConnection) -> Vec<String> {
+        let mut keys = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            if let voxmar_protocol::ServerMessage::Chat { text: Words::Key(key, args), .. } = message {
+                let why = args.into_iter().find_map(|(name, why)| match why {
+                    Words::Key(why, _) if key == "command.error.usage" && name == "why" => Some(why),
+                    _ => None,
+                });
+                keys.push(why.unwrap_or(key));
+            }
+        }
+        keys
+    }
+
+    #[test]
+    fn taming_and_breeding_food_wait_for_room_under_the_keepers_cap() {
+        let mut server = server();
+        let (player, client) = keeper(&mut server);
+        let species = server.content.creatures.id("base:rabbit").expect("rabbits");
+        let food = server.content.creatures.get(species).tame_food[0];
+        assert!(server.content.creatures.get(species).breed_food.contains(&food));
+        server.players.get_mut(&player).unwrap().inventory.add(food, 10);
+        assert_eq!(server.players[&player].held(), Some(food));
+        let in_hand = |server: &Server| server.players[&player].inventory.get(0).map_or(0, |stack| stack.count);
+        // A wild rabbit, and the keeper at their cap: one kept here, the rest waiting.
+        let wild = server.spawn_creature(species, server.spawn, 1).expect("room");
+        let mine = kept_rabbit(&mut server, 2);
+        let kept_each = server.content.creatures.limits().kept_each;
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        server.creatures.unplaced = (0..kept_each - 1).map(|_| rabbit(far)).collect();
+        told(&client);
+        server.tend(player, wild);
+        server.tend(player, mine);
+        assert_eq!(in_hand(&server), 10, "a keeper at their cap had food taken");
+        assert_eq!((server.creatures.live[&wild].trust, server.creatures.live[&mine].ready_until), (0.0, 0));
+        assert_eq!(told(&client), ["husbandry.kept_full", "husbandry.no_room_to_breed"]);
+        // An admin's taming keeps to the cap too.
+        server.command(player, "creatures tame");
+        assert!(server.creatures.live[&wild].owner.is_none());
+        assert_eq!(told(&client), ["husbandry.kept_full"]);
+        // Room for one: the kept one takes its food and is readied, the wild one takes its
+        // and comes to trust the keeper.
+        server.creatures.unplaced.pop();
+        server.tend(player, mine);
+        server.tend(player, wild);
+        assert_eq!(in_hand(&server), 8);
+        assert!(server.creatures.live[&mine].ready_until > server.tick);
+        let wild_now = &server.creatures.live[&wild];
+        assert!(wild_now.trust > 0.0 || wild_now.owner.is_some());
+        assert!(told(&client).iter().all(|key| !key.starts_with("husbandry.")), "refused with room");
+        // Another wild one: an admin tames as many as there is room for, and no more.
+        server.creatures.live.get_mut(&wild).unwrap().owner = None;
+        let other = server.spawn_creature(species, server.spawn, 3).expect("room");
+        server.command(player, "creatures tame");
+        let tamed = [wild, other].iter().filter(|id| server.creatures.live[id].owner.is_some()).count();
+        assert_eq!(tamed, 1);
+        assert_eq!(server.kept_by("test"), kept_each);
+    }
+
+    #[test]
+    fn natural_spawning_brings_a_herd_no_bigger_than_the_room_left() {
+        let mut server = server();
+        let (player, _client) = keeper(&mut server);
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        let full: Vec<_> = (0..server.room_left() - 1).map(|_| rabbit(far)).collect();
+        // Spots that bring two or more with room to spare bring one when there is room for
+        // only one (kept animals waiting in the save fill the rest).
+        let mut trimmed = 0;
+        for salt in 0..4000 {
+            server.creatures.unplaced.clear();
+            server.spawn_near(player, salt);
+            let free = server.creatures.live.len();
+            server.creatures.live.clear();
+            if free < 2 {
+                continue;
+            }
+            server.creatures.unplaced = full.clone();
+            assert_eq!(server.wild_room(), 1);
+            server.spawn_near(player, salt);
+            assert_eq!(server.creatures.live.len(), 1, "{} came for one place, {free} with room", server.creatures.live.len());
+            server.creatures.live.clear();
+            trimmed += 1;
+            if trimmed == 8 {
+                break;
+            }
+        }
+        assert_eq!(trimmed, 8, "too few groups came to judge");
     }
 }

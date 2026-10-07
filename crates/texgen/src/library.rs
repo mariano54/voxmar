@@ -241,6 +241,10 @@ impl Library {
             resolved.layers.iter_mut().for_each(|(layer_seed, _)| *layer_seed = None);
         }
         let own = recipe.seed.unwrap_or_else(|| seed_of(name));
+        // A recipe without a size of its own is written at its base's size, but a pack may
+        // redraw the base finer: a 16-row lock plate over a chest another pack draws at
+        // 32×32. Its grids give away the size it was written at; draw it that much finer.
+        let k = k * written_smaller(recipe, resolved.size, k);
         for (slot, palette) in &recipe.palettes {
             let shades = self.shades(palette, 0).map_err(|Error(e)| Error(format!("{name}: palette `{slot}`: {e}")))?;
             resolved.palettes.insert(slot.clone(), shades);
@@ -279,6 +283,28 @@ impl Library {
             }
         }
     }
+}
+
+/// How many times smaller than its base `recipe`'s own layers were written: 1, or `m` when
+/// it has no size of its own and every grid it draws at the origin is 16 texels wide (the
+/// size default's books are written at) and `1/m` of the base (`size`, already `k` times
+/// finer) on both axes. Narrower grids are details placed on purpose and stay as written.
+fn written_smaller(recipe: &Recipe, size: (u32, u32), k: u32) -> u32 {
+    if recipe.size.is_some() || recipe.base.is_none() {
+        return 1;
+    }
+    let mut written = recipe.layers.iter().filter_map(|layer| match layer {
+        Layer::Grid(grid) if grid.at.is_empty() && !grid.rows.is_empty() => {
+            Some((grid.rows.iter().map(|r| r.chars().count() as u32).max().unwrap_or(0), grid.rows.len() as u32))
+        }
+        _ => None,
+    });
+    let Some((w, h)) = written.next() else { return 1 };
+    if w != 16 || written.any(|other| other != (w, h)) || size.0 % (w * k) != 0 || size.1 % (h * k) != 0 {
+        return 1;
+    }
+    let m = size.1 / (h * k);
+    if m >= 2 && size.0 / (w * k) == m { m } else { 1 }
 }
 
 /// Layers and terms are written `Paint(palette: "stone")` rather than
@@ -427,6 +453,48 @@ mod tests {
         assert!(library.contains("block/pine_planks_pair"));
         // Within one layer, names stay unique.
         assert!(Library::from_layers([vec![("a", "(textures: {\"x\": ()})"), ("b", "(textures: {\"x\": ()})")]]).is_err());
+    }
+
+    #[test]
+    fn a_child_written_at_16_fills_a_base_redrawn_at_32() {
+        let child = r##"(textures: {"block/chest": (palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0)]),
+            "block/locked_chest": (base: "block/chest", layers: [Grid(legend: {'x': "#ff0000"}, rows: [
+                "x...............", "................", "................", "................",
+                "................", "................", "................", "................",
+                "................", "................", "................", "................",
+                "................", "................", "................", "...............x",
+            ])])})"##;
+        let hd = r##"(textures: {"block/chest": (size: (32, 32), palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0)])})"##;
+        let library = Library::from_layers([vec![("base", BOOK), ("child", child)], vec![("hd", hd)]]).unwrap();
+        let locked = library.render("block/locked_chest").unwrap().unwrap();
+        assert_eq!((locked.width, locked.height), (32, 32));
+        // The lock plate's corners land in the face's corners, not its top-left quarter.
+        for (x, y) in [(0, 0), (1, 1), (30, 30), (31, 31)] {
+            assert_eq!(locked.get(x, y), [0xff, 0, 0, 0xff], "({x}, {y})");
+        }
+        assert_ne!(locked.get(15, 15), [0xff, 0, 0, 0xff]);
+        // Drawn at the base's own size, it is drawn as written, and a pack drawing it at
+        // 32 draws it 32 across, not 64.
+        let plain = Library::from_books([("base", BOOK), ("child", child)]).unwrap();
+        let native = plain.render("block/locked_chest").unwrap().unwrap();
+        assert_eq!((native.width, native.get(15, 15)), (16, [0xff, 0, 0, 0xff]));
+        let finer = plain.render_at_least("block/locked_chest", 32).unwrap().unwrap();
+        assert_eq!((finer.width, finer.height), (32, 32));
+        assert_eq!((finer.get(0, 0), finer.get(31, 31)), ([0xff, 0, 0, 0xff], [0xff, 0, 0, 0xff]));
+        assert_ne!(finer.get(15, 15), [0xff, 0, 0, 0xff]);
+    }
+
+    #[test]
+    fn a_small_grid_on_its_base_stays_as_written() {
+        // An 8×8 badge at the origin of a 16×16 base is a detail, not a face written smaller.
+        let book = r##"(textures: {"block/plate": (palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0)]),
+            "block/badge": (base: "block/plate", layers: [Grid(legend: {'x': "#ff0000"}, rows: [
+                "x.......", "........", "........", "........", "........", "........", "........", ".......x",
+            ])])})"##;
+        let badge = Library::from_layers([vec![("base", BOOK), ("badge", book)]]).unwrap().render("block/badge").unwrap().unwrap();
+        assert_eq!((badge.width, badge.height), (16, 16));
+        assert_eq!((badge.get(0, 0), badge.get(7, 7)), ([0xff, 0, 0, 0xff], [0xff, 0, 0, 0xff]));
+        assert_ne!(badge.get(15, 15), [0xff, 0, 0, 0xff]);
     }
 
     #[test]
