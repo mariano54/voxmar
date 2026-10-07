@@ -4,9 +4,10 @@
 (
     blocks: [
         // A campfire: logs and embers that cook one thing at a time and keep the cold off.
+        // A `furnishing`: a village's gives nothing, one a player placed gives itself back.
         (
             name: "campfire", render: Plant, solid: false, sound: Wood, textures: All("campfire"),
-            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire"],
+            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "furnishing"],
             // Flames licking a block and more above the logs, a deep yellow core among them,
             // smoke thick over the fire and thinning as it rises a few blocks, embers
             // floating up as high, and now and then a crackle of sparks (`particles`:
@@ -50,12 +51,12 @@
         (template: "drop", name: "cooked_chicken", tags: ["meat", "cooked", "edible", "food:5", "heal:4", "flavour:savoury"], all: (color: (200, 140, 70))),
         (template: "drop", name: "cooked_frog", tags: ["meat", "cooked", "edible", "food:3", "heal:2", "flavour:savoury"], all: (color: (200, 150, 100))),
         (template: "drop", name: "cooked_crab", tags: ["meat", "cooked", "edible", "food:5", "heal:4", "flavour:savoury", "seafood"], all: (color: (230, 110, 60))),
-        (template: "drop", name: "cooked_duck", tags: ["meat", "cooked", "edible", "food:5", "heal:5", "flavour:savoury"], all: (color: (150, 80, 40))),
+        (template: "drop", name: "cooked_duck", tags: ["meat", "cooked", "edible", "food:5", "heal:5", "flavour:savoury"], all: (color: (150, 80, 40), rarity: Uncommon)),
         (template: "drop", name: "cooked_mutton", tags: ["meat", "cooked", "edible", "food:6", "heal:5", "flavour:savoury"], all: (color: (140, 70, 40))),
         (template: "drop", name: "cooked_pork", tags: ["meat", "cooked", "edible", "food:7", "heal:6", "flavour:savoury"], all: (color: (190, 120, 70))),
         (template: "drop", name: "cooked_beef", tags: ["meat", "cooked", "edible", "food:8", "heal:6", "flavour:savoury"], all: (color: (120, 60, 30))),
         (template: "drop", name: "cooked_venison", tags: ["meat", "cooked", "edible", "food:8", "heal:7", "flavour:savoury", "game"], all: (color: (110, 50, 30))),
-        (template: "drop", name: "cooked_bear", tags: ["meat", "cooked", "edible", "food:9", "heal:8", "flavour:savoury", "game"], all: (color: (100, 45, 30))),
+        (template: "drop", name: "cooked_bear", tags: ["meat", "cooked", "edible", "food:9", "heal:8", "flavour:savoury", "game"], all: (color: (100, 45, 30), rarity: Uncommon)),
         (template: "drop", name: "baked_potato", tags: ["root", "cooked", "edible", "food:5", "heal:3"], all: (color: (190, 140, 70))),
         (template: "drop", name: "roast_carrot", tags: ["root", "cooked", "edible", "food:4", "heal:2", "flavour:sweet"], all: (color: (220, 110, 30))),
         (template: "drop", name: "egg", tags: ["egg", "raw", "edible", "food:1"], all: (color: (240, 228, 200))),

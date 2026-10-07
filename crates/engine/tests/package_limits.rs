@@ -1,14 +1,14 @@
-//! A mod changes one creature limit: the game's own packages and a later one that sets
-//! `animals_near` load together, the later package's number wins, the rest keep base's,
-//! and a note names both packages (Design, 2026-10-07: a later package replaces
-//! single-valued data).
+//! A mod changes one creature limit and one Defence training number: the game's own
+//! packages and a later one that sets `animals_near` and `least_level` load together, the
+//! later package's numbers win, the rest keep base's, and a note names both packages for
+//! each (Design draft 91: a later package replaces single-valued data).
 
 use std::path::Path;
 
 use voxmar_engine::content::Content;
 
 #[test]
-fn a_later_package_replaces_one_creature_limit_with_a_note() {
+fn a_later_package_replaces_one_creature_limit_and_one_defence_number_with_notes() {
     let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content").canonicalize().unwrap();
     let dir = std::env::temp_dir().join(format!("voxmar-limits-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -16,9 +16,10 @@ fn a_later_package_replaces_one_creature_limit_with_a_note() {
     for package in ["base", "core"] {
         std::os::unix::fs::symlink(assets.join(package), dir.join(package)).unwrap();
     }
-    std::fs::write(dir.join("zz_herds/creatures.ron"), "(creatures: [], limits: (animals_near: 4))").unwrap();
+    std::fs::write(dir.join("zz_herds/creatures.ron"), "(creatures: [], limits: (animals_near: 4), defence: (least_level: 0.75))").unwrap();
 
-    let base = Content::load(&assets).unwrap().creatures.limits();
+    let game = Content::load(&assets).unwrap();
+    let base = game.creatures.limits();
     let content = Content::load(&dir).unwrap();
     let limits = content.creatures.limits();
     assert_eq!(limits.animals_near, 4);
@@ -26,7 +27,12 @@ fn a_later_package_replaces_one_creature_limit_with_a_note() {
     let notes: Vec<_> = content.notes.iter().filter(|n| n.contains("creature limits")).collect();
     assert_eq!(notes.len(), 1, "{:?}", content.notes);
     assert!(notes[0].contains("zz_herds") && notes[0].contains("base") && notes[0].contains("animals_near"), "{}", notes[0]);
+    let defence = content.creatures.defence();
+    assert_eq!((defence.least_level, defence.fought_within), (0.75, game.creatures.defence().fought_within));
+    let notes: Vec<_> = content.notes.iter().filter(|n| n.contains("Defence training")).collect();
+    assert_eq!(notes.len(), 1, "{:?}", content.notes);
+    assert!(notes[0].contains("zz_herds") && notes[0].contains("base") && notes[0].contains("least_level"), "{}", notes[0]);
     // The game alone has nothing to note.
-    assert!(Content::load(&assets).unwrap().notes.iter().all(|n| !n.contains("creature limits")));
+    assert!(game.notes.is_empty(), "{:?}", game.notes);
     std::fs::remove_dir_all(&dir).unwrap();
 }
