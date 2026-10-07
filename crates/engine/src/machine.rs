@@ -120,10 +120,11 @@ pub enum Role {
         /// It works only with water beside it (a washer); the world says whether there is.
         #[serde(default)]
         water: bool,
-        /// How many stacks it holds of what goes in, and of what it made.
-        #[serde(default = "three")]
+        /// How many stacks it holds of what goes in, and of what it made; by default, the
+        /// factory's `slots`.
+        #[serde(default)]
         input_slots: u8,
-        #[serde(default = "three")]
+        #[serde(default)]
         output_slots: u8,
     },
     /// Carries items between the machines beside a run of chutes, `rate` a second at most;
@@ -140,10 +141,6 @@ pub enum Role {
 
 fn one() -> f32 {
     1.0
-}
-
-fn three() -> u8 {
-    3
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -179,6 +176,29 @@ pub struct MachineFile {
     /// How the world drives wind and walked machines; a later package's replaces it.
     #[serde(default)]
     pub sources: Option<SourceRules>,
+    /// How the factory itself runs; a later package's replaces it.
+    #[serde(default)]
+    pub rules: Option<FactoryRules>,
+}
+
+/// How the factory runs (`rules` in `machines.ron`).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct FactoryRules {
+    /// Seconds of its rate a run of chutes may save up while it has nothing to carry, so
+    /// one that waited does not burst.
+    pub chute_burst: f32,
+    /// Stacks a processor holds of what goes in, and of what it made, when its entry does
+    /// not say.
+    pub slots: u8,
+    /// Items with this tag (machines) are laid against a bin, not put in it.
+    pub machine_tag: String,
+}
+
+impl Default for FactoryRules {
+    fn default() -> Self {
+        Self { chute_burst: 1.0, slots: 3, machine_tag: "machine".into() }
+    }
 }
 
 /// How the world drives the machines it powers (`sources` in `machines.ron`).
@@ -208,6 +228,18 @@ pub struct SourceRules {
     /// up or down.
     pub walk_reach: f32,
     pub walk_height: f32,
+    /// What a treadwheel gives, as a share of its power, with a walker in the worst and in
+    /// the best condition (between, in proportion).
+    pub walk_share: (f32, f32),
+    /// In-game days a kept animal walks a treadwheel after a player last fed it.
+    pub walk_fed_days: f32,
+    /// How a windmill's share grows from stall to full wind: 1 in a straight line, more
+    /// slower at first.
+    pub wind_curve: f32,
+    /// Where a water wheel or washer takes water from, and where a windmill needs open air,
+    /// as offsets from it.
+    pub water_faces: Vec<[i32; 3]>,
+    pub wind_faces: Vec<[i32; 3]>,
 }
 
 impl Default for SourceRules {
@@ -225,6 +257,11 @@ impl Default for SourceRules {
             hot_tag: "hot".into(),
             walk_reach: 3.0,
             walk_height: 2.0,
+            walk_share: (0.5, 1.2),
+            walk_fed_days: 2.0,
+            wind_curve: 1.0,
+            water_faces: vec![[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, -1, 0]],
+            wind_faces: vec![[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]],
         }
     }
 }
@@ -233,9 +270,16 @@ impl SourceRules {
     /// The share of its power a windmill gives in `wind` (blocks a second) at height `y`:
     /// nothing in calm air, all of it in a gale up high.
     pub fn wind_share(&self, wind: f32, y: f32) -> f32 {
-        let strength = ((wind - self.wind_stall) / (self.wind_full - self.wind_stall).max(0.01)).clamp(0.0, 1.0);
+        let strength = ((wind - self.wind_stall) / (self.wind_full - self.wind_stall).max(0.01)).clamp(0.0, 1.0).powf(self.wind_curve.max(0.01));
         let height = ((y - self.wind_low) / (self.wind_high - self.wind_low).max(1.0)).clamp(self.wind_low_share, 1.0);
         strength * height
+    }
+
+    /// The share of its power a treadwheel gives with a walker in `condition` (0 to 1); an
+    /// animal whose condition is not known walks it at its full power.
+    pub fn walk_share(&self, condition: Option<f32>) -> f32 {
+        let (worst, best) = self.walk_share;
+        condition.map_or(1.0, |c| worst + (best - worst) * c.clamp(0.0, 1.0))
     }
 }
 
@@ -378,11 +422,14 @@ impl Machine {
 pub struct MachineRegistry {
     machines: Vec<Machine>,
     by_block: FxHashMap<BlockId, usize>,
-    fuels: Vec<(Accepts, f32)>,
+    /// What burns, for how long, and whether it was named by a tag.
+    fuels: Vec<(Accepts, f32, bool)>,
     processes: Vec<Process>,
     walkers: Vec<String>,
     /// How the world drives wind and walked machines.
     pub sources: SourceRules,
+    /// How the factory runs.
+    pub rules: FactoryRules,
 }
 
 impl MachineRegistry {
@@ -414,7 +461,26 @@ impl MachineRegistry {
 
     pub fn new(files: Vec<MachineFile>, processes: Vec<ProcessFile>, blocks: &BlockRegistry) -> Result<Self, RegistryError> {
         let mut registry = Self::default();
-        for def in processes.into_iter().flat_map(|f| f.recipes) {
+        // A family (a name with `{name}` in it, as crafting recipes have): one recipe for
+        // every name that fits all of the recipe's blocks, `{name}_log` into `{name}_planks`.
+        let defs = processes.into_iter().flat_map(|f| f.recipes).flat_map(|def| {
+            let names: Vec<&String> = def.inputs.iter().map(|(n, _)| n).chain(def.outputs.iter().map(|(n, _)| n)).chain(def.byproducts.iter().map(|(n, ..)| n)).collect();
+            let Some(template) = names.iter().find(|n| n.contains("{name}")) else { return vec![def] };
+            let (prefix, suffix) = template.split_once("{name}").expect("it holds the placeholder");
+            (0..blocks.len())
+                .filter_map(|i| blocks.def(BlockId(i as u16)).name.strip_prefix(prefix)?.strip_suffix(suffix).map(str::to_owned))
+                .filter(|fill| names.iter().all(|n| n.starts_with("tag:") || n.split('|').all(|n| blocks.id(&n.replace("{name}", fill)).is_some())))
+                .map(|fill| {
+                    let mut def = def.clone();
+                    let fill_in = |n: &mut String| *n = n.replace("{name}", &fill);
+                    def.inputs.iter_mut().for_each(|(n, _)| fill_in(n));
+                    def.outputs.iter_mut().for_each(|(n, _)| fill_in(n));
+                    def.byproducts.iter_mut().for_each(|(n, ..)| fill_in(n));
+                    def
+                })
+                .collect()
+        });
+        for def in defs {
             let bad = |what: String| RegistryError(format!("processing recipe {} for {:?}: {what}", def.kind, def.outputs.first().map(|o| &o.0)));
             if def.seconds <= 0.0 || def.inputs.is_empty() || def.outputs.is_empty() {
                 return Err(bad("needs inputs, outputs and seconds".into()));
@@ -451,12 +517,26 @@ impl MachineRegistry {
                 registry.machines.push(Machine { block, role: def.role, processes });
             }
             for fuel in file.fuels {
-                registry.fuels.push((accepts(&fuel.item, blocks)?, fuel.seconds.max(0.0)));
+                registry.fuels.push((accepts(&fuel.item, blocks)?, fuel.seconds.max(0.0), fuel.item.contains("tag:")));
             }
             registry.walkers.extend(file.walkers);
             registry.walkers.retain(|w| !file.not_walkers.contains(w));
             if let Some(sources) = file.sources {
                 registry.sources = sources;
+            }
+            if let Some(rules) = file.rules {
+                registry.rules = rules;
+            }
+        }
+        // Processors that do not say how many stacks they hold take the factory's default.
+        let slots = registry.rules.slots.max(1);
+        for machine in &mut registry.machines {
+            if let Role::Processor { input_slots, output_slots, .. } = &mut machine.role {
+                for count in [input_slots, output_slots] {
+                    if *count == 0 {
+                        *count = slots;
+                    }
+                }
             }
         }
         Ok(registry)
@@ -489,10 +569,12 @@ impl MachineRegistry {
         self.walkers.iter().any(|w| w == species)
     }
 
-    /// How long one of `item` burns at full output, if it burns: the last fuel that takes it,
-    /// so a later package may change what an earlier one said.
+    /// How long one of `item` burns at full output, if it burns: the last fuel naming it,
+    /// else the last tag taking it, so an item's own entry is never shortened by a tag and a
+    /// later package may change what an earlier one said.
     pub fn burn_seconds(&self, item: BlockId) -> Option<f32> {
-        self.fuels.iter().rev().find(|(accepts, _)| accepts.binary_search(&item).is_ok()).map(|&(_, s)| s)
+        let last = |tagged: bool| self.fuels.iter().rev().find(|(accepts, _, tag)| *tag == tagged && accepts.binary_search(&item).is_ok()).map(|&(_, s, _)| s);
+        last(false).or_else(|| last(true))
     }
 
     /// How many of its `slots` input stacks `item` may fill: enough to leave one for each
@@ -571,6 +653,23 @@ mod tests {
         assert_eq!(registry.burn_seconds(blocks.id("t:log").unwrap()), Some(15.0));
         assert_eq!(registry.burn_seconds(blocks.id("t:ore").unwrap()), None);
         assert_eq!(crusher.ports(), vec![Port { carrier: Carrier::Electric, tier: 1, faces: ALL_FACES, role: PortRole::Takes(8.0) }]);
+    }
+
+    /// An item's own fuel entry beats a tag listed after it, and a later package's
+    /// `not_walkers` takes an earlier one's walker away.
+    #[test]
+    fn a_named_fuel_beats_a_tag_and_a_package_can_take_a_walker_away() {
+        let blocks = blocks();
+        let base = MachineRegistry::read(
+            "t",
+            r#"(machines: [], fuels: [(item: "log", seconds: 15.0), (item: "tag:log", seconds: 2.0)], walkers: ["aurochs", "camel"])"#,
+        )
+        .unwrap();
+        let package = MachineRegistry::read("m", r#"(machines: [], walkers: ["goat"], not_walkers: ["t:camel"])"#).unwrap();
+        let registry = MachineRegistry::new(vec![base, package], Vec::new(), &blocks).unwrap();
+        assert_eq!(registry.burn_seconds(blocks.id("t:log").unwrap()), Some(15.0));
+        assert!(registry.walks("t:aurochs") && registry.walks("m:goat"));
+        assert!(!registry.walks("t:camel"), "taken away by the later package");
     }
 
     #[test]
@@ -665,6 +764,25 @@ mod tests {
             top = top.max(worth[i]);
         }
         assert!((top - 3.0).abs() < 1e-4, "the ladder's top, washing, gives {top}");
+    }
+
+    #[test]
+    fn a_treadwheel_gives_half_to_six_fifths_by_its_walkers_condition_and_all_when_unknown() {
+        let rules = SourceRules::default();
+        assert_eq!(rules.walk_share(None), 1.0);
+        assert_eq!(rules.walk_share(Some(0.0)), 0.5);
+        assert!((rules.walk_share(Some(1.0)) - 1.2).abs() < 1e-6);
+        assert!((rules.walk_share(Some(5.0 / 7.0)) - 1.0).abs() < 1e-6, "an ordinary animal gives its power");
+    }
+
+    #[test]
+    fn windmills_stall_in_calm_air_and_give_all_in_a_gale_up_high() {
+        let rules = SourceRules::default();
+        assert_eq!(rules.wind_share(0.5, 180.0), 0.0, "calm air");
+        assert_eq!(rules.wind_share(12.0, 180.0), 1.0, "a gale up high");
+        assert!((rules.wind_share(12.0, 64.0) - 1.0 / 3.0).abs() < 1e-5, "a gale low down gives a third");
+        let breeze = rules.wind_share(5.5, 180.0);
+        assert!(breeze > 0.4 && breeze < 0.6, "a breeze gives about half: {breeze}");
     }
 
     /// Experience follows the ore, not the route: crushed (two dust) or washed (three), an

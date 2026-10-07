@@ -1074,4 +1074,12 @@
     "block.base.copper_wire": "Copper Wire",
     "multiblock.base.bellows_bloomery": "Bellows Bloomery",
     "multiblock.base.bellows_bloomery.hint": "The bloomery needs kiln bricks round it with bellows in the ring, and a hollow shaft of kiln bricks two more blocks high above it.",
+    "block.base.coke_oven": "Coke Oven",
+    "block.base.blast_furnace": "Blast Furnace",
+    "block.base.sawmill": "Sawmill",
+    "block.base.coke": "Coke",
+    "multiblock.base.coke_oven": "Coke Oven",
+    "multiblock.base.coke_oven.hint": "The coke oven needs a chamber of kiln bricks three on a side round a hollow middle, with the oven in the middle of one side.",
+    "multiblock.base.blast_furnace": "Blast Furnace",
+    "multiblock.base.blast_furnace.hint": "The blast furnace needs kiln bricks round it with bellows in the ring, and a hollow shaft of kiln bricks three more blocks high above it.",
 }

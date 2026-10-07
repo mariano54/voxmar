@@ -697,7 +697,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Strike | Step::Weapon => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
-        Step::Workshop => 220.0,
+        Step::Workshop => 250.0,
         // Torches crafted for a pinned quest, waited on in the server's seconds, and a quest
         // done left to drop off.
         Step::Quests => 60.0,
@@ -2014,7 +2014,37 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                             Ok("an aurochs on the treadwheel blew the bellows and the Bellows Bloomery made an iron bloom; ore put in a hopper rode a conveyor into the crusher and 4 dust came up a chute into the chest".into()),
                         );
                         teardown(world);
-                        end_workshop(world, gate, now);
+                        // In their place, the Iron age: a Coke Oven (kiln bricks three on a
+                        // side round a hollow middle, the oven in its south face) west of a
+                        // Blast Furnace (the bloomery's ring four high, bellows in it) blown by
+                        // an aurochs on a treadwheel.
+                        let at = |d: IVec3| { let p = k + d; format!("{} {} {}", p.x, p.y, p.z) };
+                        let net = world.resource::<Net>();
+                        for line in [
+                            format!("fill {} {} cobblestone", at(IVec3::new(2, -1, 1)), at(IVec3::new(4, -1, 3))),
+                            format!("fill {} {} kiln_bricks", at(IVec3::new(-1, 0, -1)), at(IVec3::new(1, 3, 1))),
+                            format!("fill {} {} air", at(IVec3::Y), at(IVec3::new(0, 3, 0))),
+                            format!("setblock {} blast_furnace", at(IVec3::ZERO)),
+                            format!("setblock {} bellows", at(IVec3::X)),
+                            format!("setblock {} shaft", at(IVec3::new(2, 0, 0))),
+                            format!("setblock {} treadwheel", at(IVec3::new(3, 0, 0))),
+                            format!("fill {} {} kiln_bricks", at(IVec3::new(-4, 0, -1)), at(IVec3::new(-2, 2, 1))),
+                            format!("setblock {} air", at(IVec3::new(-3, 1, 0))),
+                            format!("setblock {} coke_oven", at(IVec3::new(-3, 1, 1))),
+                            format!("summon aurochs 1 {}", at(IVec3::new(3, 0, 2))),
+                            "creatures tame aurochs".to_owned(),
+                            "creatures hold aurochs".to_owned(),
+                            "clear".to_owned(),
+                            "give coal_ore 1".to_owned(),
+                        ] {
+                            net.command(&line);
+                        }
+                        gate.machines_stage = 0;
+                        gate.machines_since = gate.server_now;
+                        gate.machines_asked = f32::MIN;
+                        gate.machines_held = gate.server_now;
+                        gate.machines_seen = false;
+                        gate.advance(now);
                         return;
                     }
                 }
@@ -2068,6 +2098,126 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let waited = (gate.server_now - gate.machines_since, in_phase);
                 teardown(world);
                 fail(world, gate, "bloomery and logistics", format!("{what} ({:.1} server s, {:.1} game s): holding iron ore {ore}, coal {coal}, copper ore {copper}, blooms {bloom}; /machine said {said:?}", waited.0, waited.1));
+            }
+        }
+        // The Iron age. A coal goes into the Coke Oven, which says it is making coke (by its
+        // own heat: the structure stands); two iron ore and a coke go into the Blast Furnace,
+        // which an aurochs on the treadwheel blows, and it says it is making iron. The coke
+        // and the four ingots themselves take half a minute each: the server tests wait for
+        // them (`a_coke_oven_bakes_coal_into_coke_...`).
+        19 => {
+            let k = gate.kiln;
+            let (furnace, wheel, oven) = (k, k + IVec3::new(3, 0, 0), k + IVec3::new(-3, 1, 1));
+            let teardown = move |world: &mut World| {
+                let (a, b) = (k + IVec3::new(-4, -1, -1), k + IVec3::new(4, 3, 3));
+                let net = world.resource::<Net>();
+                for line in ["creatures remove aurochs".to_owned(), format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                    net.command(&line);
+                }
+                for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
+                    net.command(line);
+                }
+            };
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
+            let said: Vec<String> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
+            let stage = gate.machines_stage;
+            let client = world.resource::<ClientWorld>();
+            if client.block(oven) != client.registry.id("base:coke_oven") || client.block(wheel) != client.registry.id("base:treadwheel") {
+                if in_phase > WORKSHOP_WAIT && gate.server_now - gate.machines_since > 10.0 {
+                    teardown(world);
+                    fail(world, gate, "iron age", "the coke oven and blast furnace never came".into());
+                }
+                return;
+            }
+            let (coal, ore, coke) = (holding(world, "coal_ore").0, holding(world, "iron_ore").0, holding(world, "coke").0);
+            // Put in: first seen in hand, then gone after the machine was used. Working: what
+            // the server says when asked.
+            let held = match stage {
+                0 => coal,
+                2 => ore,
+                3 => coke,
+                _ => 0,
+            };
+            gate.machines_seen |= held > 0;
+            let put_in = gate.machines_seen && held == 0 && gate.machines_asked > f32::MIN;
+            let done = match stage {
+                0 | 2 | 3 => put_in,
+                // Names compared without case, so a renamed capital doesn't stall the step.
+                1 => said.iter().any(|r| r.to_lowercase().contains("making coke")),
+                _ => said.iter().any(|r| r.to_lowercase().contains("making iron ingot")),
+            };
+            if done {
+                let net = world.resource::<Net>();
+                match stage {
+                    0 => {}
+                    1 => {
+                        net.command("give iron_ore 2");
+                        net.command("give coke 1");
+                    }
+                    2 | 3 => {}
+                    _ => {
+                        // Both structures in view, between them.
+                        aim(world, k + IVec3::new(-1, 1, 0));
+                        if gate.shot(world, "iron_age").is_none() {
+                            return;
+                        }
+                        gate.check(
+                            "workshop: iron age",
+                            Ok("a coal in the Coke Oven set it baking coke; two iron ore and a coke in the Blast Furnace, blown by an aurochs on the treadwheel, set it making iron".into()),
+                        );
+                        teardown(world);
+                        end_workshop(world, gate, now);
+                        return;
+                    }
+                }
+                gate.machines_stage += 1;
+                gate.machines_since = gate.server_now;
+                gate.machines_asked = f32::MIN;
+                gate.machines_seen = false;
+                return;
+            }
+            // The aurochs is held still again before its minute runs out.
+            if gate.server_now - gate.machines_held >= 20.0 {
+                gate.machines_held = gate.server_now;
+                world.resource::<Net>().command("creatures hold aurochs");
+            }
+            // Used (or asked about) only every few server seconds, as the kiln is.
+            if gate.server_now - gate.machines_asked >= 3.0 {
+                let ready = match stage {
+                    0 => select(world, "coal_ore"),
+                    2 => select(world, "iron_ore"),
+                    3 => select(world, "coke"),
+                    _ => true,
+                };
+                if ready {
+                    gate.machines_asked = gate.server_now;
+                    if stage == 1 || stage >= 4 {
+                        let asked = if stage == 1 { oven } else { furnace };
+                        if let Some(observer) = gate.observer.as_mut() {
+                            observer.replies.clear();
+                            observer.connection.send(ClientMessage::Command { line: format!("machine {} {} {}", asked.x, asked.y, asked.z) });
+                        }
+                    } else {
+                        let target = if stage == 0 { oven } else { furnace };
+                        let actions = world.resource::<crate::Actions>().0.clone();
+                        world.resource::<Net>().propose(actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
+                    }
+                }
+            }
+            // No progress for 40 seconds of the server's time; the game's clock only catches a
+            // server that stopped.
+            if gate.server_now - gate.machines_since > 40.0 || in_phase > 300.0 {
+                let what = [
+                    "the coke oven never took the coal",
+                    "the coke oven never said it was making coke",
+                    "the blast furnace never took the iron ore",
+                    "the blast furnace never took the coke",
+                    "the blast furnace never said it was making iron",
+                ][stage.min(4) as usize];
+                let waited = (gate.server_now - gate.machines_since, in_phase);
+                teardown(world);
+                fail(world, gate, "iron age", format!("{what} ({:.1} server s, {:.1} game s): holding coal {coal}, iron ore {ore}, coke {coke}; /machine said {said:?}", waited.0, waited.1));
             }
         }
         _ => {}

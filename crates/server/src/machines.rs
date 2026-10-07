@@ -13,19 +13,20 @@
 //! their inventory. Either way they are told how it is doing.
 
 use serde::{Deserialize, Serialize};
-use voxmar_engine::block::BlockId;
-use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::block::{BlockId, BlockRegistry};
+use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, local_index};
 use voxmar_engine::dropped;
-use voxmar_engine::factory::{MachineState, MachineView, Status};
+use voxmar_engine::factory::{MachineState, MachineView, Status, inputs_hold};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::lang::{Words, def_key};
-use voxmar_engine::machine::{Role, Source};
+use voxmar_engine::machine::{Machine, MachineRegistry, ProcessId, Role, Source};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits;
-use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
 
 use crate::Server;
+use crate::creatures::Live;
 use crate::items::random3;
 use crate::process::Process;
 
@@ -91,13 +92,19 @@ struct Sites {
     water_wheels: Vec<IVec3>,
 }
 
-/// The faces a water wheel takes water from: its sides, and below.
-const WATER_FACES: [IVec3; 5] = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::NEG_Y];
+/// The recipe of `machine` that makes `made` (by name) to go on with, preferring one whose
+/// inputs `inputs` hold.
+fn resumed(machine: &Machine, machines: &MachineRegistry, blocks: &BlockRegistry, made: &str, inputs: &[Option<ItemStack>]) -> Option<ProcessId> {
+    let makes = |p: &ProcessId| machines.process(*p).outputs.first().is_some_and(|&(item, _)| blocks.def(item).name == made);
+    let mut making = machine.processes.iter().copied().filter(makes);
+    making.clone().find(|&p| inputs_hold(inputs, machines.process(p))).or_else(|| making.next())
+}
 
 /// Whether the water wheel at `pos` is the one the water in `cell` turns: of the wheels it
-/// runs past, the first in order, so a fall ringed by wheels turns one of them.
-fn turns_first(wheels: &[IVec3], pos: IVec3, cell: IVec3) -> bool {
-    !wheels.iter().any(|&other| (other.x, other.y, other.z) < (pos.x, pos.y, pos.z) && WATER_FACES.iter().any(|&d| other + d == cell))
+/// runs past (by `faces`, where wheels take water from), the first in order, so a fall
+/// ringed by wheels turns one of them.
+fn turns_first(wheels: &[IVec3], faces: &[IVec3], pos: IVec3, cell: IVec3) -> bool {
+    !wheels.iter().any(|&other| (other.x, other.y, other.z) < (pos.x, pos.y, pos.z) && faces.iter().any(|&d| other + d == cell))
 }
 
 impl Server {
@@ -125,7 +132,7 @@ impl Server {
                 self.factory.set_condition(pos, 0.0);
             }
             let sites = self.machine_sites();
-            self.survey_machine(pos, &sites);
+            self.survey_machine(pos, &sites, 0.0);
         }
     }
 
@@ -158,21 +165,26 @@ impl Server {
     }
 
     /// Looks at what the world gives every machine.
-    fn survey_machines(&mut self, _seconds: f32) {
+    fn survey_machines(&mut self, seconds: f32) {
         let sites = self.machine_sites();
         let positions: Vec<IVec3> = self.factory.iter().map(|(pos, ..)| pos).collect();
         for pos in positions {
-            self.survey_machine(pos, &sites);
+            self.survey_machine(pos, &sites, seconds);
         }
+        // Work kept for animals no longer about is let go.
+        let live = &self.creatures.live;
+        self.factory.retain_walked(|id| live.contains_key(&id));
     }
 
     /// What the world lets the machine at `pos` do: flowing water beside a water wheel, the
     /// wind at a windmill (more up high), a kept animal at a treadwheel, the structure round
     /// a multiblock's core. Where the land is not loaded, a windmill is reckoned to catch an
-    /// average wind and the rest stay as they were last seen.
-    fn survey_machine(&mut self, pos: IVec3, sites: &Sites) {
+    /// average wind and the rest stay as they were last seen. `seconds` since the last look
+    /// count as work for an animal walking a wheel that gives power.
+    fn survey_machine(&mut self, pos: IVec3, sites: &Sites, seconds: f32) {
         let Some((block, state)) = self.factory.get(pos) else { return };
         let owner = state.owner.clone();
+        let giving = state.status == Status::Generating;
         let machines = self.content.machines.clone();
         let Some(machine) = machines.get(block) else { return };
         let rules = &machines.sources;
@@ -180,7 +192,16 @@ impl Server {
         let becalmed = || sites.windmills.iter().any(|&other| other != pos && (other - pos).abs().max_element() <= rules.wind_spacing);
         // Another water wheel near this one shares its water and stills it.
         let crowded = || sites.water_wheels.iter().any(|&other| other != pos && (other - pos).abs().max_element() <= rules.water_spacing);
-        if !self.world.contains(ColumnPos::of_block(pos)) {
+        // What it looks at around it must be loaded too, or it stays as it was last seen
+        // (a windmill takes the mean wind, an animal walks no wheel).
+        let reach = match machine.role {
+            // Animals are not about where the land is not loaded, so none walk it there.
+            Role::Generator { source: Source::Walked, .. } => 0,
+            Role::Processor { water: false, .. } => self.content.multiblocks.with_core(block).map(|m| m.reach()).max().unwrap_or(0),
+            _ => 1,
+        };
+        let loaded = (-reach..=reach).all(|x| (-reach..=reach).all(|z| self.world.contains(ColumnPos::of_block(pos + IVec3::new(x, 0, z)))));
+        if !loaded {
             match machine.role {
                 Role::Generator { source: Source::Wind, .. } => {
                     let share = if becalmed() { 0.0 } else { rules.wind_share(rules.wind_mean, pos.y as f32) };
@@ -192,17 +213,6 @@ impl Server {
             }
             return;
         }
-        // What it looks at around it must be loaded too, or it stays as it was last seen.
-        let reach = match machine.role {
-            // Animals are not about where the land is not loaded, so none walk it there.
-            Role::Generator { source: Source::Walked, .. } => 0,
-            Role::Processor { water: false, .. } => self.content.multiblocks.with_core(block).map(|m| m.reach()).max().unwrap_or(0),
-            _ => 1,
-        };
-        let loaded = (-reach..=reach).all(|x| (-reach..=reach).all(|z| self.world.contains(ColumnPos::of_block(pos + IVec3::new(x, 0, z)))));
-        if !loaded {
-            return;
-        }
         let condition = match machine.role {
             Role::Generator { source: Source::FlowingWater, .. } => {
                 let blocks = &self.content.blocks;
@@ -210,9 +220,10 @@ impl Server {
                 // would turn a wheel for nothing. Not lava.
                 // Each fall or current turns one wheel: the first in order beside it.
                 let hot = &rules.hot_tag;
-                let flowing = WATER_FACES.into_iter().any(|d| {
+                let faces: Vec<IVec3> = rules.water_faces.iter().map(|&f| IVec3::from_array(f)).collect();
+                let flowing = faces.iter().any(|&d| {
                     let cell = pos + d;
-                    turns_first(&sites.water_wheels, pos, cell) && self.block(cell).filter(|&b| !blocks.def(b).has_tag(hot)).and_then(|b| blocks.fluid(b)).is_some_and(|f| f.falling || f.current.is_some())
+                    turns_first(&sites.water_wheels, &faces, pos, cell) && self.block(cell).filter(|&b| !blocks.def(b).has_tag(hot)).and_then(|b| blocks.fluid(b)).is_some_and(|f| f.falling || f.current.is_some())
                 });
                 if flowing && !crowded() { 1.0 } else { 0.0 }
             }
@@ -221,7 +232,7 @@ impl Server {
                 let (tick, day) = (self.tick, self.day);
                 let wind = self.weather.local(&mut self.temperature, at, tick, day).weather.wind.length();
                 // Open air around the sails, and no other sails near, or nothing turns them.
-                let open = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y].into_iter().all(|d| !self.is_solid(pos + d));
+                let open = rules.wind_faces.iter().all(|&d| !self.is_solid(pos + IVec3::from_array(d)));
                 if open && !becalmed() { rules.wind_share(wind, pos.y as f32) } else { 0.0 }
             }
             Role::Generator { source: Source::Walked, .. } => {
@@ -236,22 +247,32 @@ impl Server {
                     (across <= rules.walk_reach && (at.y - centre.y).abs() <= rules.walk_height).then(|| at.distance(centre))
                 };
                 let keeps = |wheel_owner: &Option<String>, animal_owner: &Option<String>| animal_owner.is_some() && (wheel_owner.is_none() || wheel_owner == animal_owner);
-                let walked = self.creatures.live.values().any(|c| {
+                // Fed by a player within the last few days, or it will not walk.
+                let fed = |c: &Live| self.day - c.fed <= (rules.walk_fed_days * TICKS_PER_DAY as f32) as f64;
+                let walker = self.creatures.live.iter().find(|(_, c)| {
                     let at = c.body.position;
                     let Some(here) = reach(pos, at) else { return false };
                     // Nearer wheels it may walk, or as near and first in order, take the animal.
                     let taken = sites.wheels.iter().any(|(other, other_owner)| {
                         *other != pos && self.world.contains(ColumnPos::of_block(*other)) && keeps(other_owner, &c.owner) && reach(*other, at).is_some_and(|d| d < here || (d == here && (other.x, other.y, other.z) < (pos.x, pos.y, pos.z)))
                     });
-                    keeps(&owner, &c.owner) && !taken && machines.walks(&creatures.get(c.species).def.name)
+                    keeps(&owner, &c.owner) && fed(c) && !taken && machines.walks(&creatures.get(c.species).def.name)
                 });
-                if walked { 1.0 } else { 0.0 }
+                let walker = walker.map(|(&id, _)| id);
+                // Its time at work is kept for its keeping. Every animal walks at full power
+                // until kept creatures have a condition of their own.
+                if let Some(id) = walker.filter(|_| giving && seconds > 0.0) {
+                    self.factory.add_walked(id, seconds);
+                }
+                walker.map_or(0.0, |_| rules.walk_share(None))
             }
             Role::Processor { water: true, .. } => {
                 let blocks = &self.content.blocks;
                 // Any water beside or below, still or flowing. Not lava.
-                let wet = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::NEG_Y]
-                    .into_iter()
+                let wet = rules
+                    .water_faces
+                    .iter()
+                    .map(|&d| IVec3::from_array(d))
                     .any(|d| self.block(pos + d).is_some_and(|b| !blocks.def(b).has_tag(&rules.hot_tag) && blocks.fluid(b).is_some()));
                 if wet { 1.0 } else { 0.0 }
             }
@@ -274,7 +295,7 @@ impl Server {
         let machines = self.content.machines.clone();
         // What the world gives it now, so what it says as things go in is so.
         let sites = self.machine_sites();
-        self.survey_machine(pos, &sites);
+        self.survey_machine(pos, &sites, 0.0);
         let Some(player) = self.players.get_mut(&agent) else { return };
         let selected = player.selected;
         let mut moved = None;
@@ -317,10 +338,19 @@ impl Server {
                 lines.push(Words::Own(format!("{}.hint", def_key("multiblock", &structure.name)), structure.hint.clone()));
             }
             Some(structure) => {
-                // Counted once a build, not on every use.
-                if let Some(state) = self.factory.state_mut(pos).filter(|s| !s.counted) {
-                    state.counted = true;
-                    self.tally(agent, "built", &structure.name, 1);
+                // Counted once a build, not on every use, for whoever placed the core (whoever
+                // uses it, if nobody did), and only while they are about.
+                let owner = self.factory.get(pos).filter(|(_, s)| !s.counted).map(|(_, s)| s.owner.clone());
+                let builder = match owner {
+                    Some(Some(name)) => self.players.iter().find(|(_, p)| p.joined && p.name == name).map(|(&id, _)| id),
+                    Some(None) => Some(agent),
+                    None => None,
+                };
+                if let Some(builder) = builder {
+                    if let Some(state) = self.factory.state_mut(pos) {
+                        state.counted = true;
+                    }
+                    self.tally(builder, "built", &structure.name, 1);
                 }
                 lines.push(self.machine_words(&view));
             }
@@ -361,10 +391,10 @@ impl Server {
             (Status::Generating, _) => key("machine.generating").with("power", Words::text(view.power)),
             (Status::NoPower, _) => key("machine.no_power"),
             (Status::NoFuel, _) => key("machine.no_fuel"),
-            (Status::NoSource, _) if source == Some(Source::Wind) => key("machine.no_wind"),
+            (Status::NoSource, _) if source == Some(Source::Wind) => key("machine.no_wind").with("spacing", Words::text(self.content.machines.sources.wind_spacing)),
             (Status::NoSource, _) if washer => key("machine.needs_water"),
-            (Status::NoSource, _) if source == Some(Source::Walked) => key("machine.no_walker"),
-            (Status::NoSource, _) => key("machine.no_water"),
+            (Status::NoSource, _) if source == Some(Source::Walked) => key("machine.no_walker").with("days", Words::text(self.content.machines.sources.walk_fed_days)),
+            (Status::NoSource, _) => key("machine.no_water").with("spacing", Words::text(self.content.machines.sources.water_spacing)),
             (Status::Full, _) => key("machine.full"),
             (Status::TooHigh, _) => key("machine.too_high"),
             (Status::Overloaded, _) => key("machine.overloaded"),
@@ -404,10 +434,13 @@ impl Server {
         saved
     }
 
-    /// The machines in a column just loaded must stand in it: one whose block is gone (the
-    /// world was edited, or its save lost) leaves the factory, dropping what it held where it
-    /// stood.
-    pub(crate) fn reconcile_machines(&mut self, column: ColumnPos) {
+    /// The machines in a column just loaded and its machine blocks must agree. One whose
+    /// block is gone (the world was edited, or the land was saved after it was broken)
+    /// leaves the factory, dropping what it held where it stood: the save it came from is
+    /// the one the dropped items and players came from, so nothing is doubled. A machine
+    /// block the factory does not hold (its file could not be read) joins it, empty, if the
+    /// column was saved (`adopt`): only players build machines.
+    pub(crate) fn reconcile_machines(&mut self, column: ColumnPos, adopt: bool) {
         let gone: Vec<(IVec3, BlockId)> = self
             .factory
             .iter()
@@ -417,6 +450,31 @@ impl Server {
         for (pos, block) in gone {
             tracing::warn!("a machine at {pos} is no longer in the world; it leaves the factory");
             self.machine_changed(pos, block, BlockId::AIR);
+        }
+        let machines = &self.content.machines;
+        let Some(loaded) = self.world.column(column).filter(|_| adopt) else { return };
+        let origin = column.origin();
+        let mut found = Vec::new();
+        for (index, chunk) in loaded.chunks.iter().enumerate() {
+            if !chunk.palette().iter().any(|&b| machines.get(b).is_some()) {
+                continue;
+            }
+            let base = origin + IVec3::new(0, index as i32 * CHUNK_SIZE, 0);
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    for x in 0..CHUNK_SIZE {
+                        let block = chunk.get(local_index(IVec3::new(x, y, z)));
+                        let pos = base + IVec3::new(x, y, z);
+                        if machines.get(block).is_some() && self.factory.get(pos).is_none() {
+                            found.push((pos, block));
+                        }
+                    }
+                }
+            }
+        }
+        for (pos, block) in found {
+            tracing::warn!("a machine block at {pos} was not in the factory; it joins it, empty");
+            self.machine_changed(pos, BlockId::AIR, block);
         }
     }
 
@@ -442,19 +500,39 @@ impl Server {
             state.fuel = machine.fuel.as_ref().and_then(stack);
             state.bin = machine.bin.iter().map(stack).collect();
             // The work it was doing goes on where it was: the recipe of this machine that makes
-            // the same thing (the next step drops it if what it holds no longer does).
+            // the same thing from what it holds (a furnace makes an ingot from ore or from dust;
+            // the next step drops it if what it holds no longer does).
             if let (Some((made, progress)), Some(def)) = (&machine.work, machines.get(block)) {
-                state.process = def.processes.iter().copied().find(|&p| machines.process(p).outputs.first().is_some_and(|&(item, _)| blocks.def(item).name == *made));
+                state.process = resumed(def, &machines, &blocks, made, &state.inputs);
                 state.progress = if state.process.is_some() { *progress } else { 0.0 };
             }
-            self.factory.insert_state(IVec3::from_array(machine.position), block, state, &machines);
+            // Stacks a machine no longer has room for (a package gave it fewer slots) fall out
+            // where it stands.
+            let pos = IVec3::from_array(machine.position);
+            if let Some(def) = machines.get(block) {
+                let (inputs, outputs) = def.slots();
+                let mut spilled = Vec::new();
+                for (slots, room) in [(&mut state.inputs, inputs), (&mut state.outputs, outputs), (&mut state.bin, def.bin_slots())] {
+                    slots.retain(Option::is_some);
+                    if slots.len() > room {
+                        spilled.extend(slots.split_off(room).into_iter().flatten());
+                    }
+                }
+                for (i, stack) in spilled.into_iter().enumerate() {
+                    tracing::warn!("a machine at {pos} has no room for {} {}; it falls out", stack.count, blocks.def(stack.item).name);
+                    let random = random3(self.tick, pos, 0x5b11 ^ i as u32);
+                    self.items.spawn(stack, dropped::popped(pos, random), dropped::PICKUP_DELAY);
+                }
+            }
+            self.factory.insert_state(pos, block, state, &machines);
         }
         // The land already loaded (round the spawn) is checked now, the rest as it loads.
-        let mut loaded: Vec<ColumnPos> = self.factory.iter().map(|(pos, ..)| ColumnPos::of_block(pos)).filter(|&c| self.world.contains(c)).collect();
+        let mut loaded: Vec<ColumnPos> = self.world.columns().map(|(&c, _)| c).collect();
         loaded.sort_by_key(|c| (c.0.x, c.0.y));
         loaded.dedup();
         for column in loaded {
-            self.reconcile_machines(column);
+            let saved = self.save.as_ref().is_some_and(|save| save.has_column(column));
+            self.reconcile_machines(column, saved);
         }
     }
 }
@@ -464,12 +542,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_furnace_restored_mid_ingot_goes_on_with_the_recipe_its_inputs_make() {
+        let content = voxmar_engine::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let furnace = machines.get(blocks.expect("base:electric_furnace")).unwrap();
+        for input in ["base:iron_ore", "base:iron_dust"] {
+            let inputs = [Some(ItemStack { item: blocks.expect(input), count: 1 }), None, None];
+            let process = resumed(furnace, machines, blocks, "base:iron_ingot", &inputs).map(|p| machines.process(p));
+            assert!(process.is_some_and(|p| p.inputs[0].0.contains(&blocks.expect(input))), "an ingot from {input}");
+        }
+    }
+
+    #[test]
     fn a_fall_ringed_by_wheels_turns_one_of_them() {
         let cell = IVec3::new(0, 10, 0);
         let wheels = [IVec3::new(1, 10, 0), IVec3::new(-1, 10, 0), IVec3::new(0, 10, 1), IVec3::new(0, 10, -1), IVec3::new(0, 11, 0)];
-        let turning: Vec<IVec3> = wheels.iter().copied().filter(|&w| turns_first(&wheels, w, cell)).collect();
+        let faces: Vec<IVec3> = voxmar_engine::machine::SourceRules::default().water_faces.iter().map(|&f| IVec3::from_array(f)).collect();
+        let turning: Vec<IVec3> = wheels.iter().copied().filter(|&w| turns_first(&wheels, &faces, w, cell)).collect();
         assert_eq!(turning, [IVec3::new(-1, 10, 0)]);
         // Water elsewhere is no other wheel's.
-        assert!(turns_first(&wheels, IVec3::new(1, 10, 0), IVec3::new(2, 10, 0)));
+        assert!(turns_first(&wheels, &faces, IVec3::new(1, 10, 0), IVec3::new(2, 10, 0)));
     }
 }

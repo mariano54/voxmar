@@ -42,7 +42,7 @@ struct Client {
     chat: Vec<(ChatKind, String)>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
-    /// The server's tick as last told (once a second).
+    /// The server's tick, as it last told (once a second): the clock waits are judged by.
     server_tick: u64,
     /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
@@ -125,7 +125,8 @@ impl Client {
             quests: Vec::new(),
             _server: server,
         };
-        client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
+        // Joined once it stands in its land and has been told the time.
+        client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())) && c.day.is_some());
         client
     }
 
@@ -1343,10 +1344,10 @@ fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
     use_at(&mut client, crusher);
     client.pump_until(|c| count(c, ore) == 0 && c.chat.iter().any(|(_, t)| t.contains("making")));
     // With an empty hand, what it made comes out: two dust from one ore.
-    let started = Instant::now();
+    let started = client.server_tick;
     while count(&client, dust) == 0 {
-        assert!(started.elapsed() < Duration::from_secs(30), "the crusher made nothing: {:?}", client.chat);
-        std::thread::sleep(Duration::from_millis(500));
+        assert!(server_seconds(&client, started) < 30, "the crusher made nothing: {:?}", client.chat);
+        wait_server(&mut client, 1);
         use_at(&mut client, crusher);
         client.pump_until(|c| !c.chat.is_empty());
     }
@@ -1444,10 +1445,10 @@ fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
     use_at(&mut client, washer);
     client.pump_until(|c| count(c, ore) == 0);
     // Dry, it waits and says what it needs.
-    let started = Instant::now();
+    let started = client.server_tick;
     loop {
-        assert!(started.elapsed() < Duration::from_secs(20), "the washer never said it needs water: {:?}", client.chat);
-        std::thread::sleep(Duration::from_millis(500));
+        assert!(server_seconds(&client, started) < 20, "the washer never said it needs water: {:?}", client.chat);
+        wait_server(&mut client, 1);
         use_at(&mut client, washer);
         client.pump_until(|c| !c.chat.is_empty());
         if client.chat.iter().any(|(_, t)| t.contains("needs water")) {
@@ -1458,10 +1459,10 @@ fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
     assert!(client.ok("/machine ~4 ~ ~").contains("needs water"));
     // Water beside it: three dust for the one ore.
     client.ok("/setblock ~5 ~ ~ water");
-    let started = Instant::now();
+    let started = client.server_tick;
     while count(&client, dust) < 3 {
-        assert!(started.elapsed() < Duration::from_secs(40), "the washer made {} dust: {:?}", count(&client, dust), client.chat);
-        std::thread::sleep(Duration::from_millis(500));
+        assert!(server_seconds(&client, started) < 40, "the washer made {} dust: {:?}", count(&client, dust), client.chat);
+        wait_server(&mut client, 1);
         use_at(&mut client, washer);
         client.pump_until(|c| !c.chat.is_empty());
     }
@@ -1516,13 +1517,13 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
     client.ok("/clear");
     client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
     // Twenty seconds of work at the bellows: an empty hand takes the bloom.
-    let started = Instant::now();
+    let started = client.server_tick;
     while count(&client, bloom) == 0 {
-        if started.elapsed() > Duration::from_secs(60) {
+        if server_seconds(&client, started) > 60 {
             let wheel = client.ok("/machine ~7 ~ ~");
             panic!("the bloomery made no bloom: {:?}; the wheel: {wheel}", client.chat);
         }
-        std::thread::sleep(Duration::from_millis(1000));
+        wait_server(&mut client, 1);
         use_at(&mut client, core);
         client.pump_until(|c| !c.chat.is_empty());
     }
@@ -1530,19 +1531,85 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
     // One animal walks one wheel: a second wheel beside it, farther from the aurochs, stays
     // still while the first turns.
     client.ok("/setblock ~8 ~ ~ treadwheel");
-    let started = Instant::now();
+    let started = client.server_tick;
     while !client.ok("/machine ~8 ~ ~").contains("needs a kept animal") {
-        assert!(started.elapsed() < Duration::from_secs(10), "one aurochs walks two wheels");
-        std::thread::sleep(Duration::from_millis(300));
+        assert!(server_seconds(&client, started) < 10, "one aurochs walks two wheels");
+        wait_server(&mut client, 1);
     }
     assert!(!client.ok("/machine ~7 ~ ~").contains("needs a kept animal"), "the nearer wheel still turns");
     // The aurochs, kept, can be taken away again; then the wheel stops.
     assert!(client.ok("/creatures remove aurochs").contains("for 1 creature within"));
-    let started = Instant::now();
+    let started = client.server_tick;
     while !client.ok("/machine ~7 ~ ~").contains("needs a kept animal") {
-        assert!(started.elapsed() < Duration::from_secs(10), "the wheel still turns without its aurochs");
-        std::thread::sleep(Duration::from_millis(300));
+        assert!(server_seconds(&client, started) < 10, "the wheel still turns without its aurochs");
+        wait_server(&mut client, 1);
     }
+}
+
+#[test]
+fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two_ingots_an_ore() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    // The coke oven: a chamber of kiln bricks three on a side round a hollow middle, the
+    // oven in the middle of its south face.
+    let oven = start + IVec3::new(-3, 1, 3);
+    // The blast furnace: the bloomery's ring four high, bellows in it, blown by an aurochs
+    // on a treadwheel out east.
+    let furnace = start + IVec3::new(4, 0, 0);
+    for line in [
+        "/clear",
+        "/fill ~-5 ~ ~ ~8 ~4 ~5 air",
+        "/fill ~-4 ~ ~1 ~-2 ~2 ~3 kiln_bricks",
+        "/setblock ~-3 ~1 ~2 air",
+        "/setblock ~-3 ~1 ~3 coke_oven",
+        "/fill ~3 ~ ~-1 ~5 ~3 ~1 kiln_bricks",
+        "/fill ~4 ~1 ~ ~4 ~3 ~ air",
+        "/setblock ~4 ~ ~ blast_furnace",
+        "/setblock ~5 ~ ~ bellows",
+        "/setblock ~6 ~ ~ shaft",
+        "/setblock ~7 ~ ~ treadwheel",
+        "/summon aurochs 1 ~7 ~ ~2",
+        "/creatures tame aurochs",
+        "/creatures hold aurochs",
+        "/give coal_ore 1",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, coke, ore, ingot) = (blocks.expect("base:coal_ore"), blocks.expect("base:coke"), blocks.expect("base:iron_ore"), blocks.expect("base:iron_ingot"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| count(c, coal) == 1 && c.world.block(oven) == c.content.blocks.id("base:coke_oven") && c.world.block(furnace + IVec3::X) == c.content.blocks.id("base:bellows"));
+    // The coal goes in, and the oven bakes it by its own heat.
+    use_machine(&mut client, oven);
+    client.pump_until(|c| count(c, coal) == 0);
+    machine_says(&mut client, &format!("{} {} {}", oven.x, oven.y, oven.z), "making Coke", 10);
+    // Taken out once baked (each `/seed` answer comes after the server dealt with the take).
+    let started = client.server_tick;
+    while count(&client, coke) == 0 {
+        assert!(server_seconds(&client, started) < 60, "the coke oven baked no coke: {}", client.ok(&format!("/machine {} {} {}", oven.x, oven.y, oven.z)));
+        wait_server(&mut client, 1);
+        use_machine(&mut client, oven);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, coke), 1);
+    // Two ore and the coke into the blast furnace: four ingots.
+    client.ok("/give iron_ore 2");
+    client.pump_until(|c| count(c, ore) == 2);
+    for item in [ore, coke] {
+        let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == item)).expect("held") as u8;
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: furnace, face: Face::NegX });
+        client.pump_until(|c| count(c, item) == 0);
+    }
+    let started = client.server_tick;
+    while count(&client, ingot) == 0 {
+        assert!(server_seconds(&client, started) < 60, "the blast furnace made no iron: {}", client.ok(&format!("/machine {} {} {}", furnace.x, furnace.y, furnace.z)));
+        wait_server(&mut client, 1);
+        client.ok("/creatures hold aurochs");
+        use_machine(&mut client, furnace);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, ingot), 4, "two ore and a coke, four ingots");
 }
 
 #[test]
@@ -1584,13 +1651,13 @@ fn a_hopper_feeds_a_crusher_by_conveyor_and_a_chest_above_collects_its_dust() {
     client.earned.clear();
     use_at(&mut client, hopper);
     client.pump_until(|c| count(c, ore) == 0 && c.chat.iter().any(|(_, t)| t.contains("Put in 2")));
-    let started = Instant::now();
+    let started = client.server_tick;
     loop {
         let chest_says = client.ok("/machine ~4 ~2 ~");
         if chest_says.contains("holds 4 items") {
             break;
         }
-        assert!(started.elapsed() < Duration::from_secs(40), "the chest got no dust: {chest_says}; crusher: {}", client.ok("/machine ~4 ~ ~"));
+        assert!(server_seconds(&client, started) < 40, "the chest got no dust: {chest_says}; crusher: {}", client.ok("/machine ~4 ~ ~"));
         std::thread::sleep(Duration::from_millis(500));
     }
     assert!(client.ok("/machine ~2 ~ ~").contains("holds 0 items"));
@@ -1605,15 +1672,26 @@ fn use_machine(client: &mut Client, at: IVec3) {
     client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
 }
 
-/// Asks `/machine` about a block until its answer contains `want`, or panics after `seconds`.
+/// Server seconds since `tick`, by the clock it last told.
+fn server_seconds(client: &Client, tick: u64) -> u64 {
+    client.server_tick.saturating_sub(tick) / TICKS_PER_SECOND as u64
+}
+
+/// Waits `seconds` of the server's clock, from the next time it tells it.
+fn wait_server(client: &mut Client, seconds: u64) {
+    client.after_ticks(seconds * TICKS_PER_SECOND as u64);
+}
+
+/// Asks `/machine` about a block until its answer contains `want`, or panics after `seconds`
+/// of the server's clock.
 fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> String {
-    let started = Instant::now();
+    let started = client.server_tick;
     loop {
         let said = client.ok(&format!("/machine {at}"));
         if said.contains(want) {
             return said;
         }
-        assert!(started.elapsed() < Duration::from_secs(seconds), "/machine {at} never said `{want}`: {said}");
+        assert!(server_seconds(client, started) < seconds, "/machine {at} never said `{want}`: {said}");
         std::thread::sleep(Duration::from_millis(300));
     }
 }
@@ -1657,13 +1735,13 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     client.pump_until(|c| c.inventory.slots.iter().any(Option::is_some));
     use_machine(&mut client, crusher);
     let progress = |said: &str| said.split(", ").find_map(|part| part.strip_suffix("% done")).and_then(|p| p.trim_end_matches('.').parse::<u32>().ok());
-    let started = Instant::now();
+    let started = client.server_tick;
     let done = loop {
         let said = client.ok(&format!("/machine {crusher_at}"));
         if let Some(done) = progress(&said).filter(|&p| p >= 40) {
             break done;
         }
-        assert!(started.elapsed() < Duration::from_secs(20), "the crusher never got going: {said}");
+        assert!(server_seconds(&client, started) < 20, "the crusher never got going: {said}");
         std::thread::sleep(Duration::from_millis(200));
     };
     drop(client);
@@ -1673,18 +1751,18 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     // Until its first step it says it is idle; then it goes on from where it was.
     let said = machine_says(&mut client, &crusher_at, "making", 20);
     assert!(progress(&said).is_some_and(|p| p >= done), "the crusher began again: {said}, was {done}% done");
-    // Finished, the one ore made two dust: not two lots of it, nor none. The limit follows
-    // the work, not the clock: a crowded test machine runs the server slow.
-    let (mut moved, mut last) = (Instant::now(), progress(&said));
+    // Finished, the one ore made two dust: not two lots of it, nor none. The limit is the
+    // server's time with no progress: a crowded test machine runs the server slow.
+    let (mut moved, mut last) = (client.server_tick, progress(&said));
     loop {
         let said = client.ok(&format!("/machine {crusher_at}"));
         if said.contains("idle") {
             break;
         }
         if progress(&said) != last {
-            (moved, last) = (Instant::now(), progress(&said));
+            (moved, last) = (client.server_tick, progress(&said));
         }
-        assert!(moved.elapsed() < Duration::from_secs(20), "the crusher stopped after the restart: {said}");
+        assert!(server_seconds(&client, moved) < 20, "the crusher stopped after the restart: {said}");
         std::thread::sleep(Duration::from_millis(300));
     }
     let dust = client.content.blocks.expect("base:iron_dust");
@@ -1695,11 +1773,195 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     assert_eq!(made, 2, "one iron ore crushed across a restart");
     drop(client);
 
-    // A machines file that cannot be read is kept aside before the next save writes over it.
+    // A machines file that cannot be read is kept aside before the next save writes over it,
+    // the server goes on, and the machines standing in saved land join the factory again,
+    // empty.
     std::fs::write(dir.join("machines.ron"), "not a machine").unwrap();
-    let client = Client::join_with(config());
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
+    client.ok(&format!("/machine {at}"));
     drop(client);
-    assert_eq!(std::fs::read_to_string(dir.join("machines.unreadable.ron")).unwrap(), "not a machine");
+    let aside: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().contains("machines.unreadable.")).collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "not a machine");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// How often the server saves on its own (`SAVE_INTERVAL`), in ticks.
+const SAVE_EVERY: u64 = 30 * TICKS_PER_SECOND as u64;
+
+/// The generation of the save in `dir`, from its `world.ron`.
+fn saved_generation(dir: &std::path::Path) -> u64 {
+    let meta = std::fs::read_to_string(dir.join("world.ron")).expect("world.ron");
+    let at = meta.find("generation:").expect("a generation") + "generation:".len();
+    meta[at..].trim_start().split(|c: char| !c.is_ascii_digit()).next().and_then(|n| n.parse().ok()).expect("a number")
+}
+
+/// Waits until the server has finished the loop that handled what was sent before now: a
+/// `/seed` answer, then the next time it tells, sent by a later step of that loop or after.
+fn after_this_loop(client: &mut Client) {
+    client.ok("/seed");
+    let told = client.server_tick;
+    client.pump_until(|c| c.server_tick > told);
+}
+
+#[test]
+fn only_a_joined_player_leaving_saves_the_world() {
+    let dir = world_dir("leavers");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let autosaves = |from: u64, to: u64| (to / SAVE_EVERY).saturating_sub(from.saturating_sub(TICKS_PER_SECOND as u64) / SAVE_EVERY);
+    after_this_loop(&mut client);
+    let (before, from) = (saved_generation(&dir), client.server_tick);
+    // Three connections that close without a hello: none of them is a player leaving.
+    for _ in 0..3 {
+        let (connection, server_side) = local_pair();
+        drop(connection);
+        client._server.as_ref().unwrap().connections().send(server_side).unwrap();
+    }
+    after_this_loop(&mut client);
+    let saves = saved_generation(&dir) - before;
+    assert!(saves <= autosaves(from, client.server_tick), "{saves} saves for connections that never joined");
+    // A player who joined does save the world as they leave.
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    let (before, from) = (saved_generation(&dir), client.server_tick);
+    drop(other);
+    after_this_loop(&mut client);
+    let saves = saved_generation(&dir) - before;
+    assert!(saves >= 1 && saves <= 1 + autosaves(from, client.server_tick), "{saves} saves for a player leaving");
+    drop(client);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() {
+    let dir = world_dir("cut");
+    let config = |cut_saves| ServerConfig { view_distance: 2, world: Some(dir.clone()), cut_saves, ..Default::default() };
+    let mut client = Client::join_with(config(false));
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    for line in ["/clear", &format!("/setblock {at} chest"), "/give iron_ore 64"] {
+        client.ok(line);
+    }
+    let ore = client.content.blocks.expect("base:iron_ore");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| held(c) == 64 && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    drop(client);
+    // The ore goes into the chest, and every save after is cut short once the machines
+    // are written: the chest holding it is saved, the player without it is not.
+    let mut client = Client::join_with(config(true));
+    client.pump_until(|c| held(c) == 64);
+    use_machine(&mut client, chest);
+    client.pump_until(|c| held(c) == 0);
+    machine_says(&mut client, &at, "holds 64 items", 10);
+    drop(client);
+    // The last whole save: the ore in hand, the chest empty. Sixty-four in all.
+    let mut client = Client::join_with(config(false));
+    client.pump_until(|c| held(c) > 0);
+    let said = client.ok(&format!("/machine {at}"));
+    let in_chest = said.split(' ').zip(said.split(' ').skip(1)).find_map(|(n, word)| (word == "items").then(|| n.parse::<u32>().ok()).flatten()).unwrap_or(0);
+    assert_eq!(held(&client) + in_chest, 64, "the player holds {}, the chest: {said}", held(&client));
+    drop(client);
+    assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new(), "the cut save was forgotten");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Files a save staged and left, in the world and its players and columns.
+fn staged_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    [dir.to_path_buf(), dir.join("players"), dir.join("columns")]
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|entries| entries.flatten().map(|e| e.path()))
+        .filter(|p| p.to_string_lossy().ends_with(".new"))
+        .collect()
+}
+
+#[test]
+fn a_save_whose_machines_cannot_be_written_does_not_count_and_leaves_nothing_staged() {
+    let dir = world_dir("failing");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    after_this_loop(&mut client);
+    let before = saved_generation(&dir);
+    // The machines can't be written for the next saves: a directory stands where they go.
+    let blocked: Vec<_> = (before + 1..before + 40).map(|g| dir.join(format!("machines.ron.{g}.new"))).collect();
+    for path in &blocked {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    // A player leaving saves the world, players and all; none of it counts.
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    drop(other);
+    after_this_loop(&mut client);
+    assert_eq!(saved_generation(&dir), before, "a save missing its machines counted");
+    let staged: Vec<_> = staged_files(&dir).into_iter().filter(|p| !blocked.contains(p)).collect();
+    assert!(staged.is_empty(), "the failed save left {staged:?}");
+    // With room again, the next save counts.
+    for path in &blocked {
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    drop(other);
+    after_this_loop(&mut client);
+    assert!(saved_generation(&dir) > before, "the save after counted");
+    drop(client);
+    assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_multiblock_counts_as_built_for_whoever_placed_its_core_not_whoever_uses_it_first() {
+    let dir = world_dir("builder");
+    let mut owner = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let core = owner.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~1 ~ ~-1 ~6 ~2 ~1 air", "/fill ~1 ~-1 ~-1 ~6 ~-1 ~1 stone", "/give bloomery 1"] {
+        owner.ok(line);
+    }
+    let bloomery = owner.content.blocks.expect("base:bloomery");
+    owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == bloomery) && c.world.block(core - IVec3::Y) == c.content.blocks.id("base:stone"));
+    // The core placed by hand on open ground, then the shaft built round it.
+    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.propose("core:place", ActionTarget::Block { block: core - IVec3::Y, face: Face::PosY });
+    owner.pump_until(|c| c.world.block(core) == Some(bloomery));
+    for line in ["/fill ~3 ~ ~-1 ~5 ~2 ~-1 kiln_bricks", "/fill ~3 ~ ~1 ~5 ~2 ~1 kiln_bricks", "/fill ~3 ~ ~ ~3 ~2 ~ kiln_bricks", "/fill ~5 ~1 ~ ~5 ~2 ~ kiln_bricks", "/setblock ~5 ~ ~ bellows"] {
+        owner.ok(line);
+    }
+    owner.pump_until(|c| c.world.block(core + IVec3::X) == c.content.blocks.id("base:bellows"));
+    // Another player uses it first: the build is the owner's.
+    let mut other = owner.another("other");
+    other.pump_until(|c| c.world.block(core) == Some(bloomery));
+    // Empty-handed (its starting kit's first slot holds what a bloomery does not take).
+    let empty = other.inventory.slots.iter().take(9).position(Option::is_none).expect("an empty hotbar slot") as u8;
+    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: empty, flying: false }));
+    other.propose("base:use_machine", ActionTarget::Block { block: core, face: Face::NegX });
+    other.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Bloomery")));
+    drop(other);
+    drop(owner);
+    let read = |name: &str| std::fs::read_to_string(dir.join("players").join(format!("{name}.ron"))).unwrap();
+    assert!(read("test").contains("built:base:bellows_bloomery"), "the owner built it: {}", read("test"));
+    assert!(!read("other").contains("built:"), "the first to use it did not: {}", read("other"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
+    let dir = world_dir("spill");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    client.ok(&format!("/setblock {at} chest"));
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
+    drop(client);
+    // Thirty stacks saved in a chest of twenty-seven slots, as when a package gives it fewer.
+    let stacks = vec![r#"("base:cobblestone",64)"#; 30].join(",");
+    let saved = format!(r#"[(position:({},{},{}),block:"base:chest",inputs:[],outputs:[],fuel:None,burning:0.0,energy:0.0,condition:0.0,made:0,bin:[{stacks}])]"#, chest.x, chest.y, chest.z);
+    std::fs::write(dir.join("machines.ron"), saved).unwrap();
+    let mut client = Client::join_with(config());
+    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
+    let cobblestone = client.content.blocks.expect("base:cobblestone");
+    client.pump_until(|c| c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>() == 3 * 64);
+    drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1718,7 +1980,7 @@ fn a_broken_chest_drops_what_it_held_and_a_chute_in_hand_is_not_put_in() {
     client.ok("/give chute 1");
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == chute));
     use_machine(&mut client, chest);
-    std::thread::sleep(Duration::from_millis(500));
+    client.ok("/seed");
     machine_says(&mut client, "~2 ~ ~", "holds 7 items", 5);
     assert!(client.inventory.slots.iter().flatten().any(|s| s.item == chute), "the chute stays in hand");
     // Broken, it drops all it held.
@@ -1734,16 +1996,16 @@ fn a_water_wheel_turns_on_falling_water_but_not_on_water_poured_out_on_flat_grou
     }
     // Poured beside it, water spreads but does not run: the wheel stays still.
     client.ok("/setblock ~3 ~ ~ water");
-    machine_says(&mut client, "~4 ~ ~", "needs flowing water", 10);
-    std::thread::sleep(Duration::from_secs(2));
-    machine_says(&mut client, "~4 ~ ~", "needs flowing water", 5);
+    machine_says(&mut client, "~4 ~ ~", "a fall of water", 10);
+    wait_server(&mut client, 2);
+    machine_says(&mut client, "~4 ~ ~", "a fall of water", 5);
     // Falling past it, from a spring above, it turns.
     for line in ["/fill ~2 ~ ~-2 ~3 ~2 ~2 air", "/setblock ~3 ~3 ~ water"] {
         client.ok(line);
     }
-    let started = Instant::now();
-    while client.ok("/machine ~4 ~ ~").contains("needs flowing water") {
-        assert!(started.elapsed() < Duration::from_secs(15), "falling water never turned the wheel");
+    let started = client.server_tick;
+    while client.ok("/machine ~4 ~ ~").contains("a fall of water") {
+        assert!(server_seconds(&client, started) < 15, "falling water never turned the wheel");
         std::thread::sleep(Duration::from_millis(300));
     }
 }
@@ -1760,16 +2022,16 @@ fn water_wheels_within_four_blocks_of_another_share_its_water_and_both_turn_once
     machine_says(&mut client, &at(4, 0), "idle", 20);
     // A second wheel on the same fall shares it, and neither turns.
     client.ok("/setblock ~2 ~1 ~ water_wheel");
-    machine_says(&mut client, &at(4, 0), "needs flowing water", 20);
-    machine_says(&mut client, &at(2, 0), "needs flowing water", 20);
+    machine_says(&mut client, &at(4, 0), "a fall of water", 20);
+    machine_says(&mut client, &at(2, 0), "a fall of water", 20);
     client.ok("/setblock ~2 ~1 ~ air");
     machine_says(&mut client, &at(4, 0), "idle", 20);
     // On a fall of its own four blocks off (the data's `water_spacing`, diagonals too),
     // it stills the first all the same.
     client.ok("/setblock ~8 ~4 ~ water");
     client.ok("/setblock ~8 ~1 ~1 water_wheel");
-    machine_says(&mut client, &at(4, 0), "needs flowing water", 20);
-    machine_says(&mut client, &at(8, 1), "needs flowing water", 20);
+    machine_says(&mut client, &at(4, 0), "a fall of water", 20);
+    machine_says(&mut client, &at(8, 1), "a fall of water", 20);
     // Five blocks off, both turn.
     client.ok("/setblock ~8 ~1 ~1 air");
     client.ok("/setblock ~9 ~1 ~ water_wheel");
@@ -1795,17 +2057,23 @@ fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_whee
         "/creatures tame aurochs",
         "/creatures hold aurochs",
         "/give coal_ore 2",
+        "/fill ~2 ~3 ~-6 ~4 ~5 ~-4 air",
+        "/setblock ~3 ~4 ~-5 windmill",
+        "/wind calm 600",
     ] {
         client.ok(line);
     }
     let blocks = &client.content.blocks;
     let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    // In calm air the windmill does not turn.
+    let windmill = format!("{} {} {}", start.x + 3, start.y + 4, start.z - 5);
+    machine_says(&mut client, &windmill, "no wind", 20);
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     client.pump_until(|c| count(c, coal) == 2 && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
     let wheel = format!("{} {} {}", start.x + 3, start.y, start.z + 4);
-    let started = Instant::now();
+    let started = client.server_tick;
     while client.ok(&format!("/machine {wheel}")).contains("needs a kept animal") {
-        assert!(started.elapsed() < Duration::from_secs(10), "the aurochs never walked the wheel");
+        assert!(server_seconds(&client, started) < 10, "the aurochs never walked the wheel");
         std::thread::sleep(Duration::from_millis(300));
     }
     use_machine(&mut client, boiler);
@@ -1820,6 +2088,9 @@ fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_whee
     client.ok(&format!("/tp {} {}", start.x + 3000, start.z));
     machine_says(&mut client, &wheel, "needs a kept animal", 60);
     machine_says(&mut client, &at, "idle", 60);
+    // Unloaded, the windmill is reckoned to catch an average wind (`wind_mean`), not the
+    // calm it was left in.
+    machine_says(&mut client, &windmill, "idle", 20);
     client.ok(&format!("/tp {} {} {}", start.x, start.y, start.z));
     client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
     use_machine(&mut client, crusher);
@@ -1832,7 +2103,7 @@ fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_whee
 fn a_windmill_within_four_blocks_of_another_is_becalmed_and_both_turn_once_it_moves_away() {
     let mut client = Client::join();
     let start = client.position.floor().as_ivec3();
-    for line in ["/clear", "/fill ~3 ~3 ~-2 ~12 ~6 ~2 air", "/wind gale w 30", "/setblock ~3 ~4 ~ windmill"] {
+    for line in ["/clear", "/fill ~3 ~3 ~-2 ~12 ~6 ~5 air", "/wind gale w 30", "/setblock ~3 ~4 ~ windmill"] {
         client.ok(line);
     }
     let at = |dx: i32| format!("{} {} {}", start.x + dx, start.y + 4, start.z);
@@ -1842,11 +2113,53 @@ fn a_windmill_within_four_blocks_of_another_is_becalmed_and_both_turn_once_it_mo
     client.ok("/setblock ~7 ~4 ~ windmill");
     machine_says(&mut client, &at(3), "no wind", 20);
     machine_says(&mut client, &at(7), "no wind", 20);
-    // Five blocks off, both turn.
+    // Four off on both ways (diagonals count), the same.
     client.ok("/setblock ~7 ~4 ~ air");
+    client.ok("/setblock ~7 ~4 ~4 windmill");
+    machine_says(&mut client, &at(3), "no wind", 20);
+    // Five blocks off, both turn.
+    client.ok("/setblock ~7 ~4 ~4 air");
     client.ok("/setblock ~8 ~4 ~ windmill");
     machine_says(&mut client, &at(3), "idle", 20);
     machine_says(&mut client, &at(8), "idle", 20);
+}
+
+#[test]
+fn a_treadwheel_a_player_placed_is_walked_only_by_their_own_animals() {
+    let config = ServerConfig { view_distance: 2, admins: vec!["other".into()], ..Default::default() };
+    let mut owner = Client::join_with(config);
+    let mut other = owner.another("other");
+    let wheel = owner.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let at = format!("{} {} {}", wheel.x, wheel.y, wheel.z);
+    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/fill ~2 ~-1 ~-1 ~4 ~-1 ~3 stone", "/give treadwheel 1"] {
+        owner.ok(line);
+    }
+    let treadwheel = owner.content.blocks.expect("base:treadwheel");
+    owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel - IVec3::Y) == c.content.blocks.id("base:stone"));
+    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
+    owner.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
+    // Another player's aurochs beside it does not walk it.
+    for line in ["/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+        other.ok(line);
+    }
+    machine_says(&mut owner, &at, "needs a kept animal", 10);
+    wait_server(&mut owner, 3);
+    machine_says(&mut owner, &at, "needs a kept animal", 1);
+    // Their own wheel in its place, it does.
+    owner.ok(&format!("/setblock {at} air"));
+    for line in ["/clear", "/give treadwheel 1"] {
+        other.ok(line);
+    }
+    other.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel).is_some_and(|b| b.is_air()));
+    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    other.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
+    other.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
+    let started = owner.server_tick;
+    while owner.ok(&format!("/machine {at}")).contains("needs a kept animal") {
+        assert!(server_seconds(&owner, started) < 10, "the other player's aurochs never walked their own wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
 }
 
 #[test]
@@ -1871,9 +2184,45 @@ fn a_full_hopper_leaves_the_stack_in_hand_and_gives_nothing_back() {
     client.ok("/give copper_ore 64");
     client.pump_until(|c| held(c) == 64);
     use_machine(&mut client, hopper);
-    std::thread::sleep(Duration::from_millis(500));
+    client.ok("/seed");
     machine_says(&mut client, "~2 ~ ~", "holds 320 items", 5);
     assert_eq!(held(&client), 64, "the full hopper emptied into the inventory");
+}
+
+#[test]
+fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_it_is_fed() {
+    let mut client = Client::join();
+    let aurochs = client.content.creatures.find("aurochs").expect("aurochs in the content");
+    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/setblock ~3 ~ ~ treadwheel", "/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+        client.ok(line);
+    }
+    let start = client.position.floor().as_ivec3();
+    let wheel = format!("{} {} {}", start.x + 3, start.y, start.z);
+    let turns = |client: &mut Client| !client.ok(&format!("/machine {wheel}")).contains("needs a kept animal");
+    let started = client.server_tick;
+    while !turns(&mut client) {
+        assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    // Three days on, unfed, it will not walk.
+    client.ok("/time add 3d");
+    let said = machine_says(&mut client, &wheel, "fed in the last 2 days", 10);
+    assert!(said.contains("needs a kept animal"), "{said}");
+    // Fed its wheat, it walks again.
+    client.ok("/give wheat 1");
+    let wheat = client.content.blocks.expect("base:wheat");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == wheat) && c.creatures.values().any(|v| v.species == aurochs));
+    let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == aurochs).unwrap();
+    let at = view.position;
+    client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:tend", ActionTarget::Creature(id));
+    client.pump_until(|c| c.inventory.get(0).is_none());
+    let started = client.server_tick;
+    while !turns(&mut client) {
+        assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
 }
 
 #[test]

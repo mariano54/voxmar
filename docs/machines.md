@@ -25,17 +25,21 @@ Everything a mod might want to change is in that data, not in code.
   structure) is looked at every `survey_seconds` (1 by default) where the land is loaded.
   Where it is not, a water wheel keeps what it had, a windmill takes the mean wind
   (`wind_mean`) at its height, and a walked treadwheel stops.
-- **What it holds is never lost or made.** A save that cannot be read is copied to
-  `machines.unreadable.ron` before the server refuses to start, so nothing is overwritten.
-  A machine whose block is gone when its land loads (edited, or lost to a crash) drops
-  what it held, as breaking it would. Work half done is saved with it and goes on.
+- **What it holds is never made twice (P60).** A save is one generation: machines,
+  players, dropped items and land are staged and count together once `world.ron` takes the
+  generation, so a save cut short leaves the last whole one and nothing a player put in a
+  machine is both in hand and in the machine (see `crates/server/src/save.rs`). A machines
+  file that cannot be read is copied to `machines.unreadable.<seconds>.ron` and the server
+  goes on without it; machine blocks standing in saved land join the factory again, empty.
+  A machine whose block is gone when its land loads drops what it held, as breaking it
+  would. Work half done is saved with it and goes on.
 
 ## What there is
 
 | Age | Power | Machines |
 | --- | --- | --- |
 | Bronze | Rotation: water wheel, windmill, treadwheel (walked by a kept aurochs, horse, camel or bison beside it), shafts, bellows | Trip hammer (plates); the Bellows Bloomery (a multiblock: two iron ore and a fuel into an iron bloom, which a trip hammer beats into three ingots, a crafting table into two) |
-| Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore) |
+| Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore); the Coke Oven (a multiblock of kiln bricks three on a side round a hollow middle: coal into coke by its own heat, 30 s); the Blast Furnace (the bloomery's ring four high, on rotation: two iron ore and a coke into four ingots, two an ore, ore only); sawmill (on rotation: a log into six planks of its wood on average, half again an axe's) |
 | LV | Dynamo (rotation to LV), LV cable, battery bank | Electric furnace, macerator (2 dust, twice as fast), ore washer (3 dust, half as fast, needs water beside it) |
 | MV | Steam turbine (steam to MV), MV cable, MV battery bank, LV transformer (MV in on top, LV out of the other faces) | LV machines through a transformer |
 
@@ -118,5 +122,6 @@ Machines are saved in the world folder's `machines.ron`, by block and item names
 pack that renames or drops a machine loses only that machine. A machine remembers who
 placed it, and a multiblock counts towards `built:` quests once per standing structure.
 
-Fuels: the last entry in `fuels` that takes an item says how long it burns, so broad tags
-come first and a later package can change any of them.
+Fuels: the last entry in `fuels` naming an item says how long it burns, else the last tag
+taking it, so a tag never shortens an item's own entry and a later package can change any of
+them.
