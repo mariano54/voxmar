@@ -131,7 +131,7 @@ struct Ambient {
     surveying: bool,
     since_survey: f32,
     /// The generator of the world being played, made on first use.
-    generator: Option<(u64, Arc<OnceLock<Option<Overworld>>>)>,
+    generator: Option<(u64, Arc<OnceLock<Option<Arc<Overworld>>>>)>,
     /// The latest scan (whose sample blocks one-shots sound from), and its measures eased
     /// towards over a couple of seconds.
     enclosure: Enclosure,
@@ -292,7 +292,7 @@ fn survey(
     rayon::spawn(move || {
         let enclosure = enclosure::scan(eye, |p| snapshot.block(p), &kinds, random);
         let generator = generator.get_or_init(|| match WorldContent::load(&content) {
-            Ok(world) => Some(Overworld::with_content(seed, content.blocks.clone(), &world)),
+            Ok(world) => Some(Overworld::shared(seed, &content, &world)),
             Err(e) => {
                 warn!("ambience has no climate: {e}");
                 None
