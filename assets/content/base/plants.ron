@@ -6,10 +6,11 @@
 // (flowers, herbs; kept sparse), Alone here and there (bushes, fungi, reeds; a biome's weight
 // for these is their chance in a hundred per block). `snowy` names its look under snow. A
 // plant's tags are its block's plus its own, and its properties (nutrition, alchemy, dye)
-// default to what the block's tags say. The ten rare herbs (`named_only`) grow only in
-// the biomes that name them, one or two each, in patches: `patches` gives the plants per
-// million blocks of such a biome and the plants in a patch (design draft 61: 120 to 300, in
-// patches of 3 to 6).
+// default to what the block's tags say. The ten rare herbs, wild rice and wild taro
+// (`named_only`) grow only in the biomes that name them, one or two each, in patches:
+// `patches` gives the plants per million blocks where the plant can root and the plants in
+// a patch, and the weight a biome names it with scales that to the biome's ground (design
+// draft 61: 120 to 300 per million blocks of the biome, in patches of 3 to 6).
 (
     plants: [
         // Grasses and ferns.
@@ -178,11 +179,11 @@
         (name: "wild_squash", block: "wild_squash", spread: Alone, habitat: Open, comfort: (temperature: (14.0, 32.0), moisture: (0.50, 1.40)), tags: ["wild_crop"], properties: (nutrition: 4.0)),
         (name: "wild_melon", block: "wild_melon", spread: Alone, habitat: Open, comfort: (temperature: (18.0, 40.0), moisture: (0.20, 0.90)), tags: ["wild_crop"], properties: (nutrition: 4.0)),
         (name: "wild_yam", block: "wild_yam", spread: Alone, habitat: Anywhere, comfort: (temperature: (20.0, 40.0), moisture: (0.80, 8.0)), tags: ["wild_crop"], properties: (nutrition: 4.0)),
-        (name: "wild_taro", block: "wild_taro", spread: Alone, habitat: Water, comfort: (temperature: (20.0, 40.0)), tags: ["wild_crop"], properties: (nutrition: 4.0)),
+        (name: "wild_taro", block: "wild_taro", named_only: true, patches: (rate: 200.0, size: (3, 6)), spread: Alone, habitat: Anywhere, comfort: (temperature: (20.0, 40.0)), tags: ["wild_crop"], properties: (nutrition: 4.0)),
         (name: "wild_ginger", block: "wild_ginger", spread: Drifts, habitat: Shade, comfort: (temperature: (18.0, 40.0), moisture: (1.00, 8.0)), tags: ["wild_crop"], properties: (nutrition: 1.0)),
         (name: "wild_barley", block: "wild_barley", spread: Drifts, habitat: Open, comfort: (temperature: (-2.0, 22.0), moisture: (0.25, 1.20)), tags: ["wild_crop"], properties: (nutrition: 1.0)),
         (name: "wild_oats", block: "wild_oats", spread: Drifts, habitat: Open, comfort: (temperature: (2.0, 24.0), moisture: (0.40, 1.40)), tags: ["wild_crop"], properties: (nutrition: 1.0)),
-        (name: "wild_rice", block: "wild_rice", spread: Drifts, habitat: Water, comfort: (temperature: (14.0, 36.0)), tags: ["wild_crop"], properties: (nutrition: 1.5)),
+        (name: "wild_rice", block: "wild_rice", named_only: true, patches: (rate: 200.0, size: (3, 6)), spread: Drifts, habitat: Anywhere, comfort: (temperature: (14.0, 36.0)), tags: ["wild_crop"], properties: (nutrition: 1.5)),
         (name: "wild_millet", block: "wild_millet", spread: Drifts, habitat: Open, comfort: (temperature: (18.0, 40.0), moisture: (0.20, 0.90)), tags: ["wild_crop"], properties: (nutrition: 1.0)),
         (name: "wild_quinoa", block: "wild_quinoa", spread: Drifts, habitat: Open, comfort: (temperature: (-4.0, 16.0), moisture: (0.20, 1.00)), tags: ["wild_crop"], properties: (nutrition: 1.5)),
         (name: "wild_corn", block: "wild_corn", spread: Alone, habitat: Open, comfort: (temperature: (14.0, 34.0), moisture: (0.40, 1.40)), tags: ["wild_crop"], properties: (nutrition: 3.0)),

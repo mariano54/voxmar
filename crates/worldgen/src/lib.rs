@@ -1738,6 +1738,13 @@ mod tests {
                 }
                 let rate = placed.len() as f64 * 1e6 / columns.max(1) as f64;
                 let size = if patches.is_empty() { 0.0 } else { placed.len() as f64 / patches.len() as f64 };
+                // AT=1 shows where the biggest patch is, for shots (in the first seed's world
+                // that has the biome; positions are not told apart by seed).
+                if std::env::var("AT").is_ok()
+                    && let Some(g) = patches.iter().max_by_key(|g| g.len())
+                {
+                    println!("  {} in {biome}: a patch of {} at {:?}", plants[k], g.len(), g[0]);
+                }
                 out.push((plants[k].to_owned(), (*biome).to_owned(), rate, size, placed.len(), columns));
             }
         }
