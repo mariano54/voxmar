@@ -10,6 +10,7 @@ use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
 use voxmar_engine::lang::Words;
+use voxmar_engine::movement::Checks;
 use voxmar_engine::physics::{Aabb, player as dims};
 use voxmar_engine::skill::{SkillRegistry, Skills};
 use voxmar_engine::traits::{self, Health, TraitDecl};
@@ -22,29 +23,6 @@ use voxmar_protocol::{
 use crate::Server;
 use crate::save::{GameMode, SavedPlayer};
 
-/// How much faster than the content's top speeds a player's movement may be, for rounding,
-/// currents and network jitter.
-const SPEED_MARGIN: f32 = 1.25;
-/// Seconds of top speed a player's movement may run ahead in one go: a client that
-/// hitched sends one long step, and inputs bunch up on their way.
-const MOVE_BURST: f32 = 2.0;
-/// Blocks of movement allowed besides.
-const MOVE_SLACK: f32 = 0.5;
-/// How far a player on foot may rise above where they last stood, besides the height of
-/// their jump; out of water, the lift onto a bank as well (`STEP_OUT`).
-const RISE_SLACK: f32 = 0.25;
-/// Seconds a player on foot may go without ground or water under them before they must be
-/// coming down, and how fast (blocks a second) the height they may keep sinks after that:
-/// nobody hovers over a ravine.
-const HOVER_GRACE: f32 = 2.0;
-const HOVER_SINK: f32 = 1.0;
-/// Seconds after being let down before the height they may keep sinks again.
-const LET_DOWN_PAUSE: f32 = 0.25;
-/// How far above ground a player still counts as having just touched it, for the hover
-/// clock: a hop touches the ground for a moment only.
-const NEAR_GROUND: f32 = 0.5;
-/// Longest step a movement is checked for walls in, in blocks.
-const SWEEP_STEP: f32 = 0.25;
 /// Messages a player's handled per tick, at most; the rest wait for the next (and a
 /// connection whose queue fills is cut off). Inputs come one a tick.
 pub const MESSAGES_PER_TICK: u32 = 64;
@@ -542,29 +520,30 @@ impl Server {
         }
         // Quicker on foot as their effects say, as the client moves them.
         let tuning = &self.content.movement.on_foot(player.modifiers.speed.max(1.0));
+        let checks = tuning.checks;
         let flying = input.flying && player.allow_flight;
         // Flying, across is as fast diagonally as the client flies (both keys held), and up
         // and down as fast as flight or a fall.
         let fly = tuning.fly_sprint_speed * player.fly_speed;
         let rates = if flying {
             Budgets {
-                across: SPEED_MARGIN * fly * std::f32::consts::SQRT_2,
-                rise: SPEED_MARGIN * fly.max(tuning.jump_velocity),
-                fall: SPEED_MARGIN * fly.max(tuning.terminal_velocity),
+                across: checks.speed_margin * fly * std::f32::consts::SQRT_2,
+                rise: checks.speed_margin * fly.max(tuning.jump_velocity),
+                fall: checks.speed_margin * fly.max(tuning.terminal_velocity),
             }
         } else {
             Budgets {
-                across: SPEED_MARGIN * tuning.top_ground_speed(),
-                rise: SPEED_MARGIN * tuning.jump_velocity,
-                fall: SPEED_MARGIN * tuning.terminal_velocity,
+                across: checks.speed_margin * tuning.top_ground_speed(),
+                rise: checks.speed_margin * tuning.jump_velocity,
+                fall: checks.speed_margin * tuning.terminal_velocity,
             }
         };
         let gap = player.budget_at.map_or(1.0 / TICKS_PER_SECOND as f32, |then| at.saturating_duration_since(then).as_secs_f32());
-        let since = gap.min(MOVE_BURST);
+        let since = gap.min(checks.burst);
         let from = player.position;
         // Moved by the server since their last input (a teleport, a respawn): afresh.
         let afresh = from != player.accepted || player.budget_at.is_none();
-        let budgets = rates.refilled(&player.budgets, since, afresh);
+        let budgets = rates.refilled(&player.budgets, since, afresh, &checks);
         let mut support = if afresh || (player.flying && player.allow_flight) {
             Support { y: from.y, fluid: self.standing(from) == Some(true), at: Some(at) }
         } else {
@@ -578,7 +557,7 @@ impl Server {
         // stalled connection, a hitch), so silence neither sinks them nor buys more time.
         if self.near_ground(from) {
             support.at = Some(at);
-        } else if gap > HOVER_GRACE {
+        } else if gap > checks.hover_grace {
             let paused = std::time::Duration::from_secs_f32(gap);
             support.at = support.at.map(|then| (then + paused).min(at));
         }
@@ -659,10 +638,10 @@ impl Server {
         }
     }
 
-    /// Whether there is ground within `NEAR_GROUND` under a player at `feet`.
+    /// Whether there is ground within `Checks::near_ground` under a player at `feet`.
     fn near_ground(&self, feet: Vec3) -> bool {
         let half = dims::WIDTH / 2.0;
-        let below = Aabb { min: feet - Vec3::new(half, NEAR_GROUND, half), max: feet + Vec3::new(half, 0.0, half) };
+        let below = Aabb { min: feet - Vec3::new(half, self.content.movement.checks.near_ground, half), max: feet + Vec3::new(half, 0.0, half) };
         below.intersects(|cell| self.is_solid(cell))
     }
 
@@ -677,9 +656,10 @@ impl Server {
     }
 
     /// Whether a player at `feet` would be in a wall (with a slightly smaller box than
-    /// theirs, for rounding).
+    /// theirs, for rounding: `Checks::wall_box`).
     fn inside(&self, feet: Vec3) -> bool {
-        Aabb::standing(feet, dims::WIDTH * 0.9, dims::HEIGHT * 0.95).intersects(|cell| self.is_solid(cell))
+        let (width, height) = self.content.movement.checks.wall_box;
+        Aabb::standing(feet, dims::WIDTH * width, dims::HEIGHT * height).intersects(|cell| self.is_solid(cell))
     }
 
     /// Whether a player could have got from `from` to `to` without passing through a wall.
@@ -693,8 +673,9 @@ impl Server {
         if self.inside(from) {
             return !self.inside(to);
         }
+        let sweep_step = self.content.movement.checks.sweep_step;
         let clear = |a: Vec3, b: Vec3| {
-            let steps = ((b - a).length() / SWEEP_STEP).ceil().max(1.0) as u32;
+            let steps = ((b - a).length() / sweep_step).ceil().max(1.0) as u32;
             (1..=steps).all(|i| !self.inside(a.lerp(b, i as f32 / steps as f32)))
         };
         let across_first = Vec3::new(to.x, from.y, to.z);
@@ -720,11 +701,11 @@ pub struct Budgets {
 }
 
 impl Budgets {
-    /// These rates' budgets after `since` seconds more of `left`, each up to `MOVE_BURST`
-    /// seconds' worth and a little slack; full when starting afresh.
-    fn refilled(&self, left: &Budgets, since: f32, afresh: bool) -> Budgets {
+    /// These rates' budgets after `since` seconds more of `left`, each up to
+    /// `Checks::burst` seconds' worth and a little slack; full when starting afresh.
+    fn refilled(&self, left: &Budgets, since: f32, afresh: bool, checks: &Checks) -> Budgets {
         let fill = |left: f32, rate: f32| {
-            let cap = rate * MOVE_BURST + MOVE_SLACK;
+            let cap = rate * checks.burst + checks.slack;
             if afresh { cap } else { (left + since * rate).min(cap) }
         };
         Budgets { across: fill(left.across, self.across), rise: fill(left.rise, self.rise), fall: fill(left.fall, self.fall) }
@@ -754,7 +735,8 @@ impl Support {
     /// ground longer than a jump or a fall from it takes.
     fn ceiling(&self, tuning: &voxmar_engine::movement::Tuning, now: Instant, sinking: bool) -> f32 {
         let aloft = self.at.map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f32());
-        let sink = if sinking { (aloft - HOVER_GRACE).max(0.0) * HOVER_SINK } else { 0.0 };
+        let checks = &tuning.checks;
+        let sink = if sinking { (aloft - checks.hover_grace).max(0.0) * checks.hover_sink } else { 0.0 };
         self.y + Self::rise(tuning, self.fluid) - sink
     }
 
@@ -762,13 +744,13 @@ impl Support {
     /// water the step onto a bank.
     fn rise(tuning: &voxmar_engine::movement::Tuning, fluid: bool) -> f32 {
         let jump = tuning.jump_velocity * tuning.jump_velocity / (2.0 * tuning.gravity);
-        jump + RISE_SLACK + if fluid { voxmar_engine::movement::STEP_OUT } else { 0.0 }
+        jump + tuning.checks.rise_slack + if fluid { voxmar_engine::movement::STEP_OUT } else { 0.0 }
     }
 
     /// The support of a player let down to `y` at `now`: the height they may keep is `y`,
-    /// for `LET_DOWN_PAUSE`, and sinks on from there.
+    /// for `Checks::let_down_pause`, and sinks on from there.
     fn let_down_to(&self, y: f32, tuning: &voxmar_engine::movement::Tuning, now: Instant) -> Support {
-        let pause = std::time::Duration::from_secs_f32(HOVER_GRACE - LET_DOWN_PAUSE);
+        let pause = std::time::Duration::from_secs_f32(tuning.checks.hover_grace - tuning.checks.let_down_pause);
         Support { y: y - Self::rise(tuning, false), fluid: false, at: Some(now.checked_sub(pause).unwrap_or(now)) }
     }
 }

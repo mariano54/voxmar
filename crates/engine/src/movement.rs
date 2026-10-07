@@ -56,11 +56,66 @@ pub struct Tuning {
     pub water_speed: f32,
     pub fly_speed: f32,
     pub fly_sprint_speed: f32,
+    /// How much the server lets a player's moves get away with.
+    pub checks: Checks,
+}
+
+/// How far the server lets the moves a client reports stray from these numbers, for
+/// rounding, network jitter and hitches, before it puts the player back.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Checks {
+    /// How much faster than the top speeds a move may be.
+    pub speed_margin: f32,
+    /// Seconds of top speed a player's movement may run ahead in one go, and blocks of
+    /// movement allowed besides.
+    pub burst: f32,
+    pub slack: f32,
+    /// How far a player on foot may rise above where they last stood, besides their jump
+    /// (and out of water, `STEP_OUT`).
+    pub rise_slack: f32,
+    /// Seconds a player on foot may be off the ground before the height they may keep
+    /// starts to sink, and how fast it sinks (blocks a second).
+    pub hover_grace: f32,
+    pub hover_sink: f32,
+    /// Seconds a player let down to that height keeps it before it sinks again.
+    pub let_down_pause: f32,
+    /// How far above ground a player still counts as having just touched it.
+    pub near_ground: f32,
+    /// Longest step, in blocks, a move is checked for walls in.
+    pub sweep_step: f32,
+    /// The player's box, as shares of their width and height, that must stay out of
+    /// walls: a little smaller than theirs, for rounding.
+    pub wall_box: (f32, f32),
+}
+
+impl Checks {
+    fn check(&self) -> Result<(), String> {
+        let Checks { speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, wall_box: (width, height) } = *self;
+        let numbers = [speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, width, height];
+        if numbers.iter().any(|n| !n.is_finite() || *n < 0.0) {
+            Err("every number must be zero or more".into())
+        } else if speed_margin < 1.0 {
+            Err("speed_margin below 1 would stop players at their own top speed".into())
+        } else if burst <= 0.0 {
+            Err("burst must be more than 0, or no move could be made".into())
+        } else if !(0.05..=1.0).contains(&sweep_step) {
+            Err("sweep_step must be from 0.05 to 1 (a smaller step makes every move slow to check, a larger one lets moves pass through walls)".into())
+        } else if let_down_pause > hover_grace {
+            Err("let_down_pause must be no more than hover_grace".into())
+        } else if !(0.5..=1.0).contains(&width) || !(0.5..=1.0).contains(&height) {
+            Err("wall_box shares must be from 0.5 to 1".into())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl Tuning {
     pub fn from_ron(source: &str) -> Result<Self, RegistryError> {
-        ron::from_str(source).map_err(|e| RegistryError(format!("movement.ron: {e}")))
+        let tuning: Tuning = ron::from_str(source).map_err(|e| RegistryError(format!("movement.ron: {e}")))?;
+        tuning.checks.check().map_err(|e| RegistryError(format!("movement.ron: checks: {e}")))?;
+        Ok(tuning)
     }
 
     /// The tuning for a player whose effects make them `factor` times as quick on foot
@@ -287,6 +342,15 @@ mod tests {
 
     fn tuning() -> Tuning {
         Tuning::from_ron(include_str!("../../../assets/content/core/movement.ron")).unwrap()
+    }
+
+    #[test]
+    fn checks_a_mod_could_set_to_hang_or_stop_the_server_are_refused_on_load() {
+        let source = include_str!("../../../assets/content/core/movement.ron");
+        for (from, to) in [("sweep_step: 0.25", "sweep_step: 0.0"), ("speed_margin: 1.25", "speed_margin: 0.5"), ("burst: 2.0", "burst: 0.0"), ("let_down_pause: 0.25", "let_down_pause: 3.0"), ("hover_sink: 1.0", "hover_sink: -1.0"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 2.0)")] {
+            assert!(source.contains(from), "{from}");
+            assert!(Tuning::from_ron(&source.replace(from, to)).is_err(), "{to} loads");
+        }
     }
 
     /// Holds `controls` for `seconds` at `fps` frames a second; returns the body and
