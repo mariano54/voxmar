@@ -377,8 +377,9 @@ mod tests {
     }
 
     /// The keys the code builds from first-party content rather than names: what each
-    /// `alchemy:<property>` tag is called (`alchemy.<property>`, in item tooltips) and
-    /// each biome tag (`biome.tag.<tag>`, in `/biome`).
+    /// `alchemy:<property>` tag is called (`alchemy.<property>`, in item tooltips), each
+    /// biome tag (`biome.tag.<tag>`, in `/biome`), what creatures are doing
+    /// (`creature.doing.<module>`) and the weather's channels (`weather.channel.<name>`).
     fn built_keys(content: &voxmar_engine::content::Content) -> BTreeSet<String> {
         let blocks = &content.blocks;
         let mut keys = BTreeSet::new();
@@ -392,6 +393,14 @@ mod tests {
         for biome in world.biomes.iter().filter(|biome| first_party(&biome.name)) {
             keys.extend(biome.tags.iter().map(|tag| format!("biome.tag.{tag}")));
         }
+        // What `/creatures` says each one is doing: its brain's module, or resting.
+        keys.insert("creature.doing.resting".into());
+        for (_, species) in content.creatures.iter().filter(|(_, species)| first_party(&species.def.name)) {
+            keys.extend(species.modules.iter().map(|(module, _)| format!("creature.doing.{}", module.name())));
+        }
+        // The weather's channels in `/weather` and the F3 screen, from drizzle on, and what falls.
+        let channels = voxmar_engine::weather::Weather::default().fractions();
+        keys.extend(channels[7..].iter().map(|(name, _)| *name).chain(["rain", "snow"]).map(|name| format!("weather.channel.{name}")));
         keys
     }
 
@@ -537,7 +546,9 @@ mod tests {
         let mut wrong = Vec::new();
         for package in FIRST_PARTY {
             let english = read(package, ENGLISH);
-            for language in languages(&content()).into_iter().filter(|language| language.code != ENGLISH) {
+            // The languages first-party ships; a mod's own language falls back to English.
+            let shipped = |code: &str| FIRST_PARTY.iter().any(|package| content().join(package).join(format!("lang/{code}.ron")).exists());
+            for language in languages(&content()).into_iter().filter(|language| language.code != ENGLISH && shipped(&language.code)) {
                 let other = read(package, &language.code);
                 let code = &language.code;
                 wrong.extend(english.keys().filter(|key| !key.ends_with(".one") && !other.contains_key(*key)).map(|key| format!("{package}/lang/{code}.ron lacks `{key}`")));
@@ -667,7 +678,7 @@ mod tests {
             let def = loaded.skills.get(id);
             check(locale.skill(def), locale.skill_reading(def));
         }
-        for key in locale.keys().filter(|key| key.split_once('.').is_some_and(|(kind, rest)| kind == "effect" && !rest.contains('.'))) {
+        for key in locale.keys().filter(|key| key.split('.').count() == 3 && key.starts_with("effect")) {
             check(locale.get(key).to_owned(), locale.reading(key));
         }
         assert!(unread.is_empty(), "Japanese names without a reading (add them to lang/readings/ja.ron): {}", unread.into_iter().collect::<Vec<_>>().join(", "));

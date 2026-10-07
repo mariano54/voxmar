@@ -906,8 +906,8 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Switch(Toggle::FovEffects),
             Control::Choice(Choice::AntiAliasing),
             Control::Switch(Toggle::Vsync),
-            Control::Choice(Choice::Textures),
             Control::Switch(Toggle::MinecraftAssets),
+            Control::Choice(Choice::Textures),
         ],
     ),
     (

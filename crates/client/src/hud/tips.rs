@@ -150,6 +150,7 @@ fn notice(
 fn show_tip(
     time: Res<Time>,
     locale: Res<Locale>,
+    settings: Res<Settings>,
     mut tips: ResMut<Tips>,
     mut plate: Query<&mut Visibility, With<TipPlate>>,
     mut words: Query<&mut Text, With<TipWords>>,
@@ -182,7 +183,9 @@ fn show_tip(
     if let Some((name, _)) = tips.showing
         && let Ok(mut text) = words.single_mut()
     {
-        let wanted = locale.get(&format!("tip.{name}")).to_owned();
+        // The keys a tip names, as bound.
+        let keys = [settings.character_key, settings.recipes_key, settings.uses_key].map(|key| key.name(&locale));
+        let wanted = locale.format(&format!("tip.{name}"), &[("character", &keys[0]), ("recipes", &keys[1]), ("uses", &keys[2])]);
         if text.0 != wanted {
             text.0 = wanted;
         }

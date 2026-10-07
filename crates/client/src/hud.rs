@@ -478,10 +478,10 @@ fn update_debug(
         sky.push('\n');
         sky.push_str(&locale.render(&Words::key("hud.debug.effects").with("effects", effects), &world.registry));
     }
-    let raining = weather.nearby_rain().filter(|&(_, rain)| rain > 0.1).count();
+    let (cells, raining) = weather.nearby_rain().fold((0, 0), |(cells, raining), (_, rain)| (cells + 1, raining + usize::from(rain > 0.1)));
     if raining > 0 {
         sky.push_str(locale.get("hud.debug.separator"));
-        sky.push_str(&locale.format("hud.debug.rain", &[("count", &raining)]));
+        sky.push_str(&locale.format("hud.debug.rain", &[("count", &raining), ("cells", &cells)]));
     }
     let separator = locale.get("hud.debug.separator");
     let frames = locale.format(
