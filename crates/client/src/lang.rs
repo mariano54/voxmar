@@ -580,31 +580,35 @@ mod tests {
 
     /// Every translation of English that lives in a definition (guide lines, help, titles)
     /// was made from the English there now: each package's `lang/pins/<code>.ron` keeps,
-    /// by key, the English its translation followed. So a line inserted into a skill's
-    /// guide (which shifts every later line's key) or English reworded fails here until
-    /// the language follows and its pin is updated, instead of showing the wrong line.
+    /// by key, the English a translation followed and the translation written for it. So a
+    /// line inserted into a skill's guide (which shifts every later line's key), English
+    /// reworded, or a translation changed on its own fails here until someone checks the
+    /// two agree and updates the pin, instead of showing the wrong line.
     #[test]
     fn every_translation_follows_its_english() {
         use std::collections::BTreeMap;
-        let read = |path: &std::path::Path| -> Option<BTreeMap<String, String>> {
+        fn read<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Option<BTreeMap<String, T>> {
             let source = std::fs::read_to_string(path).ok()?;
             Some(ron::from_str(&source).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
-        };
+        }
         let loaded = voxmar_server::load_content(&assets()).unwrap();
         let own: BTreeMap<String, String> = english_in_definitions(&loaded).into_iter().collect();
         let mut wrong = Vec::new();
         for language in languages(&content()).into_iter().filter(|language| language.code != ENGLISH) {
             let code = &language.code;
             for package in FIRST_PARTY {
-                let Some(strings) = read(&content().join(package).join(format!("lang/{code}.ron"))) else { continue };
-                let pins_path = content().join(package).join(format!("lang/pins/{code}.ron"));
-                let pins = read(&pins_path).unwrap_or_default();
+                let Some(strings) = read::<String>(&content().join(package).join(format!("lang/{code}.ron"))) else { continue };
+                let pins = read::<(String, String)>(&content().join(package).join(format!("lang/pins/{code}.ron"))).unwrap_or_default();
                 let file = format!("{package}/lang/pins/{code}.ron");
-                for (key, english) in own.iter().filter(|(key, _)| strings.contains_key(*key)) {
+                for (key, english) in own.iter() {
+                    let Some(translation) = strings.get(key) else { continue };
                     match pins.get(key) {
-                        Some(pin) if pin == english => {}
-                        Some(pin) => wrong.push(format!("`{key}` in {package}/lang/{code}.ron follows {pin:?}, but English now says {english:?}: change it, then its pin in {file}")),
-                        None => wrong.push(format!("{file} lacks the English `{key}` follows: {key:?}: {english:?},")),
+                        Some((pinned, written)) if pinned == english && written == translation => {}
+                        Some((pinned, _)) if pinned != english => {
+                            wrong.push(format!("`{key}` in {package}/lang/{code}.ron follows {pinned:?}, but English now says {english:?}: change it, then its pin in {file}"))
+                        }
+                        Some((_, written)) => wrong.push(format!("`{key}` in {package}/lang/{code}.ron was {written:?} and is now {translation:?}: if it still follows {english:?}, update its pin in {file}")),
+                        None => wrong.push(format!("{file} lacks `{key}`: {key:?}: ({english:?}, {translation:?}),")),
                     }
                 }
                 wrong.extend(pins.keys().filter(|key| !own.contains_key(*key) || !strings.contains_key(*key)).map(|key| format!("{file} pins `{key}`, which {code} no longer translates")));
@@ -613,8 +617,8 @@ mod tests {
         assert!(wrong.is_empty(), "{} translations out of step with their English:\n{}", wrong.len(), wrong.join("\n"));
     }
 
-    /// The string literals in Rust or RON source, as written (escapes left in), past
-    /// comments, character literals and raw strings.
+    /// The string literals in Rust or RON source, as written (escapes left in), past line
+    /// and block comments, character literals and raw strings.
     fn string_literals(source: &str) -> Vec<String> {
         let chars: Vec<char> = source.chars().collect();
         let mut out = Vec::new();
@@ -623,6 +627,23 @@ mod tests {
             match chars[i] {
                 '/' if chars.get(i + 1) == Some(&'/') => {
                     while i < chars.len() && chars[i] != '\n' {
+                        i += 1;
+                    }
+                }
+                // Block comments, nested as Rust nests them.
+                '/' if chars.get(i + 1) == Some(&'*') => {
+                    let mut depth = 0;
+                    while i < chars.len() {
+                        if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                            depth += 1;
+                            i += 1;
+                        } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                            depth -= 1;
+                            i += 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
                         i += 1;
                     }
                 }
@@ -659,6 +680,12 @@ mod tests {
             i += 1;
         }
         out
+    }
+
+    #[test]
+    fn string_literals_skip_comments_and_characters() {
+        let source = "let a = \"menu.done\"; // \"menu.gone\"\n/* \"menu.gone\" /* \"menu.gone\" */ */ let c = '\"'; let d: &'static str = r#\"x \"y\" z\"#; \"esc \\\" q\"";
+        assert_eq!(string_literals(source), ["menu.done", "x \"y\" z", "esc \\\" q"]);
     }
 
     /// No language file keeps a key nothing uses: each first-party English key is a block's
