@@ -541,6 +541,10 @@ mod tests {
     #[test]
     fn a_birth_needs_room_and_costs_only_when_young_come() {
         let mut server = server();
+        // The keeper is here, to be paid for births.
+        let (player, _client) = keeper(&mut server);
+        let farming = server.content.skills.id("core:farming").expect("Farming");
+        let xp = |server: &Server| server.players[&player].skills.xp(farming);
         let (a, b) = (kept_rabbit(&mut server, 1), kept_rabbit(&mut server, 2));
         let kept_each = server.content.creatures.limits().kept_each;
         // The keeper is at their cap, counting animals waiting in the save.
@@ -548,8 +552,10 @@ mod tests {
         for id in [a, b] {
             server.creatures.live.get_mut(&id).unwrap().ready_until = server.tick + 100;
         }
+        let before = xp(&server);
         server.breed(a, b);
         assert_eq!(server.creatures.live.len(), 2, "young were born past the cap");
+        assert_eq!(xp(&server), before, "a refused birth paid Farming xp");
         for id in [a, b] {
             let parent = &server.creatures.live[&id];
             assert_eq!((parent.ready_until, parent.breeds_again), (0, 0), "no birth cost the parents their rest");
@@ -559,6 +565,7 @@ mod tests {
         server.breed(a, b);
         assert_eq!(server.creatures.live.len(), 3);
         assert!(server.creatures.live[&a].breeds_again > server.tick);
+        assert!(xp(&server) > before, "a birth paid no Farming xp");
         // The world full counts too, kept cap or not.
         server.creatures.unplaced.clear();
         let room = server.room_left();
@@ -566,8 +573,10 @@ mod tests {
         for id in [a, b] {
             server.creatures.live.get_mut(&id).unwrap().breeds_again = 0;
         }
+        let before = xp(&server);
         server.breed(a, b);
         assert_eq!(server.creatures.live.len(), 3, "a birth took the room kept for waiting animals");
+        assert_eq!(xp(&server), before, "a birth refused in a full world paid Farming xp");
     }
 
     /// "test", joined and an admin, standing at spawn with the land around loaded, and their

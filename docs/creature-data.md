@@ -52,10 +52,12 @@ animals and monsters spawning for anyone:
 - `wild_most` is the most wild creatures alive at once; kept animals never count against it.
 - `kept_each` is the most animals one player keeps, herds and pets together, alive or
   waiting in the save. Taming one more, or a birth past it, is refused with a message, and
-  breeding food is not taken while no young could come. The per-species caps by Farming
-  level planned in P31 will sit inside it.
+  breeding food is not taken while no young could come. A keeper already over the cap (a
+  package lowered it, or an old save) keeps every animal; taming and births wait until
+  they are under it. The per-species caps by Farming level planned in P31 will sit inside
+  it.
 - `most` is the most alive at once, wild and kept, and must hold `wild_most` and `keepers`
-  players' `kept_each`. Wild ones (spawned or summoned) and births also stop short of it by
+  players' `kept_each`; a server for more players raises `keepers` and `most` together. Wild ones (spawned or summoned) and births also stop short of it by
   the kept animals still waiting in the save, so those always have room to come back; past
   `keepers` players at their cap, wild ones get fewer.
 - `animals_near` and `monsters_near` cap each kind within 64 blocks of a player.
