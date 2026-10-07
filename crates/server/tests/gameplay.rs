@@ -1321,6 +1321,30 @@ fn beside(client: &mut Client, name: &str) -> (u32, usize) {
     (id, slot)
 }
 
+/// Faces creature `id` holding `slot` and provokes it, a blow every three server seconds
+/// while it does not fight back, until it is seen to begin a wind-up: its attack pose
+/// coming on, not one still shown from the blow before (its end not yet heard). Returns
+/// how many of its blows had come before, for the next to be waited past.
+fn provoke_until_it_winds_up(client: &mut Client, id: u32, slot: usize, name: &str) -> usize {
+    let attacking = |c: &Client| c.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking);
+    client.pump_until(|c| !attacking(c));
+    let before = client.hurt.len();
+    let mut poked = None;
+    loop {
+        assert!(client.creatures.contains_key(&id), "the {name} went");
+        face(client, id, slot, false);
+        if poked.is_none_or(|at| client.tick >= at + 3 * TICKS_PER_SECOND as u64) {
+            client.propose("core:attack", ActionTarget::Creature(id));
+            poked = Some(client.tick);
+        }
+        let asked = client.tick;
+        client.pump_until(|c| attacking(c) || !c.creatures.contains_key(&id) || c.tick >= asked + 4);
+        if attacking(client) {
+            return before;
+        }
+    }
+}
+
 /// Stands `client` 1.2 blocks from creature `id`, facing it, holding `slot`.
 fn face(client: &mut Client, id: u32, slot: usize, flying: bool) {
     let at = client.creatures[&id].position;
@@ -1434,21 +1458,7 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     // few seconds so it fights back), then answers `respond` `after` seconds later; returns
     // what came of the blow.
     let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> Defended {
-        let before = client.hurt.len();
-        let mut struck = Instant::now() - Duration::from_secs(5);
-        loop {
-            assert!(client.creatures.contains_key(&id), "the bear went");
-            face(client, id, slot, false);
-            if struck.elapsed() > Duration::from_secs(3) {
-                client.propose("core:attack", ActionTarget::Creature(id));
-                struck = Instant::now();
-            }
-            let asked = Instant::now();
-            client.pump_until(|c| c.creatures.get(&id).is_none_or(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking) || asked.elapsed() > Duration::from_millis(200));
-            if client.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking) {
-                break;
-            }
-        }
+        let before = provoke_until_it_winds_up(client, id, slot, "bear");
         std::thread::sleep(Duration::from_secs_f32(after));
         respond(client);
         client.pump_until(|c| c.hurt.len() > before);
@@ -1584,34 +1594,20 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
         let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_none()).expect("an empty hand");
         let mut outcomes = Vec::new();
         for _ in 0..2 {
-            let before = client.hurt.len();
-            let mut struck = Instant::now() - Duration::from_secs(5);
-            loop {
-                assert!(client.creatures.contains_key(&id), "the {name} went");
-                face(&mut client, id, slot, false);
-                if struck.elapsed() > Duration::from_secs(3) {
-                    client.propose("core:attack", ActionTarget::Creature(id));
-                    struck = Instant::now();
-                }
-                let asked = Instant::now();
-                client.pump_until(|c| c.creatures.get(&id).is_none_or(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking) || asked.elapsed() > Duration::from_millis(200));
-                if client.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking) {
-                    break;
-                }
-            }
-            // Straight back from it, facing it, until the blow lands.
+            let before = provoke_until_it_winds_up(&mut client, id, slot, name);
+            // Straight back from it, facing it, until the blow lands: a walk's worth each
+            // server tick, as the creature moves by them (a server running behind moves
+            // both slower).
             let away = (client.position - client.creatures[&id].position).with_y(0.0).normalize_or_zero();
-            let mut last = Instant::now();
             let started = client.tick;
+            let mut last = client.tick;
             while client.hurt.len() == before {
                 assert!(client.tick < started + 5 * TICKS_PER_SECOND as u64, "the {name}'s blow never came: {:?}", client.creatures.get(&id).map(|v| v.pose));
-                let step = last.elapsed().as_secs_f32();
-                last = Instant::now();
-                client.position += away * walk * step;
+                client.position += away * walk * (client.tick - last) as f32 / TICKS_PER_SECOND as f32;
+                last = client.tick;
                 let yaw = yaw_toward(client.position, client.creatures[&id].position);
                 client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-                let asked = Instant::now();
-                client.pump_until(|c| c.hurt.len() > before || asked.elapsed() > Duration::from_millis(30));
+                client.pump_until(|c| c.hurt.len() > before || c.tick > last);
             }
             outcomes.push(client.hurt[before].1);
             client.wait_server(1);
