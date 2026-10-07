@@ -93,6 +93,8 @@
         (template: "drop", name: "clay_pot", tags: ["pot", "container"], all: (color: (180, 100, 60))),
         (template: "drop", name: "vial", tags: ["vial", "container"], all: (color: (190, 120, 80))),
         (template: "drop", name: "fired_clay", tags: ["fired_clay", "brick"], all: (color: (170, 90, 60))),
+        // Gold coins: what shops pay and charge (prices.ron, Settlements). Never placed.
+        (template: "drop", name: "gold_coin", tags: ["currency", "coin", "metal:gold"], all: (color: (230, 190, 60))),
         // Flint: one gravel in eight breaks to it (tools.ron); arrowheads and spear points.
         (template: "drop", name: "flint", tags: ["flint", "sharp"], all: (color: (60, 60, 66))),
         (template: "drop", name: "bronze_blend", tags: ["alloy_blend", "metal:bronze"], all: (color: (190, 140, 80))),
