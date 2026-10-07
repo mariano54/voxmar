@@ -61,16 +61,25 @@
     // takes an item counts.
     // How the world drives machines: wind (blocks a second) under which windmills stall and
     // at which they give all they can, the heights between which they catch from a third
-    // of it to all, how near (across and up or down) a kept animal walks a treadwheel, and
-    // the least and most of its power a treadwheel gives by how well kept its walker is.
-    // A later package's `sources` replaces these.
-    sources: Some((wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 0.333, walk_reach: 3.0, walk_height: 2.0, walk_share: (0.5, 1.2))),
-    // Kept animals that walk a treadwheel: the big, steady grazers.
+    // of it to all, how near another windmill's sails becalm one (blocks, any way), the
+    // wind reckoned while a windmill's land is not loaded, how near (across and up or down)
+    // a kept animal walks a treadwheel, the share of its power a treadwheel gives with a
+    // walker in the worst and the best condition, the in-game days an animal walks after a
+    // player last fed it, seconds between looks at the world, and the tag of fluids (lava)
+    // that neither turn wheels nor wash ore. A later package's `sources` replaces these.
+    sources: Some((
+        wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 0.333, wind_spacing: 4, wind_mean: 5.0,
+        walk_reach: 3.0, walk_height: 2.0, walk_share: (0.5, 1.2), walk_fed_days: 2.0, survey_seconds: 1.0, hot_tag: "hot",
+    )),
+    // Kept animals that walk a treadwheel: the big, steady grazers. A later package may
+    // add to them, or take one away with `not_walkers`.
     walkers: ["aurochs", "wild_horse", "camel", "bison"],
+    // The last fuel that takes an item says how long it burns, so the broad tags come first
+    // and a later package can change any of them.
     fuels: [
-        (item: "coal_ore|charcoal", seconds: 80.0),
-        (item: "tag:log", seconds: 15.0),
-        (item: "tag:planks", seconds: 4.0),
         (item: "tag:fuel", seconds: 2.0),
+        (item: "tag:planks", seconds: 4.0),
+        (item: "tag:log", seconds: 15.0),
+        (item: "coal_ore|charcoal", seconds: 80.0),
     ],
 )

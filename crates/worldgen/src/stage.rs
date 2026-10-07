@@ -25,6 +25,8 @@ pub(crate) enum Stage {
     Trails,
     /// Planning a region's trails, on a cache miss.
     TrailPlans,
+    /// Planning a square's settlement, on a cache miss.
+    Settlements,
     /// Surface rules: the top blocks of each block column.
     Surface,
     /// Cave carvers, water tables and sealing.
@@ -45,7 +47,7 @@ pub(crate) enum Stage {
 
 impl Stage {
     #[cfg(test)]
-    pub const ALL: [Stage; 16] = [
+    pub const ALL: [Stage; 17] = [
         Stage::Other,
         Stage::Climate,
         Stage::Biomes,
@@ -53,6 +55,7 @@ impl Stage {
         Stage::RiverRegions,
         Stage::Trails,
         Stage::TrailPlans,
+        Stage::Settlements,
         Stage::Surface,
         Stage::Caves,
         Stage::CaveBiomes,

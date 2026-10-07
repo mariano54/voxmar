@@ -15,7 +15,7 @@
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["{name}_planks", "shaft", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "treadwheel", skill: "core:engineering", level: 18, xp: 30.0),
         (pattern: [["stick", "{name}_planks", "stick"], ["{name}_planks", "bronze_ingot", "{name}_planks"], ["stick", "{name}_planks", "stick"]], output: "water_wheel", skill: "core:engineering", level: 20, xp: 40.0),
         (pattern: [["wool", "stick", "wool"], ["stick", "bronze_ingot", "stick"], ["wool", "stick", "wool"]], output: "windmill", skill: "core:engineering", level: 24, xp: 50.0),
-        (pattern: [["bronze_ingot", "bronze_ingot", "bronze_ingot"], ["", "shaft", ""], ["tag:cobbled", "tag:cobbled", "tag:cobbled"]], output: "trip_hammer", skill: "core:engineering", level: 26, xp: 60.0),
+        (pattern: [["bronze_ingot", "bronze_ingot", "bronze_ingot"], ["", "shaft", ""], ["tag:cobbled", "tag:cobbled", "tag:cobbled"]], output: "trip_hammer", skill: "core:engineering", level: 32, xp: 60.0),
         // Items between machines: a wooden chest (Crafting) and a hopper of planks, wooden chutes, and iron
         // conveyors on hide belts, four times as fast.
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["{name}_planks", "", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "chest", skill: "core:crafting", level: 1, xp: 10.0),

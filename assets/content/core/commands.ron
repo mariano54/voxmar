@@ -103,8 +103,8 @@
         (name: "biome", help: "Names the biome you stand in, and its climate.", run: Biome),
         (
             name: "locate",
-            usage: "biome NAME [RADIUS] | gorge [RADIUS] | ore [NAME] [RADIUS]",
-            help: "Finds the nearest place of a biome, or of a river running deep in a gorge, within 4000 blocks unless you say (up to 10000), or the nearest sample of ore on the ground over a vein (of an ore such as iron, if you name one), within 1000.",
+            usage: "biome NAME [RADIUS] | gorge [RADIUS] | settlement [RADIUS] | ore [NAME] [RADIUS]",
+            help: "Finds the nearest place of a biome, of a river running deep in a gorge, or of a hamlet or village, within 4000 blocks unless you say (up to 10000), or the nearest sample of ore on the ground over a vein (of an ore such as iron, if you name one), within 1000.",
             permission: Admin,
             run: Locate,
         ),
@@ -122,8 +122,8 @@
         ),
         (
             name: "creatures",
-            usage: "[tame | ready | hasten | hold | remove]",
-            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, or take away the ones they keep.",
+            usage: "[tame | ready | hasten | hold | remove] [creature]",
+            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, or take away the ones they keep; only of one species, if they name it.",
             run: Creatures,
         ),
         (

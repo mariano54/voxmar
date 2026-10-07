@@ -39,11 +39,6 @@ use crate::glam::IVec3;
 use crate::inventory::{ItemStack, max_stack};
 use crate::machine::{Carrier, Machine, MachineRegistry, Port, PortRole, ProcessId, Role, Source};
 
-/// A processor's input and output slots.
-pub const INPUTS: usize = 3;
-pub const OUTPUTS: usize = 3;
-/// Server ticks a second (the factory counts power in units a tick and work in seconds).
-pub const TICKS_PER_SECOND: f32 = 20.0;
 
 /// What a machine is doing, as its players are told.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,8 +68,8 @@ pub enum Status {
 /// A machine's state: what it holds and how far its work has come.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MachineState {
-    pub inputs: [Option<ItemStack>; INPUTS],
-    pub outputs: [Option<ItemStack>; OUTPUTS],
+    pub inputs: Vec<Option<ItemStack>>,
+    pub outputs: Vec<Option<ItemStack>>,
     pub fuel: Option<ItemStack>,
     /// Seconds of full output left of what it burns now.
     pub burning: f32,
@@ -93,9 +88,15 @@ pub struct MachineState {
     pub supplied: f32,
     /// The share of what it could give that was used last step, 0 to 1.
     pub load: f32,
-    /// What it holds as a bin (a hopper, a crate).
+    /// What it holds as a bin (a hopper, a chest).
     #[serde(default)]
     pub bin: Vec<Option<ItemStack>>,
+    /// Who placed it, by name, if a player did.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// Whether its standing structure was counted for quests already (a multiblock's core).
+    #[serde(default)]
+    pub counted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -167,8 +168,8 @@ pub struct Grid {
 pub struct MachineView {
     pub block: BlockId,
     pub status: Status,
-    pub inputs: [Option<ItemStack>; INPUTS],
-    pub outputs: [Option<ItemStack>; OUTPUTS],
+    pub inputs: Vec<Option<ItemStack>>,
+    pub outputs: Vec<Option<ItemStack>>,
     pub fuel: Option<ItemStack>,
     /// How far the work is, in percent, and what it makes first.
     pub progress: u8,
@@ -196,6 +197,9 @@ impl Factory {
     /// Adds a machine with what it held (from a save).
     pub fn insert_state(&mut self, pos: IVec3, block: BlockId, mut state: MachineState, machines: &MachineRegistry) -> bool {
         let Some(machine) = machines.get(block) else { return false };
+        let (inputs, outputs) = machine.slots();
+        state.inputs.resize(inputs, None);
+        state.outputs.resize(outputs, None);
         state.bin.resize(machine.bin_slots(), None);
         let chute = match machine.role {
             Role::Chute { rate } => Some(rate),
@@ -244,6 +248,11 @@ impl Factory {
         self.walked.remove(&creature).unwrap_or(0.0)
     }
 
+    /// Lets go of the work kept for animals `keep` says are gone.
+    pub fn retain_walked(&mut self, keep: impl Fn(u32) -> bool) {
+        self.walked.retain(|&id, _| keep(id));
+    }
+
     /// Every machine, by position.
     pub fn iter(&self) -> impl Iterator<Item = (IVec3, BlockId, &MachineState)> {
         self.nodes.iter().map(|(&pos, n)| (pos, n.block, &n.state))
@@ -262,13 +271,14 @@ impl Factory {
     /// where a recipe takes it, anything into a bin. Returns what is left.
     pub fn put(&mut self, pos: IVec3, stack: ItemStack, machines: &MachineRegistry) -> Option<ItemStack> {
         let Some(node) = self.nodes.get_mut(&pos) else { return Some(stack) };
-        let machine = machines.get(node.block)?;
+        let Some(machine) = machines.get(node.block) else { return Some(stack) };
         let mut left = stack.count;
         if machine.burns() && machines.burn_seconds(stack.item).is_some() {
             left = fill(std::slice::from_mut(&mut node.state.fuel), stack.item, left);
         }
         if left > 0 && machine.is_processor() && machines.takes(machine, stack.item) {
-            left = fill(&mut node.state.inputs, stack.item, left);
+            let room = machines.input_room(machine, stack.item, node.state.inputs.len());
+            left = fill_within(&mut node.state.inputs, stack.item, left, room);
         }
         if left > 0 && !node.state.bin.is_empty() {
             let left = fill(&mut node.state.bin, stack.item, left);
@@ -280,7 +290,11 @@ impl Factory {
             prepare(node, machine, machines);
             let state = &mut node.state;
             if matches!(state.status, Status::Idle | Status::NoFuel) {
-                if state.process.is_some() {
+                if state.process.is_some() && state.condition <= 0.0 {
+                    // What the world does not give it yet: water, or the structure round it.
+                    let water = matches!(machine.role, Role::Processor { water: true, .. });
+                    state.status = if water { Status::NoSource } else { Status::Incomplete };
+                } else if state.process.is_some() {
                     state.status = Status::Working;
                 } else if state.burning > 0.0 {
                     state.status = Status::Generating;
@@ -290,20 +304,39 @@ impl Factory {
         (left > 0).then_some(ItemStack { count: left, ..stack })
     }
 
-    /// Puts a stack back where it was taken from (what a player could not carry): a bin,
-    /// or the machine's outputs. Returns what did not fit.
-    pub fn put_output(&mut self, pos: IVec3, stack: ItemStack) -> Option<ItemStack> {
-        let Some(node) = self.nodes.get_mut(&pos) else { return Some(stack) };
-        let left = fill(&mut node.state.bin, stack.item, stack.count);
-        let left = fill(&mut node.state.outputs, stack.item, left);
-        (left > 0).then_some(ItemStack { count: left, ..stack })
+    /// Whether the machine at `pos` would take `item` at all, room or not: something it
+    /// burns or works, or anything, for a bin.
+    pub fn accepts(&self, pos: IVec3, item: BlockId, machines: &MachineRegistry) -> bool {
+        let Some(machine) = self.nodes.get(&pos).and_then(|node| machines.get(node.block)) else { return false };
+        (machine.burns() && machines.burn_seconds(item).is_some()) || (machine.is_processor() && machines.takes(machine, item)) || machine.bin_slots() > 0
     }
 
-    /// Takes everything out of the machine's outputs, or out of a bin.
+    /// Takes everything out of the machine's outputs, or out of a bin; and what went in,
+    /// while it has nothing it can work (half a recipe, or the wrong things).
     pub fn take_outputs(&mut self, pos: IVec3) -> Vec<ItemStack> {
-        let Some(node) = self.nodes.get_mut(&pos) else { return Vec::new() };
+        let mut taken = Vec::new();
+        self.take_outputs_into(pos, |stack| {
+            taken.push(stack);
+            0
+        });
+        taken
+    }
+
+    /// As [`Self::take_outputs`], a stack at a time to `take`, which says how many of it it
+    /// could not carry: those stay in the slot they came from.
+    pub fn take_outputs_into(&mut self, pos: IVec3, mut take: impl FnMut(ItemStack) -> u8) {
+        let Some(node) = self.nodes.get_mut(&pos) else { return };
         let state = &mut node.state;
-        state.outputs.iter_mut().chain(state.bin.iter_mut()).filter_map(Option::take).collect()
+        let idle = state.process.is_none();
+        let inputs = state.inputs.iter_mut().filter(|_| idle);
+        for slot in state.outputs.iter_mut().chain(state.bin.iter_mut()).chain(inputs) {
+            if let Some(stack) = slot.take() {
+                let left = take(stack);
+                if left > 0 {
+                    *slot = Some(ItemStack { count: left, ..stack });
+                }
+            }
+        }
     }
 
     /// The network a port of the machine at `pos` is on, as it looks.
@@ -311,16 +344,17 @@ impl Factory {
         let Some(&network) = self.joined.get(&pos).and_then(|ports| ports.get(port)) else { return Grid::default() };
         let network = &self.networks[network];
         let mut grid = Grid { carrier: Some(network.carrier), ..Grid::default() };
+        // A machine broken since the networks were last joined is skipped until they are.
         for member in &network.members {
-            let node = &self.nodes[&member.pos];
-            let port = node.ports[member.port];
+            let Some(node) = self.nodes.get(&member.pos) else { continue };
+            let Some(&port) = node.ports.get(member.port) else { continue };
             match port.role {
                 PortRole::Gives(power) => {
                     grid.tier = grid.tier.max(port.tier);
                     grid.supply += power * offer_share(node);
                 }
                 PortRole::Holds { .. } => grid.tier = grid.tier.max(port.tier),
-                PortRole::Takes(power) => grid.demand += power * node.state.supplied.max(0.0),
+                PortRole::Takes(power) => grid.demand += power * ask_share(node, port),
                 PortRole::Carries => {}
             }
         }
@@ -351,8 +385,8 @@ impl Factory {
         Some(MachineView {
             block: node.block,
             status: state.status,
-            inputs: state.inputs,
-            outputs: state.outputs,
+            inputs: state.inputs.clone(),
+            outputs: state.outputs.clone(),
             fuel: state.fuel,
             progress,
             making: process.map(|p| p.outputs[0].0),
@@ -365,12 +399,13 @@ impl Factory {
         })
     }
 
-    /// Runs every machine for `ticks` server ticks.
-    pub fn step(&mut self, ticks: u32, machines: &MachineRegistry) {
+    /// Runs every machine for `ticks` server ticks, `per_second` of them a second (power is
+    /// counted in units a tick, work in seconds).
+    pub fn step(&mut self, ticks: u32, per_second: f32, machines: &MachineRegistry) {
         if self.dirty {
             self.connect();
         }
-        let seconds = ticks as f32 / TICKS_PER_SECOND;
+        let seconds = ticks as f32 / per_second;
         let ticks = ticks as f32;
         // What each machine asks of its networks, or offers them.
         for pos in &self.order {
@@ -459,7 +494,7 @@ impl Factory {
                 if !hopper && !giver.is_processor() {
                     continue;
                 }
-                let slots = if hopper { self.nodes[&from].state.bin.len() } else { OUTPUTS };
+                let slots = if hopper { self.nodes[&from].state.bin.len() } else { self.nodes[&from].state.outputs.len() };
                 for slot in 0..slots {
                     let state = &self.nodes[&from].state;
                     let Some(stack) = (if hopper { state.bin[slot] } else { state.outputs[slot] }) else { continue };
@@ -802,6 +837,27 @@ fn finish(pos: IVec3, state: &mut MachineState, process: &crate::machine::Proces
     state.progress = 0.0;
 }
 
+/// Puts `count` of `item` into `slots`, topping up stacks first and filling no more than
+/// `room` slots with it; returns how many did not fit.
+fn fill_within(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8, room: usize) -> u8 {
+    for stack in slots.iter_mut().flatten().filter(|s| s.item == item) {
+        let moved = count.min(max_stack(item).saturating_sub(stack.count));
+        stack.count += moved;
+        count -= moved;
+    }
+    let mut held = slots.iter().flatten().filter(|s| s.item == item).count();
+    for slot in slots.iter_mut().filter(|s| s.is_none()) {
+        if count == 0 || held >= room {
+            break;
+        }
+        let moved = count.min(max_stack(item));
+        *slot = Some(ItemStack { item, count: moved });
+        count -= moved;
+        held += 1;
+    }
+    count
+}
+
 /// Puts `count` of `item` into `slots`, topping up stacks first; returns how many did not fit.
 fn fill(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8) -> u8 {
     for stack in slots.iter_mut().flatten().filter(|s| s.item == item) {
@@ -821,7 +877,7 @@ fn fill(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8) -> u8 {
 }
 
 /// Whether the inputs hold all a recipe takes, each item counted once.
-fn inputs_hold(inputs: &[Option<ItemStack>; INPUTS], process: &crate::machine::Process) -> bool {
+fn inputs_hold(inputs: &[Option<ItemStack>], process: &crate::machine::Process) -> bool {
     let mut left: Vec<Option<ItemStack>> = inputs.to_vec();
     process.inputs.iter().all(|(accepts, count)| {
         let mut need = *count;
@@ -837,8 +893,8 @@ fn inputs_hold(inputs: &[Option<ItemStack>; INPUTS], process: &crate::machine::P
 }
 
 /// Whether the outputs have room for the most a recipe could make.
-fn outputs_fit(outputs: &[Option<ItemStack>; OUTPUTS], process: &crate::machine::Process, extra: f32) -> bool {
-    let mut slots = *outputs;
+fn outputs_fit(outputs: &[Option<ItemStack>], process: &crate::machine::Process, extra: f32) -> bool {
+    let mut slots = outputs.to_vec();
     let most = |count: u8| (count as f32 * (1.0 + extra)).ceil() as u8;
     process.outputs.iter().map(|&(item, count)| (item, most(count))).chain(process.byproducts.iter().map(|&(item, count, _)| (item, count))).all(|(item, count)| fill(&mut slots, item, count) == 0)
 }
@@ -882,7 +938,7 @@ mod tests {
     fn test() -> Test {
         let names = [
             "ore", "dust", "log", "wheel", "shaft", "mill", "boiler", "pipe", "engine", "dynamo", "lv_cable", "mv_cable", "crusher",
-            "battery", "mv_battery", "transformer", "furnace", "ingot", "washer", "chute", "conveyor", "hopper", "chest",
+            "battery", "mv_battery", "transformer", "furnace", "ingot", "washer", "chute", "conveyor", "hopper", "chest", "kiln",
         ];
         let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
         let machines = MachineRegistry::read(
@@ -907,6 +963,7 @@ mod tests {
                 (block: "conveyor", role: Chute(rate: 4.0)),
                 (block: "hopper", role: Bin(slots: 3, feeds: true)),
                 (block: "chest", role: Bin(slots: 3)),
+                (block: "kiln", role: Processor(kinds: ["fire"])),
             ], fuels: [(item: "tag:log", seconds: 10.0)])"#,
         )
         .unwrap();
@@ -915,6 +972,7 @@ mod tests {
             r#"(recipes: [
                 (kind: "crush", inputs: [("ore", 1)], outputs: [("dust", 1)], seconds: 4.0),
                 (kind: "smelt", inputs: [("dust", 2)], outputs: [("ingot", 1)], seconds: 2.0),
+                (kind: "fire", inputs: [("ore", 2), ("log", 1)], outputs: [("ingot", 1)], seconds: 2.0),
             ])"#,
         )
         .unwrap();
@@ -934,7 +992,7 @@ mod tests {
 
     fn run(t: &Test, factory: &mut Factory, seconds: f32) {
         for _ in 0..(seconds * 5.0) as u32 {
-            factory.step(4, &t.machines);
+            factory.step(4, 20.0, &t.machines);
         }
     }
 
@@ -951,6 +1009,8 @@ mod tests {
         factory.set_condition(IVec3::ZERO, 1.0);
         factory.set_condition(IVec3::X, 0.0);
         feed(&t, &mut factory, 1, "ore", 2);
+        // Dry, it says so as the ore goes in, not that it works.
+        assert_eq!(factory.get(IVec3::X).unwrap().1.status, Status::NoSource);
         run(&t, &mut factory, 10.0);
         assert_eq!(factory.get(IVec3::X).unwrap().1.status, Status::NoSource);
         assert_eq!(made(&t, &factory, 1, "dust"), 0);
@@ -960,6 +1020,35 @@ mod tests {
         assert_eq!(made(&t, &factory, 1, "dust"), 3);
         run(&t, &mut factory, 9.0);
         assert_eq!(made(&t, &factory, 1, "dust"), 6);
+    }
+
+    #[test]
+    fn a_machine_beside_a_broken_shaft_can_be_looked_at_before_the_networks_are_joined_again() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["wheel", "shaft", "shaft", "mill"]);
+        factory.set_condition(IVec3::ZERO, 1.0);
+        feed(&t, &mut factory, 3, "ore", 1);
+        run(&t, &mut factory, 1.0);
+        factory.remove(IVec3::X);
+        for x in [0, 2, 3] {
+            assert!(factory.view(IVec3::new(x, 0, 0), &t.machines).is_some());
+        }
+        run(&t, &mut factory, 1.0);
+        assert_eq!(factory.view(IVec3::new(2, 0, 0), &t.machines).unwrap().grid.supply, 0.0, "the wheel no longer reaches it");
+    }
+
+    #[test]
+    fn an_animals_work_at_a_wheel_adds_up_until_it_rests_or_is_gone() {
+        let mut factory = Factory::default();
+        factory.add_walked(7, 1.0);
+        factory.add_walked(7, 2.5);
+        factory.add_walked(9, 1.0);
+        assert_eq!(factory.walked(7), 3.5);
+        assert_eq!(factory.rested(7), 3.5);
+        assert_eq!(factory.walked(7), 0.0);
+        factory.retain_walked(|id| id != 9);
+        assert_eq!(factory.walked(9), 0.0);
     }
 
     #[test]
@@ -1169,5 +1258,53 @@ mod tests {
         assert_eq!(held(&t, &factory, 0, "dust") + held(&t, &factory, 6, "dust"), 0, "the furnaces took all the dust");
         assert_eq!(held(&t, &factory, 6, "ore"), 7, "nothing takes ore: it stays in its hopper");
         assert_eq!(held(&t, &factory, 8, "dust"), 0, "hoppers never feed the chest");
+    }
+
+    #[test]
+    fn stacks_of_one_input_leave_room_for_the_other_and_an_idle_machine_gives_them_back() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["kiln"]);
+        let ore = |count| ItemStack { item: t.id("ore"), count };
+        // Three stacks of ore: the third finds no room, kept for the log.
+        assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), None);
+        assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), None);
+        assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), Some(ore(64)));
+        // Half a recipe: an empty hand takes the ore back out (what it cannot carry stays an
+        // input, not a product), and it goes in again.
+        factory.take_outputs_into(IVec3::ZERO, |stack| stack.count);
+        let (_, state) = factory.get(IVec3::ZERO).unwrap();
+        assert_eq!(state.inputs.iter().flatten().count(), 2);
+        assert!(state.outputs.iter().all(Option::is_none));
+        assert_eq!(factory.take_outputs(IVec3::ZERO), vec![ore(64), ore(64)]);
+        assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), None);
+        assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), None);
+        feed(&t, &mut factory, 0, "log", 2);
+        run(&t, &mut factory, 2.4);
+        assert_eq!(made(&t, &factory, 0, "ingot"), 1);
+        // Working on the next, it keeps what went in.
+        assert_eq!(factory.take_outputs(IVec3::ZERO), vec![ItemStack { item: t.id("ingot"), count: 1 }]);
+    }
+
+    /// The game's own bloom: a trip hammer beats it into three ingots (1.5 an ore, the
+    /// ladder's second rung), the crafting grid into two.
+    #[test]
+    fn a_trip_hammer_beats_a_bloom_into_three_ingots_and_the_hand_into_two() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let mut factory = Factory::default();
+        let (wheel, hammer) = (IVec3::ZERO, IVec3::X);
+        assert!(factory.insert(wheel, id("base:water_wheel"), machines) && factory.insert(hammer, id("base:trip_hammer"), machines));
+        factory.set_condition(wheel, 1.0);
+        assert_eq!(factory.put(hammer, ItemStack { item: id("base:iron_bloom"), count: 1 }, machines), None);
+        for _ in 0..100 {
+            factory.step(4, 20.0, machines);
+        }
+        assert_eq!(factory.take_outputs(hammer), vec![ItemStack { item: id("base:iron_ingot"), count: 3 }]);
+        let by_hand: Vec<_> = content.recipes.iter().filter(|r| r.output == id("base:iron_ingot") && r.alternatives().into_iter().flatten().any(|a| a.contains(&id("base:iron_bloom")))).collect();
+        assert_eq!(by_hand.len(), 1);
+        assert_eq!(by_hand[0].count, 2);
+        assert_eq!(by_hand[0].alternatives().into_iter().flatten().count(), 1, "one bloom");
     }
 }

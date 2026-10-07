@@ -44,6 +44,9 @@ pub struct SavedCreature {
     /// Its genes; none in saves from before genes, which restore as wild ones of the place.
     #[serde(default)]
     pub genome: Option<genes::Genome>,
+    /// Day-clock ticks since a player last fed it; none in older saves, which count it fed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unfed: Option<f64>,
 }
 
 impl Server {
@@ -80,7 +83,9 @@ impl Server {
         let can_breed = species.def.breeding.as_ref().is_some_and(|b| self.skill_level(player, "core:farming") >= b.level) && self.tick >= creature.breeds_again;
         let breeds = mine && creature.grows_up.is_none() && can_breed && (feed || species.breed_food.contains(&item));
         let tool = mine && species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
-        tames || breeds || tool
+        // A kept one eats its food any time, to keep it fed (for a treadwheel).
+        let fed = mine && (feed || species.tame_food.contains(&item) || species.breed_food.contains(&item));
+        tames || breeds || tool || fed
     }
 
     /// `base:tend`: feeds the creature what the player holds, or takes its product with it.
@@ -151,8 +156,13 @@ impl Server {
             }
             return;
         }
-        // A kept adult fed its breeding food is ready to breed for a while.
-        let Some(breeding) = species.def.breeding.clone() else { return };
+        // Kept and fed: it walks a treadwheel for a while. A kept adult fed its breeding food
+        // is ready to breed for a while too.
+        let day = self.day;
+        self.creatures.live.get_mut(&id).expect("checked").fed = day;
+        let creature = &self.creatures.live[&id];
+        let breeding_food = tags.iter().any(|t| t == "breeding_feed") || species.breed_food.contains(&item);
+        let Some(breeding) = species.def.breeding.clone().filter(|_| breeding_food && creature.grows_up.is_none()) else { return };
         if self.skill_level(player, "core:farming") < breeding.level || self.tick < creature.breeds_again {
             return;
         }
@@ -311,6 +321,7 @@ impl Server {
                     grows_in: c.grows_up.map(|t| t.saturating_sub(tick)),
                     products_in: c.products_due.iter().map(|t| t.saturating_sub(tick)).collect(),
                     genome: Some(c.genome.clone()),
+                    unfed: Some((self.day - c.fed).max(0.0)),
                 })
             })
             .collect()
@@ -329,6 +340,7 @@ impl Server {
             creature.body.yaw = s.yaw;
             creature.health = s.health.min(def.health).max(1);
             creature.owner = Some(s.owner);
+            creature.fed = self.day - s.unfed.unwrap_or(0.0);
             creature.adult_scale = s.scale;
             creature.grows_up = s.grows_in.map(|t| tick + t);
             creature.scale = if creature.grows_up.is_some() { s.scale * YOUNG_SCALE } else { s.scale };

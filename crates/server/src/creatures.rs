@@ -114,6 +114,9 @@ pub struct Live {
     pub adult_scale: f32,
     /// Tick each of its species' products is next due.
     pub products_due: Vec<u64>,
+    /// The time of day (the day clock) a player last fed it, or it came to be: a kept
+    /// animal walks a treadwheel only while fed.
+    pub fed: f64,
     /// The last view each player was sent, to send only changes.
     sent: Option<CreatureView>,
     pub(crate) changed: bool,
@@ -669,6 +672,7 @@ impl Server {
             grows_up: None,
             adult_scale: scale,
             products_due: def.products.iter().enumerate().map(|(i, p)| self.tick + product_ticks(p.every, seed, i)).collect(),
+            fed: self.day,
             sent: None,
             changed: true,
         };

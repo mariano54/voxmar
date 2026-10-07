@@ -183,7 +183,7 @@ impl Server {
             Run::Creatures => match args.first().map(String::as_str) {
                 None => Ok(self.creatures_about(id)),
                 Some(_) if !self.is_admin(id) => Err(Words::key("command.creatures.admins_only")),
-                Some(what) => self.creatures_command(id, what),
+                Some(what) => self.creatures_command(id, what, args.get(1).map(String::as_str)),
             },
             Run::Skill => self.skill_command(id, args),
             Run::Machine => self.machine_command(id, args),
@@ -513,21 +513,27 @@ impl Server {
 
     /// `/creatures tame|ready|hasten`: for admins, the creatures within 8 blocks are tamed
     /// by them, readied to breed, or hastened (products due and young grown now).
-    fn creatures_command(&mut self, id: Source, what: &str) -> Reply {
+    /// With a species named, only creatures of it.
+    fn creatures_command(&mut self, id: Source, what: &str, species: Option<&str>) -> Reply {
         let player = Self::me(id)?;
         let at = self.position_of(id);
         let name = self.players[&player].name.clone();
         let tick = self.tick;
         let mut count = 0;
+        let only = match species {
+            Some(species) => Some(self.content.creatures.find(species).ok_or_else(|| Words::key("command.summon.unknown").with("name", species))?),
+            None => None,
+        };
+        let near = |c: &crate::creatures::Live| c.body.position.distance(at) <= 8.0 && only.is_none_or(|s| c.species == s);
         if what == "remove" {
             // Only those the player keeps: a gate step tidies away the animals it summoned.
-            let kept: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.owner_id == Some(player) && c.body.position.distance(at) <= 8.0).map(|(&id, _)| id).collect();
+            let kept: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.owner_id == Some(player) && near(c)).map(|(&id, _)| id).collect();
             for &id in &kept {
                 self.creatures.take_away(id);
             }
             return Ok(Words::key("command.creatures.done").with("count", Words::text(kept.len())));
         }
-        for creature in self.creatures.live.values_mut().filter(|c| c.body.position.distance(at) <= 8.0) {
+        for creature in self.creatures.live.values_mut().filter(|c| near(c)) {
             match what {
                 "tame" if creature.owner.is_none() => {
                     creature.owner = Some(name.clone());
@@ -648,6 +654,8 @@ impl Server {
             [kind, r] if kind == "ore" && r.parse::<i32>().is_ok() => return self.locate_ore(id, None, radius(r)?),
             [kind, name] if kind == "ore" => return self.locate_ore(id, Some(name), ORE_RADIUS),
             [kind, name, r] if kind == "ore" => return self.locate_ore(id, Some(name), radius(r)?),
+            [kind] if kind == "settlement" => return self.locate_settlement(id, LOCATE_RADIUS),
+            [kind, r] if kind == "settlement" => return self.locate_settlement(id, radius(r)?),
             [kind, name] if kind == "biome" => (name, LOCATE_RADIUS),
             [kind, name, r] if kind == "biome" => (name, radius(r)?),
             _ => return Err(Words::key("command.error.locate_what")),
@@ -687,6 +695,28 @@ impl Server {
                     .with("tp", format!("/tp {} {} {}", at.x, at.y + 1, at.z)))
             }
             None => Err(Words::key("command.error.gorge_not_near").with("radius", Words::text(radius))),
+        }
+    }
+
+    fn locate_settlement(&self, id: Source, radius: i32) -> Reply {
+        let position = self.position_of(id);
+        let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
+        let nearest = self
+            .overworld
+            .settlements_near(from, radius)
+            .into_iter()
+            .map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s))
+            .filter(|(offset, _)| offset.as_vec2().length() <= radius as f32)
+            .min_by_key(|(offset, _)| offset.length_squared());
+        match nearest {
+            Some((offset, s)) => Ok(Words::key("command.locate.settlement")
+                .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
+                .with("size", Words::key(&format!("settlement.size.{}", s.size)))
+                .with("place", format!("{} {} {}", s.centre.x, s.centre.y, s.centre.z))
+                .with("distance", Words::text(format!("{:.0}", offset.as_vec2().length())))
+                .with("way", compass(offset.as_vec2()))
+                .with("tp", format!("/tp {} {} {}", s.centre.x, s.centre.y + 1, s.centre.z))),
+            None => Err(Words::key("command.error.settlement_not_near").with("radius", Words::text(radius))),
         }
     }
 

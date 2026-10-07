@@ -496,6 +496,7 @@ impl Server {
         self.world.insert(pos, Arc::new(loaded.column));
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
+        self.reconcile_machines(pos);
     }
 
     fn handle_messages(&mut self) {
