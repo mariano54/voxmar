@@ -293,6 +293,7 @@ fn particle(emission: &Emission, emitter: &Emitter, light: u8, wind: Vec3, dice:
         },
     };
     particle.blend = emission.blend.unwrap_or(emission.style.blend());
+    particle.hides = emission.hides.unwrap_or(emission.style.hides());
     // Added light builds up where flames overlap: each gives a share, so a crowd of
     // tongues glows as one fire instead of burning out to white.
     if emission.style == ParticleStyle::Flame && particle.blend == ParticleBlend::Add {

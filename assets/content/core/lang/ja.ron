@@ -4,6 +4,11 @@
     // Kanji fill their whole box, so lines of them need a little more room than letters.
     "language.line_height": "1.4",
     "language.tight_line": "1.1",
+    // 禁則処理: 行頭に来ない文字、行末に来ない文字、分けないカタカナ語 (この文字数まで)。
+    "language.line_start_forbidden": "。、，．・：；？！ー…‥々ゝゞヽヾ」』）］｝〕〉》ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ｡､｣･ｰｧｨｩｪｫｬｭｮｯ)]}?!:;,.",
+    "language.line_end_forbidden": "「『（［｛〔〈《｢([{",
+    "language.unbroken": "ァアィイゥウェエォオカガキギクグケゲコゴサザシジスズセゼソゾタダチヂッツヅテデトドナニヌネノハバパヒビピフブプヘベペホボポマミムメモャヤュユョヨラリルレロヮワヰヱヲンヴヵヶヷヸヹヺーｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ",
+    "language.unbroken_longest": "12",
     // Between items in a line: a middle dot never starts a line in Japanese.
     "language.dot": "・",
 
@@ -119,8 +124,8 @@
     "settings.textures": "テクスチャ (再起動後)",
     "settings.textures.hint": "優先するテクスチャパック。次にゲームを起動したときに反映されます。",
     "settings.textures.minecraft": "Minecraft優先",
-    "settings.textures.voxmar": "Voxmar",
-    "settings.textures.voxmar_hd": "Voxmar HD",
+    "settings.textures.voxmar": "ボクスマー",
+    "settings.textures.voxmar_hd": "ボクスマーHD",
     "settings.minecraft_assets": "Minecraftの素材 (再起動後)",
     "settings.minecraft_assets.hint": "持っているMinecraftとPrism Launcherから、テクスチャ、ブロックの音、音楽を借ります。次の起動から反映されます。",
 
@@ -183,6 +188,11 @@
     "settings.ui_scale": "UIの大きさ",
     "settings.ui_scale.hint": "メニューや文字、HUDの大きさ。",
     "settings.font.hint": "メニュー、HUD、チャットに使うピクセルフォント。",
+    "settings.font.ledger": "台帳",
+    "settings.font.block": "ブロック",
+    "settings.font.voxmar": "ボクスマー",
+    "shader_pack.classic": "クラシック",
+    "shader_pack.verdant": "新緑",
     "settings.ui_sounds": "操作音",
     "settings.ui_sounds.hint": "ボタンやインベントリの音。",
     "settings.ui_sounds.micro_switch": "マイクロスイッチ",
@@ -225,6 +235,8 @@
     "rarity.very_rare": "ベリーレア",
     "rarity.legendary": "レジェンダリー",
 
+    "package.base": "ボクスマー",
+    "package.core": "ボクスマー",
     "item.edible": "食べられる",
     "item.fuel": "燃料",
     "item.light": "光る",
@@ -436,7 +448,7 @@
     "inventory.craft": "クラフト",
     "inventory.craft.take": "クリックで1つ、Shift+クリックで全部作る",
     "inventory.craft.nothing": "作れるものがない",
-    "inventory.craft.lookup": "アイテムの上で{key}を押すとレシピが見られる",
+    "inventory.craft.lookup": "アイテムの上で{key}を押すと\nレシピが見られる",
     "skills.full": "体力は満タン",
     "effect.core.by_the_fire": "焚き火のそば",
     "effect.core.by_the_fire.description": "近くの火や松明で温まっている。",
@@ -1042,7 +1054,7 @@
     "command.core.creatures.help.summary": "64ブロック以内の生き物を一覧表示します。",
     "command.creatures.admins_only": "コマンドで生き物を手なずけたり、繁殖できる状態にしたり、成長を早めたり、じっとさせたり、倒したりできるのは管理者だけです。",
     "command.creatures.what": "tame、ready、hasten、hold、kill のどれですか？",
-    "command.creatures.done": "8ブロック以内の{count}体に行いました。",
+    "command.creatures.done.other": "8ブロック以内の{count}体に行いました。",
     "command.skill.what": "どのスキルを、何レベルにしますか？",
     "command.skill.unknown": "「{name}」というスキルはありません。",
     "command.skill.level": "レベルは1から最大までです。",
