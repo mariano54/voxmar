@@ -1636,32 +1636,54 @@ fn a_water_wheel_turns_on_falling_water_but_not_on_water_poured_out_on_flat_grou
 }
 
 #[test]
-fn machines_keep_working_while_their_land_is_unloaded() {
-    let mut client = Client::join();
+fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_wheel_there() {
+    // A world folder, so edited land is saved and may unload (unsaved land never does).
+    let dir = world_dir("unloaded");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
     let start = client.position.floor().as_ivec3();
     let (boiler, crusher) = (start + IVec3::new(3, 0, 0), start + IVec3::new(4, 0, 0));
-    for line in ["/clear", "/fill ~3 ~ ~-1 ~4 ~1 ~1 air", "/setblock ~3 ~ ~ boiler", "/setblock ~4 ~ ~ steam_crusher", "/give coal_ore 2"] {
+    for line in [
+        "/clear",
+        "/fill ~3 ~ ~-1 ~4 ~1 ~1 air",
+        "/setblock ~3 ~ ~ boiler",
+        "/setblock ~4 ~ ~ steam_crusher",
+        "/fill ~2 ~ ~3 ~4 ~1 ~5 air",
+        "/setblock ~3 ~ ~4 treadwheel",
+        "/summon aurochs 1 ~3 ~ ~5",
+        "/creatures tame aurochs",
+        "/creatures hold aurochs",
+        "/give coal_ore 2",
+    ] {
         client.ok(line);
     }
     let blocks = &client.content.blocks;
     let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     client.pump_until(|c| count(c, coal) == 2 && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    let wheel = format!("{} {} {}", start.x + 3, start.y, start.z + 4);
+    let started = Instant::now();
+    while client.ok(&format!("/machine {wheel}")).contains("needs a kept animal") {
+        assert!(started.elapsed() < Duration::from_secs(10), "the aurochs never walked the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
     use_machine(&mut client, boiler);
     client.pump_until(|c| count(c, coal) == 0);
     client.ok("/give copper_ore 3");
     client.pump_until(|c| count(c, ore) == 3);
     use_machine(&mut client, crusher);
     client.pump_until(|c| count(c, ore) == 0);
-    // Far away, the crusher's land unloads; it works the ore all the same.
+    // Far away, the land unloads once saved: the crusher works the ore all the same, and
+    // the wheel, its aurochs not about, stops.
     let at = format!("{} {} {}", crusher.x, crusher.y, crusher.z);
     client.ok(&format!("/tp {} {}", start.x + 3000, start.z));
-    client.pump_until(|c| c.world.block(crusher).is_none());
+    machine_says(&mut client, &wheel, "needs a kept animal", 60);
     machine_says(&mut client, &at, "idle", 60);
     client.ok(&format!("/tp {} {} {}", start.x, start.y, start.z));
     client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
     use_machine(&mut client, crusher);
     client.pump_until(|c| count(c, dust) == 6);
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

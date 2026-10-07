@@ -162,15 +162,21 @@ impl Server {
         // Another windmill's sails near this one's becalm it.
         let becalmed = || sites.windmills.iter().any(|&other| other != pos && (other - pos).abs().max_element() <= rules.wind_spacing);
         if !self.world.contains(ColumnPos::of_block(pos)) {
-            if let Role::Generator { source: Source::Wind, .. } = machine.role {
-                let share = if becalmed() { 0.0 } else { rules.wind_share(rules.wind_mean, pos.y as f32) };
-                self.factory.set_condition(pos, share);
+            match machine.role {
+                Role::Generator { source: Source::Wind, .. } => {
+                    let share = if becalmed() { 0.0 } else { rules.wind_share(rules.wind_mean, pos.y as f32) };
+                    self.factory.set_condition(pos, share);
+                }
+                // No animal walks where the land is not loaded.
+                Role::Generator { source: Source::Walked, .. } => self.factory.set_condition(pos, 0.0),
+                _ => {}
             }
             return;
         }
         // What it looks at around it must be loaded too, or it stays as it was last seen.
         let reach = match machine.role {
-            Role::Generator { source: Source::Walked, .. } => rules.walk_reach.ceil() as i32,
+            // Animals are not about where the land is not loaded, so none walk it there.
+            Role::Generator { source: Source::Walked, .. } => 0,
             Role::Processor { water: false, .. } => self.content.multiblocks.with_core(block).map(|m| m.reach()).max().unwrap_or(0),
             _ => 1,
         };
@@ -264,18 +270,15 @@ impl Server {
             }
         }
         if moved.is_none() && !refused {
-            let outputs = self.factory.take_outputs(pos);
             let mut took: Vec<ItemStack> = Vec::new();
-            for stack in outputs {
+            // What does not fit stays in the machine, in the slot it was in.
+            self.factory.take_outputs_into(pos, |stack| {
                 let left = player.inventory.add(stack.item, stack.count);
-                if left > 0 {
-                    // What does not fit stays in the machine.
-                    self.factory.put_output(pos, ItemStack { count: left, ..stack });
-                }
                 if stack.count > left {
                     took.push(ItemStack { count: stack.count - left, ..stack });
                 }
-            }
+                left
+            });
             if !took.is_empty() {
                 player.changed(traits::INVENTORY);
                 let blocks = &self.content.blocks;

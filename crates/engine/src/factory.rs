@@ -287,23 +287,32 @@ impl Factory {
         (machine.burns() && machines.burn_seconds(item).is_some()) || (machine.is_processor() && machines.takes(machine, item)) || machine.bin_slots() > 0
     }
 
-    /// Puts a stack back where it was taken from (what a player could not carry): a bin,
-    /// or the machine's outputs. Returns what did not fit.
-    pub fn put_output(&mut self, pos: IVec3, stack: ItemStack) -> Option<ItemStack> {
-        let Some(node) = self.nodes.get_mut(&pos) else { return Some(stack) };
-        let left = fill(&mut node.state.bin, stack.item, stack.count);
-        let left = fill(&mut node.state.outputs, stack.item, left);
-        (left > 0).then_some(ItemStack { count: left, ..stack })
-    }
-
     /// Takes everything out of the machine's outputs, or out of a bin; and what went in,
     /// while it has nothing it can work (half a recipe, or the wrong things).
     pub fn take_outputs(&mut self, pos: IVec3) -> Vec<ItemStack> {
-        let Some(node) = self.nodes.get_mut(&pos) else { return Vec::new() };
+        let mut taken = Vec::new();
+        self.take_outputs_into(pos, |stack| {
+            taken.push(stack);
+            0
+        });
+        taken
+    }
+
+    /// As [`Self::take_outputs`], a stack at a time to `take`, which says how many of it it
+    /// could not carry: those stay in the slot they came from.
+    pub fn take_outputs_into(&mut self, pos: IVec3, mut take: impl FnMut(ItemStack) -> u8) {
+        let Some(node) = self.nodes.get_mut(&pos) else { return };
         let state = &mut node.state;
         let idle = state.process.is_none();
         let inputs = state.inputs.iter_mut().filter(|_| idle);
-        state.outputs.iter_mut().chain(state.bin.iter_mut()).chain(inputs).filter_map(Option::take).collect()
+        for slot in state.outputs.iter_mut().chain(state.bin.iter_mut()).chain(inputs) {
+            if let Some(stack) = slot.take() {
+                let left = take(stack);
+                if left > 0 {
+                    *slot = Some(ItemStack { count: left, ..stack });
+                }
+            }
+        }
     }
 
     /// The network a port of the machine at `pos` is on, as it looks.
@@ -1224,7 +1233,12 @@ mod tests {
         assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), None);
         assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), None);
         assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), Some(ore(64)));
-        // Half a recipe: an empty hand takes the ore back out, and it goes in again.
+        // Half a recipe: an empty hand takes the ore back out (what it cannot carry stays an
+        // input, not a product), and it goes in again.
+        factory.take_outputs_into(IVec3::ZERO, |stack| stack.count);
+        let (_, state) = factory.get(IVec3::ZERO).unwrap();
+        assert_eq!(state.inputs.iter().flatten().count(), 2);
+        assert!(state.outputs.iter().all(Option::is_none));
         assert_eq!(factory.take_outputs(IVec3::ZERO), vec![ore(64), ore(64)]);
         assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), None);
         assert_eq!(factory.put(IVec3::ZERO, ore(64), &t.machines), None);
