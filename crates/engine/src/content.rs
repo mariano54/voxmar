@@ -271,12 +271,17 @@ fn stack_limits(blocks: &BlockRegistry, files: &[String]) -> Result<Vec<u8>, Reg
         .collect())
 }
 
-/// Each item's pouch: the first item tagged `pouch` and `holds:TAG` for a tag it has.
-fn pouches(blocks: &BlockRegistry) -> Vec<Option<crate::block::BlockId>> {
-    let holders: Vec<(crate::block::BlockId, String)> = blocks
+/// Each item's pouch: the first item tagged `pouch` and `holds:TAG` for a tag it has, with
+/// how many of a kind it holds (its `holds_each:N`, else `inventory::POUCH_EACH`).
+fn pouches(blocks: &BlockRegistry) -> Vec<Option<(crate::block::BlockId, u16)>> {
+    let holders: Vec<(crate::block::BlockId, String, u16)> = blocks
         .ids()
         .filter(|&id| blocks.def(id).has_tag("pouch"))
-        .flat_map(|id| blocks.def(id).tags.iter().filter_map(move |t| Some((id, t.strip_prefix("holds:")?.to_owned()))))
+        .flat_map(|id| {
+            let tags = &blocks.def(id).tags;
+            let each = tags.iter().find_map(|t| t.strip_prefix("holds_each:")?.parse::<u16>().ok()).unwrap_or(crate::inventory::POUCH_EACH);
+            tags.iter().filter_map(move |t| Some((id, t.strip_prefix("holds:")?.to_owned(), each)))
+        })
         .collect();
-    blocks.ids().map(|id| holders.iter().find(|(_, tag)| blocks.def(id).has_tag(tag)).map(|&(pouch, _)| pouch)).collect()
+    blocks.ids().map(|id| holders.iter().find(|(_, tag, _)| blocks.def(id).has_tag(tag)).map(|&(pouch, _, each)| (pouch, each))).collect()
 }

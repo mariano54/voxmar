@@ -80,9 +80,11 @@ pub struct WorldMeta {
     /// nothing: experience comes from what the world holds, not from placing and breaking.
     #[serde(default)]
     pub placed: Vec<[i32; 3]>,
-    /// Picked wild plants waiting to grow back.
+    /// Picked wild plants waiting to grow back, and plants herb planters grew back.
     #[serde(default)]
     pub regrowing: Vec<SavedRegrowing>,
+    #[serde(default)]
+    pub planter_grown: Vec<[i32; 3]>,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -114,6 +116,7 @@ impl WorldMeta {
             day_speed: 1.0,
             placed: Vec::new(),
             regrowing: Vec::new(),
+            planter_grown: Vec::new(),
         }
     }
 }
@@ -371,6 +374,13 @@ pub struct SavedCrop {
     pub stage: u8,
     /// World tick its next stage is due (`u64::MAX` once ripe).
     pub due: u64,
+    /// A player sowed it. Saves from before the flag held only sown crops.
+    #[serde(default = "sown_before")]
+    pub sown: bool,
+}
+
+fn sown_before() -> bool {
+    true
 }
 
 impl WorldSave {

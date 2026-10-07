@@ -157,8 +157,16 @@ impl Server {
         for (i, &cell) in cells.iter().enumerate() {
             let Some(block) = self.block(cell) else { continue };
             let wild = !placed.contains(&cell);
-            if let Some(crop) = self.ripe_crop(block).filter(|_| wild) {
-                self.harvest(agent, crop, cell, i as u32, true);
+            // Sown or not, it is gone from the farm.
+            let sown = self.farm.take_sown(cell);
+            // A ripe crop above the player's level (one standing on broken ground) gives
+            // only its plain drop.
+            let ripe = self.ripe_crop(block).filter(|&crop| {
+                let crop = self.content.crops.get(crop);
+                wild && self.check_level(agent, crop.skill) >= crop.def.level
+            });
+            if let Some(crop) = ripe {
+                self.harvest(agent, crop, cell, i as u32, sown);
                 continue;
             }
             if let Some((crop, plants)) = self.content.crops.wild_form(block).filter(|_| wild) {
@@ -169,6 +177,16 @@ impl Server {
             }
             let info = self.content.blocks.info(block);
             if info.drops.is_air() || info.drop_count == 0 {
+                continue;
+            }
+            // A crop nobody sowed (a village's field), broken before it is harvested,
+            // gives its seed or produce only now and then: enough to start the crop, not a
+            // store of free food.
+            if wild
+                && !sown
+                && let Some(crop) = self.content.crops.stage_of(block).map(|(crop, _)| &self.content.crops.get(crop).def).filter(|def| !def.fruit)
+                && random3(self.tick, cell, i as u32 ^ 0x5eed)[0] >= crop.unsown.unwrap_or(1.0)
+            {
                 continue;
             }
             let stack = ItemStack { item: info.drops, count: info.drop_count };
