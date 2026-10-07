@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use voxmar_engine::block::BlockId;
+use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::husbandry::{self, IN_LOVE_SECONDS, MATE_RANGE, YOUNG_SCALE};
 use voxmar_engine::creature::brain::Mind;
 use voxmar_engine::creature::{CreatureId, mix, unit_from};
@@ -294,6 +295,7 @@ impl Server {
     /// The kept creatures, as the save keeps them.
     pub(crate) fn saved_creatures(&self) -> Vec<SavedCreature> {
         let tick = self.tick;
+        let waiting = self.creatures.unplaced.iter().cloned();
         self.creatures
             .live
             .values()
@@ -313,14 +315,39 @@ impl Server {
                     genome: Some(c.genome.clone()),
                 })
             })
+            .chain(waiting)
             .collect()
+    }
+
+    /// Tries again to put back kept creatures that could not come back yet.
+    pub(crate) fn place_unplaced(&mut self) {
+        if self.creatures.unplaced.is_empty() {
+            return;
+        }
+        let waiting = std::mem::take(&mut self.creatures.unplaced);
+        // Only those whose species is back and whose place is loaded are tried; the rest
+        // wait as they are.
+        let (ready, still): (Vec<_>, Vec<_>) = waiting.into_iter().partition(|s| {
+            self.content.creatures.id(&s.species).is_some() && self.world.contains(ColumnPos::of_block(Vec3::from_array(s.position).floor().as_ivec3()))
+        });
+        self.creatures.unplaced = still;
+        self.restore_creatures(ready);
     }
 
     /// Puts kept creatures from a save back in the world.
     pub(crate) fn restore_creatures(&mut self, saved: Vec<SavedCreature>) {
         for s in saved {
-            let Some(species) = self.content.creatures.id(&s.species) else { continue };
-            let Some(id) = self.spawn_creature(species, Vec3::from_array(s.position), s.seed) else { continue };
+            // One that cannot come back now waits, in the save, for its species (a mod
+            // turned off) or for room (the world full): a player's animal is never lost.
+            let Some(species) = self.content.creatures.id(&s.species) else {
+                tracing::warn!("a kept {} of {} waits: its species is not in the content", s.species, s.owner);
+                self.creatures.unplaced.push(s);
+                continue;
+            };
+            let Some(id) = self.spawn_creature(species, Vec3::from_array(s.position), s.seed) else {
+                self.creatures.unplaced.push(s);
+                continue;
+            };
             let def = &self.content.creatures.get(species).def;
             let tick = self.tick;
             let creature = self.creatures.live.get_mut(&id).expect("just made");
@@ -349,4 +376,62 @@ impl Server {
 fn yielded(count: u8, yield_: f32, roll: f32) -> u8 {
     let exact = count as f32 * yield_.max(0.0);
     (exact.floor() + if roll.fract() < exact.fract() { 1.0 } else { 0.0 }).clamp(1.0, 64.0) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Server, ServerConfig, load_content, open_world};
+
+    fn server() -> Server {
+        let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+        let mut config = ServerConfig::default();
+        let (save, meta) = open_world(&mut config).expect("no save to open");
+        let (_, incoming) = crossbeam_channel::unbounded();
+        let (_, console) = crossbeam_channel::unbounded();
+        Server::new(config, meta, save, content, incoming, console)
+    }
+
+    fn rabbit(at: Vec3) -> SavedCreature {
+        let at = at.to_array();
+        SavedCreature {
+            species: "base:rabbit".into(),
+            position: at,
+            home: at,
+            yaw: 0.0,
+            health: 3,
+            owner: "test".into(),
+            seed: 7,
+            scale: 1.0,
+            grows_in: None,
+            products_in: Vec::new(),
+            genome: None,
+        }
+    }
+
+    #[test]
+    fn a_waiting_animal_comes_back_once_its_place_is_loaded() {
+        let mut server = server();
+        // One waits where the world is loaded (spawn), one far off where it is not.
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        server.creatures.unplaced.push(rabbit(server.spawn));
+        server.creatures.unplaced.push(rabbit(far));
+        // No player keeps columns loaded here, so step to the tick before the next try and
+        // load the spawn column by hand, as a player standing there would.
+        let every = 10 * TICKS_PER_SECOND as u64;
+        server.tick = server.tick.next_multiple_of(every) + every - 1;
+        let at = server.spawn.floor().as_ivec3();
+        server.load_area(at, at);
+        server.tick();
+        let kept: Vec<_> = server.creatures.live.values().filter(|c| c.owner.as_deref() == Some("test")).collect();
+        assert_eq!(kept.len(), 1, "the one whose place is loaded is back");
+        assert_eq!(server.content.creatures.get(kept[0].species).def.name, "base:rabbit");
+        assert_eq!(server.creatures.unplaced.len(), 1, "the far one still waits");
+        assert_eq!(server.creatures.unplaced[0].position, far.to_array());
+        // The save holds each exactly once: the one back with its genes, the far one as it was.
+        let saved = server.saved_creatures();
+        assert_eq!(saved.len(), 2, "{saved:?}");
+        assert_eq!(saved.iter().filter(|s| s.genome.is_some()).count(), 1);
+        assert_eq!(saved.iter().filter(|s| s.position == far.to_array()).count(), 1);
+    }
 }

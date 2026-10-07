@@ -184,7 +184,30 @@ pub struct FrostDef {
     /// on rocks) that match one of these and are open to the sky turn into the block
     /// given, so snow covers every level down through the canopy.
     #[serde(default)]
-    pub blanket: Vec<(BlockMatch, String)>,
+    pub blanket: Vec<BlanketDef>,
+}
+
+/// One rule of the snow blanket: blocks `covers` matches, unless they carry a tag in
+/// `not`, turn into `to` where snow lies on them. Built blocks (`not: ["building"]`)
+/// keep their own look and their drops; snow stops on them.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BlanketDef {
+    pub covers: BlockMatch,
+    pub to: String,
+    #[serde(default)]
+    pub not: Vec<String>,
+}
+
+impl BlanketDef {
+    /// Whether the rule turns `def` to snow.
+    pub fn applies(&self, def: &voxmar_engine::block::BlockDef) -> bool {
+        let matched = match &self.covers {
+            BlockMatch::Name(name) => def.name == *name,
+            BlockMatch::Tag(tag) => def.has_tag(tag),
+        };
+        matched && !self.not.iter().any(|tag| def.has_tag(tag))
+    }
 }
 
 /// One block by name, or every block carrying a tag.
@@ -1500,7 +1523,11 @@ impl WorldContent {
                         ice: q(&f.ice),
                         thick_ice: q(&f.thick_ice),
                         rare_ice: q(&f.rare_ice),
-                        blanket: f.blanket.iter().map(|(m, to)| (qualify_match(&file.package, m), q(to))).collect(),
+                        blanket: f
+                            .blanket
+                            .iter()
+                            .map(|b| BlanketDef { covers: qualify_match(&file.package, &b.covers), to: q(&b.to), not: b.not.clone() })
+                            .collect(),
                     };
                     climate = Some(ClimateDef { frost, ..def });
                 }
@@ -1745,14 +1772,17 @@ impl WorldContent {
             block(&|| "weather.ron: snow_cover".to_owned(), ground)?;
             block(&|| "weather.ron: snow_cover".to_owned(), snowy)?;
         }
-        for (from, to) in &frost.blanket {
-            block(&climate_at, to)?;
-            match from {
+        for rule in &frost.blanket {
+            block(&climate_at, &rule.to)?;
+            match &rule.covers {
                 BlockMatch::Name(name) => block(&climate_at, name)?,
                 BlockMatch::Tag(tag) if registry.tagged(tag).next().is_none() => {
                     return Err(ContentError(format!("climate.ron: no block has the tag `{tag}` the snow blanket covers")));
                 }
                 BlockMatch::Tag(_) => {}
+            }
+            if let Some(tag) = rule.not.iter().find(|tag| registry.tagged(tag).next().is_none()) {
+                return Err(ContentError(format!("climate.ron: no block has the tag `{tag}` the snow blanket spares")));
             }
         }
 
@@ -2668,6 +2698,34 @@ mod tests {
         assert!(content.biomes.len() >= 10, "{} biomes", content.biomes.len());
         assert!(content.biomes.iter().all(|b| b.name.starts_with("base:")));
         assert!(content.provinces.len() >= 6);
+    }
+
+    /// The snow blanket spares what its rules say, and refuses tags no block has and
+    /// entries it cannot read.
+    #[test]
+    fn the_snow_blanket_spares_built_stone_and_checks_its_rules() {
+        let registry = registry();
+        let content = WorldContent::base(&registry).unwrap();
+        let blanket = &content.climate.frost.blanket;
+        let snowed = |name: &str| blanket.iter().any(|rule| rule.applies(registry.def(registry.expect(name))));
+        assert!(snowed("base:stone") && snowed("base:granite") && snowed("base:moss_block"));
+        for built in ["base:cobblestone", "base:stone_bricks", "base:polished_stone", "base:mossy_cobblestone", "base:cobbled_granite"] {
+            assert!(!snowed(built), "{built} turns to snow");
+        }
+        let with_blanket = |entries: &str| {
+            let mut files = base_files();
+            let climate = files.iter_mut().find(|f| f.name == "climate.ron").unwrap();
+            let start = climate.source.find("blanket: [").unwrap();
+            let end = start + climate.source[start..].find("],\n").unwrap() + 2;
+            climate.source.replace_range(start..end, &format!("blanket: [{entries}],"));
+            WorldContent::from_files(files.iter(), &registry)
+        };
+        assert!(with_blanket(r#"(covers: Tag("stone"), to: "snow_block", not: ["building"])"#).is_ok());
+        let spares = with_blanket(r#"(covers: Tag("stone"), to: "snow_block", not: ["no_such_tag"])"#).unwrap_err().0;
+        assert!(spares.contains("no_such_tag"), "{spares}");
+        assert!(with_blanket(r#"(covers: Tag("no_such_tag"), to: "snow_block")"#).is_err());
+        assert!(with_blanket(r#"(Tag("stone"), "snow_block")"#).is_err(), "the old form is refused, not misread");
+        assert!(with_blanket(r#"(covers: Tag("stone"), to: "snow_block", except: ["building"])"#).is_err());
     }
 
     #[test]
