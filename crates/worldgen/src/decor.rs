@@ -133,6 +133,9 @@ pub struct Decor {
 /// Standing stones are of a local stone at least this light (0 ..= 255).
 const LIGHT_STONE: u8 = 140;
 
+/// The share of a rock's blocks of its second stone.
+const ROCK_MOTTLE: f32 = 0.33;
+
 fn ground_bit(ground: Ground) -> u8 {
     1 << ground as u8
 }
@@ -377,9 +380,10 @@ impl Decor {
                 let r = lerp(*radius, rng.unit());
                 let stones = self.stones(area, site, stones);
                 let block = stones.pick(rng.unit().min(0.9999));
+                let other = stones.pick(rng.unit().min(0.9999));
                 let centre = base.as_vec3() + Vec3::new(0.5, -0.35 + 0.1 * r, 0.5);
                 let damp = *moss * dampness(site);
-                self.rock(area, centre, Vec3::new(r, r * 0.8, r), block, damp, rng.next_u64(), blocks);
+                self.rock(area, centre, Vec3::new(r, r * 0.8, r), [block, other], damp, rng.next_u64(), blocks);
             }
             Form::Rocks { count, spread, size, stones, moss } => {
                 let stones = self.stones(area, site, stones);
@@ -390,14 +394,15 @@ impl Decor {
                     let (x, z) = ((base.x as f32 + 0.5 + a.cos() * d).floor() as i32, (base.z as f32 + 0.5 + a.sin() * d).floor() as i32);
                     let r = lerp(*size, rng.unit());
                     let block = stones.pick(rng.unit().min(0.9999));
+                    let other = stones.pick(rng.unit().min(0.9999));
                     let seed = rng.next_u64();
                     if area.unfit(x, z) || (area.height(x, z) - base.y + 1).abs() > 2 {
                         continue;
                     }
-                    // Half sunk, yet standing high enough that a rock shows a shape above the
-                    // grass (a mound of a few blocks), never a lone cube on a buried disc.
-                    let centre = Vec3::new(x as f32 + 0.5, area.height(x, z) as f32 + 0.5 + 0.5 * r, z as f32 + 0.5);
-                    self.rock(area, centre, Vec3::new(r, r * 0.75, r), block, damp, seed, blocks);
+                    // Sitting on the ground as a rounded mound: two blocks high in the middle,
+                    // stepping down to one around it, never a flat slab or a lone cube.
+                    let centre = Vec3::new(x as f32 + 0.5, area.height(x, z) as f32 + 1.6 + 0.15 * r, z as f32 + 0.5);
+                    self.rock(area, centre, Vec3::new(r, r * 0.95, r), [block, other], damp, seed, blocks);
                 }
             }
             Form::Bush { radius, leaves, log } => {
@@ -626,7 +631,10 @@ impl Decor {
     /// out of the ground rather than sitting on it; in damp places, moss on the blocks of
     /// its top and its north face.
     #[allow(clippy::too_many_arguments)]
-    fn rock(&self, area: &Area, centre: Vec3, radii: Vec3, block: BlockId, moss: f32, seed: u64, blocks: &mut Blocks) {
+    /// `stones` are its main stone and a second, about one block in three, so a rock's
+    /// face is mottled rather than one texture throughout (the same stone twice where the
+    /// palette has one).
+    fn rock(&self, area: &Area, centre: Vec3, radii: Vec3, stones: [BlockId; 2], moss: f32, seed: u64, blocks: &mut Blocks) {
         // Blocks are laid from the bottom up, so each can check what lies beneath it.
         let min = (centre - radii).floor().as_ivec3();
         let max = (centre + radii).floor().as_ivec3();
@@ -647,11 +655,15 @@ impl Decor {
                     let north = !inside(cell + IVec3::NEG_Z);
                     let shelter = if top { 1.0 } else if north { 0.7 } else { 0.0 };
                     let mossy = unit(hash3(seed ^ 0x3055, x, y, z)) < moss * shelter;
-                    let rock = if mossy { self.moss } else { block };
+                    let second = unit(hash3(seed ^ 0x5ec0, x, y, z)) < ROCK_MOTTLE;
+                    let rock = if mossy { self.moss } else { stones[second as usize] };
                     let ground = area.height(x, z);
                     if y > ground {
-                        // Only on something firm: the ground, or the rock's own lower blocks.
-                        if area.world.terrain.is_firm(blocks.get(cell - IVec3::Y)) {
+                        // Only on the ground or on the rock's own lower blocks, never on a log
+                        // or a bush it happens to overlap.
+                        let below = blocks.get(cell - IVec3::Y);
+                        let own = below == self.moss || stones.contains(&below);
+                        if area.world.terrain.is_firm(below) && (y - 1 <= ground || own) {
                             blocks.put_if_air(cell, rock);
                         }
                     } else if y >= ground - 1

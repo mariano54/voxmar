@@ -1861,7 +1861,71 @@ mod tests {
         }
         let (planted, flowers) = (planted as f32 / open as f32, flowers as f32 / open as f32);
         println!("{open} open grass blocks, {planted:.2} planted, {flowers:.3} flowers");
-        assert!(open > 1000 && planted > 0.25 && flowers < 0.05, "{open} open, {planted} planted, {flowers} flowers");
+        // Two-sided: well carpeted but not crowded; flowers present but scarce (the plains'
+        // stray flowers since the flower cut are about one block in a thousand).
+        assert!(open > 1000 && (0.24..=0.36).contains(&planted) && (0.0005..=0.05).contains(&flowers), "{open} open, {planted} planted, {flowers} flowers");
+    }
+
+    /// Small plants in 3×3 chunks of `biome` near the origin of `world`: how many in all,
+    /// and how many of them the plant density keeps (gatherables).
+    fn plants_in(world: &Overworld, content: &WorldContent, biome: &str, registry: &BlockRegistry) -> (u32, u32) {
+        let kept: rustc_hash::FxHashSet<BlockId> =
+            content.plants.iter().filter(|p| content.plant_kept(p, registry)).filter_map(|p| registry.id(&p.block)).collect();
+        let at = world.locate_biome(biome, IVec2::ZERO, 6000).unwrap();
+        let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
+        let (mut all, mut gathered) = (0, 0);
+        for column in generate_area(world, first, 3) {
+            for z in 0..32 {
+                for x in 0..32 {
+                    for y in (1..WORLD_HEIGHT_FOR_TESTS).rev() {
+                        let b = column.block(IVec3::new(x, y, z));
+                        if b.is_air() {
+                            continue;
+                        }
+                        if registry.info(b).render != voxmar_engine::block::RenderKind::Plant {
+                            break;
+                        }
+                        all += 1;
+                        gathered += kept.contains(&b) as u32;
+                    }
+                }
+            }
+        }
+        (all, gathered)
+    }
+
+    /// The plant density thins the look of the land, not its harvest: at density 0.5 the
+    /// same ground grows 40-60% of the plants it grows at 1.0, while the plants gathered
+    /// for food and crafting (wild crops, rare herbs, forage, berries, fungi, sugar cane)
+    /// keep their count within sampling noise.
+    #[test]
+    fn plant_density_thins_the_look_not_the_harvest() {
+        let registry = registry();
+        let full_density = "(density: 1.0, plants: [])";
+        let half = WorldContent::base(&registry).unwrap();
+        assert_eq!(half.plant_density, 0.5, "the test measures the base package's 0.5");
+        let files: Vec<voxmar_engine::content::ContentFile> = crate::content::BASE_FILES
+            .iter()
+            .map(|(name, source)| voxmar_engine::content::ContentFile { package: "base".into(), name: (*name).into(), source: (*source).into() })
+            .chain([voxmar_engine::content::ContentFile { package: "mod".into(), name: "plants.ron".into(), source: full_density.into() }])
+            .collect();
+        let full = WorldContent::from_files(files.iter(), &registry).unwrap();
+        assert_eq!(full.plant_density, 1.0);
+        let (mut all, mut gathered) = ([0u32; 2], [0u32; 2]);
+        for seed in [1, 7] {
+            for (k, content) in [&full, &half].into_iter().enumerate() {
+                let world = Overworld::with_content(seed, registry.clone(), content);
+                for biome in ["forest", "plains", "taiga"] {
+                    let (a, g) = plants_in(&world, content, biome, &registry);
+                    all[k] += a;
+                    gathered[k] += g;
+                }
+            }
+        }
+        let (ratio, kept) = (all[1] as f32 / all[0] as f32, gathered[1] as f32 / gathered[0] as f32);
+        println!("plants {} → {} ({ratio:.2}); gathered {} → {} ({kept:.2})", all[0], all[1], gathered[0], gathered[1]);
+        assert!((0.4..=0.6).contains(&ratio), "plants at half density: {ratio}");
+        assert!(gathered[0] >= 100 && (0.85..=1.15).contains(&kept), "gathered plants {gathered:?}: {kept}");
     }
 
     /// `cargo test --release -p voxmar_worldgen decor_sights -- --ignored --nocapture`

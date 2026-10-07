@@ -177,8 +177,9 @@ pub struct Ecology {
     richness: f32,
     /// The content's tree density, on forest trees.
     tree_density: f32,
-    /// The content's plant density, on flowers, plants growing alone and the carpet.
-    plant_density: f32,
+    /// Each plant's share of its biome's rate that grows: the content's plant density,
+    /// or all of it for the plants the density keeps (gatherables).
+    plant_density: Vec<f32>,
     seed: u64,
 }
 
@@ -315,7 +316,7 @@ impl Ecology {
             varieties: noise(seed, 36, 1.0 / 600.0, FractalType::FBm, 2),
             richness: dials.vegetation,
             tree_density: content.tree_density,
-            plant_density: content.plant_density,
+            plant_density: content.plants.iter().map(|p| if content.plant_kept(p, registry) { 1.0 } else { content.plant_density }).collect(),
             seed,
         }
     }
@@ -520,7 +521,11 @@ impl Ecology {
             }
             (total, if all > 0.0 { (total / (SUITED * all)).min(1.0) } else { 0.0 })
         };
-        let choose = |list: &[(PlantId, f32)], total: f32, u: f32| choose(list, total, u, grows);
+        // As `grows`, thinned by the plant density (gatherables keep their rate), and the
+        // share of a list's weight here that survives the thinning.
+        let thinned = |plant: PlantId| grows(plant) * self.plant_density[plant.0 as usize];
+        let kept = |list: &[(PlantId, f32)], total: f32| list.iter().map(|&(p, w)| w * thinned(p)).sum::<f32>() / total;
+        let choose_thinned = |list: &[(PlantId, f32)], total: f32, u: f32| choose(list, total * kept(list, total), u, thinned);
         let fertile = 0.8 + 0.4 * site.fertility;
 
         // Flowers, sparse: a stray one here and there, drifts where the bloom field runs
@@ -537,12 +542,12 @@ impl Ecology {
                 // creeks and rivers.
                 let edge = smoothstep(0.05, 0.25, site.forest) * (1.0 - smoothstep(0.35, 0.6, site.forest));
                 let open = (1.0 - 0.75 * site.forest) * (1.0 + 0.5 * site.clearing + 1.2 * edge + 1.5 * site.river);
-                if take(self.plant_density * flora.flowers * field * open * thriving * (0.7 + 0.6 * self.richness) * fertile) {
+                if take(kept(&flora.drifts, total) * flora.flowers * field * open * thriving * (0.7 + 0.6 * self.richness) * fertile) {
                     let variety = crate::climate::uniform(self.varieties.get_noise_2d(x as f32, z as f32));
                     let local = crate::climate::uniform(self.kinds.get_noise_2d(x as f32, z as f32)) + 0.1 * (second - 0.5);
                     let window = (KINDS_AT_ONCE / flora.drifts.len() as f32).min(1.0);
                     let drift = (variety + window * local.clamp(0.0, 1.0)).rem_euclid(1.0);
-                    return Some(self.place(choose(&flora.drifts, total, drift), third, snow));
+                    return Some(self.place(choose_thinned(&flora.drifts, total, drift), third, snow));
                 }
             }
         }
@@ -555,7 +560,7 @@ impl Ecology {
         }
         // Fungi, bushes, reeds: plants that grow alone.
         for &(plant, weight) in &flora.alone {
-            if take(self.plant_density * ALONE_CHANCE * weight * grows(plant)) {
+            if take(ALONE_CHANCE * weight * thinned(plant)) {
                 return Some(self.place(plant, second, snow));
             }
         }
@@ -568,8 +573,8 @@ impl Ecology {
                 let lush = (meadow + 0.3 * site.clearing).min(1.0);
                 // The biome's cover, eased so the lushest meadows keep theirs while
                 // ordinary ground is a little thinner.
-                if take(self.plant_density * flora.cover.powf(COVER_EASE) * site.vegetation * lush * thriving * fertile) {
-                    return Some(self.place(choose(&flora.carpet, total, second), third, snow));
+                if take(kept(&flora.carpet, total) * flora.cover.powf(COVER_EASE) * site.vegetation * lush * thriving * fertile) {
+                    return Some(self.place(choose_thinned(&flora.carpet, total, second), third, snow));
                 }
             }
         }
