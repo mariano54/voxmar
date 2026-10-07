@@ -86,6 +86,17 @@ const SHOT: UVec2 = UVec2::new(960, 540);
 /// the ore's on a quiet one.
 const TIME_LIMIT: f32 = 300.0 + GORGE_OVERLOADED_LIMIT + GORGE_LOAD_LIMIT;
 const LOAD_LIMIT: f32 = 180.0;
+/// Longest the whole session may take by the wall clock, whatever the game's and the
+/// server's clocks say: the backstop for a client too slow for game time to keep up (a
+/// frame counts at most 250 ms of it) and for a server that hangs.
+const WALL_LIMIT: f32 = 900.0;
+/// How long the server's ticks may stand still, in seconds of the wall clock, before the
+/// session fails as the server stopped: waits in the world count the server's seconds and
+/// would wait for it until `TIME_LIMIT`.
+const SERVER_SILENT: f32 = 60.0;
+/// A frame longer than this, in seconds, is the process stopped (memcap stops our runs
+/// while Mariano plays), not a slow session: it counts only this much of the wall clock.
+const SUSPENDED: f32 = 10.0;
 /// Longest a single step may take.
 const STEP_LIMIT: f32 = 30.0;
 /// Longest the strike step may take: a server running behind takes blows slowly, and the
@@ -351,6 +362,13 @@ struct Gate {
     server_now: f32,
     step_server: f32,
     phase_server: f32,
+    /// Seconds of the wall clock the session has run, each frame counted up to `SUSPENDED`;
+    /// the server's ticks last seen, and the wall second they last changed; and whether the
+    /// session ended because they stood still.
+    wall: f32,
+    ticks_seen: u64,
+    ticks_changed: f32,
+    server_stopped: bool,
     /// The step last frame, and the failures by then: a step that fails lets go of every key
     /// and button (a step that passes may hand one on, as digging hands walking on).
     last_step: Step,
@@ -427,6 +445,10 @@ impl Gate {
             server_now: 0.0,
             step_server: 0.0,
             phase_server: 0.0,
+            wall: 0.0,
+            ticks_seen: 0,
+            ticks_changed: 0.0,
+            server_stopped: false,
             last_step: Step::Load,
             failures_then: 0,
             health_last: 0,
@@ -589,6 +611,12 @@ fn run(world: &mut World) {
     if let Some(net) = world.get_resource::<Net>() {
         gate.server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
     }
+    // The wall clock, for what ends a session whose other clocks stopped (`guard`).
+    gate.wall += world.resource::<Time<Real>>().delta_secs().min(SUSPENDED);
+    match world.get_resource::<Net>().and_then(Net::server).map(|server| server.ticks()) {
+        Some(ticks) if ticks == gate.ticks_seen => {}
+        ticks => (gate.ticks_seen, gate.ticks_changed) = (ticks.unwrap_or(0), gate.wall),
+    }
     // A step that failed lets go of everything it held: one once left the player walking
     // off the test ground, failing every step after it.
     if gate.step != gate.last_step && gate.failures.len() > gate.failures_then {
@@ -688,6 +716,20 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
     }
     if now > TIME_LIMIT {
         return Err(format!("still at {:?} after {TIME_LIMIT}s", gate.step));
+    }
+    // Every wait in the world counts the server's seconds, so these end a session whose
+    // server stopped (its ticks standing still while the game goes on) or that takes too
+    // long by the wall clock whatever its clocks say. Once it has ticked: a server that
+    // never starts is the load's to fail.
+    if gate.ticks_seen > 0 && gate.wall - gate.ticks_changed > SERVER_SILENT {
+        gate.server_stopped = true;
+        return Err(format!(
+            "the server stopped: its clock stood at tick {} ({:.1} server s) for {SERVER_SILENT} s of the wall clock during {:?}",
+            gate.ticks_seen, gate.server_now, gate.step
+        ));
+    }
+    if gate.wall > WALL_LIMIT {
+        return Err(format!("still at {:?} after {WALL_LIMIT} s of the wall clock", gate.step));
     }
     let limit = match gate.step {
         Step::Load => LOAD_LIMIT,
@@ -4550,6 +4592,12 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
     }
     if let Err(e) = std::fs::write(gate.dir.join("report.txt"), &report) {
         error!("cannot write the gate report: {e}");
+    }
+    // A server that stopped may never stop for good either: leaving would wait on its
+    // thread for ever (`ServerHandle`'s drop joins it), so the session ends here.
+    if gate.server_stopped {
+        error!("{}", report.trim_end());
+        std::process::exit(1);
     }
     if gate.failures.is_empty() {
         info!("{}", report.trim_end());

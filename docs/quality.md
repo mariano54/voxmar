@@ -128,7 +128,11 @@ The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loa
   `gate.server_in_phase()`, and each step's own limit (`guard`) is in the server's
   seconds. Given up by the game's seconds, the cook step failed on a stalled server
   before the server had run the ticks it waited for. Only waits on the client's own work
-  (drawing, shots, screens, movement it predicts) count the game's seconds.
+  (drawing, shots, screens, movement it predicts) count the game's seconds. A server
+  that stops is caught all the same: the session fails "the server stopped" once its
+  ticks stand still for `SERVER_SILENT` (60 s) of the wall clock, and on `WALL_LIMIT`
+  (15 min) of it in all, with frames longer than 10 s (memcap stopping the run while
+  Mariano plays) counted as 10 s.
 - Propose actions (clicks that ask the server for something) at most every few server
   seconds while waiting, or once and then wait: `SERVER_LAG` stalls 600 ms on every other
   proposal, so a step proposing every 30 frames starves the server of ticks and the
