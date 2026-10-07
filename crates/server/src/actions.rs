@@ -306,7 +306,8 @@ impl Server {
                     self.set_block(cell, placed);
                     // Marked as the player's: an ore teaches nothing broken again, and a
                     // furnishing gives itself back (where the world placed one, it does not).
-                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) || self.content.blocks.def(item).has_tag("furnishing") {
+                    // (By the block placed: a held item may place as another, as a torch does.)
+                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) || self.content.blocks.def(placed).has_tag("furnishing") {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);
@@ -444,7 +445,8 @@ impl Server {
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block);
         let info = self.content.blocks.info(block);
         let [roll, kick, ..] = crate::items::random3(self.tick, pos, agent ^ 0xd1ce);
-        if roll < bonus && !info.drops.is_air() && info.drop_count > 0 {
+        // Never a furnishing's: it gives itself back only where a player placed it.
+        if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
             let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };
             let body = voxmar_engine::dropped::popped(pos, [kick, roll, kick * roll]);
             self.items.spawn(stack, body, voxmar_engine::dropped::PICKUP_DELAY);
