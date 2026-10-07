@@ -120,12 +120,17 @@ pub enum Role {
         /// It works only with water beside it (a washer); the world says whether there is.
         #[serde(default)]
         water: bool,
+        /// How many stacks it holds of what goes in, and of what it made.
+        #[serde(default = "three")]
+        input_slots: u8,
+        #[serde(default = "three")]
+        output_slots: u8,
     },
     /// Carries items between the machines beside a run of chutes, `rate` a second at most;
     /// a run moves as fast as its slowest chute.
     Chute { rate: f32 },
     /// Holds items in `slots` stacks. One that `feeds` (a hopper) gives what players put in
-    /// it to the machines on its chutes; one that does not (a crate) collects what they make.
+    /// it to the machines on its chutes; one that does not (a chest) collects what they make.
     Bin {
         slots: u8,
         #[serde(default)]
@@ -135,6 +140,10 @@ pub enum Role {
 
 fn one() -> f32 {
     1.0
+}
+
+fn three() -> u8 {
+    3
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -161,16 +170,19 @@ pub struct MachineFile {
     pub machines: Vec<MachineDef>,
     #[serde(default)]
     pub fuels: Vec<FuelDef>,
-    /// The creatures that, kept, walk a treadwheel (`Walked`), by species name.
+    /// The creatures that, kept, walk a treadwheel (`Walked`), by species name; and those an
+    /// earlier package named that no longer do.
     #[serde(default)]
     pub walkers: Vec<String>,
+    #[serde(default)]
+    pub not_walkers: Vec<String>,
     /// How the world drives wind and walked machines; a later package's replaces it.
     #[serde(default)]
     pub sources: Option<SourceRules>,
 }
 
 /// How the world drives the machines it powers (`sources` in `machines.ron`).
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct SourceRules {
     /// Wind (blocks a second) under which a windmill stalls, and at which it gives all it can.
@@ -180,6 +192,15 @@ pub struct SourceRules {
     pub wind_low: f32,
     pub wind_high: f32,
     pub wind_low_share: f32,
+    /// How near (in blocks, any way, diagonals too) another windmill's sails becalm one.
+    pub wind_spacing: i32,
+    /// The wind (blocks a second) a windmill is reckoned to catch while its land is not
+    /// loaded: an average day's, not the gale it was left in.
+    pub wind_mean: f32,
+    /// Seconds between looks at what the world gives machines where their land is loaded.
+    pub survey_seconds: f32,
+    /// Fluids with this tag (lava) neither turn wheels nor wash ore.
+    pub hot_tag: String,
     /// How near a kept animal must stand to walk a treadwheel: across, from its centre, and
     /// up or down.
     pub walk_reach: f32,
@@ -188,7 +209,29 @@ pub struct SourceRules {
 
 impl Default for SourceRules {
     fn default() -> Self {
-        Self { wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 1.0 / 3.0, walk_reach: 3.0, walk_height: 2.0 }
+        Self {
+            wind_stall: 1.0,
+            wind_full: 10.0,
+            wind_low: 96.0,
+            wind_high: 176.0,
+            wind_low_share: 1.0 / 3.0,
+            wind_spacing: 4,
+            wind_mean: 5.0,
+            survey_seconds: 1.0,
+            hot_tag: "hot".into(),
+            walk_reach: 3.0,
+            walk_height: 2.0,
+        }
+    }
+}
+
+impl SourceRules {
+    /// The share of its power a windmill gives in `wind` (blocks a second) at height `y`:
+    /// nothing in calm air, all of it in a gale up high.
+    pub fn wind_share(&self, wind: f32, y: f32) -> f32 {
+        let strength = ((wind - self.wind_stall) / (self.wind_full - self.wind_stall).max(0.01)).clamp(0.0, 1.0);
+        let height = ((y - self.wind_low) / (self.wind_high - self.wind_low).max(1.0)).clamp(self.wind_low_share, 1.0);
+        strength * height
     }
 }
 
@@ -309,6 +352,14 @@ impl Machine {
         matches!(self.role, Role::Processor { .. })
     }
 
+    /// The stacks it holds of what goes in and of what it made, if it is a processor.
+    pub fn slots(&self) -> (usize, usize) {
+        match self.role {
+            Role::Processor { input_slots, output_slots, .. } => (input_slots.max(1) as usize, output_slots.max(1) as usize),
+            _ => (0, 0),
+        }
+    }
+
     /// The stacks it holds as a bin, if it is one.
     pub fn bin_slots(&self) -> usize {
         match self.role {
@@ -340,7 +391,7 @@ impl MachineRegistry {
         for fuel in &mut file.fuels {
             qualify(namespace, &mut fuel.item);
         }
-        for walker in &mut file.walkers {
+        for walker in file.walkers.iter_mut().chain(&mut file.not_walkers) {
             qualify(namespace, walker);
         }
         Ok(file)
@@ -399,6 +450,7 @@ impl MachineRegistry {
                 registry.fuels.push((accepts(&fuel.item, blocks)?, fuel.seconds.max(0.0)));
             }
             registry.walkers.extend(file.walkers);
+            registry.walkers.retain(|w| !file.not_walkers.contains(w));
             if let Some(sources) = file.sources {
                 registry.sources = sources;
             }
@@ -433,9 +485,24 @@ impl MachineRegistry {
         self.walkers.iter().any(|w| w == species)
     }
 
-    /// How long one of `item` burns at full output, if it burns: the first fuel that takes it.
+    /// How long one of `item` burns at full output, if it burns: the last fuel that takes it,
+    /// so a later package may change what an earlier one said.
     pub fn burn_seconds(&self, item: BlockId) -> Option<f32> {
-        self.fuels.iter().find(|(accepts, _)| accepts.binary_search(&item).is_ok()).map(|&(_, s)| s)
+        self.fuels.iter().rev().find(|(accepts, _)| accepts.binary_search(&item).is_ok()).map(|&(_, s)| s)
+    }
+
+    /// How many of its `slots` input stacks `item` may fill: enough to leave one for each
+    /// other thing a recipe it goes into takes, so two stacks of ore never shut out the coal.
+    pub fn input_room(&self, machine: &Machine, item: BlockId, slots: usize) -> usize {
+        let others = machine
+            .processes
+            .iter()
+            .map(|&p| self.process(p))
+            .filter(|p| p.inputs.iter().any(|(accepts, _)| accepts.binary_search(&item).is_ok()))
+            .map(|p| p.inputs.len() - 1)
+            .max()
+            .unwrap_or(0);
+        slots.saturating_sub(others).max(1)
     }
 
     /// Whether `machine` works any recipe `item` goes into.
@@ -503,11 +570,25 @@ mod tests {
         assert!(MachineRegistry::new(vec![machines], Vec::new(), &blocks).is_err());
     }
 
-    /// The most ingots one ore can become through the game's machines, each kind at the best
-    /// yield any machine of it has: the iron ladder (1 by hand, 1.5 bloomed and hammered, 2
-    /// crushed, 3 washed) must hold for every ore, so no chain of machines beats it.
+    /// The last fuel that takes an item wins, so the game's broad tags must not shorten coal.
     #[test]
-    fn no_chain_of_machines_gets_more_than_three_ingots_from_an_ore() {
+    fn coal_burns_longer_than_a_log_and_a_log_longer_than_planks() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let burns = |name: &str| content.machines.burn_seconds(content.blocks.expect(name));
+        assert_eq!(burns("base:coal_ore"), Some(80.0));
+        assert_eq!(burns("base:charcoal"), Some(80.0));
+        assert_eq!(burns("base:oak_log"), Some(15.0));
+        assert_eq!(burns("base:oak_planks"), Some(4.0));
+    }
+
+    /// The most ingots one ore can become, by any chain of the game's machines (each kind at
+    /// the best yield any machine of it has), crafting recipes and cooking: the iron ladder
+    /// (1 by hand, 1.5 bloomed and hammered, 2 crushed, 3 washed) must hold for every ore,
+    /// and no loop may give back more than went in. What a recipe makes is shared among the
+    /// units that go in, fuels aside (they burn, they add no metal): three copper and a tin
+    /// make four bronze, a fourth each; two ore and a coal make a bloom of three, half each.
+    #[test]
+    fn no_chain_gets_more_than_three_ingots_from_an_ore_and_no_loop_gains() {
         let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
         let (blocks, machines) = (&content.blocks, &content.machines);
         let best_yield = |kind: &str| {
@@ -516,31 +597,62 @@ mod tests {
                 _ => None,
             }).fold(0.0f32, f32::max)
         };
-        // Ingots an item is worth at most, following recipes from it; fuels and other
-        // inputs beside it are free, which only makes the bound looser.
-        fn worth(item: BlockId, blocks: &BlockRegistry, machines: &MachineRegistry, best_yield: &dyn Fn(&str) -> f32, seen: &mut Vec<BlockId>) -> f32 {
-            if blocks.def(item).name.ends_with("_ingot") {
-                return 1.0;
-            }
-            if seen.contains(&item) {
-                return 0.0;
-            }
-            seen.push(item);
-            let mut best = 0.0f32;
-            for (_, process) in machines.processes() {
-                let Some(&(_, count)) = process.inputs.iter().find(|(accepts, _)| accepts.binary_search(&item).is_ok()) else { continue };
-                let made: f32 = process.outputs.iter().map(|&(out, n)| n as f32 * (1.0 + best_yield(&process.kind)) * worth(out, blocks, machines, best_yield, seen)).sum();
-                best = best.max(made / count as f32);
-            }
-            seen.pop();
-            best
+        // Every conversion: what goes in (any of, how many) and what comes out (how many).
+        let mut conversions: Vec<(Vec<(Vec<BlockId>, f32)>, Vec<(BlockId, f32)>)> = Vec::new();
+        for (_, process) in machines.processes() {
+            let extra = 1.0 + best_yield(&process.kind);
+            conversions.push((process.inputs.iter().map(|(a, n)| (a.clone(), *n as f32)).collect(), process.outputs.iter().map(|&(o, n)| (o, n as f32 * extra)).collect()));
         }
-        let ores: Vec<BlockId> = (0..blocks.len()).map(|i| BlockId(i as u16)).filter(|&b| blocks.def(b).name.ends_with("_ore")).collect();
+        for recipe in content.recipes.iter() {
+            let mut inputs: Vec<(Vec<BlockId>, f32)> = Vec::new();
+            for accepts in recipe.alternatives().into_iter().flatten() {
+                match inputs.iter_mut().find(|(a, _)| a.as_slice() == accepts) {
+                    Some((_, n)) => *n += 1.0,
+                    None => inputs.push((accepts.to_vec(), 1.0)),
+                }
+            }
+            conversions.push((inputs, vec![(recipe.output, recipe.count as f32)]));
+        }
+        for (input, recipe) in content.cooking.iter() {
+            conversions.push((vec![(vec![input], 1.0)], vec![(recipe.output, 1.0)]));
+        }
+        // Worth in ingots, raised until nothing changes: a loop that gains never settles.
+        let ingot = |b: BlockId| blocks.def(b).name.ends_with("_ingot");
+        let mut worth: Vec<f32> = (0..blocks.len()).map(|i| if ingot(BlockId(i as u16)) { 1.0 } else { 0.0 }).collect();
+        let mut settled = false;
+        for _ in 0..blocks.len() + 2 {
+            let mut changed = false;
+            for (inputs, outputs) in &conversions {
+                let made: f32 = outputs.iter().map(|&(o, n)| n * worth[o.0 as usize]).sum();
+                let fuel = |accepts: &Vec<BlockId>| accepts.iter().any(|&a| machines.burn_seconds(a).is_some());
+                let units: f32 = inputs.iter().filter(|(a, _)| !fuel(a)).map(|(_, n)| n).sum();
+                let units = if units > 0.0 { units } else { inputs.iter().map(|(_, n)| n).sum() };
+                for (accepts, _) in inputs {
+                    for &item in accepts {
+                        let each = made / units;
+                        if each > worth[item.0 as usize] * (1.0 + 1e-5) + 1e-6 {
+                            worth[item.0 as usize] = each;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                settled = true;
+                break;
+            }
+        }
+        let rising: Vec<&str> = (0..blocks.len()).filter(|&i| worth[i] > 1e3).map(|i| blocks.def(BlockId(i as u16)).name.as_str()).collect();
+        assert!(settled && worth.iter().all(|w| w.is_finite()), "a loop of recipes gives back more than went in: {rising:?}");
         let mut top = 0.0f32;
-        for ore in ores {
-            let most = worth(ore, blocks, machines, &best_yield, &mut Vec::new());
-            assert!(most <= 3.0 + 1e-4, "{} can become {most} ingots", blocks.def(ore).name);
-            top = top.max(most);
+        for i in 0..blocks.len() {
+            let ore = BlockId(i as u16);
+            // An ore that burns (coal) is fuel, not metal: it rides along free.
+            if !blocks.def(ore).name.ends_with("_ore") || machines.burn_seconds(ore).is_some() {
+                continue;
+            }
+            assert!(worth[i] <= 3.0 + 1e-4, "{} can become {} ingots", blocks.def(ore).name, worth[i]);
+            top = top.max(worth[i]);
         }
         assert!((top - 3.0).abs() < 1e-4, "the ladder's top, washing, gives {top}");
     }

@@ -1846,8 +1846,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                             format!("setblock {} shaft", at(IVec3::new(2, 0, 0))),
                             format!("setblock {} treadwheel", at(IVec3::new(3, 0, 0))),
                             format!("summon aurochs 1 {}", at(IVec3::new(3, 0, 2))),
-                            "creatures tame".to_owned(),
-                            "creatures hold".to_owned(),
+                            "creatures tame aurochs".to_owned(),
+                            "creatures hold aurochs".to_owned(),
                             "clear".to_owned(),
                             "give iron_ore 2".to_owned(),
                         ] {
@@ -1910,7 +1910,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let teardown = move |world: &mut World| {
                 let (a, b) = (k + IVec3::new(-1, -1, -1), k + IVec3::new(4, 2, 3));
                 let net = world.resource::<Net>();
-                for line in ["creatures remove".to_owned(), format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                for line in ["creatures remove aurochs".to_owned(), format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
                     net.command(&line);
                 }
                 for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
@@ -1995,7 +1995,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // The aurochs is held still again before its minute runs out.
             if stage <= 2 && gate.server_now - gate.machines_held >= 20.0 {
                 gate.machines_held = gate.server_now;
-                world.resource::<Net>().command("creatures hold");
+                world.resource::<Net>().command("creatures hold aurochs");
             }
             // Used (or asked about) only every few server seconds, as the kiln is.
             if gate.server_now - gate.machines_asked >= 3.0 {

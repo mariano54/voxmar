@@ -40,6 +40,8 @@ const CREATURES_FILE: &str = "creatures.ron";
 const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
 const MACHINES_FILE: &str = "machines.ron";
+/// Where an unreadable machines file is kept aside.
+const MACHINES_UNREADABLE_FILE: &str = "machines.unreadable.ron";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
 /// layout changes.
 const COLUMN_MAGIC: &[u8; 4] = b"vxc4";
@@ -391,11 +393,21 @@ impl WorldSave {
         write_atomic(&self.dir.join(CROPS_FILE), text.as_bytes())
     }
 
-    /// The machines, none if the world has no machines file.
+    /// The machines, none if the world has no machines file. A file that cannot be read is
+    /// first kept aside (`machines.unreadable.ron`, the first such), since the next save
+    /// writes over it: every machine and everything chests hold would be lost.
     pub fn read_machines(&self) -> io::Result<Vec<crate::machines::SavedMachine>> {
         let path = self.dir.join(MACHINES_FILE);
         match std::fs::read_to_string(&path) {
-            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
+            Ok(source) => ron::from_str(&source).map_err(|e| {
+                let aside = self.dir.join(MACHINES_UNREADABLE_FILE);
+                if !aside.exists()
+                    && let Err(copy) = std::fs::copy(&path, &aside)
+                {
+                    tracing::error!("could not keep the unreadable machines file aside: {copy}");
+                }
+                invalid(&path, e)
+            }),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(e) => Err(e),
         }

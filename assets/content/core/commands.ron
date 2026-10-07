@@ -122,8 +122,8 @@
         ),
         (
             name: "creatures",
-            usage: "[tame | ready | hasten | hold | remove]",
-            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, or take away the ones they keep.",
+            usage: "[tame | ready | hasten | hold | remove] [creature]",
+            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, or take away the ones they keep; only of one species, if they name it.",
             run: Creatures,
         ),
         (

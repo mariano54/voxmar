@@ -308,6 +308,7 @@ impl Server {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);
+                    self.placed_machine(agent, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     let player = self.players.get_mut(&agent).unwrap();
