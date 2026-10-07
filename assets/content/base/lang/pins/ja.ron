@@ -109,6 +109,8 @@
     "quest.base.a_friend_in_the_wild.why": ("A tamed junglefowl lays eggs at home: your first step to a farm, and to pets.", "手なずけたヤケイは家で卵を産む。農場とペットへの第一歩。"),
     "quest.base.bare_hands": ("First Catch", "初めての釣果"),
     "quest.base.bare_hands.why": ("Fish are the easiest food near water, and heal well once cooked.", "魚は水辺でいちばん手軽な食べ物で、焼けばよく回復する。"),
+    "quest.base.charcoal": ("Charcoal", "木炭"),
+    "quest.base.charcoal.why": ("Fuel before metal: coal or charcoal smelts copper and makes torches. Burn logs down in a campfire, or dig out a coal seam.", "金属の前に燃料を。石炭か木炭で銅を製錬でき、松明も作れる。焚き火で原木を燃やすか、石炭の鉱脈を掘ろう。"),
     "quest.base.crafting_table": ("Crafting Table", "作業台"),
     "quest.base.crafting_table.why": ("Its three-by-three grid makes every tool and weapon.", "3×3の枠であらゆる道具と武器を作れる。"),
     "quest.base.crucible_kiln": ("Crucible Kiln", "るつぼ窯"),
