@@ -84,15 +84,26 @@ pub struct QuestDef {
 pub struct QuestFile {
     #[serde(default)]
     pub quests: Vec<QuestDef>,
-    /// How the interface follows pinned quests (`core/quests.ron`); the first package to
-    /// give it keeps it.
+    /// How the interface follows pinned quests (`core/quests.ron`); a later package
+    /// changes what it gives, field by field.
     #[serde(default)]
-    pub tracker: Option<Tracker>,
+    pub tracker: Option<TrackerPatch>,
+}
+
+/// What a package changes of how pinned quests are followed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrackerPatch {
+    #[serde(default)]
+    pub pins: Option<usize>,
+    #[serde(default)]
+    pub done_stays: Option<f32>,
+    #[serde(default)]
+    pub backing_alpha: Option<f32>,
 }
 
 /// How the interface follows pinned quests on screen.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tracker {
     /// Quests pinned at once, at most.
     pub pins: usize,
@@ -194,7 +205,13 @@ impl QuestRegistry {
     }
 
     pub fn new(files: Vec<QuestFile>) -> Result<Self, RegistryError> {
-        let tracker = files.iter().find_map(|f| f.tracker).unwrap_or_default();
+        // Packages in order, each changing what it gives.
+        let mut tracker = Tracker::default();
+        for patch in files.iter().filter_map(|f| f.tracker) {
+            tracker.pins = patch.pins.unwrap_or(tracker.pins);
+            tracker.done_stays = patch.done_stays.unwrap_or(tracker.done_stays);
+            tracker.backing_alpha = patch.backing_alpha.unwrap_or(tracker.backing_alpha);
+        }
         if tracker.pins == 0 || !(tracker.done_stays >= 0.0) || !(0.0..=1.0).contains(&tracker.backing_alpha) {
             return Err(RegistryError(format!("quests.ron: the tracker needs a pin or more, a stay of 0 s or more and a backing from 0 to 1, not {tracker:?}")));
         }
@@ -308,14 +325,14 @@ mod tests {
     }
 
     #[test]
-    fn the_tracker_comes_from_the_first_package_to_give_it() {
+    fn a_later_package_changes_the_tracker_field_by_field() {
         let core = QuestRegistry::read("core", "(tracker: (pins: 2, done_stays: 3.0, backing_alpha: 0.4))").unwrap();
-        let base = QuestRegistry::read("base", "(tracker: (pins: 5, done_stays: 1.0, backing_alpha: 0.9))").unwrap();
-        assert_eq!(QuestRegistry::new(vec![core, base]).unwrap().tracker(), Tracker { pins: 2, done_stays: 3.0, backing_alpha: 0.4 });
+        let mod_ = QuestRegistry::read("mod", "(tracker: (pins: 5))").unwrap();
+        assert_eq!(QuestRegistry::new(vec![core, mod_]).unwrap().tracker(), Tracker { pins: 5, done_stays: 3.0, backing_alpha: 0.4 });
         assert_eq!(registry().tracker(), Tracker::default());
-        let none = QuestRegistry::read("core", "(tracker: (pins: 0, done_stays: 3.0, backing_alpha: 0.4))").unwrap();
+        let none = QuestRegistry::read("core", "(tracker: (pins: 0))").unwrap();
         assert!(QuestRegistry::new(vec![none]).is_err());
-        let clear = QuestRegistry::read("core", "(tracker: (pins: 3, done_stays: 3.0, backing_alpha: 1.5))").unwrap();
+        let clear = QuestRegistry::read("core", "(tracker: (backing_alpha: 1.5))").unwrap();
         assert!(QuestRegistry::new(vec![clear]).is_err());
     }
 

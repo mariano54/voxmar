@@ -270,6 +270,73 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
     if need > 1 { locale.format("quest.progress", &[("goal", &what), ("have", &have.min(need)), ("need", &need)]) } else { what }
 }
 
+/// A chapter's web: its quests, then those of other chapters that come first; where each
+/// stands, in steps (its column, then its row); and how many columns and rows it takes.
+pub(crate) struct Layout<'a> {
+    pub quests: Vec<&'a QuestDef>,
+    /// How many of `quests` are the chapter's own.
+    pub ours: usize,
+    pub cells: Vec<Vec2>,
+    pub columns: usize,
+    pub tallest: usize,
+}
+
+/// Lays out chapter `age`'s web: each quest a column past the furthest of those it comes
+/// after (those from other chapters in the first), each column ordered by the rows of
+/// those its quests come after, so lines cross as little as may be, and centred on the
+/// tallest.
+pub(crate) fn layout<'a>(content: &'a Content, age: &str) -> Layout<'a> {
+    let mut quests: Vec<&QuestDef> = content.quests.iter().filter(|q| q.age == age).collect();
+    let mut outside: Vec<&QuestDef> = Vec::new();
+    for quest in &quests {
+        for first in before(content, quest) {
+            if first.age != age && !outside.iter().any(|o| o.name == first.name) {
+                outside.push(first);
+            }
+        }
+    }
+    let ours = quests.len();
+    quests.extend(outside);
+    // Each quest's column: one past the furthest of those it comes after; those outside
+    // the chapter stand in the first.
+    let mut depth: Vec<usize> = vec![0; quests.len()];
+    for _ in 0..quests.len() {
+        for i in 0..ours {
+            depth[i] = before(content, quests[i]).iter().filter_map(|first| quests.iter().position(|q| q.name == first.name)).map(|j| depth[j] + 1).max().unwrap_or(0);
+        }
+    }
+    // Each column's quests in the order of the rows of those they come after, so lines
+    // cross as little as may be; each column centred on the tallest.
+    let columns = depth.iter().copied().max().map_or(1, |d| d + 1);
+    let mut row: Vec<f32> = vec![0.0; quests.len()];
+    let mut tallest = 1;
+    for d in 0..columns {
+        let mut column: Vec<usize> = (0..quests.len()).filter(|&i| depth[i] == d).collect();
+        let key = |i: usize| -> f32 {
+            let firsts: Vec<f32> = if i < ours { before(content, quests[i]).iter().filter_map(|first| quests.iter().position(|q| q.name == first.name)).map(|j| row[j]).collect() } else { Vec::new() };
+            if firsts.is_empty() { f32::MAX } else { firsts.iter().sum::<f32>() / firsts.len() as f32 }
+        };
+        let keys: Vec<(usize, f32)> = column.iter().map(|&i| (i, key(i))).collect();
+        column.sort_by(|a, b| {
+            let (ka, kb) = (keys.iter().find(|k| k.0 == *a).unwrap().1, keys.iter().find(|k| k.0 == *b).unwrap().1);
+            ka.total_cmp(&kb).then(a.cmp(b))
+        });
+        for (r, &i) in column.iter().enumerate() {
+            row[i] = r as f32;
+        }
+        tallest = tallest.max(column.len());
+    }
+    for d in 0..columns {
+        let count = depth.iter().filter(|&&x| x == d).count();
+        let shift = (tallest - count) as f32 / 2.0;
+        for i in (0..quests.len()).filter(|&i| depth[i] == d) {
+            row[i] += shift;
+        }
+    }
+    let cells = (0..quests.len()).map(|i| Vec2::new(depth[i] as f32, row[i])).collect();
+    Layout { quests, ours, cells, columns, tallest }
+}
+
 /// A goal's line: its mark (met, or not yet) and its words.
 fn goal_line(locale: &Locale, content: &Content, quest: &QuestDef, goal: &Goal, progress: (u32, u32), met: bool) -> String {
     let mark = locale.get(if met { "quest.mark.done" } else { "quest.mark.todo" });
@@ -394,14 +461,22 @@ fn pick(
 
 /// Pins a quest, or unpins it; pinning past the tracker's room does nothing.
 pub fn toggle_pin(settings: &mut Settings, content: &Content, name: &str) {
-    if let Some(i) = settings.pinned_quests.iter().position(|p| p == name) {
-        settings.pinned_quests.remove(i);
-    } else if settings.pinned_quests.len() < content.quests.tracker().pins && content.quests.get(name).is_some() {
-        settings.pinned_quests.push(name.to_owned());
-    } else {
-        return;
+    if toggle(&mut settings.pinned_quests, content, name) {
+        settings.save();
     }
-    settings.save();
+}
+
+/// Pins `name` or unpins it in `pins`: whether anything changed. A quest the content does
+/// not have, or one past the tracker's room, is not pinned.
+fn toggle(pins: &mut Vec<String>, content: &Content, name: &str) -> bool {
+    if let Some(i) = pins.iter().position(|p| p == name) {
+        pins.remove(i);
+    } else if pins.len() < content.quests.tracker().pins && content.quests.get(name).is_some() {
+        pins.push(name.to_owned());
+    } else {
+        return false;
+    }
+    true
 }
 
 /// Draws the open chapter and the picked quest, again when anything they show changes.
@@ -461,57 +536,10 @@ fn draw(
         });
     }
     let Some(age) = ages.get(view.chapter) else { return };
-    // The chapter's quests, and those of other chapters that come first, at the left.
-    let mut quests: Vec<&QuestDef> = content.quests.iter().filter(|q| &q.age == age).collect();
-    let mut outside: Vec<&QuestDef> = Vec::new();
-    for quest in &quests {
-        for first in before(content, quest) {
-            if first.age != *age && !outside.iter().any(|o| o.name == first.name) {
-                outside.push(first);
-            }
-        }
-    }
-    let ours = quests.len();
-    quests.extend(outside);
-    // Each quest's column: one past the furthest of those it comes after; those outside
-    // the chapter stand in the first.
-    let mut depth: Vec<usize> = vec![0; quests.len()];
-    for _ in 0..quests.len() {
-        for i in 0..ours {
-            depth[i] = before(content, quests[i]).iter().filter_map(|first| quests.iter().position(|q| q.name == first.name)).map(|j| depth[j] + 1).max().unwrap_or(0);
-        }
-    }
-    // Each column's quests in the order of the rows of those they come after, so lines
-    // cross as little as may be; each column centred on the tallest.
-    let columns = depth.iter().copied().max().map_or(1, |d| d + 1);
-    let mut row: Vec<f32> = vec![0.0; quests.len()];
-    let mut tallest = 1;
-    for d in 0..columns {
-        let mut column: Vec<usize> = (0..quests.len()).filter(|&i| depth[i] == d).collect();
-        let key = |i: usize| -> f32 {
-            let firsts: Vec<f32> = if i < ours { before(content, quests[i]).iter().filter_map(|first| quests.iter().position(|q| q.name == first.name)).map(|j| row[j]).collect() } else { Vec::new() };
-            if firsts.is_empty() { f32::MAX } else { firsts.iter().sum::<f32>() / firsts.len() as f32 }
-        };
-        let keys: Vec<(usize, f32)> = column.iter().map(|&i| (i, key(i))).collect();
-        column.sort_by(|a, b| {
-            let (ka, kb) = (keys.iter().find(|k| k.0 == *a).unwrap().1, keys.iter().find(|k| k.0 == *b).unwrap().1);
-            ka.total_cmp(&kb).then(a.cmp(b))
-        });
-        for (r, &i) in column.iter().enumerate() {
-            row[i] = r as f32;
-        }
-        tallest = tallest.max(column.len());
-    }
-    for d in 0..columns {
-        let count = depth.iter().filter(|&&x| x == d).count();
-        let shift = (tallest - count) as f32 / 2.0;
-        for i in (0..quests.len()).filter(|&i| depth[i] == d) {
-            row[i] += shift;
-        }
-    }
+    let Layout { quests, ours, cells, columns, tallest } = layout(content, age);
     // Spread to fill the well, within reason; a web too big for it scrolls.
     let step = Vec2::new(WEB_ROOM.x / columns as f32, WEB_ROOM.y / tallest as f32).clamp(STEP_LEAST, STEP_MOST);
-    let place = |i: usize| Vec2::new(depth[i] as f32, row[i]) * step + (step - Vec2::splat(SLOT)) / 2.0;
+    let place = |i: usize| cells[i] * step + (step - Vec2::splat(SLOT)) / 2.0;
     let centre = |i: usize| place(i) + Vec2::splat(SLOT / 2.0);
     if let Ok(web) = web.single() {
         commands.entity(web).despawn_children().with_children(|web| {
@@ -685,24 +713,32 @@ struct Finished(Vec<(String, f32)>);
 
 /// Unpins a quest once it has shown done on screen for a moment.
 fn retire(time: Res<Time>, player: Res<LocalPlayer>, launch: Res<Launch>, tracker: Query<&Visibility, With<Tracker>>, mut settings: ResMut<Settings>, mut finished: Local<Finished>) {
-    let stays = launch.content.quests.tracker().done_stays;
     let shown = tracker.iter().any(|v| *v != Visibility::Hidden);
-    for name in &settings.pinned_quests {
-        if state(&player, name).is_some_and(|s| s.done) && !finished.0.iter().any(|(n, _)| n == name) {
-            finished.0.push((name.clone(), 0.0));
-        }
-    }
-    // Counting only while it can be seen.
-    if shown {
-        for (_, seen) in &mut finished.0 {
-            *seen += time.delta_secs();
-        }
-    }
-    let gone: Vec<String> = finished.0.iter().filter(|(_, seen)| *seen > stays).map(|(n, _)| n.clone()).collect();
+    let done = |name: &str| state(&player, name).is_some_and(|s| s.done);
+    let gone = finished.tick(&settings.pinned_quests, done, shown, time.delta_secs(), launch.content.quests.tracker().done_stays);
     if !gone.is_empty() {
         settings.pinned_quests.retain(|p| !gone.contains(p));
-        finished.0.retain(|(n, _)| !gone.contains(n));
         settings.save();
+    }
+}
+
+impl Finished {
+    /// Counts `seconds` for each pinned quest done, while the tracker is `shown`: those
+    /// shown done longer than `stays`, which then drop off.
+    fn tick(&mut self, pinned: &[String], done: impl Fn(&str) -> bool, shown: bool, seconds: f32, stays: f32) -> Vec<String> {
+        for name in pinned {
+            if done(name) && !self.0.iter().any(|(n, _)| n == name) {
+                self.0.push((name.clone(), 0.0));
+            }
+        }
+        if shown {
+            for (_, seen) in &mut self.0 {
+                *seen += seconds;
+            }
+        }
+        let gone: Vec<String> = self.0.iter().filter(|(_, seen)| *seen > stays).map(|(n, _)| n.clone()).collect();
+        self.0.retain(|(n, _)| !gone.contains(n));
+        gone
     }
 }
 
@@ -814,6 +850,62 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn pins_toggle_up_to_the_trackers_room_and_only_known_quests() {
+        let content = content();
+        let most = content.quests.tracker().pins;
+        let names: Vec<String> = content.quests.iter().map(|q| q.name.clone()).take(most + 1).collect();
+        let mut pins = Vec::new();
+        for name in &names[..most] {
+            assert!(toggle(&mut pins, &content, name));
+        }
+        assert!(!toggle(&mut pins, &content, &names[most]), "pinned past the room");
+        assert_eq!(pins.len(), most);
+        assert!(toggle(&mut pins, &content, &names[0]), "unpinning");
+        assert!(!pins.contains(&names[0]));
+        assert!(!toggle(&mut pins, &content, "base:no_such_quest"));
+        assert_eq!(pins.len(), most - 1);
+    }
+
+    #[test]
+    fn a_done_quest_counts_down_only_while_shown() {
+        let pinned = vec!["base:a".to_owned(), "base:b".to_owned()];
+        let done = |name: &str| name == "base:a";
+        let mut finished = Finished::default();
+        // Hidden behind a screen for a long while: nothing drops off.
+        for _ in 0..100 {
+            assert!(finished.tick(&pinned, done, false, 0.5, 5.0).is_empty());
+        }
+        // Shown: it stays its five seconds, then goes, and the quest not done stays.
+        for _ in 0..10 {
+            assert!(finished.tick(&pinned, done, true, 0.5, 5.0).is_empty());
+        }
+        assert_eq!(finished.tick(&pinned, done, true, 0.5, 5.0), vec!["base:a".to_owned()]);
+        assert!(finished.0.is_empty());
+    }
+
+    /// No two quests of a web stand in one place, and a quest from another chapter that
+    /// comes first is drawn, in the first column.
+    #[test]
+    fn webs_keep_quests_apart_and_show_the_way_in() {
+        let content = content();
+        for age in chapters(&content) {
+            let web = layout(&content, &age);
+            for (i, a) in web.cells.iter().enumerate() {
+                for b in &web.cells[i + 1..] {
+                    assert!(a.distance(*b) >= 1.0, "{age}: two quests within a step of each other at {a} and {b}");
+                }
+                assert!(a.x < web.columns as f32 && a.y < web.tallest as f32, "{age}: {a} outside {}×{}", web.columns, web.tallest);
+            }
+            for i in web.ours..web.quests.len() {
+                assert_eq!(web.cells[i].x, 0.0, "{age}: {} from another chapter stands past the first column", web.quests[i].name);
+            }
+        }
+        let farm = layout(&content, "farm");
+        let hearth = farm.quests.iter().position(|q| q.name == "base:homestead_hearth").expect("the farm's web shows the hearth that opens it");
+        assert!(hearth >= farm.ours);
     }
 
     /// Each chapter has a name in Japanese, and the tracker's numbers come from the data.

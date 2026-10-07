@@ -285,7 +285,7 @@
     "character.no_effects": "状態異常はありません。",
     "screen.quests": "クエスト",
     "settings.key.quests": "クエストキー",
-    "settings.key.quests.hint": "クエストブックを開閉します。",
+    "settings.key.quests.hint": "クエストブックを開閉する。",
     "quest.hint": "クエストをクリックで詳しく。ピン留めすると画面の右に表示される。",
     "quest.pick": "クエストを選ぶと、やる理由が出る。",
     "quest.empty": "ここにはまだクエストがない。",

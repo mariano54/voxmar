@@ -228,7 +228,7 @@ enum Step {
     /// The journal key opens the journal, whose Plants page lists what there is to find.
     Journal,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
-    /// reading, W held with it open does not walk, Esc shuts it; a quest pinned counts
+    /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
     /// drops off.
     Quests,
@@ -281,6 +281,8 @@ struct Gate {
     quest_feet: Vec3,
     /// The quests' revision when torches were crafted for the tracker.
     quests_rev: u32,
+    /// When a quest already done was pinned, to time how long it stays.
+    quest_pinned: f32,
     /// Where the player died in the workshop, the most items carried since waking, and when
     /// (in server seconds) that last went up.
     fell: Vec3,
@@ -381,6 +383,7 @@ impl Gate {
             count_before: 0,
             quest_feet: Vec3::ZERO,
             quests_rev: 0,
+            quest_pinned: 0.0,
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
@@ -680,8 +683,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Quests => 60.0,
         _ => STEP_LIMIT,
     };
-    // The journal's tour is judged page by page.
-    let start = if gate.step == Step::FitJournal { gate.phase_since } else { gate.since };
+    // The text-fit tours are judged view by view: sixty views at a settle each take most of
+    // a step's time on their own, and a lagging machine draws each later, not wrongly.
+    let start = if matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus) { gate.phase_since } else { gate.since };
     if now - start > limit {
         return Err(format!("{:?} took longer than {limit}s", gate.step));
     }
@@ -2456,6 +2460,21 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return quit(world, gate, "quests: Esc", format!("Esc left the book open: {open}, the mouse grabbed: {locked}, the menu open: {menu}"));
             }
             gate.check("quests: Esc", Ok("Esc shut the book and grabbed the mouse again".into()));
+            // W again with the book shut walks, or standing still above proved nothing.
+            gate.quest_feet = world.resource::<LocalPlayer>().position;
+            key(world, KeyCode::KeyW, true);
+            gate.advance(now);
+        }
+        8 => {
+            let moved = (world.resource::<LocalPlayer>().position - gate.quest_feet).xz().length();
+            if moved <= 1.0 {
+                if waited > 2.0 {
+                    quit(world, gate, "quests: walks", format!("W held {waited:.1} server s with the book shut moved the feet only {moved:.2} blocks"));
+                }
+                return;
+            }
+            key(world, KeyCode::KeyW, false);
+            gate.check("quests: walks", Ok(format!("W with the book shut walked {moved:.2} blocks in {waited:.1} server s")));
             // Pinned, the torch quest stands at the right; then torches made for it.
             let content = world.resource::<Launch>().content.clone();
             toggle_pin(&mut world.resource_mut::<crate::settings::Settings>(), &content, TRACKED);
@@ -2465,7 +2484,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command("give stick 1");
             gate.advance(now);
         }
-        8 => {
+        9 => {
             let ready = holding(world, "base:charcoal").0 >= 1 && holding(world, "base:stick").0 >= 1;
             let words = tracker_words(world, gate.count_before);
             let lines = tracker_lines(world);
@@ -2483,7 +2502,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.quests_rev = world.resource::<LocalPlayer>().quests_rev;
             gate.advance(now);
         }
-        9 => {
+        10 => {
             let made = gate.count_before + 4;
             let rev = world.resource::<LocalPlayer>().quests_rev;
             let lines = tracker_lines(world).unwrap_or_default();
@@ -2504,9 +2523,10 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut settings = world.resource_mut::<crate::settings::Settings>();
             settings.pinned_quests.clear();
             toggle_pin(&mut settings, &content, DONE_QUEST);
+            gate.quest_pinned = now;
             gate.advance(now);
         }
-        10 => {
+        11 => {
             let done = world.resource::<Locale>().get("quest.tracker.done").to_owned();
             let lines = tracker_lines(world);
             if !lines.as_ref().is_some_and(|lines| lines.contains(&done)) {
@@ -2519,14 +2539,20 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         _ => {
+            // It stays its while, counted from when it was pinned done, then goes.
+            let stays = world.resource::<Launch>().content.quests.tracker().done_stays;
+            let since = now - gate.quest_pinned;
             let pinned = !world.resource::<crate::settings::Settings>().pinned_quests.is_empty();
             let lines = tracker_lines(world);
-            if (pinned || lines.is_some()) && in_phase < 8.0 {
+            if lines.is_none() && since < stays - 1.0 {
+                return quit(world, gate, "quests: retired", format!("done, it dropped off after only {since:.1} s of {stays} s"));
+            }
+            if (pinned || lines.is_some()) && since < stays + 3.0 {
                 return;
             }
             gate.check(
                 "quests: retired",
-                if pinned || lines.is_some() { Err(format!("8 s after it was done, still pinned: {pinned}; the tracker reads {lines:?}")) } else { Ok(format!("done, it dropped off after {in_phase:.1} s and the tracker went")) },
+                if pinned || lines.is_some() { Err(format!("{since:.1} s after it was pinned done, still pinned: {pinned}; the tracker reads {lines:?}")) } else { Ok(format!("done, it stayed and dropped off by {since:.1} s ({stays} s asked), and the tracker went")) },
             );
             world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
             gate.next(Step::Catalogue, now);
