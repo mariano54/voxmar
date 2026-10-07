@@ -128,15 +128,21 @@ impl Surroundings for Around<'_> {
     }
 }
 
-/// A small, fast hash for the spread of popped drops: deterministic for a given tick and
-/// place, like everything else the server does.
+/// A small, fast hash for the spread of popped drops and for chances: deterministic for a
+/// given tick and place, like everything else the server does. Each value goes through
+/// the whole of MurmurHash3's finaliser: with half of it, ticks in a row gave values in a
+/// slow drift, so a one-in-eight chance tried on sixty ticks running could miss them all.
 pub(crate) fn random3(tick: u64, cell: IVec3, salt: u32) -> [f32; 3] {
-    let mut h = tick ^ (cell.x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (cell.y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
+    let mut h = tick.wrapping_mul(0xd6e8_feb8_6659_fd93)
+        ^ (cell.x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ (cell.y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
         ^ (cell.z as u64).wrapping_mul(0x1656_67b1_9e37_79f9)
         ^ (salt as u64).wrapping_mul(0x27d4_eb2f_1656_67c5);
     [0, 1, 2].map(|_| {
         h ^= h >> 33;
         h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
         h ^= h >> 33;
         (h >> 40) as f32 / (1u64 << 24) as f32
     })
@@ -145,14 +151,17 @@ pub(crate) fn random3(tick: u64, cell: IVec3, salt: u32) -> [f32; 3] {
 impl Server {
     /// Pops what breaking the blocks at `cells` (a block and the plants it held up) drops
     /// out into the world: a ripe crop its harvest, earning `agent` its experience.
-    pub(crate) fn drop_loot(&mut self, agent: PlayerId, cells: &[IVec3]) {
+    /// `placed` lists cells a player put their block in: those give their plain drop, never
+    /// a harvest or a forage.
+    pub(crate) fn drop_loot(&mut self, agent: PlayerId, cells: &[IVec3], placed: &[IVec3]) {
         for (i, &cell) in cells.iter().enumerate() {
             let Some(block) = self.block(cell) else { continue };
-            if let Some(crop) = self.ripe_crop(block) {
-                self.harvest(agent, crop, cell, i as u32);
+            let wild = !placed.contains(&cell);
+            if let Some(crop) = self.ripe_crop(block).filter(|_| wild) {
+                self.harvest(agent, crop, cell, i as u32, true);
                 continue;
             }
-            if let Some((crop, plants)) = self.content.crops.wild_form(block) {
+            if let Some((crop, plants)) = self.content.crops.wild_form(block).filter(|_| wild) {
                 for plant in 0..plants as u32 {
                     self.forage(agent, crop, cell, i as u32 * 8 + plant);
                 }

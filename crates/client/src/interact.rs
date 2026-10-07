@@ -267,7 +267,7 @@ fn break_and_place(
             }
             // A block that asks for a skill level or a better tool says so on a fresh click.
             _ if mouse.just_pressed(MouseButton::Left)
-                && let Err(Rejection::Unmet(need @ (Requirement::BlockLevel | Requirement::ToolGood))) = def.validate(&context, action_target) =>
+                && let Err(Rejection::Unmet(need @ (Requirement::BlockLevel | Requirement::CropLevel | Requirement::ToolGood))) = def.validate(&context, action_target) =>
             {
                 if let Some(words) = refusal(&world, &launch.content, &locale, hit.block, need) {
                     toasts.refused(words, time.elapsed_secs());
@@ -477,6 +477,13 @@ fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
 /// What to tell a player whose click a block refused: the skill level it asks for, or the
 /// least tool that would do.
 fn refusal(world: &ClientWorld, content: &Content, locale: &Locale, block: IVec3, need: Requirement) -> Option<String> {
+    // A ripe crop above the player's Farming level.
+    if need == Requirement::CropLevel {
+        let (crop, _) = content.crops.stage_of(world.block(block)?)?;
+        let crop = content.crops.get(crop);
+        let skill = locale.skill(content.skills.get(crop.skill));
+        return Some(locale.format("skills.needs", &[("skill", &skill), ("level", &crop.def.level)]));
+    }
     let rule = content.tools.rule(world.block(block)?)?;
     match need {
         Requirement::BlockLevel => {

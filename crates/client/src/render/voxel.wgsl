@@ -267,9 +267,17 @@ fn plant_shade(w0: u32) -> f32 {
     return 1.0;
 }
 
-// Where a model's quad's vertex lies across its cell: past the two crossed diagonal quads
-// every model starts with, a # of four straight quads (crops), a flat cap (mushrooms) or a
-// straight cross through the middle (bushes).
+// A bush or flower (`MODEL_BUSH`, four quads) splays from one root like a bouquet: each card
+// faces out from the middle, its foot close to the centre and its top leaning out, so no
+// card runs through the middle to be seen flat on, and from any side the cards stand at
+// different depths. Distances in blocks from the plant's centre.
+const BUSH_FOOT: f32 = 0.05;
+const BUSH_SPREAD: f32 = 0.3;
+const BUSH_WIDTH: f32 = 1.0;
+
+// Where a model's quad's vertex lies across its cell: a # of four straight quads (crops), a
+// cap with volume (mushrooms), four splayed cards (bushes and flowers), else the two
+// crossed diagonal quads.
 fn model_across(w0: u32) -> vec2<f32> {
     let corner = (w0 >> 21u) & 3u;
     let far = select(0.0, 1.0, corner == 1u || corner == 2u);
@@ -283,12 +291,11 @@ fn model_across(w0: u32) -> vec2<f32> {
             return 0.5 + cap_vertex(w0).at.xz;
         }
         case MODEL_BUSH: {
-            if piece == 2u {
-                return vec2(far, 0.5);
-            }
-            if piece == 3u {
-                return vec2(0.5, far);
-            }
+            let angle = 0.7853982 + f32(piece) * 1.5707963;
+            let outward = vec2(cos(angle), sin(angle));
+            let along = vec2(-outward.y, outward.x);
+            let reach = select(BUSH_FOOT, BUSH_SPREAD, corner >= 2u);
+            return 0.5 + outward * reach + along * (far - 0.5) * BUSH_WIDTH;
         }
         default: {}
     }

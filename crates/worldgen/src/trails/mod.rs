@@ -77,7 +77,21 @@ pub trait Land: Sync {
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
         (0..size * size).map(|i| self.sample(origin.x + i % size * step, origin.y + i / size * step)).collect()
     }
+
+    /// Whether a settlement lies within `reach` blocks of the box from `min` to `max`.
+    fn settled(&self, _min: IVec2, _max: IVec2, _reach: i32) -> bool {
+        false
+    }
+
+    /// Where settlements' lanes lead out within the box from `min` to `max`.
+    fn gates(&self, _min: IVec2, _max: IVec2) -> Vec<IVec2> {
+        Vec::new()
+    }
 }
+
+/// How far from a settlement trails are laid: as far as a trail from its gate reaches,
+/// with room for the detours routing takes.
+const SETTLED_REACH: i32 = network::MAX_EDGE + 16 * CELL + 64;
 
 /// Blocks along a side of a tile of stamps.
 const TILE: i32 = 64;
@@ -205,7 +219,7 @@ impl Trails {
         for rz in first.y..=last.y {
             for rx in first.x..=last.x {
                 let region = IVec2::new(rx, rz);
-                if !self.laid_in(region) {
+                if !self.laid_in(land, region) {
                     continue;
                 }
                 for path in self.paths(land, region).0.iter() {
@@ -248,7 +262,20 @@ impl Trails {
     }
 
     fn places(&self, land: &dyn Land, region: IVec2) -> Arc<[Poi]> {
-        self.places.get(region, || sites::places(self.seed, region, &self.cells(land)).into())
+        self.places.get(region, || {
+            let cells = self.cells(land);
+            let mut places = sites::places(self.seed, region, &cells);
+            // Settlements' gates, where their lanes lead out.
+            let (min, max) = (region * REGION, region * REGION + REGION - 1);
+            for gate in land.gates(min, max) {
+                let cell = gate.div_euclid(IVec2::splat(CELL));
+                let here = cells(cell);
+                if !here.submerged() {
+                    places.push(Poi { cell, height: here.height as i32, kind: Kind::Settlement });
+                }
+            }
+            places.into()
+        })
     }
 
     /// The places within `radius` blocks of `centre`, and perhaps a few more.
@@ -270,10 +297,13 @@ impl Trails {
             let near = |centre: Vec2, radius: f32| self.places_near(land, centre, radius);
             let cells = self.cells(land);
             let mut routes = Vec::new();
+            if !self.laid_in(land, region) {
+                return Arc::new(Routes(Vec::new()));
+            }
             for from in self.places(land, region).iter() {
                 let mut ends = self.places_near(land, from.at().as_vec2(), network::MAX_EDGE as f32);
                 ends.sort_by_key(|p| (p.cell.x, p.cell.y));
-                for to in ends.iter().filter(|to| from.below(to) && network::keep(from, to, &near)) {
+                for to in ends.iter().filter(|to| from.below(to) && self.joins(from, to) && network::keep(from, to, &near)) {
                     let margin = (from.cell - to.cell).abs().max_element() / 3;
                     let margin = margin.clamp(6, 16);
                     let (min, max) = (from.cell.min(to.cell) - margin, from.cell.max(to.cell) + margin);
@@ -337,11 +367,25 @@ impl Trails {
     }
 
     /// Whether trails are laid in the region `region`: everywhere, or within reach of a
-    /// settlement (there are none yet).
-    fn laid_in(&self, _region: IVec2) -> bool {
+    /// settlement.
+    fn laid_in(&self, land: &dyn Land, region: IVec2) -> bool {
         match self.laid {
             TrailsWhere::Everywhere => true,
-            TrailsWhere::NearSettlements => false,
+            TrailsWhere::NearSettlements => land.settled(region * REGION, region * REGION + REGION - 1, SETTLED_REACH),
+        }
+    }
+
+    /// Whether a trail may join `a` and `b`: any two places where trails are laid
+    /// everywhere; near settlements, only a settlement to a place worth walking to or to
+    /// another settlement, never two lanes of one settlement, so trails lead out of
+    /// settlements rather than webbing the open land.
+    fn joins(&self, a: &Poi, b: &Poi) -> bool {
+        match self.laid {
+            TrailsWhere::Everywhere => true,
+            TrailsWhere::NearSettlements => {
+                let (sa, sb) = (a.kind == Kind::Settlement, b.kind == Kind::Settlement);
+                (sa || sb) && !(sa && sb && (a.cell - b.cell).as_vec2().length() * (CELL as f32) < 240.0)
+            }
         }
     }
 
@@ -360,7 +404,7 @@ impl Trails {
         let tile = self.tiles.get(key, || {
             let _stage = stage::enter(Stage::TrailPlans);
             let region = (key * TILE).div_euclid(IVec2::splat(REGION));
-            if !self.laid_in(region) {
+            if !self.laid_in(land, region) {
                 return Arc::new(Tile { stamps: None, markers: Vec::new() });
             }
             self.prepare(land, region);

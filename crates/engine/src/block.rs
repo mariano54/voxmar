@@ -362,15 +362,17 @@ pub enum ParticleStyle {
 /// The shape a plant is drawn as, all of quads of its texture that sway with the wind.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlantModel {
-    /// Two quads crossing on the cell's diagonals: grass and most flowers.
+    /// Two quads crossing on the cell's diagonals: grass, ferns and tall grasses.
     #[default]
     Cross,
-    /// Four quads in a #, straight with the blocks: crops and reeds, as Minecraft's wheat.
+    /// Four quads in a #, straight with the blocks: crops in rows, as Minecraft's wheat.
     Hash,
     /// A mushroom with volume: a stem of the side texture, a domed cap of the top texture
     /// (a crown and four sloping sides) and gills of the bottom texture under it.
     Cap,
-    /// A cross with a second, straight one through it: fuller bushes and shrubs.
+    /// Four quads splayed from one root like a bouquet, each facing out from the middle
+    /// with its top leaning out: bushes, flowers, wild grains and reeds. No quad runs through
+    /// the middle, so none is seen flat on.
     Bush,
     /// A small rock with volume, lying still on the ground: a lump with a flat top and
     /// four sloping sides, and a chip beside it, all of the block's texture, its size

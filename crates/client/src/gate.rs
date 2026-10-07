@@ -211,6 +211,9 @@ enum Step {
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
+    /// `/locate settlement` finds a hamlet or village, and the server's world there has
+    /// what its plan says: a well on its square, doors open onto a floor, and houses dry.
+    Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
@@ -288,6 +291,8 @@ struct Gate {
     gorge_reached: bool,
     /// Where `/locate ore` found a sample of ore.
     ore: IVec3,
+    /// Where `/locate settlement` sent the player: the middle of its square.
+    settlement: IVec3,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
@@ -373,6 +378,7 @@ impl Gate {
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
+            settlement: IVec3::ZERO,
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             blows_seen: 0,
@@ -877,6 +883,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
+        Step::Settlements => settlements(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
@@ -2565,7 +2572,7 @@ fn localized_text(world: &mut World, key: &str) -> Option<String> {
 /// Follows the weather shown from frame to frame once it is ready. On the first frame it
 /// must already be the server's (joining shows the real weather, not a change from the
 /// menus' sky into it); after that no fraction may change faster than easing lets it
-/// (`weather::fastest`), so fog, rain and the rest come and go gradually.
+/// (`weather::Easing::fastest`), so fog, rain and the rest come and go gradually.
 fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
     let weather = world.resource::<crate::weather::ClientWeather>();
     let shown = weather.current.fractions();
@@ -2587,7 +2594,7 @@ fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
         Some(last) => {
             let dt = world.resource::<Time>().delta_secs();
             for (i, (&(name, value), was)) in shown.iter().zip(last).enumerate() {
-                let ratio = (value - was).abs() / (crate::weather::fastest(i) * dt + 1e-4);
+                let ratio = (value - was).abs() / (weather.easing().fastest(i) * dt + 1e-4);
                 if ratio > gate.weather_jump.0 {
                     gate.weather_jump = (ratio, name, now);
                 }
@@ -3226,20 +3233,23 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let at = light_on_screen(world);
             gate.check("sky: sun", disc(&shot, at, "sun"));
             gate.check("sky: day", gradient(&shot));
-            // Up above the top of the world, as a flying player can go.
+            // Up above the top of the world, as a flying player can go: by teleport, for the
+            // server refuses a move that jumps hundreds of blocks in one step.
+            let feet = gate.feet;
             let mut player = world.resource_mut::<LocalPlayer>();
             player.flying = true;
-            player.position.y = ABOVE_THE_WORLD;
             player.pitch = 0.2;
+            world.resource::<Net>().command(&format!("tp {} {ABOVE_THE_WORLD} {}", feet.x as f32 + 0.5, feet.z as f32 + 0.5));
             gate.advance(now);
         }
-        3 if in_phase > 0.5 => {
+        3 if in_phase > 0.5 && world.resource::<LocalPlayer>().position.y > ABOVE_THE_WORLD - 1.0 => {
             let Some(shot) = gate.shot(world, "above the world") else { return };
             gate.check("sky: above the world", sky_lit(&shot));
-            let mut player = world.resource_mut::<LocalPlayer>();
-            player.position.y = gate.feet.y as f32;
-            player.flying = false;
-            world.resource::<Net>().command(&format!("time set {SUNSET}"));
+            let feet = gate.feet;
+            world.resource_mut::<LocalPlayer>().flying = false;
+            let net = world.resource::<Net>();
+            net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+            net.command(&format!("time set {SUNSET}"));
             gate.advance(now);
         }
         // At sunset, the sky above the horizon towards the sun, then away from it.
@@ -3321,6 +3331,142 @@ const GORGE_LOAD_LIMIT: f32 = 60.0;
 /// being skipped: a skipped check would let a landing in untested.
 const GORGE_OVERLOADED_LIMIT: f32 = 240.0;
 
+/// How far `/locate settlement` looks from the gorge, in blocks: about one 1024-block
+/// square in six holds one.
+const SETTLEMENT_RADIUS: i32 = 3000;
+/// How far around its middle the step needs the world loaded and judges buildings.
+const SETTLEMENT_REACH: i32 = 40;
+
+/// `/locate settlement` names the nearest hamlet or village; the player and the observer go
+/// there, and once the server's world around it has loaded, its blocks are judged against
+/// the plan worldgen gives for it (`Overworld::settlements_near`): its well stands on the
+/// square, every door within reach is open with a floor under it and space behind it, and
+/// no house holds water. Then the player goes back to the test ground.
+fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    match gate.phase {
+        0 => {
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.replies.clear();
+                observer.connection.send(ClientMessage::Command { line: format!("locate settlement {SETTLEMENT_RADIUS}") });
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words| content.english.render(words, &content.blocks);
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("settlement") || r.contains("hamlet or village"))) else {
+                if gate.server_in_phase() > 20.0 {
+                    gate.check("settlements", Err("no answer to /locate settlement".into()));
+                    gate.next(Step::Recipes, now);
+                }
+                return;
+            };
+            let at = reply.split("/tp ").nth(1).and_then(|rest| {
+                let n: Vec<i32> = rest.split_whitespace().take(3).filter_map(|v| v.parse().ok()).collect();
+                (n.len() == 3).then(|| IVec3::new(n[0], n[1], n[2]))
+            });
+            let Some(at) = at else {
+                gate.check("settlements", Err(format!("/locate settlement: {reply}")));
+                gate.next(Step::Recipes, now);
+                return;
+            };
+            gate.settlement = at;
+            world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
+            }
+            gate.advance(now);
+        }
+        2 => {
+            let at = gate.settlement;
+            let (low, high) = (at - IVec3::splat(SETTLEMENT_REACH), at + IVec3::splat(SETTLEMENT_REACH));
+            let (low, high) = (ColumnPos::of_block(low).0, ColumnPos::of_block(high).0);
+            let columns: Vec<ColumnPos> = (low.x..=high.x).flat_map(|x| (low.y..=high.y).map(move |z| ColumnPos::new(x, z))).collect();
+            let held = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
+            if held < columns.len() {
+                // Waits on the server's clock: generating a fresh area takes the cores.
+                if gate.server_in_phase() > 120.0 {
+                    let n = columns.len();
+                    gate.check("settlements", Err(format!("the world around the settlement at {at} did not load: the server sent {held} of its {n} columns in 120 server seconds")));
+                    gate.next(Step::Recipes, now);
+                }
+                return;
+            }
+            let result = judge_settlement(world, gate, at);
+            gate.check("settlements", result);
+            let feet = gate.feet;
+            world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // Back on the test ground.
+        _ => {
+            let home = world.resource::<LocalPlayer>().position.xz().distance(gate.feet.xz().as_vec2() + 0.5) < 2.0;
+            if home || gate.server_in_phase() > 20.0 {
+                if !home {
+                    gate.check("settlements: back", Err("the player never came back to the test ground".into()));
+                }
+                gate.next(Step::Recipes, now);
+            }
+        }
+    }
+}
+
+/// The settlement whose middle is `at`, as worldgen plans it, against the server's blocks.
+fn judge_settlement(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the settlement's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let plans = generator.settlements_near(at.xz(), 64);
+    let Some(plan) = plans.iter().find(|s| s.centre.xz() == at.xz()) else {
+        return Err(format!("worldgen plans no settlement with its middle at {at} ({} near)", plans.len()));
+    };
+    let def = |p: IVec3| observer.world.block(p).map(|b| client.registry.def(b));
+    let solid = |p: IVec3| def(p).is_some_and(|d| d.solid);
+    let wet = |p: IVec3| observer.world.block(p).is_some_and(|b| client.registry.fluid(b).is_some());
+    let within = |p: IVec2| (p - at.xz()).abs().max_element() <= SETTLEMENT_REACH;
+    let mut problems = Vec::new();
+    // The well: something built on its ground above its floor.
+    let well = plan.buildings.iter().find(|b| b.kind.name() == "well");
+    let well_built = well.is_some_and(|b| {
+        (b.min.x..=b.max.x).any(|x| (b.min.y..=b.max.y).any(|z| (b.floor..b.floor + 3).any(|y| def(IVec3::new(x, y, z)).is_some_and(|d| d.name != "core:air"))))
+    });
+    if !well_built {
+        problems.push(format!("no well built on the square ({})", if well.is_some() { "planned, but nothing stands there" } else { "none planned" }));
+    }
+    let (mut doors, mut houses) = (0, 0);
+    for b in plan.buildings.iter().filter(|b| within(b.min) && within(b.max)) {
+        let middle = (b.min + b.max) / 2;
+        if b.door.is_some() {
+            houses += 1;
+            if wet(IVec3::new(middle.x, b.floor + 1, middle.y)) {
+                problems.push(format!("water inside the {} at {middle}", b.kind.name()));
+            }
+        }
+        let Some(door) = b.door else { continue };
+        let step = b.facing.step();
+        let (out, inside) = (door + IVec3::new(step.x, 0, step.y), door - IVec3::new(step.x, 0, step.y));
+        let blocked: Vec<IVec3> = [door, door + IVec3::Y, out, out + IVec3::Y, inside, inside + IVec3::Y].into_iter().filter(|&p| solid(p)).collect();
+        if !blocked.is_empty() {
+            problems.push(format!("the {}'s door at {door} is blocked at {blocked:?}", b.kind.name()));
+        } else if !solid(door - IVec3::Y) || !solid(inside - IVec3::Y) {
+            problems.push(format!("the {}'s door at {door} has no floor under it or behind it", b.kind.name()));
+        } else {
+            doors += 1;
+        }
+    }
+    if doors == 0 && problems.is_empty() {
+        problems.push("no door within reach of the square to judge".into());
+    }
+    let name = &plan.name.0;
+    if problems.is_empty() {
+        Ok(format!("{name}, a {} at {at}: a well on the square, {doors} doors open onto floors, {houses} buildings dry", plan.size))
+    } else {
+        Err(format!("{name}, a {} at {at}: {}", plan.size, problems.join("; ")))
+    }
+}
+
 fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
@@ -3336,7 +3482,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("gorge"))) else {
                 if in_phase > 20.0 {
                     gate.check("gorge", Err("no answer to /locate gorge".into()));
-                    gate.next(Step::Recipes, now);
+                    gate.next(Step::Settlements, now);
                 }
                 return;
             };
@@ -3347,7 +3493,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("gorge", Err(format!("/locate gorge: {reply}")));
-                gate.next(Step::Recipes, now);
+                gate.next(Step::Settlements, now);
                 return;
             };
             gate.gorge = at;
@@ -3388,7 +3534,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                              and the player {reached} {away:.0} blocks away"
                         )),
                     );
-                    gate.next(Step::Recipes, now);
+                    gate.next(Step::Settlements, now);
                 }
                 return;
             }
@@ -3426,7 +3572,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the walls by the water at {} {} {} stand only {walls} blocks high", at.x, water, at.z)),
             };
             gate.check("gorge", result);
-            gate.next(Step::Recipes, now);
+            gate.next(Step::Settlements, now);
         }
         _ => {}
     }
