@@ -103,8 +103,8 @@
         (name: "biome", help: "Names the biome you stand in, and its climate.", run: Biome),
         (
             name: "locate",
-            usage: "biome NAME [RADIUS] | gorge [RADIUS] | settlement [RADIUS] | ore [NAME] [RADIUS]",
-            help: "Finds the nearest place of a biome, of a river running deep in a gorge, or of a hamlet or village, within 4000 blocks unless you say (up to 10000), or the nearest sample of ore on the ground over a vein (of an ore such as iron, if you name one), within 1000.",
+            usage: "biome NAME [RADIUS] | gorge [RADIUS] | settlement [hamlet|village] [RADIUS] | ore [NAME] [RADIUS]",
+            help: "Finds the nearest place of a biome, of a river running deep in a gorge, or of a hamlet or village (of one size, if you say), within 4000 blocks unless you say (up to 10000), or the nearest sample of ore on the ground over a vein (of an ore such as iron, if you name one), within 1000.",
             permission: Admin,
             run: Locate,
         ),

@@ -1,0 +1,344 @@
+// The people of settlements: one species per calling, so a player sees who is who
+// ("Baker", "Guard"). Settlements place them (settlements.ron `people`), never the land
+// (kind Villager); the server keeps them only near players (crates/server/src/villagers.rs).
+//
+// Every person is drawn from the same body, dressed by their genes: skin by the climate of
+// the land about (fairer in the cold), a shirt from their calling's colours, trousers, now
+// and then a scarf, and a height of their own. People of one region share a mix, so a
+// village's folk look like kin. Their mind is a routine (`Routine`): where their day sends
+// them, they go; struck, they run, and the guards come.
+(
+    creatures: [
+        // Folk at home.
+        (
+            name: "villager", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(200, 188, 158), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (200, 188, 158))]), (name: "shirt_1", effects: [Colour(0, (140, 118, 90))]), (name: "shirt_2", effects: [Colour(0, (108, 116, 84))]), (name: "shirt_3", effects: [Colour(0, (84, 96, 122))]), (name: "shirt_4", effects: [Colour(0, (150, 72, 58))]), (name: "shirt_5", effects: [Colour(0, (176, 148, 92))]), (name: "shirt_6", effects: [Colour(0, (116, 110, 104))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Works the fields and orchards.
+        (
+            name: "farmer", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(200, 188, 158), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (200, 188, 158))]), (name: "shirt_1", effects: [Colour(0, (140, 118, 90))]), (name: "shirt_2", effects: [Colour(0, (108, 116, 84))]), (name: "shirt_3", effects: [Colour(0, (176, 148, 92))]), (name: "shirt_4", effects: [Colour(0, (150, 132, 96))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Keeps the pens and barns.
+        (
+            name: "herder", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(140, 118, 90), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (140, 118, 90))]), (name: "shirt_1", effects: [Colour(0, (108, 116, 84))]), (name: "shirt_2", effects: [Colour(0, (130, 104, 74))]), (name: "shirt_3", effects: [Colour(0, (200, 188, 158))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Bakes at the bakery.
+        (
+            name: "baker", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(228, 220, 202), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (228, 220, 202))]), (name: "shirt_1", effects: [Colour(0, (214, 204, 180))]), (name: "shirt_2", effects: [Colour(0, (234, 224, 194))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Grinds at the mill.
+        (
+            name: "miller", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(214, 206, 190), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (214, 206, 190))]), (name: "shirt_1", effects: [Colour(0, (196, 188, 170))]), (name: "shirt_2", effects: [Colour(0, (200, 188, 158))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Works hides at the tannery.
+        (
+            name: "tanner", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(120, 92, 62), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (120, 92, 62))]), (name: "shirt_1", effects: [Colour(0, (100, 80, 56))]), (name: "shirt_2", effects: [Colour(0, (140, 118, 90))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Works the forge.
+        (
+            name: "smith", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(78, 62, 50), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (78, 62, 50))]), (name: "shirt_1", effects: [Colour(0, (62, 58, 56))]), (name: "shirt_2", effects: [Colour(0, (94, 74, 58))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Keeps the trading post.
+        (
+            name: "trader", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(122, 54, 54), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (122, 54, 54))]), (name: "shirt_1", effects: [Colour(0, (54, 84, 112))]), (name: "shirt_2", effects: [Colour(0, (142, 112, 52))]), (name: "shirt_3", effects: [Colour(0, (70, 94, 70))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Keeps the inn.
+        (
+            name: "innkeeper", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(150, 110, 70), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (150, 110, 70))]), (name: "shirt_1", effects: [Colour(0, (112, 62, 52))]), (name: "shirt_2", effects: [Colour(0, (200, 188, 158))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Keeps the chapel.
+        (
+            name: "priest", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(222, 216, 202), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (222, 216, 202))]), (name: "shirt_1", effects: [Colour(0, (96, 96, 106))]), (name: "shirt_2", effects: [Colour(0, (78, 66, 96))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Fishes from the boathouse.
+        (
+            name: "fisher", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(72, 92, 112), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (72, 92, 112))]), (name: "shirt_1", effects: [Colour(0, (150, 140, 108))]), (name: "shirt_2", effects: [Colour(0, (196, 178, 120))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Works the woodyard.
+        (
+            name: "woodcutter", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(116, 52, 42), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (116, 52, 42))]), (name: "shirt_1", effects: [Colour(0, (82, 102, 62))]), (name: "shirt_2", effects: [Colour(0, (140, 118, 90))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // The old of the place.
+        (
+            name: "elder", kind: Villager, level: 3, health: 12,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(150, 142, 132), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (150, 142, 132))]), (name: "shirt_1", effects: [Colour(0, (122, 120, 128))]), (name: "shirt_2", effects: [Colour(0, (146, 130, 110))]), (name: "shirt_3", effects: [Colour(0, (200, 188, 158))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 0.95, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.2, run: 3.0, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.3, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Children, playing.
+        (
+            name: "child", kind: Villager, level: 1, health: 6,
+            body: (
+                size: (0.45, 1.2),
+                model: Biped(body: (0.36, 0.46, 0.24), head: (0.38, 0.38, 0.38), legs: 0.44, arms: 0.42),
+                colours: [(182, 92, 72), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (182, 92, 72))]), (name: "shirt_1", effects: [Colour(0, (92, 130, 162))]), (name: "shirt_2", effects: [Colour(0, (202, 170, 92))]), (name: "shirt_3", effects: [Colour(0, (122, 152, 92))]), (name: "shirt_4", effects: [Colour(0, (200, 188, 158))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "scarf", kind: Alleles([(name: "none", frequency: 6.0), (name: "red", effects: [Marking(Collar(colour: (150, 64, 52), width: 0.07))]), (name: "green", effects: [Marking(Collar(colour: (86, 112, 70), width: 0.07))]), (name: "blue", effects: [Marking(Collar(colour: (70, 88, 128), width: 0.07))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.6, run: 4.2, turn: 360.0, jump: 7.5),
+            temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.9, spread: 0.25),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Flee(radius: 1.0)), (do: LookAround)],
+        ),
+        // Guards the village by day or night.
+        (
+            name: "guard", kind: Villager, level: 25, health: 60, defence: 25,
+            attack: (damage: (2, 6), reach: 1.2, every: 1.1, style: Slash),
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(150, 154, 160), (92, 74, 56), (60, 48, 40)],
+                skin: (eyes: Front, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: Some((58, 46, 38))),
+            ),
+            genes: [
+                (name: "skin", kind: Alleles([(name: "fair", frequency: 1.0, cold: 1.2, effects: [Marking(Hood(colour: (240, 210, 184)))]), (name: "light", frequency: 1.4, cold: 0.5, effects: [Marking(Hood(colour: (226, 186, 150)))]), (name: "olive", frequency: 1.4, cold: 0.0, effects: [Marking(Hood(colour: (204, 160, 118)))]), (name: "tan", frequency: 1.0, cold: -0.6, effects: [Marking(Hood(colour: (170, 118, 82)))]), (name: "brown", frequency: 0.8, cold: -1.0, effects: [Marking(Hood(colour: (126, 84, 58)))]), (name: "deep", frequency: 0.6, cold: -1.4, effects: [Marking(Hood(colour: (90, 60, 42)))])])),
+                (name: "shirt", kind: Alleles([(name: "shirt_0", effects: [Colour(0, (150, 154, 160))]), (name: "shirt_1", effects: [Colour(0, (132, 136, 142))])])),
+                (name: "trousers", kind: Alleles([(name: "trousers_0", effects: [Colour(1, (92, 74, 56))]), (name: "trousers_1", effects: [Colour(1, (72, 66, 60))]), (name: "trousers_2", effects: [Colour(1, (110, 96, 72))]), (name: "trousers_3", effects: [Colour(1, (62, 68, 84))]), (name: "trousers_4", effects: [Colour(1, (84, 88, 70))])])),
+                (name: "tabard", kind: Alleles([(name: "red", effects: [Marking(Saddle(colour: (128, 44, 40)))]), (name: "blue", effects: [Marking(Saddle(colour: (44, 64, 112)))]), (name: "green", effects: [Marking(Saddle(colour: (56, 84, 52)))])])),
+                (name: "height", kind: Number(mean: 1.0, spread: 0.04, range: (0.88, 1.1), effect: Scale)),
+            ],
+            movement: (style: Walker, walk: 1.5, run: 4.8, turn: 360.0, jump: 7.5),
+            temperament: (aggression: 0.3, fear: 0.0, nervousness: 0.2, curiosity: 0.3, sociability: 0.6, energy: 0.6, spread: 0.2),
+            senses: (sight: 32.0, hearing: 24.0),
+            leash: 400.0,
+            behaviours: [(do: Routine), (do: Defend), (do: LookAround)],
+        ),
+    ],
+)

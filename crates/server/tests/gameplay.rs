@@ -1246,3 +1246,80 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
 }
+
+/// A settlement's people are about when a player comes: asleep at home at night (resting,
+/// inside a building), up and walking to their day's places in the morning, and gone when
+/// the player leaves.
+#[test]
+fn villagers_sleep_at_night_and_go_about_their_day() {
+    use voxmar_engine::creature::Kind;
+    use voxmar_engine::creature::brain::Pose;
+    let mut client = Client::join();
+    client.admin = true;
+    let found = client.ok("/locate settlement 4000");
+    let tp = found.split("/tp ").nth(1).expect("a way there").split(" goes").next().unwrap().to_owned();
+    client.ok("/time set midnight");
+    client.ok(&format!("/tp {tp}"));
+    let people = |c: &Client| -> Vec<voxmar_protocol::CreatureView> {
+        c.creatures.values().filter(|v| c.content.creatures.get(v.species).def.kind == Kind::Villager).cloned().collect()
+    };
+    client.pump_until(|c| people(c).len() >= 3);
+    // In bed: most are resting at midnight (a night watchman is up).
+    let asleep = |c: &Client| people(c).iter().filter(|v| v.pose == Pose::Resting).count();
+    client.pump_until(|c| asleep(c) * 3 >= people(c).len() * 2);
+    let night: std::collections::HashMap<u32, Vec3> = people(&client).iter().map(|v| (v.id, v.position)).collect();
+    // Morning: up and out.
+    client.ok("/time set day");
+    let start = Instant::now();
+    client.pump_until(|c| {
+        let moved = people(c).iter().filter(|v| night.get(&v.id).is_some_and(|p| p.distance(v.position) > 4.0)).count();
+        moved >= 2 || start.elapsed() > Duration::from_secs(60)
+    });
+    let moved = people(&client).iter().filter(|v| night.get(&v.id).is_some_and(|p| p.distance(v.position) > 4.0)).count();
+    assert!(moved >= 2, "only {moved} of {} people left their beds in the morning", night.len());
+    assert!(asleep(&client) * 2 < people(&client).len(), "most still asleep by day");
+    // Far away, they go.
+    let far = client.position + Vec3::new(600.0, 0.0, 600.0);
+    client.ok(&format!("/tp {} {}", far.x as i32, far.z as i32));
+    client.pump_until(|c| people(c).is_empty());
+}
+
+/// Struck by a player, a villager runs, and the village's guards come for whoever did it.
+#[test]
+fn guards_come_for_a_player_who_strikes_a_villager() {
+    use voxmar_engine::creature::Kind;
+    let mut client = Client::join();
+    let found = client.ok("/locate settlement village 6000");
+    let tp = found.split("/tp ").nth(1).expect("a way there").split(" goes").next().unwrap().to_owned();
+    client.ok("/time set noon");
+    // Guards leave creative players be, as every creature does.
+    client.ok("/gamemode survival");
+    client.ok(&format!("/tp {tp}"));
+    let named = |c: &Client, v: &voxmar_protocol::CreatureView| c.content.creatures.get(v.species).def.name.clone();
+    let guards = |c: &Client| -> Vec<voxmar_protocol::CreatureView> { c.creatures.values().filter(|v| named(c, v) == "base:guard").cloned().collect() };
+    // A villager with a guard within call.
+    let pick = |c: &Client| {
+        c.creatures.values().find(|v| {
+            let def = &c.content.creatures.get(v.species).def;
+            def.kind == Kind::Villager && def.name != "base:guard" && guards(c).iter().any(|g| g.position.distance(v.position) < 30.0)
+        }).cloned()
+    };
+    client.pump_until(|c| pick(c).is_some());
+    let villager = pick(&client).unwrap();
+    client.ok(&format!("/tp {} {} {}", villager.position.x + 1.0, villager.position.y, villager.position.z));
+    let full = client.health;
+    let start = Instant::now();
+    while client.health == full && start.elapsed() < Duration::from_secs(60) {
+        if let Some(v) = client.creatures.get(&villager.id) {
+            if v.position.distance(client.position) > 2.5 {
+                // It ran: follow it, as a player chasing it would.
+                let at = v.position;
+                client.ok(&format!("/tp {} {} {}", at.x + 1.0, at.y, at.z));
+            }
+            client.propose("core:attack", ActionTarget::Creature(villager.id));
+        }
+        let asked = Instant::now();
+        client.pump_until(|_| asked.elapsed() > Duration::from_millis(400));
+    }
+    assert!(client.health < full, "no guard struck back in a minute");
+}

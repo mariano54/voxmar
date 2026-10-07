@@ -530,7 +530,9 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
     let mut decision = Decision { face: Some(p.position), ..Default::default() };
     let stalker = stalks && def.movement.style == Style::Stalker;
     if !close {
-        decision.goal = Some(p.position);
+        // Those with a way found for them (guards going after someone) follow it until the
+        // target is near.
+        decision.goal = Some(ctx.at.errand.filter(|_| d > 4.0).map_or(p.position, |e| e.to));
         if stalker && d > 4.5 {
             decision.speed = walk(ctx) * 0.6;
             decision.pose = Pose::Crouched;

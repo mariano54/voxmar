@@ -115,6 +115,8 @@ struct Trip {
     best: (f32, u64),
     /// Tick after which to find the way again when none was found.
     retry: u64,
+    /// The player an angry guard is going after, by the way found to them.
+    pursuit: Option<u32>,
 }
 
 impl Town {
@@ -291,7 +293,7 @@ impl Server {
     /// Where person `i` is meant to be now, and the trip that leaves them there.
     fn spot_for(&self, town: u64, i: usize, seed: u64) -> Option<(IVec3, Trip)> {
         let (place, slot, day) = self.place_now(town, i, seed);
-        let mut trip = Trip { place, slot, day, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, self.tick), retry: 0 };
+        let mut trip = Trip { place, slot, day, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, self.tick), retry: 0, pursuit: None };
         let target = self.target(town, i, seed, &mut trip)?;
         trip.path = vec![target];
         Some((target, trip))
@@ -314,12 +316,19 @@ impl Server {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let at = creature.body.position;
         let seed = creature.seed;
-        let (place, slot, day) = self.place_now(town, i, seed);
         let tick = self.tick;
+        // An angry guard goes after the one it is angry with, by the lanes.
+        let chasing = creature.mind.attacker().filter(|_| creature.mind.anger > 0.0 && self.villagers.towns[&town].info.people[i].guard);
+        if let Some(player) = chasing {
+            self.pursue(town, i, at, player);
+            return;
+        }
+        let (place, slot, day) = self.place_now(town, i, seed);
         let fresh = {
             let trip = self.villagers.towns[&town].people[i].trip.as_ref();
             match trip {
                 None => true,
+                Some(t) if t.pursuit.is_some() => true,
                 Some(t) => t.place != place || t.slot != slot || t.day != day || t.next_spot.is_some_and(|n| tick >= n) || (t.path.len() <= 1 && t.retry != 0 && tick >= t.retry),
             }
         };
@@ -329,7 +338,7 @@ impl Server {
             }
             self.villagers.ways += 1;
             let leg = self.villagers.towns[&town].people[i].trip.as_ref().filter(|t| t.place == place).map_or(0, |t| t.leg + 1);
-            let mut trip = Trip { place, slot, day, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg, best: (f32::MAX, tick), retry: 0 };
+            let mut trip = Trip { place, slot, day, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg, best: (f32::MAX, tick), retry: 0, pursuit: None };
             let Some(target) = self.target(town, i, mix(seed, tick / 200), &mut trip) else { return };
             let start = at.floor().as_ivec3();
             match self.way(start, target, town) {
@@ -361,6 +370,33 @@ impl Server {
             // Stuck: find the way again from here.
             trip.next_spot = Some(tick);
         }
+    }
+
+    /// Person `i` (a guard) at `at` goes after `player`: a way to where they stand, found
+    /// again every two seconds; `Defend` strikes once they are in reach.
+    fn pursue(&mut self, town: u64, i: usize, at: Vec3, player: u32) {
+        let Some(target) = self.players.get(&player).map(|p| p.position.floor().as_ivec3()) else { return };
+        let tick = self.tick;
+        let trip = self.villagers.towns[&town].people[i].trip.as_ref();
+        let due = trip.is_none_or(|t| t.pursuit != Some(player) || tick >= t.retry);
+        if !due || self.villagers.ways >= WAYS_PER_TICK {
+            if let Some(t) = self.villagers.towns.get_mut(&town).expect("listed").people[i].trip.as_mut() {
+                // Along the way, turn by turn.
+                if let Some(&next) = t.path.get(t.step)
+                    && t.step + 1 < t.path.len()
+                    && (next.as_vec3() + Vec3::new(0.5, 0.0, 0.5)).with_y(0.0).distance(at.with_y(0.0)) < 0.9
+                {
+                    t.step += 1;
+                }
+            }
+            return;
+        }
+        self.villagers.ways += 1;
+        let start = at.floor().as_ivec3();
+        let path = self.way(start, target, town).unwrap_or_else(|| vec![target]);
+        let (place, slot, day) = (Place::Patrol, usize::MAX, 0);
+        let trip = Trip { place, slot, day, path, step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, tick), retry: tick + 2 * TICKS_PER_SECOND as u64, pursuit: Some(player) };
+        self.villagers.towns.get_mut(&town).expect("listed").people[i].trip = Some(trip);
     }
 
     /// Picks the cell person `i` goes to for `trip`'s place, and how they are once there.

@@ -639,8 +639,10 @@ impl Server {
             [kind, r] if kind == "ore" && r.parse::<i32>().is_ok() => return self.locate_ore(id, None, radius(r)?),
             [kind, name] if kind == "ore" => return self.locate_ore(id, Some(name), ORE_RADIUS),
             [kind, name, r] if kind == "ore" => return self.locate_ore(id, Some(name), radius(r)?),
-            [kind] if kind == "settlement" => return self.locate_settlement(id, LOCATE_RADIUS),
-            [kind, r] if kind == "settlement" => return self.locate_settlement(id, radius(r)?),
+            [kind] if kind == "settlement" => return self.locate_settlement(id, None, LOCATE_RADIUS),
+            [kind, r] if kind == "settlement" && r.parse::<i32>().is_ok() => return self.locate_settlement(id, None, radius(r)?),
+            [kind, size] if kind == "settlement" => return self.locate_settlement(id, Some(size), LOCATE_RADIUS),
+            [kind, size, r] if kind == "settlement" => return self.locate_settlement(id, Some(size), radius(r)?),
             [kind, name] if kind == "biome" => (name, LOCATE_RADIUS),
             [kind, name, r] if kind == "biome" => (name, radius(r)?),
             _ => return Err(Words::key("command.error.locate_what")),
@@ -683,7 +685,7 @@ impl Server {
         }
     }
 
-    fn locate_settlement(&self, id: Source, radius: i32) -> Reply {
+    fn locate_settlement(&self, id: Source, size: Option<&String>, radius: i32) -> Reply {
         let position = self.position_of(id);
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
         let nearest = self
@@ -691,7 +693,7 @@ impl Server {
             .settlements_near(from, radius)
             .into_iter()
             .map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s))
-            .filter(|(offset, _)| offset.as_vec2().length() <= radius as f32)
+            .filter(|(offset, s)| offset.as_vec2().length() <= radius as f32 && size.is_none_or(|size| *size == s.size))
             .min_by_key(|(offset, _)| offset.length_squared());
         match nearest {
             Some((offset, s)) => Ok(Words::key("command.locate.settlement")
