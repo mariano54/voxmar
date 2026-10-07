@@ -611,8 +611,11 @@ impl Server {
             return Some(false);
         }
         let ground = Aabb { min: feet - Vec3::new(dims::WIDTH / 2.0, 0.1, dims::WIDTH / 2.0), max: feet + Vec3::new(dims::WIDTH / 2.0, 0.0, dims::WIDTH / 2.0) };
-        // In water, even on its bottom, a swimmer may be lifted out onto a bank.
-        if Aabb::standing(feet, dims::WIDTH, dims::HEIGHT).intersects(|cell| self.block(cell).is_some_and(|b| blocks.info(b).fluid.is_some())) {
+        // In water, even on its bottom, a swimmer may be lifted out onto a bank: water as the
+        // client swims in it (`movement::water_around`), so not lava.
+        let water = blocks.id("base:water").unwrap_or(voxmar_engine::block::BlockId::AIR);
+        let (depth, _) = voxmar_engine::movement::water_around(blocks, water, |cell| self.block(cell), &Aabb::standing(feet, dims::WIDTH, dims::HEIGHT));
+        if depth > 0.0 {
             Some(true)
         } else if ground.intersects(|cell| self.is_solid(cell)) {
             Some(false)

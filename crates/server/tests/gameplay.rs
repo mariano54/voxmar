@@ -1568,13 +1568,13 @@ fn long_steps_off_ledges_down_terraces_and_up_steps_are_not_snapped() {
 }
 
 #[test]
-fn swimmers_climb_out_onto_a_bank_but_nobody_jumps_out_of_a_dry_pit() {
+fn swimmers_climb_out_onto_a_bank_but_nobody_jumps_out_of_a_dry_pit_or_lava() {
     let mut client = on_a_test_floor();
     let start = client.position;
     let at = start.floor().as_ivec3();
-    // Two pits two blocks deep in the floor, walled in stone: water at x+3..x+5, and dry
-    // at x+9..x+11.
-    for (x, inside) in [(3, "water"), (9, "air")] {
+    // Three pits two blocks deep in the floor, walled in stone: water at x+3..x+5, dry at
+    // x+9..x+11 and lava at x+15..x+17.
+    for (x, inside) in [(3, "water"), (9, "air"), (15, "lava")] {
         client.fill(at, IVec3::new(x - 1, -3, -2), IVec3::new(x + 3, -1, 2), "stone");
         client.fill(at, IVec3::new(x, -2, -1), IVec3::new(x + 2, -1, 1), inside);
     }
@@ -1586,6 +1586,12 @@ fn swimmers_climb_out_onto_a_bank_but_nobody_jumps_out_of_a_dry_pit() {
     let pit = start + Vec3::new(11.0, -2.0, 0.0);
     client.tp(pit);
     client.send_position(start + Vec3::new(12.0, 0.0, 0.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported, Some(pit));
+    // Nor out of lava, which nobody swims in.
+    let pit = start + Vec3::new(17.0, -2.0, 0.0);
+    client.tp(pit);
+    client.send_position(start + Vec3::new(18.0, 0.0, 0.0), false);
     client.pump_until(|c| c.teleported.is_some());
     assert_eq!(client.teleported, Some(pit));
 }

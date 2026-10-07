@@ -335,6 +335,9 @@ impl Server {
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     player.position = spawn;
+                    // Where they wake is where a grave goes until they stand elsewhere,
+                    // not where they last stood in the life before.
+                    player.last_ground = Some(spawn);
                     player.fall_start = None;
                     player.changed(traits::HEALTH);
                     player.changed(traits::VITALS);
