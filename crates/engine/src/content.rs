@@ -382,17 +382,13 @@ mod tests {
         ("base:first_bronze", &["base:bronze_blend"]),
     ];
 
-    /// Walls on the main line waiting for design's numbers, as the start of the wall's line
-    /// (none should stay here long): copper ore at Mining 5 is reached only by the Charcoal
-    /// quest's coal route, and the crucible's Engineering 10 by nothing yet.
-    const AWAITING_DESIGN: &[&str] = &["base:red_metal: mining copper_ore", "base:crucible_kiln: base:crucible"];
-
     /// The main quest line, walked in order, reaches every level it asks for from what it
     /// guarantees: quest rewards and the things it has the player make (each quest's own
-    /// crafts, cooks and ores, and the pieces in `ALSO_MADE`). Where a quest has several
-    /// routes, only what every route gives counts. A level asked for before the walk has
-    /// earned it is a wall: grinding throwaway crafts to go on (design draft 100 found the
-    /// chimney and Engineering 5 for copper).
+    /// crafts, cooks and ores, the pieces in `ALSO_MADE`, and the ores those recipes use
+    /// up, mined first). Where a quest has several routes, only what every route gives
+    /// counts. A level asked for before the walk has earned it is a wall: grinding
+    /// throwaway crafts to go on (design drafts 100 and 102 found the chimney, Engineering 5
+    /// for copper and 10 for the crucible, and the tin in bronze at Mining 10).
     #[test]
     fn the_main_quest_line_earns_every_level_it_asks_for() {
         use crate::quest::{Goal, Reward};
@@ -400,13 +396,29 @@ mod tests {
         let (skills, blocks) = (&content.skills, &content.blocks);
         let skill_named = |name: &str| skills.id(name).or_else(|| skills.id(&format!("core:{name}")));
         let item = |name: &str| blocks.id(name).or_else(|| blocks.id(&format!("base:{name}")));
+        // The block an ingredient must be mined as, if every item that can fill its place
+        // is mined (the easiest of them); none when something else will do (charcoal for
+        // coal in a torch).
+        let mined = |accepts: &[crate::block::BlockId]| {
+            let rules: Option<Vec<_>> = accepts.iter().map(|&b| content.tools.rule(b).filter(|r| r.skill.is_some()).map(|r| (b, r))).collect();
+            rules?.into_iter().min_by_key(|(_, r)| r.level)
+        };
         // What making one batch of `name` asks and gives: (skill, level, tenths of xp, how
-        // many it makes), from the easiest grid recipe or, failing that, cooking recipe.
-        let recipe = |name: &str| -> Option<(Option<SkillId>, u8, u32, u32)> {
+        // many it makes, the ores it uses up), from the easiest grid recipe or, failing
+        // that, cooking recipe.
+        type Batch<'a> = (Option<SkillId>, u8, u32, u32, Vec<(crate::block::BlockId, &'a crate::tool::Rule)>);
+        let recipe = |name: &str| -> Option<Batch> {
             let id = item(name)?;
-            let grid = content.recipes.iter().filter(|r| r.output == id).min_by_key(|r| r.level).map(|r| (r.skill, r.level, r.xp, r.count as u32));
-            let cooked = || content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id).min_by_key(|r| r.def.level).map(|r| (r.skill, r.def.level, r.def.xp, 1));
-            grid.or_else(cooked).map(|(skill, level, xp, count)| (skill, level, (xp * 10.0).round() as u32, count))
+            let grid = content.recipes.iter().filter(|r| r.output == id).min_by_key(|r| r.level).map(|r| {
+                let ores = r.alternatives().into_iter().flatten().filter_map(|accepts| mined(accepts)).collect();
+                (r.skill, r.level, r.xp, r.count as u32, ores)
+            });
+            let cooked = || {
+                let r = content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id).min_by_key(|r| r.def.level)?;
+                let inputs: Vec<crate::block::BlockId> = content.cooking.iter().filter(|(_, other)| std::ptr::eq(*other, r)).map(|(input, _)| input).collect();
+                Some((r.skill, r.def.level, r.def.xp, 1, mined(&inputs).into_iter().collect()))
+            };
+            grid.or_else(cooked).map(|(skill, level, xp, count, ores)| (skill, level, (xp * 10.0).round() as u32, count, ores))
         };
         // The line and every quest it comes after, in file order once their `after` is done.
         let quests: Vec<&crate::quest::QuestDef> = content.quests.iter().collect();
@@ -444,10 +456,18 @@ mod tests {
                     _ => None,
                 }));
                 for (name, n) in makes {
-                    let Some((skill, level, tenths, count)) = recipe(&name) else { panic!("{}: nothing makes `{name}`", quest.name) };
+                    let Some((skill, level, tenths, count, ores)) = recipe(&name) else { panic!("{}: nothing makes `{name}`", quest.name) };
                     let had = made_here.entry(name.clone()).or_default();
                     let batches = n.saturating_sub(*had).div_ceil(count);
                     *had += batches * count;
+                    // The ores it uses up are mined first.
+                    for (ore, rule) in ores.into_iter().filter(|_| batches > 0) {
+                        let skill = rule.skill.expect("mined");
+                        if skills.level(route.xp(skill)) < rule.level {
+                            stuck.push(format!("{}: {name} uses {} at {} {}, the line gives {} xp", quest.name, blocks.def(ore).name, skills.get(skill).name, rule.level, route.xp(skill) / 10));
+                        }
+                        route.grant(skill, (rule.xp * 10.0).round() as u32 * batches);
+                    }
                     let Some(skill) = skill else { continue };
                     if batches > 0 && skills.level(route.xp(skill)) < level {
                         stuck.push(format!("{}: {name} needs {} {level}, the line gives {} xp", quest.name, skills.get(skill).name, route.xp(skill) / 10));
@@ -500,7 +520,6 @@ mod tests {
             }
             done.push(quest.name.clone());
         }
-        walls.retain(|w| !AWAITING_DESIGN.iter().any(|a| w.starts_with(a)));
         assert!(walls.is_empty(), "the main quest line asks for levels it hasn't earned: {walls:#?}");
     }
 }
