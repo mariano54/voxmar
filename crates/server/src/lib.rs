@@ -286,6 +286,9 @@ pub(crate) fn load_column(
 pub(crate) struct Server {
     config: ServerConfig,
     meta: WorldMeta,
+    /// The last save generation begun, whether or not it counted: none is begun twice, so
+    /// files a failed save left can never pass for a later one's.
+    generation: u64,
     save: Option<WorldSave>,
     content: Content,
     generator: Arc<dyn Generator>,
@@ -396,6 +399,7 @@ impl Server {
             tick,
             day: meta.day.unwrap_or(tick) as f64,
             day_speed: meta.day_speed,
+            generation: meta.generation,
             meta,
             save,
             content,
@@ -558,75 +562,83 @@ impl Server {
         self.tick_seconds = started.elapsed().as_secs_f64();
     }
 
-    /// Writes edited columns, joined players and the world's metadata. Failures are
-    /// logged; columns that failed stay dirty and are tried again at the next save.
+    /// Writes edited columns, joined players and the world's metadata, as one generation:
+    /// if any of it fails, none of it counts, and edited columns are tried again next time.
     fn save(&mut self) {
         let Some(save) = &self.save else { return };
         let _span = tracing::info_span!("save_world").entered();
         let started = Instant::now();
         // One generation: nothing counts until `world.ron` does, so a save cut short leaves
         // the last whole one, and what a player holds never also stays in a machine.
-        let generation = self.meta.generation + 1;
+        let generation = self.generation.max(self.meta.generation) + 1;
+        self.generation = generation;
         save.begin(generation);
+        let mut ok = true;
+        let mut failed = |what: &str, e: std::io::Error| {
+            tracing::error!("could not save {what}: {e}");
+            ok = false;
+        };
         let (world, registry) = (&self.world, &self.content.blocks);
+        // A column no longer in the world has nothing left to save.
+        self.dirty.retain(|&pos| world.column(pos).is_some());
         let mut written = FxHashSet::default();
-        self.dirty.retain(|&pos| {
-            let Some(column) = world.column(pos) else { return false };
+        for &pos in &self.dirty {
+            let Some(column) = world.column(pos) else { continue };
             match save.write_column(pos, column, registry) {
                 Ok(()) => {
                     written.insert(pos);
                 }
-                Err(e) => tracing::error!("could not save column {pos:?}: {e}"),
+                Err(e) => failed(&format!("column {pos:?}"), e),
             }
-            true
-        });
+        }
         if let Err(e) = save.write_machines(&self.saved_machines()) {
-            tracing::error!("could not save machines: {e}");
+            failed("machines", e);
         }
         if self.config.cut_saves {
             tracing::warn!("save {generation} cut short after its machines, as asked");
             return;
         }
         for player in self.players.values().filter(|p| p.joined) {
-            self.save_player(player);
+            if let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills, &self.content.effects), registry) {
+                failed(&format!("player {}", player.name), e);
+            }
         }
-        let blocks = &self.content.blocks;
-        if let Err(e) = save.write_items(&self.items.saved(|item| blocks.def(item).name.clone())) {
-            tracing::error!("could not save dropped items: {e}");
+        if let Err(e) = save.write_items(&self.items.saved(|item| registry.def(item).name.clone())) {
+            failed("dropped items", e);
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
-            tracing::error!("could not save creatures: {e}");
+            failed("creatures", e);
         }
         let crops = &self.content.crops;
         if let Err(e) = save.write_crops(&self.farm.saved(|id| crops.get(id).def.name.clone())) {
-            tracing::error!("could not save crops: {e}");
+            failed("crops", e);
         }
-        self.meta.time = self.tick;
-        self.meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
-        self.meta.regrowing = self.saved_regrowing();
-        self.meta.day = Some(self.day as u64);
-        self.meta.day_speed = self.day_speed;
-        self.meta.last_played = save::unix_time();
-        self.meta.generation = generation;
-        match save.commit(&self.meta) {
-            // Columns saved are clean; any not moved into place are written again next time.
-            Ok(true) => self.dirty.retain(|pos| !written.contains(pos)),
-            Ok(false) => {}
-            Err(e) => {
-                tracing::error!("could not save {}: {e}", save.dir().display());
-                self.meta.generation = generation - 1;
+        if !ok {
+            // A part missing would let what moved since the last save be in two places, or
+            // none: the world stays as last saved.
+            save.abandon();
+            tracing::error!("save {generation} of {} abandoned", save.dir().display());
+            return;
+        }
+        let mut meta = self.meta.clone();
+        meta.time = self.tick;
+        meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
+        meta.regrowing = self.saved_regrowing();
+        meta.day = Some(self.day as u64);
+        meta.day_speed = self.day_speed;
+        meta.last_played = save::unix_time();
+        meta.generation = generation;
+        match save.commit(&meta) {
+            Ok(moved) => {
+                self.meta = meta;
+                // Columns saved are clean; any not moved into place are written again next time.
+                if moved {
+                    self.dirty.retain(|pos| !written.contains(pos));
+                }
             }
+            Err(e) => tracing::error!("could not save {}: {e}", save.dir().display()),
         }
         tracing::debug!("saved {} columns and {} players in {:?}", written.len(), self.players.len(), started.elapsed());
-    }
-
-    fn save_player(&self, player: &Player) {
-        if let Some(save) = &self.save
-            && player.joined
-            && let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills, &self.content.effects), &self.content.blocks)
-        {
-            tracing::error!("could not save player {}: {e}", player.name);
-        }
     }
 
     /// The clocks, as players are told them.

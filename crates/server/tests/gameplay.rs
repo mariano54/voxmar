@@ -1267,10 +1267,10 @@ fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
     use_at(&mut client, crusher);
     client.pump_until(|c| count(c, ore) == 0 && c.chat.iter().any(|(_, t)| t.contains("making")));
     // With an empty hand, what it made comes out: two dust from one ore.
-    let started = Instant::now();
+    let started = client.tick;
     while count(&client, dust) == 0 {
-        assert!(started.elapsed() < Duration::from_secs(30), "the crusher made nothing: {:?}", client.chat);
-        std::thread::sleep(Duration::from_millis(500));
+        assert!(server_seconds(&client, started) < 30, "the crusher made nothing: {:?}", client.chat);
+        wait_server(&mut client, 1);
         use_at(&mut client, crusher);
         client.pump_until(|c| !c.chat.is_empty());
     }
@@ -1371,7 +1371,7 @@ fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
     let started = client.tick;
     loop {
         assert!(server_seconds(&client, started) < 20, "the washer never said it needs water: {:?}", client.chat);
-        std::thread::sleep(Duration::from_millis(500));
+        wait_server(&mut client, 1);
         use_at(&mut client, washer);
         client.pump_until(|c| !c.chat.is_empty());
         if client.chat.iter().any(|(_, t)| t.contains("needs water")) {
@@ -1385,7 +1385,7 @@ fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
     let started = client.tick;
     while count(&client, dust) < 3 {
         assert!(server_seconds(&client, started) < 40, "the washer made {} dust: {:?}", count(&client, dust), client.chat);
-        std::thread::sleep(Duration::from_millis(500));
+        wait_server(&mut client, 1);
         use_at(&mut client, washer);
         client.pump_until(|c| !c.chat.is_empty());
     }
@@ -1446,7 +1446,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
             let wheel = client.ok("/machine ~7 ~ ~");
             panic!("the bloomery made no bloom: {:?}; the wheel: {wheel}", client.chat);
         }
-        std::thread::sleep(Duration::from_millis(1000));
+        wait_server(&mut client, 1);
         use_at(&mut client, core);
         client.pump_until(|c| !c.chat.is_empty());
     }
@@ -1457,7 +1457,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
     let started = client.tick;
     while !client.ok("/machine ~8 ~ ~").contains("needs a kept animal") {
         assert!(server_seconds(&client, started) < 10, "one aurochs walks two wheels");
-        std::thread::sleep(Duration::from_millis(300));
+        wait_server(&mut client, 1);
     }
     assert!(!client.ok("/machine ~7 ~ ~").contains("needs a kept animal"), "the nearer wheel still turns");
     // The aurochs, kept, can be taken away again; then the wheel stops.
@@ -1465,7 +1465,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
     let started = client.tick;
     while !client.ok("/machine ~7 ~ ~").contains("needs a kept animal") {
         assert!(server_seconds(&client, started) < 10, "the wheel still turns without its aurochs");
-        std::thread::sleep(Duration::from_millis(300));
+        wait_server(&mut client, 1);
     }
 }
 
@@ -1510,7 +1510,7 @@ fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two
     let started = client.tick;
     while count(&client, coke) == 0 {
         assert!(server_seconds(&client, started) < 60, "the coke oven baked no coke: {}", client.ok(&format!("/machine {} {} {}", oven.x, oven.y, oven.z)));
-        std::thread::sleep(Duration::from_millis(500));
+        wait_server(&mut client, 1);
         use_machine(&mut client, oven);
         client.ok("/seed");
     }
@@ -1527,7 +1527,7 @@ fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two
     let started = client.tick;
     while count(&client, ingot) == 0 {
         assert!(server_seconds(&client, started) < 60, "the blast furnace made no iron: {}", client.ok(&format!("/machine {} {} {}", furnace.x, furnace.y, furnace.z)));
-        std::thread::sleep(Duration::from_millis(500));
+        wait_server(&mut client, 1);
         client.ok("/creatures hold aurochs");
         use_machine(&mut client, furnace);
         client.ok("/seed");
@@ -1788,8 +1788,50 @@ fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() 
     let in_chest = said.split(' ').zip(said.split(' ').skip(1)).find_map(|(n, word)| (word == "items").then(|| n.parse::<u32>().ok()).flatten()).unwrap_or(0);
     assert_eq!(held(&client) + in_chest, 64, "the player holds {}, the chest: {said}", held(&client));
     drop(client);
-    let staged: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".new")).collect();
-    assert!(staged.is_empty(), "the cut save was forgotten: {staged:?}");
+    assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new(), "the cut save was forgotten");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Files a save staged and left, in the world and its players and columns.
+fn staged_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    [dir.to_path_buf(), dir.join("players"), dir.join("columns")]
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|entries| entries.flatten().map(|e| e.path()))
+        .filter(|p| p.to_string_lossy().ends_with(".new"))
+        .collect()
+}
+
+#[test]
+fn a_save_whose_machines_cannot_be_written_does_not_count_and_leaves_nothing_staged() {
+    let dir = world_dir("failing");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    after_this_loop(&mut client);
+    let before = saved_generation(&dir);
+    // The machines can't be written for the next saves: a directory stands where they go.
+    let blocked: Vec<_> = (before + 1..before + 40).map(|g| dir.join(format!("machines.ron.{g}.new"))).collect();
+    for path in &blocked {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    // A player leaving saves the world, players and all; none of it counts.
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    drop(other);
+    after_this_loop(&mut client);
+    assert_eq!(saved_generation(&dir), before, "a save missing its machines counted");
+    let staged: Vec<_> = staged_files(&dir).into_iter().filter(|p| !blocked.contains(p)).collect();
+    assert!(staged.is_empty(), "the failed save left {staged:?}");
+    // With room again, the next save counts.
+    for path in &blocked {
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    drop(other);
+    after_this_loop(&mut client);
+    assert!(saved_generation(&dir) > before, "the save after counted");
+    drop(client);
+    assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

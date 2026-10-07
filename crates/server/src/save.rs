@@ -229,7 +229,12 @@ impl WorldSave {
     /// whether all did (any left are moved when the world next opens).
     pub fn commit(&self, meta: &WorldMeta) -> io::Result<bool> {
         let staged = self.staging.lock().expect("save staging").take();
-        self.write_meta(meta)?;
+        if let Err(e) = self.write_meta(meta) {
+            if let Some((generation, files)) = &staged {
+                discard(*generation, files);
+            }
+            return Err(e);
+        }
         let Some((generation, files)) = staged else { return Ok(true) };
         let mut moved = true;
         for file in files {
@@ -239,6 +244,14 @@ impl WorldSave {
             }
         }
         Ok(moved)
+    }
+
+    /// Gives up the save begun, as a failed write must: what it staged is deleted and the
+    /// world stays as last saved, so nothing held is ever both there and in a newer file.
+    pub fn abandon(&self) {
+        if let Some((generation, files)) = self.staging.lock().expect("save staging").take() {
+            discard(generation, &files);
+        }
     }
 
     /// Where a file of the save being written goes: beside its own while one is begun.
@@ -557,6 +570,19 @@ fn staged_path(path: &Path, generation: u64) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// Deletes the files a save of `generation` staged for `files`. One left behind is deleted
+/// when the world next opens, as that generation never counted.
+fn discard(generation: u64, files: &[PathBuf]) {
+    for file in files {
+        let staged = staged_path(file, generation);
+        if let Err(e) = std::fs::remove_file(&staged)
+            && e.kind() != io::ErrorKind::NotFound
+        {
+            tracing::error!("could not delete the unsaved {}: {e}", staged.display());
+        }
+    }
+}
+
 /// The file a staged one is for, and its generation.
 fn staged_of(path: &Path) -> Option<(PathBuf, u64)> {
     let name = path.file_name()?.to_str()?;
@@ -568,11 +594,17 @@ fn staged_of(path: &Path) -> Option<(PathBuf, u64)> {
 /// see the old or the new contents.
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temporary = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&temporary)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&temporary, path)
+    let written = (|| {
+        let mut file = std::fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 /// A file name for any player name: letters, digits, `-` and `_` are kept and everything
@@ -651,6 +683,45 @@ mod tests {
         save.recover(&save.read_meta().unwrap());
         assert_eq!(save.read_machines().unwrap(), machines(64));
         assert_eq!(save.read_crops().unwrap(), crops(1));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A save with a part that could not be written never counts, and leaves nothing
+    /// staged: what moved since the last save is never in two places.
+    #[test]
+    fn a_save_with_a_failed_write_or_meta_leaves_the_last_one_whole() {
+        let dir = temp_dir("failed");
+        let save = WorldSave::new(&dir);
+        let mut meta = WorldMeta::new("Test", 7, GameMode::Creative);
+        save.create(&meta).unwrap();
+        let crops = |stage: u8| vec![SavedCrop { position: [1, 2, 3], crop: "base:wheat".into(), stage, due: 9 }];
+        save.begin(1);
+        save.write_crops(&crops(0)).unwrap();
+        meta.generation = 1;
+        assert!(save.commit(&meta).unwrap());
+        // Generation 2: the crops write, the machines cannot (their place is a directory).
+        let blocked = staged_path(&dir.join(MACHINES_FILE), 2);
+        std::fs::create_dir_all(&blocked).unwrap();
+        save.begin(2);
+        save.write_crops(&crops(1)).unwrap();
+        assert!(save.write_machines(&[]).is_err());
+        save.abandon();
+        assert_eq!(save.read_meta().unwrap().generation, 1);
+        assert!(!staged_path(&dir.join(CROPS_FILE), 2).exists(), "nothing of it is left staged");
+        assert_eq!(save.read_crops().unwrap(), crops(0));
+        std::fs::remove_dir_all(&blocked).unwrap();
+        // Generation 3: everything writes, but `world.ron` cannot: it does not count either.
+        let meta_blocked = dir.join(META_FILE).with_extension("tmp");
+        std::fs::create_dir_all(&meta_blocked).unwrap();
+        save.begin(3);
+        save.write_crops(&crops(2)).unwrap();
+        save.write_machines(&[]).unwrap();
+        meta.generation = 3;
+        assert!(save.commit(&meta).is_err());
+        std::fs::remove_dir_all(&meta_blocked).unwrap();
+        assert_eq!(save.read_meta().unwrap().generation, 1);
+        assert!(!staged_path(&dir.join(CROPS_FILE), 3).exists() && !staged_path(&dir.join(MACHINES_FILE), 3).exists(), "nothing of it is left staged");
+        assert_eq!(save.read_crops().unwrap(), crops(0));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
