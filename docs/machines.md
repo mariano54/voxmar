@@ -45,7 +45,7 @@ Everything a mod might want to change is in that data, not in code.
 | Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore); the Coke Oven (a multiblock of kiln bricks three on a side round a hollow middle: coal into coke by its own heat, 30 s); the Blast Furnace (the bloomery's ring four high, on rotation: two iron ore and a coke into four ingots, two an ore, ore only); sawmill (on rotation: a log into six planks of its wood on average, half again an axe's) |
 | LV | Dynamo (rotation to LV), LV cable, battery bank | Electric furnace, macerator (2 dust, twice as fast), ore washer (3 dust, half as fast, needs water beside it) |
 | MV | Steam turbine (steam to MV), MV cable, MV battery bank, LV transformer (MV in on top, LV out of the other faces) | LV machines through a transformer |
-| HV | The Turbine Hall (a multiblock of turbine casing five long, three wide and three high, hollow in the middle, its core in the front face: steam to HV, 128 a step from 128 steam), HV cable, HV battery bank, MV transformer (HV in on top, MV out of the other faces) | MV and LV machines through transformers |
+| HV | The Turbine Hall (a multiblock of turbine casing five long, three wide and three high, hollow in the middle, its core in the front face: steam to HV, 128 a step from 128 steam: six boilers run it at full, five at 94%), HV cable, HV battery bank, MV transformer (HV in on top, MV out of the other faces) | MV and LV machines through transformers |
 
 ## How power moves
 

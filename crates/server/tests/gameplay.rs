@@ -1690,9 +1690,19 @@ fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformer
         client.ok("/seed");
     }
     assert_eq!(count(&client, dust), 2, "a macerator makes two dust an ore");
-    // A casing broken out of the hall: the turbine stops.
+    // A casing broken out of the hall: the turbine stops, and a player at the macerator
+    // sees it has no power within a survey (`survey_seconds`, 1) and the converters' lag.
     client.ok(&format!("/setblock {} air", at(hall + IVec3::new(2, 0, 0))));
-    machine_says(&mut client, &at(core), "not complete", 10);
+    let broken = client.tick;
+    client.ok("/clear");
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_machine(&mut client, macerator);
+    client.pump_until(|c| count(c, ore) == 0);
+    machine_says(&mut client, &at(macerator), "no power", 2);
+    assert!(server_seconds(&client, broken) <= 2, "the macerator ran on for {} s", server_seconds(&client, broken));
+    machine_says(&mut client, &at(core), "not complete", 1);
 }
 
 #[test]
