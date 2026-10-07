@@ -481,17 +481,27 @@ fn leash() -> f32 {
 struct CreatureFile {
     creatures: Vec<CreatureDef>,
     #[serde(default)]
-    limits: Option<Limits>,
+    limits: Option<SetLimits>,
 }
 
-/// How many creatures the world holds. One package's `creatures.ron` sets them (`limits`),
-/// as one sets movement; without any, these defaults.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// How many creatures the world holds. A package's `creatures.ron` may set any of them
+/// (`limits`); a later package's replace an earlier one's, with a note naming both, and
+/// what none sets keeps these defaults. Wild creatures and kept animals have budgets of
+/// their own, so a rancher's herds never empty the world of wild animals and monsters for
+/// everyone.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limits {
-    /// Most alive at once, whatever the players. Wild ones leave room for kept animals
-    /// still waiting in the save, so those always come back.
+    /// Most alive at once, wild and kept, whatever the players: room for the wild ones and
+    /// `keepers` players' kept animals. Kept animals still waiting in the save count against
+    /// it. Past that many keepers at their cap, wild ones get fewer.
     pub most: usize,
+    /// Most wild creatures alive at once.
+    pub wild_most: usize,
+    /// Most animals one player keeps, herds and pets together, alive or waiting in the
+    /// save: taming and births past it are refused.
+    pub kept_each: usize,
+    /// How many players' kept animals `most` makes room for, beside the wild ones.
+    pub keepers: usize,
     /// At most this many animals, and this many monsters, near each player.
     pub animals_near: usize,
     pub monsters_near: usize,
@@ -499,21 +509,61 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { most: 512, animals_near: 6, monsters_near: 6 }
+        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 6, monsters_near: 6 }
     }
 }
 
+/// The limits one package sets: any of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SetLimits {
+    pub most: Option<usize>,
+    pub wild_most: Option<usize>,
+    pub kept_each: Option<usize>,
+    pub keepers: Option<usize>,
+    pub animals_near: Option<usize>,
+    pub monsters_near: Option<usize>,
+}
+
 impl Limits {
-    /// Whether these limits can hold: room for one, and for what one player draws near.
-    pub fn check(&self) -> Result<(), RegistryError> {
-        if self.most == 0 {
-            return Err(RegistryError("creature limits: `most` must be at least 1".into()));
+    /// These limits with `set` over them, and the names of those it set.
+    pub fn with(mut self, set: &SetLimits) -> (Self, Vec<&'static str>) {
+        let mut changed = Vec::new();
+        for (name, field, value) in [
+            ("most", &mut self.most, set.most),
+            ("wild_most", &mut self.wild_most, set.wild_most),
+            ("kept_each", &mut self.kept_each, set.kept_each),
+            ("keepers", &mut self.keepers, set.keepers),
+            ("animals_near", &mut self.animals_near, set.animals_near),
+            ("monsters_near", &mut self.monsters_near, set.monsters_near),
+        ] {
+            if let Some(value) = value {
+                *field = value;
+                changed.push(name);
+            }
         }
-        if self.animals_near + self.monsters_near > self.most {
-            return Err(RegistryError(format!(
-                "creature limits: {} animals and {} monsters near one player are more than `most` ({})",
-                self.animals_near, self.monsters_near, self.most
-            )));
+        (self, changed)
+    }
+
+    /// Whether these limits can hold: room for one wild creature, for what one player draws
+    /// near, and for every keeper's animals beside the wild ones.
+    pub fn check(&self) -> Result<(), RegistryError> {
+        let error = |why: String| Err(RegistryError(format!("creature limits: {why}")));
+        if self.wild_most == 0 {
+            return error("`wild_most` must be at least 1".into());
+        }
+        if self.animals_near + self.monsters_near > self.wild_most {
+            return error(format!(
+                "{} animals and {} monsters near one player are more than `wild_most` ({})",
+                self.animals_near, self.monsters_near, self.wild_most
+            ));
+        }
+        let needed = self.keepers.checked_mul(self.kept_each).and_then(|kept| kept.checked_add(self.wild_most));
+        if needed.is_none_or(|needed| self.most < needed) {
+            return error(format!(
+                "`most` ({}) is less than `wild_most` ({}) and {} keepers' {} kept animals each",
+                self.most, self.wild_most, self.keepers, self.kept_each
+            ));
         }
         Ok(())
     }
@@ -564,7 +614,7 @@ pub struct CreatureRegistry {
 impl CreatureRegistry {
     /// Reads a package's `creatures.ron`, qualifying names with its namespace: its species,
     /// and the limits if it sets them.
-    pub fn read(namespace: &str, source: &str) -> Result<(Vec<CreatureDef>, Option<Limits>), RegistryError> {
+    pub fn read(namespace: &str, source: &str) -> Result<(Vec<CreatureDef>, Option<SetLimits>), RegistryError> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let file: CreatureFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/creatures.ron: {e}")))?;
         let qualify = |name: &mut String| {
@@ -858,13 +908,25 @@ mod tests {
 
     #[test]
     fn limits_load_from_the_file_and_are_checked() {
-        let source = RABBIT.replacen("(creatures:", "(limits: (most: 40, animals_near: 4, monsters_near: 3), creatures:", 1);
-        let (_, limits) = CreatureRegistry::read("base", &source).unwrap();
-        assert_eq!(limits, Some(Limits { most: 40, animals_near: 4, monsters_near: 3 }));
+        let source = RABBIT.replacen("(creatures:", "(limits: (wild_most: 20, kept_each: 5), creatures:", 1);
+        let (_, set) = CreatureRegistry::read("base", &source).unwrap();
+        let set = set.expect("set");
+        assert_eq!(set, SetLimits { wild_most: Some(20), kept_each: Some(5), ..Default::default() });
         assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().1, None, "a file without limits leaves them to another");
+        // What a package sets replaces what was there; the rest stays.
+        let (limits, changed) = Limits::default().with(&set);
+        assert_eq!(changed, ["wild_most", "kept_each"]);
+        assert_eq!((limits.wild_most, limits.kept_each, limits.most), (20, 5, Limits::default().most));
         assert!(Limits::default().check().is_ok());
-        // Room for none, or less room than one player's surroundings draw, will not load.
-        for bad in [Limits { most: 0, animals_near: 0, monsters_near: 0 }, Limits { most: 10, animals_near: 6, monsters_near: 6 }] {
+        // Room for no wild ones, less than one player's surroundings draw, or less in all
+        // than the wild ones and every keeper's animals, will not load.
+        let ok = Limits::default();
+        for bad in [
+            Limits { wild_most: 0, animals_near: 0, monsters_near: 0, ..ok },
+            Limits { wild_most: 10, ..ok },
+            Limits { most: ok.wild_most + ok.keepers * ok.kept_each - 1, ..ok },
+            Limits { keepers: usize::MAX, ..ok },
+        ] {
             let blocks = BlockRegistry::new(vec![]).unwrap();
             assert!(CreatureRegistry::new(Vec::new(), bad, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
         }
