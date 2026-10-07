@@ -82,6 +82,8 @@ pub struct LocalPlayer {
     pub journal: voxmar_engine::journal::Journal,
     /// Every quest's state, as the server tells it (the quest book's data).
     pub quests: Vec<voxmar_engine::quest::QuestState>,
+    /// Counts the server's word on quests, for screens to redraw only on a change.
+    pub quests_rev: u32,
 }
 
 impl Default for LocalPlayer {
@@ -114,6 +116,7 @@ impl Default for LocalPlayer {
             seed: 0,
             journal: Default::default(),
             quests: Vec::new(),
+            quests_rev: 0,
         }
     }
 }
@@ -139,6 +142,8 @@ pub struct UiState {
     pub character_open: bool,
     /// The journal of what the player has found.
     pub journal_open: bool,
+    /// The quest book.
+    pub quests_open: bool,
     /// The settings menu.
     pub menu_open: bool,
     /// The chat and command line.
@@ -164,15 +169,16 @@ fn grab_cursor(
             ui.console_open = false;
         } else if ui.recipes_open {
             ui.recipes_open = false;
-        } else if ui.inventory_open || ui.character_open || ui.journal_open {
+        } else if ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open {
             ui.inventory_open = false;
             ui.character_open = false;
             ui.journal_open = false;
+            ui.quests_open = false;
         } else {
             ui.menu_open = !ui.menu_open;
         }
     }
-    let screen_open = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.console_open || ui.recipes_open || player.dead;
+    let screen_open = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.console_open || ui.recipes_open || player.dead;
     let want_locked = !screen_open && (ui.cursor_locked || *screen_was_open || mouse.just_pressed(MouseButton::Left));
     *screen_was_open = screen_open;
     let changed = want_locked != ui.cursor_locked;

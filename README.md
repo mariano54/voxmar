@@ -722,6 +722,23 @@ own: 36 frames of the game itself, captured along the coast near spawn, then cro
 tinted and tiled (801915d). Starting a game fades the menu's music out, so a world
 opens in quiet; returning to the menus brings it back.
 
+Voxmar ships none of Minecraft's or any modpack's music. Only with the Minecraft assets setting on
+does music from the player's own install play: the tracks of their Prism Launcher instance join
+Voxmar's (the most recently launched GT New Horizons one, or the instance `prism_instance` names in
+`settings.ron`, in the launcher folder `prism_folder` names, empty for the standard one; a named one
+that is missing is logged). They are the vanilla music and records the launcher's asset store holds
+for its Minecraft version, a music mod's soundtrack zip (HorizonMelodies, with the newer Minecraft
+and the StaTech tracks), and music in its resource packs and mod jars. A file found once (the same
+size and CRC-32) is not added again, so packs repeating the soundtrack add nothing; the log names
+every copy skipped and the track it repeats. Nothing is copied: each track is read from where it is
+as it is about to play, and played only once it is checked to decode (one that does not leaves the
+rotation). `assets/content/base/music.ron` holds the numbers, where to look, and which moments each
+track suits by its path: menu tracks on the title screen, Nether, End, cave and structure tracks
+deep underground, the rest in the world; Voxmar's own play everywhere, a quarter of the picks.
+`cargo test --profile iter -p voxmar_client prism_music_decodes -- --ignored --nocapture` lists
+what this machine's instance has, with every copy skipped from the 1.21 and StaTech resource packs,
+and checks every track is placed and decodes.
+
 Block sounds follow each block's material (`sound: Wood` in its definition; the kinds are listed
 in `blocks.ron`), so new blocks sound right without new audio. Steps, landings, placing, the taps
 while mining and breaking come from the player's own Minecraft install when it has them and the
