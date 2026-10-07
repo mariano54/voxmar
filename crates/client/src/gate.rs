@@ -3595,10 +3595,11 @@ fn stars(shot: &Image) -> Result<String, String> {
 
 /// Open ground at midnight, in the lower half of a shot: dark, but not black. Before nights
 /// were lifted (2026-10-06) a moonless night's ground averaged 2 or 3 of 255 and Mariano
-/// could not see where he walked.
+/// could not see where he walked; nights averaging 8 (moonless) to 17 (full moon) he found
+/// far too bright; they now average about 5 to 9.
 fn night_ground(shot: &Image) -> Result<String, String> {
-    const DARKEST: f32 = 6.0;
-    const BRIGHTEST: f32 = 70.0;
+    const DARKEST: f32 = 3.5;
+    const BRIGHTEST: f32 = 40.0;
     let (w, h, data) = pixels(shot)?;
     let (mut sum, mut count) = (0.0f32, 0.0f32);
     // The lower half, above the hotbar.
