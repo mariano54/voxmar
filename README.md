@@ -229,7 +229,9 @@ broken blocks and the chips while mining, and the smoke, embers, sparks and flam
 and torches give off), how far the hotbar sits above the bottom edge (Raise
 HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the sprint key and double-tap sprint, the zoom key
 (click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
-smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
+smoothly while zoomed), zoom in survival, toggle guard (a right-click raises the guard and the next
+lowers it, instead of holding the button), damage numbers (the hitsplats a fight shows), and fly speed
+for admins, with Resume, Save and quit
 to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in
 the OS config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
 `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`);
