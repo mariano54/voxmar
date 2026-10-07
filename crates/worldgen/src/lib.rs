@@ -304,7 +304,7 @@ impl Overworld {
         Self {
             dials,
             geology: Geology::new(stream, &dials, content, &rocks),
-            rivers: water::Rivers::new(stream, &dials),
+            rivers: water::Rivers::new(stream, &dials, content),
             ecology,
             decor,
             trails: trails::Trails::new(stream, content.trails.laid),
@@ -1743,6 +1743,111 @@ mod tests {
             println!("{name} ({areas} areas): ground {:?}", top(&ground, 6));
             println!("  on the ground {:.0}/area: {:?}", per(&above), top(&above, 8));
             println!("  lone cubes {:.0}/area: {:?}", per(&lone), top(&lone, 8));
+        }
+    }
+
+    /// Tarns and lake banks in mountains and their alpine meadows (and snowy peaks, whose
+    /// own lakes the sky lotus shares): `cargo test --profile iter -p voxmar_worldgen
+    /// tarn_census -- --ignored --nocapture` (SEEDS=1,2,3,4, REGIONS=3, AT=1 for places to
+    /// look). Over `REGIONS` × `REGIONS` regions of rivers (a kilometre each) around the
+    /// nearest place of each of those biomes to the origin of each seed's world: each biome's land in and out of
+    /// tarn country, the still lakes there per square kilometre (by their pit) and their size,
+    /// and the share of its land that is lake bank (a block or two over a lake's water,
+    /// where the sky lotus may grow).
+    #[test]
+    #[ignore]
+    fn tarn_census() {
+        let registry = registry();
+        let seeds: Vec<u64> = std::env::var("SEEDS").unwrap_or_else(|_| "1,2,3,4".into()).split(',').filter_map(|s| s.parse().ok()).collect();
+        let regions: i32 = std::env::var("REGIONS").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
+        let names = ["mountains", "alpine_meadow", "snowy_peaks"];
+        // Per biome, in country and out: land columns (sampled every 8 blocks, so 64 each),
+        // bank columns, lakes, lake cells.
+        let mut tally = [[[0u64; 4]; 2]; 3];
+        const STEP: i32 = 8;
+        for &seed in &seeds {
+            let world = Overworld::new(seed, registry.clone());
+            let ids: Vec<BiomeId> = names.iter().map(|n| world.biomes.id(&format!("base:{n}")).unwrap()).collect();
+            let size = crate::water::REGION;
+            // The regions around the nearest place of each biome, each once.
+            let mut around: Vec<IVec2> = Vec::new();
+            for name in names {
+                let Some(at) = world.locate_biome(name, IVec2::ZERO, 60000) else { continue };
+                let centre = at.div_euclid(IVec2::splat(size));
+                for r in 0..regions * regions {
+                    let region = centre + IVec2::new(r % regions - regions / 2, r / regions - regions / 2);
+                    if !around.contains(&region) {
+                        around.push(region);
+                    }
+                }
+            }
+            let country = |x: i32, z: i32| usize::from(world.rivers.tarn_country(x, z) >= 0.5);
+            let mut dry: Option<((i32, i32), i32)> = None;
+            let mut banks = std::collections::HashSet::new();
+            for region in around {
+                let first = region * size;
+                // The land, every `STEP` blocks, a sampler a 256-block tile.
+                for t in 0..16 {
+                    let tile = first + IVec2::new(t % 4, t / 4) * 256;
+                    let sampler = world.dense_sampler(tile, tile + 255);
+                    for k in 0..(256 / STEP) * (256 / STEP) {
+                        let (x, z) = (tile.x + k % (256 / STEP) * STEP, tile.y + k / (256 / STEP) * STEP);
+                        let site = sampler.site(x, z);
+                        let Some(b) = ids.iter().position(|&id| id == site.home) else { continue };
+                        if site.height >= site.water {
+                            let c = country(x, z);
+                            tally[b][c][0] += (STEP * STEP) as u64;
+                            if b < 2 && world.rivers.tarn_country(x, z) == 0.0 && dry.is_none_or(|(_, h)| site.height > h) {
+                                dry = Some(((x, z), site.height));
+                            }
+                        }
+                    }
+                }
+                // The lakes by their pits, and the banks around each, column by column.
+                for (pit, water, cells) in world.rivers.stream_lakes(world.stages(), region) {
+                    let site = world.site(pit.x, pit.y);
+                    let Some(b) = ids.iter().position(|&id| id == site.home) else { continue };
+                    let c = country(pit.x, pit.y);
+                    tally[b][c][2] += 1;
+                    tally[b][c][3] += cells as u64;
+                    if std::env::var("AT").is_ok() && b < 2 {
+                        println!("  seed {seed}: a lake of {cells} cells, its water at {water}, at {}, {} ({}{})", pit.x, pit.y, names[b], if c == 1 { ", tarn country" } else { "" });
+                    }
+                    let reach = 8 + 4 * (cells as f32).sqrt() as i32 * 2;
+                    let sampler = world.dense_sampler(pit - reach, pit + reach);
+                    for z in pit.y - reach..=pit.y + reach {
+                        for x in pit.x - reach..=pit.x + reach {
+                            let site = sampler.site(x, z);
+                            if let Some(b) = ids.iter().position(|&id| id == site.home)
+                                && site.body == Body::Lake
+                                && (0..=2).contains(&(site.height - site.water))
+                                && banks.insert((x, z))
+                            {
+                                tally[b][country(x, z)][1] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            if std::env::var("AT").is_ok()
+                && let Some((at, height)) = dry
+            {
+                println!("  seed {seed}: high ground outside tarn country at {at:?}, height {height}");
+            }
+        }
+        for (b, name) in names.iter().enumerate() {
+            let land: u64 = tally[b].iter().map(|t| t[0]).sum();
+            for (country, label) in [(1, "in tarn country"), (0, "outside it")] {
+                let [columns, banks, lakes, cells] = tally[b][country];
+                let km2 = columns as f64 / 1e6;
+                let across = if lakes > 0 { 2.0 * (cells as f64 * 64.0 / lakes as f64 / std::f64::consts::PI).sqrt() } else { 0.0 };
+                println!(
+                    "{name:<14} {label:<16} {:>5.1}% of its land, {km2:>6.2} km2: {:>5.1} lakes a km2 (about {across:.0} blocks across), bank {:.2}% of the land",
+                    columns as f64 * 100.0 / land.max(1) as f64,
+                    lakes as f64 / km2.max(1e-9),
+                    banks as f64 * 100.0 / columns.max(1) as f64
+                );
+            }
         }
     }
 

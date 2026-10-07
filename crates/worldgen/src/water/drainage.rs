@@ -96,8 +96,23 @@ pub struct Tier {
     pub lakes: bool,
     /// The chance that a small pit, which would be breached, fills as a hot spring.
     pub springs: f32,
+    /// When a small pit high in the hills holds a tarn instead of being breached.
+    pub tarns: Option<TarnRule>,
     pub tunnel: Option<TunnelRule>,
     pub seed: u64,
+}
+
+/// When a small pit, which would be breached, holds a tarn: a still lake one block under its
+/// rim, in a hollow high in the hills (`content::TarnsDef`).
+pub struct TarnRule {
+    /// The lowest the pit's bottom may lie, in blocks: tarns are a highland thing, and
+    /// lowland water never changes for them.
+    pub floor: f32,
+    /// Depth of the pit below its spill point, in blocks, from which it may hold one.
+    pub depth: f32,
+    /// The chance that such a pit holds one where its ground lets tarns lie fully
+    /// (`Ground::tarns`).
+    pub chance: f32,
 }
 
 /// When a deep basin drains through a tunnel under its rim instead of filling.
@@ -162,6 +177,11 @@ pub trait Ground: Sync {
     /// How humid the climate is at a cell, 0 (arid) ..= 1 (wet enough that lakes stay
     /// full).
     fn humidity(&self, cell: IVec2) -> f32;
+    /// How fully tarns may lie at a cell, 0 ..= 1: their climate and country, and a
+    /// climate humid enough to keep them full.
+    fn tarns(&self, _cell: IVec2) -> f32 {
+        0.0
+    }
 }
 
 /// Reads cells of any tile, keeping the tiles it has used.
@@ -875,6 +895,22 @@ impl Drainage {
         if !big && depth >= 1.5 && unit(3) < tier.springs {
             lake.kind = Kind::Lake;
             lake.spring = true;
+            lake.path = way_out(outlet);
+            lake.level = ((spill - 1.0) * 8.0).floor() as i32;
+            return lake;
+        }
+        // High in the hills, now and then a small pit holds a tarn rather than being breached.
+        if !big
+            && let Some(rule) = &tier.tarns
+            && bottom >= rule.floor
+            && depth >= rule.depth
+            && {
+                // The cheap roll first: most pits are passed over without weighing their climate.
+                let u = unit(4);
+                u < rule.chance && u < rule.chance * ground.tarns(pit)
+            }
+        {
+            lake.kind = Kind::Lake;
             lake.path = way_out(outlet);
             lake.level = ((spill - 1.0) * 8.0).floor() as i32;
             return lake;

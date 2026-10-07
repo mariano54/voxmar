@@ -1142,6 +1142,35 @@ pub struct ShapeDef {
     pub strata: Vec<String>,
 }
 
+/// Tarns: small still lakes in hollows high in the hills, which the stream tier of the
+/// rivers fills where it would otherwise breach a small pit (see `crate::water`). Nothing is
+/// carved for them: the land's own hollows hold them. A later package's replace an earlier
+/// one's.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TarnsDef {
+    /// The climate they lie in, on the bands of `climate.ron`, as for shapes.
+    pub climate: Vec<ClimateBox>,
+    /// The lowest a pit's bottom may lie, in blocks above the sea: tarns are a highland
+    /// thing, and lowland water never changes for them.
+    pub floor: f32,
+    /// Depth of a pit under its rim, in blocks, from which it may hold one.
+    pub depth: f32,
+    /// The chance that such a pit in tarn country holds one, where the climate keeps lakes
+    /// full; less in drier climates, none in deserts.
+    pub chance: f32,
+    /// Tarn country: a slow noise about `scale` blocks across gathers tarns into `share`
+    /// of their climate, a lake district in places and dry rock in others; none elsewhere.
+    pub country: TarnCountryDef,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TarnCountryDef {
+    pub scale: f32,
+    pub share: f32,
+}
+
 /// What a shape makes, and its sizes in blocks.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 pub enum ShapeKind {
@@ -1341,6 +1370,8 @@ struct BiomeFile {
 #[serde(deny_unknown_fields)]
 struct ShapeFile {
     shapes: Vec<ShapeDef>,
+    #[serde(default)]
+    tarns: Option<TarnsDef>,
 }
 
 #[derive(Deserialize)]
@@ -1414,6 +1445,8 @@ pub struct WorldContent {
     pub ores: crate::ores::OresDef,
     /// Settlements (`settlements.ron`).
     pub settlements: crate::settlements::SettlementsDef,
+    /// Tarns (`terrain.ron`); none when no package defines them.
+    pub tarns: Option<TarnsDef>,
 }
 
 /// What hiking trails are made of (`trails.ron`); a later package's replaces an earlier
@@ -1508,6 +1541,7 @@ impl WorldContent {
         let mut weather = voxmar_engine::weather::WeatherTable::default();
         let mut ores = crate::ores::OresDef::default();
         let mut settlements = crate::settlements::SettlementsDef::default();
+        let mut tarns = None;
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
@@ -1582,12 +1616,18 @@ impl WorldContent {
                         PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), snowy: p.snowy.as_deref().map(q), ..p }
                     }));
                 }
-                "terrain.ron" => shapes.extend(parse::<ShapeFile>(&at, &file.source)?.shapes.into_iter().map(|s| ShapeDef {
-                    name: q(&s.name),
-                    surface: s.surface.map(|surface| qualify_surface(&file.package, surface)),
-                    strata: s.strata.iter().map(|n| q(n)).collect(),
-                    ..s
-                })),
+                "terrain.ron" => {
+                    let file_shapes = parse::<ShapeFile>(&at, &file.source)?;
+                    shapes.extend(file_shapes.shapes.into_iter().map(|s| ShapeDef {
+                        name: q(&s.name),
+                        surface: s.surface.map(|surface| qualify_surface(&file.package, surface)),
+                        strata: s.strata.iter().map(|n| q(n)).collect(),
+                        ..s
+                    }));
+                    if file_shapes.tarns.is_some() {
+                        tarns = file_shapes.tarns;
+                    }
+                }
                 "land.ron" => land = Some(parse::<LandDef>(&at, &file.source)?),
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
                 "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
@@ -1673,7 +1713,7 @@ impl WorldContent {
         let snow_cover = weather.snow_cover().to_vec();
         let tree_density = tree_density.unwrap_or(1.0);
         let plant_density = plant_density.unwrap_or(1.0);
-        let content = Self { climate, provinces, biomes, trees, tree_density, plant_density, plant_density_keeps, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements };
+        let content = Self { climate, provinces, biomes, trees, tree_density, plant_density, plant_density_keeps, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements, tarns };
         content.ores.check(registry, &content.provinces)?;
         if !content.settlements.styles.is_empty() {
             content.settlements.check(registry)?;
@@ -1877,6 +1917,22 @@ impl WorldContent {
                 block(&|| format!("{}, strata", at()), name)?;
             }
             self.check_surface(&biome.surface, !biome.strata.is_empty(), &|| at(), &block, &blocks)?;
+        }
+
+        if let Some(tarns) = &self.tarns {
+            let at = || "terrain.ron: tarns".to_owned();
+            for climate in &tarns.climate {
+                if climate.aether.is_some() || climate.depth.is_some() || climate.height.is_some() || climate.provinces.is_some() {
+                    return Err(ContentError(format!("{}: tarns follow the climate bands alone", at())));
+                }
+                self.check_box(climate, &at)?;
+            }
+            let TarnCountryDef { scale, share } = tarns.country;
+            for (what, value, range) in [("floor", tarns.floor, 0.0..=256.0), ("depth", tarns.depth, 0.5..=16.0), ("chance", tarns.chance, 0.0..=1.0), ("country scale", scale, 64.0..=16384.0), ("country share", share, 0.0..=1.0)] {
+                if !range.contains(&value) {
+                    return Err(ContentError(format!("{}: the {what} {value} is outside {range:?}", at())));
+                }
+            }
         }
 
         // Terrain shapes.
