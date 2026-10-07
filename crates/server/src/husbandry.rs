@@ -735,6 +735,27 @@ mod tests {
     }
 
     #[test]
+    fn every_kept_animal_is_looked_at_once_a_reckoning_a_share_at_a_time() {
+        let mut server = test_server();
+        let ids: Vec<u32> = (0..30).map(|salt| kept_rabbit(&mut server, salt)).collect();
+        let mut looked: std::collections::BTreeMap<u32, u32> = Default::default();
+        let mut most_at_once = 0;
+        server.tick = server.tick.next_multiple_of(RECKON_EVERY);
+        for _ in 0..RECKON_EVERY {
+            server.day += 1.0;
+            let before: Vec<f64> = ids.iter().map(|id| server.creatures.live[id].reckoned).collect();
+            server.tick_husbandry();
+            let now: Vec<u32> = ids.iter().zip(before).filter(|(id, was)| server.creatures.live[*id].reckoned != *was).map(|(id, _)| *id).collect();
+            most_at_once = most_at_once.max(now.len());
+            now.into_iter().for_each(|id| *looked.entry(id).or_default() += 1);
+            server.tick += 1;
+        }
+        assert!(ids.iter().all(|id| looked.get(id) == Some(&1)), "{looked:?}");
+        // Thirty animals over twenty shares: never more than two in one pass.
+        assert!(most_at_once <= 2, "{most_at_once} looked at in one pass");
+    }
+
+    #[test]
     fn work_and_the_save_follow_condition() {
         let mut server = test_server();
         let id = kept_rabbit(&mut server, 1);
