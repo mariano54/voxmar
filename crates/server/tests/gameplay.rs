@@ -1371,19 +1371,20 @@ fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
     client.ok("/summon rabbit 1 ~ ~ ~-2");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
     let before = client.items.len();
-    client.ok("/creatures kill");
-    // Judged by the server's clock, so a stalled server proves nothing for free.
+    // Judged by the server's clock, with bounds that hold whenever this thread runs: no
+    // reply carries the tick it ran on, but the tick read before the command is no later
+    // than the kill's, and the tick read once the loot is seen is no earlier than its drop.
     let ticks = |c: &Client| c._server.as_ref().expect("the server").ticks();
-    let killed = ticks(&client);
-    let seconds = |c: &Client| (ticks(c) - killed) as f32 / TICKS_PER_SECOND as f32;
-    let one_tick = 1.0 / TICKS_PER_SECOND as f32;
-    // While it falls, nothing has dropped.
-    while seconds(&client) < falls - one_tick {
-        assert_eq!(client.items.len(), before, "loot came out of a body still falling, {:.2}s into a {falls}s fall", seconds(&client));
+    let asked = ticks(&client);
+    client.ok("/creatures kill");
+    let fall = (falls * TICKS_PER_SECOND as f32).round() as u64;
+    // While the server has not run a fall's length since we asked, nothing has dropped.
+    while ticks(&client) < asked + fall {
+        assert_eq!(client.items.len(), before, "loot came out of a body still falling, {} ticks after asking", ticks(&client) - asked);
         let until = Instant::now() + Duration::from_millis(10);
         client.pump_until(|_| Instant::now() > until);
     }
-    // Then its meat is on the ground, and not before the fall was done.
+    // Then its meat is on the ground, and the server had run at least the fall by then.
     client.pump_until(|c| c.items.len() > before);
-    assert!(seconds(&client) >= falls - one_tick, "dropped {:.2}s after the kill, before the {falls}s fall", seconds(&client));
+    assert!(ticks(&client) >= asked + fall, "loot seen {} ticks after asking, before the {fall}-tick fall", ticks(&client) - asked);
 }

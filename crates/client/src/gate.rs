@@ -2889,8 +2889,9 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if let Some(fall) = fall {
                     gate.fall_judged = true;
                     // Judged by what was drawn: every joint of the body, every frame of its fall.
-                    let result = if fall.samples < fall.joints.max(1) {
-                        Err(format!("its fall was never seen: {} joint samples for {} joints", fall.samples, fall.joints))
+                    // Watched over several frames, not one: three samples of every joint.
+                    let result = if fall.samples < 3 * fall.joints.max(1) {
+                        Err(format!("its fall was hardly seen: {} joint samples for {} joints", fall.samples, fall.joints))
                     } else if fall.spread > 1.5 {
                         Err(format!("a joint of its body was drawn {:.2} of its heights from where it died", fall.spread))
                     } else if fall.scale > 0.05 {
