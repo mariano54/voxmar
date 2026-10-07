@@ -21,6 +21,13 @@ impl Key {
         KEYS.iter().map(|&(k, _)| Key(k))
     }
 
+    /// Whether it is a modifier (Shift, Ctrl, Alt, Super) or Enter, which a binding moved
+    /// for the player never lands on.
+    pub fn modifier_or_enter(self) -> bool {
+        use KeyCode::*;
+        matches!(self.0, ShiftLeft | ShiftRight | ControlLeft | ControlRight | AltLeft | AltRight | SuperLeft | SuperRight | Enter | NumpadEnter)
+    }
+
     /// What the menu calls it.
     pub fn label(self) -> &'static str {
         KEYS.iter().find(|&&(k, _)| k == self.0).map_or("?", |&(_, label)| label)

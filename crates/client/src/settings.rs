@@ -387,8 +387,8 @@ impl Settings {
     /// The settings with every value within its slider's range, a listed resolution, and
     /// no two bindings on one key, nor one on a key the game keeps for itself: a binding
     /// that collides goes back to its default (one moved off its default first), or to the
-    /// first free key if another holds its default, so a hand-edited file or a key a new
-    /// screen took never leaves a screen that cannot open.
+    /// first free key that is not a modifier or Enter if another holds its default, so a
+    /// hand-edited file or a key a new screen took never leaves a screen that cannot open.
     /// Only what is read changes; nothing is written.
     pub fn clamped(mut self) -> Self {
         self.resolution = nearest_resolution(self.resolution);
@@ -405,7 +405,7 @@ impl Settings {
             }
             let free = |key: Key, settings: &Settings| !FIXED_KEYS.contains(&key.0) && !Binding::ALL.iter().any(|other| other.get(settings) == key);
             let default = binding.get(&defaults);
-            let moved = if free(default, &self) { Some(default) } else { Key::all().find(|&k| free(k, &self)) };
+            let moved = if free(default, &self) { Some(default) } else { Key::all().find(|&k| !k.modifier_or_enter() && free(k, &self)) };
             if let Some(moved) = moved {
                 binding.set(&mut self, moved);
             }
