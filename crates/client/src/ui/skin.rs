@@ -169,11 +169,21 @@ pub enum InterfaceFont {
 impl InterfaceFont {
     pub const ALL: [InterfaceFont; 3] = [InterfaceFont::Ledger, InterfaceFont::Block, InterfaceFont::Voxmar];
 
+    /// Its name in the font it builds and in the gate's log; players see [`Self::key`].
     pub fn label(self) -> &'static str {
         match self {
             InterfaceFont::Ledger => "Ledger",
             InterfaceFont::Block => "Block",
             InterfaceFont::Voxmar => "Voxmar",
+        }
+    }
+
+    /// Its name in the settings, from lang.
+    pub fn key(self) -> &'static str {
+        match self {
+            InterfaceFont::Ledger => "settings.font.ledger",
+            InterfaceFont::Block => "settings.font.block",
+            InterfaceFont::Voxmar => "settings.font.voxmar",
         }
     }
 
