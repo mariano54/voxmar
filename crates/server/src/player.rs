@@ -217,10 +217,12 @@ impl Player {
         }
     }
 
-    /// Whether a player playing from elsewhere has sent nothing for longer than `timeout`
-    /// by `now`. The integrated server's own player never is.
+    /// Whether a player playing from elsewhere has sent nothing, not even the keepalive
+    /// their client's network thread sends while the game itself is minimized or busy,
+    /// for longer than `timeout` by `now`. The integrated server's own player never is.
     pub fn idle(&self, now: Instant, timeout: std::time::Duration) -> bool {
-        self.joined && !self.connection.is_local() && now.saturating_duration_since(self.last_heard) > timeout
+        let heard = self.connection.last_heard().map_or(self.last_heard, |at| at.max(self.last_heard));
+        self.joined && !self.connection.is_local() && now.saturating_duration_since(heard) > timeout
     }
 
     pub fn mode(&self) -> GameMode {

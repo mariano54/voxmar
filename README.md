@@ -246,7 +246,8 @@ the server (or by an admin in game) makes anyone else an admin, which their save
 `deop NAME`. Cap render distance with `--view-distance N` (default 32) and players with
 `--max-players N` (default 64). Each name plays once at a time, whatever its case (Ada and ada
 are one player, with one save); at most 16 connections may be waiting to say hello, and a
-player from elsewhere who sends nothing for 15 seconds is let go.
+player from elsewhere whose connection sends nothing for 15 seconds is let go (the game's
+network thread says it is there every 5 seconds, even while the game is minimized).
 
 ### Saved worlds
 

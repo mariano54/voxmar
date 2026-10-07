@@ -65,9 +65,10 @@ pub struct ServerConfig {
     /// A password that makes whoever joins with it an admin, from anywhere (`--admin-token`
     /// on the dedicated server; a client sends `VOXMAR_ADMIN_TOKEN`). `None` for none.
     pub admin_token: Option<String>,
-    /// How long a player connected from elsewhere may send nothing before they are let go
-    /// (clients send their position every tick): a connection that died without closing
-    /// would otherwise keep their name taken.
+    /// How long a player connected from elsewhere may send nothing before they are let go:
+    /// a connection that died without closing would otherwise keep their name taken. A
+    /// client's network thread sends a keepalive every `transport::KEEPALIVE` whatever the
+    /// game is doing, so a minimized or busy client is never let go.
     pub idle_timeout: Duration,
     /// Directory the world is saved in; a new world is created there if it holds none. A
     /// saved world's game mode replaces `allow_flight`. `None` keeps the world in memory

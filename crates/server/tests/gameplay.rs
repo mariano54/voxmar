@@ -1688,6 +1688,20 @@ fn a_player_who_falls_silent_is_let_go_and_may_join_again() {
 }
 
 #[test]
+fn a_player_who_sends_nothing_but_keepalives_is_kept() {
+    let host = Client::join();
+    let addr = tcp::listen("127.0.0.1:0", host._server.as_ref().unwrap().connections()).unwrap();
+    let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    // Twenty seconds of the server's clock with no input, as from a minimized game: only
+    // the connection's keepalives. (Being let go would end the pump with a panic.)
+    let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
+    let until = ticks(&host) + 20 * TICKS_PER_SECOND as u64;
+    guest.pump_until(|_| ticks(&host) >= until);
+    assert!(guest.ok("/seed").contains(char::is_numeric), "the guest was let go");
+    drop(host);
+}
+
+#[test]
 fn chat_floods_slow_down_once_and_admins_make_admins_who_stay_until_deop() {
     let dir = world_dir("op");
     let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });

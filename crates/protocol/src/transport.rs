@@ -5,9 +5,14 @@
 //! socket, over TCP. Never when the game got round to it: a server busy with a long tick
 //! judges a player's timed actions (how long a block took to break) by when the player's
 //! messages came, not by when it read them (see the server's `actions`).
+//!
+//! A TCP client also sends an empty frame whenever it has sent nothing for a while (its
+//! writer thread does, whatever the game is doing), so a server can tell a client that is
+//! only minimized or busy from one whose connection died (`Connection::last_heard`).
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, unbounded};
 
@@ -28,6 +33,22 @@ pub struct Connection<Out, In> {
     /// Set when the outgoing queue filled up because the peer stopped reading: the
     /// connection then counts as closed (see `send`).
     overflowed: AtomicBool,
+    /// When the peer last sent anything, a message or a keepalive, as milliseconds since
+    /// `EPOCH`; `None` in process.
+    heard: Option<Arc<AtomicU64>>,
+}
+
+/// How long a TCP client goes without sending anything before it sends a keepalive.
+pub const KEEPALIVE: Duration = Duration::from_secs(5);
+
+/// The clock `Connection::heard` counts on.
+fn epoch() -> Instant {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    *EPOCH.get_or_init(Instant::now)
+}
+
+fn heard_now(heard: &AtomicU64) {
+    heard.fetch_max(epoch().elapsed().as_millis() as u64, Ordering::Relaxed);
 }
 
 pub type ClientConnection = Connection<ClientMessage, ServerMessage>;
@@ -79,8 +100,13 @@ impl<Out, In> Connection<Out, In> {
         self.loopback
     }
 
-    fn new(tx: Sender<(Instant, Out)>, rx: Receiver<(Instant, In)>, local: bool, loopback: bool) -> Self {
-        Self { tx, rx, local, loopback, overflowed: AtomicBool::new(false) }
+    /// When the peer last sent anything over TCP, keepalives included; `None` in process.
+    pub fn last_heard(&self) -> Option<Instant> {
+        self.heard.as_ref().map(|heard| epoch() + Duration::from_millis(heard.load(Ordering::Relaxed)))
+    }
+
+    fn new(tx: Sender<(Instant, Out)>, rx: Receiver<(Instant, In)>, local: bool, loopback: bool, heard: Option<Arc<AtomicU64>>) -> Self {
+        Self { tx, rx, local, loopback, overflowed: AtomicBool::new(false), heard }
     }
 }
 
@@ -88,18 +114,16 @@ impl<Out, In> Connection<Out, In> {
 pub fn local_pair() -> (ClientConnection, ServerConnection) {
     let (client_tx, server_rx) = unbounded();
     let (server_tx, client_rx) = unbounded();
-    (Connection::new(client_tx, client_rx, true, true), Connection::new(server_tx, server_rx, true, true))
+    (Connection::new(client_tx, client_rx, true, true, None), Connection::new(server_tx, server_rx, true, true, None))
 }
 
 pub mod tcp {
     use std::io::{self, BufReader, BufWriter, Read, Write};
     use std::net::{TcpListener, TcpStream, ToSocketAddrs};
-    use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
     use std::thread;
-    use std::time::Duration;
 
-    use crossbeam_channel::bounded;
+    use crossbeam_channel::{RecvTimeoutError, bounded};
 
     use serde::Serialize;
     use serde::de::DeserializeOwned;
@@ -193,15 +217,35 @@ pub mod tcp {
         // An IPv4 peer reaching a dual-stack listener shows as `::ffff:127.0.0.1`.
         let loopback = stream.peer_addr()?.ip().to_canonical().is_loopback();
         let (out_tx, out_rx) = bounded::<(Instant, Out)>(MAX_QUEUED_OUT);
-        let (max_frame, (in_tx, in_rx), open) = match side {
-            Side::Client => (MAX_SERVER_FRAME, unbounded::<(Instant, In)>(), None),
-            Side::Server(open) => (MAX_CLIENT_FRAME, bounded(MAX_QUEUED_IN), Some(open)),
+        // Clients keep their connection alive; servers need not.
+        let (max_frame, (in_tx, in_rx), open, keepalive) = match side {
+            Side::Client => (MAX_SERVER_FRAME, unbounded::<(Instant, In)>(), None, Some(KEEPALIVE)),
+            Side::Server(open) => (MAX_CLIENT_FRAME, bounded(MAX_QUEUED_IN), Some(open), None),
         };
+        let heard = Arc::new(AtomicU64::new(0));
+        heard_now(&heard);
 
         let mut writer = BufWriter::new(stream.try_clone()?);
         thread::Builder::new().name("net-write".into()).spawn(move || {
             let mut buffer = Vec::new();
-            while let Ok((_, message)) = out_rx.recv() {
+            loop {
+                let message = match keepalive {
+                    Some(every) => match out_rx.recv_timeout(every) {
+                        Ok((_, message)) => message,
+                        // Nothing to send for a while: an empty frame, to say we are here.
+                        Err(RecvTimeoutError::Timeout) => {
+                            if writer.write_all(&0u32.to_le_bytes()).and_then(|()| writer.flush()).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    },
+                    None => match out_rx.recv() {
+                        Ok((_, message)) => message,
+                        Err(_) => break,
+                    },
+                };
                 buffer.clear();
                 let ok = postcard::to_io(&message, &mut buffer).is_ok()
                     && writer.write_all(&(buffer.len() as u32).to_le_bytes()).is_ok()
@@ -217,6 +261,7 @@ pub mod tcp {
         })?;
 
         let mut reader = BufReader::new(stream);
+        let heard_by_reader = heard.clone();
         thread::Builder::new().name("net-read".into()).spawn(move || {
             let _open = open;
             let mut buffer = Vec::new();
@@ -226,6 +271,11 @@ pub mod tcp {
                     break;
                 }
                 let len = u32::from_le_bytes(len) as usize;
+                heard_now(&heard_by_reader);
+                // A keepalive.
+                if len == 0 {
+                    continue;
+                }
                 if len > max_frame {
                     tracing::warn!("frame of {len} bytes exceeds limit, closing connection");
                     break;
@@ -252,6 +302,6 @@ pub mod tcp {
             let _ = reader.get_ref().shutdown(std::net::Shutdown::Both);
         })?;
 
-        Ok(Connection::new(out_tx, in_rx, false, loopback))
+        Ok(Connection::new(out_tx, in_rx, false, loopback, Some(heard)))
     }
 }
