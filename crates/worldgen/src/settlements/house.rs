@@ -76,7 +76,8 @@ pub struct Mats {
     pub weathered: Palette,
     pub hedge: Palette,
     pub log: BlockId,
-    pub crops: Vec<[BlockId; 4]>,
+    /// The crops its fields grow, by weight: their stages, the last ripe.
+    pub crops: Vec<([BlockId; 4], f32)>,
 }
 
 impl Mats {
@@ -1286,7 +1287,12 @@ fn field(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     let mut pen = Pen { frame, canvas, seed: spec.seed };
     let (w, d) = (spec.w, spec.d);
     let mut rng = Rng::new(spec.seed, 0xf1e1d, 0, 0);
-    let crop = if mats.crops.is_empty() { None } else { Some(mats.crops[rng.below(mats.crops.len() as u32) as usize]) };
+    let total: f32 = mats.crops.iter().map(|c| c.1).sum();
+    let mut roll = rng.unit() * total;
+    let crop = mats.crops.iter().find(|c| {
+        roll -= c.1;
+        roll <= 0.0
+    }).or(mats.crops.last()).map(|c| c.0);
     // How far grown the whole field is, give or take.
     let growth = rng.unit();
     let ditch = w / 2;
@@ -1309,8 +1315,9 @@ fn field(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             pen.put(x, -1, z, Put::Down(fixed.dirt));
             match crop {
                 Some(stages) => {
-                    let u = (growth * 3.0 + rng.unit() * 1.4 - 0.4).clamp(0.0, 3.0) as usize;
-                    pen.set(x, 1, z, stages[u.min(3)]);
+                    // Growing, never ripe: what a field gives is its grower's.
+                    let u = (growth * 2.5 + rng.unit() * 1.2 - 0.4).clamp(0.0, 2.0) as usize;
+                    pen.set(x, 1, z, stages[u.min(2)]);
                 }
                 None => pen.clear(x, 1, z),
             }

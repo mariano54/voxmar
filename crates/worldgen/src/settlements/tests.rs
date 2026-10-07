@@ -325,6 +325,69 @@ fn settlements_stand_dry_with_open_doors() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Wells hold water to their brim, uncapped by paving; fields grow only the crops their
+/// size allows (none rarer than uncommon), and no field or tree in a settlement is ripe:
+/// what a settlement grows is its grower's.
+#[test]
+fn settlement_wells_hold_water_and_crops_are_everyday() {
+    let registry = base_registry();
+    let content = crate::WorldContent::base(&registry).unwrap();
+    let def = &content.settlements;
+    let level = |size: &str| def.sizes.iter().find(|s| s.name == size).map_or(0, |s| s.crop_level);
+    let mut failures = Vec::new();
+    let (mut wells, mut planted) = (0, 0);
+    for seed in [1u64, 42, 7] {
+        let world = Overworld::new(seed, registry.clone());
+        let spawn = world.spawn_point();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000).iter().take(6) {
+            let mut columns: rustc_hash::FxHashMap<ColumnPos, Column> = Default::default();
+            let mut block = |p: IVec3| {
+                let c = ColumnPos::of_block(p);
+                columns.entry(c).or_insert_with(|| world.generate(c)).block(IVec3::new(p.x & 31, p.y, p.z & 31))
+            };
+            let most = level(&s.size);
+            for b in &s.buildings {
+                if b.kind.name() == "well" {
+                    wells += 1;
+                    for z in b.min.y + 1..b.max.y {
+                        for x in b.min.x + 1..b.max.x {
+                            let top = registry.def(block(IVec3::new(x, b.floor, z))).name.clone();
+                            if !top.contains("water") {
+                                failures.push(format!("seed {seed} {}: the well at {} holds {top} at its brim", s.name.0, b.min));
+                            }
+                        }
+                    }
+                }
+                for z in b.min.y..=b.max.y {
+                    for x in b.min.x..=b.max.x {
+                        for y in b.floor - 1..=b.floor + 6 {
+                            let name = registry.def(block(IVec3::new(x, y, z))).name.clone();
+                            let bare = name.split_once(':').map_or(name.as_str(), |(_, n)| n);
+                            // A ripe crop is `<crop>_crop`, a ripe fruit tree `<fruit>_leaves`.
+                            let (crop, ripe) = match bare.rsplit_once("_crop") {
+                                Some((crop, stage)) => (crop, stage.is_empty()),
+                                None => match bare.strip_suffix("_leaves") {
+                                    Some(fruit) => (fruit, true),
+                                    None => continue,
+                                },
+                            };
+                            let Some(&(need, rarity)) = def.crops.get(&format!("base:{crop}")) else { continue };
+                            planted += 1;
+                            if ripe {
+                                failures.push(format!("seed {seed} {}: ripe {bare} in the {} at {x} {y} {z}", s.name.0, b.what));
+                            } else if bare.contains("_crop") && (need > most || rarity > voxmar_engine::block::Rarity::Uncommon) {
+                                failures.push(format!("seed {seed} {} ({}): {bare} needs Farming {need}, over {most}", s.name.0, s.size));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(wells >= 6 && planted > 100, "only {wells} wells and {planted} crops looked at");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 /// `SEED=1 X=-2364 Z=742 R=300 cargo test --profile iter -p voxmar_worldgen settlement_at -- --ignored --nocapture`
 /// lists the settlements within `R` blocks of a place and where their buildings stand.
 #[test]
