@@ -2474,7 +2474,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             key(world, KeyCode::KeyW, false);
-            gate.check("quests: walks", Ok(format!("W with the book shut walked {moved:.2} blocks in {waited:.1} server s")));
+            gate.check("quests: walks", Ok(format!("W with the book shut walked {moved:.2} blocks in {in_phase:.2} s ({waited:.1} server s)")));
             // Pinned, the torch quest stands at the right; then torches made for it.
             let content = world.resource::<Launch>().content.clone();
             toggle_pin(&mut world.resource_mut::<crate::settings::Settings>(), &content, TRACKED);
