@@ -1,10 +1,12 @@
 //! Looking closely at a creature (right click on one with nothing it wants in hand): what
 //! the player learns grows with their Farming level, as docs/breeding.md, "Inspecting",
-//! lays out. Anyone sees its kind, health, age and temper; Farming 10 reads what its genes
+//! lays out. Anyone sees its kind, health, age and temper, and a kept one's condition in a
+//! word and what it wants (the number at Farming 30); Farming 10 reads what its genes
 //! show, 20 what it carries hidden, 30 the numbers, 40 the odds of a mutation where it
 //! stands. Every line travels as words, in the player's language.
 
 use voxmar_engine::creature::brain::Personality;
+use voxmar_engine::creature::condition::{self, Met};
 use voxmar_engine::genes::{self, Gene, GeneKind, NumberEffect};
 use voxmar_engine::lang::{Words, def_key};
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
@@ -40,6 +42,20 @@ impl Server {
                 .with("age", age)
                 .with("temper", temper(&creature.mind.personality)),
         ];
+        // A kept one's condition in a word for anyone, exactly at Farming 30, and what it
+        // wants.
+        if creature.owner.is_some() {
+            let state = Words::key(&format!("condition.{}", condition::word(creature.condition)));
+            lines.push(if level >= NUMBERS {
+                Words::key("inspect.kept_exactly").with("state", state).with("value", Words::text(format!("{:.2}", creature.condition)))
+            } else {
+                Words::key("inspect.kept").with("state", state)
+            });
+            let wants: Vec<Words> = creature.needs.all().into_iter().filter(|(_, met)| *met != Met::Yes).map(|(need, _)| Words::key(&format!("need.{need}"))).collect();
+            if !wants.is_empty() {
+                lines.push(Words::key("inspect.wants").with("needs", Words::List(wants)));
+            }
+        }
         let defs = &def.genes;
         let genome = &creature.genome;
         if !defs.is_empty() {

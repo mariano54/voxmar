@@ -16,6 +16,7 @@
 
 pub mod anatomy;
 pub mod brain;
+pub mod condition;
 pub mod husbandry;
 pub mod model;
 pub mod motion;
@@ -428,6 +429,9 @@ pub struct CreatureDef {
     /// What kept ones give on timers.
     #[serde(default)]
     pub products: Vec<husbandry::Product>,
+    /// What kept ones need beyond food, water and their climate (docs/breeding.md).
+    #[serde(default)]
+    pub needs: condition::NeedsDef,
     /// What individuals inherit: coat colours, size, yield, temper (docs/breeding.md). At
     /// most [`crate::genes::MOST`].
     #[serde(default)]
@@ -482,6 +486,17 @@ struct CreatureFile {
     creatures: Vec<CreatureDef>,
     #[serde(default)]
     limits: Option<Limits>,
+    #[serde(default)]
+    condition: Option<condition::ConditionRules>,
+}
+
+/// One package's `creatures.ron`: its species, and the world's creature limits and
+/// condition rules if it sets them.
+#[derive(Debug)]
+pub struct CreaturePackage {
+    pub defs: Vec<CreatureDef>,
+    pub limits: Option<Limits>,
+    pub condition: Option<condition::ConditionRules>,
 }
 
 /// How many creatures the world holds. One package's `creatures.ron` sets them (`limits`),
@@ -559,12 +574,12 @@ pub struct CreatureRegistry {
     creatures: Vec<Creature>,
     by_name: FxHashMap<String, CreatureId>,
     limits: Limits,
+    condition: condition::ConditionRules,
 }
 
 impl CreatureRegistry {
-    /// Reads a package's `creatures.ron`, qualifying names with its namespace: its species,
-    /// and the limits if it sets them.
-    pub fn read(namespace: &str, source: &str) -> Result<(Vec<CreatureDef>, Option<Limits>), RegistryError> {
+    /// Reads a package's `creatures.ron`, qualifying names with its namespace.
+    pub fn read(namespace: &str, source: &str) -> Result<CreaturePackage, RegistryError> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let file: CreatureFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/creatures.ron: {e}")))?;
         let qualify = |name: &mut String| {
@@ -572,7 +587,7 @@ impl CreatureRegistry {
                 *name = format!("{namespace}:{name}");
             }
         };
-        let limits = file.limits;
+        let (limits, condition) = (file.limits, file.condition);
         let defs = file
             .creatures
             .into_iter()
@@ -599,13 +614,14 @@ impl CreatureRegistry {
                 def
             })
             .collect();
-        Ok((defs, limits))
+        Ok(CreaturePackage { defs, limits, condition })
     }
 
     /// Resolves species against the blocks (items) and skills.
-    pub fn new(defs: Vec<CreatureDef>, limits: Limits, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
+    pub fn new(defs: Vec<CreatureDef>, limits: Limits, condition: condition::ConditionRules, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
         limits.check()?;
-        let mut registry = Self { limits, ..Self::default() };
+        condition.check()?;
+        let mut registry = Self { limits, condition, ..Self::default() };
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
@@ -688,6 +704,11 @@ impl CreatureRegistry {
     /// How many creatures the world holds.
     pub fn limits(&self) -> Limits {
         self.limits
+    }
+
+    /// How kept animals' condition is reckoned.
+    pub fn condition(&self) -> &condition::ConditionRules {
+        &self.condition
     }
 
     pub fn id(&self, name: &str) -> Option<CreatureId> {
@@ -810,8 +831,8 @@ mod tests {
             BlockDef { name: "base:carrot".into(), ..Default::default() },
         ])
         .unwrap();
-        let (defs, _) = CreatureRegistry::read("base", RABBIT).unwrap();
-        CreatureRegistry::new(defs, Limits::default(), &blocks, &SkillRegistry::default()).unwrap()
+        let defs = CreatureRegistry::read("base", RABBIT).unwrap().defs;
+        CreatureRegistry::new(defs, Limits::default(), Default::default(), &blocks, &SkillRegistry::default()).unwrap()
     }
 
     #[test]
@@ -852,22 +873,36 @@ mod tests {
             BlockDef { name: "base:carrot".into(), ..Default::default() },
         ])
         .unwrap();
-        let (defs, _) = CreatureRegistry::read("base", &source).unwrap();
-        assert!(CreatureRegistry::new(defs, Limits::default(), &blocks, &SkillRegistry::default()).is_err());
+        let defs = CreatureRegistry::read("base", &source).unwrap().defs;
+        assert!(CreatureRegistry::new(defs, Limits::default(), Default::default(), &blocks, &SkillRegistry::default()).is_err());
     }
 
     #[test]
     fn limits_load_from_the_file_and_are_checked() {
         let source = RABBIT.replacen("(creatures:", "(limits: (most: 40, animals_near: 4, monsters_near: 3), creatures:", 1);
-        let (_, limits) = CreatureRegistry::read("base", &source).unwrap();
+        let limits = CreatureRegistry::read("base", &source).unwrap().limits;
         assert_eq!(limits, Some(Limits { most: 40, animals_near: 4, monsters_near: 3 }));
-        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().1, None, "a file without limits leaves them to another");
+        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().limits, None, "a file without limits leaves them to another");
         assert!(Limits::default().check().is_ok());
         // Room for none, or less room than one player's surroundings draw, will not load.
         for bad in [Limits { most: 0, animals_near: 0, monsters_near: 0 }, Limits { most: 10, animals_near: 6, monsters_near: 6 }] {
             let blocks = BlockRegistry::new(vec![]).unwrap();
-            assert!(CreatureRegistry::new(Vec::new(), bad, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
+            assert!(CreatureRegistry::new(Vec::new(), bad, Default::default(), &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
         }
+    }
+
+    #[test]
+    fn condition_rules_load_from_the_file_and_are_checked() {
+        let source = RABBIT.replacen("(creatures:", "(condition: (up: 0.2, fed: (0.5, 1.5)), creatures:", 1);
+        let rules = CreatureRegistry::read("base", &source).unwrap().condition.expect("set");
+        // What it leaves out keeps its default.
+        assert_eq!((rules.up, rules.fed, rules.down), (0.2, (0.5, 1.5), 0.25));
+        let source = RABBIT.replace("health: 6,", "health: 6, needs: (space: 2, shelter: false),");
+        let rabbit = &CreatureRegistry::read("base", &source).unwrap().defs[0];
+        assert_eq!((rabbit.needs.space(0.5), rabbit.needs.shelter()), (2.0, false));
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        let bad = condition::ConditionRules { tamed: 2.0, ..Default::default() };
+        assert!(CreatureRegistry::new(Vec::new(), Limits::default(), bad, &blocks, &SkillRegistry::default()).is_err());
     }
 
     #[test]

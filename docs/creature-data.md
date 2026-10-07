@@ -44,6 +44,17 @@ movement (a second package setting them fails to load):
 limits: (most: 512, animals_near: 6, monsters_near: 6),
 ```
 
+It may set the condition rules too (see breeding.md, "Keeping animals"); what it leaves
+out keeps its default:
+
+```ron
+condition: (up: 0.15, down: 0.25, met: 1.0, partly: 0.8, unmet: 0.5, tamed: 0.6, hurt: 0.5,
+    output: (0.5, 0.7), breed: 0.5, fed: (1.0, 2.0), space_radius: 5.0),
+```
+
+A species says what it needs when kept with `needs: (space: 6, shelter: false, company:
+true)`, each optional: room from its width, shelter wanted, company if it is social.
+
 `most` is the most alive at once, whatever the players. Wild ones (spawned or summoned)
 stop short of it by the kept animals still waiting in the save, so those always have room
 to come back. `animals_near` and `monsters_near` cap each kind within 64 blocks of a
@@ -221,7 +232,10 @@ Content fails to load, with the file and a reason, when:
 - a level, chance or count is out of range, or a loot table references itself;
 - a supernatural species has no aether minimum;
 - the limits leave no room (`most` 0), or one player's `animals_near` and `monsters_near`
-  together are more than `most`.
+  together are more than `most`;
+- the condition rules have a share outside 0..1, a need met counting less than partly
+  met (or that less than unmet), a rate or reach of 0, an output that falls below 0, or
+  `fed` days out of order. A second package setting either fails too.
 
 Test-time checks (in `cargo test`): every species can be spawned and survives a simulated
 day in the sandbox; the supernatural share of species is 15–30% and of encounters, over a

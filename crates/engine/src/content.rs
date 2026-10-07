@@ -93,6 +93,7 @@ impl Content {
         let mut crops = Vec::new();
         let mut creatures = Vec::new();
         let mut creature_limits = None;
+        let mut condition_rules = None;
         let mut cooking = Vec::new();
         let mut recipes = Vec::new();
         let mut effects = Vec::new();
@@ -135,12 +136,17 @@ impl Content {
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "creatures.ron" => {
-                        let (defs, limits) = CreatureRegistry::read(package, &source)?;
-                        creatures.extend(defs);
-                        if let Some(limits) = limits
+                        let read = CreatureRegistry::read(package, &source)?;
+                        creatures.extend(read.defs);
+                        if let Some(limits) = read.limits
                             && creature_limits.replace(limits).is_some()
                         {
                             return Err(RegistryError(format!("{package}/creatures.ron: another package already sets the creature limits")));
+                        }
+                        if let Some(rules) = read.condition
+                            && condition_rules.replace(rules).is_some()
+                        {
+                            return Err(RegistryError(format!("{package}/creatures.ron: another package already sets the condition rules")));
                         }
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
@@ -206,7 +212,7 @@ impl Content {
         skills.validate()?;
         let blocks = BlockRegistry::new(blocks)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
-        let creatures = CreatureRegistry::new(creatures, creature_limits.unwrap_or_default(), &blocks, &skills)?;
+        let creatures = CreatureRegistry::new(creatures, creature_limits.unwrap_or_default(), condition_rules.unwrap_or_default(), &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
         let effects = EffectRegistry::new(effects)?;

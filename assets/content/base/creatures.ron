@@ -22,6 +22,16 @@
     // 12: halved (Mariano, 2026-10-07: "too many animals, the world is too crowded"), so the
     // land feels wild and an animal is something to come upon.
     limits: (most: 512, animals_near: 6, monsters_near: 6),
+    // How a kept animal's condition is reckoned (docs/breeding.md, "Keeping animals"; the
+    // numbers from the progression plan, 2026-10-07). A need met counts 1, partly 0.8,
+    // unmet 0.5; condition walks toward their product 0.15 a day up and 0.25 down; a newly
+    // tamed animal starts at 0.6; below half health it is held to 0.5. Products, litters
+    // and treadwheel power scale by 0.5 + 0.7 × condition, and breeding needs above 0.5.
+    // Fed within a day is fed, within two partly; room is shared within 5 blocks.
+    condition: (
+        up: 0.15, down: 0.25, met: 1.0, partly: 0.8, unmet: 0.5, tamed: 0.6, hurt: 0.5,
+        output: (0.5, 0.7), breed: 0.5, fed: (1.0, 2.0), space_radius: 5.0,
+    ),
     creatures: [
         // --- Small and common: where everyone starts -------------------------------------
         (
@@ -95,6 +105,8 @@
         ),
         (
             name: "mallard", level: 1, health: 3, rarity: Uncommon,
+            // A duck minds no rain (docs/breeding.md, "Keeping animals").
+            needs: (shelter: false),
             body: (
                 size: (0.4, 0.55),
                 model: Biped(body: (0.3, 0.26, 0.46), head: (0.17, 0.18, 0.2), legs: 0.12, wings: (0.05, 0.36), beak: (0.1, 0.04, 0.13), tail: (0.12, 0.06, 0.1), tilt: 4.0, tail_lift: 18.0),
