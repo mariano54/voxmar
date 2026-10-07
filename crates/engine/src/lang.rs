@@ -203,6 +203,7 @@ impl Lang {
             Words::Text(text) => text.clone(),
             Words::Own(key, own) => self.get_or(key, own).to_owned(),
             Words::Block(name) => blocks.id(name).map_or_else(|| title_from_id(name), |id| self.block(blocks.def(id))),
+            Words::Name(names) => names.iter().find(|(code, _)| *code == self.code).or(names.first()).map(|(_, name)| name.clone()).unwrap_or_default(),
             Words::Lines(lines) => lines.iter().map(|line| self.render(line, blocks)).collect::<Vec<_>>().join("\n"),
             Words::List(items) => {
                 let separator = self.find("language.list_separator").unwrap_or(", ");
@@ -275,6 +276,9 @@ pub enum Words {
     Lines(Vec<Words>),
     /// Several, as a list: "a, b, c".
     List(Vec<Words>),
+    /// A generated name (a settlement's), as it is written in each language by code,
+    /// English first: the reader's language's, else English.
+    Name(Vec<(String, String)>),
 }
 
 impl Words {

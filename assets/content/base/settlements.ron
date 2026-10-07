@@ -1,0 +1,391 @@
+// Settlements: hamlets and villages grown on good ground (see crates/worldgen/src/settlements).
+//
+// Every settlement is rolled from deep lists, and every roll leans on the settlement's
+// character, so the lists stay coherent rather than shuffled: a rich, orderly village on a
+// fertile river plain builds big stone-footed houses round a paved square with lamps
+// along straight lanes; a poor, old hamlet on a cold hill is a few crooked huts on
+// wandering paths with woodpiles and moss in the walls.
+//
+// LEVERS. Each settlement draws five levers, each 0 ..= 1, partly from its site and partly
+// from the seed (the code says how; the wiki's settlements page records it):
+//   wealth    fertile soil, fresh water and flat ground make it richer
+//   age       how long it has stood: moss and cracks, crooked lanes, old kinds of house
+//   order     planned or grown: straight lanes and aligned houses towards 1
+//   crowding  how close the houses stand and how small their yards are
+//   green     gardens, hedges, flowers and trees left standing
+// Any entry below may `lean` on them: a lean of +1 on wealth doubles its weight in the
+// richest places and drops it to nothing in the poorest; -0.5 halves it where it is
+// richest. Leans multiply, so entries can lean on several levers at once.
+//
+// grid: one site is considered per square of `spacing` blocks; `chance` of the squares
+//   hold one (mostly hamlets: see sizes), placed at least `margin` blocks inside the
+//   square so a settlement never reaches into the next.
+// avoid: biome tags no settlement is built in (rivers, lakes and their banks, crags and
+//   terrain shapes are always avoided too).
+// sizes: hamlets and villages: how many houses, lanes and how long, the square's radius,
+//   and the places they always or sometimes have (Well, Trader, Inn, Smithy, Stall,
+//   Shrine, Field, Pen, Orchard, Woodyard).
+// layouts: how lanes are laid out (Spokes, Line, Green, Scatter, Fork).
+// houses: the kinds of house, by size, storeys, roof and extras.
+// props: what stands in yards and along lanes.
+// styles: what a settlement is built of, by the biome it stands in; the first whose
+//   biome tags match wins (an empty list matches anywhere). `woods` fill `{wood}` (the
+//   main wood) and `{trim}` (a second wood, sometimes the same) in block names; every
+//   material list is weighed per settlement, which keeps a few of its options, and each
+//   house picks among those.
+(
+    grid: (spacing: 1024, chance: 0.33, margin: 160),
+    avoid: ["no_settlement", "ocean", "water", "river", "peaks", "ice", "frozen", "fantastical", "giant"],
+    sizes: [
+        (
+            name: "hamlet", weight: 3.0,
+            houses: (2, 5), lanes: (1, 3), lane_length: (16, 34), square: (3, 5),
+            always: [Well],
+            sometimes: [(Trader, 0.7), (Field, 0.6), (Pen, 0.45), (Woodyard, 0.35), (Orchard, 0.15), (Shrine, 0.1)],
+        ),
+        (
+            name: "village", weight: 1.0, lean: {"wealth": 0.4},
+            houses: (7, 14), lanes: (3, 5), lane_length: (30, 60), square: (6, 9),
+            always: [Well, Trader, Inn, Smithy],
+            sometimes: [(Stall, 0.8), (Stall, 0.5), (Stall, 0.25), (Field, 0.9), (Field, 0.6), (Pen, 0.7), (Orchard, 0.35), (Woodyard, 0.4), (Shrine, 0.35)],
+        ),
+    ],
+    layouts: [
+        // Lanes leave the square in every direction.
+        (name: "spokes", shape: Spokes, weight: 3.0),
+        // One long street through the square, short lanes off it.
+        (name: "street", shape: Line, weight: 2.0, lean: {"order": 0.6}),
+        // Houses face a wide green, lanes lead out from its rim.
+        (name: "green", shape: Green, weight: 1.5, lean: {"order": 0.5, "green": 0.8}),
+        // No square to speak of: houses wherever the paths wander.
+        (name: "scatter", shape: Scatter, weight: 1.5, lean: {"order": -0.9, "age": 0.5}),
+        // A street that forks in two.
+        (name: "fork", shape: Fork, weight: 1.5),
+    ],
+    houses: [
+        (name: "cottage", weight: 4.0, width: (5, 7), depth: (6, 8), walls: (3, 3), storeys: (1, 1)),
+        (name: "long_house", weight: 1.5, lean: {"age": 0.8, "wealth": -0.3}, width: (5, 6), depth: (10, 14), walls: (3, 3), storeys: (1, 1)),
+        (name: "town_house", weight: 1.5, lean: {"wealth": 0.6, "crowding": 0.8, "order": 0.3}, width: (5, 7), depth: (6, 8), walls: (3, 4), storeys: (2, 2)),
+        (name: "farm_house", weight: 1.5, lean: {"green": 0.6, "crowding": -0.8, "wealth": 0.3}, width: (7, 9), depth: (9, 11), walls: (3, 4), storeys: (1, 2), porch: 0.6),
+        (name: "hut", weight: 2.0, lean: {"wealth": -0.9, "age": 0.4}, width: (4, 5), depth: (4, 6), walls: (2, 3), storeys: (1, 1)),
+        (name: "tower_house", weight: 0.4, lean: {"order": -0.5, "age": 0.6}, width: (5, 6), depth: (5, 6), walls: (3, 4), storeys: (3, 3)),
+        (name: "hall", weight: 0.6, lean: {"wealth": 1.0}, width: (8, 10), depth: (11, 14), walls: (4, 5), storeys: (1, 1), porch: 0.4),
+        (name: "wing_house", weight: 1.0, lean: {"wealth": 0.6}, width: (6, 8), depth: (7, 9), walls: (3, 3), storeys: (1, 2), wing: 1.0),
+    ],
+    // Extras any house may have, each by its own chance, leaning like the lists.
+    extras: [
+        (name: Chimney, chance: 0.45, lean: {"wealth": 0.4}),
+        (name: Porch, chance: 0.2, lean: {"green": 0.4}),
+        (name: Shed, chance: 0.3, lean: {"crowding": -0.6, "wealth": -0.2}),
+        (name: FlowerBoxes, chance: 0.3, lean: {"green": 0.8, "wealth": 0.3}),
+        (name: Garden, chance: 0.35, lean: {"green": 0.9, "crowding": -0.7}),
+        (name: Hedge, chance: 0.2, lean: {"green": 0.7, "order": 0.5}),
+        (name: Lamp, chance: 0.6, lean: {"wealth": 0.6}),
+        (name: Woodpile, chance: 0.35, lean: {"wealth": -0.3, "age": 0.3}),
+        (name: Moss, chance: 0.3, lean: {"age": 1.0}),
+        (name: Wing, chance: 0.1, lean: {"wealth": 0.5}),
+    ],
+    props: [
+        (name: Woodpile, weight: 2.0, lean: {"wealth": -0.2}),
+        (name: Crates, weight: 1.5, lean: {"wealth": 0.5}),
+        (name: StonePile, weight: 1.0, lean: {"age": 0.6}),
+        (name: FlowerBed, weight: 1.5, lean: {"green": 1.0}),
+        (name: HerbPlanter, weight: 1.0, lean: {"green": 0.4, "wealth": 0.3}),
+        (name: Campfire, weight: 0.8, lean: {"wealth": -0.6, "order": -0.4}),
+        (name: Lamp, weight: 2.0, lean: {"wealth": 0.8, "order": 0.5}),
+        (name: Bush, weight: 1.2, lean: {"green": 0.8, "order": -0.3}),
+        (name: Compost, weight: 0.8, lean: {"green": 0.4}),
+        (name: Boulder, weight: 0.6, lean: {"order": -0.8}),
+    ],
+    // Names: a first part and a last part, each with its Japanese reading, by the biome's
+    // tags (the first list whose tags match; an empty list matches anywhere). Hamlets
+    // sometimes take a small word ("End", "Cross") instead of a last part, and now and
+    // then a name takes a word before it, leaning on the levers ("Old" where it is old).
+    names: [
+        (
+            biome: ["desert", "dunes", "mesa", "savanna", "scrubland"],
+            first: [("Sab", "サブ"), ("Kar", "カル"), ("Ama", "アマ"), ("Zir", "ジル"), ("Tal", "タル"), ("Oas", "オア"), ("Ham", "ハム"), ("Dal", "ダル"), ("Mer", "メル"), ("Sur", "スル"), ("Ras", "ラス"), ("Nub", "ヌブ"), ("Kes", "ケス"), ("Yar", "ヤル"), ("Qad", "カド"), ("Bah", "バハ"), ("Jem", "ジェム"), ("Saf", "サフ"), ("Tam", "タム"), ("Azz", "アッズ"), ("Mal", "マル"), ("Har", "ハル"), ("Zab", "ザブ"), ("Imr", "イムル"), ("Wad", "ワド"), ("Sel", "セル"), ("Kufr", "クフル"), ("Num", "ヌム"), ("Ebb", "エッブ"), ("Ush", "ウシュ"), ("Nar", "ナル"), ("Tir", "ティル"), ("Baz", "バズ"), ("Fas", "ファス")],
+            last: [("ah", "ア"), ("ir", "イル"), ("um", "ウム"), ("esh", "エシュ"), ("ara", "アラ"), ("oun", "ウン"), ("ad", "アド"), ("is", "イス"), ("an", "アン"), ("eth", "エス"), ("abad", "アバド"), ("iya", "イヤ"), ("oum", "ウーム"), ("assa", "アッサ"), ("ek", "エク"), ("ul", "ウル"), ("ina", "イナ"), ("ar", "アル"), ("aya", "アヤ"), ("ez", "エズ")],
+            small: [("Well", "ウェル"), ("Rest", "レスト"), ("Palms", "パームズ"), ("Spring", "スプリング"), ("Gate", "ゲート"), ("Shade", "シェード")],
+            prefixes: [
+                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                (en: "New", ja: "ニュー", weight: 0.5, lean: {"age": -1.0}),
+                (en: "Upper", ja: "アッパー", weight: 0.5),
+                (en: "Lower", ja: "ロウアー", weight: 0.5),
+                (en: "Red", ja: "レッド", weight: 0.4),
+                (en: "Dry", ja: "ドライ", weight: 0.4, lean: {"green": -1.0}),
+            ],
+        ),
+        (
+            biome: ["jungle", "tropical"],
+            first: [("Ma", "マ"), ("Ta", "タ"), ("Ka", "カ"), ("Lu", "ル"), ("Nai", "ナイ"), ("Ro", "ロ"), ("Hi", "ヒ"), ("Pa", "パ"), ("Wai", "ワイ"), ("Ko", "コ"), ("Mo", "モ"), ("Te", "テ"), ("Ala", "アラ"), ("Uku", "ウク"), ("Ewa", "エワ"), ("Oli", "オリ"), ("Ri", "リ"), ("Sa", "サ"), ("Nu", "ヌ"), ("Ho", "ホ")],
+            last: [("lani", "ラニ"), ("koa", "コア"), ("mau", "マウ"), ("nui", "ヌイ"), ("rua", "ルア"), ("tai", "タイ"), ("vale", "ヴァレ"), ("moa", "モア"), ("kai", "カイ"), ("pono", "ポノ"), ("ana", "アナ"), ("hiva", "ヒヴァ"), ("roa", "ロア"), ("lua", "ルア")],
+            small: [("Landing", "ランディング"), ("Grove", "グローヴ"), ("Falls", "フォールズ")],
+            prefixes: [
+                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                (en: "Deep", ja: "ディープ", weight: 0.6, lean: {"green": 1.0}),
+            ],
+        ),
+        (
+            biome: ["heath", "highland", "rocky", "mountain", "alpine", "erratics"],
+            first: [("Ben", "ベン"), ("Dun", "ダン"), ("Glen", "グレン"), ("Kil", "キル"), ("Inver", "インヴァー"), ("Strath", "ストラス"), ("Bal", "バル"), ("Auch", "オーク"), ("Craig", "クレイグ"), ("Ard", "アード"), ("Tor", "トル"), ("Pen", "ペン"), ("Lan", "ラン"), ("Cul", "カル"), ("Dal", "ダル"), ("Kin", "キン"), ("Aber", "アバー"), ("Drum", "ドラム"), ("Carn", "カーン"), ("Moy", "モイ"), ("Ross", "ロス"), ("Brae", "ブレイ"), ("Lochan", "ロッホン"), ("Fin", "フィン"), ("Mor", "モー")],
+            last: [("more", "モア"), ("ach", "アック"), ("lie", "リー"), ("nie", "ニー"), ("gorm", "ゴーム"), ("ross", "ロス"), ("ock", "オック"), ("try", "トリー"), ("van", "ヴァン"), ("allan", "アラン"), ("ness", "ネス"), ("fell", "フェル"), ("ton", "トン"), ("garry", "ギャリー"), ("rig", "リグ"), ("eagh", "イー")],
+            small: [("Cairn", "ケアン"), ("Brae", "ブレイ"), ("Crag", "クラグ"), ("Bothy", "ボシー"), ("Shiel", "シール")],
+            prefixes: [
+                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                (en: "High", ja: "ハイ", weight: 0.8),
+                (en: "Little", ja: "リトル", weight: 0.5, lean: {"crowding": -1.0}),
+                (en: "Grey", ja: "グレイ", weight: 0.5),
+            ],
+        ),
+        (
+            biome: ["tundra", "conifer", "cold", "snow", "taiga", "frozen"],
+            first: [("Frost", "フロスト"), ("Kald", "カルド"), ("Rav", "ラヴ"), ("Stor", "ストル"), ("Hjal", "ヤル"), ("Grim", "グリム"), ("Ulf", "ウルフ"), ("Bjorn", "ビョルン"), ("Ask", "アスク"), ("Tor", "トル"), ("Skal", "スカル"), ("Hed", "ヘド"), ("Ring", "リング"), ("Ny", "ニュー"), ("Elg", "エルグ"), ("Vind", "ヴィンド"), ("Sva", "スヴァ"), ("Hval", "ヴァル"), ("Lind", "リンド"), ("Bir", "ビル"), ("Gran", "グラン"), ("Haf", "ハフ"), ("Sol", "ソル"), ("Rune", "ルーネ"), ("Varg", "ヴァルグ"), ("Ise", "イーセ"), ("Kvit", "クヴィト"), ("Ormr", "オルム"), ("Fjal", "フィャル"), ("Thor", "トール"), ("Ey", "エイ"), ("Alf", "アルフ")],
+            last: [("vik", "ヴィク"), ("heim", "ヘイム"), ("by", "ビー"), ("stad", "スタッド"), ("dal", "ダル"), ("ness", "ネス"), ("garth", "ガース"), ("thwaite", "スウェイト"), ("fell", "フェル"), ("sund", "スンド"), ("vang", "ヴァング"), ("holm", "ホルム"), ("bo", "ボー"), ("set", "セット"), ("fjord", "フィヨルド"), ("rud", "ルド"), ("lund", "ルンド"), ("berg", "ベルグ"), ("toft", "トフト"), ("hus", "フース")],
+            small: [("Holt", "ホルト"), ("Stead", "ステッド"), ("Cairn", "ケアン"), ("Hearth", "ハース"), ("Lodge", "ロッジ")],
+            prefixes: [
+                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                (en: "North", ja: "ノース", weight: 0.6),
+                (en: "White", ja: "ホワイト", weight: 0.4),
+                (en: "Little", ja: "リトル", weight: 0.5, lean: {"crowding": -1.0}),
+            ],
+        ),
+        (
+            biome: ["wetland"],
+            first: [("Fen", "フェン"), ("Mire", "マイア"), ("Reed", "リード"), ("Sedge", "セッジ"), ("Wil", "ウィル"), ("Bog", "ボグ"), ("Carr", "カー"), ("Rush", "ラッシュ"), ("Eel", "イール"), ("Mud", "マッド"), ("Heron", "ヘロン"), ("Teal", "ティール"), ("Moss", "モス"), ("Alder", "オルダー"), ("Wad", "ワッド"), ("Marsh", "マーシュ"), ("Pool", "プール"), ("Flag", "フラッグ"), ("Withy", "ウィジー"), ("Snipe", "スナイプ"), ("Otter", "オッター"), ("Brack", "ブラック")],
+            last: [("wick", "ウィック"), ("moor", "ムーア"), ("ey", "イー"), ("well", "ウェル"), ("holm", "ホルム"), ("water", "ウォーター"), ("ford", "フォード"), ("mere", "ミア"), ("fleet", "フリート"), ("lode", "ロード"), ("stow", "ストウ"), ("staithe", "ステイズ"), ("hythe", "ハイズ"), ("ings", "イングス")],
+            small: [("Stilts", "スティルツ"), ("Landing", "ランディング"), ("Staithe", "ステイズ"), ("Causeway", "コーズウェイ")],
+            prefixes: [
+                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                (en: "Low", ja: "ロウ", weight: 0.7),
+                (en: "Black", ja: "ブラック", weight: 0.4),
+            ],
+        ),
+        (
+            biome: [],
+            first: [("Ash", "アッシュ"), ("Oak", "オーク"), ("Bram", "ブラム"), ("Hollin", "ホリン"), ("Thorn", "ソーン"), ("Mill", "ミル"), ("Wen", "ウェン"), ("Elm", "エルム"), ("Ald", "オルド"), ("Haw", "ホー"), ("Brook", "ブルック"), ("Wyn", "ウィン"), ("Lark", "ラーク"), ("Fern", "ファーン"), ("Barrow", "バロウ"), ("Copp", "コップ"), ("Har", "ハー"), ("Stan", "スタン"), ("Wych", "ウィッチ"), ("Lin", "リン"), ("Mar", "マー"), ("Cran", "クラン"), ("Bly", "ブライ"), ("Cherry", "チェリー"), ("Wood", "ウッド"), ("Red", "レッド"), ("Kings", "キングス"), ("Bourne", "ボーン"), ("Ox", "オックス"), ("Pidd", "ピッド"), ("Sel", "セル"), ("Tun", "タン"), ("Wil", "ウィル"), ("Pen", "ペン"), ("Brad", "ブラッド"), ("Chal", "チャル"), ("Ather", "アザー"), ("Hen", "ヘン"), ("Rook", "ルック"), ("Swan", "スワン"), ("Apple", "アップル"), ("Hazel", "ヘーゼル"), ("Bell", "ベル"), ("Clay", "クレイ"), ("Dun", "ダン"), ("Lang", "ラング"), ("Nether", "ネザー"), ("Tad", "タッド")],
+            last: [("ford", "フォード"), ("ley", "リー"), ("ton", "トン"), ("ham", "ハム"), ("wick", "ウィック"), ("field", "フィールド"), ("bury", "ベリー"), ("worth", "ワース"), ("stead", "ステッド"), ("brook", "ブルック"), ("well", "ウェル"), ("hurst", "ハースト"), ("combe", "クーム"), ("dale", "デール"), ("thorpe", "ソープ"), ("cote", "コート"), ("den", "デン"), ("ridge", "リッジ"), ("bridge", "ブリッジ"), ("wold", "ウォルド"), ("shaw", "ショー"), ("hope", "ホープ"), ("minster", "ミンスター"), ("ing", "イング"), ("lock", "ロック"), ("sted", "ステッド"), ("over", "オーヴァー"), ("church", "チャーチ")],
+            small: [("End", "エンド"), ("Green", "グリーン"), ("Cross", "クロス"), ("Hollow", "ホロウ"), ("Row", "ロウ"), ("Corner", "コーナー"), ("Bottom", "ボトム"), ("Hill", "ヒル")],
+            prefixes: [
+                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                (en: "New", ja: "ニュー", weight: 0.6, lean: {"age": -1.0}),
+                (en: "Great", ja: "グレート", weight: 0.5, lean: {"wealth": 1.0, "crowding": 0.5}),
+                (en: "Little", ja: "リトル", weight: 0.6, lean: {"crowding": -1.0}),
+                (en: "Upper", ja: "アッパー", weight: 0.4),
+                (en: "Nether", ja: "ネザー", weight: 0.3),
+                (en: "Long", ja: "ロング", weight: 0.3, lean: {"order": 1.0}),
+                (en: "Green", ja: "グリーン", weight: 0.3, lean: {"green": 1.0}),
+            ],
+        ),
+    ],
+    styles: [
+        (
+            name: "sandstone", biome: ["desert", "dunes"],
+            woods: [Name("palm", 2), Name("acacia", 2), Name("baobab", 1)],
+            foundation: [Name("sandstone_bricks", 3), Name("cobbled_sandstone", 1)],
+            floor: [Name("polished_sandstone", 2), Name("terracotta", 1)],
+            walls: [Name("sandstone", 3), Name("polished_sandstone", 2), Name("sandstone_bricks", 1), Name("white_terracotta", 1)],
+            frame: [Name("sandstone_bricks", 2), Name("{wood}_log", 1)],
+            roof: [Name("polished_sandstone", 2), Name("sandstone_bricks", 1)],
+            trim: [Name("{trim}_planks", 1), Name("orange_terracotta", 1)],
+            roofs: [(Flat, 4), (Shed, 1)],
+            window: Some("glass"), window_chance: 0.5,
+            paving: [Name("sandstone", 3), Name("cobbled_sandstone", 2), Name("sand", 1)],
+            hedge: [Name("dead_bush", 1)],
+            crops: [Name("wheat", 1)],
+            weathered: [Name("cobbled_sandstone", 2), Name("cracked_sandstone_bricks", 1)],
+        ),
+        (
+            name: "red_sandstone", biome: ["mesa"],
+            woods: [Name("acacia", 3), Name("dark_oak", 1)],
+            foundation: [Name("red_sandstone_bricks", 3), Name("cobbled_red_sandstone", 1)],
+            floor: [Name("polished_red_sandstone", 2), Name("terracotta", 1)],
+            walls: [Name("red_sandstone", 2), Name("orange_terracotta", 2), Name("terracotta", 2), Name("white_terracotta", 1)],
+            frame: [Name("{wood}_log", 2), Name("red_sandstone_bricks", 1)],
+            roof: [Name("polished_red_sandstone", 2), Name("brown_terracotta", 1)],
+            trim: [Name("{trim}_planks", 1)],
+            roofs: [(Flat, 3), (Shed, 1), (Gable, 1)],
+            window: Some("glass"), window_chance: 0.5,
+            paving: [Name("red_sandstone", 2), Name("cobbled_red_sandstone", 2), Name("red_sand", 1)],
+            hedge: [Name("dead_bush", 1)],
+            crops: [Name("wheat", 1)],
+            weathered: [Name("cobbled_red_sandstone", 2), Name("cracked_red_sandstone_bricks", 1)],
+        ),
+        (
+            name: "mudbrick", biome: ["savanna", "scrubland"],
+            woods: [Name("acacia", 3), Name("baobab", 1)],
+            foundation: [Name("cobbled_sandstone", 2), Name("cobblestone", 1)],
+            floor: [Name("packed_earth", 2), Name("{wood}_planks", 1)],
+            walls: [Name("terracotta", 3), Name("orange_terracotta", 1), Name("white_terracotta", 1), Name("brown_terracotta", 1)],
+            frame: [Name("{wood}_log", 3), Name("stripped_{wood}_log", 1)],
+            roof: [Name("{trim}_planks", 2), Name("{wood}_planks", 1)],
+            trim: [Name("{trim}_planks", 1)],
+            roofs: [(Gable, 2), (Hip, 2), (Flat, 1)],
+            window: None, window_chance: 0.4,
+            paving: [Name("packed_earth", 3), Name("coarse_dirt", 2), Name("red_sand", 1)],
+            hedge: [Name("acacia_leaves", 1)],
+            crops: [Name("wheat", 2), Name("potato", 1)],
+            weathered: [Name("coarse_dirt", 1), Name("cobbled_sandstone", 1)],
+        ),
+        (
+            name: "stilts", biome: ["wetland"], stilts: 2,
+            woods: [Name("mangrove", 2), Name("willow", 2), Name("cypress", 2), Name("dark_oak", 1)],
+            foundation: [Name("{wood}_log", 1)],
+            floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
+            walls: [Name("{wood}_planks", 3), Name("{trim}_planks", 2), Name("stripped_{wood}_log", 1)],
+            frame: [Name("{wood}_log", 3)],
+            roof: [Name("{trim}_planks", 2), Name("dark_oak_planks", 1)],
+            trim: [Name("{trim}_log", 1)],
+            roofs: [(Gable, 3), (Hip, 1)],
+            window: None, window_chance: 0.45,
+            paving: [Name("mud", 2), Name("{wood}_planks", 2), Name("coarse_dirt", 1)],
+            hedge: [Name("{wood}_leaves", 1)],
+            crops: [Name("cabbage", 1), Name("potato", 1)],
+            weathered: [Name("mossy_cobblestone", 1)],
+        ),
+        (
+            name: "log_cabin", biome: ["tundra", "conifer", "cold", "snow", "taiga"],
+            woods: [Name("spruce", 4), Name("pine", 3), Name("redwood", 1)],
+            foundation: [Name("cobblestone", 3), Name("mossy_cobblestone", 1), Name("cobbled_andesite", 1)],
+            floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
+            walls: [Name("stripped_{wood}_log", 3), Name("{wood}_log", 3), Name("{wood}_planks", 2), Name("cobblestone", 1)],
+            frame: [Name("{wood}_log", 3), Name("{trim}_log", 1)],
+            roof: [Name("dark_oak_planks", 2), Name("{wood}_planks", 2), Name("{trim}_planks", 1)],
+            trim: [Name("stripped_{trim}_log", 1), Name("{trim}_planks", 1)],
+            roofs: [(Gable, 5), (Hip, 1)],
+            window: Some("glass"), window_chance: 0.6,
+            paving: [Name("gravel", 3), Name("cobblestone", 2), Name("packed_earth", 1)],
+            hedge: [Name("{wood}_leaves", 1)],
+            crops: [Name("cabbage", 2), Name("potato", 2), Name("wheat", 1)],
+            weathered: [Name("mossy_cobblestone", 2), Name("cobbled_andesite", 1)],
+        ),
+        (
+            name: "stone_cottage", biome: ["heath", "highland", "rocky", "mountain", "alpine", "erratics"],
+            woods: [Name("spruce", 3), Name("oak", 2), Name("dark_oak", 1)],
+            foundation: [Name("cobblestone", 3), Name("mossy_cobblestone", 1), Name("cobbled_slate", 1)],
+            floor: [Name("{wood}_planks", 2), Name("cobbled_slate", 1), Name("polished_stone", 1)],
+            walls: [Name("cobblestone", 3), Name("cobbled_andesite", 2), Name("cobbled_granite", 1), Name("stone_bricks", 1), Name("cobbled_slate", 1), Name("cobbled_limestone", 1)],
+            frame: [Name("stone_bricks", 2), Name("{wood}_log", 2), Name("polished_andesite", 1)],
+            roof: [Name("slate_bricks", 2), Name("polished_slate", 1), Name("{trim}_planks", 2), Name("dark_oak_planks", 1)],
+            trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
+            roofs: [(Gable, 5), (Hip, 2)],
+            window: Some("glass"), window_chance: 0.45,
+            paving: [Name("gravel", 2), Name("cobblestone", 3), Name("cobbled_slate", 1)],
+            hedge: [Name("spruce_leaves", 1)],
+            crops: [Name("potato", 2), Name("cabbage", 2), Name("wheat", 1)],
+            weathered: [Name("mossy_cobblestone", 3), Name("cracked_stone_bricks", 1), Name("mossy_stone_bricks", 1)],
+        ),
+        (
+            name: "blossom_house", biome: ["blossom"],
+            woods: [Name("cherry", 4), Name("dark_oak", 1)],
+            foundation: [Name("stone_bricks", 2), Name("polished_andesite", 2), Name("cobbled_andesite", 1)],
+            floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
+            walls: [Name("polished_calcite", 3), Name("chalk_bricks", 2), Name("{wood}_planks", 1), Name("white_terracotta", 1), Name("stripped_{wood}_log", 1)],
+            frame: [Name("{wood}_log", 2), Name("dark_oak_log", 2), Name("stripped_{trim}_log", 1)],
+            roof: [Name("gray_terracotta", 2), Name("black_terracotta", 1), Name("dark_oak_planks", 2), Name("slate_bricks", 1), Name("pink_terracotta", 1)],
+            trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
+            roofs: [(Hip, 5), (Gable, 2)],
+            window: Some("glass"), window_chance: 0.4,
+            paving: [Name("gravel", 3), Name("polished_andesite", 1), Name("cobbled_andesite", 2)],
+            hedge: [Name("cherry_leaves", 2), Name("azalea_leaves", 1)],
+            crops: [Name("cabbage", 2), Name("wheat", 1), Name("strawberry", 1)],
+            weathered: [Name("mossy_cobbled_andesite", 2), Name("mossy_stone_bricks", 1)],
+        ),
+        (
+            name: "birch_cottage", biome: ["birch"],
+            woods: [Name("birch", 5), Name("oak", 1)],
+            foundation: [Name("cobblestone", 2), Name("cobbled_diorite", 2), Name("mossy_cobblestone", 1)],
+            floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
+            walls: [Name("{wood}_planks", 3), Name("stripped_{wood}_log", 2), Name("polished_calcite", 1), Name("cobbled_diorite", 1)],
+            frame: [Name("{wood}_log", 3), Name("dark_oak_log", 1)],
+            roof: [Name("dark_oak_planks", 2), Name("spruce_planks", 2), Name("red_terracotta", 1), Name("green_terracotta", 1)],
+            trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
+            roofs: [(Gable, 5), (Hip, 1), (Shed, 1)],
+            window: Some("glass"), window_chance: 0.6,
+            paving: [Name("gravel", 3), Name("packed_earth", 2), Name("cobbled_diorite", 1)],
+            hedge: [Name("birch_leaves", 2), Name("golden_birch_leaves", 1)],
+            crops: [Name("potato", 2), Name("carrot", 2), Name("cabbage", 1)],
+            weathered: [Name("mossy_cobblestone", 2), Name("mossy_cobbled_diorite", 1)],
+        ),
+        (
+            name: "maple_lodge", biome: ["autumn"],
+            woods: [Name("maple", 4), Name("oak", 1), Name("dark_oak", 1)],
+            foundation: [Name("cobbled_granite", 2), Name("cobblestone", 2), Name("mossy_cobbled_granite", 1)],
+            floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
+            walls: [Name("{wood}_planks", 3), Name("stripped_{wood}_log", 2), Name("cobbled_granite", 1), Name("granite_bricks", 1), Name("{trim}_planks", 1)],
+            frame: [Name("{wood}_log", 3), Name("dark_oak_log", 1)],
+            roof: [Name("dark_oak_planks", 2), Name("brown_terracotta", 2), Name("red_terracotta", 1), Name("{trim}_planks", 1)],
+            trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
+            roofs: [(Gable, 5), (Hip, 2)],
+            window: Some("glass"), window_chance: 0.55,
+            paving: [Name("gravel", 2), Name("packed_earth", 2), Name("cobbled_granite", 1)],
+            hedge: [Name("maple_leaves", 1), Name("amber_maple_leaves", 1), Name("russet_oak_leaves", 1)],
+            crops: [Name("wheat", 2), Name("carrot", 1), Name("potato", 1)],
+            weathered: [Name("mossy_cobbled_granite", 2), Name("cracked_granite_bricks", 1)],
+        ),
+        (
+            name: "jungle_stilts", biome: ["jungle", "tropical"], stilts: 2,
+            woods: [Name("jungle", 3), Name("palm", 2), Name("mangrove", 1)],
+            foundation: [Name("{wood}_log", 1)],
+            floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
+            walls: [Name("{wood}_planks", 3), Name("stripped_{wood}_log", 2), Name("{trim}_planks", 1)],
+            frame: [Name("{wood}_log", 3), Name("stripped_{trim}_log", 1)],
+            roof: [Name("{trim}_planks", 2), Name("jungle_planks", 1), Name("dark_oak_planks", 1), Name("brown_terracotta", 1)],
+            trim: [Name("{trim}_planks", 1)],
+            roofs: [(Hip, 3), (Gable, 3)],
+            window: None, window_chance: 0.45,
+            paving: [Name("mud", 2), Name("coarse_dirt", 2), Name("{wood}_planks", 1)],
+            hedge: [Name("jungle_leaves", 2), Name("palm_leaves", 1)],
+            crops: [Name("tomato", 2), Name("chili_pepper", 1), Name("potato", 1)],
+            weathered: [Name("mossy_cobblestone", 1)],
+        ),
+        (
+            name: "turf_house", biome: ["tundra", "heath"],
+            woods: [Name("spruce", 3), Name("pine", 2), Name("birch", 1)],
+            foundation: [Name("cobblestone", 3), Name("cobbled_slate", 1), Name("mossy_cobblestone", 1)],
+            floor: [Name("{wood}_planks", 2), Name("packed_earth", 1), Name("cobbled_slate", 1)],
+            walls: [Name("cobblestone", 2), Name("{wood}_log", 2), Name("cobbled_slate", 1), Name("packed_earth", 1), Name("stripped_{wood}_log", 1)],
+            frame: [Name("{wood}_log", 3), Name("cobbled_slate", 1)],
+            roof: [Name("grass_block", 3), Name("moss_block", 2), Name("podzol", 1)],
+            trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
+            roofs: [(Gable, 4), (Hip, 2)],
+            window: Some("glass"), window_chance: 0.3,
+            paving: [Name("gravel", 3), Name("cobbled_slate", 1), Name("packed_earth", 1)],
+            hedge: [Name("spruce_leaves", 1)],
+            crops: [Name("potato", 2), Name("cabbage", 2)],
+            weathered: [Name("mossy_cobblestone", 2), Name("mossy_cobbled_slate", 1)],
+        ),
+        (
+            name: "villa", biome: ["warm"],
+            woods: [Name("oak", 2), Name("dark_oak", 1), Name("acacia", 1)],
+            foundation: [Name("cobbled_limestone", 2), Name("cobbled_travertine", 2), Name("cobblestone", 1)],
+            floor: [Name("polished_travertine", 2), Name("{wood}_planks", 2), Name("terracotta", 1)],
+            walls: [Name("polished_limestone", 2), Name("travertine_bricks", 2), Name("limestone_bricks", 1), Name("polished_calcite", 1), Name("white_terracotta", 1), Name("yellow_terracotta", 1)],
+            frame: [Name("polished_travertine", 2), Name("{wood}_log", 2), Name("limestone_bricks", 1)],
+            roof: [Name("red_terracotta", 3), Name("orange_terracotta", 2), Name("brown_terracotta", 1)],
+            trim: [Name("{trim}_planks", 1), Name("polished_travertine", 1)],
+            roofs: [(Hip, 3), (Gable, 2), (Flat, 1)],
+            window: Some("glass"), window_chance: 0.5,
+            paving: [Name("cobbled_travertine", 2), Name("cobbled_limestone", 2), Name("gravel", 1), Name("polished_travertine", 1)],
+            hedge: [Name("olive_leaves", 2), Name("azalea_leaves", 1), Name("flowering_azalea_leaves", 1)],
+            crops: [Name("wheat", 2), Name("tomato", 2), Name("saffron", 1)],
+            weathered: [Name("mossy_cobbled_limestone", 2), Name("cracked_travertine_bricks", 1)],
+        ),
+        (
+            name: "timber_frame", biome: [],
+            woods: [Name("oak", 4), Name("dark_oak", 2), Name("birch", 1), Name("spruce", 1), Name("maple", 1), Name("cherry", 1)],
+            foundation: [Name("cobblestone", 3), Name("mossy_cobblestone", 1), Name("stone_bricks", 1), Name("cobbled_limestone", 1)],
+            floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1), Name("polished_stone", 1)],
+            walls: [Name("chalk_bricks", 2), Name("polished_calcite", 2), Name("{wood}_planks", 3), Name("{trim}_planks", 1), Name("white_terracotta", 1), Name("limestone_bricks", 1), Name("cobblestone", 1), Name("travertine_bricks", 1)],
+            frame: [Name("{wood}_log", 3), Name("dark_oak_log", 2), Name("stripped_{trim}_log", 1)],
+            roof: [Name("dark_oak_planks", 3), Name("spruce_planks", 2), Name("{trim}_planks", 1), Name("slate_bricks", 1), Name("brown_terracotta", 1), Name("red_terracotta", 1)],
+            trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
+            roofs: [(Gable, 6), (Hip, 2), (Shed, 1)],
+            window: Some("glass"), window_chance: 0.6,
+            paving: [Name("cobblestone", 3), Name("gravel", 2), Name("packed_earth", 2), Name("stone_bricks", 1)],
+            hedge: [Name("oak_leaves", 3), Name("{wood}_leaves", 1), Name("azalea_leaves", 1)],
+            crops: [Name("wheat", 3), Name("carrot", 2), Name("potato", 2), Name("cabbage", 1)],
+            weathered: [Name("mossy_cobblestone", 3), Name("cracked_stone_bricks", 1), Name("mossy_stone_bricks", 1)],
+        ),
+    ],
+)

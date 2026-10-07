@@ -595,6 +595,12 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         }
     }
 
+    // Settlements' buildings, props and paving, on the ground their plans graded.
+    {
+        let _stage = stage::enter(Stage::Decoration);
+        world.settlements.build(world, pos, &mut blocks, &|x, z| geology.get(x, z).height);
+    }
+
     // Samples of ore over the veins below, on open ground of the land's own: never in
     // water, on a path, on wood or leaves, or where the vein would lie above the ground.
     for sample in terrain.ores.samples(world, pos) {

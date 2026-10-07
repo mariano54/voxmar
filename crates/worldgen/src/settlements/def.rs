@@ -1,0 +1,593 @@
+//! What settlements are made of (`settlements.ron`): the lists generation rolls from and
+//! the levers each entry leans on.
+
+use std::collections::BTreeMap;
+
+use rustc_hash::FxHashMap;
+use serde::Deserialize;
+use voxmar_engine::block::{BlockId, BlockRegistry};
+
+use crate::content::{ContentError, Select, qualify};
+
+/// The five levers every settlement draws, each 0 ..= 1 (see `settlements.ron`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Lever {
+    Wealth,
+    Age,
+    Order,
+    Crowding,
+    Green,
+}
+
+impl Lever {
+    pub const ALL: [Lever; 5] = [Lever::Wealth, Lever::Age, Lever::Order, Lever::Crowding, Lever::Green];
+
+    fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.name() == name)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Lever::Wealth => "wealth",
+            Lever::Age => "age",
+            Lever::Order => "order",
+            Lever::Crowding => "crowding",
+            Lever::Green => "green",
+        }
+    }
+}
+
+/// A settlement's levers.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Levers(pub [f32; 5]);
+
+impl Levers {
+    pub fn get(&self, lever: Lever) -> f32 {
+        self.0[lever as usize]
+    }
+}
+
+/// How much an entry's weight follows the levers: each lean multiplies it by
+/// `1 + lean × (2 × lever − 1)`, never below nothing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Lean(pub Vec<(Lever, f32)>);
+
+impl Lean {
+    fn parse(at: &str, map: &BTreeMap<String, f32>) -> Result<Self, ContentError> {
+        map.iter()
+            .map(|(name, &lean)| {
+                Lever::parse(name)
+                    .map(|lever| (lever, lean))
+                    .ok_or_else(|| ContentError(format!("{at}: no lever is called `{name}` (wealth, age, order, crowding, green)")))
+            })
+            .collect::<Result<_, _>>()
+            .map(Lean)
+    }
+
+    pub fn weigh(&self, weight: f32, levers: &Levers) -> f32 {
+        self.0.iter().fold(weight, |w, &(lever, lean)| w * (1.0 + lean * (2.0 * levers.get(lever) - 1.0)).max(0.0))
+    }
+}
+
+/// Places a settlement always or sometimes has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
+pub enum Special {
+    Well,
+    Trader,
+    Inn,
+    Smithy,
+    Stall,
+    Shrine,
+    Field,
+    Pen,
+    Orchard,
+    Woodyard,
+}
+
+/// How lanes are laid out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub enum Shape {
+    Spokes,
+    Line,
+    Green,
+    Scatter,
+    Fork,
+}
+
+/// Roofs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub enum Roof {
+    Gable,
+    Hip,
+    Flat,
+    Shed,
+}
+
+/// What a house may have besides walls and a roof.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
+pub enum Extra {
+    Chimney,
+    Porch,
+    Shed,
+    FlowerBoxes,
+    Garden,
+    Hedge,
+    Lamp,
+    Woodpile,
+    Moss,
+    Wing,
+}
+
+/// What stands in yards and by lanes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub enum Prop {
+    Woodpile,
+    Crates,
+    StonePile,
+    FlowerBed,
+    HerbPlanter,
+    Campfire,
+    Lamp,
+    Bush,
+    Compost,
+    Boulder,
+}
+
+// ---------------------------------------------------------------------------------------
+// The file
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GridDef {
+    pub spacing: i32,
+    pub chance: f32,
+    pub margin: i32,
+}
+
+impl Default for GridDef {
+    fn default() -> Self {
+        Self { spacing: 1024, chance: 0.33, margin: 160 }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SizeFile {
+    name: String,
+    weight: f32,
+    #[serde(default)]
+    lean: BTreeMap<String, f32>,
+    houses: (u32, u32),
+    lanes: (u32, u32),
+    lane_length: (u32, u32),
+    square: (u32, u32),
+    #[serde(default)]
+    always: Vec<Special>,
+    #[serde(default)]
+    sometimes: Vec<(Special, f32)>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LayoutFile {
+    name: String,
+    shape: Shape,
+    weight: f32,
+    #[serde(default)]
+    lean: BTreeMap<String, f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HouseFile {
+    name: String,
+    weight: f32,
+    #[serde(default)]
+    lean: BTreeMap<String, f32>,
+    width: (u32, u32),
+    depth: (u32, u32),
+    walls: (u32, u32),
+    storeys: (u32, u32),
+    #[serde(default)]
+    porch: f32,
+    #[serde(default)]
+    wing: f32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtraFile {
+    name: Extra,
+    chance: f32,
+    #[serde(default)]
+    lean: BTreeMap<String, f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PropFile {
+    name: Prop,
+    weight: f32,
+    #[serde(default)]
+    lean: BTreeMap<String, f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NamesFile {
+    #[serde(default)]
+    biome: Vec<String>,
+    first: Vec<(String, String)>,
+    last: Vec<(String, String)>,
+    #[serde(default)]
+    small: Vec<(String, String)>,
+    #[serde(default)]
+    prefixes: Vec<PrefixFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrefixFile {
+    en: String,
+    ja: String,
+    weight: f32,
+    #[serde(default)]
+    lean: BTreeMap<String, f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StyleFile {
+    name: String,
+    #[serde(default)]
+    biome: Vec<String>,
+    #[serde(default)]
+    stilts: u32,
+    woods: Vec<Select>,
+    foundation: Vec<Select>,
+    floor: Vec<Select>,
+    walls: Vec<Select>,
+    frame: Vec<Select>,
+    roof: Vec<Select>,
+    trim: Vec<Select>,
+    roofs: Vec<(Roof, f32)>,
+    window: Option<String>,
+    window_chance: f32,
+    paving: Vec<Select>,
+    hedge: Vec<Select>,
+    crops: Vec<Select>,
+    #[serde(default)]
+    weathered: Vec<Select>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettlementFile {
+    grid: Option<GridDef>,
+    #[serde(default)]
+    avoid: Vec<String>,
+    #[serde(default)]
+    sizes: Vec<SizeFile>,
+    #[serde(default)]
+    layouts: Vec<LayoutFile>,
+    #[serde(default)]
+    houses: Vec<HouseFile>,
+    #[serde(default)]
+    extras: Vec<ExtraFile>,
+    #[serde(default)]
+    props: Vec<PropFile>,
+    #[serde(default)]
+    names: Vec<NamesFile>,
+    #[serde(default)]
+    styles: Vec<StyleFile>,
+}
+
+// ---------------------------------------------------------------------------------------
+// Parsed definitions, names qualified by their package
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SizeDef {
+    pub name: String,
+    pub weight: f32,
+    pub lean: Lean,
+    pub houses: (u32, u32),
+    pub lanes: (u32, u32),
+    pub lane_length: (u32, u32),
+    pub square: (u32, u32),
+    pub always: Vec<Special>,
+    pub sometimes: Vec<(Special, f32)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayoutDef {
+    pub name: String,
+    pub shape: Shape,
+    pub weight: f32,
+    pub lean: Lean,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HouseDef {
+    pub name: String,
+    pub weight: f32,
+    pub lean: Lean,
+    pub width: (u32, u32),
+    pub depth: (u32, u32),
+    pub walls: (u32, u32),
+    pub storeys: (u32, u32),
+    pub porch: f32,
+    pub wing: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtraDef {
+    pub name: Extra,
+    pub chance: f32,
+    pub lean: Lean,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PropDef {
+    pub name: Prop,
+    pub weight: f32,
+    pub lean: Lean,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NamesDef {
+    pub biome: Vec<String>,
+    pub first: Vec<(String, String)>,
+    pub last: Vec<(String, String)>,
+    pub small: Vec<(String, String)>,
+    /// Words put before a name ("Old", "Upper"), in English and Japanese, by weight.
+    pub prefixes: Vec<(String, String, f32, Lean)>,
+}
+
+/// A material: block names, some with `{wood}` or `{trim}` in them, by weight.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Material(pub Vec<(String, f32)>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StyleDef {
+    pub name: String,
+    pub biome: Vec<String>,
+    pub stilts: u32,
+    pub woods: Vec<(String, f32)>,
+    pub foundation: Material,
+    pub floor: Material,
+    pub walls: Material,
+    pub frame: Material,
+    pub roof: Material,
+    pub trim: Material,
+    pub roofs: Vec<(Roof, f32)>,
+    pub window: Option<String>,
+    pub window_chance: f32,
+    pub paving: Material,
+    pub hedge: Material,
+    pub crops: Vec<(String, f32)>,
+    pub weathered: Material,
+}
+
+/// Every package's `settlements.ron` together.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SettlementsDef {
+    pub grid: GridDef,
+    pub avoid: Vec<String>,
+    pub sizes: Vec<SizeDef>,
+    pub layouts: Vec<LayoutDef>,
+    pub houses: Vec<HouseDef>,
+    pub extras: Vec<ExtraDef>,
+    pub props: Vec<PropDef>,
+    pub names: Vec<NamesDef>,
+    pub styles: Vec<StyleDef>,
+}
+
+fn names(package: &str, at: &str, selects: &[Select]) -> Result<Vec<(String, f32)>, ContentError> {
+    selects
+        .iter()
+        .map(|s| match s {
+            Select::Name(name, weight) => Ok((qualify(package, name), *weight)),
+            Select::Tag(tag, _) => Err(ContentError(format!("{at}: settlements name their blocks; Tag(\"{tag}\") is not allowed"))),
+        })
+        .collect()
+}
+
+impl SettlementsDef {
+    /// Adds a package's `settlements.ron`: its grid replaces earlier ones, its lists add
+    /// to theirs.
+    pub fn extend(&mut self, at: &str, package: &str, source: &str) -> Result<(), ContentError> {
+        let file: SettlementFile = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(source)
+            .map_err(|e| ContentError(format!("{at}: {e}")))?;
+        if let Some(grid) = file.grid {
+            self.grid = grid;
+        }
+        self.avoid.extend(file.avoid);
+        for s in file.sizes {
+            self.sizes.push(SizeDef {
+                lean: Lean::parse(at, &s.lean)?,
+                name: s.name,
+                weight: s.weight,
+                houses: s.houses,
+                lanes: s.lanes,
+                lane_length: s.lane_length,
+                square: s.square,
+                always: s.always,
+                sometimes: s.sometimes,
+            });
+        }
+        for l in file.layouts {
+            self.layouts.push(LayoutDef { lean: Lean::parse(at, &l.lean)?, name: l.name, shape: l.shape, weight: l.weight });
+        }
+        for h in file.houses {
+            self.houses.push(HouseDef {
+                lean: Lean::parse(at, &h.lean)?,
+                name: h.name,
+                weight: h.weight,
+                width: h.width,
+                depth: h.depth,
+                walls: h.walls,
+                storeys: h.storeys,
+                porch: h.porch,
+                wing: h.wing,
+            });
+        }
+        for e in file.extras {
+            self.extras.push(ExtraDef { lean: Lean::parse(at, &e.lean)?, name: e.name, chance: e.chance });
+        }
+        for p in file.props {
+            self.props.push(PropDef { lean: Lean::parse(at, &p.lean)?, name: p.name, weight: p.weight });
+        }
+        for n in file.names {
+            let prefixes = n
+                .prefixes
+                .into_iter()
+                .map(|p| Ok((p.en, p.ja, p.weight, Lean::parse(at, &p.lean)?)))
+                .collect::<Result<_, ContentError>>()?;
+            self.names.push(NamesDef { biome: n.biome, first: n.first, last: n.last, small: n.small, prefixes });
+        }
+        for s in file.styles {
+            let m = |list: &[Select]| names(package, at, list).map(Material);
+            self.styles.push(StyleDef {
+                woods: s.woods.iter().map(|w| match w {
+                    Select::Name(name, weight) => Ok((name.clone(), *weight)),
+                    Select::Tag(tag, _) => Err(ContentError(format!("{at}: woods are named; Tag(\"{tag}\") is not allowed"))),
+                }).collect::<Result<_, _>>()?,
+                foundation: m(&s.foundation)?,
+                floor: m(&s.floor)?,
+                walls: m(&s.walls)?,
+                frame: m(&s.frame)?,
+                roof: m(&s.roof)?,
+                trim: m(&s.trim)?,
+                paving: m(&s.paving)?,
+                hedge: m(&s.hedge)?,
+                weathered: m(&s.weathered)?,
+                crops: names(package, at, &s.crops)?,
+                window: s.window.as_deref().map(|w| qualify(package, w)),
+                name: s.name,
+                biome: s.biome,
+                stilts: s.stilts,
+                roofs: s.roofs,
+                window_chance: s.window_chance,
+            });
+        }
+        Ok(())
+    }
+
+    /// Checks the numbers and that every block named resolves, for every wood.
+    pub fn check(&self, registry: &BlockRegistry) -> Result<(), ContentError> {
+        let fail = |what: String| Err(ContentError(format!("settlements.ron: {what}")));
+        let grid = &self.grid;
+        if grid.spacing < 256 || !(0.0..=1.0).contains(&grid.chance) || grid.margin < 64 || grid.margin * 2 + 64 > grid.spacing {
+            return fail(format!("the grid needs a spacing of 256 or more, a chance in [0, 1] and a margin of 64 or more that leaves room: {grid:?}"));
+        }
+        if self.sizes.is_empty() || self.layouts.is_empty() || self.houses.is_empty() || self.styles.is_empty() || self.names.is_empty() {
+            return fail("needs sizes, layouts, houses, names and styles".into());
+        }
+        for s in &self.sizes {
+            let ordered = |(a, b): (u32, u32)| a <= b;
+            if !(ordered(s.houses) && ordered(s.lanes) && ordered(s.lane_length) && ordered(s.square) && s.lanes.0 >= 1 && s.square.1 <= 16 && s.lane_length.1 <= 96) {
+                return fail(format!("size `{}` needs ranges low to high, at least one lane, a square of at most 16 and lanes of at most 96", s.name));
+            }
+        }
+        for h in &self.houses {
+            if h.width.0 < 4 || h.depth.0 < 4 || h.width.1 > 12 || h.depth.1 > 16 || h.width.0 > h.width.1 || h.depth.0 > h.depth.1 || h.walls.0 < 2 || h.walls.1 > 6 || h.storeys.0 < 1 || h.storeys.1 > 3 {
+                return fail(format!("house `{}` is out of bounds (width 4..=12, depth 4..=16, walls 2..=6, storeys 1..=3)", h.name));
+            }
+        }
+        for n in &self.names {
+            if n.first.is_empty() || n.last.is_empty() {
+                return fail("every list of names needs first and last parts".into());
+            }
+        }
+        if !self.names.iter().any(|n| n.biome.is_empty()) || !self.styles.iter().any(|s| s.biome.is_empty()) {
+            return fail("needs a style and a list of names for anywhere (no biome tags)".into());
+        }
+        for style in &self.styles {
+            if style.woods.is_empty() || style.roofs.is_empty() || style.crops.is_empty() {
+                return fail(format!("style `{}` needs woods, roofs and crops", style.name));
+            }
+            for (wood, _) in &style.woods {
+                for (trim, _) in &style.woods {
+                    for material in style.materials() {
+                        for (name, _) in &material.0 {
+                            let name = fill(name, wood, trim);
+                            if registry.id(&name).is_none() {
+                                return fail(format!("style `{}` names `{name}`, which is no block", style.name));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(window) = &style.window
+                && registry.id(window).is_none()
+            {
+                return fail(format!("style `{}`'s window `{window}` is no block", style.name));
+            }
+            for (crop, _) in &style.crops {
+                for stage in ["_crop_0", "_crop_1", "_crop_2", "_crop"] {
+                    if registry.id(&format!("{crop}{stage}")).is_none() {
+                        return fail(format!("style `{}`'s crop `{crop}` has no `{crop}{stage}` block", style.name));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl StyleDef {
+    fn materials(&self) -> [&Material; 9] {
+        [&self.foundation, &self.floor, &self.walls, &self.frame, &self.roof, &self.trim, &self.paving, &self.hedge, &self.weathered]
+    }
+}
+
+/// `name` with its `{wood}` and `{trim}` filled in. Woods are bare names in the package of
+/// the block (`base:{wood}_log` with `oak` is `base:oak_log`).
+pub fn fill(name: &str, wood: &str, trim: &str) -> String {
+    name.replace("{wood}", wood).replace("{trim}", trim)
+}
+
+/// Block names to ids, for every block a style may use, made once.
+#[derive(Default)]
+pub struct Resolved(pub FxHashMap<String, BlockId>);
+
+impl Resolved {
+    pub fn new(def: &SettlementsDef, registry: &BlockRegistry) -> Self {
+        let mut map = FxHashMap::default();
+        for style in &def.styles {
+            for (wood, _) in &style.woods {
+                for (trim, _) in &style.woods {
+                    for material in style.materials() {
+                        for (name, _) in &material.0 {
+                            let name = fill(name, wood, trim);
+                            if let Some(id) = registry.id(&name) {
+                                map.insert(name, id);
+                            }
+                        }
+                    }
+                }
+            }
+            for (crop, _) in &style.crops {
+                for stage in ["_crop_0", "_crop_1", "_crop_2", "_crop"] {
+                    let name = format!("{crop}{stage}");
+                    if let Some(id) = registry.id(&name) {
+                        map.insert(name, id);
+                    }
+                }
+            }
+            if let Some(window) = &style.window
+                && let Some(id) = registry.id(window)
+            {
+                map.insert(window.clone(), id);
+            }
+        }
+        Self(map)
+    }
+
+    pub fn get(&self, name: &str) -> Option<BlockId> {
+        self.0.get(name).copied()
+    }
+}

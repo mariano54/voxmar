@@ -84,6 +84,8 @@ pub enum Kind {
     Viewpoint,
     /// Flat, low ground where trails start: a meadow or valley floor, often by a stream.
     Trailhead,
+    /// Where a settlement's lane leads out.
+    Settlement,
 }
 
 /// A place of interest, at a grid point.
