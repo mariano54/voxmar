@@ -296,6 +296,8 @@ fn pouches(blocks: &BlockRegistry) -> Result<Vec<Option<(crate::block::BlockId, 
 
 #[cfg(test)]
 mod tests {
+    use rustc_hash::FxHashMap;
+
     use super::*;
     use crate::skill::SkillId;
 
@@ -356,5 +358,138 @@ mod tests {
             .map(|(&id, (level, what))| format!("{} (first {what}, at {level})", content.skills.get(id).name))
             .collect();
         assert!(late.is_empty(), "these skills are trained only from above level 1: {late:?}");
+    }
+
+    /// What finishing each main-line quest makes that its tasks don't name: the hearth's
+    /// pieces, the kilns' and what goes into them.
+    const ALSO_MADE: &[(&str, &[&str])] = &[
+        ("base:stone_in_hand", &["base:crafting_table"]),
+        ("base:homestead_hearth", &["base:hearthstone", "base:chimney"]),
+        ("base:the_potter", &["base:pit_kiln", "base:fired_clay"]),
+        ("base:red_metal", &["base:copper_ingot"]),
+        ("base:crucible_kiln", &["base:kiln_bricks", "base:crucible"]),
+        ("base:first_bronze", &["base:bronze_blend"]),
+    ];
+
+    /// Walls on the main line waiting for design's numbers, as the start of the wall's line
+    /// (none should stay here long): copper ore at Mining 5 is reached only by the Charcoal
+    /// quest's coal route, and the crucible's Engineering 10 by nothing yet.
+    const AWAITING_DESIGN: &[&str] = &["base:red_metal: mining copper_ore", "base:crucible_kiln: base:crucible"];
+
+    /// The main quest line, walked in order, reaches every level it asks for from what it
+    /// guarantees: quest rewards and the things it has the player make (each quest's own
+    /// crafts, cooks and ores, and the pieces in `ALSO_MADE`). Where a quest has several
+    /// routes, only what every route gives counts. A level asked for before the walk has
+    /// earned it is a wall: grinding throwaway crafts to go on (design draft 100 found the
+    /// chimney and Engineering 5 for copper).
+    #[test]
+    fn the_main_quest_line_earns_every_level_it_asks_for() {
+        use crate::quest::{Goal, Reward};
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (skills, blocks) = (&content.skills, &content.blocks);
+        let skill_named = |name: &str| skills.id(name).or_else(|| skills.id(&format!("core:{name}")));
+        let item = |name: &str| blocks.id(name).or_else(|| blocks.id(&format!("base:{name}")));
+        // What making one batch of `name` asks and gives: (skill, level, tenths of xp, how
+        // many it makes), from the easiest grid recipe or, failing that, cooking recipe.
+        let recipe = |name: &str| -> Option<(Option<SkillId>, u8, u32, u32)> {
+            let id = item(name)?;
+            let grid = content.recipes.iter().filter(|r| r.output == id).min_by_key(|r| r.level).map(|r| (r.skill, r.level, r.xp, r.count as u32));
+            let cooked = || content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id).min_by_key(|r| r.def.level).map(|r| (r.skill, r.def.level, r.def.xp, 1));
+            grid.or_else(cooked).map(|(skill, level, xp, count)| (skill, level, (xp * 10.0).round() as u32, count))
+        };
+        // The line and every quest it comes after, in file order once their `after` is done.
+        let quests: Vec<&crate::quest::QuestDef> = content.quests.iter().collect();
+        let mut wanted: Vec<String> = quests.iter().filter(|q| q.branch == "main").map(|q| q.name.clone()).collect();
+        let mut i = 0;
+        while i < wanted.len() {
+            let quest = quests.iter().find(|q| q.name == wanted[i]).expect("a quest named in `after`");
+            for after in &quest.after {
+                let first = after.split('|').next().unwrap().to_owned();
+                if !wanted.contains(&first) {
+                    wanted.push(first);
+                }
+            }
+            i += 1;
+        }
+        let mut xp = crate::skill::Skills::default();
+        skills.start(&mut xp);
+        let mut made: FxHashMap<String, u32> = FxHashMap::default();
+        let mut done: Vec<String> = Vec::new();
+        let mut walls = Vec::new();
+        while done.len() < wanted.len() {
+            let ready = |q: &&&crate::quest::QuestDef| !done.contains(&q.name) && wanted.contains(&q.name) && q.after.iter().all(|a| a.split('|').any(|a| done.iter().any(|d| d == a)));
+            let Some(quest) = quests.iter().find(ready) else { panic!("the main line can't go on after {done:?}") };
+            // Each route: what it makes (item, how many) and mines (ore, how many).
+            let also: Vec<(String, u32)> = ALSO_MADE.iter().filter(|(q, _)| *q == quest.name).flat_map(|(_, items)| items.iter().map(|i| (i.to_string(), 1))).collect();
+            let mut gains: Option<Vec<u32>> = None;
+            let mut made_after: Option<FxHashMap<String, u32>> = None;
+            let mut routes = Vec::new();
+            for task in &quest.tasks {
+                let mut route = xp.clone();
+                let mut stuck = Vec::new();
+                let mut made_here = made.clone();
+                let makes = also.iter().cloned().chain(task.iter().filter_map(|goal| match goal {
+                    Goal::Craft(item, n) | Goal::Cook(item, n) if item != "any" && !item.starts_with("tag:") => Some((item.clone(), *n)),
+                    _ => None,
+                }));
+                for (name, n) in makes {
+                    let Some((skill, level, tenths, count)) = recipe(&name) else { panic!("{}: nothing makes `{name}`", quest.name) };
+                    let had = made_here.entry(name.clone()).or_default();
+                    let batches = n.saturating_sub(*had).div_ceil(count);
+                    *had += batches * count;
+                    let Some(skill) = skill else { continue };
+                    if batches > 0 && skills.level(route.xp(skill)) < level {
+                        stuck.push(format!("{}: {name} needs {} {level}, the line gives {} xp", quest.name, skills.get(skill).name, route.xp(skill) / 10));
+                    }
+                    route.grant(skill, tenths * batches);
+                }
+                for goal in task {
+                    if let Goal::Mine(ore, n) = goal
+                        && let Some(rule) = item(ore).and_then(|id| content.tools.rule(id))
+                        && let Some(skill) = rule.skill
+                    {
+                        if skills.level(route.xp(skill)) < rule.level {
+                            stuck.push(format!("{}: mining {ore} needs {} {}, the line gives {} xp", quest.name, skills.get(skill).name, rule.level, route.xp(skill) / 10));
+                        }
+                        route.grant(skill, (rule.xp * 10.0).round() as u32 * n);
+                    }
+                }
+                if stuck.is_empty() {
+                    // Only what every open route gives counts.
+                    let these: Vec<u32> = skills.ids().map(|id| route.xp(id)).collect();
+                    gains = Some(match gains {
+                        None => these,
+                        Some(old) => old.into_iter().zip(these).map(|(a, b)| a.min(b)).collect(),
+                    });
+                    made_after = Some(match made_after {
+                        None => made_here,
+                        Some(old) => old.into_iter().map(|(name, n)| (name.clone(), n.min(made_here.get(&name).copied().unwrap_or(0)))).collect(),
+                    });
+                } else {
+                    routes.push(stuck);
+                }
+            }
+            if let Some(after) = made_after {
+                made = after;
+            }
+            match gains {
+                Some(gains) => {
+                    for (id, xp_now) in skills.ids().zip(gains) {
+                        xp.grant(id, xp_now - xp.xp(id));
+                    }
+                }
+                // No route open: report the first's walls and carry on as if it were done.
+                None => walls.extend(routes.into_iter().next().unwrap_or_default()),
+            }
+            for reward in &quest.rewards {
+                if let Reward::Xp(name, amount) = reward {
+                    let skill = skill_named(name).unwrap_or_else(|| panic!("{}: no skill `{name}`", quest.name));
+                    xp.grant(skill, (amount * 10.0).round() as u32);
+                }
+            }
+            done.push(quest.name.clone());
+        }
+        walls.retain(|w| !AWAITING_DESIGN.iter().any(|a| w.starts_with(a)));
+        assert!(walls.is_empty(), "the main quest line asks for levels it hasn't earned: {walls:#?}");
     }
 }

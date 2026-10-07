@@ -88,7 +88,7 @@ Flowers, herbs, fungi and berry bushes the world grew come back where they were 
 from is still there: dig out or replace the ground and the spot is gone. Commons take 20
 minutes of world time, uncommons an hour, rares half a day, very rares two days and
 legendaries four. Herbs cannot be sown, and a plant a player places does not come back,
-except on a herb planter (planks and dirt at a crafting table, Construction 5) for a player
+except on a herb planter (planks and dirt at a crafting table, Construction 3) for a player
 whose Farming level reaches the plant's (1, 15, 40, 60, 80 by rarity); picking one there
 teaches Farming. Waiting plants are saved with the world (`WorldMeta::regrowing`), and
 `/grow` brings back those near you at once.
@@ -100,7 +100,7 @@ A multiblock is a structure recognised from a pattern of blocks (`multiblocks.ro
 `a|b`, `.` for anything and a space for air, and a core block; it counts turned any of four
 ways. The first is the Homestead Hearth, the Nomad age's gate: a hearthstone (eight
 cobbles at a crafting table, Construction 1) in a ring of stone, with a chimney (cobbles and
-clay, Construction 3) two blocks tall at one corner. Right click the hearthstone
+clay, Construction 1) two blocks tall at one corner. Right click the hearthstone
 (`base:light_hearth`): if the hearth stands, it is your home (`Player::home`, saved) and
 you wake on it after dying; if not, you are told what it needs.
 
@@ -108,7 +108,7 @@ you wake on it after dying; if not, you are told what it needs.
 
 A sleeping bag (three wool and two hide, four pelts, or feathers and two hide) is where
 you wake after dying until a hearth gives you a home: right click it to sleep
-(`base:sleep`, `Player::bed`, saved). A pit kiln (cobbles round a campfire, Construction 3) fires clay into fired clay (`cooking.ron` at the
+(`base:sleep`, `Player::bed`, saved). A pit kiln (cobbles round a campfire, Construction 1) fires clay into fired clay (`cooking.ron` at the
 `pit_kiln` station; a station recipe may name its own `skill`, here Crafting), which pots,
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
