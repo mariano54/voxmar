@@ -15,10 +15,11 @@
 //   which takes it back to that stage to fruit again. Each find has a chance; uncommon and
 //   rarer finds come up to half again as often with level.
 // - `wild` names wild plants that are this crop gone wild, and `forage` what each gives.
-//   Most crops are rare; their wild forms are where seeds come from first.
-// - `unsown` is the chance a crop nobody sowed (a village's field), broken unripe, gives
-//   its seed or produce: enough to start the crop, not a store of free food (Review,
-//   d506b51). A crop may set its own.
+//   Most crops are rare; their wild forms are where seeds come from first. A ripe crop
+//   nobody sowed (plants.ron grows some wild, alone) forages the same way.
+// - `unsown` is the chance a crop nobody sowed (a village's field), broken unripe or ripe
+//   with no `forage`, gives its seed, produce or harvest, never experience: enough to
+//   start the crop, not a store of free food (Review, d506b51). A crop may set its own.
 (
     unsown: 0.15,
     crops: [
@@ -73,19 +74,22 @@
             harvest: [(item: "potato", count: (2, 4))],
         ),
         (
-            name: "cabbage", level: 20, rarity: Uncommon, xp: (plant: 7.0, harvest: 33.0), minutes: 22.0,
+            name: "cabbage", level: 20, rarity: Uncommon, xp: (plant: 7.0, harvest: 33.0, forage: 4.0), minutes: 22.0,
             comfort: (temperature: (-4.0, 20.0), moisture: (0.6, 2.0)),
             harvest: [(item: "cabbage"), (item: "cabbage_seeds", count: (1, 2), chance: 0.6)],
+            forage: [(item: "cabbage", chance: 0.6), (item: "cabbage_seeds", chance: 0.5)],
         ),
         (
-            name: "tomato", level: 30, rarity: Rare, xp: (plant: 16.0, harvest: 30.0), minutes: 26.0, regrow: 2,
+            name: "tomato", level: 30, rarity: Rare, xp: (plant: 16.0, harvest: 30.0, forage: 6.0), minutes: 26.0, regrow: 2,
             comfort: (temperature: (14.0, 32.0), moisture: (0.4, 1.5)),
             harvest: [(item: "tomato", count: (1, 3)), (item: "tomato_seeds", chance: 0.15, rarity: Uncommon)],
+            forage: [(item: "tomato", count: (1, 2), chance: 0.6), (item: "tomato_seeds", chance: 0.4, rarity: Uncommon)],
         ),
         (
-            name: "strawberry", level: 38, rarity: Rare, xp: (plant: 28.0, harvest: 50.0), minutes: 22.0, regrow: 2,
+            name: "strawberry", level: 38, rarity: Rare, xp: (plant: 28.0, harvest: 50.0, forage: 8.0), minutes: 22.0, regrow: 2,
             comfort: (temperature: (6.0, 24.0), moisture: (0.6, 1.8)),
             harvest: [(item: "strawberry", count: (2, 4)), (item: "strawberry_seeds", chance: 0.12, rarity: Uncommon)],
+            forage: [(item: "strawberry", count: (1, 2), chance: 0.6), (item: "strawberry_seeds", chance: 0.4, rarity: Uncommon)],
         ),
         (
             name: "chili_pepper", level: 45, rarity: Rare, xp: (plant: 45.0, harvest: 80.0, forage: 10.0), minutes: 30.0, regrow: 2,
@@ -95,9 +99,10 @@
             forage: [(item: "chili_pepper", count: (1, 2), chance: 0.6), (item: "chili_pepper_seeds", chance: 0.4, rarity: Rare)],
         ),
         (
-            name: "saffron", level: 60, rarity: VeryRare, xp: (plant: 128.0, harvest: 512.0), minutes: 45.0,
+            name: "saffron", level: 60, rarity: VeryRare, xp: (plant: 128.0, harvest: 512.0, forage: 16.0), minutes: 45.0,
             comfort: (temperature: (6.0, 28.0), moisture: (0.15, 0.8)),
             harvest: [(item: "saffron", count: (1, 2)), (item: "saffron_seeds", chance: 0.35, rarity: Uncommon)],
+            forage: [(item: "saffron", chance: 0.5), (item: "saffron_seeds", chance: 0.4, rarity: Rare)],
         ),
         // Fruit on trees: picked by hand, back to bare leaves to fruit again. Not sown;
         // trees grow them in their crowns (trees.ron's `fruit`), oaks apples and golden

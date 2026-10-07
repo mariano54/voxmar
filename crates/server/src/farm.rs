@@ -285,13 +285,12 @@ impl Server {
         let Some(regrow) = crop.def.regrow else { return };
         let block = crop.stages[regrow as usize];
         let sown = self.farm.planted.get(&pos).is_some_and(|p| p.sown);
-        // A village's tomatoes, which nobody sowed, are picked as its field is broken: now
-        // and then, and for no experience. Fruit on trees is anyone's.
+        // Tomatoes nobody sowed are picked as they would be broken (see `unsown_ripe`).
+        // Fruit on trees is anyone's.
         if sown || crop.def.fruit {
             self.harvest(agent, id, pos, 0, false);
-        } else if self.unsown_gives(id, pos, 0) {
-            let loot = crop.harvest.clone();
-            self.yield_loot(agent, id, &loot, pos, 0);
+        } else {
+            self.unsown_ripe(agent, id, pos, 0);
         }
         self.set_block(pos, block);
         let rate = self.crop_rate(id, pos);
@@ -363,9 +362,8 @@ impl Server {
 mod tests {
     use super::*;
 
-    /// Crops whose seed comes from settlement fields, which Settlements is adding; until
-    /// then nothing supplies them.
-    const AWAITING_SETTLEMENTS: [&str; 1] = ["base:rye"];
+    /// Crops whose seed nothing supplies yet, waiting on another thread's change.
+    const AWAITING_SETTLEMENTS: [&str; 0] = [];
 
     #[test]
     fn every_sown_crop_is_obtainable() {
@@ -374,19 +372,26 @@ mod tests {
         let world = voxmar_worldgen::WorldContent::load(&content).unwrap();
         let crops = &content.crops;
         let fields: Vec<&str> = world.settlements.styles.iter().flat_map(|s| s.crops.iter().map(|(c, _)| c.as_str())).collect();
+        let mut nowhere = Vec::new();
         for (id, crop) in crops.iter() {
             let Some(seed) = crop.seed else { continue };
             let gives = |loot: &[(BlockId, crop::Loot)]| loot.iter().any(|(item, _)| *item == seed);
             // Foraged from its wild form, given by another crop, or harvested from a
             // settlement's field.
-            // A wild form the world grows (plants.ron), or it is found nowhere.
-            let generated = crop.def.wild.iter().any(|wild| world.plants.iter().any(|p| p.block == *wild || format!("base:{}", p.block) == *wild));
+            // A wild form the world grows (plants.ron), or the crop itself grown wild and
+            // ripe, or it is found nowhere.
+            let ripe = &crop.def.stages[crop.ripe_stage() as usize];
+            let generated = crop.def.wild.iter().chain([ripe]).any(|wild| world.plants.iter().any(|p| p.block == *wild || format!("base:{}", p.block) == *wild));
             let foraged = generated && gives(&crop.forage);
             let other = crops.iter().any(|(other, c)| other != id && (gives(&c.harvest) || gives(&c.forage)));
-            let field = fields.iter().any(|f| *f == crop.def.name || format!("base:{f}") == crop.def.name) && gives(&crop.harvest);
+            // Village fields grow unripe, so what an unripe stage drops.
+            let field = fields.iter().any(|f| *f == crop.def.name || format!("base:{f}") == crop.def.name) && content.blocks.info(crop.stages[0]).drops == seed;
             let name = crop.def.name.as_str();
-            assert!(foraged || other || field || AWAITING_SETTLEMENTS.contains(&name), "nothing in survival gives {name}'s seed");
+            if !(foraged || other || field || AWAITING_SETTLEMENTS.contains(&name)) {
+                nowhere.push(name.to_owned());
+            }
         }
+        assert!(nowhere.is_empty(), "nothing in survival gives these crops' seeds: {nowhere:?}");
     }
 
     #[test]

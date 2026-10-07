@@ -168,11 +168,8 @@ impl Server {
             if let Some(crop) = ripe {
                 if sown {
                     self.harvest(agent, crop, cell, i as u32, true);
-                } else if self.unsown_gives(crop, cell, i as u32) {
-                    // A field nobody sowed (a village's) now and then gives a harvest, but
-                    // never its experience.
-                    let loot = self.content.crops.get(crop).harvest.clone();
-                    self.yield_loot(agent, crop, &loot, cell, i as u32);
+                } else {
+                    self.unsown_ripe(agent, crop, cell, i as u32);
                 }
                 continue;
             }
@@ -207,6 +204,18 @@ impl Server {
     pub(crate) fn unsown_gives(&self, crop: voxmar_engine::crop::CropId, cell: IVec3, salt: u32) -> bool {
         let def = &self.content.crops.get(crop).def;
         def.fruit || random3(self.tick, cell, salt ^ 0x5eed)[0] < def.unsown.unwrap_or(1.0)
+    }
+
+    /// A ripe crop nobody sowed: one the world grew wild forages like its wild form (its
+    /// `forage`, and forage experience at its level); one with no forage list (a village's)
+    /// now and then gives its harvest, never its experience.
+    pub(crate) fn unsown_ripe(&mut self, agent: PlayerId, crop: voxmar_engine::crop::CropId, cell: IVec3, salt: u32) {
+        if !self.content.crops.get(crop).forage.is_empty() {
+            self.forage(agent, crop, cell, salt);
+        } else if self.unsown_gives(crop, cell, salt) {
+            let loot = self.content.crops.get(crop).harvest.clone();
+            self.yield_loot(agent, crop, &loot, cell, salt);
+        }
     }
 
     /// Throws up to `count` items of `slot` from the player's hand.
