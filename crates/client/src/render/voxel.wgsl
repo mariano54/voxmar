@@ -41,8 +41,10 @@
 // of an overlay drawn over it, tinted (a grass block side's fringe), plus one (0 for
 // none), b the overlay's tint, a how brightly the layer glows by itself.
 @group(2) @binding(7) var block_layers: texture_2d<f32>;
-// The tint byte's bit for a layer whose texture is a strip of frames.
+// The tint byte's bits for a layer whose texture is a strip of frames, and for one its
+// pack gives other drawings of.
 const ANIMATED: u32 = 32u;
+const VARIED: u32 = 16u;
 #endif
 @group(3) @binding(0) var<storage, read> vertex_chunks: array<u32>;
 
@@ -259,9 +261,17 @@ fn plant_shade(w0: u32) -> f32 {
     return 1.0;
 }
 
-// Where a model's quad's vertex lies across its cell: past the two crossed diagonal quads
-// every model starts with, a # of four straight quads (crops), a flat cap (mushrooms) or a
-// straight cross through the middle (bushes).
+// A bush or flower (`MODEL_BUSH`, four quads) splays from one root like a bouquet: each card
+// faces out from the middle, its foot close to the centre and its top leaning out, so no
+// card runs through the middle to be seen flat on, and from any side the cards stand at
+// different depths. Distances in blocks from the plant's centre.
+const BUSH_FOOT: f32 = 0.05;
+const BUSH_SPREAD: f32 = 0.3;
+const BUSH_WIDTH: f32 = 1.0;
+
+// Where a model's quad's vertex lies across its cell: a # of four straight quads (crops), a
+// cap with volume (mushrooms), four splayed cards (bushes and flowers), else the two
+// crossed diagonal quads.
 fn model_across(w0: u32) -> vec2<f32> {
     let corner = (w0 >> 21u) & 3u;
     let far = select(0.0, 1.0, corner == 1u || corner == 2u);
@@ -275,12 +285,11 @@ fn model_across(w0: u32) -> vec2<f32> {
             return 0.5 + cap_vertex(w0).at.xz;
         }
         case MODEL_BUSH: {
-            if piece == 2u {
-                return vec2(far, 0.5);
-            }
-            if piece == 3u {
-                return vec2(0.5, far);
-            }
+            let angle = 0.7853982 + f32(piece) * 1.5707963;
+            let outward = vec2(cos(angle), sin(angle));
+            let along = vec2(-outward.y, outward.x);
+            let reach = select(BUSH_FOOT, BUSH_SPREAD, corner >= 2u);
+            return 0.5 + outward * reach + along * (far - 0.5) * BUSH_WIDTH;
         }
         default: {}
     }
@@ -698,6 +707,17 @@ fn animation_frame(layer: i32) -> i32 {
     let frame = u32(floor(globals.time * 20.0 / ticks)) % frames;
     return select(i32(first + frame) - 1, layer, frame == 0u);
 }
+
+// The drawing of a layer with others (render/mod.rs, `layer_table`) the block at `cell`
+// shows: the layer itself or one of the others, by the block's position.
+fn variant_layer(layer: i32, cell: vec3<i32>) -> i32 {
+    let variants = textureLoad(block_layers, vec2(layer, 1), 0);
+    let first = u32(variants.r * 255.0 + 0.5) | (u32(variants.g * 255.0 + 0.5) << 8u);
+    let count = max(u32(variants.b * 255.0 + 0.5), 1u);
+    // Bits the turn and mirror (`laid`) do not use, so the drawing does not follow them.
+    let pick = (block_hash(cell) >> 8u) % count;
+    return select(i32(first + pick) - 1, layer, pick == 0u);
+}
 #endif
 
 @fragment
@@ -717,9 +737,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
         layer = animation_frame(layer);
     }
     var look = Laid(in.uv, dpdx(in.uv), dpdy(in.uv));
-    if tint_byte >= 64u {
+    if tint_byte >= VARIED {
         let cell = vec3<i32>(floor(in.world_position - NORMALS[in.face] * 0.5));
-        look = laid(in.uv, look.dx, look.dy, in.face, cell, (tint_byte & 64u) != 0u, (tint_byte & 128u) != 0u);
+        if (tint_byte & VARIED) != 0u {
+            layer = variant_layer(layer, cell);
+        }
+        if tint_byte >= 64u {
+            look = laid(in.uv, look.dx, look.dy, in.face, cell, (tint_byte & 64u) != 0u, (tint_byte & 128u) != 0u);
+        }
     }
     var albedo = textureSampleGrad(block_textures, block_sampler, look.uv, layer, look.dx, look.dy);
     let kind = tint_kind(in.surface);
@@ -759,7 +784,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #endif
     if overlay != 0u {
         let over = textureSampleGrad(block_textures, block_sampler, look.uv, i32(overlay - 1u), look.dx, look.dy);
-        let tint = biome_colour(tint_byte & 31u, in.colours, in.world_position, in.face);
+        let tint = biome_colour(tint_byte & 15u, in.colours, in.world_position, in.face);
         base = mix(base, over.rgb * tint, over.a);
     }
 #endif

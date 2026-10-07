@@ -52,7 +52,7 @@
             breeding: (level: 1, litter: (1, 3), growth: 8.0, xp: 12.0),
             loot: [
                 (item: "raw_rabbit"),
-                (item: "rabbit_hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]),
+                (item: "hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]),
                 (item: "rabbit_foot", chance: 0.03, rarity: Rare),
             ],
         ),
@@ -110,7 +110,7 @@
             xp: (kill: 4.0, skill: "hunter"),
             taming: (level: 3, xp: 14.0),
             breeding: (level: 3, growth: 9.0, xp: 16.0),
-            products: [(item: "duck_egg", every: 6.0)],
+            products: [(item: "egg", every: 6.0)],
             loot: [(item: "raw_duck"), (item: "feather", count: (1, 3), chance: 0.9)],
         ),
         (
@@ -306,7 +306,7 @@
             diet: (favourite: ["raw_chicken", "raw_rabbit"]),
             xp: (kill: 12.0, skill: "hunter"),
             taming: (level: 20, per_feed: (0.12, 0.3), xp: 40.0),
-            loot: [(item: "fox_fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
+            loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
         ),
         (
             name: "wolf", level: 12, health: 16, rarity: Uncommon, weak: Some(Crush),
@@ -341,7 +341,7 @@
             taming: (level: 20, per_feed: (0.1, 0.25), xp: 45.0),
             breeding: (level: 20, food: ["raw_beef", "raw_venison"], growth: 12.0, xp: 40.0),
             loot: [
-                (item: "wolf_pelt", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]),
+                (item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]),
                 (item: "fang", chance: 0.3, rarity: Uncommon),
                 (item: "bone", count: (0, 1)),
             ],
@@ -373,9 +373,9 @@
             xp: (kill: 80.0, skill: "hunter"),
             loot: [
                 (item: "raw_bear", count: (2, 4)),
-                (item: "bear_pelt", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]),
-                (item: "bear_fat", count: (1, 2)),
-                (item: "claw", chance: 0.4, rarity: Uncommon),
+                (item: "fur", count: (2, 2), chance: 0.9, tools: [(tag: "knife", chance: 1.1)]),
+                (item: "lard", count: (1, 2)),
+                (item: "fang", chance: 0.4, rarity: Uncommon),
             ],
         ),
         // --- More of the small and common: level 1 to 3, everywhere ----------------------
@@ -423,7 +423,7 @@
             diet: (favourite: ["hazelnut", "walnut", "chestnut", "almond"]),
             xp: (kill: 3.0, skill: "hunter"),
             taming: (level: 2, xp: 8.0),
-            loot: [(item: "raw_rabbit", chance: 0.6), (item: "squirrel_tail", chance: 0.08, rarity: Uncommon)],
+            loot: [(item: "raw_rabbit", chance: 0.6), (item: "fur", chance: 0.08, rarity: Uncommon)],
         ),
         (
             name: "common_frog", level: 1, health: 2,
@@ -627,7 +627,7 @@
             diet: (favourite: ["raw_rabbit", "raw_chicken"]),
             xp: (kill: 10.0, skill: "hunter"),
             taming: (level: 15, per_feed: (0.12, 0.3), xp: 32.0),
-            loot: [(item: "snow_fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
+            loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
         ),
         (
             name: "lynx", level: 14, health: 18, rarity: Uncommon, weak: Some(Crush),
@@ -651,7 +651,7 @@
             leash: 44.0,
             diet: (favourite: ["raw_rabbit", "raw_venison"]),
             xp: (kill: 34.0, skill: "hunter"),
-            loot: [(item: "lynx_pelt", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]), (item: "claw", chance: 0.3, rarity: Uncommon)],
+            loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]), (item: "fang", chance: 0.3, rarity: Uncommon)],
         ),
         (
             name: "badger", level: 7, health: 12, weak: Some(Crush),
@@ -675,7 +675,7 @@
             leash: 20.0,
             diet: (eats: ["brown_mushroom"], favourite: ["strawberry", "apple"]),
             xp: (kill: 18.0, skill: "hunter"),
-            loot: [(item: "badger_pelt", chance: 0.85, tools: [(tag: "knife", chance: 1.15)]), (item: "claw", chance: 0.25)],
+            loot: [(item: "fur", chance: 0.85, tools: [(tag: "knife", chance: 1.15)]), (item: "fang", chance: 0.25)],
         ),
         // --- Supernatural -------------------------------------------------------------------
         (
@@ -732,7 +732,7 @@
             senses: (sight: 14.0, hearing: 8.0),
             leash: 18.0,
             xp: (kill: 6.0, skill: "hunter"),
-            loot: [(item: "glimmer_dust", count: (1, 2)), (item: "aether_mote", chance: 0.1, rarity: Uncommon)],
+            loot: [(item: "moon_dust", count: (1, 2)), (item: "aether_mote", chance: 0.1, rarity: Uncommon)],
         ),
         // --- Open country, wetlands and cold -----------------------------------------------
         (
@@ -759,7 +759,7 @@
             leash: 20.0,
             diet: (eats: ["short_grass", "clover", "dandelion"], favourite: ["carrot", "wild_carrot"]),
             xp: (kill: 6.0, skill: "hunter"),
-            loot: [(item: "raw_rabbit", count: (1, 2)), (item: "rabbit_hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)])],
+            loot: [(item: "raw_rabbit", count: (1, 2)), (item: "hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)])],
         ),
         (
             name: "pheasant", level: 1, health: 3,
@@ -1115,7 +1115,7 @@
             xp: (kill: 6.0, skill: "hunter"),
             taming: (level: 6, per_feed: (0.15, 0.35), xp: 18.0),
             breeding: (level: 6, litter: (1, 3), growth: 8.0, xp: 16.0),
-            loot: [(item: "sand_fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
+            loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
         ),
         (
             name: "snow_leopard", level: 22, health: 26, rarity: Rare, weak: Some(Stab),
@@ -1139,7 +1139,7 @@
             leash: 48.0,
             diet: (favourite: ["raw_mutton", "raw_venison"]),
             xp: (kill: 60.0, skill: "hunter"),
-            loot: [(item: "leopard_pelt", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]), (item: "claw", chance: 0.4, rarity: Uncommon)],
+            loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]), (item: "fang", chance: 0.4, rarity: Uncommon)],
         ),
         (
             name: "beaver", level: 3, health: 7,
@@ -1162,7 +1162,7 @@
             leash: 16.0,
             diet: (favourite: ["walnut", "chestnut"]),
             xp: (kill: 8.0, skill: "hunter"),
-            loot: [(item: "beaver_pelt", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]), (item: "raw_pork", chance: 0.5)],
+            loot: [(item: "fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]), (item: "raw_pork", chance: 0.5)],
         ),
         (
             name: "macaw", title: "Macaw", level: 1, health: 3,
@@ -1186,7 +1186,7 @@
             xp: (kill: 4.0, skill: "hunter"),
             taming: (level: 3, xp: 12.0),
             breeding: (level: 8, litter: (1, 2), growth: 8.0, xp: 18.0),
-            loot: [(item: "bright_feather", count: (1, 3)), (item: "raw_chicken", chance: 0.6)],
+            loot: [(item: "feather", count: (1, 3)), (item: "raw_chicken", chance: 0.6)],
         ),
         (
             name: "sporeling", kind: Spirit, supernatural: true, level: 4, health: 6, rarity: Uncommon,

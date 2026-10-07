@@ -274,9 +274,10 @@ impl Server {
                         self.discover_broken(agent, broken);
                     }
                     self.picked(agent, block);
-                    self.reward_break(agent, block);
+                    let instead = self.reward_break(agent, block);
                     let plants = supported_by(&Context { server: self, agent }, block);
-                    let cells: Vec<IVec3> = std::iter::once(block).chain(plants).collect();
+                    // A block that gave something else instead (gravel's flint) drops nothing of its own.
+                    let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
                     self.drop_loot(agent, &cells);
                 }
                 (Effect::Throw, ActionTarget::Stack { slot, count }) => self.throw(agent, slot as usize, count),
@@ -418,14 +419,15 @@ impl Server {
     /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:
     /// more often with the skill's level above what the block asks and a better tool. A
     /// block a player placed teaches nothing and gives nothing extra.
-    fn reward_break(&mut self, agent: PlayerId, pos: IVec3) {
-        let Some(block) = self.block(pos) else { return };
+    /// Returns whether it gave something else instead of the block's own drop.
+    fn reward_break(&mut self, agent: PlayerId, pos: IVec3) -> bool {
+        let Some(block) = self.block(pos) else { return false };
         let tools = self.content.tools.clone();
-        let Some(rule) = tools.rule(block) else { return };
+        let Some(rule) = tools.rule(block) else { return false };
         if self.placed.remove(&pos) {
-            return;
+            return false;
         }
-        let Some(player) = self.players.get(&agent) else { return };
+        let Some(player) = self.players.get(&agent) else { return false };
         let held = player.held();
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block);
@@ -438,6 +440,15 @@ impl Server {
         }
         if let Some(skill) = rule.skill.filter(|_| rule.xp > 0.0) {
             self.grant_xp(agent, skill, rule.xp);
+        }
+        let [other, ..] = crate::items::random3(self.tick, pos, agent ^ 0x1257);
+        match rule.instead {
+            Some((item, chance)) if other < chance => {
+                let body = voxmar_engine::dropped::popped(pos, [kick, other, roll]);
+                self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+                true
+            }
+            _ => false,
         }
     }
 

@@ -646,6 +646,8 @@ impl Server {
             [kind, r] if kind == "ore" && r.parse::<i32>().is_ok() => return self.locate_ore(id, None, radius(r)?),
             [kind, name] if kind == "ore" => return self.locate_ore(id, Some(name), ORE_RADIUS),
             [kind, name, r] if kind == "ore" => return self.locate_ore(id, Some(name), radius(r)?),
+            [kind] if kind == "settlement" => return self.locate_settlement(id, LOCATE_RADIUS),
+            [kind, r] if kind == "settlement" => return self.locate_settlement(id, radius(r)?),
             [kind, name] if kind == "biome" => (name, LOCATE_RADIUS),
             [kind, name, r] if kind == "biome" => (name, radius(r)?),
             _ => return Err(Words::key("command.error.locate_what")),
@@ -685,6 +687,28 @@ impl Server {
                     .with("tp", format!("/tp {} {} {}", at.x, at.y + 1, at.z)))
             }
             None => Err(Words::key("command.error.gorge_not_near").with("radius", Words::text(radius))),
+        }
+    }
+
+    fn locate_settlement(&self, id: Source, radius: i32) -> Reply {
+        let position = self.position_of(id);
+        let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
+        let nearest = self
+            .overworld
+            .settlements_near(from, radius)
+            .into_iter()
+            .map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s))
+            .filter(|(offset, _)| offset.as_vec2().length() <= radius as f32)
+            .min_by_key(|(offset, _)| offset.length_squared());
+        match nearest {
+            Some((offset, s)) => Ok(Words::key("command.locate.settlement")
+                .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
+                .with("size", Words::key(&format!("settlement.size.{}", s.size)))
+                .with("place", format!("{} {} {}", s.centre.x, s.centre.y, s.centre.z))
+                .with("distance", Words::text(format!("{:.0}", offset.as_vec2().length())))
+                .with("way", compass(offset.as_vec2()))
+                .with("tp", format!("/tp {} {} {}", s.centre.x, s.centre.y + 1, s.centre.z))),
+            None => Err(Words::key("command.error.settlement_not_near").with("radius", Words::text(radius))),
         }
     }
 

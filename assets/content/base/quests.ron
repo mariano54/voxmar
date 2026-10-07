@@ -97,7 +97,7 @@
         (
             name: "the_potter", age: "farm", branch: "main", title: "The Potter",
             why: "Pots and vials hold potions and stews, and fired clay lines the kiln you are working toward.",
-            tasks: [[Cook("clay_pot", 6)]],
+            tasks: [[Craft("clay_pot", 6)]],
             after: ["homestead_hearth"],
             rewards: [Xp("crafting", 305.0), Item("vial", 4)],
         ),

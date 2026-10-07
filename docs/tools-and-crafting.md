@@ -108,19 +108,28 @@ you wake on it after dying; if not, you are told what it needs.
 
 A sleeping bag (three wool and two hide, four pelts, or feathers and two hide) is where
 you wake after dying until a hearth gives you a home: right click it to sleep
-(`base:sleep`, `Player::bed`, saved). A pit kiln (cobbles round a campfire) fires clay:
-shaped into pots and vials at the grid, or as it is into bricks (`cooking.ron` recipes at
-the `pit_kiln` station; a station recipe may name its own `skill`, here Crafting). Four
-fired bricks make kiln bricks. The Crucible Kiln, the Farm age's gate, is a multiblock:
+(`base:sleep`, `Player::bed`, saved). A pit kiln (cobbles round a campfire) fires clay into fired clay (`cooking.ron` at the
+`pit_kiln` station; a station recipe may name its own `skill`, here Crafting), which pots,
+vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
-corner. A crucible smelts only in a standing kiln: copper ore and tin ore into ingots,
-and a bronze blend (three copper ingots and a tin ingot) into bronze, all Engineering,
+corner. A crucible smelts only in a standing kiln: copper ore into ingots,
+and a bronze blend (three copper ingots and a tin ore) into bronze, all Engineering,
 never burnt (`stop_burning: 0`). Right clicking the crucible with nothing it smelts
 lights the kiln, and quests count it (`Built("crucible_kiln")`).
 
 Multiblocks are lit generically (`base:light` on a block tagged `multiblock_core`): a
 multiblock with `home: true` becomes home, any other is just lit; one that does not
 stand yet says its `hint`. Wooden chests wait for a container screen.
+
+## Fewer items, more ways (P27)
+
+Mariano, 2026-10-07: one item per material or part, each with several ways to get it
+(gathering, crafting, drops, quest rewards, trade), rather than many items for the same
+thing. Every warm pelt is fur (a bear gives two), rabbit hide is hide, duck eggs are eggs,
+bear fat is lard, bright feathers are feathers, claws are fangs, glimmer dust is moon dust;
+fired clay replaces unfired pots, unfired vials and fired bricks, and tin ore goes straight
+into the bronze blend. Flint comes from gravel, one break in eight (tools.ron's `instead`;
+gravel a player placed gives none).
 
 ## Dying
 

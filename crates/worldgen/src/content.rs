@@ -1372,6 +1372,8 @@ pub struct WorldContent {
     pub land: LandDef,
     /// Ore veins (`ores.ron`).
     pub ores: crate::ores::OresDef,
+    /// Settlements (`settlements.ron`).
+    pub settlements: crate::settlements::SettlementsDef,
 }
 
 /// What hiking trails are made of (`trails.ron`); a later package's replaces an earlier
@@ -1416,7 +1418,7 @@ pub struct TreadDef {
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 14] = [
+pub(crate) const BASE_FILES: [(&str, &str); 15] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
     ("cave_biomes.ron", include_str!("../../../assets/content/base/cave_biomes.ron")),
@@ -1426,6 +1428,7 @@ pub(crate) const BASE_FILES: [(&str, &str); 14] = [
     ("ores.ron", include_str!("../../../assets/content/base/ores.ron")),
     ("plants.ron", include_str!("../../../assets/content/base/plants.ron")),
     ("rocks.ron", include_str!("../../../assets/content/base/rocks.ron")),
+    ("settlements.ron", include_str!("../../../assets/content/base/settlements.ron")),
     ("surfaces.ron", include_str!("../../../assets/content/base/surfaces.ron")),
     ("terrain.ron", include_str!("../../../assets/content/base/terrain.ron")),
     ("trails.ron", include_str!("../../../assets/content/base/trails.ron")),
@@ -1459,6 +1462,7 @@ impl WorldContent {
         let (mut decorations, mut rule_sets) = (Vec::new(), Vec::new());
         let mut weather = voxmar_engine::weather::WeatherTable::default();
         let mut ores = crate::ores::OresDef::default();
+        let mut settlements = crate::settlements::SettlementsDef::default();
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
@@ -1524,6 +1528,7 @@ impl WorldContent {
                 })),
                 "land.ron" => land = Some(parse::<LandDef>(&at, &file.source)?),
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
+                "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
                 "weather.ron" => weather.extend(&file.package, &file.source).map_err(|e| ContentError(e.0))?,
                 "decorations.ron" => decorations.extend(
                     parse::<DecorationFile>(&at, &file.source)?.decorations.into_iter().map(|d| qualify_decoration(&file.package, d)),
@@ -1582,8 +1587,11 @@ impl WorldContent {
         }
         let snow_cover = weather.snow_cover().to_vec();
         let tree_density = tree_density.unwrap_or(1.0);
-        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores };
+        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements };
         content.ores.check(registry, &content.provinces)?;
+        if !content.settlements.styles.is_empty() {
+            content.settlements.check(registry)?;
+        }
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
         Ok(content)
     }

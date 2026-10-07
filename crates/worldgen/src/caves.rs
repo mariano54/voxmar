@@ -1152,6 +1152,40 @@ mod tests {
 }
 
 impl Caves {
+    /// Whether a sinkhole or a ravine may open the ground within `radius` blocks of
+    /// `centre` (x, z): settlements keep away from them.
+    pub(crate) fn opens_near(&self, centre: (i32, i32), radius: i32) -> bool {
+        // As `sinkholes_near` places them, the widest 16 blocks across.
+        const REACH: i32 = 32 + features::REACH;
+        let here = Vec2::new(centre.0 as f32, centre.1 as f32);
+        let cell = |v: i32| v.div_euclid(SINKHOLE_CELL);
+        for sz in cell(centre.1 - radius - 16)..=cell(centre.1 + radius + 16) {
+            for sx in cell(centre.0 - radius - 16)..=cell(centre.0 + radius + 16) {
+                let mut rng = Rng::new(self.seed, SINKHOLES, sx, sz);
+                if rng.chance(0.035 * self.style.sinkholes) {
+                    let span = (SINKHOLE_CELL - 2 * REACH) as u32;
+                    let at = Vec2::new((sx * SINKHOLE_CELL + REACH + rng.below(span)) as f32, (sz * SINKHOLE_CELL + REACH + rng.below(span)) as f32);
+                    if at.distance(here) < (radius + 16) as f32 {
+                        return true;
+                    }
+                }
+            }
+        }
+        let cell = |v: i32| v.div_euclid(RAVINE_CELL);
+        for rz in cell(centre.1 - 1300 - radius)..=cell(centre.1 + 1300 + radius) {
+            for rx in cell(centre.0 - 1300 - radius)..=cell(centre.0 + 1300 + radius) {
+                if let Some(path) = self.ravine_path(rx, rz)
+                    && path.points.iter().any(|p| p.distance(here) < radius as f32 + path.width)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+impl Caves {
     /// Places near `centre` (within `radius`) worth looking at, for previews and captures:
     /// the strongest spot of each kind of region, and the nearest ravine point.
     #[cfg(test)]
