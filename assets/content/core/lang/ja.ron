@@ -225,6 +225,8 @@
     "rarity.very_rare": "ベリーレア",
     "rarity.legendary": "レジェンダリー",
 
+    "package.base": "Voxmar",
+    "package.core": "Voxmar",
     "item.edible": "食べられる",
     "item.fuel": "燃料",
     "item.light": "光る",
