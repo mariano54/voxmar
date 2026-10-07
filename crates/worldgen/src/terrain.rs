@@ -596,9 +596,10 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     }
 
     // Settlements' buildings, props and paving, on the ground their plans graded.
+    let settled;
     {
         let _stage = stage::enter(Stage::Decoration);
-        world.settlements.build(world, pos, &mut blocks, &|x, z| geology.get(x, z).height);
+        settled = world.settlements.build(world, pos, &mut blocks, &|x, z| geology.get(x, z).height);
     }
 
     // Samples of ore over the veins below, on open ground of the land's own: never in
@@ -625,13 +626,18 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             if !terrain.frosty(*surface) {
                 continue;
             }
-            let mut open = true;
-            for y in (site.height + 1..(site.height + 48).min(WORLD_HEIGHT)).rev() {
+            // Through a canopy snow reaches every level; under a roof or an overhang of
+            // rock none falls, however much air lies between.
+            let (mut open, mut sheltered) = (true, false);
+            // From over the tallest tree or crag, or the tallest roof a settlement set here.
+            let top = (site.height + SNOW_REACH).max(settled.map_or(0, |t| t + 2)).min(WORLD_HEIGHT);
+            for y in (site.height + 1..top).rev() {
                 let block = blocks.get_local(x, y, z);
-                if open && let Some(snowy) = terrain.blanket[block.0 as usize] {
+                if open && !sheltered && let Some(snowy) = terrain.blanket[block.0 as usize] {
                     blocks.set_local(x, y, z, snowy);
                 }
                 open = block.is_air() || terrain.plants[block.0 as usize];
+                sheltered |= terrain.earth[block.0 as usize];
             }
         }
     }
@@ -643,6 +649,9 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     }
     column
 }
+
+/// How far over the ground the snow blanket looks for a roof or overhang.
+const SNOW_REACH: i32 = 48;
 
 /// How far into a sea cliff waves cut a notch at the waterline, in blocks.
 const NOTCH: i32 = 3;
