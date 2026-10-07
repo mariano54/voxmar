@@ -3,7 +3,6 @@
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::skill::Skills;
@@ -423,11 +422,10 @@ fn movement(
         sprinting: player.sprinting,
         jump_delay: player.jump_delay,
     };
-    let water = world.registry.id("base:water").unwrap_or(BlockId::AIR);
     // Quicker or slower on foot as the player's effects say (fruit, a gale).
     let speed = launch.content.effects.modifiers(&player.vitals.effects).speed;
     let tuning = launch.content.movement.on_foot(speed);
-    movement::advance(&mut body, &Around { world: &world, water }, &tuning, controls, time.delta_secs().min(0.25));
+    movement::advance(&mut body, &Around { world: &world }, &tuning, controls, time.delta_secs().min(0.25));
     player.position = body.position;
     player.velocity = body.velocity;
     player.on_ground = body.on_ground;
@@ -441,8 +439,6 @@ fn movement(
 /// The client's world as movement sees it.
 struct Around<'a> {
     world: &'a ClientWorld,
-    /// The water block, the one fluid that is swum in.
-    water: BlockId,
 }
 
 impl Surroundings for Around<'_> {
@@ -451,7 +447,7 @@ impl Surroundings for Around<'_> {
     }
 
     fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
-        movement::water_around(&self.world.registry, self.water, |p| self.world.block(p), aabb)
+        movement::water_around(&self.world.registry, |p| self.world.block(p), aabb)
     }
 }
 

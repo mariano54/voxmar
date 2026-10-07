@@ -123,8 +123,7 @@ impl Surroundings for Around<'_> {
 
     fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
         let blocks = &self.0.content.blocks;
-        let water = blocks.id("base:water").unwrap_or(BlockId::AIR);
-        movement::water_around(blocks, water, |p| self.0.block(p), aabb)
+        movement::water_around(blocks, |p| self.0.block(p), aabb)
     }
 }
 

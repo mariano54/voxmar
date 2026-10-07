@@ -634,9 +634,7 @@ impl Server {
     pub(crate) fn grave_site(&self, id: PlayerId) -> Vec3 {
         let player = &self.players[&id];
         let blocks = &self.content.blocks;
-        let lava = blocks.id("base:lava").and_then(|b| blocks.fluid(b)).map(|f| f.fluid);
-        let in_lava = lava.is_some()
-            && player.aabb().intersects(|cell| self.block(cell).and_then(|b| blocks.fluid(b)).is_some_and(|f| Some(f.fluid) == lava));
+        let in_lava = player.aabb().intersects(|cell| self.block(cell).and_then(|b| blocks.fluid(b)).is_some_and(|f| crate::process::is_lava(blocks, f.fluid)));
         if player.position.y < self.survival.void_below || in_lava { player.last_ground.unwrap_or(self.spawn) } else { player.position }
     }
 
@@ -651,8 +649,7 @@ impl Server {
         let ground = Aabb { min: feet - Vec3::new(dims::WIDTH / 2.0, 0.1, dims::WIDTH / 2.0), max: feet + Vec3::new(dims::WIDTH / 2.0, 0.0, dims::WIDTH / 2.0) };
         // In water, even on its bottom, a swimmer may be lifted out onto a bank: water as the
         // client swims in it (`movement::water_around`), so not lava.
-        let water = blocks.id("base:water").unwrap_or(voxmar_engine::block::BlockId::AIR);
-        let (depth, _) = voxmar_engine::movement::water_around(blocks, water, |cell| self.block(cell), &Aabb::standing(feet, dims::WIDTH, dims::HEIGHT));
+        let (depth, _) = voxmar_engine::movement::water_around(blocks, |cell| self.block(cell), &Aabb::standing(feet, dims::WIDTH, dims::HEIGHT));
         if depth > 0.0 {
             Some(true)
         } else if ground.intersects(|cell| self.is_solid(cell)) {

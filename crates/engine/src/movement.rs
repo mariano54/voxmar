@@ -240,16 +240,16 @@ fn can_step_out(body: &Body, world: &impl Surroundings, wish: Vec3) -> bool {
 
 /// How deep the water `aabb` stands in is over its feet (0 out of water), and the mean
 /// flow of that water (blocks per second along x, z): flowing water and river currents
-/// carry swimmers along. Only `water` counts, not other fluids.
-pub fn water_around(registry: &BlockRegistry, water: BlockId, block: impl Fn(IVec3) -> Option<BlockId>, aabb: &Aabb) -> (f32, Vec2) {
-    let Some(water) = registry.fluid(water).map(|f| f.fluid) else { return (0.0, Vec2::ZERO) };
+/// carry swimmers along. Only fluids that are swum in count (`FluidDef::swim`), so not
+/// lava. The client moves by it and the server judges moves by it.
+pub fn water_around(registry: &BlockRegistry, block: impl Fn(IVec3) -> Option<BlockId>, aabb: &Aabb) -> (f32, Vec2) {
     let (lo, hi) = (aabb.min.floor().as_ivec3(), (aabb.max - 1e-4).floor().as_ivec3());
     let (mut cells, mut depth, mut flow) = (0, 0.0f32, Vec2::ZERO);
     for y in lo.y..=hi.y {
         for z in lo.z..=hi.z {
             for x in lo.x..=hi.x {
                 let cell = IVec3::new(x, y, z);
-                let Some(state) = block(cell).and_then(|b| registry.fluid(b)).filter(|s| s.fluid == water) else { continue };
+                let Some(state) = block(cell).and_then(|b| registry.fluid(b)).filter(|s| registry.fluid_def(s.fluid).def.swim) else { continue };
                 // Shallow flowing water only counts up to its surface.
                 let covered = block(cell + IVec3::Y).and_then(|b| registry.fluid(b)).is_some_and(|s| s.fluid == state.fluid);
                 let surface = y as f32 + if covered { 1.0 } else { state.height() };
