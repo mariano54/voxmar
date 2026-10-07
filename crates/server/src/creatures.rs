@@ -56,13 +56,6 @@ const SPAWN_EVERY: u64 = 2 * TICKS_PER_SECOND as u64;
 /// Spawn spots lie this far from the player, in blocks.
 const SPAWN_NEAR: f32 = 20.0;
 const SPAWN_FAR: f32 = 56.0;
-/// At most this many animals and monsters within `NEAR` of a player. Animals were 12:
-/// halved (Mariano, 2026-10-07: "too many animals, the world is too crowded"), so the
-/// land feels wild and an animal is something to come upon.
-const ANIMAL_CAP: usize = 6;
-const MONSTER_CAP: usize = 6;
-/// Most creatures alive at once, whatever the players.
-const MAX_CREATURES: usize = 512;
 /// How far kin hear an alarm, and are counted as kin by herding.
 const KIN_RANGE: f32 = 14.0;
 /// How far creatures look for food.
@@ -641,7 +634,7 @@ impl Server {
 
     /// Puts a creature of `species` at `at`, with a home there.
     pub(crate) fn spawn_creature(&mut self, species: CreatureId, at: Vec3, salt: u64) -> Option<u32> {
-        if self.creatures.live.len() >= MAX_CREATURES {
+        if self.creatures.live.len() >= self.content.creatures.limits().most {
             return None;
         }
         let id = self.creatures.next;
@@ -708,8 +701,13 @@ impl Server {
 
     /// Tries a spot around a player, and puts there a group of whatever suits it best,
     /// if anything does and the player has room for more around them.
-    fn spawn_near(&mut self, player: PlayerId, salt: u64) {
+    pub(crate) fn spawn_near(&mut self, player: PlayerId, salt: u64) {
         let Some(at) = self.players.get(&player).map(|p| p.position) else { return };
+        let limits = self.content.creatures.limits();
+        let wild_room = self.wild_room();
+        if wild_room == 0 {
+            return;
+        }
         let nearby = |kind: Kind| {
             self.creatures
                 .live
@@ -737,7 +735,7 @@ impl Server {
         for (id, species) in self.content.creatures.iter() {
             let def = &species.def;
             let monster = def.kind == Kind::Monster;
-            if (monster && (monsters >= MONSTER_CAP || !dark)) || (!monster && animals >= ANIMAL_CAP) {
+            if (monster && (monsters >= limits.monsters_near || !dark)) || (!monster && animals >= limits.animals_near) {
                 continue;
             }
             if def.habitat.caves != underground && !monster {
@@ -778,13 +776,38 @@ impl Server {
             group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
         };
         // Never past the cap: a herd arriving near it comes smaller.
-        let room = if self.content.creatures.get(species).def.kind == Kind::Monster { MONSTER_CAP.saturating_sub(monsters) } else { ANIMAL_CAP.saturating_sub(animals) };
-        let count = count.min(room.max(1) as u8);
+        let room = if self.content.creatures.get(species).def.kind == Kind::Monster { limits.monsters_near.saturating_sub(monsters) } else { limits.animals_near.saturating_sub(animals) };
+        let count = count.min(room.max(1).min(wild_room).min(u8::MAX as usize) as u8);
         for i in 0..count.max(1) {
             let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
             let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
             self.spawn_creature(species, cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5), seed ^ i as u64);
         }
+    }
+
+    /// Room left under the world's total: what `most` leaves after the living and the kept
+    /// animals still waiting in the save, so those always fit back.
+    pub(crate) fn room_left(&self) -> usize {
+        self.content.creatures.limits().most.saturating_sub(self.creatures.live.len() + self.creatures.unplaced.len())
+    }
+
+    /// How many more wild creatures the world has room for: under the wild budget, which
+    /// kept animals never touch, and under the total.
+    pub(crate) fn wild_room(&self) -> usize {
+        let wild = self.creatures.live.values().filter(|c| c.owner.is_none()).count();
+        self.content.creatures.limits().wild_most.saturating_sub(wild).min(self.room_left())
+    }
+
+    /// How many animals a player keeps, alive or waiting in the save.
+    pub(crate) fn kept_by(&self, name: &str) -> usize {
+        let live = self.creatures.live.values().filter(|c| c.owner.as_deref() == Some(name)).count();
+        live + self.creatures.unplaced.iter().filter(|s| s.owner == name).count()
+    }
+
+    /// How many young a keeper's animals may have now: room under the keeper's own cap and
+    /// under the world's total.
+    pub(crate) fn birth_room(&self, keeper: &str) -> usize {
+        self.content.creatures.limits().kept_each.saturating_sub(self.kept_by(keeper)).min(self.room_left())
     }
 
     /// The cell nearest height `y` in a column where a body can stand: solid beneath, two

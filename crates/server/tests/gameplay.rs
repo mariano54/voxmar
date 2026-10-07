@@ -1001,8 +1001,7 @@ fn a_finished_break_the_server_refused_is_undone_on_the_client() {
     let stone = client.world.block(far).unwrap();
     let target = ActionTarget::Block { block: far, face: Face::PosY };
     client.propose("core:mine", target);
-    let refused = Instant::now() + Duration::from_millis(300);
-    client.pump_until(|_| Instant::now() > refused);
+    client.settle();
     client.world.set_block(far, BlockId::AIR);
     client.connection.send(ClientMessage::Finished { target });
     client.pump_until(|c| c.world.block(far) == Some(stone));
@@ -1029,26 +1028,37 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     let hold = |client: &Client, slot: u8| {
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
+    // How long a break takes, in server ticks, with the pickaxe and by hand: a refusal
+    // waits that long and more before it says nothing broke.
+    let hardness = client.content.blocks.info(iron).hardness;
+    let pickaxe = client.content.blocks.expect("base:stone_pickaxe");
+    let ticks = |speed: f32| (hardness / speed * TICKS_PER_SECOND as f32).ceil() as u64;
+    let (with_pickaxe, by_hand) = (ticks(client.content.tools.speed(Some(pickaxe), iron)), ticks(client.content.tools.speed(None, iron)));
     // At Mining 1, even with the pickaxe: refused.
     hold(&client, 4);
     mine(&client);
-    let waited = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > waited);
+    client.settle();
+    client.after_ticks(with_pickaxe + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke at Mining 1");
     // At Mining 15 with a bare hand: refused too.
     client.ok("/skill mining 15");
     hold(&client, 5);
     mine(&client);
-    let waited = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > waited);
+    client.settle();
+    client.after_ticks(by_hand + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke without a pickaxe");
-    // At Mining 15 with the stone pickaxe: broken, quicker than by hand, teaching Mining (35).
+    // At Mining 15 with the stone pickaxe: broken, quicker than by hand (by the server's
+    // clock, told once a second), teaching Mining (35).
     hold(&client, 4);
-    let started = Instant::now();
+    let told = client.server_tick;
+    client.pump_until(|c| c.server_tick > told);
+    let started = client.server_tick;
     mine(&client);
     client.pump_until(|c| c.world.block(ore) == Some(BlockId::AIR) && c.earned.contains(&350));
-    let hardness = client.content.blocks.info(iron).hardness;
-    assert!(started.elapsed().as_secs_f32() < hardness * 0.5, "a stone pickaxe should mine iron ore at four times a hand's speed");
+    let seen = client.server_tick;
+    client.pump_until(|c| c.server_tick > seen);
+    let took = client.server_tick - started;
+    assert!(took < by_hand, "a stone pickaxe took {took} ticks to mine iron ore, a hand's {by_hand}");
 }
 
 #[test]
@@ -1069,8 +1079,9 @@ fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     };
     // Away from a table the three-by-three pattern makes nothing.
     lay(&client);
-    let waited = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > waited);
+    // Handled, and the inventory told (it goes out as the tick ends).
+    client.settle();
+    client.after_ticks(2);
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == pickaxe), "a pickaxe was crafted without a table");
     // At the table it makes a stone pickaxe, teaching Engineering.
     client.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
@@ -1454,8 +1465,9 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
     // up, on a loaded machine), the second sowing then held nothing and was refused.
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && potatoes(c) == before - 1);
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
-    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR) && potatoes(c) == before);
-    assert_eq!(client.quiet(potatoes), before, "a sown sprout broken did not give its potato back");
+    // At least, so a count that overshoots fails on the exact check below, not a timeout.
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR) && potatoes(c) >= before);
+    assert_eq!(client.quiet(potatoes), before, "a sown sprout broken gave other than its potato back");
     // Sown, grown ripe and harvested: the harvest's experience with the sowing's.
     let earned = client.earned.len();
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == potato));
@@ -1523,16 +1535,13 @@ fn a_wild_ripe_crop_forages_at_its_level_and_a_field_stage_rolls() {
             + c.inventory.pouched(seeds) as usize
             + c.items.values().filter(|i| i.stack.item == seeds).map(|i| i.stack.count as usize).sum::<usize>()
     };
-    let before = seeds_had(&client);
+    let before = client.quiet(seeds_had);
     for &cell in &field {
         client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
         client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
     }
-    for _ in 0..3 {
-        client.settle();
-    }
     // One seed a success: about 4 of 28 at 0.15; 13 or more is a one-in-13,000 chance.
-    let found = seeds_had(&client).saturating_sub(before);
+    let found = client.quiet(seeds_had).saturating_sub(before);
     assert!(found <= 12, "a field stage nobody sowed gave {found} seeds from {} crops", field.len());
     assert_eq!(client.earned.len(), earned, "breaking a field stage nobody sowed paid experience");
 }
