@@ -32,6 +32,29 @@
             wild: ["wild_carrot"],
             forage: [(item: "carrot", chance: 0.6)],
         ),
+        // Regional crops (P50): rye in the cold, chickpeas in dry warmth, rice in wet
+        // heat beside water, taro in wet heat. Each is sown from its own harvest; the
+        // sowing's experience comes with the harvest.
+        (
+            name: "rye", seed: "rye", level: 3, xp: (plant: 2.5, harvest: 10.0), minutes: 12.0,
+            comfort: (temperature: (-8.0, 18.0), moisture: (0.2, 1.4)),
+            harvest: [(item: "rye", count: (2, 3))],
+        ),
+        (
+            name: "chickpea", seed: "chickpea", level: 7, xp: (plant: 3.0, harvest: 12.0), minutes: 14.0,
+            comfort: (temperature: (12.0, 32.0), moisture: (0.15, 0.9)),
+            harvest: [(item: "chickpea", count: (2, 3))],
+        ),
+        (
+            name: "rice", seed: "rice", level: 10, xp: (plant: 3.5, harvest: 15.0), minutes: 15.0,
+            comfort: (temperature: (16.0, 34.0), moisture: (1.2, 3.0)),
+            harvest: [(item: "rice", count: (2, 3))],
+        ),
+        (
+            name: "taro", seed: "taro", level: 11, xp: (plant: 4.0, harvest: 17.0), minutes: 16.0,
+            comfort: (temperature: (18.0, 36.0), moisture: (0.9, 2.5)),
+            harvest: [(item: "taro", count: (2, 3))],
+        ),
         (
             name: "potato", seed: "potato", level: 12, rarity: Uncommon, xp: (plant: 4.0, harvest: 19.0), minutes: 16.0,
             comfort: (temperature: (0.0, 22.0), moisture: (0.5, 1.8)),
