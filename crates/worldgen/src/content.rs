@@ -1441,7 +1441,9 @@ impl WorldContent {
     /// The generator's definitions from loaded content packages, checked against their
     /// blocks.
     pub fn load(content: &Content) -> Result<Self, ContentError> {
-        Self::from_files(content.files.iter(), &content.blocks)
+        let world = Self::from_files(content.files.iter(), &content.blocks)?;
+        world.settlements.check_furnishings(&content.blocks)?;
+        Ok(world)
     }
 
     /// The base package's definitions alone.
@@ -1530,7 +1532,8 @@ impl WorldContent {
                 "land.ron" => land = Some(parse::<LandDef>(&at, &file.source)?),
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
                 "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
-                // Each crop's level and rarity, so settlements keep to everyday crops.
+                // Each crop's level, rarity and stages, so settlements keep to everyday crops
+                // and never grow them ripe.
                 "crops.ron" => {
                     #[derive(serde::Deserialize)]
                     struct Crop {
@@ -1539,13 +1542,17 @@ impl WorldContent {
                         level: u32,
                         #[serde(default)]
                         rarity: voxmar_engine::block::Rarity,
+                        #[serde(default)]
+                        stages: Vec<String>,
                     }
                     #[derive(serde::Deserialize)]
                     struct Crops {
                         crops: Vec<Crop>,
                     }
                     for c in parse::<Crops>(&at, &file.source)?.crops {
-                        settlements.crops.insert(q(&c.name), (c.level, c.rarity));
+                        let name = q(&c.name);
+                        let stages = if c.stages.is_empty() { (0..3).map(|i| format!("{name}_crop_{i}")).chain([format!("{name}_crop")]).collect() } else { c.stages.iter().map(|s| q(s)).collect() };
+                        settlements.crops.insert(name, crate::settlements::def::CropInfo { level: c.level, rarity: c.rarity, stages });
                     }
                 }
                 "weather.ron" => weather.extend(&file.package, &file.source).map_err(|e| ContentError(e.0))?,
