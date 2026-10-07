@@ -23,6 +23,8 @@ mod density;
 mod dials;
 mod ecology;
 mod features;
+#[cfg(test)]
+mod generated_water;
 mod geology;
 mod growth;
 mod hue;
@@ -283,8 +285,7 @@ impl Overworld {
 
     /// As [`with_content`](Self::with_content), as generation `version` would seed it: tests
     /// use it to check a world before `VERSION` is bumped to reseed every world.
-    #[doc(hidden)]
-    pub fn with_content_at(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent, version: u32) -> Self {
+    fn with_content_at(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent, version: u32) -> Self {
         let stream = rng::stream_seed(seed, Self::ID, version);
         let mut dials = WorldDials::sample(stream);
         dials.pole_distance *= content.climate.zones / WorldDials::POLE_DISTANCE;

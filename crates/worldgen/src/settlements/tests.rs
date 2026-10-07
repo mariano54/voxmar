@@ -1193,7 +1193,7 @@ fn slopes_never_bury_walls() {
     let registry = base_registry();
     let mut failures = Vec::new();
     let mut looked = 0;
-    for seed in [1u64, 42, 7] {
+    for seed in [0u64, 1, 42, 7] {
         let world = Overworld::new(seed, registry.clone());
         let spawn = world.spawn_point();
         let mut columns: rustc_hash::FxHashMap<ColumnPos, Column> = Default::default();
@@ -1212,10 +1212,7 @@ fn slopes_never_bury_walls() {
                             let d = registry.def(col.block(IVec3::new(x & 31, y, z & 31)));
                             d.solid && (d.has_tag("soil") || d.has_tag("surface") || (d.has_tag("stone") && d.has_tag("natural") && !d.has_tag("building")))
                         };
-                        // Snow is land only on land: the snow blanket also caps a prop's
-                        // stone (climate.ron, `blanket`).
-                        let snow = |y: i32| registry.def(col.block(IVec3::new(x & 31, y, z & 31))).has_tag("snow");
-                        let Some(top) = (b.floor - 12..=b.floor + 8).rev().find(|&y| land(y) && (!snow(y) || land(y - 1))) else { continue };
+                        let Some(top) = (b.floor - 12..=b.floor + 8).rev().find(|&y| land(y)) else { continue };
                         looked += 1;
                         if top > b.floor + 1 {
                             failures.push(format!("seed {seed} {}: the {}'s walls are buried {} deep at {x}, {z}", s.name.0, b.what, top - b.floor));
@@ -1512,6 +1509,36 @@ fn ripe_or_rare_fruit_is_refused() {
         d.centrepieces[0].parts = vec![("leaves".into(), "base:{wood}_leaves".into())];
         d.styles[0].woods.push(("apple".into(), 1.0));
     }));
+}
+
+/// Loading refuses a furnishing slot whose block would drop itself from every village
+/// (design draft 80): one that drops nothing passes, and so does one tagged `furnishing`,
+/// which gives itself back only where a player placed it.
+#[test]
+fn furnishings_that_drop_themselves_are_refused_unless_tagged() {
+    use crate::content::Select;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let base = crate::content::WorldContent::load(&content).unwrap().settlements;
+    let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
+        let mut def = base.clone();
+        change(&mut def);
+        def.check_furnishings(&content.blocks).is_err()
+    };
+    assert!(!refused(&|_| {}), "the game's own settlements load");
+    // Planks drop themselves and are no furnishing; the crafting table is one.
+    assert!(refused(&|d| d.furnishings.barrel = Some("base:oak_planks".into())));
+    assert!(!refused(&|d| d.furnishings.barrel = Some("base:crafting_table".into())));
+    assert!(refused(&|d| d.furnishings.hay = vec![Select::Name("base:oak_planks".into(), 1.0)]));
+    assert!(refused(&|d| d.furnishings.sacks = vec![Select::Tag("planks".into(), 1.0)]), "by tag too");
+    assert!(refused(&|d| d.furnishings.campfire = Some("base:torch".into())), "a torch drops itself and is no furnishing");
+    // An altar is checked once it is one: the stone altar passes, and so does a building
+    // block standing in for it.
+    assert!(!refused(&|d| d.furnishings.altar = Some("base:stone_altar".into())));
+    assert!(!refused(&|d| d.furnishings.altar = Some("base:polished_calcite".into())));
+    assert!(refused(&|d| d.furnishings.nets = vec![Select::Name("base:oak_planks".into(), 1.0)]));
+    // A centrepiece's own bell too.
+    assert!(refused(&|d| d.centrepieces[0].parts = vec![("bell".into(), "base:oak_planks".into())]));
 }
 
 /// Snow lies over a snowy village without turning its built stone to snow: chimney
