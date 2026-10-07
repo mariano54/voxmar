@@ -2016,11 +2016,12 @@ mod tests {
     fn rare_herb_census() {
         let seeds: Vec<u64> = std::env::var("SEEDS").unwrap_or_else(|_| "7,1,42".into()).split(',').filter_map(|s| s.parse().ok()).collect();
         let chunks = std::env::var("CHUNKS").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
-        for (herb, biome, rate, size, n, columns) in rare_herb_counts(&seeds, chunks) {
+        let other = std::env::var("WILD").is_ok() || std::env::var("WILDTAG").is_ok();
+        for (herb, biome, rate, size, n, columns) in if other { Vec::new() } else { rare_herb_counts(&seeds, chunks) } {
             println!("{herb:>13} {biome:<18} {rate:>6.0} per million columns, {n:>4} plants in {columns:>6} columns, {size:.1} a patch");
         }
-        // WILD=plant,plant (or WILDTAG=tag, every plant carrying it): those plants over a
-        // spread of climates (or WILDBIOMES=a,b), every biome they appear in, as placed plants
+        // WILD=plant,plant (or WILDTAG=tag, every plant carrying it) instead: those plants over
+        // a spread of climates (or WILDBIOMES=a,b), every biome they appear in, as placed plants
         // per million columns (a square kilometre) and one in how many columns.
         let registry = registry();
         let content = crate::content::WorldContent::base(&registry).unwrap();
