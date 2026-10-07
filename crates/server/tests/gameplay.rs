@@ -1713,6 +1713,52 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// How often the server saves on its own (`SAVE_INTERVAL`), in ticks.
+const SAVE_EVERY: u64 = 30 * TICKS_PER_SECOND as u64;
+
+/// The generation of the save in `dir`, from its `world.ron`.
+fn saved_generation(dir: &std::path::Path) -> u64 {
+    let meta = std::fs::read_to_string(dir.join("world.ron")).expect("world.ron");
+    let at = meta.find("generation:").expect("a generation") + "generation:".len();
+    meta[at..].trim_start().split(|c: char| !c.is_ascii_digit()).next().and_then(|n| n.parse().ok()).expect("a number")
+}
+
+/// Waits until the server has finished the loop that handled what was sent before now: a
+/// `/seed` answer, then the next time it tells, sent by a later step of that loop or after.
+fn after_this_loop(client: &mut Client) {
+    client.ok("/seed");
+    let told = client.tick;
+    client.pump_until(|c| c.tick > told);
+}
+
+#[test]
+fn only_a_joined_player_leaving_saves_the_world() {
+    let dir = world_dir("leavers");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let autosaves = |from: u64, to: u64| (to / SAVE_EVERY).saturating_sub(from.saturating_sub(TICKS_PER_SECOND as u64) / SAVE_EVERY);
+    after_this_loop(&mut client);
+    let (before, from) = (saved_generation(&dir), client.tick);
+    // Three connections that close without a hello: none of them is a player leaving.
+    for _ in 0..3 {
+        let (connection, server_side) = local_pair();
+        drop(connection);
+        client._server.as_ref().unwrap().connections().send(server_side).unwrap();
+    }
+    after_this_loop(&mut client);
+    let saves = saved_generation(&dir) - before;
+    assert!(saves <= autosaves(from, client.tick), "{saves} saves for connections that never joined");
+    // A player who joined does save the world as they leave.
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    let (before, from) = (saved_generation(&dir), client.tick);
+    drop(other);
+    after_this_loop(&mut client);
+    let saves = saved_generation(&dir) - before;
+    assert!(saves >= 1 && saves <= 1 + autosaves(from, client.tick), "{saves} saves for a player leaving");
+    drop(client);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() {
     let dir = world_dir("cut");

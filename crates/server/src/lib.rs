@@ -513,10 +513,14 @@ impl Server {
                     Ok(Some((at, message))) => self.handle_message(id, message, at),
                     Ok(None) => break,
                     Err(_) => {
-                        tracing::info!("{} left", player.name);
-                        // The whole world with them: what they hold is saved as one with
-                        // what machines and the ground hold, or a crash could double it.
-                        self.save();
+                        // The whole world with whoever had joined: what they hold is saved
+                        // as one with what machines and the ground hold, or a crash could
+                        // double it. A connection that never said hello holds nothing, and
+                        // opening and closing sockets must not make the server save.
+                        if player.joined {
+                            tracing::info!("{} left", player.name);
+                            self.save();
+                        }
                         self.players.remove(&id);
                     }
                 }
