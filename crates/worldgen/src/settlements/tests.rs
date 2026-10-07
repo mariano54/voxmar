@@ -870,7 +870,7 @@ fn plans_keep_to_their_squares_and_rules() {
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
 fn settlements_are_unchanged() {
-    const EXPECTED: u64 = 13117089924478091730;
+    const EXPECTED: u64 = 2318370820319564431;
     let world = base_world(1);
     let mut text = String::new();
     for cz in -3..3 {
