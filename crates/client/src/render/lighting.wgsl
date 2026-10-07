@@ -197,7 +197,13 @@ fn wet_sheen(color: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, wet: f32, sk
         let cloud = reflected_cloud(world, mirrored);
         reflection = reflection * (1.0 - cloud.a) + cloud.rgb;
     }
-    let sheened = mix(color, reflection * smoothstep(0.5, 0.9, sky), fresnel * mix(0.35 * wet, 0.9, puddle));
+    // Soaked ground mirrors the sky's brightness in its own colour, a gloss; a puddle, thin
+    // water over the ground, half in the sky's colour. Sky blue mixed into red sand turned
+    // it pink.
+    let luminance = vec3(0.2126, 0.7152, 0.0722);
+    let in_own_colour = dot(reflection, luminance) * color / max(dot(color, luminance), 1e-4);
+    reflection = mix(in_own_colour, reflection, 0.5 * puddle);
+    let sheened = mix(color, reflection * smoothstep(0.5, 0.9, sky), fresnel * mix(0.35 * wet, 0.6, puddle));
     // Never pale: a glancing sheen of bright sky over sand or gravel read as frost. What it
     // mirrors still shows, as a gloss a little brighter than the soaked ground, which keeps
     // its colour.

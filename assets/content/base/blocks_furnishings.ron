@@ -25,7 +25,7 @@
         ),
         // A fishing net hung to dry, with cork floats.
         (
-            name: "fishing_net", render: Plant, solid: false, sound: Grass, textures: All("fishing_net"),
+            name: "fishing_net", render: Plant, solid: false, support: Above, sound: Grass, textures: All("fishing_net"),
             hardness: 0.2, color: (170, 150, 110), tags: ["net", "fibre", "fishing", "building"],
         ),
         // Bunches of herbs hung upside down to dry.

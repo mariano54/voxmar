@@ -267,7 +267,7 @@ impl Atmosphere {
             cloud_map: Vec4::ZERO,
             cloud_shade: Vec4::ZERO,
             ground: Vec4::new(
-                std::env::var("VOXMAR_TEMP_WET").ok().and_then(|v| v.parse().ok()).unwrap_or(weather.wetness).clamp(0.0, 1.0) * pack.wet_ground,
+                weather.wetness.clamp(0.0, 1.0) * pack.wet_ground,
                 weather.frost.clamp(0.0, 1.0) * pack.frost,
                 weather.snow_cover.clamp(0.0, 1.0) * pack.frost,
                 pack.bounce,
