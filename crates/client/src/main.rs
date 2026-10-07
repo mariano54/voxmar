@@ -756,12 +756,13 @@ fn setup(
         }
         let (info, def) = (registry.info(block), registry.def(block));
         let own = def.icon.as_ref().and_then(|name| source.read(&format!("item/{name}")));
-        let icon = own.unwrap_or_else(|| match (info.render, registry.shape(block)) {
+        // A shape as it stands (a barrel's staves, a stair's steps), each quad in its own
+        // texture; a block in facings turned south, so its front faces the icon's left.
+        let shown = registry.facing(block, voxmar_engine::block::Facing::South);
+        let icon = own.unwrap_or_else(|| match (info.render, registry.shape(shown)) {
             (RenderKind::Plant | RenderKind::Invisible, _) => face_texture(info, Face::PosZ),
-            // A shape as it stands (a barrel's staves, a stair's steps), each quad in its
-            // own texture.
             (RenderKind::Model, Some(shape)) => {
-                let textures: Vec<_> = registry.shape_layers(block).iter().map(|&layer| as_image(block_textures[layer as usize].clone())).collect();
+                let textures: Vec<_> = registry.shape_layers(shown).iter().map(|&layer| as_image(block_textures[layer as usize].clone())).collect();
                 let quads: Vec<_> = shape
                     .quads
                     .iter()
