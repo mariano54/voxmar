@@ -1363,6 +1363,12 @@ impl SettlementsDef {
         if rules.lots.passes == 0 || rules.lots.tries == 0 || rules.lanes.step <= 0.0 || !(0.0..1.0).contains(&rules.lots.closer) {
             return fail("rules: lots need passes and tries, lanes a step, and `closer` in [0, 1)".into());
         }
+        // Lamps and props stand along lanes `every` blocks apart times a size's `lamps`:
+        // at least a block, or laying them out would never end.
+        let every = rules.dressing.every;
+        if !(every.0 > 0.0 && every.1 >= 0.0 && every.1.is_finite()) || self.sizes.iter().any(|s| every.0 * s.lamps < 1.0) {
+            return fail(format!("rules: dressing needs `every` above nothing then nothing or more, and every size's lamps that far apart times its `lamps` a block or more: {every:?}"));
+        }
         if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 {
             return fail(format!("the site needs ranges low to high and a glade of at most 48 blocks, its treeless ring the smaller: {site:?}"));
         }
