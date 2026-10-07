@@ -1344,6 +1344,116 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table")));
 }
 
+/// A content directory with one more package, `zz_test`, holding `files`: what a mod adds.
+/// Returns where it is (to remove) and the content loaded from it.
+fn with_mod(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Content) {
+    let assets = world_dir(name);
+    copy_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), &assets.join("content"));
+    let package = assets.join("content/zz_test");
+    std::fs::create_dir_all(&package).unwrap();
+    for (file, source) in files {
+        std::fs::write(package.join(file), source).unwrap();
+    }
+    let content = load_content(&assets).expect("content loads");
+    (assets, content)
+}
+
+/// Joins a new in-process server of `content`.
+fn join_content(content: Content) -> Client {
+    let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
+    let (connection, server_side) = local_pair();
+    server.connections().send(server_side).unwrap();
+    Client::greet_content(connection, "test", Some(server), None, content)
+}
+
+const TEST_QUESTS: &str = r#"(quests: [
+    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("base:stick", 3)]], rewards: [Item("base:torch", 2)]),
+    (name: "miner", age: "nomad", branch: "main", title: "Miner", why: "", tasks: [[Level("mining", 10)]], rewards: [Xp("crafting", 50.0)]),
+    (name: "laden", age: "nomad", branch: "main", title: "Laden", why: "", tasks: [[Have("base:cobblestone", 2304)]], rewards: [Item("base:apple", 3)]),
+])"#;
+
+/// Quests are checked once a second by the server's clock: one a goal short is still open
+/// after a check, and one whose goal holds is done at the next, rewarded once, and stays
+/// done when what it asked for is gone.
+#[test]
+fn a_quest_is_done_at_the_next_check_once_its_goal_holds_and_rewards_once() {
+    let (assets, content) = with_mod("quests-have", &[("quests.ron", TEST_QUESTS)]);
+    let mut client = join_content(content);
+    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
+    let torch = client.content.blocks.expect("base:torch");
+    let carried = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| !c.quests.is_empty());
+    client.ok("/clear");
+    client.ok("/give stick 2");
+    // A whole second of the server's ticks: a check has run, and two sticks are not three.
+    client.after_ticks(TICKS_PER_SECOND as u64);
+    assert!(!done(&client, "zz_test:sticks"), "two sticks finished it");
+    assert_eq!(carried(&client, torch), 0);
+    client.chat.clear();
+    client.ok("/give stick 1");
+    client.pump_until(|c| done(c, "zz_test:sticks") && carried(c, torch) == 2);
+    assert!(client.chat.iter().any(|(_, line)| line.contains("Three Sticks")), "{:?}", client.chat);
+    // Without the sticks, two checks later: still done, and the torches came once.
+    client.ok("/clear stick");
+    client.after_ticks(2 * TICKS_PER_SECOND as u64);
+    assert!(done(&client, "zz_test:sticks"));
+    assert_eq!(carried(&client, torch), 2);
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// A level goal holds from that level, not a level before, and its experience comes once.
+#[test]
+fn a_level_quest_waits_for_the_level_and_grants_its_experience() {
+    let (assets, content) = with_mod("quests-level", &[("quests.ron", TEST_QUESTS)]);
+    let mut client = join_content(content);
+    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
+    client.pump_until(|c| !c.quests.is_empty());
+    client.ok("/skill mining 9");
+    client.after_ticks(TICKS_PER_SECOND as u64);
+    assert!(!done(&client, "zz_test:miner"), "level 9 finished a level 10 quest");
+    client.earned.clear();
+    client.ok("/skill mining 10");
+    client.pump_until(|c| done(c, "zz_test:miner") && c.earned.contains(&500));
+    client.after_ticks(2 * TICKS_PER_SECOND as u64);
+    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == 500).count(), 1, "{:?}", client.earned);
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// A reward that does not fit lies at the player's feet rather than being lost.
+#[test]
+fn a_quest_reward_that_does_not_fit_drops_at_the_players_feet() {
+    let (assets, content) = with_mod("quests-full", &[("quests.ron", TEST_QUESTS)]);
+    let mut client = join_content(content);
+    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
+    let apple = client.content.blocks.expect("base:apple");
+    client.pump_until(|c| !c.quests.is_empty());
+    client.ok("/clear");
+    // Every slot full of cobblestone.
+    client.ok("/give cobblestone 2304");
+    client.pump_until(|c| done(c, "zz_test:laden"));
+    client.pump_until(|c| c.items.values().any(|i| i.stack.item == apple && i.stack.count == 3));
+    assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == apple));
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// Every age a first-party quest belongs to names its chapter in English and Japanese
+/// (`quest.age.<age>`), which the quest book heads its chapters with.
+#[test]
+fn every_quest_age_is_named_in_english_and_japanese() {
+    let content = content();
+    let japanese = voxmar_engine::lang::Lang::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), "ja");
+    let ages: std::collections::BTreeSet<&str> = content.quests.iter().map(|quest| quest.age.as_str()).collect();
+    assert!(!ages.is_empty());
+    for age in ages {
+        let key = format!("quest.age.{age}");
+        assert!(content.english.find(&key).is_some(), "no English for {key}");
+        assert!(japanese.find(&key).is_some(), "no Japanese for {key}");
+    }
+}
+
 #[test]
 fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     let mut client = Client::join();
