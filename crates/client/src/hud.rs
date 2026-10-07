@@ -153,7 +153,7 @@ pub fn spawn_count(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, corne
         let pixel = BODY / crate::ui::skin::font_size(1);
         for (x, y) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (1.0, 1.0)] {
             let at = Node { position_type: PositionType::Absolute, left: Val::Px(x * pixel), top: Val::Px(y * pixel), ..default() };
-            corner.spawn((at, crate::ui::widgets::text(font, "", BODY, OUTLINE), Ring(count)));
+            corner.spawn((at, crate::ui::widgets::text(font, "", BODY, OUTLINE), Ring(count), crate::ui::fit::Decoration));
         }
     });
 }
