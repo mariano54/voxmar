@@ -352,18 +352,20 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     // Saffron takes farming 60: refused, nothing sown, no experience.
     hold(&client, 5);
     client.propose("base:plant", ActionTarget::Block { block: other, face: Face::PosY });
-    // Wheat takes level 1: sown, with its planting experience (2, in tenths).
+    // Wheat takes level 1: sown, its planting experience waiting for the harvest.
     hold(&client, 4);
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
-    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && c.earned == [20]);
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout));
+    assert!(client.earned.is_empty(), "sowing paid at once: {:?}", client.earned);
     assert_eq!(client.world.block(other + IVec3::Y), Some(BlockId::AIR), "sown without the level");
     client.pump_until(|c| c.inventory.get(4).map(|s| s.count) == Some(4));
 
-    // Grown ripe, then broken: its harvest pops out and its experience is earned.
+    // Grown ripe, then broken: its harvest pops out and its experience is earned, the
+    // sowing's (2) with the harvest's (9), in tenths.
     assert_eq!(client.ok("/grow ripe"), "Grew 1 plant.");
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
-    client.pump_until(|c| c.earned == [20, 90] && c.items.values().any(|i| i.stack.item == wheat));
+    client.pump_until(|c| c.earned == [110] && c.items.values().any(|i| i.stack.item == wheat));
     client.pump_until(|c| c.skills.xp(voxmar_engine::skill::SkillId(0)) == 110);
 
     // Ripe fruit on a tree is picked by hand, at any level: the fruit pops out and the
@@ -483,7 +485,8 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
     let below = client.position.floor().as_ivec3() - IVec3::Y;
     client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
     client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
-    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.count == 1));
+    let purse = client.content.blocks.id("base:coin_purse");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.count == 1 && Some(s.item) != purse));
     // Step a little within the same block, so the position is our own rather than spawn.
     let moved = client.position + Vec3::new(0.2, 0.0, -0.2);
     client.send_position(moved, false);
@@ -1165,7 +1168,8 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     for line in ["/clear", "/give oak_planks 4"] {
         client.ok(line);
     }
-    client.pump_until(|c| c.inventory.get(0).is_some());
+    // The four given, not the starting kit's planks still there before the clear.
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.count == 4));
     for cell in voxmar_engine::craft::SMALL {
         let to = (voxmar_engine::inventory::CRAFT + cell) as u8;
         client.propose("core:transfer", ActionTarget::Slots { from: 0, to, count: 1 });
@@ -1301,7 +1305,8 @@ fn gravel_sometimes_breaks_to_flint_instead() {
         client.ok(line);
     }
     let (gravel, flint) = (client.content.blocks.expect("base:gravel"), client.content.blocks.expect("base:flint"));
-    client.pump_until(|c| c.inventory.get(0).is_some());
+    let shovel = client.content.blocks.expect("base:iron_shovel");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == shovel));
     client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     // One break in eight gives flint: in sixty, all but certainly some.
     let mut flints = 0;
@@ -1310,6 +1315,10 @@ fn gravel_sometimes_breaks_to_flint_instead() {
         client.pump_until(|c| c.world.block(below) == Some(gravel));
         client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
         client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+        // The drop comes just after the block goes; setting the gravel again at once could
+        // bury it unseen.
+        let seen = Instant::now() + Duration::from_millis(300);
+        client.pump_until(|c| Instant::now() > seen || c.items.values().any(|i| i.stack.item == flint));
         flints = client.items.values().filter(|i| i.stack.item == flint).count() + client.inventory.slots.iter().flatten().filter(|s| s.item == flint).count();
         if flints > 0 {
             break;
@@ -1782,4 +1791,96 @@ fn a_full_hopper_leaves_the_stack_in_hand_and_gives_nothing_back() {
     std::thread::sleep(Duration::from_millis(500));
     machine_says(&mut client, "~2 ~ ~", "holds 320 items", 5);
     assert_eq!(held(&client), 64, "the full hopper emptied into the inventory");
+}
+
+#[test]
+fn a_ripe_crop_above_the_farming_level_refuses_harvest() {
+    let mut client = Client::join();
+    let at = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    // Ripe tomatoes ask for Farming 30.
+    for line in ["/fill ~2 ~-1 ~ ~2 ~-1 ~ farmland", "/fill ~2 ~ ~ ~2 ~1 ~ air", "/setblock ~2 ~ ~ tomato_crop"] {
+        client.ok(line);
+    }
+    let ripe = client.content.blocks.expect("base:tomato_crop");
+    client.pump_until(|c| c.world.block(at) == Some(ripe));
+    let earned = client.earned.len();
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.propose("base:pick", ActionTarget::Block { block: at, face: Face::PosY });
+    let wait = Instant::now() + Duration::from_millis(1500);
+    client.pump_until(|_| Instant::now() > wait);
+    assert_eq!(client.world.block(at), Some(ripe), "a level 1 farmer harvested Farming 30 tomatoes");
+    assert_eq!(client.earned.len(), earned, "no experience for a refused harvest");
+    // At Farming 30 it comes.
+    client.ok("/skill farming 30");
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) != Some(ripe) && c.earned.len() > earned);
+}
+
+#[test]
+fn breaking_a_sprout_teaches_nothing_and_sowing_pays_at_harvest() {
+    let mut client = Client::join();
+    let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/clear", "/give wheat_seeds 4", "/fill ~ ~-1 ~2 ~ ~-1 ~2 farmland", "/fill ~ ~ ~2 ~ ~1 ~2 air"] {
+        client.ok(line);
+    }
+    let (seeds, sprout) = (client.content.blocks.expect("base:wheat_seeds"), client.content.blocks.expect("base:wheat_crop_0"));
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == seeds) && c.world.block(ground) == c.content.blocks.id("base:farmland"));
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    let earned = client.earned.len();
+    for _ in 0..3 {
+        client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+        client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout));
+        client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
+        client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
+    }
+    let wait = Instant::now() + Duration::from_millis(800);
+    client.pump_until(|_| Instant::now() > wait);
+    assert_eq!(client.earned.len(), earned, "sowing and breaking sprouts paid experience");
+}
+
+#[test]
+fn a_placed_wild_flower_gives_itself_back_and_no_forage() {
+    let mut client = Client::join();
+    let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/clear", "/give moonbloom 1", "/fill ~ ~-1 ~2 ~ ~-1 ~2 grass_block", "/fill ~ ~ ~2 ~ ~1 ~2 air"] {
+        client.ok(line);
+    }
+    let moonbloom = client.content.blocks.expect("base:moonbloom");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == moonbloom) && c.world.block(ground) == c.content.blocks.id("base:grass_block"));
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(moonbloom));
+    let earned = client.earned.len();
+    client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
+    // Its plain drop: the flower, and nothing foraged or taught.
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == moonbloom) || c.items.values().any(|i| i.stack.item == moonbloom));
+    let wait = Instant::now() + Duration::from_millis(800);
+    client.pump_until(|_| Instant::now() > wait);
+    assert_eq!(client.earned.len(), earned, "foraging a placed flower paid experience");
+    let seeds = client.content.blocks.expect("base:moonbloom_seeds");
+    assert!(!client.items.values().any(|i| i.stack.item == seeds), "a placed flower was foraged for seeds");
+}
+
+#[test]
+fn crafting_all_stops_when_the_grid_makes_another_recipe() {
+    let mut client = Client::join();
+    for line in ["/clear", "/give oak_planks 6"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.count == 6));
+    // Grid cells 0 and 3 (down the left) two planks each, 1 and 4 one each: a crafting
+    // table first; what is left, a plank over a plank, would make sticks.
+    let to = |cell: usize| (voxmar_engine::inventory::CRAFT + cell) as u8;
+    for (cell, count) in [(0, 2), (3, 2), (1, 1), (4, 1)] {
+        client.propose("core:transfer", ActionTarget::Slots { from: 0, to: to(cell), count });
+    }
+    let earned = client.earned.len();
+    client.propose("core:craft", ActionTarget::Slot(0));
+    let (table, stick) = (client.content.blocks.expect("base:crafting_table"), client.content.blocks.expect("base:stick"));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == table));
+    let wait = Instant::now() + Duration::from_millis(800);
+    client.pump_until(|_| Instant::now() > wait);
+    assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
+    assert_eq!(client.earned[earned..], [80], "one table's Engineering, once");
 }
