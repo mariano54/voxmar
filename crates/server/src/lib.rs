@@ -291,7 +291,9 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
-    /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
+    /// Cells whose block a player placed: ores, which then teach nothing; plants, which
+    /// don't regrow by themselves; and furnishings, which give themselves back only from
+    /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.

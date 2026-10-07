@@ -227,6 +227,14 @@ impl Content {
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks)?);
+        // A furnishing gives itself back only where a player placed it: one that drops
+        // nothing anyway has no business with the tag.
+        if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag("furnishing") && (blocks.info(id).drops.is_air() || blocks.info(id).drop_count == 0)) {
+            return Err(RegistryError(format!(
+                "block `{}` is a `furnishing` but drops nothing: give it a drop, or remove the tag (village props that drop nothing don't need it)",
+                blocks.def(id).name
+            )));
+        }
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),

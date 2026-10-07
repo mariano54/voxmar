@@ -188,6 +188,10 @@ impl Server {
             if info.drops.is_air() || info.drop_count == 0 {
                 continue;
             }
+            // A furnishing the world placed (a village's altar) gives nothing.
+            if wild && self.content.blocks.def(block).has_tag("furnishing") {
+                continue;
+            }
             // A crop nobody sowed (a village's field), broken before it is harvested,
             // gives its seed or produce only now and then: enough to start the crop, not a
             // store of free food.
