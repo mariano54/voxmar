@@ -434,4 +434,30 @@ mod tests {
         assert_eq!(saved.iter().filter(|s| s.genome.is_some()).count(), 1);
         assert_eq!(saved.iter().filter(|s| s.position == far.to_array()).count(), 1);
     }
+
+    #[test]
+    fn wild_creatures_leave_room_for_animals_waiting_in_the_save() {
+        let mut server = server();
+        let most = server.content.creatures.limits().most;
+        // Waiting animals far off fill all but two places.
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        let waiting = most - server.creatures.live.len() - 2;
+        server.creatures.unplaced = (0..waiting).map(|_| rabbit(far)).collect();
+        assert_eq!(server.wild_room(), 2);
+        let wild = |server: &Server| server.creatures.live.values().filter(|c| c.owner.is_none()).count();
+        server.console("summon rabbit 4");
+        assert_eq!(wild(&server), 2, "wild ones took the waiting animals' room");
+        assert_eq!(server.wild_room(), 0);
+        server.console("summon rabbit 1");
+        assert_eq!(wild(&server), 2, "a full world summoned more");
+        // The room was kept: a waiting one whose place loads still comes back into it.
+        server.creatures.unplaced[0] = rabbit(server.spawn);
+        let every = 10 * TICKS_PER_SECOND as u64;
+        server.tick = server.tick.next_multiple_of(every) + every - 1;
+        let at = server.spawn.floor().as_ivec3();
+        server.load_area(at, at);
+        server.tick();
+        assert_eq!(server.creatures.live.values().filter(|c| c.owner.is_some()).count(), 1);
+        assert_eq!(server.creatures.unplaced.len(), waiting - 1);
+    }
 }

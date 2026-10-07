@@ -491,6 +491,10 @@ impl Server {
         };
         let mut placed = 0;
         for i in 0..count {
+            // Summoned ones are wild: they leave room for kept animals waiting in the save.
+            if self.wild_room() == 0 {
+                break;
+            }
             let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
             let cell = (at + offset).floor().as_ivec3();
             // Commands may run before the land around a player has loaded (a capture's,
