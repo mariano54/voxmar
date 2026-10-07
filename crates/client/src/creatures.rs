@@ -323,6 +323,11 @@ impl Creatures {
             .map(|(id, _)| id)
     }
 
+    /// Every living creature's body, for the player to bump against (`player::movement`).
+    pub fn bodies<'a>(&'a self, launch: &'a Launch) -> impl Iterator<Item = Aabb> + 'a {
+        self.shown.keys().filter_map(move |&id| self.aabb(launch, id))
+    }
+
     fn aabb(&self, launch: &Launch, id: u32) -> Option<Aabb> {
         let shown = self.shown.get(&id).filter(|s| s.dying.is_none())?;
         let size = launch.content.creatures.get(shown.view.species).def.body.size;
@@ -782,7 +787,6 @@ fn show(
 #[allow(clippy::too_many_arguments)]
 pub fn aim(
     time: Res<Time>,
-    mut cooldown: Local<f32>,
     mouse: Res<ButtonInput<MouseButton>>,
     ui: Res<UiState>,
     launch: Res<Launch>,
@@ -791,13 +795,15 @@ pub fn aim(
     player: Res<LocalPlayer>,
     creatures: Res<Creatures>,
     mut target: ResMut<Target>,
+    mut fighting: ResMut<crate::fight::Fighting>,
 ) {
     let eye = player.eye();
     let look = player.look_direction().normalize_or_zero();
     let block = target.hit.map_or(f32::MAX, |hit| hit.distance);
-    // What a blow would be struck with: its reach, and how soon the next may come.
+    // What a blow would be struck with: its reach and rhythm, and whether it guards.
     let held = player.inventory.get(player.selected).map(|s| s.item);
-    let weapon = launch.content.combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    let combat = &launch.content.combat;
+    let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
     let nearest = creatures
         .shown
         .keys()
@@ -808,10 +814,10 @@ pub fn aim(
     if target.creature.is_some() {
         target.hit = None;
     }
-    *cooldown -= time.delta_secs();
     // A right click tends it with what is in hand: food that tames it or readies a kept one
     // to breed, or a tool for its product (the server judges; this only asks when it may).
-    // With anything else, or nothing, in hand, it looks closely at it.
+    // With a weapon that guards, the button guards (`fight`); with anything else, or
+    // nothing, in hand, it looks closely at it.
     if let Some(id) = target.creature
         && ui.cursor_locked
         && !player.dead
@@ -820,27 +826,26 @@ pub fn aim(
     {
         let species = launch.content.creatures.get(view.species);
         let mine = view.kept && view.owner.is_some() && view.owner == creatures.me;
-        let accepts = player.inventory.get(player.selected).map(|s| s.item).is_some_and(|item| {
+        let accepts = held.is_some_and(|item| {
             let tags = &launch.content.blocks.def(item).tags;
             let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
             (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool))
         });
-        let action = if accepts { "base:tend" } else { "base:inspect" };
-        if let Some(action) = actions.0.id(action) {
+        let action = if accepts { Some("base:tend") } else if combat.guard(&weapon).is_none() { Some("base:inspect") } else { None };
+        if let Some(action) = action.and_then(|a| actions.0.id(a)) {
             net.propose_from(&player, action, ActionTarget::Creature(id));
         }
     }
+    // A left click swings: at once, or held for the beat (the server keeps the same
+    // rhythm and says what lands).
     if let Some(id) = target.creature
-        && *cooldown <= 0.0
         && ui.cursor_locked
         && !player.dead
         && mouse.just_pressed(MouseButton::Left)
         && let Some(attack) = actions.0.id("core:attack")
+        && fighting.click(time.elapsed_secs_f64(), &combat.timing(&weapon), held, &combat.feel)
     {
         net.propose_from(&player, attack, ActionTarget::Creature(id));
-        // Blows come no faster than the server takes them; how hard each lands for the wait
-        // is the server's (`voxmar_engine::combat`).
-        *cooldown = weapon.quickest();
     }
 }
 

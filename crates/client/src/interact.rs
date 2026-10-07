@@ -28,9 +28,10 @@ pub struct InteractPlugin;
 impl Plugin for InteractPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Target>()
+            .init_resource::<crate::fight::Fighting>()
             .add_systems(
                 Update,
-                (select_slot.after(player::zoom), find_target, crate::creatures::aim, pick_block, break_and_place, draw_target)
+                (select_slot.after(player::zoom), find_target, crate::creatures::aim, pick_block, break_and_place, crate::fight::guard, draw_target)
                     .chain()
                     .in_set(InteractSystems)
                     .run_if(in_state(crate::menu::Screen::InGame)),
@@ -49,6 +50,9 @@ pub struct Target {
     block_hit: Option<RayHit>,
     /// The creature under the crosshair, nearer than any block (see `creatures::aim`).
     pub creature: Option<u32>,
+    /// The right press this frame did something (a table, a bed, cooking, eating), so it
+    /// raises no guard (`fight`).
+    pub used_right: bool,
     /// Block being broken and progress in 0..1.
     pub breaking: Option<(IVec3, f32)>,
     /// The target the mining in progress was proposed at, which its `Finished` names.
@@ -292,6 +296,7 @@ fn break_and_place(
 
     // Food in hand is eaten when it would not be placed: an item, or nothing in reach to
     // put it on. Eating takes a moment, so it starts on the press, not again while held.
+    target.used_right = false;
     if mouse.just_pressed(MouseButton::Right) && ui.cursor_locked && !player.dead {
         let content = &launch.content;
         // A crafting table opens the inventory with its three-by-three grid.
@@ -300,6 +305,7 @@ fn break_and_place(
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             if actions.0.get(use_table).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
                 net.propose_from(&player, use_table, action_target);
+                target.used_right = true;
                 player.station = Some(hit.block);
                 ui.inventory_open = true;
                 return;
@@ -315,6 +321,7 @@ fn break_and_place(
                 let cooks = actions.0.id("base:cook").and_then(|cook| actions.0.get(cook)).is_some_and(|def| def.validate(&context, action_target).is_ok());
                 if !cooks && actions.0.get(action).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
                     net.propose_from(&player, action, action_target);
+                    target.used_right = true;
                     return;
                 }
             }
@@ -326,6 +333,7 @@ fn break_and_place(
             match actions.0.get(cook).map(|def| def.validate(&context, action_target)) {
                 Some(Ok(())) => {
                     net.propose_from(&player, cook, action_target);
+                    target.used_right = true;
                     target.place_cooldown = 0.4;
                     return;
                 }
@@ -354,6 +362,7 @@ fn break_and_place(
                     // Eating takes the player's hands: the server drops (or, if nearly
                     // done, completes) any mining it replaces, and so does the client.
                     net.propose_from(&player, eat, ActionTarget::None);
+                    target.used_right = true;
                     target.breaking = None;
                     target.mine_cooldown = 1.2;
                     target.place_cooldown = 1.2;

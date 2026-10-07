@@ -87,6 +87,11 @@ impl Net {
         self.connection.send(ClientMessage::Finished { target });
     }
 
+    /// The player raised or lowered their guard (`fight`).
+    pub fn guard(&self, up: bool) {
+        self.connection.send(ClientMessage::Guard { up });
+    }
+
     pub fn send_settings(&self, view_distance: u8, fly_speed: f32) {
         self.connection.send(ClientMessage::Settings { view_distance, fly_speed });
     }
@@ -159,6 +164,7 @@ pub(crate) fn receive(
     (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     mut broken: MessageWriter<BlockBroken>,
+    mut fighting: ResMut<crate::fight::Fighting>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     loop {
@@ -285,7 +291,11 @@ pub(crate) fn receive(
             ServerMessage::Quests { states } => player.quests = states,
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
-            ServerMessage::Struck { creature, damage, killed } => creatures.struck(creature, damage, killed, time.elapsed_secs()),
+            ServerMessage::Struck { creature, damage, killed, blow } => {
+                creatures.struck(creature, damage, killed, time.elapsed_secs());
+                fighting.struck(creature, damage, blow, time.elapsed_secs_f64());
+            }
+            ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
         }
     }
