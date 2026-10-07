@@ -1878,22 +1878,70 @@ mod tests {
         }
     }
 
-    /// Design's rates for the rare herbs (draft 61): in every biome naming it, each herb
-    /// grows at 120 to 300 plants per million columns of that biome, in patches of 3 to 6.
-    /// A herb's `patches` rate in plants.ron is its density where it can root; the weight a
-    /// biome names it with scales that to the biome's own ground. Generated for real, so
-    /// slow: the full gate runs it.
+    /// Design's rates for the rare herbs (draft 89): in every biome naming it, each herb
+    /// grows within 0.5 to 1.6 times its own `aim` (plants.ron), in patches of 3 to 6
+    /// (2.5 to 6.5 measured), and the classes keep their order: Legendary herbs rarer than
+    /// VeryRare ones, VeryRare than Rare, on the same samples. Each biome is counted over
+    /// more seeds until every herb in it has 25 patches (a count's noise under about ±20%),
+    /// up to 24 seeds; a biome too small to get there is printed and left to the census.
+    /// Generated for real, so slow: the full gate runs it.
     #[test]
     fn rare_herbs_grow_at_their_rates() {
+        let registry = registry();
+        let content = crate::content::WorldContent::base(&registry).unwrap();
+        let (herbs, biomes, pairs) = rare_herbs();
+        let herb_names: Vec<&str> = herbs.iter().map(String::as_str).collect();
+        let def = |herb: &str| content.plants.iter().find(|p| p.name.trim_start_matches("base:") == herb).unwrap();
         let mut wrong = Vec::new();
-        for (herb, biome, rate, size, n, columns) in rare_herb_counts(&[7, 1, 42], 12) {
-            // Allow for the count's noise; a rare biome too small in the sample to expect a
-            // dozen plants is left to the census.
-            if columns as f64 * 200.0 / 1e6 < 12.0 {
-                continue;
+        let mut measured: Vec<(String, f64)> = Vec::new();
+        for biome in &biomes {
+            let here: Vec<&String> = pairs.iter().filter(|p| p.1 == *biome).map(|p| &p.0).collect();
+            // Per herb here: plants, patches; and the biome's columns.
+            let mut tally: std::collections::HashMap<String, (usize, f64)> = std::collections::HashMap::new();
+            let mut columns = 0u64;
+            let mut seeds = 0u64;
+            while seeds < 24 {
+                let batch: Vec<u64> = (seeds + 1..=seeds + 4).collect();
+                seeds += 4;
+                let mut batch_columns = 0;
+                for (herb, _, _, size, n, cols) in plant_counts(&batch, 12, &herb_names, &[biome.as_str()]) {
+                    batch_columns = cols;
+                    let e = tally.entry(herb).or_default();
+                    e.0 += n;
+                    e.1 += if size > 0.0 { n as f64 / size } else { 0.0 };
+                }
+                columns += batch_columns;
+                if here.iter().all(|h| tally.get(h.as_str()).is_some_and(|t| t.1 >= 25.0)) {
+                    break;
+                }
             }
-            if !(84.0..=390.0).contains(&rate) || n >= 8 && !(2.5..=6.5).contains(&size) {
-                wrong.push(format!("{herb} in {biome}: {rate:.0} per million in {columns} columns, {size:.1} a patch"));
+            for herb in here {
+                let (n, patches) = tally.get(herb.as_str()).copied().unwrap_or_default();
+                let rate = n as f64 * 1e6 / columns.max(1) as f64;
+                let aim = def(herb).patches.as_ref().unwrap().aim as f64;
+                if patches < 25.0 {
+                    println!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}) from only {patches:.0} patches in {columns} columns over {seeds} seeds: left to the census");
+                    continue;
+                }
+                let size = n as f64 / patches;
+                println!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}), {size:.1} a patch, {patches:.0} patches over {seeds} seeds");
+                measured.push((herb.clone(), rate));
+                if !(0.5 * aim..=1.6 * aim).contains(&rate) || !(2.5..=6.5).contains(&size) {
+                    wrong.push(format!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}), {size:.1} a patch"));
+                }
+            }
+        }
+        // The classes in order, by each class's mean rate over its herbs' biomes.
+        let class = |herb: &str| registry.def(registry.expect(&def(herb).block)).rarity;
+        let mean = |r: voxmar_engine::block::Rarity| {
+            let rates: Vec<f64> = measured.iter().filter(|(h, _)| class(h) == r).map(|(_, x)| *x).collect();
+            (!rates.is_empty()).then(|| rates.iter().sum::<f64>() / rates.len() as f64)
+        };
+        use voxmar_engine::block::Rarity::{Legendary, Rare, VeryRare};
+        let order: Vec<(voxmar_engine::block::Rarity, f64)> = [Legendary, VeryRare, Rare].into_iter().filter_map(|r| mean(r).map(|m| (r, m))).collect();
+        for pair in order.windows(2) {
+            if pair[0].1 >= pair[1].1 {
+                wrong.push(format!("{:?} herbs ({:.0} per million) are not rarer than {:?} ones ({:.0})", pair[0].0, pair[0].1, pair[1].0, pair[1].1));
             }
         }
         assert!(wrong.is_empty(), "{}", wrong.join("; "));
