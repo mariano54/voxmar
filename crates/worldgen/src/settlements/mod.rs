@@ -312,6 +312,12 @@ impl Settlements {
         IVec2::new(x, z).div_euclid(IVec2::splat(self.def.grid.spacing))
     }
 
+    /// How many squares are planned, for tests of how much a piece of generation needs.
+    #[cfg(test)]
+    pub(crate) fn made(&self) -> usize {
+        self.plans.len()
+    }
+
     /// The settlement planned in square `cell`, if any.
     pub fn slot(&self, world: &Overworld, cell: IVec2) -> Arc<Slot> {
         let found = RECENT.with(|recent| {
@@ -416,16 +422,17 @@ impl Settlements {
     /// The settlements whose squares lie within `radius` blocks of `centre`.
     pub fn near(&self, world: &Overworld, centre: IVec2, radius: i32) -> Vec<Arc<Slot>> {
         let (first, last) = (self.cell_of(centre.x - radius, centre.y - radius), self.cell_of(centre.x + radius, centre.y + radius));
-        let mut found = Vec::new();
-        for cz in first.y..=last.y {
-            for cx in first.x..=last.x {
-                let slot = self.slot(world, IVec2::new(cx, cz));
-                if slot.0.is_some() {
-                    found.push(slot);
-                }
-            }
+        let cells: Vec<IVec2> = (first.y..=last.y).flat_map(|cz| (first.x..=last.x).map(move |cx| IVec2::new(cx, cz))).collect();
+        // Squares nobody has planned yet are planned side by side first (see
+        // `crate::parallel`): each may need a river region of its own, and trails ask for
+        // several at once, which one after another kept a new world's first columns waiting.
+        let missing: Vec<IVec2> = cells.iter().copied().filter(|&c| !self.plans.has(c)).collect();
+        if missing.len() > 1 {
+            crate::parallel::for_each(&missing, |&c| {
+                self.slot(world, c);
+            });
         }
-        found
+        cells.into_iter().map(|c| self.slot(world, c)).filter(|slot| slot.0.is_some()).collect()
     }
 
     /// Whether any settlement's gate lies within `reach` blocks of the box from `min` to
@@ -483,6 +490,7 @@ fn fixed(registry: &BlockRegistry, f: &FurnishingsDef) -> Option<Fixed> {
         fruit: palette(&f.fruit, &any),
         hay: palette(&f.hay, &any),
         hanging: palette(&f.hanging, &any),
+        nets: palette(if f.nets.is_empty() { &f.hanging } else { &f.nets }, &any),
         sacks: palette(&f.sacks, &any),
         cloth: palette(&f.cloth, &any),
     })

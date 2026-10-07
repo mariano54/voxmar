@@ -84,7 +84,10 @@ The levers are correlated, so a place reads as a whole:
   jungle stilts, turf house, villa, and timber frame anywhere else). A style names its
   woods, its roof shapes by weight, and a weighted list per part (foundation, floor,
   walls, frame, roof, trim, paving, hedge, weathered, crops); `{wood}` and `{trim}` stand
-  for the two woods the settlement picks. A settlement keeps one to three entries of
+  for the two woods the settlement picks. Crops are everyday ones: a size's fields grow
+  only crops up to its `crop_level` (hamlets 5: wheat and carrot; villages 12: potato
+  too), by weight, and always growing, never ripe; loading fails on a crop rarer than
+  uncommon, above every size's level, or a style with nothing a hamlet may grow. A settlement keeps one to three entries of
   each list, fewer where it is orderly. Where two styles fit a biome, either may be
   built.
 - `names`: name parts by biome tag, each with its Japanese reading, small words for
@@ -94,7 +97,8 @@ The levers are correlated, so a place reads as a whole:
   from sinkholes and ravines, and the glade it opens in the woods.
 - `furnishings`: the blocks every settlement uses whatever its style (torch, campfire,
   table, farmland, water, dirt, planter, anvil, barrel, bell, altar) and the lists of
-  flowers, bushes, stall canopies, compost, boulders, orchard fruit, hay, things hung to
+  flowers, bushes, stall canopies, compost, boulders, orchard fruit (in blossom or
+  unripe, never the ripe leaves), hay, things hung to
   dry, sacks and cloth. Hay, sacks and drying herbs stand in with terracotta and hanging
   roots until the pack has blocks of their own.
 
