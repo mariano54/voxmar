@@ -139,6 +139,13 @@ impl Fights {
     }
 }
 
+/// Ticks between pings to each player, for their round trip; a ping unanswered this long
+/// is given up and sent again; and the share of each round trip measured the smoothed one
+/// moves by.
+const PING_EVERY: u64 = TICKS_PER_SECOND as u64;
+const PING_LOST: std::time::Duration = std::time::Duration::from_secs(5);
+const ROUND_TRIP_SMOOTHING: f32 = 0.25;
+
 fn ticks(seconds: f32) -> u64 {
     (seconds.max(0.0) * TICKS_PER_SECOND as f32).ceil() as u64
 }
@@ -154,6 +161,38 @@ impl Server {
         self.content.combat.guard_of(p.held(), &p.inventory.worn, |skill| self.content.skills.level(p.skills.xp(skill)))
     }
 
+    /// Pings each player every second (`ServerMessage::Ping`), for their round trip.
+    pub(crate) fn ping_players(&mut self) {
+        if !self.tick.is_multiple_of(PING_EVERY) {
+            return;
+        }
+        let number = self.tick as u32;
+        for player in self.players.values_mut().filter(|p| p.joined) {
+            if player.ping.is_some_and(|(_, sent)| sent.elapsed() < PING_LOST) {
+                continue;
+            }
+            player.connection.send(ServerMessage::Ping { id: number });
+            player.ping = Some((number, Instant::now()));
+        }
+    }
+
+    /// A player's answer to ping `number`, which arrived `at`.
+    pub(crate) fn pong(&mut self, player: PlayerId, number: u32, at: Instant) {
+        let Some(p) = self.players.get_mut(&player) else { return };
+        let Some((_, sent)) = p.ping.filter(|&(id, _)| id == number) else { return };
+        let sample = at.saturating_duration_since(sent).as_secs_f32();
+        p.round_trip = Some(p.round_trip.map_or(sample, |r| r + (sample - r) * ROUND_TRIP_SMOOTHING));
+        p.ping = None;
+    }
+
+    /// Seconds a player's guard and dodges are judged earlier by, and their creatures'
+    /// blows wait: their round trip (they see a wind-up begin and their answer arrives that
+    /// much late), never past `Feel::lag_allowance`.
+    fn lag_allowance(&self, player: PlayerId) -> f64 {
+        let most = self.content.combat.feel.lag_allowance.max(0.0);
+        self.players.get(&player).and_then(|p| p.round_trip).map_or(0.0, |r| r.clamp(0.0, most)) as f64
+    }
+
     fn wielded_by(&self, player: PlayerId) -> Option<Weapon> {
         let p = self.players.get(&player)?;
         Some(self.content.combat.wielded(p.held(), |skill| self.content.skills.level(p.skills.xp(skill))))
@@ -167,6 +206,7 @@ impl Server {
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
         let feel = self.content.combat.feel;
+        let seen = now - self.lag_allowance(player);
         let fighter = self.fights.fighters.entry(player).or_default();
         if fighter.guarding.is_up() {
             return;
@@ -176,8 +216,9 @@ impl Server {
             fighter.held = held;
         }
         if let Click::Swing(_) = fighter.rhythm.click(now, &timing, &feel) {
-            let counter = now <= fighter.counter_until;
-            let riposte = now <= fighter.riposte_until;
+            // Windows a perfect answer opened count as of when the player saw it.
+            let counter = seen <= fighter.counter_until;
+            let riposte = seen <= fighter.riposte_until;
             fighter.counter_until = 0.0;
             fighter.riposte_until = 0.0;
             fighter.aim = Some(Aim { creature, counter, riposte, weapon, held });
@@ -190,14 +231,16 @@ impl Server {
         let Some(weapon) = self.wielded_by(player) else { return };
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
+        // Judged as of when the player saw the blow coming (`lag_allowance`).
+        let seen = now - self.lag_allowance(player);
         let feel = self.content.combat.feel;
         let fighter = self.fights.fighters.entry(player).or_default();
         if up {
-            if fighter.guarding.raise(now, &feel) && fighter.rhythm.cancel(now, &timing, &feel) {
+            if fighter.guarding.raise(seen, &feel) && fighter.rhythm.cancel(now, &timing, &feel) {
                 fighter.aim = None;
             }
         } else {
-            fighter.guarding.lower(now);
+            fighter.guarding.lower(seen);
         }
     }
 
@@ -218,10 +261,11 @@ impl Server {
         let may = p.health.alive() && !p.flying && grounded && !self.eating(player);
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
+        let seen = now - self.lag_allowance(player);
         // The heaviest armour worn sets the dodge; without armour, the first.
         let dodge = self.content.combat.dodge_of(&p.inventory.worn).clone();
         let fighter = self.fights.fighters.entry(player).or_default();
-        if !(may && fighter.guarding.dodge(now, &dodge, &feel)) {
+        if !(may && fighter.guarding.dodge(seen, &dodge, &feel)) {
             // Numbered, as every teleport is, so inputs sent before the client saw it are dropped.
             if let Some(p) = self.players.get_mut(&player) {
                 p.teleport(p.position);
@@ -324,12 +368,15 @@ impl Server {
         }
         // Creatures' blows, each judged at the moment it lands, once every guard and dodge
         // that arrived before that moment has been handled: one that arrived after the last
-        // messages were taken in, and before the blow landed, still counts. (Arrived, not
-        // sent: the trip from the client is not made up for; `reach_slack` absorbs it.) A
-        // blow so held is judged up to a tick later, so where the player and the creature
-        // stand, for its lunge and reach, is up to a tick later too.
+        // messages were taken in, and before the blow landed, still counts. The player saw
+        // the wind-up begin late by their round trip, and their answer arrives as late, so
+        // the blow waits that much longer too (`lag_allowance`); their guard and dodges are
+        // judged as of when they saw it. A blow so held is judged up to a tick later (and
+        // the allowance later), so where the player and the creature stand, for its lunge
+        // and reach, is that much later too.
         let heard = self.heard.map_or(now, |at| self.fights.secs(at));
-        let (due, waiting): (Vec<Windup>, Vec<Windup>) = std::mem::take(&mut self.fights.windups).into_iter().partition(|w| w.lands <= heard);
+        let windups = std::mem::take(&mut self.fights.windups);
+        let (due, waiting): (Vec<Windup>, Vec<Windup>) = windups.into_iter().partition(|w| w.lands + self.lag_allowance(w.player) <= heard);
         self.fights.windups = waiting;
         for windup in due {
             self.creature_blow(windup.creature, windup.player, windup.lands);

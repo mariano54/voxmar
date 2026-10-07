@@ -443,6 +443,8 @@ struct Gate {
     sweep: Sweep,
     /// The player's states the server had sent when the wear step clicked.
     worn_states: u32,
+    /// The Defence level before the wear step raised it, to put back after.
+    worn_defence: u8,
     overlay_counted: (f32, f32),
 }
 
@@ -529,6 +531,7 @@ impl Gate {
             feel: FeelRun::default(),
             sweep: Sweep::default(),
             worn_states: 0,
+            worn_defence: 1,
             overlay_counted: (0.0, 0.0),
         }
     }
@@ -5028,6 +5031,9 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     };
     match gate.phase {
         0 => {
+            let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+            let skills = &launch.content.skills;
+            gate.worn_defence = skills.id("core:defence").map_or(1, |defence| skills.level(player.skills.xp(defence)));
             let net = world.resource::<Net>();
             net.command("skill defence 20");
             for (name, _) in [WORN_SHIRT, WORN_SHIELD] {
@@ -5152,7 +5158,8 @@ fn end_wear(world: &mut World, gate: &mut Gate, now: f32) {
     for (name, _) in [WORN_SHIRT, WORN_SHIELD] {
         net.command(&format!("clear {}", name.trim_start_matches("base:")));
     }
-    net.command("skill defence 1");
+    // Back to the level before, for the steps after.
+    net.command(&format!("skill defence {}", gate.worn_defence));
     // The fights before may have killed every creature about: one is summoned beside the
     // player, for `combat_hud` to tell its blows at.
     net.command(&format!("summon {} 1 ~ ~ ~2", CREATURE.trim_start_matches("base:")));

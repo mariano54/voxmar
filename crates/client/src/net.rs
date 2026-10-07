@@ -102,6 +102,11 @@ impl Net {
         self.connection.send(ClientMessage::Guard { up });
     }
 
+    /// Answers the server's ping `id` (`ServerMessage::Ping`).
+    pub fn pong(&self, id: u32) {
+        self.connection.send(ClientMessage::Pong { id });
+    }
+
     pub fn send_settings(&self, view_distance: u8, fly_speed: f32) {
         self.connection.send(ClientMessage::Settings { view_distance, fly_speed });
     }
@@ -321,6 +326,7 @@ pub(crate) fn receive(
                 fighting.struck(creature, damage, blow, pips, time.elapsed_secs_f64());
             }
             ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
+            ServerMessage::Ping { id } => net.pong(id),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
         }
     }

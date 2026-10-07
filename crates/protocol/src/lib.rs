@@ -71,6 +71,8 @@ pub enum ClientMessage {
     Take { item: BlockId, count: u8, held: bool },
     /// The player raised (`up`) or lowered their guard (`voxmar_engine::combat`).
     Guard { up: bool },
+    /// The answer to `ServerMessage::Ping` number `id`, sent as soon as it is read.
+    Pong { id: u32 },
 }
 
 /// The client's predicted movement state, sent every tick. The server checks it against
@@ -158,6 +160,9 @@ pub enum ServerMessage {
     /// `defended` says. Every blow that comes down is answered; a wind-up a daze cuts short
     /// comes to nothing and is not.
     Hurt { creature: u32, damage: u16, defended: voxmar_engine::combat::Defended },
+    /// Asks for a `ClientMessage::Pong` straight back: the round trip it takes is how late
+    /// the player sees what happens and answers it (fights judge guards and dodges by it).
+    Ping { id: u32 },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between
