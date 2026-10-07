@@ -119,8 +119,8 @@
     "settings.textures": "テクスチャ (再起動後)",
     "settings.textures.hint": "優先するテクスチャパック。次にゲームを起動したときに反映されます。",
     "settings.textures.minecraft": "Minecraft優先",
-    "settings.textures.voxmar": "Voxmar",
-    "settings.textures.voxmar_hd": "Voxmar HD",
+    "settings.textures.voxmar": "ボクスマー",
+    "settings.textures.voxmar_hd": "ボクスマーHD",
     "settings.minecraft_assets": "Minecraftの素材 (再起動後)",
     "settings.minecraft_assets.hint": "持っているMinecraftとPrism Launcherから、テクスチャ、ブロックの音、音楽を借ります。次の起動から反映されます。",
 
