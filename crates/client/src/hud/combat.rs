@@ -3,7 +3,10 @@
 //! rhythm pips beneath it (all lit, the next blow on the beat is a flourish); and
 //! hitsplats, the number each blow did rising and fading over the creature it struck, or
 //! above the hotbar for those that came at the player, coloured by what kind of blow it
-//! was or what came of it (a miss, a block, a perfect block, a dodge).
+//! was or what came of it (a miss, a block, a perfect block, a dodge). A blow that hurts
+//! the player also flashes what the health bar lost. All of it follows the design wiki's
+//! combat feel (the meter, pips and hitsplats; damage numbers can be switched off, and the
+//! guard put on a toggle, in the settings).
 //!
 //! Sizes, colours and timings are the packages' (`combat_hud.ron`, in `core`); a later
 //! package changes what it gives.
@@ -15,12 +18,14 @@ use voxmar_engine::content::ContentFile;
 
 use crate::creatures::Creatures;
 use crate::fight::Fighting;
+use crate::hud::HealthMeter;
 use crate::lang::{Locale, TightLine};
 use crate::menu::Screen;
 use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
-use crate::ui::skin::PX;
-use crate::ui::widgets::{BODY, UiFont, shadowed};
+use crate::settings::Settings;
+use crate::ui::skin::{PX, font_size};
+use crate::ui::widgets::{Meter, TRAIL, UiFont, shadowed};
 
 pub struct CombatHudPlugin;
 
@@ -28,7 +33,7 @@ impl Plugin for CombatHudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SplatsShown>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, meter.run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (meter, flash).run_if(in_state(Screen::InGame)))
             .add_systems(PostUpdate, splats.after(TransformSystems::Propagate).run_if(in_state(Screen::InGame)));
     }
 }
@@ -75,22 +80,32 @@ pub struct PipStyle {
     pub ready: Rgb,
 }
 
-/// One kind of hitsplat: its colour, and how many times the body text's size it is.
+/// One kind of hitsplat: its colour, and its size in screen pixels a font pixel (2 as body
+/// text, 3 as headings; whole numbers keep the pixel font crisp).
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Splat {
     pub color: Rgb,
-    #[serde(default = "one")]
-    pub size: u8,
+    #[serde(default = "body")]
+    pub scale: u32,
 }
 
-fn one() -> u8 {
-    1
+fn body() -> u32 {
+    2
+}
+
+/// What a blow that hurts the player does to the health bar: what it lost shows in `color`
+/// at first, fading back to the bar's own over `seconds`.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashStyle {
+    pub color: Rgb,
+    pub seconds: f32,
 }
 
 /// Hitsplats: the seconds each shows and how far it rises meanwhile, how far apart
-/// those on one creature stand, how high over the hotbar the player's own stand, and each
-/// kind's look by its name.
+/// those on one creature stand, how high over the hotbar the player's own stand, each
+/// kind's look by its name, and the health bar's flash when a blow hurts.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SplatStyle {
@@ -100,6 +115,7 @@ pub struct SplatStyle {
     pub hurt_above: f32,
     pub blows: std::collections::BTreeMap<String, Splat>,
     pub defended: std::collections::BTreeMap<String, Splat>,
+    pub flash: FlashStyle,
 }
 
 /// What a package gives in `combat_hud.ron`; each part replaces the one before, but for
@@ -233,8 +249,19 @@ pub struct SplatsShown {
     /// Whether the meter has shown in a fight, and the most pips it lit.
     pub meter: bool,
     pub pips: u8,
+    /// How many blows that hurt the player have flashed the health bar.
+    pub flashes: u32,
     struck_seen: u32,
     hurt_seen: u32,
+    /// When the blow that last flashed the health bar came (app seconds).
+    flashed_at: Option<f64>,
+}
+
+impl SplatsShown {
+    /// How many blows each way the splats have taken in, drawn or not.
+    pub fn seen(&self) -> (u32, u32) {
+        (self.struck_seen, self.hurt_seen)
+    }
 }
 
 fn spawn(mut commands: Commands, launch: Res<Launch>) {
@@ -355,6 +382,7 @@ fn splats(
     creatures: Res<Creatures>,
     scale: Res<UiScale>,
     mut shown: ResMut<SplatsShown>,
+    settings: Res<Settings>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     layer: Query<(Entity, &ComputedNode), With<SplatLayer>>,
     mut marks: Query<(Entity, &HitSplat, &mut Node, &mut TextColor, &mut Visibility)>,
@@ -367,6 +395,8 @@ fn splats(
     let new_hurt = (fighting.hurt_count - shown.hurt_seen.min(fighting.hurt_count)) as usize;
     shown.struck_seen = fighting.struck_count;
     shown.hurt_seen = fighting.hurt_count;
+    // With damage numbers off, none are drawn (and those already up go as they would).
+    let (new_struck, new_hurt) = if settings.damage_numbers { (new_struck, new_hurt) } else { (0, 0) };
     let mut on_each: std::collections::HashMap<Option<u32>, u8> = std::collections::HashMap::new();
     for (_, mark, ..) in &marks {
         *on_each.entry(mark.creature).or_default() += 1;
@@ -377,7 +407,7 @@ fn splats(
         let centred = UiTransform::from_translation(Val2::percent(-50.0, -100.0));
         let mark = HitSplat { creature, at, slot: *slot };
         *slot += 1;
-        commands.entity(layer).with_child((node, centred, shadowed(&font.0, words, BODY * look.size.max(1) as f32, look.color.color()), TightLine, mark, Visibility::Hidden));
+        commands.entity(layer).with_child((node, centred, shadowed(&font.0, words, font_size(look.scale.max(2)), look.color.color()), TightLine, mark, Visibility::Hidden));
     };
     for &(creature, damage, blow, at) in fighting.struck.iter().rev().take(new_struck).rev() {
         let words = struck_words(&locale, damage, blow);
@@ -430,6 +460,38 @@ fn splats(
     }
 }
 
+/// The health bar's colour for what was lost, `age` seconds after a blow hurt the player:
+/// the flash's at first, the bar's own once it is over.
+pub fn flash_colour(flash: &FlashStyle, age: f32) -> Color {
+    let share = (age / flash.seconds.max(1e-3)).clamp(0.0, 1.0);
+    Color::from(Srgba::from(flash.color.color()).mix(&Srgba::from(TRAIL), share))
+}
+
+/// A blow that hurt the player flashes what the health bar lost, then lets it drain as
+/// any loss does.
+fn flash(
+    time: Res<Time>,
+    style: Option<Res<CombatStyle>>,
+    fighting: Res<Fighting>,
+    mut shown: ResMut<SplatsShown>,
+    health: Query<&Meter, With<HealthMeter>>,
+    mut colours: Query<&mut BackgroundColor>,
+) {
+    let (Some(style), Ok(meter)) = (style, health.single()) else { return };
+    let last = fighting.hurt.iter().filter(|h| h.2 == Defended::Hit && h.1 > 0).map(|h| h.3).reduce(f64::max);
+    if let Some(last) = last
+        && shown.flashed_at.is_none_or(|was| last > was)
+    {
+        shown.flashed_at = Some(last);
+        shown.flashes += 1;
+    }
+    let age = shown.flashed_at.map_or(f32::INFINITY, |at| (time.elapsed_secs_f64() - at) as f32);
+    let colour = flash_colour(&style.splats.flash, age);
+    if let Ok(mut background) = colours.get_mut(meter.trail()) {
+        background.set_if_neq(BackgroundColor(colour));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,9 +511,10 @@ mod tests {
         let style = CombatStyle::load(&files).unwrap();
         assert!(style.meter.width > 0.0 && style.splats.seconds > 0.0);
         let mut modded = files.clone();
-        modded.push(file("mod", r#"(splats: (seconds: 2.0, rise: 30, spread: 8, hurt_above: 64, blows: { "flourish": (color: (1, 2, 3), size: 2) }, defended: {}))"#));
+        modded.push(file("mod", r#"(splats: (seconds: 2.0, rise: 30, spread: 8, hurt_above: 64, blows: { "flourish": (color: (1, 2, 3), scale: 4) }, defended: {}, flash: (color: (9, 9, 9), seconds: 1.0)))"#));
         let changed = CombatStyle::load(&modded).unwrap();
-        assert_eq!(changed.blow(Blow::Flourish), Splat { color: Rgb(1, 2, 3), size: 2 });
+        assert_eq!(changed.blow(Blow::Flourish), Splat { color: Rgb(1, 2, 3), scale: 4 });
+        assert_eq!(changed.splats.flash, FlashStyle { color: Rgb(9, 9, 9), seconds: 1.0 });
         assert_eq!(changed.blow(Blow::Plain), style.blow(Blow::Plain), "kinds the mod does not give stay");
         assert_eq!(changed.splats.seconds, 2.0);
         assert_eq!(changed.meter, style.meter);
@@ -461,8 +524,23 @@ mod tests {
     fn a_style_missing_a_kind_is_refused() {
         let source = r#"(meter: (width: 24, height: 3, below: 12, empty: (0,0,0), fill: (0,0,0), beat: (0,0,0), buffer: (0,0,0), linger: 3.0),
             pips: (size: 3, gap: 2, off: (0,0,0), on: (0,0,0), ready: (0,0,0)),
-            splats: (seconds: 1.0, rise: 10, spread: 8, hurt_above: 60, blows: { "plain": (color: (0,0,0)) }, defended: {}))"#;
-        assert!(CombatStyle::load(&[file("core", source)]).is_err());
+            splats: (seconds: 1.0, rise: 10, spread: 8, hurt_above: 60, blows: { "plain": (color: (0,0,0)) }, defended: {}, flash: (color: (0,0,0), seconds: 0.5)))"#;
+        let refused = CombatStyle::load(&[file("core", source)]).unwrap_err();
+        assert!(refused.contains("no splat for a beat blow"), "{refused}");
+    }
+
+    /// A blow that hurts shows the flash's colour on what the bar lost, fading to the bar's
+    /// own, and stays there once the flash is over.
+    #[test]
+    fn a_hurt_flashes_the_health_bar_then_fades_to_its_own_colour() {
+        let flash = FlashStyle { color: Rgb(236, 76, 64), seconds: 0.6 };
+        let srgba = |c: Color| Srgba::from(c);
+        assert_eq!(srgba(flash_colour(&flash, 0.0)), srgba(flash.color.color()));
+        assert_eq!(srgba(flash_colour(&flash, 0.6)), srgba(TRAIL));
+        assert_eq!(srgba(flash_colour(&flash, f32::INFINITY)), srgba(TRAIL), "no blow yet");
+        let half = srgba(flash_colour(&flash, 0.3));
+        let (from, to) = (srgba(flash.color.color()), srgba(TRAIL));
+        assert!((half.green - (from.green + to.green) / 2.0).abs() < 0.01 && (half.alpha - (from.alpha + to.alpha) / 2.0).abs() < 0.01, "{half:?}");
     }
 
     /// Every blow and every outcome reads in each language, with its damage where it has

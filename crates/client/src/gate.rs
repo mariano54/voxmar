@@ -211,7 +211,8 @@ enum Step {
     /// Every blow traded so far got its hitsplat, and the meter showed; then a run of
     /// blows of every kind and outcome, told to this side as the server would, draws its
     /// splats in their colours over a creature and over the hotbar, with the pips all lit
-    /// (shot in English and Japanese); and with the guard on a toggle, one right click
+    /// and the health bar flashing for the hit (shot in English and Japanese); with damage
+    /// numbers off the same run draws none; and with the guard on a toggle, one right click
     /// raises it and the next lowers it.
     CombatHud,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
@@ -3852,6 +3853,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             aim_at(world, feet + Vec3::Y * 0.3);
+            gate.count_before = world.resource::<SplatsShown>().flashes;
             tell_blows(world, id);
             gate.advance(now);
         }
@@ -3871,29 +3873,55 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             let meter = world.query_filtered::<&InheritedVisibility, With<crate::hud::combat::MeterRoot>>().iter(world).any(|v| v.get());
+            // The blow that hurt (5, a hit) flashed the health bar.
+            let flashed = world.resource::<SplatsShown>().flashes > gate.count_before;
             let name = if gate.phase == 1 { "combat-en" } else { "combat-ja" };
             let Some(_) = gate.shot(world, name) else { return };
-            gate.check(&format!("combat marks: {language}"), if meter { Ok(format!("{} splats in their colours, the meter and all pips lit", STRUCK_SHOWN.len() + HURT_SHOWN.len())) } else { Err("the splats showed without the meter".into()) });
+            let result = match (meter, flashed) {
+                (true, true) => Ok(format!("{} splats in their colours, the meter and all pips lit, the health bar flashed", STRUCK_SHOWN.len() + HURT_SHOWN.len())),
+                (false, _) => Err("the splats showed without the meter".into()),
+                (_, false) => Err("a hit on the player did not flash the health bar".into()),
+            };
+            gate.check(&format!("combat marks: {language}"), result);
+            gate.count_before = world.resource::<SplatsShown>().flashes;
             if gate.phase == 1 {
                 set_language(world, "ja");
-                if let Some((id, _)) = creature {
-                    tell_blows(world, id);
-                }
             } else {
+                // With damage numbers off, the same blows draw nothing.
                 set_language(world, "en");
+                world.resource_mut::<crate::settings::Settings>().damage_numbers = false;
+                let shown = world.resource::<SplatsShown>();
+                gate.count_before = (shown.struck.len() + shown.hurt.len()) as u32;
             }
+            if let Some((id, _)) = creature {
+                tell_blows(world, id);
+            }
+            gate.advance(now);
+        }
+        3 => {
+            let told = {
+                let fighting = world.resource::<crate::fight::Fighting>();
+                (fighting.struck_count, fighting.hurt_count)
+            };
+            let shown = world.resource::<SplatsShown>();
+            if in_phase < 0.25 || shown.seen() != told {
+                return;
+            }
+            let drawn = (shown.struck.len() + shown.hurt.len()) as u32 - gate.count_before;
+            gate.check("damage numbers off", if drawn == 0 { Ok(format!("with damage numbers off, {} blows drew no splat", STRUCK_SHOWN.len() + HURT_SHOWN.len())) } else { Err(format!("with damage numbers off, {drawn} splats were drawn")) });
+            world.resource_mut::<crate::settings::Settings>().damage_numbers = true;
             gate.advance(now);
         }
         // The guard on a toggle: one click up, the next down (looking at the sky, so the
         // click is the guard's and nothing else's).
-        3 => {
+        4 => {
             world.resource_mut::<crate::settings::Settings>().toggle_guard = true;
             select(world, WEAPON);
             look(world, 0.0, 60.0);
             mouse(world, MouseButton::Right, true);
             gate.advance(now);
         }
-        4 => {
+        5 => {
             mouse(world, MouseButton::Right, false);
             if in_phase < 0.3 {
                 return;

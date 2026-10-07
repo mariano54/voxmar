@@ -167,7 +167,9 @@
     "settings.zoom_in_survival": "Zoom in survival",
     "settings.zoom_in_survival.hint": "Lets the zoom key work in survival, not only in creative.",
     "settings.toggle_guard": "Toggle guard",
-    "settings.toggle_guard.hint": "A right click raises the guard and the next lowers it, instead of holding the button.",
+    "settings.toggle_guard.hint": "A right-click raises the guard and the next lowers it, instead of holding the button.",
+    "settings.damage_numbers": "Damage numbers",
+    "settings.damage_numbers.hint": "In a fight, shows what each blow did where it landed.",
     "settings.fly_speed": "Fly speed",
     "settings.fly_speed.hint": "How fast you fly. Only admins may fly faster than normal.",
 

@@ -109,8 +109,9 @@ struct HotbarSelection;
 /// What sits along the bottom edge: the hotbar, health and effects.
 #[derive(Component)]
 struct Bottom;
+/// The health bar's meter (a blow that hurts flashes it, `combat`).
 #[derive(Component)]
-struct HealthMeter;
+pub struct HealthMeter;
 /// The row of effects over the meters.
 #[derive(Component)]
 struct EffectChips;
