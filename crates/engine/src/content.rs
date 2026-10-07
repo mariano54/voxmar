@@ -44,6 +44,8 @@ pub struct Content {
     pub effects: Arc<EffectRegistry>,
     /// What tools do to breaking blocks, and what breaking them takes and teaches.
     pub tools: Arc<ToolRegistry>,
+    /// Weapons, their classes and styles (`combat`).
+    pub combat: Arc<crate::combat::CombatRegistry>,
     /// What bites where.
     pub fishing: Arc<FishingRegistry>,
     /// Structures recognised from patterns of blocks (the Homestead Hearth).
@@ -94,6 +96,7 @@ impl Content {
         let mut recipes = Vec::new();
         let mut effects = Vec::new();
         let mut tools = Vec::new();
+        let mut combat = Vec::new();
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
@@ -134,7 +137,8 @@ impl Content {
                         creatures.extend(CreatureRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "recipes.ron" => {
+                    // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons).
+                    topic if topic.starts_with("recipes") => {
                         recipes.extend(RecipeRegistry::read(package, &source)?);
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -167,6 +171,10 @@ impl Content {
                         tools.push(ToolRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "combat.ron" => {
+                        combat.push(crate::combat::CombatRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "effects.ron" => {
                         effects.push(EffectRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -193,6 +201,7 @@ impl Content {
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
         let effects = EffectRegistry::new(effects)?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
+        let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
@@ -211,6 +220,7 @@ impl Content {
             recipes: Arc::new(recipes),
             effects: Arc::new(effects),
             tools: Arc::new(tools),
+            combat: Arc::new(combat),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
             multiblocks: Arc::new(multiblocks),
