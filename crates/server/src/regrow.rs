@@ -66,7 +66,8 @@ impl Server {
 
     /// A player put `block` at `pos`: a plant placed by hand does not regrow by itself.
     pub(crate) fn placed_plant(&mut self, block: BlockId, pos: IVec3) {
-        if self.content.regrowth.regrows(self.content.blocks.def(block), self.content.blocks.info(block).solid) {
+        let forageable = self.content.crops.wild_form(block).is_some() || self.content.crops.stage_of(block).is_some();
+        if forageable || self.content.regrowth.regrows(self.content.blocks.def(block), self.content.blocks.info(block).solid) {
             self.placed.insert(pos);
             self.regrowing.remove(&pos);
         }
