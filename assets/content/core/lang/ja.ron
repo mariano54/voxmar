@@ -4,6 +4,11 @@
     // Kanji fill their whole box, so lines of them need a little more room than letters.
     "language.line_height": "1.4",
     "language.tight_line": "1.1",
+    // 禁則処理: 行頭に来ない文字、行末に来ない文字、分けないカタカナ語 (この文字数まで)。
+    "language.line_start_forbidden": "。、，．・：；？！ー…‥々ゝゞヽヾ」』）］｝〕〉》ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ｡､｣･ｰｧｨｩｪｫｬｭｮｯ)]}?!:;,.",
+    "language.line_end_forbidden": "「『（［｛〔〈《｢([{",
+    "language.unbroken": "ァアィイゥウェエォオカガキギクグケゲコゴサザシジスズセゼソゾタダチヂッツヅテデトドナニヌネノハバパヒビピフブプヘベペホボポマミムメモャヤュユョヨラリルレロヮワヰヱヲンヴヵヶヷヸヹヺーｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ",
+    "language.unbroken_longest": "12",
     // Between items in a line: a middle dot never starts a line in Japanese.
     "language.dot": "・",
 
@@ -1044,7 +1049,7 @@
     "command.core.creatures.help.summary": "64ブロック以内の生き物を一覧表示します。",
     "command.creatures.admins_only": "コマンドで生き物を手なずけたり、繁殖できる状態にしたり、成長を早めたり、じっとさせたり、倒したりできるのは管理者だけです。",
     "command.creatures.what": "tame、ready、hasten、hold、kill のどれですか？",
-    "command.creatures.done": "8ブロック以内の{count}体に行いました。",
+    "command.creatures.done.other": "8ブロック以内の{count}体に行いました。",
     "command.skill.what": "どのスキルを、何レベルにしますか？",
     "command.skill.unknown": "「{name}」というスキルはありません。",
     "command.skill.level": "レベルは1から最大までです。",
