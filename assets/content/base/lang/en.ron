@@ -686,6 +686,7 @@
     "block.base.aether_mote": "Aether Mote",
     "block.base.campfire": "Campfire",
     "block.base.torch": "Torch",
+    "block.base.wall_torch": "Wall Torch",
     "block.base.cooked_rabbit": "Cooked Rabbit",
     "block.base.cooked_chicken": "Cooked Chicken",
     "block.base.cooked_frog": "Cooked Frog",

@@ -23,6 +23,7 @@
 
 use std::collections::BTreeMap;
 
+use glam::IVec3;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -207,6 +208,72 @@ pub struct BlockDef {
     /// Particles it gives off while near the player: a campfire's smoke, embers and sparks,
     /// a torch's flame. Only the client draws them.
     pub particles: Vec<Emission>,
+    /// Whether it comes in four facings: the block itself faces north (-z), and blocks
+    /// `<name>_east`, `<name>_south` and `<name>_west` are made from it, turned (their
+    /// particles too), each dropping the block itself. A wall torch faces out from its
+    /// wall; a stair, door or bed the way it was placed.
+    pub facing: bool,
+    /// For a block made in one of its facings (see `facing`): which way it faces.
+    pub faces: Option<Facing>,
+    /// The block placed instead when this one is placed against a block's side, by name,
+    /// facing out from it: a torch on a wall is a wall torch (`facing` and `support: Wall`).
+    pub wall: Option<String>,
+}
+
+/// One of the four ways a block can face (see [`BlockDef::facing`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Facing {
+    /// Towards -z.
+    #[default]
+    North,
+    /// Towards +x.
+    East,
+    /// Towards +z.
+    South,
+    /// Towards -x.
+    West,
+}
+
+impl Facing {
+    pub const ALL: [Facing; 4] = [Facing::North, Facing::East, Facing::South, Facing::West];
+
+    pub const fn normal(self) -> IVec3 {
+        match self {
+            Facing::North => IVec3::NEG_Z,
+            Facing::East => IVec3::X,
+            Facing::South => IVec3::Z,
+            Facing::West => IVec3::NEG_X,
+        }
+    }
+
+    /// The facing pointing out of a block's side; none for its top and bottom.
+    pub fn of_face(face: Face) -> Option<Facing> {
+        Facing::ALL.into_iter().find(|f| f.normal() == face.normal())
+    }
+
+    /// The name suffix of the block made in this facing (the block itself faces north).
+    fn suffix(self) -> &'static str {
+        match self {
+            Facing::North => "",
+            Facing::East => "_east",
+            Facing::South => "_south",
+            Facing::West => "_west",
+        }
+    }
+
+    /// A point in a cell (from its lower corner, in blocks) given for the block facing
+    /// north, where it lies once the block is turned to face this way.
+    pub fn turn(self, at: [f32; 3]) -> [f32; 3] {
+        let (x, z) = (at[0] - 0.5, at[2] - 0.5);
+        // Clockwise seen from above: north (-z) to east (+x) to south (+z) to west.
+        let (x, z) = match self {
+            Facing::North => (x, z),
+            Facing::East => (-z, x),
+            Facing::South => (-x, -z),
+            Facing::West => (z, -x),
+        };
+        [x + 0.5, at[1], z + 0.5]
+    }
 }
 
 /// A stream of particles a block gives off, as the client draws it near the player. The
@@ -311,6 +378,9 @@ pub enum PlantModel {
     /// four sloping sides, and a chip beside it, all of the block's texture, its size
     /// `plant_height` times the usual. Samples of ore over a vein.
     Rock,
+    /// Two crossed quads leaning out from the wall behind it, still, as a torch fixed to
+    /// a wall: for a block in four facings (see [`BlockDef::facing`]) with `support: Wall`.
+    Wall,
 }
 
 /// How an opaque block's textures vary from block to block, as Minecraft's stone, sand and
@@ -337,6 +407,8 @@ pub enum Support {
     Below,
     /// Hangs from the block above (vines, hanging roots, stalactites).
     Above,
+    /// Fixed to the side of the block behind it, the way it does not face: a wall torch.
+    Wall,
 }
 
 impl Default for BlockDef {
@@ -370,11 +442,20 @@ impl Default for BlockDef {
             plant_height: 1.0,
             host: None,
             particles: Vec::new(),
+            facing: false,
+            faces: None,
+            wall: None,
         }
     }
 }
 
 impl BlockDef {
+    /// For a block made in one of its facings other than north: the block it was made
+    /// from, by name (`base:wall_torch` for `base:wall_torch_east`).
+    pub fn facing_of(&self) -> Option<&str> {
+        self.faces.and_then(|facing| self.name.strip_suffix(facing.suffix())).filter(|base| *base != self.name)
+    }
+
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.iter().any(|t| t == tag)
     }
@@ -385,6 +466,7 @@ impl BlockDef {
         fill(&mut self.name);
         self.textures.names_mut().into_iter().for_each(fill);
         self.drops.iter_mut().for_each(fill);
+        self.wall.iter_mut().for_each(fill);
         self.icon.iter_mut().for_each(fill);
         self.tags.iter_mut().for_each(fill);
         for variant in &mut self.variants {
@@ -405,6 +487,7 @@ impl BlockDef {
         self.host.iter_mut().for_each(qualify);
         self.family.iter_mut().for_each(qualify);
         self.variant_of.iter_mut().for_each(qualify);
+        self.wall.iter_mut().for_each(qualify);
         if let Some(fluid) = &mut self.fluid {
             for meeting in &mut fluid.meets {
                 for name in [&mut meeting.fluid, &mut meeting.source, &mut meeting.flowing, &mut meeting.below] {
@@ -601,6 +684,11 @@ pub struct BlockInfo {
     /// A plant's shape and height (see [`BlockDef::model`]).
     pub model: PlantModel,
     pub plant_height: f32,
+    /// Which way it faces, for a block made in four facings (see [`BlockDef::facing`]).
+    pub facing: Option<Facing>,
+    /// The block placed instead against a block's side, facing north (see
+    /// [`BlockDef::wall`] and [`BlockRegistry::facing`]).
+    pub wall: Option<BlockId>,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -724,6 +812,23 @@ impl BlockRegistry {
                 defs.extend(fluid::state_defs(&def));
                 continue;
             }
+            if def.facing {
+                defs.push(BlockDef { faces: Some(Facing::North), ..def });
+                for facing in [Facing::East, Facing::South, Facing::West] {
+                    let mut turned = BlockDef {
+                        name: format!("{}{}", base.name, facing.suffix()),
+                        drops: Some(base.drops.clone().unwrap_or_else(|| base.name.clone())),
+                        faces: Some(facing),
+                        ..base.clone()
+                    };
+                    turned.particles.iter_mut().for_each(|emission| emission.at = facing.turn(emission.at));
+                    defs.push(turned);
+                }
+                if !base.variants.is_empty() {
+                    return Err(RegistryError(format!("`{}` comes in facings, so it cannot have variants too", base.name)));
+                }
+                continue;
+            }
             defs.push(def);
             for variant in &base.variants {
                 defs.push(BlockDef {
@@ -817,6 +922,17 @@ impl BlockRegistry {
                 food: crate::vitals::food_value(&def.tags),
                 model: def.model,
                 plant_height: def.plant_height,
+                facing: def.faces,
+                wall: match &def.wall {
+                    Some(name) => {
+                        let wall = *by_name.get(name).ok_or_else(|| RegistryError(format!("`{}` goes on walls as unknown block `{name}`", def.name)))?;
+                        if defs[wall.0 as usize].faces.is_none() {
+                            return Err(RegistryError(format!("`{}` goes on walls as `{name}`, which has no facings", def.name)));
+                        }
+                        Some(wall)
+                    }
+                    None => None,
+                },
             });
         }
         if textures.len() > 4096 {
@@ -887,6 +1003,23 @@ impl BlockRegistry {
 
     pub fn id(&self, name: &str) -> Option<BlockId> {
         self.by_name.get(name).copied()
+    }
+
+    /// Whether the block is only ever a form another takes when placed, never held: another
+    /// look of a block (`variant_of`), a block turned to face east, south or west, or what a
+    /// block becomes against a wall (a wall torch). Catalogues list the block itself.
+    pub fn placement_form(&self, id: BlockId) -> bool {
+        let def = self.def(id);
+        def.variant_of.is_some() || def.facing_of().is_some() || self.info.iter().any(|info| info.wall == Some(id))
+    }
+
+    /// `block`, made in four facings (see [`BlockDef::facing`]), turned to face `facing`;
+    /// `block` itself if it has no facings.
+    pub fn facing(&self, block: BlockId, facing: Facing) -> BlockId {
+        let Some(now) = self.info(block).facing else { return block };
+        let name = &self.def(block).name;
+        let base = name.strip_suffix(now.suffix()).unwrap_or(name);
+        self.id(&format!("{base}{}", facing.suffix())).unwrap_or(block)
     }
 
     /// Like [`Self::id`] but for names the engine or generator cannot work without.

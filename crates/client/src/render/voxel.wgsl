@@ -125,6 +125,12 @@ const MODEL_HASH: u32 = 1u;
 const MODEL_CAP: u32 = 2u;
 const MODEL_BUSH: u32 = 3u;
 const MODEL_ROCK: u32 = 4u;
+const MODEL_WALL: u32 = 5u;
+// A plant on a wall (`MODEL_WALL`, a torch): how high its foot sits on the wall, how far
+// out from the wall, and how far it leans out for every block it rises (22°, as a wall
+// torch leans).
+const WALL_FOOT: vec2<f32> = vec2(0.2, 0.08);
+const WALL_LEAN: f32 = 0.4;
 const PLANT_MODEL_SHIFT: u32 = 28u;
 const PLANT_MODEL_HIGH_SHIFT: u32 = 24u;
 const PLANT_PIECE_SHIFT: u32 = 30u;
@@ -324,11 +330,23 @@ fn plant_across(w0: u32) -> vec2<f32> {
 // wind and away from the player.
 fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
     let packed = plant_across(w0);
-    let stack = f32((w0 >> PLANT_STACK_SHIFT) & 3u);
+    let model = plant_model(w0);
+    // A plant on a wall keeps which way it faces where others keep their stack.
+    let stack = select(f32((w0 >> PLANT_STACK_SHIFT) & 3u), 0.0, model == MODEL_WALL);
     var up = f32((w0 >> 23u) & 1u) + stack;
     // The corner of the cell the whole plant stands in.
     let base = origin + local_position(w0) - vec3(packed.x, up, packed.y);
-    let model = plant_model(w0);
+    if model == MODEL_WALL {
+        // Straight with the blocks and still: its foot against the wall behind it, leaning
+        // out the way it faces (north, east, south, west: -z, +x, +z, -x).
+        let facing = (w0 >> PLANT_STACK_SHIFT) & 3u;
+        let outs = array(vec2(0.0, -1.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(-1.0, 0.0));
+        let out = outs[facing];
+        let rise = up * f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
+        let foot = vec2(0.5) - out * (0.5 - WALL_FOOT.y);
+        let at = foot + (packed - 0.5) + out * rise * WALL_LEAN;
+        return vec3(base.x + at.x, base.y + WALL_FOOT.x + rise, base.z + at.y);
+    }
     var across = model_across(w0);
     let cell = vec3<i32>(floor(base + 0.5));
     let a = pcg3d(vec3<u32>(cell));
