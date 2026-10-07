@@ -540,6 +540,40 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
 }
 
 #[test]
+fn a_world_placed_altar_drops_nothing_and_a_players_drops_itself_across_restarts() {
+    let dir = world_dir("altar");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let feet = client.position.floor().as_ivec3();
+    let (village, own) = (feet + IVec3::new(1, 0, 1), feet + IVec3::new(-1, 0, 1));
+    // One set by the world (a village chapel's, as /setblock sets it), one the player places.
+    for line in ["/clear", "/give stone_altar 1", "/setblock ~1 ~ ~1 stone_altar", "/fill ~-1 ~ ~1 ~-1 ~1 ~1 air", "/fill ~-1 ~-1 ~1 ~-1 ~-1 ~1 stone"] {
+        client.ok(line);
+    }
+    let altar = client.content.blocks.expect("base:stone_altar");
+    client.pump_until(|c| c.world.block(village) == Some(altar) && c.inventory.get(0).is_some_and(|s| s.item == altar));
+    client.propose("core:place", ActionTarget::Block { block: own - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(altar));
+    let altars = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == altar).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == altar).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    // The village's: nothing.
+    client.propose("core:mine", ActionTarget::Block { block: village, face: Face::PosY });
+    client.pump_until(|c| c.world.block(village) == Some(BlockId::AIR));
+    assert_eq!(client.quiet(altars), 0, "a village's altar dropped itself");
+    // Saved and loaded, the player's is still the player's: it gives itself back.
+    drop(client);
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(own) == Some(altar));
+    client.propose("core:mine", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(BlockId::AIR));
+    assert_eq!(client.quiet(altars), 1, "a player's altar did not give itself back");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn game_mode_decides_flight_and_the_host_is_admin() {
     use voxmar_server::save::{GameMode, WorldMeta, WorldSave};
     for (mode, creative) in [(GameMode::Survival, false), (GameMode::Creative, true)] {

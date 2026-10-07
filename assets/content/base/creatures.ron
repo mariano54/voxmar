@@ -24,6 +24,10 @@
     // (Mariano, 2026-10-07: "too many animals, the world is too crowded"), so the land
     // feels wild and an animal is something to come upon.
     limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 6, monsters_near: 6),
+    // A creature's blow that misses trains Defence only from a creature the player landed a
+    // damaging blow on within the last 10 seconds, and of at least half their Defence level
+    // (design wiki draft 63), so it can't be trained standing among cave bats.
+    defence: (fought_within: 10.0, least_level: 0.5),
     creatures: [
         // --- Small and common: where everyone starts -------------------------------------
         (
@@ -59,7 +63,7 @@
             loot: [
                 (item: "raw_rabbit"),
                 (item: "hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]),
-                (item: "rabbit_foot", chance: 0.03, rarity: Rare),
+                (item: "rabbit_foot", chance: 0.0078, rarity: Rare),
             ],
         ),
         (
@@ -179,7 +183,7 @@
             loot: [
                 (item: "raw_mutton", count: (1, 2)),
                 (item: "wool", chance: 0.6, tools: [(tag: "shears", chance: 1.6, extra: 1)]),
-                (item: "bone", chance: 0.4),
+                (item: "bone", chance: 0.5),
             ],
         ),
         (
@@ -214,7 +218,7 @@
         ),
         (
             name: "aurochs", title: "Aurochs", level: 6, health: 14, rarity: Uncommon, weak: Some(Stab),
-            attack: (damage: (2, 4), reach: 1.2, every: 1.6, style: Crush),
+            attack: (damage: (1, 3), reach: 1.2, every: 1.6, style: Crush),
             defence: 4,
             body: (
                 size: (1.1, 1.45),
@@ -505,7 +509,7 @@
             xp: (kill: 3.0, skill: "hunter"),
             taming: (level: 1, xp: 8.0),
             breeding: (level: 1, litter: (1, 2), growth: 6.0, xp: 10.0),
-            products: [(item: "egg", every: 4.0, xp: 3.0)],
+            products: [(item: "egg", every: 10.0, xp: 3.0)],
             loot: [(item: "raw_chicken"), (item: "feather", count: (0, 2))],
         ),
         (
@@ -1050,7 +1054,7 @@
             senses: (sight: 30.0, hearing: 30.0),
             leash: 40.0,
             xp: (kill: 70.0, skill: "hunter"),
-            loot: [(item: "frost_antler", chance: 0.6, rarity: Rare), (item: "raw_venison", count: (1, 2)), (item: "aether_mote", chance: 0.3, rarity: Uncommon)],
+            loot: [(item: "frost_antler", chance: 0.6, rarity: Uncommon), (item: "raw_venison", count: (1, 2)), (item: "aether_mote", chance: 0.3, rarity: Uncommon)],
         ),
         // --- Hot country, mountains, rivers and the strange places ------------------------
         (
@@ -1338,7 +1342,7 @@
             breeding: (level: 28, growth: 12.0, xp: 70.0),
             loot: [
                 (item: "moonhare_pelt", chance: 0.8),
-                (item: "moon_dust", chance: 0.1, rarity: VeryRare, when: [Night]),
+                (item: "moon_dust", chance: 0.1, rarity: Uncommon, when: [Night]),
             ],
         ),
         (
@@ -1357,7 +1361,7 @@
             senses: (sight: 24.0, hearing: 12.0),
             leash: 20.0,
             behaviours: [(do: Wander(radius: 10.0)), (do: Curious(distance: 4.0), weight: 1.5), (do: Flee(radius: 3.0)), (do: Blink), (do: Herd(spacing: 2.0))],
-            loot: [(item: "aether_mote", chance: 0.6, rarity: Rare)],
+            loot: [(item: "aether_mote", chance: 0.6, rarity: Uncommon)],
         ),
     ],
 )

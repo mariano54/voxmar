@@ -11,6 +11,12 @@
     // How tall a line of wrapped text is, in font sizes.
     "language.line_height": "1.2",
     "language.tight_line": "1.0",
+    // Where wrapped lines may not break (none in English): characters no line starts with,
+    // characters no line ends with, and characters whose runs stay whole, up to so many.
+    "language.line_start_forbidden": "",
+    "language.line_end_forbidden": "",
+    "language.unbroken": "",
+    "language.unbroken_longest": "",
     // Between items in a line: "Farming 3 · Mining 5".
     "language.dot": " · ",
 
@@ -134,7 +140,7 @@
     "settings.textures.voxmar": "Voxmar",
     "settings.textures.voxmar_hd": "Voxmar HD",
     "settings.minecraft_assets": "Minecraft assets (on restart)",
-    "settings.minecraft_assets.hint": "Borrow textures, block sounds and music from your own Minecraft and Prism Launcher. Takes effect when the game next starts.",
+    "settings.minecraft_assets.hint": "Borrow textures, block sounds and music from your own Minecraft and Prism Launcher, if you have them. Takes effect on the next start.",
 
     "settings.shader_pack": "Shader pack",
     "settings.shader_pack.hint": "The look of light, sky, water and colour.",
@@ -195,6 +201,11 @@
     "settings.ui_scale": "Interface size",
     "settings.ui_scale.hint": "How large menus, text and the HUD are drawn.",
     "settings.font.hint": "The pixel font menus, the HUD and chat are written in.",
+    "settings.font.ledger": "Ledger",
+    "settings.font.block": "Block",
+    "settings.font.voxmar": "Voxmar",
+    "shader_pack.classic": "Classic",
+    "shader_pack.verdant": "Verdant",
     "settings.ui_sounds": "Interface sounds",
     "settings.ui_sounds.hint": "What buttons and the inventory sound like.",
     "settings.ui_sounds.micro_switch": "Micro switch",
@@ -651,7 +662,8 @@
     "command.creatures.line": "{count} × {creature}, nearest {distance} blocks away ({doing})",
     "command.creatures.admins_only": "Only admins may tame, ready, hasten, hold or kill creatures with a command.",
     "command.creatures.what": "Tame, ready, hasten, hold or kill?",
-    "command.creatures.done": "Done, for {count} creatures within 8 blocks.",
+    "command.creatures.done.one": "Done, for {count} creature within 8 blocks.",
+    "command.creatures.done.other": "Done, for {count} creatures within 8 blocks.",
     "command.skill.what": "Which skill, and what level?",
     "command.skill.unknown": "There is no skill called `{name}`.",
     "command.skill.level": "The level must be from 1 to the highest.",
@@ -923,7 +935,7 @@
     "skill.core.crafting.guide.9": "Aether-woven cloth (to come)",
     "skill.core.defence": "Defence",
     "skill.core.defence.description": "Turning blows aside, and wearing armour.",
-    "skill.core.defence.guide.0": "Hide armour; blows you turn aside train it",
+    "skill.core.defence.guide.0": "Hide armour; blows you turn aside while you fight back train it",
     "skill.core.defence.guide.1": "Hard leather",
     "skill.core.defence.guide.10": "Aetherite armour",
     "skill.core.defence.guide.11": "Cape perk: protection spells last longer (when spells come)",
