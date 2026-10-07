@@ -244,12 +244,13 @@ impl Server {
         player.changed(traits::INVENTORY);
         let Some(id) = self.content.crops.planted_by(seed) else { return };
         let crop = self.content.crops.get(id);
-        let (sprout, skill, xp) = (crop.stages[0], crop.skill, crop.def.xp.plant);
+        let sprout = crop.stages[0];
         self.set_block(pos, sprout);
         let rate = self.crop_rate(id, pos);
         let due = if rate > 0.0 { self.stage_due(id, pos, 0, rate) } else { self.tick + RETRY };
         self.farm.schedule(pos, Planted { crop: id, stage: 0, due });
-        self.grant_xp(agent, skill, xp);
+        // Sowing's experience comes with the harvest: paid at sowing, sowing a seed and
+        // breaking the sprout for it back paid without end.
     }
 
     /// Picks a ripe crop that fruits again: its harvest pops out and it goes back to its
@@ -259,7 +260,7 @@ impl Server {
         let crop = self.content.crops.get(id);
         let Some(regrow) = crop.def.regrow else { return };
         let block = crop.stages[regrow as usize];
-        self.harvest(agent, id, pos, 0);
+        self.harvest(agent, id, pos, 0, false);
         self.set_block(pos, block);
         let rate = self.crop_rate(id, pos);
         let due = if rate > 0.0 { self.stage_due(id, pos, regrow, rate) } else { self.tick + RETRY };
@@ -268,9 +269,12 @@ impl Server {
 
     /// What a ripe crop at `pos` yields for `agent`, popped out into the world, and the
     /// experience it earns. `salt` tells apart several harvests in one tick.
-    pub(crate) fn harvest(&mut self, agent: PlayerId, id: CropId, pos: IVec3, salt: u32) {
+    /// `sown` adds the sowing's experience (a crop broken at harvest, not one picked to
+    /// fruit again).
+    pub(crate) fn harvest(&mut self, agent: PlayerId, id: CropId, pos: IVec3, salt: u32, sown: bool) {
         let crop = &self.content.crops.get(id);
-        let (loot, skill, xp) = (crop.harvest.clone(), crop.skill, crop.def.xp.harvest);
+        let (loot, skill) = (crop.harvest.clone(), crop.skill);
+        let xp = crop.def.xp.harvest + if sown { crop.def.xp.plant } else { 0.0 };
         let ripe = self.content.blocks.def(crop.stages[crop.ripe_stage() as usize]).name.clone();
         self.yield_loot(agent, id, &loot, pos, salt);
         self.grant_xp(agent, skill, xp);
@@ -280,9 +284,12 @@ impl Server {
     /// What foraging one wild plant of a crop at `pos` yields, and its experience.
     pub(crate) fn forage(&mut self, agent: PlayerId, id: CropId, pos: IVec3, salt: u32) {
         let crop = &self.content.crops.get(id);
-        let (loot, skill, xp) = (crop.forage.clone(), crop.skill, crop.def.xp.forage);
+        let (loot, skill, xp, level) = (crop.forage.clone(), crop.skill, crop.def.xp.forage, crop.def.level);
         self.yield_loot(agent, id, &loot, pos, salt);
-        self.grant_xp(agent, skill, xp);
+        // No experience foraging what is above the forager's level.
+        if self.check_level(agent, skill) >= level {
+            self.grant_xp(agent, skill, xp);
+        }
     }
 
     /// Rolls `loot` for `agent`'s level in the crop's skill and pops it out at `pos`.

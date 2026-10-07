@@ -20,6 +20,11 @@ Every frame on the client (all in `client/src/weather.rs` and `weather/atmospher
 | `Wind` | mean wind, gustiness, gust offset, world seconds | see docs/rendering.md, "Wind" |
 | `ClientAtmosphere` | haze colour and density, sky tint, warmth, saturation, ambient particle sets | the land's air (biomes) with the weather applied |
 
+Every tunable value of the weather (how far around players it is simulated, how often it
+is sent, lightning, forced weather, drying, lying snow, how fast each channel eases on
+clients, the land's air) is data: the `tuning` section of `weather.ron`
+(`voxmar_engine::weather::WeatherTuning`). A mod's `weather.ron` may set any of them alone.
+
 `--weather KIND` shows any kind from `weather.ron` without a server, `--command "/weather
 KIND"` forces it on the server, `--wait SECONDS` lets a capture run longer first, and
 captures log the weather and air they show. Every kind: `/weather list`.

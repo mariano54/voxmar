@@ -67,6 +67,11 @@
         // Pouches from a hide and twine (Crafting 3): seeds stood up, herbs laid flat.
         (pattern: [["twine"], ["hide"]], output: "seed_pouch", level: 3, xp: 12.0),
         (pattern: [["hide", "twine"]], output: "herb_pouch", level: 3, xp: 12.0),
+        // A coin purse: a hide drawn shut with two twines (Crafting 1); every player starts
+        // with one.
+        (ingredients: ["hide", "twine", "twine"], output: "coin_purse", level: 1, xp: 8.0),
+        // A stone altar (Construction 1): pray at it and offer bones (combat's prayers.ron).
+        (pattern: [["stone_bricks", "stone_bricks", "stone_bricks"], ["", "stone_bricks", ""], ["stone_bricks", "stone_bricks", "stone_bricks"]], output: "stone_altar", skill: "core:construction", level: 1, xp: 20.0),
         // For taming and breeding: a treat any tameable animal takes, twice as gladly as its
         // own food; seed mix that readies any kept animal to breed.
         (ingredients: ["wheat", "wheat", "apple", "egg"], output: "taming_treat", count: 2, skill: "core:cooking", level: 27, xp: 30.0),
