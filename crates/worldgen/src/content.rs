@@ -2822,4 +2822,28 @@ mod tests {
             assert!(message.contains(expected) && message.contains("cave_biomes.ron"), "expected `{expected}` in: {message}");
         }
     }
+
+    /// A biome's field stones read as two stones, not one (Review on decor): where it
+    /// names two or more, the lightest and darkest differ in brightness by at least 30 of
+    /// 255. Stone and andesite, 10 apart, looked like one stone at 3840×2160.
+    #[test]
+    fn field_stones_differ_enough_to_show() {
+        let registry = registry();
+        let content = WorldContent::base(&registry).unwrap();
+        let luma = |name: &str| {
+            let [r, g, b] = registry.def(registry.expect(name)).color;
+            0.3 * r as f32 + 0.59 * g as f32 + 0.11 * b as f32
+        };
+        let mut checked = 0;
+        for biome in &content.biomes {
+            let lumas: Vec<f32> = biome.field_stones.iter().filter_map(|s| if let Select::Name(name, _) = s { Some(luma(name)) } else { None }).collect();
+            if lumas.len() < 2 {
+                continue;
+            }
+            checked += 1;
+            let spread = lumas.iter().copied().fold(f32::MIN, f32::max) - lumas.iter().copied().fold(f32::MAX, f32::min);
+            assert!(spread >= 30.0, "{}: its field stones {:?} differ by only {spread:.0} in brightness", biome.name, biome.field_stones);
+        }
+        assert!(checked >= 5, "{checked} biomes with field stones");
+    }
 }
