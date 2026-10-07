@@ -50,7 +50,7 @@ use std::cell::RefCell;
 
 use glam::{IVec2, IVec3, UVec3, Vec2};
 
-use crate::block::{BlockId, BlockRegistry, PlantModel, RenderKind, Tint};
+use crate::block::{BlockId, BlockRegistry, PlantModel, RenderKind, Support, Tint};
 use crate::coords::{CHUNK_SIZE, Face, WORLD_HEIGHT};
 use crate::fluid::{self, FluidState};
 use crate::light::{LIGHT_PAD, LitRegion, MAX_LIGHT};
@@ -94,6 +94,8 @@ const PLANT_STACK_SHIFT: u32 = 25;
 /// On plant vertices, bits 28..29 the model and 30..31 the quad of it (with the face's low
 /// bit); word 1 bits 14..18 the plant's height in eighths. Bit 24 is the model's third bit.
 const PLANT_MODEL_SHIFT: u32 = 28;
+/// On plant vertices, bit 27: the plant hangs from the block above (`Support::Above`).
+const PLANT_HANGS_SHIFT: u32 = 27;
 const PLANT_MODEL_HIGH_SHIFT: u32 = 24;
 const PLANT_PIECE_SHIFT: u32 = 30;
 const PLANT_HEIGHT_SHIFT: u32 = 14;
@@ -1044,9 +1046,12 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
     // How many plant cells this one stands on (tall grass, sugar cane), so the shader can
     // shape the whole stack as one plant.
     let is_plant = |y: i32| y >= 0 && registry.info(column.block(IVec3::new(pos.x, y, pos.z))).render == RenderKind::Plant;
-    // A plant on a wall stands on nothing: these bits say which way it faces instead.
+    // A plant on a wall stands on nothing: these bits say which way it faces instead. One
+    // hanging from above is drawn from the top of its cell, alone.
+    let hangs = info.support == Support::Above;
     let stack = match (info.model, info.facing) {
         (PlantModel::Wall, Some(facing)) => facing as u32,
+        _ if hangs => 0,
         _ => (1..=3).take_while(|&d| is_plant(chunk_y + pos.y - d)).count() as u32,
     };
     let tint = info.tints[Face::PosX as usize];
@@ -1085,6 +1090,7 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
                 | (corner as u32) << 21
                 | (top as u32) << 23
                 | stack << PLANT_STACK_SHIFT
+                | (hangs as u32) << PLANT_HANGS_SHIFT
                 | (info.model as u32 & 3) << PLANT_MODEL_SHIFT
                 | (info.model as u32 >> 2) << PLANT_MODEL_HIGH_SHIFT
                 | (piece as u32 / 2) << PLANT_PIECE_SHIFT;

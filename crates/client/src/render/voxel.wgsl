@@ -135,6 +135,8 @@ const PLANT_MODEL_SHIFT: u32 = 28u;
 const PLANT_MODEL_HIGH_SHIFT: u32 = 24u;
 const PLANT_PIECE_SHIFT: u32 = 30u;
 const PLANT_HEIGHT_SHIFT: u32 = 14u;
+// Set on a plant hanging from the block above (mesh.rs, `PLANT_HANGS_SHIFT`).
+const PLANT_HANGS: u32 = 1u << 27u;
 // A mushroom (`MODEL_CAP`, eight quads): a stem of two narrow quads crossing square with
 // the cell, and a cap with volume: a flat crown, four sloping sides down to a wider rim and
 // gills beneath it. Sizes are in blocks across and shares of the plant's height up.
@@ -375,7 +377,13 @@ fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
     let offset = across - 0.5;
     let turned = vec2(offset.x * cos(angle) - offset.y * sin(angle), offset.x * sin(angle) + offset.y * cos(angle));
     let shift = (a.yz - 0.5) * 0.3;
-    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x)) * f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
+    let own_height = f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
+    if (w0 & PLANT_HANGS) != 0u {
+        // Hanging from the block above (a bell, herbs, roots, a stalactite): its top at the
+        // top of the cell, as long as its data says, and still, so it stays on its beam.
+        return vec3(base.x + 0.5 + turned.x + shift.x, base.y + 1.0 - (1.0 - up) * own_height, base.z + 0.5 + turned.y + shift.y);
+    }
+    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x)) * own_height;
     let sink = b.y * 0.25;
     // Bent along a curve from the base, and lower for it; the whole plant leans alike, so
     // a tall plant's two blocks stay joined.
