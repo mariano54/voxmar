@@ -63,7 +63,10 @@ fn respawn(
     button: Query<&Interaction, (Changed<Interaction>, With<RespawnButton>)>,
 ) {
     let clicked = button.iter().any(|interaction| *interaction == Interaction::Pressed);
-    if player.dead && (clicked || (keys.just_pressed(KeyCode::KeyR) && !ui.console_open)) {
-        net.propose(actions.0.expect("core:respawn"), ActionTarget::None);
+    if player.dead
+        && (clicked || (keys.just_pressed(KeyCode::KeyR) && !ui.console_open))
+        && let Some(respawn) = actions.named("core:respawn")
+    {
+        net.propose(respawn, ActionTarget::None);
     }
 }

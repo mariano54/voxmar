@@ -113,12 +113,14 @@ fn pick_block(
     let holds = |slot: usize| player.inventory.get(slot).is_some_and(|s| s.item == item);
     if let Some(slot) = (0..HOTBAR_SLOTS).find(|&slot| holds(slot)) {
         player.selected = slot;
-    } else if let Some(slot) = (HOTBAR_SLOTS..SLOTS).find(|&slot| holds(slot)) {
+    } else if let Some(slot) = (HOTBAR_SLOTS..SLOTS).find(|&slot| holds(slot))
+        && let Some(transfer) = actions.named("core:transfer")
+    {
         let selected = player.selected;
         let count = player.inventory.get(slot).map_or(0, |s| s.count);
         if player.inventory.move_items(slot, selected, count) {
             let target = ActionTarget::Slots { from: slot as u8, to: selected as u8, count };
-            net.propose(actions.0.expect("core:transfer"), target);
+            net.propose(transfer, target);
         }
     }
 }
@@ -242,9 +244,10 @@ fn break_and_place(
         net.cancel();
     }
 
-    if let Some(hit) = mining {
-        let mine = actions.0.expect("core:mine");
-        let def = actions.0.get(mine).expect("core:mine is defined");
+    if let Some(hit) = mining
+        && let Some(mine) = actions.named("core:mine")
+        && let Some(def) = actions.0.get(mine)
+    {
         let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
         let context = ClientContext { world: &world, player: &player, content: &launch.content };
         match target.breaking {
@@ -362,7 +365,7 @@ fn break_and_place(
         let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
         // With a creature under the crosshair, a right click tends it instead (`creatures::aim`).
         if food && target.creature.is_none() && (hit.is_none() || !placeable) {
-            let eat = actions.0.expect("core:eat");
+            let Some(eat) = actions.named("core:eat") else { return };
             let context = ClientContext { world: &world, player: &player, content };
             match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {
                 Some(Ok(())) => {
@@ -411,6 +414,13 @@ fn break_and_place(
         // A ripe crop that fruits again is picked, whatever is in hand; an item with an
         // action of its own (a seed plants) does that; anything else is placed.
         let held = context.actor_held();
+        // A ripe crop above the player's Farming level says so, and is not built on.
+        if let Some(Some(Err(Rejection::Unmet(need @ Requirement::CropLevel)))) = actions.0.id("base:pick").map(valid) {
+            if let Some(words) = refusal(&context, &locale, hit.block, need) {
+                toasts.refused(words, time.elapsed_secs());
+            }
+            return;
+        }
         let pick = actions.0.id("base:pick").filter(|&id| valid(id).is_some_and(|v| v.is_ok()));
         // A seed pouch in hand sows on ground that takes its seeds, and empties elsewhere.
         let sow = actions.0.id("base:plant").filter(|&id| held.is_some_and(|h| world.registry.def(h).has_tag("pouch")) && valid(id).is_some_and(|v| v.is_ok()));
@@ -433,7 +443,7 @@ fn break_and_place(
             }
             return;
         }
-        let place = actions.0.expect("core:place");
+        let Some(place) = actions.named("core:place") else { return };
         let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
         if let Some(item) = held.filter(|_| allowed) {
             let cell = placement_cell(&context, hit.block, hit.face);
@@ -539,5 +549,78 @@ fn draw_target(target: Res<Target>, mut gizmos: Gizmos) {
         // pipelines the cube needs, and a world whose first block looked at came only after
         // loading compiled the other mid-play.
         None => gizmos.cube(Transform::from_scale(Vec3::ZERO), Color::NONE),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use voxmar_engine::action::ActionRegistry;
+    use voxmar_engine::coords::ColumnPos;
+    use voxmar_engine::world::Column;
+
+    use super::*;
+    use crate::render::terrain::Terrain;
+
+    /// `break_and_place` alone, with the shipped content but `actions`, the player looking
+    /// at the block beside their feet with the cursor locked.
+    fn app(actions: Arc<ActionRegistry>) -> (App, IVec3, voxmar_protocol::ServerConnection) {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (connection, server_side) = voxmar_protocol::local_pair();
+        let mut world = ClientWorld::new(content.blocks.clone(), 2, Terrain::detached());
+        world.insert_column(ColumnPos::of_block(IVec3::ZERO), Arc::new(Column::default()));
+        let player = LocalPlayer { position: Vec3::new(0.5, 100.0, 0.5), ..default() };
+        let block = IVec3::new(1, 100, 0);
+        let target = Target { hit: Some(RayHit { block, face: voxmar_engine::coords::Face::NegX, distance: 1.0 }), ..default() };
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin)
+            .init_resource::<ButtonInput<MouseButton>>()
+            .insert_resource(UiState { cursor_locked: true, ..default() })
+            .insert_resource(Net::new(connection, None, "tester".into(), content.fingerprint()))
+            .insert_resource(Actions(actions))
+            .insert_resource(world)
+            .insert_resource(player)
+            .insert_resource(target)
+            .add_message::<SoundCue>()
+            .add_message::<BlockBroken>()
+            .insert_resource(Locale::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), "en"))
+            .insert_resource(Launch { name: "tester".into(), host: false, content })
+            .init_resource::<SkillToasts>()
+            .add_systems(Update, break_and_place);
+        (app, block, server_side)
+    }
+
+    /// Content that leaves `core:mine` out (a partial mod): holding the button does
+    /// nothing, frame after frame, and proposes nothing.
+    #[test]
+    fn holding_mine_without_a_mine_action_does_nothing() {
+        let (mut app, block, server_side) = app(Arc::new(ActionRegistry::default()));
+        let stone = app.world().resource::<Launch>().content.blocks.expect("base:stone");
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, stone);
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<ClientWorld>().block(block), Some(stone));
+        let proposed = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).count();
+        assert_eq!(proposed, 0);
+    }
+
+    /// A ripe crop that fruits again, above the player's Farming level: right click says
+    /// the level it needs and proposes nothing.
+    #[test]
+    fn a_ripe_crop_above_the_players_level_says_what_it_needs() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        let (_, crop) = content.crops.iter().find(|(_, c)| c.def.regrow.is_some() && c.def.level > 1).expect("a crop that fruits again above level 1");
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, crop.ripe());
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        let level = crop.def.level.to_string();
+        let refusals: Vec<String> = app.world().resource::<SkillToasts>().refusals().into_iter().map(str::to_owned).collect();
+        assert!(refusals.iter().any(|why| why.contains("Farming") && why.contains(&level)), "{refusals:?}");
+        let proposed = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).count();
+        assert_eq!(proposed, 0);
     }
 }
