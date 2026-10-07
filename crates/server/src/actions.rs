@@ -284,6 +284,7 @@ impl Server {
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
                 (Effect::Pick, ActionTarget::Block { block, .. }) => self.pick(agent, block),
                 (Effect::Strike, ActionTarget::Creature(id)) => self.player_strikes(agent, id),
+                (Effect::Dodge, _) => self.dodge(agent),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),

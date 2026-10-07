@@ -77,7 +77,9 @@ impl Server {
 /// Splits an inventory into what is kept (the `keep` most valuable single items, and a
 /// grave-ward amulet besides when `warded`) and the stacks that are left behind.
 fn split(inventory: &Inventory, keep: usize, warded: bool, value: impl Fn(BlockId) -> u32) -> (Inventory, Vec<ItemStack>) {
-    let mut carried: Vec<ItemStack> = (0..=voxmar_engine::inventory::CURSOR + voxmar_engine::craft::GRID).filter_map(|slot| inventory.get(slot)).collect();
+    use voxmar_engine::inventory::{CURSOR, LAST, WORN};
+    // Everything carried: the inventory, the pointer, the crafting grid and what is worn.
+    let mut carried: Vec<ItemStack> = (0..=CURSOR + voxmar_engine::craft::GRID).chain(WORN..=LAST).filter_map(|slot| inventory.get(slot)).collect();
     carried.extend(inventory.pouched.iter().flat_map(|&(item, count)| {
         (0..count.div_ceil(64)).map(move |i| ItemStack { item, count: (count - i * 64).min(64) as u8 })
     }));

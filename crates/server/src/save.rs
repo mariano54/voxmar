@@ -158,6 +158,9 @@ struct PlayerFile {
     flying: bool,
     health: Health,
     inventory: Vec<Option<(String, u8)>>,
+    /// What is worn, slot by slot (`inventory::WORN`).
+    #[serde(default)]
+    worn: Vec<Option<String>>,
     #[serde(default)]
     skills: Vec<(String, u32)>,
     #[serde(default)]
@@ -305,6 +308,9 @@ impl WorldSave {
                 .filter(|&(_, count)| count > 0)
                 .and_then(|(item, count)| Some(ItemStack { item: registry.id(&item)?, count: count.min(MAX_STACK) }));
         }
+        for (slot, item) in inventory.worn.iter_mut().zip(file.worn) {
+            *slot = item.and_then(|item| Some(ItemStack { item: registry.id(&item)?, count: 1 }));
+        }
         inventory.pouched = file.pouched.iter().filter_map(|(item, count)| Some((registry.id(item)?, *count))).filter(|&(_, n)| n > 0).collect();
         let position = Vec3::from(file.position);
         if !position.is_finite() {
@@ -331,6 +337,7 @@ impl WorldSave {
             flying: player.flying,
             health: player.health,
             inventory,
+            worn: held.worn.iter().map(|slot| slot.map(|stack| registry.def(stack.item).name.clone())).collect(),
             skills: player.skills.clone(),
             effects: player.effects.clone(),
             home: player.home,

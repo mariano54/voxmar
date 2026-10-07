@@ -5,6 +5,7 @@ mod actions;
 mod commands;
 mod cooking;
 mod creatures;
+mod fight;
 mod fishing;
 mod death;
 mod hearth;
@@ -297,6 +298,8 @@ pub(crate) struct Server {
     arrival: Instant,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
+    /// Swings, guards, dodges and creatures' wind-ups (`fight`).
+    fights: fight::Fights,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -399,6 +402,7 @@ impl Server {
             regrowing,
             arrival: Instant::now(),
             creatures: creatures::Creatures::default(),
+            fights: fight::Fights::default(),
             processes,
             temperature,
             wear_rules,
@@ -519,6 +523,7 @@ impl Server {
         self.check_quests();
         self.tick_items();
         self.tick_creatures();
+        self.tick_fights();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();

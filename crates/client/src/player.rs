@@ -370,6 +370,7 @@ fn movement(
     world: Res<ClientWorld>,
     mut player: ResMut<LocalPlayer>,
     mut last_forward: Local<Option<f32>>,
+    (net, actions, mut fighting, creatures): (Res<crate::net::Net>, Res<crate::Actions>, ResMut<crate::fight::Fighting>, Res<crate::creatures::Creatures>),
 ) {
     let player = &mut *player;
     if !player.joined || player.dead {
@@ -402,10 +403,37 @@ fn movement(
         double_tap = settings.double_tap_sprint && last_forward.is_some_and(|t| now - t < DOUBLE_TAP);
         *last_forward = (!double_tap).then_some(now);
     }
+    // A dodge (`fight`): with a direction, a dash that way; alone, a step back. Not in the
+    // air, nor with the guard up, nor sooner than the last allows.
+    let combat = &launch.content.combat;
+    let clock = time.elapsed_secs_f64();
+    if ui.cursor_locked
+        && keys.just_pressed(settings.dodge_key.0)
+        && player.on_ground
+        && !player.flying
+        && fighting.guard.is_none()
+        && clock >= fighting.dodge_ready
+        && let Some(dodge_action) = actions.0.id("core:dodge")
+    {
+        // The heaviest armour worn chooses the dodge; without armour, the first.
+        let dodge = combat.dodge_of(&player.inventory.worn);
+        let dir = if wish == Vec3::ZERO { -forward } else { wish.normalize() };
+        fighting.dash = Some((dir, dodge.distance / dodge.time.max(0.05), dodge.time));
+        fighting.dodge_ready = clock + dodge.cooldown as f64;
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+        fighting.rhythm.cancel(clock, &combat.timing(&weapon), &combat.feel);
+        net.propose_from(player, dodge_action, voxmar_engine::action::ActionTarget::None);
+    }
+    // Guarding, the player walks slower and cannot sprint.
+    let guard_speed = fighting.guard.and_then(|_| {
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).map(|g| g.speed)
+    });
     let controls = Controls {
         wish: wish.normalize_or_zero(),
         forward: pressed(KeyCode::KeyW) && !pressed(KeyCode::KeyS),
-        sprint: pressed(settings.sprint_key.0) || double_tap,
+        sprint: guard_speed.is_none() && (pressed(settings.sprint_key.0) || double_tap),
         jump: pressed(KeyCode::Space),
         descend: pressed(KeyCode::ShiftLeft),
     };
@@ -422,9 +450,34 @@ fn movement(
     };
     let water = world.registry.id("base:water").unwrap_or(BlockId::AIR);
     // Quicker or slower on foot as the player's effects say (fruit, a gale).
-    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed;
+    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed * guard_speed.unwrap_or(1.0);
     let tuning = launch.content.movement.on_foot(speed);
-    movement::advance(&mut body, &Around { world: &world, water }, &tuning, controls, time.delta_secs().min(0.25));
+    let dt = time.delta_secs().min(0.25);
+    let around = Around { world: &world, water };
+    if let Some((dir, dash_speed, left)) = fighting.dash {
+        // The dash carries the player, stopping at a wall or at a ledge, so it never drops
+        // them off an edge.
+        let ahead = (body.position + dir * 0.45).floor().as_ivec3();
+        let ground = (0..=1).any(|d| around.solid(ahead - IVec3::Y * (1 + d)));
+        if ground {
+            body.velocity.x = dir.x * dash_speed;
+            body.velocity.z = dir.z * dash_speed;
+        } else {
+            body.velocity.x = 0.0;
+            body.velocity.z = 0.0;
+        }
+        fighting.dash = (left > dt && ground).then_some((dir, dash_speed, left - dt));
+    }
+    movement::advance(&mut body, &around, &tuning, controls, dt);
+    // A creature's body is not walked into: the player is put back out of it, a little
+    // clear, so the view never ends up inside its model.
+    for aabb in creatures.bodies(&launch) {
+        if let Some(out) = out_of(body.position, &aabb, dims::WIDTH / 2.0 + CLEAR_OF_CREATURES)
+            && !Aabb::standing(out, dims::WIDTH, dims::HEIGHT).intersects(|cell| around.solid(cell))
+        {
+            body.position = out;
+        }
+    }
     player.position = body.position;
     player.velocity = body.velocity;
     player.on_ground = body.on_ground;
@@ -433,6 +486,24 @@ fn movement(
     player.against_wall = body.against_wall;
     player.sprinting = body.sprinting;
     player.jump_delay = body.jump_delay;
+}
+
+/// How far clear of a creature's body the player stands, past their own half width.
+const CLEAR_OF_CREATURES: f32 = 0.2;
+
+/// Where a player standing at `feet` must move to be `room` clear of `aabb` sideways, if
+/// they are not already (or above or below it).
+fn out_of(feet: Vec3, aabb: &Aabb, room: f32) -> Option<Vec3> {
+    if feet.y + dims::HEIGHT <= aabb.min.y || feet.y >= aabb.max.y {
+        return None;
+    }
+    let (min, max) = (aabb.min - Vec3::new(room, 0.0, room), aabb.max + Vec3::new(room, 0.0, room));
+    if feet.x <= min.x || feet.x >= max.x || feet.z <= min.z || feet.z >= max.z {
+        return None;
+    }
+    // Out by the nearest side.
+    let sides = [(feet.x - min.x, Vec3::new(min.x, feet.y, feet.z)), (max.x - feet.x, Vec3::new(max.x, feet.y, feet.z)), (feet.z - min.z, Vec3::new(feet.x, feet.y, min.z)), (max.z - feet.z, Vec3::new(feet.x, feet.y, max.z))];
+    sides.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, out)| out)
 }
 
 /// The client's world as movement sees it.

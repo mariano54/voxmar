@@ -207,6 +207,7 @@ impl Content {
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks));
+        crate::inventory::set_worn_slots(combat.worn_slots());
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),

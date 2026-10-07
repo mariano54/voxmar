@@ -106,6 +106,15 @@ pub struct Attack {
     /// horns and hooves crush.
     #[serde(default)]
     pub style: crate::combat::Style,
+    /// Seconds it winds up before the blow lands, the tell a player can block or dodge
+    /// by, and seconds it recovers after, standing open to blows (unset, `combat::Feel`'s).
+    #[serde(default)]
+    pub windup: Option<f32>,
+    #[serde(default)]
+    pub recovery: Option<f32>,
+    /// A heavy blow goes through any guard: only a dodge escapes it.
+    #[serde(default)]
+    pub heavy: bool,
 }
 
 fn reach() -> f32 {

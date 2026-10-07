@@ -200,6 +200,13 @@ enum Step {
     /// An iron sword in hand at Attack 20, a brown bear struck until it dies takes harder
     /// blows than a fist could deal.
     Weapon,
+    /// The bear again, in survival, provoked into fighting back: the guard raised just as
+    /// its wind-up ends is a perfect block that takes nothing, a click then is a counter,
+    /// and a dodge as the next blow comes down lets it pass.
+    Feel,
+    /// A chainmail shirt and a wooden shield in hand, each right click puts one on in its
+    /// own worn slot, and with the shield on the guard is the shield's.
+    Wear,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -348,6 +355,8 @@ struct Gate {
     /// Frames on which the open overlay's text changed (each one lays the UI out again),
     /// and when counting began and last went on.
     overlay_changes: u32,
+    /// Where the fight-feel step stands.
+    feel: FeelRun,
     overlay_counted: (f32, f32),
 }
 
@@ -409,6 +418,7 @@ impl Gate {
             death_seen: false,
             killed_on_purpose: false,
             overlay_changes: 0,
+            feel: FeelRun::default(),
             overlay_counted: (0.0, 0.0),
         }
     }
@@ -660,7 +670,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area of the world to generate and mesh.
         Step::Gorge | Step::Ore => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
-        Step::Strike | Step::Weapon => STRIKE_LIMIT,
+        Step::Strike | Step::Weapon | Step::Feel => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
         Step::Workshop => 220.0,
@@ -880,6 +890,8 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
         Step::Weapon => weapon(world, gate, now, in_phase),
+        Step::Feel => feel(world, gate, now, in_phase),
+        Step::Wear => wear(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
@@ -2977,13 +2989,307 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// Back to survival with the hands free, for the steps after.
+/// Hands free, on to the fight's feel.
 fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Left, false);
     key(world, KeyCode::KeyW, false);
+    gate.next(Step::Feel, now);
+}
+
+/// Answers to a creature's blow the feel step tries before failing: each one moves the
+/// answer's moment by `FEEL_STEP` seconds, earlier or later by what came of the last, so a
+/// lagging server is met where its blows fall. Perfect windows are 0.12 to 0.15 s, so a
+/// step of 0.05 cannot jump one.
+const FEEL_TRIES: u32 = 14;
+const FEEL_STEP: f32 = 0.05;
+/// Bears the step summons at most, should provoking them and the counter kill one.
+const FEEL_BEARS: u32 = 3;
+
+/// Where the fight-feel step stands: when the bear's wind-up was first seen (by the wall's
+/// clock, as the server times blows), how long after that the answer comes, and what has
+/// been tried.
+#[derive(Default)]
+struct FeelRun {
+    seen: Option<Instant>,
+    after: f32,
+    answered: bool,
+    tries: u32,
+    outcomes: Vec<voxmar_engine::combat::Defended>,
+    hurts: u32,
+    struck: u32,
+    /// The server's clock at the last provoking blow, or the bear's last blow.
+    poked: f32,
+    clicked: bool,
+    bears: u32,
+}
+
+/// The bear in survival: provoked with a click every few server seconds until it winds up,
+/// then the guard raised (phase 2) or a dodge (phase 4) a moment after the wind-up shows.
+/// A perfect block must take nothing, and the click after it (phase 3) be a counter.
+fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use voxmar_engine::combat::{Blow, Defended};
+    use voxmar_engine::creature::brain::Pose;
+    let (species, windup) = {
+        let content = &world.resource::<Launch>().content;
+        let Some(species) = content.creatures.find(BEAR) else {
+            gate.check("perfect block", Err(format!("no `{BEAR}` in the content")));
+            end_feel(world, gate, now);
+            return;
+        };
+        let windup = content.creatures.get(species).def.attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
+        (species, windup)
+    };
+    let bear = |world: &World| world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
+    let dodge_key = world.resource::<Settings>().dodge_key.0;
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    let summon = |world: &mut World| world.resource::<Net>().command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+    if gate.feel.clicked {
+        mouse(world, MouseButton::Left, false);
+        gate.feel.clicked = false;
+    }
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("gamemode survival");
+            net.command(&format!("skill attack {WEAPON_LEVEL}"));
+            // Room for the blows that come while the answer's moment is found.
+            net.command("skill hitpoints 60");
+            if item_count(world, WEAPON) == 0 {
+                world.resource::<Net>().command(&format!("give {} 1", WEAPON.trim_start_matches("base:")));
+            }
+            summon(world);
+            let fighting = world.resource::<crate::fight::Fighting>();
+            gate.feel = FeelRun { after: (windup - 0.2).max(0.0), hurts: fighting.hurt_count, struck: fighting.struck_count, poked: f32::MIN, bears: 1, ..default() };
+            gate.advance(now);
+        }
+        1 => {
+            let roomy = world.resource::<LocalPlayer>().max_health >= 100;
+            if roomy && bear(world).is_some() && select(world, WEAPON) {
+                gate.advance(now);
+            } else if in_phase > 10.0 {
+                gate.check("perfect block", Err(format!("the sword, Hitpoints 60 or the bear never came (bear seen: {}, most health {roomy})", bear(world).is_some())));
+                end_feel(world, gate, now);
+            }
+        }
+        2 | 4 => {
+            let blocking = gate.phase == 2;
+            let Some(view) = bear(world) else {
+                // Provoking it and the counter can kill one: another takes its place.
+                if gate.feel.bears < FEEL_BEARS && gate.server_in_phase() > 1.0 {
+                    gate.feel.bears += 1;
+                    gate.feel.seen = None;
+                    gate.phase_server = gate.server_now;
+                    summon(world);
+                } else if gate.feel.bears >= FEEL_BEARS {
+                    gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_BEARS} bears died before it came")));
+                    end_feel(world, gate, now);
+                }
+                return;
+            };
+            let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
+            key(world, KeyCode::KeyW, distance > 2.2 && gate.feel.seen.is_none());
+            aim_at(world, view.position + Vec3::Y * 0.6);
+            if view.pose == Pose::Attacking && gate.feel.seen.is_none() && !gate.feel.answered {
+                gate.feel.seen = Some(Instant::now());
+            }
+            if let Some(seen) = gate.feel.seen
+                && !gate.feel.answered
+                && seen.elapsed().as_secs_f32() >= gate.feel.after
+            {
+                gate.feel.answered = true;
+                if blocking {
+                    mouse(world, MouseButton::Right, true);
+                } else {
+                    // With no direction held, a step back.
+                    key(world, KeyCode::KeyW, false);
+                    key(world, dodge_key, true);
+                }
+            } else if !blocking {
+                key(world, dodge_key, false);
+            }
+            // Provoked at most every few server seconds while it does not fight back.
+            if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 {
+                gate.feel.poked = gate.server_now;
+                mouse(world, MouseButton::Left, true);
+                gate.feel.clicked = true;
+            }
+            let fighting = world.resource::<crate::fight::Fighting>();
+            if fighting.hurt_count == gate.feel.hurts {
+                return;
+            }
+            let (_, damage, defended, _) = *fighting.hurt.last().expect("counted");
+            gate.feel.hurts = fighting.hurt_count;
+            gate.feel.poked = gate.server_now;
+            mouse(world, MouseButton::Right, false);
+            key(world, dodge_key, false);
+            let answered = std::mem::take(&mut gate.feel.answered);
+            gate.feel.seen = None;
+            gate.feel.outcomes.push(defended);
+            let passed = if blocking { defended == Defended::Perfect } else { matches!(defended, Defended::Dodged | Defended::Evaded) };
+            if passed {
+                let detail = format!("{defended:?} for {damage} damage, answered {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
+                let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
+                gate.check(if blocking { "perfect block" } else { "dodge" }, result);
+                gate.feel.struck = world.resource::<crate::fight::Fighting>().struck_count;
+                gate.advance(now);
+                return;
+            }
+            gate.feel.tries += 1;
+            // Guarded but not perfect: raised too soon. Hit with an answer given: too late.
+            let shift = match defended {
+                Defended::Blocked => FEEL_STEP,
+                Defended::Hit if answered => -FEEL_STEP,
+                _ => 0.0,
+            };
+            gate.feel.after = (gate.feel.after + shift).clamp(0.0, windup);
+            if gate.feel.tries >= FEEL_TRIES {
+                let outcomes = std::mem::take(&mut gate.feel.outcomes);
+                gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}")));
+                end_feel(world, gate, now);
+            }
+        }
+        3 => {
+            // The guard let down last frame; the click now must be a counter.
+            mouse(world, MouseButton::Right, false);
+            let Some(view) = bear(world) else {
+                gate.check("counter", Err("the bear went before the counter".into()));
+                gate.phase = 3;
+                gate.advance(now);
+                return;
+            };
+            aim_at(world, view.position + Vec3::Y * 0.6);
+            if gate.feel.poked != f32::MAX && in_phase > 0.0 {
+                mouse(world, MouseButton::Left, true);
+                gate.feel.clicked = true;
+                gate.feel.poked = f32::MAX;
+            }
+            let fighting = world.resource::<crate::fight::Fighting>();
+            if fighting.struck_count > gate.feel.struck {
+                let (_, damage, blow, _) = *fighting.struck.last().expect("counted");
+                gate.feel.poked = gate.server_now;
+                if blow == Blow::Counter && damage > 0 {
+                    gate.check("counter", Ok(format!("the click after the perfect block was a counter for {damage}")));
+                    gate.feel.tries = 0;
+                    gate.feel.outcomes.clear();
+                    gate.feel.after = (windup - 0.15).max(0.0);
+                    gate.advance(now);
+                } else if gate.feel.tries + 1 >= FEEL_TRIES {
+                    gate.check("counter", Err(format!("the click after the perfect block was {blow:?} for {damage}")));
+                    end_feel(world, gate, now);
+                } else {
+                    // Too late for the window (a server far behind): block again.
+                    gate.feel.tries += 1;
+                    gate.phase = 1;
+                    gate.advance(now);
+                }
+            } else if gate.server_in_phase() > UNANSWERED {
+                gate.check("counter", Err(format!("the server answered no blow for {UNANSWERED}s")));
+                end_feel(world, gate, now);
+            }
+        }
+        5 => {
+            // In creative its blows pass by; strike it until it dies, a beat apart.
+            if gate.feel.bears > 0 {
+                world.resource::<Net>().command("gamemode creative");
+                gate.feel.bears = 0;
+            }
+            match bear(world) {
+                Some(view) if gate.server_in_phase() < UNANSWERED * 2.0 => {
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.4;
+                    key(world, KeyCode::KeyW, far);
+                    aim_at(world, view.position + Vec3::Y * 0.6);
+                    let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
+                    mouse(world, MouseButton::Left, swing);
+                }
+                Some(_) => {
+                    gate.check("feel: bear killed", Err(format!("the bear lived {}s of blows", UNANSWERED * 2.0)));
+                    end_feel(world, gate, now);
+                }
+                None => end_feel(world, gate, now),
+            }
+        }
+        _ => end_feel(world, gate, now),
+    }
+}
+
+/// Back to survival at the first levels with the hands free, for the steps after.
+fn end_feel(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Left, false);
+    mouse(world, MouseButton::Right, false);
+    key(world, KeyCode::KeyW, false);
+    key(world, world.resource::<Settings>().dodge_key.0, false);
     let net = world.resource::<Net>();
     net.command("gamemode survival");
     net.command("skill attack 1");
+    net.command("skill hitpoints 10");
+    gate.next(Step::Wear, now);
+}
+
+/// What the wear step puts on, and where (`inventory::WORN` on).
+const WORN_SHIRT: (&str, usize) = ("base:chainmail_shirt", 1);
+const WORN_SHIELD: (&str, usize) = ("base:wooden_shield", 5);
+
+/// Each piece selected and right-clicked goes on: the server's word must put it in its
+/// worn slot. Then the shield is what guards (a stop of 55%, not the sword's 35%).
+fn wear(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use voxmar_engine::inventory::WORN;
+    let worn = |world: &World, (name, at): (&str, usize)| {
+        let item = world.resource::<ClientWorld>().registry.id(name);
+        world.resource::<LocalPlayer>().inventory.get(WORN + at).is_some_and(|s| Some(s.item) == item)
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("skill defence 20");
+            for (name, _) in [WORN_SHIRT, WORN_SHIELD] {
+                net.command(&format!("give {} 1", name.trim_start_matches("base:")));
+            }
+            gate.advance(now);
+        }
+        1 | 3 => {
+            // Selected, then one right click, once the server has given it.
+            let piece = if gate.phase == 1 { WORN_SHIRT } else { WORN_SHIELD };
+            if select(world, piece.0) {
+                look(world, 0.0, 80.0);
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if in_phase > 10.0 {
+                gate.check("wear", Err(format!("no {} came to the inventory", piece.0)));
+                end_wear(world, gate, now);
+            }
+        }
+        2 | 4 => {
+            mouse(world, MouseButton::Right, false);
+            let piece = if gate.phase == 2 { WORN_SHIRT } else { WORN_SHIELD };
+            if worn(world, piece) {
+                if gate.phase == 4 {
+                    let player = world.resource::<LocalPlayer>();
+                    let launch = world.resource::<Launch>();
+                    let held = world.resource::<ClientWorld>().registry.id(WEAPON);
+                    let guard = launch.content.combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill)));
+                    let stop = guard.map_or(0.0, |g| g.stop);
+                    gate.check("wear", if stop > 0.5 { Ok(format!("a chainmail shirt and a wooden shield on; the guard stops {:.0}%", stop * 100.0)) } else { Err(format!("with the shield on, the guard stops {:.0}%", stop * 100.0)) });
+                    end_wear(world, gate, now);
+                } else {
+                    gate.advance(now);
+                }
+            } else if gate.server_in_phase() > 5.0 {
+                gate.check("wear", Err(format!("a right click with {} in hand did not put it on", piece.0)));
+                end_wear(world, gate, now);
+            }
+        }
+        _ => end_wear(world, gate, now),
+    }
+}
+
+/// Takes it all off again, for the steps after.
+fn end_wear(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Right, false);
+    let net = world.resource::<Net>();
+    for (name, _) in [WORN_SHIRT, WORN_SHIELD] {
+        net.command(&format!("clear {}", name.trim_start_matches("base:")));
+    }
+    net.command("skill defence 1");
     gate.next(Step::Cook, now);
 }
 
