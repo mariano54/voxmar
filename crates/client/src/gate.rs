@@ -2118,8 +2118,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let put_in = gate.machines_seen && held == 0 && gate.machines_asked > f32::MIN;
             let done = match stage {
                 0 | 2 | 3 => put_in,
-                1 => said.iter().any(|r| r.contains("making Coke")),
-                _ => said.iter().any(|r| r.contains("making Iron Ingot")),
+                // Names compared without case, so a renamed capital doesn't stall the step.
+                1 => said.iter().any(|r| r.to_lowercase().contains("making coke")),
+                _ => said.iter().any(|r| r.to_lowercase().contains("making iron ingot")),
             };
             if done {
                 let net = world.resource::<Net>();
