@@ -133,6 +133,8 @@
     "settings.textures.minecraft": "Minecraft first",
     "settings.textures.voxmar": "Voxmar",
     "settings.textures.voxmar_hd": "Voxmar HD",
+    "settings.minecraft_assets": "Minecraft assets (on restart)",
+    "settings.minecraft_assets.hint": "Borrow textures and block sounds from your own Minecraft install, if you have one. Takes effect when the game next starts.",
 
     "settings.shader_pack": "Shader pack",
     "settings.shader_pack.hint": "The look of light, sky, water and colour.",
