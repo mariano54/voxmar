@@ -1,0 +1,10 @@
+// Regional crops (P50, design's wiki draft 64): each sown from what it yields, as carrots
+// and potatoes are, so there are no separate seed items (crops.ron has their growing).
+(
+    families: [
+        (template: "root_crop", name: "rye", all: (model: Hash), members: {"rye": (tags: ["grain", "edible", "fibre"])}),
+        (template: "root_crop", name: "chickpea", all: (model: Bush), members: {"chickpea": (tags: ["edible", "pulse", "flavour:savoury"])}),
+        (template: "root_crop", name: "rice", all: (model: Hash), members: {"rice": (tags: ["grain", "edible"])}),
+        (template: "root_crop", name: "taro", members: {"taro": (tags: ["edible", "root", "flavour:savoury"])}),
+    ],
+)

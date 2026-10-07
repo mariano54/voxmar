@@ -92,7 +92,7 @@ fn label(
     node.top = Val::Px(at.y);
     let ours = player.skills_known.then(|| launch.content.skills.combat_level(&player.skills));
     if let Ok((mut text, mut color)) = words.single_mut() {
-        let level = locale.format("character.level", &[("level", &def.level)]);
+        let level = locale.format("character.level_short", &[("level", &def.level)]);
         if text.0 != level {
             text.0 = level;
         }

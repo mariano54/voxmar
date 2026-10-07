@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, bounded};
-use voxmar_engine::weather::pcg;
+use voxmar_engine::weather::{AirTuning, pcg};
 use voxmar_protocol::TICKS_PER_DAY;
 use voxmar_worldgen::{DayTime, Motion, Overworld, ParticleDef, WeatherWhen, WorldContent};
 
@@ -32,7 +32,10 @@ impl Plugin for AtmospherePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ClientAtmosphere>()
             .add_systems(Update, (prepare, sample, combine).chain().in_set(AtmosphereSystems))
-            .add_systems(OnExit(Screen::InGame), |mut air: ResMut<ClientAtmosphere>| *air = ClientAtmosphere::default());
+            .add_systems(OnExit(Screen::InGame), |mut air: ResMut<ClientAtmosphere>| {
+                let tuning = air.tuning.clone();
+                *air = ClientAtmosphere { tuning, ..default() };
+            });
     }
 }
 
@@ -40,14 +43,9 @@ impl Plugin for AtmospherePlugin {
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AtmosphereSystems;
 
-/// Seconds between samples of the land's air, and to ease most of the way to each: long
-/// enough that walking out of a hazy swamp thins the haze gradually rather than at once.
-const SAMPLE_EVERY: f32 = 0.5;
-const EASE: f32 = 10.0;
-/// Share of nights each night-time particle set (fireflies) comes out on, and of days
-/// each daytime one (pollen, dust) does.
-const NIGHTS_OUT: f32 = 0.6;
-const DAYS_OUT: f32 = 0.35;
+// How often the air is sampled, how slowly it eases (long enough that walking out of a
+// hazy swamp thins the haze gradually rather than at once) and on what share of nights
+// and days particle sets come out are data: `tuning: (air: …)` in weather.ron.
 
 /// The air around the player, for the renderer.
 #[derive(Resource)]
@@ -77,6 +75,8 @@ pub struct ClientAtmosphere {
     sampling: Option<Receiver<Air>>,
     /// Whether the land's air has been sampled in this game (or cannot be).
     sampled: bool,
+    /// From content.
+    tuning: AirTuning,
 }
 
 /// One set of ambient particles: how many, and how they look and move.
@@ -113,6 +113,7 @@ impl Default for Air {
 impl Default for ClientAtmosphere {
     fn default() -> Self {
         let air = Air::default();
+        let tuning = base_tuning();
         Self {
             haze: srgb(air.haze),
             haze_density: 1.0,
@@ -125,9 +126,10 @@ impl Default for ClientAtmosphere {
             generator: None,
             seed: None,
             building: None,
-            since_sample: SAMPLE_EVERY,
+            since_sample: tuning.sample_every,
             sampling: None,
             sampled: false,
+            tuning,
         }
     }
 }
@@ -140,6 +142,11 @@ impl ClientAtmosphere {
             self.generator = None;
             self.building = None;
         }
+    }
+
+    /// Samples and eases the air as content says.
+    pub fn tune(&mut self, tuning: AirTuning) {
+        self.tuning = tuning;
     }
 
     /// Whether the land's air where the player is has been sampled (or cannot be), so the
@@ -169,7 +176,7 @@ fn prepare(mut air: ResMut<ClientAtmosphere>, launch: Res<Launch>) {
     let (sender, receiver) = bounded(1);
     rayon::spawn(move || match WorldContent::load(&content) {
         Ok(world) => {
-            let _ = sender.send(Arc::new(Overworld::with_content(seed, content.blocks.clone(), &world)));
+            let _ = sender.send(Overworld::shared(seed, &content, &world));
         }
         Err(e) => tracing::error!("cannot sample the air: {e}"),
     });
@@ -198,7 +205,7 @@ fn sample(time: Res<Time>, mut air: ResMut<ClientAtmosphere>, player: Res<LocalP
     if let Some(generator) = &air.generator
         && player.joined
         && air.sampling.is_none()
-        && air.since_sample >= SAMPLE_EVERY
+        && air.since_sample >= air.tuning.sample_every
     {
         air.since_sample = 0.0;
         let at = player.position.floor().as_ivec3();
@@ -219,7 +226,7 @@ fn sample(time: Res<Time>, mut air: ResMut<ClientAtmosphere>, player: Res<LocalP
         air.sampling = Some(receiver);
     }
     // The same at any frame rate.
-    let t = 1.0 - (-time.delta_secs() / EASE).exp();
+    let t = 1.0 - (-time.delta_secs() / air.tuning.ease).exp();
     let (land, target) = (&mut air.land, &air.target);
     land.haze = land.haze.lerp(target.haze, t);
     land.haze_density += (target.haze_density - land.haze_density) * t;
@@ -271,6 +278,7 @@ fn combine(
 
     let wind = shown.wind.length();
     let seed = air.seed.unwrap_or(0);
+    let (nights_out, days_out) = (air.tuning.nights_out, air.tuning.days_out);
     let mut particles: Vec<AmbientParticles> = land
         .particles
         .iter()
@@ -292,8 +300,8 @@ fn combine(
             // Night creatures come out only on some nights, pollen on some days and then
             // mostly in sunshine; dust follows the wind instead.
             let out = match set.time {
-                DayTime::Night => out_on(seed, night_index, &set.name, NIGHTS_OUT),
-                DayTime::Day if set.motion != Motion::Blow => out_on(seed, day_index, &set.name, DAYS_OUT) * sunny,
+                DayTime::Night => out_on(seed, night_index, &set.name, nights_out),
+                DayTime::Day if set.motion != Motion::Blow => out_on(seed, day_index, &set.name, days_out) * sunny,
                 _ => 1.0,
             };
             // Sets tagged `flowers` (pollen) keep mostly to where flowers are near.
@@ -311,6 +319,16 @@ fn combine(
         .collect();
     particles.sort_by(|a, b| b.density.total_cmp(&a.density));
     air.particles = particles;
+}
+
+/// The base package's air tuning, until content says otherwise: the menus run before it
+/// loads.
+fn base_tuning() -> AirTuning {
+    static BASE: std::sync::LazyLock<AirTuning> = std::sync::LazyLock::new(|| {
+        let source = include_str!("../../../../assets/content/base/weather.ron");
+        voxmar_engine::weather::WeatherTable::from_ron("base", source).expect("base weather.ron").tuning().air.clone()
+    });
+    BASE.clone()
 }
 
 /// How much a set showing at `time` shows at a fraction of the day from sunrise.
@@ -351,11 +369,11 @@ mod tests {
 
     #[test]
     fn fireflies_keep_to_some_nights() {
-        let nights: Vec<f32> = (0..400).map(|n| out_on(9, n, "base:fireflies", NIGHTS_OUT)).collect();
+        let nights: Vec<f32> = (0..400).map(|n| out_on(9, n, "base:fireflies", base_tuning().nights_out)).collect();
         let out = nights.iter().sum::<f32>() / nights.len() as f32;
         assert!((0.5..0.7).contains(&out), "{out}");
-        assert_eq!(out_on(9, 12, "base:fireflies", NIGHTS_OUT), out_on(9, 12, "base:fireflies", NIGHTS_OUT));
-        let days = (0..400).map(|n| out_on(9, n, "base:pollen", DAYS_OUT)).sum::<f32>() / 400.0;
+        assert_eq!(out_on(9, 12, "base:fireflies", base_tuning().nights_out), out_on(9, 12, "base:fireflies", base_tuning().nights_out));
+        let days = (0..400).map(|n| out_on(9, n, "base:pollen", base_tuning().days_out)).sum::<f32>() / 400.0;
         assert!((0.27..0.43).contains(&days), "{days}");
         assert!(time_of_day(DayTime::Night, 0.75) == 1.0 && time_of_day(DayTime::Night, 0.25) == 0.0);
         assert!(time_of_day(DayTime::Day, 0.25) == 1.0 && time_of_day(DayTime::Twilight, 0.0) > 0.9);

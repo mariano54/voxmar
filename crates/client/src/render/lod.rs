@@ -26,6 +26,7 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rustc_hash::FxHashSet;
 use voxmar_engine::block::{BlockId, BlockRegistry, Tint};
+use voxmar_engine::content::Content;
 use voxmar_engine::coords::{CHUNK_SIZE, Face};
 use voxmar_worldgen::{BiomeColors, Overworld, WorldContent};
 
@@ -236,9 +237,10 @@ impl WorldGenerator {
         Self { content, current: None }
     }
 
-    /// Makes the generator of the world with this seed the current one, and returns it.
-    pub fn start(&mut self, seed: u64, registry: Arc<BlockRegistry>) -> Arc<Overworld> {
-        let generator = Arc::new(Overworld::with_content(seed, registry, &self.content));
+    /// Makes the generator of the world with this seed the current one, and returns it:
+    /// the one the server in this process plays on (`Overworld::shared`), if it holds one.
+    pub fn start(&mut self, seed: u64, content: &Content) -> Arc<Overworld> {
+        let generator = Overworld::shared(seed, content, &self.content);
         self.current = Some(generator.clone());
         generator
     }

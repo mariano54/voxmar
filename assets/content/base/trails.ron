@@ -9,8 +9,8 @@
 //   creek. stepping_stone: stones across shallow water, every other block.
 // cairn: the stones of cairns, which mark trails above the treeline and stand on
 //   summits. waymarker: the stones of the old, half-fallen markers at trailheads.
-// laid: NearSettlements (trails only within reach of a settlement: none yet, so no trails)
-//   or Everywhere.
+// laid: NearSettlements (trails only within reach of a settlement, leading out of its
+//   gates) or Everywhere. Either way trails route round settlements' buildings.
 (
     laid: NearSettlements,
     tread: [

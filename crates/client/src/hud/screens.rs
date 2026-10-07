@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use crate::lang::Localized;
+use crate::lang::{Locale, Localized};
 use crate::menu::Screen;
 use crate::player::{LocalPlayer, UiState};
 use crate::settings::Settings;
@@ -49,13 +49,13 @@ impl GameScreen {
         }
     }
 
-    fn key_label(self, settings: &Settings) -> &'static str {
+    fn key_label(self, settings: &Settings, locale: &Locale) -> String {
         match self {
-            GameScreen::Inventory => settings.inventory_key.label(),
-            GameScreen::Character => settings.character_key.label(),
-            GameScreen::Journal => settings.journal_key.label(),
-            GameScreen::Quests => settings.quests_key.label(),
-            GameScreen::Menu => "Esc",
+            GameScreen::Inventory => settings.inventory_key.name(locale),
+            GameScreen::Character => settings.character_key.name(locale),
+            GameScreen::Journal => settings.journal_key.name(locale),
+            GameScreen::Quests => settings.quests_key.name(locale),
+            GameScreen::Menu => crate::keys::escape_name(locale),
         }
     }
 
@@ -131,11 +131,12 @@ fn click_hotkeys(keys: Query<(&Hotkey, &Interaction), Changed<Interaction>>, mut
 fn label_hotkeys(
     mut commands: Commands,
     settings: Res<Settings>,
+    locale: Res<Locale>,
     font: Res<UiFont>,
     bars: Query<(Entity, &HotkeyBar, Ref<HotkeyBar>)>,
 ) {
     for (entity, bar, added) in &bars {
-        if !added.is_added() && !settings.is_changed() {
+        if !added.is_added() && !settings.is_changed() && !locale.is_changed() {
             continue;
         }
         commands.entity(entity).despawn_children().with_children(|row| {
@@ -145,7 +146,7 @@ fn label_hotkeys(
                 row.spawn((Button, Hotkey(screen), node)).with_children(|key| {
                     let cap = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), min_width: Val::Px(crate::ui::skin::CAP_MIN), justify_content: JustifyContent::Center, ..default() };
                     let piece = if current { Piece::ButtonSelected } else { Piece::Button };
-                    let label = shadowed(&font.0, screen.key_label(&settings), BODY, if current { GOLD } else { TEXT });
+                    let label = shadowed(&font.0, screen.key_label(&settings, &locale), BODY, if current { GOLD } else { TEXT });
                     key.spawn((cap, piece.image(), crate::ui::widgets::HoverLight)).with_child((label, crate::lang::TightLine));
                     key.spawn((Localized(screen.title()), text(&font.0, "", BODY, if current { GOLD } else { MUTED })));
                 });
