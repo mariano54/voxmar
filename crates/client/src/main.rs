@@ -612,6 +612,12 @@ fn setup(
     let (registry, world_content) = (&registry.blocks, registry.world.clone());
     let mut source = Source::discover(settings.textures, settings.minecraft_assets);
     let (size, mut block_textures, animations) = source.block_textures(registry.textures());
+    // A pack we don't ship may give an opaque face clear texels, which are filled below; it
+    // hears of it if that is most of the face.
+    let opaque = textures::opaque_faces(registry);
+    for warning in textures::see_through_warnings(registry.textures(), &block_textures, &opaque, &source.servers(registry.textures())) {
+        warn!("{warning}");
+    }
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];
     for id in 0..registry.len() {
