@@ -267,4 +267,62 @@
     // Ground blocks lying snow whitens, and what they become; as the snow melts they turn
     // back. The generator places the same snowy blocks where snow lies all year.
     snow_cover: [("base:grass_block", "base:snowy_grass_block")],
+    // How the weather is simulated, told to players and shown (`WeatherTuning` in
+    // crates/engine/src/weather.rs says what each value does). A later package may set any
+    // of these alone; the rest stay. Times in seconds, distances in blocks.
+    tuning: (
+        simulation: (
+            range: 2, catch_up: 600, catch_up_step: 5, mean_wind: 3.0,
+            report_change: 0.02, resend: 5,
+            // Under the fiercest storm, a ground strike every 18 minutes or so in each
+            // 512-block cell: a few flashes a minute around a player.
+            lightning: 0.0009, lightning_reach: 1500.0, cloud_flash_height: 160, effect_lightning: 0.06666667,
+            force_radius: 1024.0, force_edge: 384.0, force_fade: 60, command_quick: 3,
+            effect_region: 1500.0, named: 0.3,
+            drying: 300.0, snow_columns: 2, snow_changes: 256, shade_lingers: 0.25,
+            lying_kept: 10800, lying_catch_up: 3600, lightning_memory: 600.0, hail_energy: 4.0,
+        ),
+        // How clients ease towards each report: `settle` seconds to settle in, `full`
+        // seconds at least for a whole swing (0 to 1), `most` per second at most, `ramp`
+        // seconds to gather speed. Cloud builds and clears over a minute, rain sets in and
+        // stops over twenty seconds or so, fog gathers and lifts over half a minute.
+        shown: (
+            fractions: {
+                "cover": (settle: 20.0, full: 60.0),
+                "convection": (settle: 20.0, full: 40.0),
+                "cirrus": (settle: 25.0, full: 60.0),
+                "humidity": (settle: 15.0, full: 40.0),
+                "gusts": (settle: 4.0, full: 10.0),
+                "precipitation": (settle: 8.0, full: 25.0),
+                "snow": (settle: 8.0, full: 20.0),
+                "drizzle": (settle: 8.0, full: 20.0),
+                "hail": (settle: 4.0, full: 12.0),
+                "sleet": (settle: 6.0, full: 20.0),
+                "fog": (settle: 12.0, full: 35.0),
+                "ground_fog": (settle: 15.0, full: 40.0),
+                "dust": (settle: 8.0, full: 20.0),
+                "wetness": (settle: 10.0, full: 40.0),
+                "snow_cover": (settle: 20.0, full: 80.0),
+                "frost": (settle: 25.0, full: 80.0),
+                "lightning": (settle: 3.0, full: 8.0),
+                "rainbow": (settle: 6.0, full: 15.0),
+                "halo": (settle: 10.0, full: 25.0),
+                "aurora": (settle: 15.0, full: 40.0),
+                "heat_haze": (settle: 8.0, full: 20.0),
+                "wisps": (settle: 5.0, full: 15.0),
+                "motes": (settle: 6.0, full: 15.0),
+                "falling_stars": (settle: 8.0, full: 20.0),
+            },
+            fraction_ramp: 2.0,
+            // After a command: every fraction swings fully within six seconds, never at once.
+            command: (settle: 1.0, full: 6.0), command_ramp: 0.5, command_for: 10.0,
+            temperature: (settle: 20.0, most: 0.5, ramp: 2.0),
+            fog_top: (settle: 10.0, most: 3.0, ramp: 2.0),
+            wind: (settle: 8.0, most: 1.5, ramp: 2.0),
+            command_wind: (settle: 1.0, most: 4.0, ramp: 0.5),
+            ready_wait: 5.0,
+            bolt_life: 0.45,
+        ),
+        air: (sample_every: 0.5, ease: 10.0, nights_out: 0.6, days_out: 0.35),
+    ),
 )
