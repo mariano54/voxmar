@@ -59,7 +59,7 @@ pub use biome::{Biome, BiomeId, Biomes};
 pub use content::{DayTime, Motion, ParticleDef, WeatherWhen};
 pub use caves::{CaveStyle, LAVA_LEVEL};
 pub use climate::LAPSE_RATE;
-pub use content::{ContentError, WorldContent};
+pub use content::{ContentError, Select, WorldContent};
 pub use dials::WorldDials;
 pub use ecology::PlantProperties;
 pub use water::{Body, Cavity, Current, WaterSight};
