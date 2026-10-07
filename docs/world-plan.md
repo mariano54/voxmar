@@ -59,8 +59,9 @@ My defaults where the answers left a fork (say if any is wrong):
 - Rivers are where a warped noise crosses zero, always at sea level; lakes come from a
   separate noise and are always low and flat (`geology.rs`). Water never flows.
 - Caves (`terrain.rs`) are one cheese-cavern noise plus two tunnel lattices, always dry.
-- About 90 blocks (`assets/content/base/blocks.ron`). Textures come from the player's own
-  Minecraft jar, with flat placeholders otherwise (`client/src/textures.rs`).
+- About 90 blocks (`assets/content/base/blocks.ron`). Textures came from the player's own
+  Minecraft jar; now our own pack draws them, and the jar is used only when the player turns
+  on the Minecraft assets setting (`client/src/textures.rs`).
 - Weather is simulated on the server (humidity, cloud, rain, snow, storms, lightning). There
   is no command console.
 
