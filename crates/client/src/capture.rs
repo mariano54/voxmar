@@ -91,6 +91,8 @@ pub struct CapturePlugin {
     pub press: Option<MouseButton>,
     /// An item whose hotbar slot to select once the inventory has it (`--hold`).
     pub hold: Option<String>,
+    /// Armour to put on once the inventory has it (`--wear`, again for each piece).
+    pub wear: Vec<String>,
     /// Click `press` over and over through the clip (`--repeat`).
     pub repeat: bool,
     /// Keep looking at the nearest creature (`--face-creature`).
@@ -165,6 +167,7 @@ impl Plugin for CapturePlugin {
             }),
             press: self.press,
             hold: self.hold.clone(),
+            wear: self.wear.clone(),
             repeat: self.repeat,
             face_creature: self.face_creature,
             strike: self.strike.clone(),
@@ -188,7 +191,7 @@ impl Plugin for CapturePlugin {
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
         )
-        .add_systems(Update, (hold, press, dig, showcase, fill_grid).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
+        .add_systems(Update, (hold, wear, press, dig, showcase, fill_grid).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time)
@@ -223,6 +226,7 @@ struct Capture {
     clip: Option<Clip>,
     press: Option<MouseButton>,
     hold: Option<String>,
+    wear: Vec<String>,
     repeat: bool,
     face_creature: bool,
     strike: Option<String>,
@@ -351,6 +355,19 @@ fn hold(state: Res<Capture>, world: Res<crate::world::ClientWorld>, mut player: 
     let Some(item) = state.hold.as_deref().and_then(|name| world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}")))) else { return };
     if let Some(slot) = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == item)) {
         player.selected = slot;
+    }
+}
+
+/// Puts on each piece of `--wear` once the inventory has it, moving it into its worn slot
+/// as a click would; the server checks it fits.
+fn wear(state: Res<Capture>, world: Res<crate::world::ClientWorld>, player: Res<LocalPlayer>, net: Res<crate::net::Net>, actions: Res<crate::Actions>, mut asked: Local<Vec<String>>) {
+    use voxmar_engine::inventory::{WORN, worn_slot};
+    for name in state.wear.iter().filter(|name| !asked.contains(name)) {
+        let Some(item) = world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}"))) else { continue };
+        let (Some(from), Some(at)) = ((0..WORN).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == item)), worn_slot(item)) else { continue };
+        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (WORN + at) as u8, count: 1 };
+        net.propose(actions.0.expect("core:transfer"), target);
+        asked.push(name.clone());
     }
 }
 

@@ -142,6 +142,8 @@ struct Options {
     press: Option<MouseButton>,
     /// `--hold ITEM`: select the hotbar slot holding an item, once it is there.
     hold: Option<String>,
+    /// `--wear ITEM` (again for each piece): put armour on, once it is in the inventory.
+    wear: Vec<String>,
     /// `--repeat`: click `--press`'s button over and over through the clip.
     repeat: bool,
     /// `--face-creature`: keep looking at the nearest creature.
@@ -258,6 +260,7 @@ fn parse_options() -> Result<Options, String> {
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--hold" => options.hold = Some(value()?),
+            "--wear" => options.wear.push(value()?),
             "--repeat" => options.repeat = true,
             "--face-creature" => options.face_creature = true,
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
@@ -512,6 +515,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             clip_commands: options.clip_commands,
             press: options.press,
             hold: options.hold,
+            wear: options.wear,
             repeat: options.repeat,
             face_creature: options.face_creature,
             strike: options.strike,
