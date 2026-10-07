@@ -36,6 +36,18 @@ pub struct ConditionRules {
     pub fed: (f32, f32),
     /// How far around it others count against its room, in blocks.
     pub space_radius: f32,
+    /// Within how many blocks one of its kind keeps a social animal company.
+    pub company: f32,
+    /// How well its home's climate suits it (its comfort fit there, 0 to 1): at least the
+    /// first is met, at least the second partly.
+    pub climate: (f32, f32),
+    /// Rain or snow heavier than this, falling on it under open sky, wants a roof.
+    pub wet: f32,
+    /// How near a roof, in blocks, it can shelter under.
+    pub roof_within: f32,
+    /// Snow counts as rain (partly met) for a kind whose comfort reaches this cold, in °C,
+    /// and as unmet for the rest.
+    pub snow_hardy: f32,
 }
 
 impl Default for ConditionRules {
@@ -52,6 +64,11 @@ impl Default for ConditionRules {
             breed: 0.5,
             fed: (1.0, 2.0),
             space_radius: 5.0,
+            company: 14.0,
+            climate: (0.75, 0.25),
+            wet: 0.05,
+            roof_within: 3.0,
+            snow_hardy: -10.0,
         }
     }
 }
@@ -60,12 +77,13 @@ crate::content::settable! {
     /// What one package sets of the condition rules.
     SetConditionRules for ConditionRules {
         up: f32, down: f32, met: f32, partly: f32, unmet: f32, tamed: f32, hurt: f32,
-        output: (f32, f32), breed: f32, fed: (f32, f32), space_radius: f32,
+        output: (f32, f32), breed: f32, fed: (f32, f32), space_radius: f32, company: f32,
+        climate: (f32, f32), wet: f32, roof_within: f32, snow_hardy: f32,
     }
 }
 
 impl ConditionRules {
-    /// Whether these rules make sense: shares within 0..1 in order, rates and the reach above
+    /// Whether these rules make sense: shares within 0..1 in order, rates and reaches above
     /// zero, outputs never below nothing.
     pub fn check(&self) -> Result<(), RegistryError> {
         let error = |why: &str| Err(RegistryError(format!("condition: {why}")));
@@ -84,6 +102,12 @@ impl ConditionRules {
         }
         if !(0.0 <= self.fed.0 && self.fed.0 <= self.fed.1) {
             return error("fed must be two day counts, the first no more than the second");
+        }
+        if !(share(self.climate.0) && share(self.climate.1) && self.climate.1 <= self.climate.0) {
+            return error("climate must be two fits within 0 and 1, the first no less than the second");
+        }
+        if !(self.company > 0.0 && self.wet >= 0.0 && self.roof_within >= 0.0 && self.snow_hardy.is_finite()) {
+            return error("company must be above 0, wet and roof_within 0 or more, snow_hardy a temperature");
         }
         Ok(())
     }
@@ -112,6 +136,17 @@ impl ConditionRules {
     /// How much of its usual output an animal in `condition` gives: 0.5 to 1.2 by default.
     pub fn output(&self, condition: f32) -> f32 {
         (self.output.0 + self.output.1 * condition.clamp(0.0, 1.0)).max(0.0)
+    }
+
+    /// How well its home's climate suits it, from its comfort fit there.
+    pub fn climate(&self, fit: f32) -> Met {
+        if fit >= self.climate.0 {
+            Met::Yes
+        } else if fit >= self.climate.1 {
+            Met::Partly
+        } else {
+            Met::No
+        }
     }
 
     /// How well it has eaten, `days` after its last meal.
@@ -179,8 +214,7 @@ pub struct NeedsDef {
 }
 
 impl NeedsDef {
-    /// Its room: given, or about eight blocks for each block of its width (a chicken 3, a
-    /// sheep 7, an aurochs 11), between 2 and 16.
+    /// Its room: given, or about eight blocks for each block of its width, between 2 and 16.
     pub fn space(&self, width: f32) -> f32 {
         self.space.unwrap_or_else(|| (8.0 * width).round().clamp(2.0, 16.0))
     }
@@ -195,25 +229,51 @@ impl NeedsDef {
     }
 }
 
-/// How well its room is met: `room` blocks each for the animals sharing it, against the
-/// `space` it wants. Half of it is partly met.
-pub fn room(room: f32, space: f32) -> Met {
-    if room >= space {
+/// How well its room is met: the ground within reach (`area` blocks) against what every
+/// kept animal on it wants (`wanted`, its own included). Up to twice crowded is partly met.
+pub fn room(area: f32, wanted: f32) -> Met {
+    if wanted <= area {
         Met::Yes
-    } else if room >= space / 2.0 {
+    } else if wanted <= 2.0 * area {
         Met::Partly
     } else {
         Met::No
     }
 }
 
-/// Its condition in a word, for players: `poor`, `fair`, `good` or `fine`.
+/// How well its want of shelter is met: `wet` is what falls on it under open sky
+/// (`Some(true)` snow, `Some(false)` rain, `None` nothing), `roof` whether one is near enough
+/// to shelter under, `hardy` whether its kind is made for the cold (snow is then no worse
+/// than rain).
+pub fn shelter(wants_roof: bool, wet: Option<bool>, roof: bool, hardy: bool) -> Met {
+    match wet {
+        None => Met::Yes,
+        Some(_) if !wants_roof || roof => Met::Yes,
+        Some(true) if !hardy => Met::No,
+        Some(_) => Met::Partly,
+    }
+}
+
+/// Its condition in a word, for players: `poor`, `fair`, `good` or `excellent`.
 pub fn word(condition: f32) -> &'static str {
     match condition {
         c if c < 0.4 => "poor",
         c if c < 0.6 => "fair",
         c if c < 0.85 => "good",
-        _ => "fine",
+        _ => "excellent",
+    }
+}
+
+/// Which way its condition is heading, for players: toward `target` by more than a hair
+/// (`Some(true)` improving, `Some(false)` getting worse), or holding.
+pub fn trend(condition: f32, target: f32) -> Option<bool> {
+    const HAIR: f32 = 0.01;
+    if target > condition + HAIR {
+        Some(true)
+    } else if target < condition - HAIR {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -266,13 +326,25 @@ mod tests {
     fn meals_rooms_and_species_needs_read_as_written() {
         let rules = ConditionRules::default();
         assert_eq!([0.5, 1.5, 2.5].map(|d| rules.fed(d)), [Met::Yes, Met::Partly, Met::No]);
-        assert_eq!([7.0, 4.0, 2.0].map(|r| room(r, 6.0)), [Met::Yes, Met::Partly, Met::No]);
+        // 78 blocks within 5 of it: room for 13 sheep at 6 each, half again partly.
+        let area = std::f32::consts::PI * 25.0;
+        assert_eq!([13.0, 26.0, 27.0].map(|sheep| room(area, sheep * 6.0)), [Met::Yes, Met::Partly, Met::No]);
+        assert_eq!([0.9, 0.5, 0.1].map(|fit| rules.climate(fit)), [Met::Yes, Met::Partly, Met::No]);
         let needs = NeedsDef::default();
         assert_eq!((needs.space(0.4), needs.space(0.9), needs.space(1.4), needs.space(3.0)), (3.0, 7.0, 11.0, 16.0));
         assert!(needs.shelter() && needs.company(0.6) && !needs.company(0.3));
         let duck = NeedsDef { shelter: Some(false), space: Some(2.0), company: Some(true) };
         assert!(!duck.shelter() && duck.company(0.0) && duck.space(5.0) == 2.0);
-        assert_eq!([0.2, 0.5, 0.7, 0.9].map(word), ["poor", "fair", "good", "fine"]);
+        assert_eq!([0.2, 0.5, 0.7, 0.9].map(word), ["poor", "fair", "good", "excellent"]);
+        // Dry, under a roof or minding no rain: met. Rain in the open: partly. Snow in the
+        // open: unmet, but partly for a kind made for the cold.
+        assert_eq!(shelter(true, None, false, false), Met::Yes);
+        assert_eq!(shelter(true, Some(true), true, false), Met::Yes);
+        assert_eq!(shelter(false, Some(true), false, false), Met::Yes);
+        assert_eq!(shelter(true, Some(false), false, false), Met::Partly);
+        assert_eq!(shelter(true, Some(true), false, false), Met::No);
+        assert_eq!(shelter(true, Some(true), false, true), Met::Partly);
+        assert_eq!([(0.6, 0.8), (0.6, 0.5), (0.6, 0.605)].map(|(c, t)| trend(c, t)), [Some(true), Some(false), None]);
     }
 
     #[test]
@@ -284,6 +356,9 @@ mod tests {
             ConditionRules { up: 0.0, ..Default::default() },
             ConditionRules { output: (0.5, -0.7), ..Default::default() },
             ConditionRules { fed: (3.0, 2.0), ..Default::default() },
+            ConditionRules { climate: (0.25, 0.75), ..Default::default() },
+            ConditionRules { company: 0.0, ..Default::default() },
+            ConditionRules { snow_hardy: f32::NAN, ..Default::default() },
         ];
         for rules in bad {
             assert!(rules.check().is_err(), "{rules:?} loaded");

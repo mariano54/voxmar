@@ -6,7 +6,7 @@
 //! stands. Every line travels as words, in the player's language.
 
 use voxmar_engine::creature::brain::Personality;
-use voxmar_engine::creature::condition::{self, Met};
+use voxmar_engine::creature::condition;
 use voxmar_engine::genes::{self, Gene, GeneKind, NumberEffect};
 use voxmar_engine::lang::{Words, def_key};
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
@@ -24,6 +24,11 @@ const NOTABLE: f32 = 0.8;
 
 impl Server {
     pub(crate) fn inspect(&mut self, player: PlayerId, id: u32) {
+        // A kept one's needs as they are now, not as last reckoned.
+        if self.creatures.live.get(&id).is_some_and(|c| c.owner.is_some()) {
+            let needs = self.needs_of(id);
+            self.creatures.live.get_mut(&id).expect("checked").needs = needs;
+        }
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species = self.content.creatures.get(creature.species);
         let def = &species.def;
@@ -42,18 +47,24 @@ impl Server {
                 .with("age", age)
                 .with("temper", temper(&creature.mind.personality)),
         ];
-        // A kept one's condition in a word for anyone, exactly at Farming 30, and what it
-        // wants.
+        // A kept one's condition in a word for anyone, exactly at Farming 30, which way it
+        // is heading, and what it wants.
         if creature.owner.is_some() {
             let state = Words::key(&format!("condition.{}", condition::word(creature.condition)));
+            let rules = self.content.creatures.condition();
+            let target = rules.target(&creature.needs, (creature.health as u32) * 2 < def.health as u32);
+            let (kept, exactly) = match condition::trend(creature.condition, target) {
+                Some(true) => ("inspect.kept_improving", "inspect.kept_exactly_improving"),
+                Some(false) => ("inspect.kept_worsening", "inspect.kept_exactly_worsening"),
+                None => ("inspect.kept", "inspect.kept_exactly"),
+            };
             lines.push(if level >= NUMBERS {
-                Words::key("inspect.kept_exactly").with("state", state).with("value", Words::text(format!("{:.2}", creature.condition)))
+                Words::key(exactly).with("state", state).with("value", Words::text(format!("{:.2}", creature.condition)))
             } else {
-                Words::key("inspect.kept").with("state", state)
+                Words::key(kept).with("state", state)
             });
-            let wants: Vec<Words> = creature.needs.all().into_iter().filter(|(_, met)| *met != Met::Yes).map(|(need, _)| Words::key(&format!("need.{need}"))).collect();
-            if !wants.is_empty() {
-                lines.push(Words::key("inspect.wants").with("needs", Words::List(wants)));
+            if let Some(wants) = self.wants(id) {
+                lines.push(Words::key("inspect.wants").with("needs", wants));
             }
         }
         let defs = &def.genes;

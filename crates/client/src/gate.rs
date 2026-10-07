@@ -3495,13 +3495,41 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if tags.contains(&kept.as_str()) {
                 let detail = format!("{} {}: {}", readout.name, readout.level, tags.join(", "));
                 gate.check("readout: kept", Ok(detail));
-                gate.next(Step::Ore, now);
+                gate.advance(now);
             } else if in_phase > 3.0 {
                 let detail = format!("aimed at the tamed junglefowl, it read {:?} {:?} with tags {tags:?}", readout.name, readout.level);
                 gate.check("readout: kept", Err(detail));
                 gate.next(Step::Ore, now);
             }
         }
+        4 => {
+            // Looking closely at it with nothing it eats in hand: a newly tamed one is in good
+            // condition.
+            let good = world.resource::<crate::lang::Locale>().get("condition.good").to_owned();
+            let replied = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|line| line.contains(&good));
+            if replied {
+                mouse(world, MouseButton::Right, false);
+                gate.check("condition", Ok(format!("looking closely read \"{good}\" after {in_phase:.1}s")));
+                gate.advance(now);
+            } else if in_phase > 3.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("condition", Err(format!("3 seconds of looking closely at our junglefowl said nothing with \"{good}\"")));
+                gate.next(Step::Ore, now);
+            } else if let Some(view) = hen(world) {
+                let wheat = world.resource::<ClientWorld>().registry.id("base:wheat");
+                let free = {
+                    let player = world.resource::<LocalPlayer>();
+                    (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none_or(|stack| Some(stack.item) != wheat))
+                };
+                if let Some(slot) = free {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                }
+                aim_at(world, view.position + Vec3::Y * 0.3);
+                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
+        5 => gate.next(Step::Ore, now),
         _ => {}
     }
 }
