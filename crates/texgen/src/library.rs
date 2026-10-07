@@ -146,9 +146,9 @@ impl Library {
                     continue;
                 }
                 let name = pattern.replace("{name}", &family.name);
-                if library.recipes.contains_key(&name) {
-                    continue;
-                }
+                // An explicit texture of the name beats the family's, but what the family made
+                // below it is still what the lower layers saw (kept at the end).
+                let explicit = library.recipes.contains_key(&name);
                 let mut versions: Vec<(usize, Recipe)> = Vec::new();
                 for (drawn, recipe) in drawings {
                     let made_at = level.max(*drawn);
@@ -157,20 +157,45 @@ impl Library {
                     }
                     versions.push((made_at, family_member(recipe, &family)));
                 }
-                match made.get(&name) {
-                    Some((earlier, _)) if *earlier == level => {
+                match made.get_mut(&name) {
+                    Some((earlier, _)) if *earlier == level && !explicit => {
                         return Err(Error(format!("{origin}: two families make texture `{name}`")));
                     }
-                    Some((earlier, _)) if *earlier > level => continue,
-                    _ => {
+                    // A later layer's family replaces this one, but not below its own layer.
+                    Some((earlier, theirs)) if *earlier > level => {
+                        let below = versions.into_iter().filter(|(at, _)| at < earlier);
+                        let mut all: Vec<_> = below.collect();
+                        all.append(theirs);
+                        *theirs = all;
+                    }
+                    // This family replaces an earlier layer's, which still stands below it.
+                    Some((_, ours)) => {
+                        let mut all: Vec<_> = ours.drain(..).filter(|(at, _)| *at < level).collect();
+                        all.extend(versions);
+                        made.insert(name, (level, all));
+                    }
+                    None => {
                         made.insert(name, (level, versions));
                     }
                 }
             }
         }
         for (name, (_, versions)) in made {
-            for (level, recipe) in versions {
-                library.put(name.clone(), level, recipe);
+            match library.levels.get(&name) {
+                // Explicit textures beat family ones from any layer; the family's versions from
+                // below the first explicit one are what those lower layers saw.
+                Some(&level) => {
+                    let first = library.replaced.get(&name).and_then(|r| r.first()).map_or(level, |(at, _)| *at);
+                    let below: Vec<_> = versions.into_iter().filter(|(at, _)| *at < first).collect();
+                    if !below.is_empty() {
+                        library.replaced.entry(name).or_default().splice(0..0, below);
+                    }
+                }
+                None => {
+                    for (level, recipe) in versions {
+                        library.put(name.clone(), level, recipe);
+                    }
+                }
             }
         }
         Ok(library)
@@ -598,6 +623,31 @@ mod tests {
         let table = library.render("block/pine_table").unwrap().unwrap();
         assert_eq!((table.width, table.get(31, 31)), (32, [0xff, 0, 0, 0xff]));
         assert_ne!(table.get(15, 15), [0xff, 0, 0, 0xff]);
+    }
+
+    /// A base-pack table on pine planks, which the base pack's `wood` family makes.
+    const PINE_TABLE: &str = r##"(textures: {"block/pine_table": (base: "block/pine_planks", layers: [Grid(legend: {'x': "#ff0000"}, rows: [
+            "x...............", "................", "................", "................",
+            "................", "................", "................", "................",
+            "................", "................", "................", "................",
+            "................", "................", "................", "...............x",
+        ])])})"##;
+
+    #[test]
+    fn a_family_texture_a_later_pack_draws_itself_still_scales_what_is_built_on_it() {
+        let hd = r##"(textures: {"block/pine_planks": (size: (32, 32), palettes: {"wood": "grey"}, layers: [Paint(palette: "wood", base: 0.5)])})"##;
+        let library = Library::from_layers([vec![("base", BOOK), ("child", PINE_TABLE)], vec![("hd", hd)]]).unwrap();
+        let table = library.render("block/pine_table").unwrap().unwrap();
+        assert_eq!((table.width, table.get(31, 31)), (32, [0xff, 0, 0, 0xff]));
+    }
+
+    #[test]
+    fn a_family_a_later_pack_declares_again_still_scales_what_is_built_on_it() {
+        let hd = r##"(templates: {"wood": {"block/{name}_planks": (size: (32, 32), layers: [Paint(palette: "wood", base: 0.5)])}},
+            families: [(template: "wood", name: "pine", palettes: {"wood": "red"})])"##;
+        let library = Library::from_layers([vec![("base", BOOK), ("child", PINE_TABLE)], vec![("hd", hd)]]).unwrap();
+        let table = library.render("block/pine_table").unwrap().unwrap();
+        assert_eq!((table.width, table.get(31, 31)), (32, [0xff, 0, 0, 0xff]));
     }
 
     #[test]
