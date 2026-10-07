@@ -142,7 +142,14 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         // Where the rules hold the text as written together, by each joined character.
         let held = rules.held(&text.0.chars().collect::<Vec<_>>());
         let written: Vec<usize> = chars.iter().scan(0, |n, &c| Some(std::mem::replace(n, *n + usize::from(!joiner(c))))).collect();
-        let mappings: [fn(char) -> bool; 3] = [|_| true, |c| !c.is_whitespace(), |c| !c.is_whitespace() && c != voxmar_engine::lang::WORD_JOINER];
+        // Every character; spaces drawn but joiners not; neither; joiners drawn but spaces not.
+        // Spaces kept comes first, so one joiner per space can't match the wrong way round.
+        let mappings: [fn(char) -> bool; 4] = [
+            |_| true,
+            |c| c != voxmar_engine::lang::WORD_JOINER,
+            |c| !c.is_whitespace() && c != voxmar_engine::lang::WORD_JOINER,
+            |c| !c.is_whitespace(),
+        ];
         let Some(at) = mappings.iter().map(|keep| (0..chars.len()).filter(|&i| keep(chars[i])).collect::<Vec<usize>>()).find(|at| at.len() == layout.glyphs.len()) else {
             found.push(Spill { text: text.0.clone(), past: [0.0; 4], own: true, size: Vec2::ZERO, lines: layout.size, over: None, broken: None, unmatched: Some((layout.glyphs.len(), chars.len())) });
             continue;
@@ -262,16 +269,17 @@ mod tests {
     fn line_breaks_against_the_rules_are_found() {
         use bevy::text::{GlyphAtlasInfo, PositionedGlyph};
         let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
-        let look = |lines: &[usize]| {
+        let look_at = |text: &str, lines: &[usize]| {
             let mut world = World::new();
             world.insert_resource(crate::lang::Locale::load(&content, "ja"));
             let atlas_info = GlyphAtlasInfo { texture: AssetId::default(), rect: Rect::default(), offset: Vec2::ZERO, is_alpha_mask: false };
             let glyphs = lines.iter().map(|&line_index| PositionedGlyph { position: Vec2::ZERO, atlas_info: atlas_info.clone(), section_index: 0, line_index }).collect();
             let layout = TextLayoutInfo { glyphs, size: Vec2::splat(10.0), ..Default::default() };
-            world.spawn((Text::new("クリックする"), layout, ComputedNode::default(), UiGlobalTransform::default(), InheritedVisibility::VISIBLE));
+            world.spawn((Text::new(text), layout, ComputedNode::default(), UiGlobalTransform::default(), InheritedVisibility::VISIBLE));
             let found: Vec<String> = find(&mut world).iter().map(ToString::to_string).collect();
             (found, world.resource::<LineBreaksChecked>().checked)
         };
+        let look = |lines: &[usize]| look_at("クリックする", lines);
         // Laid out as ク⁠リ⁠ッ⁠クする, a glyph each with the joiners (9) or without (6).
         let (found, checked) = look(&[0, 0, 1, 1, 1, 1, 1, 1, 1]);
         assert!(checked == 1 && found.len() == 1 && found[0].contains("ク|リック"), "{found:?}");
@@ -279,6 +287,18 @@ mod tests {
         assert!(checked == 1 && found.len() == 1 && found[0].contains("ク|リック"), "{found:?}");
         // Broken where it may break: after the word.
         assert_eq!(look(&[0, 0, 0, 0, 1, 1]), (vec![], 1));
+        // ボタン を押す joined is ボ⁠タ⁠ン を押す: 2 joiners, 1 space. Drawn with the space and
+        // without the joiners (7 glyphs), a break inside the word is still found where it is.
+        let (found, checked) = look_at("ボタン を押す", &[0, 1, 1, 1, 1, 1, 1]);
+        assert!(checked == 1 && found.len() == 1 && found[0].contains("ボ|タン を"), "{found:?}");
+        assert_eq!(look_at("ボタン を押す", &[0, 0, 0, 0, 1, 1, 1]), (vec![], 1));
+        // One joiner and one space (ア⁠イ う): dropping either leaves 4, and the space kept is
+        // tried first, so the glyphs line up with the characters they are.
+        let (found, checked) = look_at("アイ う", &[0, 1, 1, 1]);
+        assert!(checked == 1 && found.len() == 1 && found[0].contains("ア|イ う"), "{found:?}");
+        assert_eq!(look_at("アイ う", &[0, 0, 0, 1]), (vec![], 1));
+        // A break at the space, misread as one inside アイ were the joiner taken as drawn.
+        assert_eq!(look_at("アイ う", &[0, 0, 1, 1]), (vec![], 1));
         let (found, checked) = look(&[0, 0, 0]);
         assert!(checked == 0 && found.len() == 1 && found[0].contains("unchecked"), "{found:?}");
     }
