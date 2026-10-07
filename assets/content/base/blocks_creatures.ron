@@ -33,8 +33,8 @@
         (template: "drop", name: "ember_scale", tags: ["scale", "aether", "fire"], all: (color: (240, 120, 40), light: 6, rarity: Uncommon)),
         (template: "drop", name: "snail_shell", tags: ["shell", "small"], all: (color: (150, 106, 60))),
         (template: "drop", name: "horsehair", tags: ["fibre", "hair"], all: (color: (60, 50, 44))),
-        (template: "drop", name: "sunwing_feather", tags: ["feather", "aether", "fire"], all: (color: (255, 200, 80), light: 8, rarity: Rare)),
-        (template: "drop", name: "frost_antler", tags: ["antler", "aether", "cold"], all: (color: (190, 220, 250), light: 5, rarity: Rare)),
+        (template: "drop", name: "sunwing_feather", tags: ["feather", "aether", "fire"], all: (color: (255, 200, 80), light: 8, rarity: Uncommon)),
+        (template: "drop", name: "frost_antler", tags: ["antler", "aether", "cold"], all: (color: (190, 220, 250), light: 5, rarity: Uncommon)),
         (template: "drop", name: "bat_wing", tags: ["membrane", "small"], all: (color: (60, 50, 48))),
         (template: "drop", name: "spore_cap", tags: ["fungus", "aether", "edible", "food:1"], all: (color: (160, 90, 200), light: 5, rarity: Uncommon)),
         (template: "drop", name: "beetle_crystal", tags: ["crystal", "aether"], all: (color: (120, 210, 230), light: 6, rarity: Uncommon)),
@@ -51,9 +51,9 @@
         (template: "drop", name: "venom_sac", tags: ["alchemy:poison", "venom"], all: (color: (120, 190, 80), rarity: Uncommon)),
         (template: "drop", name: "rotten_flesh", tags: ["meat", "rotten", "bait", "edible", "food:1"], all: (color: (120, 130, 80))),
         // Supernatural.
-        (template: "drop", name: "moonhare_pelt", tags: ["hide", "fur", "aether", "glowing", "alchemy:luminous"], all: (color: (190, 215, 250), rarity: Rare)),
-        (template: "drop", name: "moon_dust", tags: ["aether", "dust", "alchemy:luminous", "alchemy:night_sight"], all: (color: (210, 225, 255), rarity: VeryRare)),
+        (template: "drop", name: "moonhare_pelt", tags: ["hide", "fur", "aether", "glowing", "alchemy:luminous"], all: (color: (190, 215, 250), rarity: Uncommon)),
+        (template: "drop", name: "moon_dust", tags: ["aether", "dust", "alchemy:luminous", "alchemy:night_sight"], all: (color: (210, 225, 255), rarity: Uncommon)),
         (template: "drop", name: "lumen_slime", tags: ["aether", "slime", "glowing", "alchemy:luminous", "alchemy:night_sight"], all: (color: (110, 240, 210), rarity: Uncommon)),
-        (template: "drop", name: "aether_mote", tags: ["aether", "alchemy:aether"], all: (color: (230, 200, 255), rarity: Rare)),
+        (template: "drop", name: "aether_mote", tags: ["aether", "alchemy:aether"], all: (color: (230, 200, 255), rarity: Uncommon)),
     ],
 )

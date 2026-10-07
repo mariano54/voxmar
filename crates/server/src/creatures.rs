@@ -65,6 +65,11 @@ const FOOD_RANGE: i32 = 6;
 /// from. Plus how far the creature moves in this many seconds.
 const REACH_SLACK: f32 = 1.0;
 const REACH_LAG: f32 = 0.6;
+/// Defence trains on blows turned aside only while the player fights back, their last blow
+/// at a creature at most this many ticks before, and only against creatures of at least
+/// half their Defence level, so standing among weak monsters trains nothing (design wiki,
+/// draft 63).
+const DEFENCE_FOUGHT_WITHIN: u64 = 10 * TICKS_PER_SECOND as u64;
 /// Seconds a player must keep within `SETTLE_RADIUS` blocks of one spot before hunters
 /// there leave them be (RuneScape's ten minutes in 21 × 21 squares).
 const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
@@ -160,6 +165,9 @@ pub struct Creatures {
     gone: Vec<CreatureGone>,
     /// Each player's last strike tick.
     struck: FxHashMap<PlayerId, std::time::Instant>,
+    /// Each player's last blow at a creature, on the server's clock: Defence trains only
+    /// while they fight back (`DEFENCE_FOUGHT_WITHIN`).
+    fought: FxHashMap<PlayerId, u64>,
     /// Where each player settled and since when (RuneScape's tolerance).
     settled: FxHashMap<PlayerId, (Vec3, u64)>,
     /// Kept creatures from the save that could not be put back yet (their species is gone
@@ -242,6 +250,7 @@ impl Server {
     fn settle_players(&mut self) {
         let tick = self.tick;
         let players: Vec<(PlayerId, Vec3)> = self.players.values().filter(|p| p.joined).map(|p| (p.id, p.position)).collect();
+        self.creatures.fought.retain(|id, _| players.iter().any(|(p, _)| p == id));
         let settled = &mut self.creatures.settled;
         settled.retain(|id, _| players.iter().any(|(p, _)| p == id));
         for (id, position) in players {
@@ -502,6 +511,10 @@ impl Server {
         }
         let defence_skill = self.skill("core:defence");
         let defence = self.level(player, defence_skill);
+        // Only a fight trains Defence: the player struck back lately, at a creature a match
+        // for them.
+        let fighting = self.creatures.fought.get(&player).is_some_and(|&at| self.tick.saturating_sub(at) <= DEFENCE_FOUGHT_WITHIN);
+        let trains = fighting && 2 * def.level as u32 >= defence as u32;
         let [hit, amount] = combat_roll(self.tick, species.0 as u32, player as u64 ^ 0xa7);
         let (low, high) = attack.damage;
         let target = self.players.get_mut(&player).expect("checked above");
@@ -511,7 +524,7 @@ impl Server {
                 target.connection.send(ServerMessage::Died);
             }
             target.changed(traits::HEALTH);
-        } else if let Some(skill) = defence_skill {
+        } else if let Some(skill) = defence_skill.filter(|_| trains) {
             // Experience for the blow turned aside: four a point of the damage it would do.
             let tenths = 40 * (low as u32 + high as u32) / 2;
             target.skills.grant(skill, tenths.max(10));
@@ -537,6 +550,7 @@ impl Server {
         self.creatures.struck.insert(player, at);
         let strength = voxmar_engine::combat::strength_for(since.filter(|&s| s < 5.0), weapon.cooldown);
         let Some(creature) = self.creatures.live.get(&id) else { return };
+        self.creatures.fought.insert(player, self.tick);
         let species = self.content.creatures.get(creature.species);
         let attack_skill = weapon.skill;
         let attack = self.level(player, attack_skill);
@@ -933,6 +947,57 @@ mod tests {
 #[cfg(test)]
 mod combat_tests {
     use super::*;
+    use crate::{ServerConfig, load_content, open_world};
+
+    fn server() -> Server {
+        let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+        let mut config = ServerConfig::default();
+        let (save, meta) = open_world(&mut config).expect("no save to open");
+        let (_, incoming) = crossbeam_channel::unbounded();
+        let (_, console) = crossbeam_channel::unbounded();
+        Server::new(config, meta, save, content, incoming, console)
+    }
+
+    #[test]
+    fn defence_trains_only_while_fighting_back_against_a_match() {
+        let mut server = server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2);
+        joined.joined = true;
+        server.players.insert(player, joined);
+        server.tick = 10_000;
+        // Defence 20: a wolf (level 12) is a match for it, a fox (level 4) is not.
+        let defence = server.content.skills.id("core:defence").expect("Defence");
+        let xp_for = server.content.skills.xp_for(20);
+        server.players.get_mut(&player).unwrap().skills.grant(defence, xp_for);
+        let (wolf, fox) = (server.content.creatures.id("base:wolf").unwrap(), server.content.creatures.id("base:fox").unwrap());
+        // A hundred blows at the player, their last blow at a creature `ago` ticks before
+        // each (none if `None`): the Defence xp they earn.
+        let earned = |server: &mut Server, species: CreatureId, ago: Option<u64>| {
+            let before = server.players[&player].skills.xp(defence);
+            for _ in 0..100 {
+                server.tick += 7;
+                match ago {
+                    Some(ago) => server.creatures.fought.insert(player, server.tick - ago),
+                    None => server.creatures.fought.remove(&player),
+                };
+                server.players.get_mut(&player).unwrap().health = traits::Health::full(crate::player::MAX_HEALTH);
+                server.creature_strikes(species, player);
+            }
+            server.players[&player].skills.xp(defence) - before
+        };
+        let within = DEFENCE_FOUGHT_WITHIN;
+        assert!(earned(&mut server, wolf, Some(within)) > 0, "fighting a wolf back trained nothing");
+        assert_eq!(earned(&mut server, wolf, None), 0, "standing among wolves trained Defence");
+        assert_eq!(earned(&mut server, wolf, Some(within + 1)), 0, "a fight over for more than 10 s still trained");
+        assert_eq!(earned(&mut server, fox, Some(0)), 0, "a fox, under half the player's Defence, trained it");
+        // A blow at a creature is what counts as fighting back.
+        server.creatures.fought.clear();
+        let id = server.spawn_creature(wolf, server.spawn + Vec3::new(1.0, 0.0, 0.0), 1).expect("room");
+        server.player_strikes(player, id);
+        assert_eq!(server.creatures.fought.get(&player), Some(&server.tick));
+    }
 
     #[test]
     fn blows_at_a_steady_beat_land_as_often_as_the_odds_say() {
