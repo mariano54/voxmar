@@ -54,7 +54,7 @@ pub struct Tuning {
     /// repeat while the feet are still in it (at most 1).
     pub jump_delay: f32,
     /// How much of a wall-blocked step must have been heading into the wall for it to stop
-    /// a sprint; glancing off a wall keeps it.
+    /// a sprint (a share, at most 1); glancing off a wall keeps it.
     pub head_on: f32,
     /// How high a walker steps up onto a block without jumping (at most 1), for blocks
     /// shorter than a whole one. Kept here for the client and the server's move checks
@@ -130,6 +130,8 @@ impl Tuning {
             Err(format!("{name} must be more than 0"))
         } else if jump_delay > 1.0 {
             Err("jump_delay must be at most 1 second".into())
+        } else if head_on > 1.0 {
+            Err("head_on must be at most 1 (a share of the way the player runs), or a sprint would never stop at a wall".into())
         } else if step_up > 1.0 {
             Err("step_up must be at most 1 block".into())
         } else {
@@ -369,7 +371,7 @@ mod tests {
         let t = tuning();
         assert_eq!([t.wade_depth, t.step_out, t.climb_out_speed, t.jump_delay, t.head_on, t.step_up], [0.4, 0.6, 6.0, 0.5, 0.35, 0.5 + 1.0 / 16.0]);
         let source = include_str!("../../../assets/content/core/movement.ron");
-        for (from, to) in [("wade_depth: 0.4", "wade_depth: 0.0"), ("climb_out_speed: 6.0", "climb_out_speed: -6.0"), ("jump_delay: 0.5", "jump_delay: 1.5"), ("head_on: 0.35", "head_on: 0.0"), ("step_up: 0.5625", "step_up: 2.0")] {
+        for (from, to) in [("wade_depth: 0.4", "wade_depth: 0.0"), ("climb_out_speed: 6.0", "climb_out_speed: -6.0"), ("jump_delay: 0.5", "jump_delay: 1.5"), ("head_on: 0.35", "head_on: 0.0"), ("head_on: 0.35", "head_on: 1.5"), ("step_up: 0.5625", "step_up: 2.0")] {
             assert!(source.contains(from), "{from}");
             assert!(Tuning::from_ron(&source.replace(from, to)).is_err(), "{to} loads");
         }

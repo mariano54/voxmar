@@ -26,7 +26,7 @@
     // water doesn't repeat while the feet are still in it; at most 1.
     jump_delay: 0.5,
     // How much of a step blocked by a wall must have been heading into it to stop a
-    // sprint; glancing along a wall keeps it.
+    // sprint (a share, at most 1); glancing along a wall keeps it.
     head_on: 0.35,
     // How high a walker steps up without jumping, for blocks shorter than a whole one (at
     // most 1): half a block and a pixel.

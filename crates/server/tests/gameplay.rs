@@ -263,12 +263,24 @@ impl Client {
     }
 
     fn propose(&self, action: &str, target: ActionTarget) {
+        self.propose_at(action, target, Instant::now());
+    }
+
+    /// Proposes as if the player clicked at `at`: in process, the clock the server times
+    /// actions and blows by (see `Connection::send_at`), so a test spaces clicks exactly
+    /// without waiting.
+    fn propose_at(&self, action: &str, target: ActionTarget, at: Instant) {
         let action: ActionId = self.content.actions.expect(action);
-        self.connection.send(ClientMessage::Propose { action, target });
+        self.connection.send_at(ClientMessage::Propose { action, target }, at);
     }
 
     fn send_position(&self, position: Vec3, flying: bool) {
-        self.connection.send(ClientMessage::Input(PlayerInput { teleport: self.teleports, position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }));
+        self.send_position_at(position, flying, Instant::now());
+    }
+
+    /// Sends a move as made at `at` (see `propose_at`).
+    fn send_position_at(&self, position: Vec3, flying: bool, at: Instant) {
+        self.connection.send_at(ClientMessage::Input(PlayerInput { teleport: self.teleports, position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }), at);
     }
 
     /// Runs a command and returns the console lines it answers with.
@@ -437,12 +449,12 @@ fn a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started() {
     let stone = client.world.block(a).unwrap();
     let hardness = client.content.blocks.info(stone).hardness;
     assert!(Duration::from_secs_f32(hardness) > CATCH_UP * 2, "stone mines too fast for this test");
-    let mine = |client: &Client, block: IVec3| client.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
-    mine(&client, c);
-    std::thread::sleep(Duration::from_millis(50));
-    mine(&client, a);
-    std::thread::sleep(Duration::from_secs_f32(hardness * 0.85));
-    mine(&client, b);
+    // Clicked 50 ms apart, then the next once 85% of the second's time has passed.
+    let mine = |client: &Client, block: IVec3, at: Instant| client.propose_at("core:mine", ActionTarget::Block { block, face: Face::PosY }, at);
+    let start = Instant::now();
+    mine(&client, c, start);
+    mine(&client, a, start + Duration::from_millis(50));
+    mine(&client, b, start + Duration::from_millis(50) + Duration::from_secs_f32(hardness * 0.85));
     client.pump_until(|cl| cl.world.block(a) == Some(BlockId::AIR) && cl.world.block(b) == Some(BlockId::AIR));
     assert_eq!(client.world.block(c), Some(stone), "a block only begun was broken");
 }
@@ -505,10 +517,9 @@ fn only_admins_fly_fast() {
     for (mut client, admin) in clients {
         assert_eq!(client.admin, admin);
         client.connection.send(ClientMessage::Settings { view_distance: 2, fly_speed: 4.0 });
-        // A second after the last move, rise faster than normal flight allows but within
-        // four times its speed, then make an impossible move so the server answers with
-        // where it thinks we are.
-        std::thread::sleep(Duration::from_millis(1100));
+        // The first move since joining (a full allowance), rise faster than normal flight
+        // allows but within four times its speed, then make an impossible move so the server
+        // answers with where it thinks we are.
         let start = client.position;
         let up = start + Vec3::Y * 100.0;
         client.send_position(up, true);
@@ -841,9 +852,12 @@ fn walking_wears_a_path() {
     assert_eq!(before, id("grass_block"), "spawn is on {}, not grass", blocks.def(before).name);
     // Each crossing is a step onto the other block: forty steps on each.
     let (here, there) = (start + step.as_vec3() * 0.3, start + step.as_vec3() * 0.7);
+    // A step a tick at most is seen (wear looks once a tick), so each waits for the tick
+    // after it; stamped 110 ms apart, the walking pace the moves are judged by.
+    let start = Instant::now();
     for i in 0..80 {
-        client.send_position(if i % 2 == 0 { there } else { here }, false);
-        std::thread::sleep(Duration::from_millis(110));
+        client.send_position_at(if i % 2 == 0 { there } else { here }, false, start + Duration::from_millis(110) * i);
+        client.after_ticks(0);
     }
     client.pump_until(|c| c.world.block(under).is_some_and(|b| worn.contains(&b)));
     // Plants on the path are trampled away.
@@ -911,17 +925,19 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
     client.ok("/summon brown_bear 1 ~ ~ ~");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
     let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
-    // Struck a full charge apart, beside it wherever it goes, until `landed` blows land.
-    let strike = |client: &mut Client, landed: usize| {
+    // Struck a full charge (650 ms) apart, beside it wherever it goes, until `landed` blows
+    // land. The clicks are stamped apart rather than waited for.
+    let mut click = Instant::now();
+    let mut strike = |client: &mut Client, landed: usize| {
         let start = client.damage.len();
         while client.damage[start..].iter().filter(|&&d| d > 0).count() < landed && client.creatures.contains_key(&id) {
             assert!(client.damage.len() - start < 80, "{} blows landed {landed}", client.damage.len() - start);
             let at = client.creatures[&id].position;
             client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
             client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-            std::thread::sleep(Duration::from_millis(650));
+            click += Duration::from_millis(650);
             let blows = client.blows;
-            client.propose("core:attack", ActionTarget::Creature(id));
+            client.propose_at("core:attack", ActionTarget::Creature(id), click);
             let asked = Instant::now();
             client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || asked.elapsed() > Duration::from_millis(400));
         }
@@ -1052,16 +1068,18 @@ fn placing_or_throwing_while_mining_does_not_cancel_the_mining() {
     client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 stone");
     client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
     let hardness = client.content.blocks.info(client.world.block(a).unwrap()).hardness;
+    // Each click half the break's time after the last, by the clock the server judges by.
+    let (mut at, half) = (Instant::now(), Duration::from_secs_f32(hardness * 0.5));
     for (block, instant) in [(a, "core:drop"), (b, "core:place")] {
         let target = ActionTarget::Block { block, face: Face::PosY };
-        client.propose("core:mine", target);
-        std::thread::sleep(Duration::from_secs_f32(hardness * 0.5));
+        client.propose_at("core:mine", target, at);
+        at += half;
         match instant {
-            "core:drop" => client.propose(instant, ActionTarget::Stack { slot: 0, count: 1 }),
-            _ => client.propose(instant, ActionTarget::Block { block: feet + IVec3::new(2, -1, 0), face: Face::PosY }),
+            "core:drop" => client.propose_at(instant, ActionTarget::Stack { slot: 0, count: 1 }, at),
+            _ => client.propose_at(instant, ActionTarget::Block { block: feet + IVec3::new(2, -1, 0), face: Face::PosY }, at),
         }
-        std::thread::sleep(Duration::from_secs_f32(hardness * 0.5));
-        client.connection.send(ClientMessage::Finished { target });
+        at += half;
+        client.connection.send_at(ClientMessage::Finished { target }, at);
     }
     client.pump_until(|cl| cl.world.block(a) == Some(BlockId::AIR) && cl.world.block(b) == Some(BlockId::AIR));
 }
