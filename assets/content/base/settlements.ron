@@ -87,7 +87,7 @@
         fertility: 0.3, poor: {"cold": 0.15, "desert": 0.15},
         height: (3, 90), relief: 14, reach: 48, firm: 24, caves: 150,
         step: 16, tries: 6, look: 6, creek: 4, score: (luck: 3.0, spread: 1.2, relief: 0.25, water: 3.0, height: 0.02),
-        glade: (5, 16), glade_trees: (0.08, 0.3), eaves: 1,
+        glade: (5, 16), glade_trees: (0.08, 0.1), eaves: 1,
     ),
     // rules: the rest of the numbers planning reads.
     //   spawn_settlement_within: a new player finds a settlement within this many blocks of

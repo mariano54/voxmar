@@ -15,7 +15,7 @@ use super::house::{self, Fixed, Kind, Mats, Spec};
 use super::centre;
 use super::{Building, Plan, Raster};
 use crate::geology::GeoSample;
-use crate::rng::{Rng, hash3};
+use crate::rng::{Rng, hash3, mix};
 use crate::trails::Land;
 use crate::{Overworld, SEA_LEVEL};
 
@@ -52,6 +52,9 @@ pub struct Ctx<'a> {
     /// Near where a new player spawns, in the square settled for them: it is always
     /// settled, within `spawn_settlement_within` of this.
     pub spawn: Option<IVec2>,
+    /// The squares one of which may be settled for a new player whatever their roll (those
+    /// in reach of where they spawn), whose names their neighbours keep off too.
+    pub promised: &'a [IVec2],
 }
 
 /// Picks from `items` by weight; `None` when every weight is nothing.
@@ -227,7 +230,7 @@ fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 /// they are placed.
 /// In the square a new player spawns in (`spawn`), only spots within the promised reach of
 /// them are looked at, their climate rules none out, and several are kept, best first.
-fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, bool)> {
+pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, bool)> {
     let (grid, site) = (&ctx.def.grid, &ctx.def.site);
     let step = site.step;
     let first = cell * grid.spacing + grid.margin;
@@ -506,8 +509,23 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     }
     // Where one spot cannot be laid out (too few homes fit, no level ground for the well),
     // the spawn's square tries its next; any other square has the one.
-    site(ctx, cell, spawn).into_iter().find_map(|(centre, fresh)| lay_out(ctx, cell, centre, fresh, rng.clone()))
+    let sites = site(ctx, cell, spawn);
+    let first = sites.iter().find_map(|&(centre, fresh)| lay_out(ctx, cell, centre, fresh, rng.clone(), false));
+    if spawn.is_none() || first.is_some() {
+        return first;
+    }
+    // The spawn's square tries each spot with other draws (another square, other lanes,
+    // the well elsewhere), then as the smallest place, before it is left empty: only the
+    // land may keep a new player from a settlement.
+    let salted = |salt: u64| Rng::new(ctx.seed ^ mix(salt), 0x5e771e, cell.x, cell.y);
+    sites
+        .iter()
+        .find_map(|&(centre, fresh)| (1..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), false)))
+        .or_else(|| sites.iter().find_map(|&(centre, fresh)| (0..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), true))))
 }
+
+/// How many draws the spawn's square tries laying out each spot with.
+const SPAWN_SALTS: u64 = 8;
 
 /// The stream names are drawn from, apart from the rest of the plan so a square's
 /// neighbours can draw the names it may take without planning it.
@@ -541,8 +559,9 @@ fn offered_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, k: u3
 /// offers that no square within `rules.names_apart` blocks offers too. Each square takes
 /// one of its own offers and keeps off its neighbours', so no two near share a name, and
 /// none needs another planned to know it. Only where every offer is taken (rare) does it
-/// look further, still keeping off its neighbours' offers.
-pub(super) fn unique_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, small: bool) -> (String, String) {
+/// look further, still keeping off its neighbours' offers; a hamlet takes a first and
+/// last part it offered before that, rather than a taken small name.
+pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], cell: IVec2, list: usize, small: bool) -> (String, String) {
     let (grid, apart) = (&def.grid, def.rules.names_apart);
     let first = offered_name(def, seed, cell, list, 0, small);
     if apart <= 0 {
@@ -557,8 +576,9 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: us
             let other = cell + IVec2::new(dx, dz);
             let (olo, ohi) = inner(other);
             let gap = (olo - hi).max(lo - ohi).max(IVec2::ZERO).as_vec2().length();
-            // Squares too far, and those whose roll holds no settlement (see `plan`).
-            if other == cell || gap > apart as f32 || !Rng::new(seed, 0x5e771e, other.x, other.y).chance(grid.chance) {
+            // Squares too far, and those whose roll holds no settlement and that are not
+            // the spawn's to settle (see `plan`).
+            if other == cell || gap > apart as f32 || !(Rng::new(seed, 0x5e771e, other.x, other.y).chance(grid.chance) || promised.contains(&other)) {
                 continue;
             }
             for l in 0..def.names.len() {
@@ -573,11 +593,19 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: us
             }
         }
     }
-    (0..NAME_OFFERS + 32).map(|k| offered_name(def, seed, cell, list, k, small)).find(|n| !taken.contains(&n.0)).unwrap_or(first)
+    // Its own offers first; a hamlet's small names are few (twenty first parts by three
+    // words), so where those are taken it offers a first and last part instead, of which
+    // there are hundreds (its neighbours keep off both forms). Then names no one offered.
+    let offers = |small: bool, ks: std::ops::Range<u32>| ks.map(move |k| offered_name(def, seed, cell, list, k, small));
+    let forms = if small { vec![true, false] } else { vec![false] };
+    let own = forms.iter().flat_map(|&f| offers(f, 0..NAME_OFFERS));
+    let further = forms.iter().flat_map(|&f| offers(f, NAME_OFFERS..NAME_OFFERS + 32));
+    own.chain(further).find(|n| !taken.contains(&n.0)).unwrap_or(first)
 }
 
 /// Lays out the settlement of the square `cell` round `centre`, if it can.
-fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng) -> Option<Plan> {
+/// `smallest`: as the size with fewest houses, whatever the draw.
+fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool) -> Option<Plan> {
     let def = ctx.def;
     let levers = levers(ctx, centre, fresh, &mut rng);
     let biome = ctx.world.biome_at(centre.x, centre.y);
@@ -606,6 +634,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng) -> 
     let style = &def.styles[style_index];
     let sizes: Vec<(usize, f32)> = def.sizes.iter().enumerate().map(|(i, s)| (i, s.lean.weigh(s.weight, &levers))).collect();
     let size_index = pick(&mut rng, &sizes)?;
+    let size_index = if smallest { (0..def.sizes.len()).min_by_key(|&i| def.sizes[i].houses).unwrap_or(size_index) } else { size_index };
     let size = &def.sizes[size_index];
     let layouts: Vec<(usize, f32)> = def.layouts.iter().enumerate().filter(|(_, l)| fresh || !l.water).map(|(i, l)| (i, l.lean.weigh(l.weight, &levers))).collect();
     let layout_index = pick(&mut rng, &layouts)?;
@@ -615,7 +644,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng) -> 
     let name = {
         let small = size_index == 0 && !names.small.is_empty() && Rng::new(ctx.seed, NAMING, cell.x, cell.y).chance(names.small_chance);
         let list = def.names.iter().position(|n| std::ptr::eq(n, names)).unwrap_or(0);
-        let name = unique_name(def, ctx.seed, cell, list, small);
+        let name = unique_name(def, ctx.seed, ctx.promised, cell, list, small);
         // Now and then a word before it, leaning on the levers ("Old" where it is old).
         let prefixes: Vec<(usize, f32)> = names.prefixes.iter().enumerate().map(|(i, p)| (i, p.3.weigh(p.2, &levers))).collect();
         match (rng.chance(names.prefix_chance), pick(&mut rng, &prefixes)) {
@@ -1843,26 +1872,33 @@ fn place(
     Some(Lot { spec, rect, frame, floor, mats, door, yard, house, centre: None })
 }
 
-/// The lowest and highest ground under `rect`, sampled every `step` blocks and along its
-/// edges; none where any of it is not solid ground out of the water's channel, or water
-/// lies within `bank` blocks of it.
+/// The lowest and highest ground under `rect`, its height sampled every `step` blocks and
+/// along its edges; none where any of it is not solid ground out of the water's channel, or
+/// water lies within `bank` blocks of it. Water is looked for at every block, under it and
+/// on its banks alike, as a creek one block wide could lie between samples.
 fn level(ground: &mut Ground, rect: &Rect, bank: i32, step: i32) -> Option<(i32, i32)> {
     let outer = rect.grow(bank);
     let (mut lowest, mut highest) = (i32::MAX, i32::MIN);
-    let along = |lo: i32, hi: i32| (lo..=hi).step_by(step.max(1) as usize).chain(std::iter::once(hi));
-    for z in along(outer.min.y, outer.max.y) {
-        for x in along(outer.min.x, outer.max.x) {
+    let step = step.max(1);
+    let sampled = |v: i32, lo: i32, hi: i32| (v - lo) % step == 0 || v == hi;
+    for z in outer.min.y..=outer.max.y {
+        for x in outer.min.x..=outer.max.x {
             let p = IVec2::new(x, z);
             let g = ground.at(p);
             if g.submerged() {
                 return None;
             }
             if rect.holds(p) {
-                if !solid(&g) || g.river >= 0.5 {
+                if g.river >= 0.5 {
                     return None;
                 }
-                lowest = lowest.min(g.height);
-                highest = highest.max(g.height);
+                if sampled(x, outer.min.x, outer.max.x) && sampled(z, outer.min.y, outer.max.y) {
+                    if !solid(&g) {
+                        return None;
+                    }
+                    lowest = lowest.min(g.height);
+                    highest = highest.max(g.height);
+                }
             }
         }
     }
@@ -2085,6 +2121,43 @@ pub(super) fn draw_prop(fixed: &Fixed, mats: &Mats, canvas: &mut Canvas, frame: 
             }
             if let Some(net) = fixed.nets.pick(u(0x4e)) {
                 put(1, 2, 0, Put::Set(net));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::*;
+    use crate::geology::GeoSample;
+    use crate::trails::Land;
+    use crate::water::Body;
+
+    /// Flat ground with a creek one block wide along `x == creek.0` (a column) or
+    /// `z == creek.1` (a row).
+    struct Creek(Option<i32>, Option<i32>);
+
+    impl Land for Creek {
+        fn sample(&self, x: i32, z: i32) -> GeoSample {
+            let wet = self.0 == Some(x) || self.1 == Some(z);
+            let (height, water) = if wet { (139, 140) } else { (140, 140) };
+            GeoSample { height, mountain: 0.0, river: 0.0, water, top: 8, body: Body::Creek, current: None, cavity: None, crag: Default::default(), trail: None, form: Default::default() }
+        }
+    }
+
+    /// A lot sampled every other block still sees a creek one block wide on any row or
+    /// column of its banks or under it: an odd one, between the samples, as well as an
+    /// even one.
+    #[test]
+    fn a_creek_one_block_wide_is_never_missed() {
+        let rect = Rect::new(IVec2::new(0, 0), IVec2::new(10, 8));
+        let bank = 3;
+        let dry = Creek(None, None);
+        assert_eq!(level(&mut Ground { land: &dry, seen: FxHashMap::default() }, &rect, bank, 2), Some((140, 140)));
+        for at in -bank..=9 + bank {
+            for creek in [Creek(Some(at), None), Creek(None, Some(at.min(7 + bank)))] {
+                let found = level(&mut Ground { land: &creek, seen: FxHashMap::default() }, &rect, bank, 2);
+                assert_eq!(found, None, "a creek at x {:?} z {:?} beside a lot from 0,0 to 9,7 let it stand", creek.0, creek.1);
             }
         }
     }

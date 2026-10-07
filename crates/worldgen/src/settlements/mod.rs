@@ -271,10 +271,6 @@ fn lane_distance(points: &[Vec2], p: Vec2) -> f32 {
     best
 }
 
-/// How high over a building's floor the land's trees are cut back: over the tallest roof
-/// and the tallest crown.
-const PRUNE_HEIGHT: i32 = 48;
-
 /// A square of the grid: its settlement, if it has one.
 pub struct Slot(pub Option<Plan>);
 
@@ -305,9 +301,15 @@ pub struct Settlements {
     /// The land's own tree blocks (natural leaves and logs) by block id, which no roof
     /// lies under.
     wild_tree: Vec<bool>,
+    /// How high over a building's floor they are cut back: over the tallest tree rooted
+    /// up to a glade's width uphill.
+    crowns: i32,
     /// Near where a new player spawns (see `Overworld::spawn_estimate`), and the square
     /// settled for them there, if none was already within reach.
     spawn: std::sync::OnceLock<Spawn>,
+    /// The squares in reach of where a new player spawns, one of which may be settled
+    /// for them (`spawn_square`).
+    promised: std::sync::OnceLock<Vec<IVec2>>,
     id: u64,
     /// How many squares were planned, for tests that no square is planned twice.
     #[cfg(test)]
@@ -322,7 +324,8 @@ struct Spawn {
 }
 
 impl Settlements {
-    pub fn new(seed: u64, def: &SettlementsDef, registry: &BlockRegistry) -> Self {
+    /// `trees`: how far over its foot the land's tallest tree reaches (`trees::tallest`).
+    pub fn new(seed: u64, def: &SettlementsDef, registry: &BlockRegistry, trees: i32) -> Self {
         static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
             seed: crate::rng::mix(seed ^ 0x5e77_1e5e),
@@ -336,7 +339,9 @@ impl Settlements {
                     b.has_tag("natural") && (b.render == RenderKind::Leaves || b.has_tag("log"))
                 })
                 .collect(),
+            crowns: trees + def.site.glade.0 + 1,
             spawn: std::sync::OnceLock::new(),
+            promised: std::sync::OnceLock::new(),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             #[cfg(test)]
             planned: std::sync::atomic::AtomicUsize::new(0),
@@ -477,7 +482,7 @@ impl Settlements {
             let (min, max) = ((b.min - eaves).max(lo), (b.max + eaves).min(hi));
             for z in min.y..=max.y {
                 for x in min.x..=max.x {
-                    for y in b.floor + 1..b.floor + PRUNE_HEIGHT {
+                    for y in b.floor + 1..=b.floor + self.crowns {
                         let p = IVec3::new(x, y, z);
                         if blocks.contains(p) && self.wild_tree[blocks.get(p).0 as usize] {
                             blocks.set(p, BlockId::AIR);
@@ -509,7 +514,7 @@ impl Settlements {
         #[cfg(test)]
         self.planned.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let land = world.land();
-        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn };
+        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn, promised: self.promised(world) };
         plan::plan(&ctx, cell)
     }
 
@@ -527,15 +532,7 @@ impl Settlements {
             return spawn;
         }
         let at = world.spawn_estimate();
-        let grid = &self.def.grid;
-        let inner = |cell: IVec2| (cell * grid.spacing + grid.margin, (cell + 1) * grid.spacing - grid.margin);
-        let reach = |cell: IVec2| {
-            let (lo, hi) = inner(cell);
-            at.clamp(lo, hi).as_vec2().distance(at.as_vec2())
-        };
-        let (first, last) = (self.cell_of(at.x - within, at.y - within), self.cell_of(at.x + within, at.y + within));
-        let mut cells: Vec<IVec2> = (first.y..=last.y).flat_map(|z| (first.x..=last.x).map(move |x| IVec2::new(x, z))).filter(|&c| reach(c) <= within as f32).collect();
-        cells.sort_by(|a, b| reach(*a).total_cmp(&reach(*b)).then((a.x, a.y).cmp(&(b.x, b.y))));
+        let cells = self.promised(world).to_vec();
         // Each square as any other would plan it, side by side.
         let made = std::sync::Mutex::new(FxHashMap::default());
         crate::parallel::for_each(&cells, |&c| {
@@ -560,6 +557,39 @@ impl Settlements {
         }
         spawn.early = std::sync::Mutex::new(made.into_iter().map(|(c, p)| (c, Arc::new(Slot(p)))).collect());
         spawn
+    }
+
+    /// The squares one of which may be settled for a new player (see `promised`).
+    fn promised(&self, world: &Overworld) -> &[IVec2] {
+        self.promised.get_or_init(|| if self.def.rules.spawn_settlement_within > 0 { self.in_reach(world.spawn_estimate()) } else { Vec::new() })
+    }
+
+    /// The squares whose ground lies within `spawn_settlement_within` of `at`, nearest
+    /// first.
+    fn in_reach(&self, at: IVec2) -> Vec<IVec2> {
+        let within = self.def.rules.spawn_settlement_within;
+        let grid = &self.def.grid;
+        let inner = |cell: IVec2| (cell * grid.spacing + grid.margin, (cell + 1) * grid.spacing - grid.margin);
+        let reach = |cell: IVec2| {
+            let (lo, hi) = inner(cell);
+            at.clamp(lo, hi).as_vec2().distance(at.as_vec2())
+        };
+        let (first, last) = (self.cell_of(at.x - within, at.y - within), self.cell_of(at.x + within, at.y + within));
+        let mut cells: Vec<IVec2> = (first.y..=last.y).flat_map(|z| (first.x..=last.x).map(move |x| IVec2::new(x, z))).filter(|&c| reach(c) <= within as f32).collect();
+        cells.sort_by(|a, b| reach(*a).total_cmp(&reach(*b)).then((a.x, a.y).cmp(&(b.x, b.y))));
+        cells
+    }
+
+    /// Whether any square in reach of the spawn has a spot a settlement could stand on
+    /// (see `plan::site`): where none has, the land itself keeps the promise from being
+    /// kept.
+    #[cfg(test)]
+    pub(crate) fn spawn_has_sites(&self, world: &Overworld) -> bool {
+        let Some(fixed) = &self.fixed else { return false };
+        let at = world.spawn_estimate();
+        let land = world.land();
+        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn: Some(at), promised: self.promised(world) };
+        self.in_reach(at).into_iter().any(|c| !plan::site(&ctx, c, Some(at)).is_empty())
     }
 
     /// Whether (x, z) lies within a settlement's bounds, a few blocks round included.

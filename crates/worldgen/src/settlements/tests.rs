@@ -877,7 +877,7 @@ fn plans_keep_to_their_squares_and_rules() {
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
 fn settlements_are_unchanged() {
-    const EXPECTED: u64 = 18106927858959230201;
+    const EXPECTED: u64 = 7909794199593065950;
     let world = base_world(1);
     let mut text = String::new();
     for cz in -3..3 {
@@ -1402,13 +1402,12 @@ fn every_storey_can_be_walked_to() {
 
 /// A new player finds a settlement within `spawn_settlement_within` of where they spawn
 /// (rules), measured from the spawn point itself, and never spawns inside one; over twenty
-/// worlds. A world may spawn where no square in reach can be settled (seed 7: a strip of
-/// coast under mountains, with no spot of the dry, firm, gentle ground away from the sea a
-/// settlement needs): there none is promised (design, draft 81), but that is all that may
-/// excuse one, and most worlds keep the promise.
+/// worlds. Only the land may excuse a world (design, draft 81): one where no square in
+/// reach has a spot a settlement could stand on, as on seed 0. A square with spots tries
+/// each with other draws and as the smallest place before it gives up (`plan::plan`).
 #[test]
 fn a_settlement_stands_near_spawn() {
-    let (mut far, mut unserved) = (Vec::new(), Vec::new());
+    let (mut far, mut excused) = (Vec::new(), Vec::new());
     // 0x5eed: the world a new game makes unless told otherwise.
     let seeds: Vec<u64> = (0..20).chain([42, 99, 0x5eed]).collect();
     for &seed in &seeds {
@@ -1421,16 +1420,16 @@ fn a_settlement_stands_near_spawn() {
         if nearest <= within {
             continue;
         }
-        // None in reach: only where no square in reach could be settled.
-        if world.settlements.spawn.get().is_some_and(|s| s.square.is_none()) {
-            unserved.push(seed);
+        let sites = world.settlements.spawn_has_sites(&world);
+        eprintln!("seed {seed}: none within {within} of spawn at {spawn}; spots in reach: {sites}");
+        if sites {
+            far.push(format!("seed {seed}: the nearest settlement is {nearest:.0} blocks from spawn at {spawn}, though the land has spots for one"));
         } else {
-            far.push(format!("seed {seed}: the nearest settlement is {nearest:.0} blocks from spawn at {spawn}"));
+            excused.push(seed);
         }
     }
-    eprintln!("no square in reach of spawn could be settled on seeds {unserved:?}");
     assert!(far.is_empty(), "{}", far.join("\n"));
-    assert!(unserved.len() * 5 <= seeds.len(), "the promise is kept on too few worlds; none on seeds {unserved:?}");
+    assert_eq!(excused, [0], "the worlds whose land has no spot near spawn");
 }
 
 /// Loading refuses ripe or rare fruit wherever a settlement puts leaves: orchards' fruit by
@@ -1458,7 +1457,7 @@ fn ripe_or_rare_fruit_is_refused() {
 }
 
 /// No tree's crown lies over a roof, and no tree's trunk stands within the glade's treeless
-/// ring of a building's walls, in the woods round spawn (Elmwick, seed 1, stands in a forest).
+/// ring of a building's walls, in the woods round spawn (Fernford, seed 1, stands in a forest).
 #[test]
 fn trees_keep_off_roofs_and_walls() {
     use super::house::Kind;
@@ -1551,32 +1550,40 @@ fn naming_never_repeats_near() {
     let world = base_world(1);
     let def = &world.settlements.def;
     let (grid, apart) = (&def.grid, def.rules.names_apart as f32);
-    let mut named = Vec::new();
-    for z in -20..20 {
-        for x in -20..20 {
-            let cell = IVec2::new(x, z);
-            if !crate::rng::Rng::new(world.settlements.seed, 0x5e771e, x, z).chance(grid.chance) {
-                continue;
+    // A quarter of the squares hamlets with small names, then every one: the small names
+    // are few, so near ones run out and fall back on first and last parts. The squares
+    // round the middle are promised to a spawn, settled whatever their roll.
+    let rolled = |x: i32, z: i32| crate::rng::Rng::new(world.settlements.seed, 0x5e771e, x, z).chance(grid.chance);
+    let promised: Vec<IVec2> = (-2..=2).flat_map(|z| (-2..=2).map(move |x| IVec2::new(x, z))).filter(|c| !rolled(c.x, c.y)).collect();
+    assert!(!promised.is_empty());
+    for every in [4u64, 1] {
+        let mut named = Vec::new();
+        for z in -20..20 {
+            for x in -20..20 {
+                let cell = IVec2::new(x, z);
+                if !rolled(x, z) && !promised.contains(&cell) {
+                    continue;
+                }
+                // A list and form per square, as its biome and size would pick.
+                let h = crate::rng::hash3(7, x, 0, z);
+                let list = (h % def.names.len() as u64) as usize;
+                let small = (h >> 32) % every == 0 && !def.names[list].small.is_empty();
+                let name = super::plan::unique_name(def, world.settlements.seed, &promised, cell, list, small).0;
+                named.push((cell, list, name));
             }
-            // A list and form per square, as its biome and size would pick.
-            let h = crate::rng::hash3(7, x, 0, z);
-            let list = (h % def.names.len() as u64) as usize;
-            let small = h >> 32 & 3 == 0 && !def.names[list].small.is_empty();
-            let name = super::plan::unique_name(def, world.settlements.seed, cell, list, small).0;
-            named.push((cell, list, name));
         }
-    }
-    let gap = |a: IVec2, b: IVec2| ((a - b).abs() * grid.spacing - (grid.spacing - 2 * grid.margin)).max(IVec2::ZERO).as_vec2().length();
-    let mut clashes = Vec::new();
-    for (i, a) in named.iter().enumerate() {
-        for b in &named[i + 1..] {
-            if a.2 == b.2 && gap(a.0, b.0) <= apart {
-                clashes.push(format!("{} in squares {} and {}", a.2, a.0, b.0));
+        let gap = |a: IVec2, b: IVec2| ((a - b).abs() * grid.spacing - (grid.spacing - 2 * grid.margin)).max(IVec2::ZERO).as_vec2().length();
+        let mut clashes = Vec::new();
+        for (i, a) in named.iter().enumerate() {
+            for b in &named[i + 1..] {
+                if a.2 == b.2 && gap(a.0, b.0) <= apart {
+                    clashes.push(format!("{} in squares {} and {}", a.2, a.0, b.0));
+                }
             }
         }
+        assert!(named.len() > 500, "only {} squares named", named.len());
+        assert!(clashes.is_empty(), "one in {every} small: {} clashes:\n{}", clashes.len(), clashes.join("\n"));
     }
-    assert!(named.len() > 500, "only {} squares named", named.len());
-    assert!(clashes.is_empty(), "{} clashes:\n{}", clashes.len(), clashes.join("\n"));
 }
 
 /// Settling the spawn plans each square in its reach once: the plans made finding the
@@ -1609,4 +1616,5 @@ fn the_spawn_plans_each_square_once() {
         assert!(spawn.early.lock().unwrap().is_empty());
     }
 }
+
 

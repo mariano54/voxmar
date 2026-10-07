@@ -369,7 +369,7 @@ impl Default for SiteDef {
             relief: 14,
             caves: 150,
             glade: (5, 16),
-            glade_trees: (0.08, 0.3),
+            glade_trees: (0.08, 0.1),
             eaves: 1,
             water: 48,
             fertility: 0.3,
