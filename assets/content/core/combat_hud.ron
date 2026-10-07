@@ -16,11 +16,12 @@
     pips: (size: 3, gap: 2, off: (58, 62, 80), on: (242, 193, 78), ready: (255, 138, 61)),
     // Hitsplats, as the design wiki's combat feel has them: red for damage, blue for a miss
     // or a block, green for bleeding, gold for flourishes and counters, a little larger on
-    // the beat. Each shows `seconds`, rising `rise` meanwhile; those on one creature stand
-    // `spread` apart; the player's own stand `hurt_above` over the bottom edge. `scale` is
-    // screen pixels a font pixel: 2 as body text (the default), 3 as headings.
+    // the beat. Each shows `seconds`, rising `rise` meanwhile; those on one creature stack
+    // upward, newest lowest, `gap` apart; the player's own stand `hurt_above` over the
+    // bottom edge. `scale` is screen pixels a font pixel: 2 as body text (the default), 3
+    // as headings.
     splats: (
-        seconds: 0.9, rise: 14, spread: 9, hurt_above: 70,
+        seconds: 0.9, rise: 14, gap: 1, hurt_above: 70,
         // The player's blows, by kind.
         blows: {
             "plain": (color: (236, 76, 64)),

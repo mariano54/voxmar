@@ -103,15 +103,15 @@ pub struct FlashStyle {
     pub seconds: f32,
 }
 
-/// Hitsplats: the seconds each shows and how far it rises meanwhile, how far apart
-/// those on one creature stand, how high over the hotbar the player's own stand, each
+/// Hitsplats: the seconds each shows and how far it rises meanwhile, the room between
+/// those stacked on one creature, how high over the hotbar the player's own stand, each
 /// kind's look by its name, and the health bar's flash when a blow hurts.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SplatStyle {
     pub seconds: f32,
     pub rise: f32,
-    pub spread: f32,
+    pub gap: f32,
     pub hurt_above: f32,
     pub blows: std::collections::BTreeMap<String, Splat>,
     pub defended: std::collections::BTreeMap<String, Splat>,
@@ -236,8 +236,8 @@ pub struct HitSplat {
     /// The creature struck, or none for a blow at the player.
     pub creature: Option<u32>,
     pub at: f64,
-    /// Its place among those shown on the same one, for spreading them.
-    slot: u8,
+    /// Its text's size, for stacking before it is laid out.
+    size: f32,
 }
 
 /// The hitsplats drawn so far, ever, by what they said: for the gate to check against
@@ -385,7 +385,7 @@ fn splats(
     settings: Res<Settings>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     layer: Query<(Entity, &ComputedNode), With<SplatLayer>>,
-    mut marks: Query<(Entity, &HitSplat, &mut Node, &mut TextColor, &mut Visibility)>,
+    mut marks: Query<(Entity, &HitSplat, &ComputedNode, &mut Node, &mut TextColor, &mut Visibility)>,
 ) {
     let (Some(style), Ok((layer, area))) = (style, layer.single()) else { return };
     let now = time.elapsed_secs_f64();
@@ -397,17 +397,12 @@ fn splats(
     shown.hurt_seen = fighting.hurt_count;
     // With damage numbers off, none are drawn (and those already up go as they would).
     let (new_struck, new_hurt) = if settings.damage_numbers { (new_struck, new_hurt) } else { (0, 0) };
-    let mut on_each: std::collections::HashMap<Option<u32>, u8> = std::collections::HashMap::new();
-    for (_, mark, ..) in &marks {
-        *on_each.entry(mark.creature).or_default() += 1;
-    }
-    let mut add = |commands: &mut Commands, creature: Option<u32>, words: String, look: Splat, at: f64| {
-        let slot = on_each.entry(creature).or_default();
+    let add = |commands: &mut Commands, creature: Option<u32>, words: String, look: Splat, at: f64| {
         let node = Node { position_type: PositionType::Absolute, ..default() };
         let centred = UiTransform::from_translation(Val2::percent(-50.0, -100.0));
-        let mark = HitSplat { creature, at, slot: *slot };
-        *slot += 1;
-        commands.entity(layer).with_child((node, centred, shadowed(&font.0, words, font_size(look.scale.max(2)), look.color.color()), TightLine, mark, Visibility::Hidden));
+        let size = font_size(look.scale.max(2));
+        let mark = HitSplat { creature, at, size };
+        commands.entity(layer).with_child((node, centred, shadowed(&font.0, words, size, look.color.color()), TightLine, mark, Visibility::Hidden));
     };
     for &(creature, damage, blow, at) in fighting.struck.iter().rev().take(new_struck).rev() {
         let words = struck_words(&locale, damage, blow);
@@ -423,7 +418,11 @@ fn splats(
     let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
     let Ok((camera, eye)) = camera.single() else { return };
     let size = area.size() * area.inverse_scale_factor();
-    for (entity, mark, mut node, mut color, mut visibility) in &mut marks {
+    let stacked: Vec<(Entity, (Option<u32>, f64, f32))> =
+        marks.iter().map(|(entity, mark, laid, ..)| (entity, (mark.creature, mark.at, (laid.size().y * laid.inverse_scale_factor()).max(mark.size)))).collect();
+    let lifts: std::collections::HashMap<Entity, f32> =
+        stacked.iter().map(|(entity, _)| *entity).zip(lifts(stacked.iter().map(|(_, mark)| *mark), splat.gap * PX)).collect();
+    for (entity, mark, _, mut node, mut color, mut visibility) in &mut marks {
         let age = (now - mark.at) as f32 / splat.seconds.max(1e-3);
         if age >= 1.0 {
             commands.entity(entity).despawn();
@@ -441,13 +440,8 @@ fn splats(
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
-        // Spread side to side by its place, so blows close together do not cover each other.
-        let side = match mark.slot % 3 {
-            0 => 0.0,
-            1 => -1.0,
-            _ => 1.0,
-        };
-        let at = base + Vec2::new(side * splat.spread * PX, -age * splat.rise * PX);
+        let lift = lifts.get(&entity).copied().unwrap_or_default();
+        let at = base - Vec2::Y * (lift + age * splat.rise * PX);
         node.left = Val::Px(at.x);
         node.top = Val::Px(at.y);
         // Full for the first half, then fading out.
@@ -458,6 +452,28 @@ fn splats(
         }
         visibility.set_if_neq(Visibility::Inherited);
     }
+}
+
+/// How far above its place each splat stands, for splats given as (whom, when, height):
+/// those on one creature (or on the player) stack upward, newest lowest and each older one
+/// its newer neighbour's height and `gap` higher, so blows close together never cover each
+/// other; as they all rise alike, an older one stays above a newer.
+pub fn lifts(splats: impl Iterator<Item = (Option<u32>, f64, f32)>, gap: f32) -> Vec<f32> {
+    let splats: Vec<_> = splats.collect();
+    let mut order: Vec<usize> = (0..splats.len()).collect();
+    // By whom, then newest first (the later told first, of two told at once).
+    order.sort_by(|&a, &b| splats[a].0.cmp(&splats[b].0).then(splats[b].1.total_cmp(&splats[a].1)).then(b.cmp(&a)));
+    let mut lifts = vec![0.0; splats.len()];
+    let mut above = (None, 0.0);
+    for i in order {
+        let (whom, _, height) = splats[i];
+        if above.0 != Some(whom) {
+            above = (Some(whom), 0.0);
+        }
+        lifts[i] = above.1;
+        above.1 += height + gap;
+    }
+    lifts
 }
 
 /// The health bar's colour for what was lost, `age` seconds after a blow hurt the player:
@@ -511,7 +527,7 @@ mod tests {
         let style = CombatStyle::load(&files).unwrap();
         assert!(style.meter.width > 0.0 && style.splats.seconds > 0.0);
         let mut modded = files.clone();
-        modded.push(file("mod", r#"(splats: (seconds: 2.0, rise: 30, spread: 8, hurt_above: 64, blows: { "flourish": (color: (1, 2, 3), scale: 4) }, defended: {}, flash: (color: (9, 9, 9), seconds: 1.0)))"#));
+        modded.push(file("mod", r#"(splats: (seconds: 2.0, rise: 30, gap: 1, hurt_above: 64, blows: { "flourish": (color: (1, 2, 3), scale: 4) }, defended: {}, flash: (color: (9, 9, 9), seconds: 1.0)))"#));
         let changed = CombatStyle::load(&modded).unwrap();
         assert_eq!(changed.blow(Blow::Flourish), Splat { color: Rgb(1, 2, 3), scale: 4 });
         assert_eq!(changed.splats.flash, FlashStyle { color: Rgb(9, 9, 9), seconds: 1.0 });
@@ -524,9 +540,22 @@ mod tests {
     fn a_style_missing_a_kind_is_refused() {
         let source = r#"(meter: (width: 24, height: 3, below: 12, empty: (0,0,0), fill: (0,0,0), beat: (0,0,0), buffer: (0,0,0), linger: 3.0),
             pips: (size: 3, gap: 2, off: (0,0,0), on: (0,0,0), ready: (0,0,0)),
-            splats: (seconds: 1.0, rise: 10, spread: 8, hurt_above: 60, blows: { "plain": (color: (0,0,0)) }, defended: {}, flash: (color: (0,0,0), seconds: 0.5)))"#;
+            splats: (seconds: 1.0, rise: 10, gap: 1, hurt_above: 60, blows: { "plain": (color: (0,0,0)) }, defended: {}, flash: (color: (0,0,0), seconds: 0.5)))"#;
         let refused = CombatStyle::load(&[file("core", source)]).unwrap_err();
         assert!(refused.contains("no splat for a beat blow"), "{refused}");
+    }
+
+    /// Splats on one creature stack upward, newest lowest, apart from another creature's
+    /// and the player's own; two told at once still stand apart.
+    #[test]
+    fn splats_on_one_creature_stack_newest_lowest() {
+        let splats = [(Some(7), 1.0, 16.0), (Some(7), 1.2, 32.0), (None, 1.1, 16.0), (Some(7), 1.1, 16.0), (Some(9), 1.0, 16.0), (None, 1.1, 16.0)];
+        let lifts = lifts(splats.into_iter(), 2.0);
+        // Creature 7: newest (1.2, 32 high) at 0, then 1.1 above it, then 1.0 above that.
+        assert_eq!((lifts[1], lifts[3], lifts[0]), (0.0, 34.0, 52.0));
+        assert_eq!(lifts[4], 0.0, "another creature's stack starts on its own");
+        // The player's two, told at once: the later told lowest.
+        assert_eq!((lifts[5], lifts[2]), (0.0, 18.0));
     }
 
     /// A blow that hurts shows the flash's colour on what the bar lost, fading to the bar's
