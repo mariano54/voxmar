@@ -1,0 +1,35 @@
+// The numbers survival runs on, which the server reads. A later package's survival.ron
+// changes only the numbers it sets. Health is in half hearts; temperatures in °C.
+(
+    // Health a player starts with, before their Hitpoints level sets it (twice the level).
+    max_health: 20,
+    // What a new player starts with: item and count (in as many slots as it takes; baked
+    // food takes one each), after `pack_end`: the first tools, food for the first night,
+    // light and a little wood.
+    starter_kit: [
+        ("base:wooden_pickaxe", 1),
+        ("base:wooden_axe", 1),
+        ("base:bread", 4),
+        ("base:torch", 8),
+        ("base:oak_planks", 16),
+    ],
+    // What a new player starts with in the pack's last slots (last first), out of the
+    // hotbar's way: the empty coin purse.
+    pack_end: [("base:coin_purse", 1)],
+    // Falls shorter than this many blocks do no damage; each block more costs one.
+    safe_fall: 3.0,
+    // Lava burns this much health every so many seconds.
+    burn: 4,
+    burn_every: 0.5,
+    // Below this height the void takes all of a player's health.
+    void_below: -16.0,
+    // Blocks giving at least this much light (of 15) warm those near them: up to `heat` at
+    // their heart, fading to nothing past `heat_reach` blocks.
+    heat_emission: 12,
+    heat: 14.0,
+    heat_reach: 4,
+    // How much colder standing in water feels.
+    water_chill: 8.0,
+    // How far up a roof is looked for, to tell whether a player is out in the weather.
+    roof_scan: 48,
+)

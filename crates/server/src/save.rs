@@ -13,7 +13,10 @@
 //! - `machines.ron`: the machines players built, by block name, with what they hold.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
-//! never leaves a half-written file behind.
+//! never leaves a half-written file behind. A file that cannot be read is never silently
+//! replaced: it is moved aside to `<file>.corrupt-<unix time>` (`set_aside`) and the error
+//! logged, and if it cannot even be moved the server refuses to start (world files) or the
+//! player to join (player files).
 //!
 //! A save is one generation: everything but `world.ron` is first written beside its file as
 //! `<file>.<generation>.new`, then `world.ron` takes the new generation (the moment the save
@@ -345,7 +348,7 @@ impl WorldSave {
             return Err(invalid(&path, "not a column file"));
         };
         let mut encoded = Vec::new();
-        ZlibDecoder::new(compressed).read_to_end(&mut encoded)?;
+        ZlibDecoder::new(compressed).read_to_end(&mut encoded).map_err(|e| invalid(&path, e))?;
         let file: ColumnFile<Column> = postcard::from_bytes(&encoded).map_err(|e| invalid(&path, e))?;
         let mut column = file.column;
         if column.colors.len() != COLUMN_AREA || !column.chunks.iter().all(Chunk::is_valid) {
@@ -389,13 +392,37 @@ impl WorldSave {
         write_atomic(&self.target(path), &encoder.finish()?)
     }
 
+    /// Where the player called `name` is saved: by the name in lower case, since names
+    /// differing only in case are one player (and one file on macOS and Windows).
     fn player_path(&self, name: &str) -> PathBuf {
-        self.dir.join("players").join(format!("{}.ron", file_name(name)))
+        self.dir.join("players").join(format!("{}.ron", file_name(&name.to_lowercase())))
+    }
+
+    /// The file the player called `name` is read from: theirs, or one saved before names
+    /// were kept in lower case, under the name as some player typed it, in any case
+    /// (written back to theirs at the next save).
+    fn player_file(&self, name: &str) -> PathBuf {
+        let path = self.player_path(name);
+        if path.exists() {
+            return path;
+        }
+        // Compared by the names they hold, so a name escaped in the file (`Ü` as `~dc~`)
+        // matches in any case too.
+        let wanted = name.to_lowercase();
+        let older = std::fs::read_dir(self.dir.join("players"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|older| older.extension().is_some_and(|e| e == "ron"))
+            .filter(|older| older.file_stem().and_then(|n| player_name(&n.to_string_lossy())).is_some_and(|n| n.to_lowercase() == wanted))
+            .min();
+        older.unwrap_or(path)
     }
 
     /// The saved state of the player called `name`. Items that no longer exist are dropped.
     pub fn read_player(&self, name: &str, registry: &BlockRegistry) -> io::Result<Option<SavedPlayer>> {
-        let path = self.player_path(name);
+        let path = self.player_file(name);
         let source = match std::fs::read_to_string(&path) {
             Ok(source) => source,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -414,7 +441,18 @@ impl WorldSave {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+        let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+    }
+
+    /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
+    pub fn set_aside_player(&self, name: &str) -> io::Result<PathBuf> {
+        set_aside(&self.player_file(name))
+    }
+
+    /// Moves the column file at `pos` aside, as unreadable (`set_aside`).
+    pub fn set_aside_column(&self, pos: ColumnPos) -> io::Result<PathBuf> {
+        set_aside(&self.column_path(pos))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -553,6 +591,62 @@ impl WorldSave {
     }
 }
 
+/// What a world keeps besides its columns and players, as read when it opens.
+#[derive(Debug, Default)]
+pub(crate) struct WorldState {
+    pub items: Vec<SavedItem>,
+    pub crops: Vec<SavedCrop>,
+    pub creatures: Vec<crate::husbandry::SavedCreature>,
+}
+
+impl WorldSave {
+    /// The dropped items, crops and kept creatures. A file that is not what it should be is
+    /// moved aside and logged, and the world opens without what it held; a file that could
+    /// not be read at all, or moved aside (and so would be overwritten at the next save), is
+    /// an error.
+    pub(crate) fn read_state(&self) -> io::Result<WorldState> {
+        Ok(WorldState {
+            items: self.read_or_set_aside(ITEMS_FILE, Self::read_items)?,
+            crops: self.read_or_set_aside(CROPS_FILE, Self::read_crops)?,
+            creatures: self.read_or_set_aside(CREATURES_FILE, Self::read_creatures)?,
+        })
+    }
+
+    fn read_or_set_aside<T: Default>(&self, file: &str, read: fn(&Self) -> io::Result<T>) -> io::Result<T> {
+        let error = match read(self) {
+            Ok(value) => return Ok(value),
+            // Not read at all (no permission, a failing disk): the world does not open.
+            Err(error) if error.kind() != io::ErrorKind::InvalidData => return Err(error),
+            Err(error) => error,
+        };
+        let path = self.dir.join(file);
+        match set_aside(&path) {
+            Ok(aside) => {
+                tracing::error!("could not read {}: {error}; kept it as {} and opened the world without it", path.display(), aside.display());
+                Ok(T::default())
+            }
+            Err(moving) => Err(io::Error::new(error.kind(), format!("could not read {}: {error}; nor move it aside: {moving}", path.display()))),
+        }
+    }
+}
+
+/// Moves an unreadable save file aside, to `<file>.corrupt-<unix time>` beside it, so the
+/// next save does not replace it and it can be looked at or restored by hand. Returns
+/// where it went.
+pub fn set_aside(path: &Path) -> io::Result<PathBuf> {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let stamp = unix_time();
+    for n in 0..1000 {
+        let suffix = if n == 0 { String::new() } else { format!("-{n}") };
+        let aside = path.with_file_name(format!("{name}.corrupt-{stamp}{suffix}"));
+        if !aside.exists() {
+            std::fs::rename(path, &aside)?;
+            return Ok(aside);
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} has been set aside too often", path.display())))
+}
+
 /// Every world in `root`, most recently played first. Directories without a readable
 /// `world.ron` are skipped.
 pub fn list_worlds(root: &Path) -> Vec<(WorldSave, WorldMeta)> {
@@ -630,6 +724,23 @@ fn file_name(name: &str) -> String {
         }
     }
     out
+}
+
+/// The player name a `file_name` holds, or `None` if it is not one.
+fn player_name(file: &str) -> Option<String> {
+    let mut out = String::with_capacity(file.len());
+    let mut rest = file;
+    while let Some(c) = rest.chars().next() {
+        if c == '~' {
+            let (hex, after) = rest[1..].split_once('~')?;
+            out.push(char::from_u32(u32::from_str_radix(hex, 16).ok()?)?);
+            rest = after;
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    Some(out)
 }
 
 fn invalid(path: &Path, error: impl std::fmt::Display) -> io::Error {
@@ -828,6 +939,23 @@ mod tests {
         // Names that are not plain file names stay inside the players directory.
         let files = std::fs::read_dir(dir.join("players")).unwrap().count();
         assert!(files >= 4, "{files} player files");
+        // Names differing only in case are one player, with one file, on any filesystem.
+        assert_eq!(save.read_player("STEVE", &registry).unwrap(), Some(player.clone()));
+        assert!(dir.join("players/steve.ron").exists() && !dir.join("players/Steve.ron").exists() || cfg!(not(target_os = "linux")));
+        // A file saved under the name as typed, before names were kept in lower case, is
+        // still found, and the next save goes to the lower-case one.
+        let old = SavedPlayer { yaw: 0.5, ..player.clone() };
+        let text = std::fs::read_to_string(dir.join("players/a~2f~b.ron")).unwrap();
+        std::fs::write(dir.join("players/Ada.ron"), text.replace("yaw: 1.25", "yaw: 0.5")).unwrap();
+        assert_eq!(save.read_player("Ada", &registry).unwrap(), Some(old.clone()));
+        assert_eq!(save.read_player("ada", &registry).unwrap(), Some(old.clone()), "on a case-sensitive disk too");
+        save.write_player("Ada", &player, &registry).unwrap();
+        assert_eq!(save.read_player("ADA", &registry).unwrap(), Some(player.clone()));
+        // A name escaped in the old file is matched by what it holds: `Über` as `~dc~ber`.
+        std::fs::write(dir.join("players/~dc~ber.ron"), text.replace("yaw: 1.25", "yaw: 0.5")).unwrap();
+        assert_eq!(save.read_player("über", &registry).unwrap(), Some(old.clone()));
+        assert_eq!(player_name("a~2f~b").as_deref(), Some("a/b"));
+        assert_eq!(player_name("a~zz~b"), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

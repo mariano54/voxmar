@@ -337,12 +337,16 @@ impl Server {
                 }
                 (Effect::Respawn, _) => {
                     // Home, if the player has one, else the bed they last slept in, else
-                    // world spawn.
+                    // world spawn. What they carried is left where they fell first.
+                    self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
                     let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     player.position = spawn;
+                    // Where they wake is where a grave goes until they stand elsewhere,
+                    // not where they last stood in the life before.
+                    player.last_ground = Some(spawn);
                     player.fall_start = None;
                     player.changed(traits::HEALTH);
                     player.changed(traits::VITALS);

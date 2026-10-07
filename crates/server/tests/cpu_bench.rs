@@ -32,7 +32,7 @@ fn streaming_at_four_times_flight_speed() {
     let server = spawn(ServerConfig { seed: 1, view_distance: 32, ..Default::default() }, content.clone()).expect("server starts");
     let (connection, server_side) = local_pair();
     server.connections().send(server_side).expect("server takes the connection");
-    connection.send(ClientMessage::Hello { name: "bench".into(), protocol: PROTOCOL_VERSION, content: content.fingerprint() });
+    connection.send(ClientMessage::Hello { name: "bench".into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: None });
     connection.send(ClientMessage::Settings { view_distance: 32, fly_speed: 4.0 });
 
     let mut world = VoxelWorld::default();
