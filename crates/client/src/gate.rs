@@ -217,6 +217,10 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// Rice sown on farmland with no water near is refused by the server, and the refusal
+    /// shows by the hotbar, as a level the player lacks does (the server sends it as a
+    /// refusal, not a console line).
+    Refusal,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
     /// An effect that comes on pops up with its name, and the first look at the inventory
@@ -907,6 +911,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Settlements => settlements(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
@@ -2066,7 +2071,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::Effects, now);
+        gate.next(Step::Refusal, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -2091,7 +2096,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::Effects, now);
+                gate.next(Step::Refusal, now);
             }
         }
         2 => {
@@ -2126,6 +2131,77 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
+            gate.next(Step::Refusal, now);
+        }
+    }
+}
+
+/// The plot `refusal` sows, on the test ground's dirt and more than four blocks from its
+/// pool, so nothing waters it.
+const DRY_PLOT: IVec3 = IVec3::new(-5, -1, 5);
+
+/// Rice (which grows only with water near) sown on a dry plot: the server refuses it and
+/// says why as a refusal, which shows by the hotbar with the others.
+fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    let plot = gate.feet + DRY_PLOT;
+    let rice = world.resource::<ClientWorld>().registry.id("base:rice");
+    let crop = world.resource::<Launch>().content.blocks.id("base:rice_crop");
+    let (Some(rice), Some(crop)) = (rice, crop) else {
+        gate.check("refusal", Err("no rice in the content".into()));
+        gate.next(Step::Effects, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            for line in [
+                "skill farming 10".to_owned(),
+                "give rice 2".to_owned(),
+                format!("setblock {} {} {} farmland", plot.x, plot.y, plot.z),
+                format!("fill {} {} {} {} {} {} air", plot.x, plot.y + 1, plot.z, plot.x, plot.y + 2, plot.z),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let farmland = world.resource::<ClientWorld>().registry.id("base:farmland");
+            let tilled = farmland.is_some() && world.resource::<ClientWorld>().block(plot) == farmland;
+            match (tilled, in_hotbar(world, &mut gate.food_moved, rice)) {
+                (true, Some(slot)) => {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                    gate.advance(now);
+                }
+                _ if gate.server_in_phase() > UNANSWERED => {
+                    gate.check("refusal", Err(format!("the farmland ({tilled}) or rice in the hotbar never came")));
+                    gate.next(Step::Effects, now);
+                }
+                _ => {}
+            }
+        }
+        2 => {
+            aim_at(world, plot.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            let name = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                locale.block(launch.content.blocks.def(crop))
+            };
+            let said = world.resource::<crate::hud::skills::SkillToasts>().refusals().find(|why| why.contains(&name)).map(str::to_owned);
+            if let Some(said) = said {
+                mouse(world, MouseButton::Right, false);
+                gate.check("refusal", Ok(format!("sowing rice on a dry plot was refused: \"{said}\"")));
+                gate.advance(now);
+            } else if gate.server_in_phase() > UNANSWERED {
+                mouse(world, MouseButton::Right, false);
+                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name}")));
+                gate.advance(now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        _ => {
+            let net = world.resource::<Net>();
+            net.command("clear rice");
+            net.command(&format!("setblock {} {} {} dirt", plot.x, plot.y, plot.z));
             gate.next(Step::Effects, now);
         }
     }

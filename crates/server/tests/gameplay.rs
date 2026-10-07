@@ -40,6 +40,8 @@ struct Client {
     quick: bool,
     /// Console lines received.
     chat: Vec<(ChatKind, String)>,
+    /// Refusals received, in English.
+    refused: Vec<String>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
     /// The server's tick as last told (once a second).
@@ -115,6 +117,7 @@ impl Client {
             weather: None,
             quick: false,
             chat: Vec::new(),
+            refused: Vec::new(),
             day: None,
             server_tick: 0,
             creatures: Default::default(),
@@ -189,6 +192,7 @@ impl Client {
                 self.quick = quick;
             }
             ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
+            ServerMessage::Refused { why } => self.refused.push(self.content.english.render(&why, &self.content.blocks)),
             ServerMessage::Time { tick, day, day_speed } => {
                 self.day = Some((day, day_speed));
                 self.server_tick = tick;
@@ -1360,11 +1364,12 @@ fn sowing_where_a_crop_cannot_grow_is_refused_with_why() {
     client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.chat.clear();
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
-    client.pump_until(|c| !c.chat.is_empty());
-    let (kind, text) = client.chat[0].clone();
-    assert_eq!(kind, ChatKind::Info);
+    client.pump_until(|c| !c.refused.is_empty());
+    // A refusal, for the interface to show as one, not a console line.
+    let text = client.refused[0].clone();
     assert!(text.contains("water close by") || text.contains("here for"), "refused sowing said {text:?}");
     client.settle();
+    assert!(client.chat.is_empty(), "a refused sowing also wrote to the console: {:?}", client.chat);
     assert_eq!(client.world.block(ground + IVec3::Y), Some(BlockId::AIR), "rice was sown where it cannot grow");
     assert_eq!(client.inventory.get(0).map(|s| s.count), Some(2), "a refused sowing took the seed");
 }
