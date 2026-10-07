@@ -921,6 +921,10 @@ struct StyleFile {
     crops: Vec<Select>,
     #[serde(default)]
     weathered: Vec<Select>,
+    /// What chimneys are built of, one to a chimney (the first foundation stone when left
+    /// out).
+    #[serde(default)]
+    chimney: Vec<Select>,
     /// Its logs, `{wood}` its wood (`{wood}_log` when left out).
     #[serde(default)]
     log: Option<String>,
@@ -1094,6 +1098,7 @@ pub struct StyleDef {
     pub hedge: Material,
     pub crops: Vec<(String, f32)>,
     pub weathered: Material,
+    pub chimney: Material,
     /// Its logs' block, `{wood}` its wood.
     pub log: String,
 }
@@ -1299,6 +1304,7 @@ impl SettlementsDef {
                 paving: m(&s.paving)?,
                 hedge: m(&s.hedge)?,
                 weathered: m(&s.weathered)?,
+                chimney: m(&s.chimney)?,
                 crops: names(package, at, &s.crops)?,
                 window: s.window.as_deref().map(|w| qualify(package, w)),
                 log: qualify(package, s.log.as_deref().unwrap_or("{wood}_log")),
@@ -1542,8 +1548,8 @@ impl SettlementsDef {
 }
 
 impl StyleDef {
-    fn materials(&self) -> [&Material; 9] {
-        [&self.foundation, &self.floor, &self.walls, &self.frame, &self.roof, &self.trim, &self.paving, &self.hedge, &self.weathered]
+    fn materials(&self) -> [&Material; 10] {
+        [&self.foundation, &self.floor, &self.walls, &self.frame, &self.roof, &self.trim, &self.paving, &self.hedge, &self.weathered, &self.chimney]
     }
 }
 

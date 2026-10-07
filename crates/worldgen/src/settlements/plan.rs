@@ -138,6 +138,14 @@ impl Rect {
         d.length()
     }
 
+    /// How far `p` is outside the blocks, or how deep inside them (negative).
+    fn signed(&self, p: Vec2) -> f32 {
+        let lo = self.min.as_vec2() - 0.5;
+        let hi = self.max.as_vec2() + 0.5;
+        let d = (lo - p).max(p - hi);
+        if d.max_element() > 0.0 { d.max(Vec2::ZERO).length() } else { d.max_element() }
+    }
+
     fn grow(&self, by: i32) -> Rect {
         Rect { min: self.min - by, max: self.max + by }
     }
@@ -346,6 +354,7 @@ struct Kit {
     paving: Palette,
     hedge: Palette,
     weathered: Palette,
+    chimney: Vec<(BlockId, f32)>,
     crops: Vec<([BlockId; 4], f32)>,
     fruit: Palette,
     roofs: Vec<(Roof, f32)>,
@@ -391,6 +400,7 @@ fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, crop_level: u32, rng: &mut 
         paving: Palette(resolve(&style.paving.0)),
         hedge: Palette(resolve(&style.hedge.0)),
         weathered: Palette(resolve(&style.weathered.0)),
+        chimney: resolve(&style.chimney.0),
         crops,
         fruit: Palette(ctx.fixed.fruit.iter().filter(|f| f.2 <= crop_level).map(|&(b, w, _)| (b, w)).collect()),
         // The style's roofs, each weighed again by how the place leans.
@@ -412,6 +422,7 @@ impl Kit {
         let fallback = self.foundation.0.first().map_or(ctx.fixed.dirt, |b| b.0);
         let wall = one(rng, &self.walls, fallback);
         let log = ctx.resolved.get(&fill(&self.log, &self.wood, &self.wood)).unwrap_or(fallback);
+        let chimney = one(rng, &self.chimney, fallback);
         Mats {
             foundation: self.foundation.clone(),
             floor: one(rng, &self.floor, wall),
@@ -423,6 +434,7 @@ impl Kit {
             weathered: self.weathered.clone(),
             hedge: self.hedge.clone(),
             log,
+            chimney,
             crops: self.crops.clone(),
             fruit: self.fruit.clone(),
         }
@@ -556,6 +568,8 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     if on_square && let Some(spec) = &centre_spec {
         square = square.max(spec.w.max(spec.d) / 2 + 5).min(16);
     }
+    // Lanes lead off the square and never back across it.
+    let square_rect = Rect { min: centre - square, max: centre + square };
     // Everything it builds stays inside its square of the grid, a margin in, so it never
     // reaches the next.
     let bounds = Rect { min: cell * def.grid.spacing + def.grid.margin / 2, max: (cell + 1) * def.grid.spacing - def.grid.margin / 2 - 1 };
@@ -570,7 +584,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let start_angle = rng.unit() * std::f32::consts::TAU;
     let lane_length = |rng: &mut Rng| between(rng, size.lane_length) as f32;
     let walk_from = |ground: &mut Ground, lanes: &mut Vec<Lane>, rng: &mut Rng, from: Vec2, angle: f32, length: f32, half: f32, main: bool| {
-        let points = walk(ground, lanes, rng, from, angle, length, wiggle, &bounds, lanes_def, &[]);
+        let points = walk(ground, lanes, rng, from, angle, length, wiggle, &bounds, lanes_def, &[(square_rect, CLEAR)]);
         if points.len() >= 3 {
             lanes.push(Lane { points, half, paved: paved && main, main });
         }
@@ -752,7 +766,8 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let workshops = between(&mut rng, size.workshops);
     let mut lots: Vec<Lot> = Vec::new();
     let mut occupied: Vec<Rect> = Vec::new();
-    let square_rect = Rect { min: centre - square, max: centre + square };
+    // The well and centrepiece, which lanes keep a ring clear of.
+    let mut kept: Vec<Rect> = Vec::new();
     let gap = rules.lots.gap.0 + ((1.0 - crowding) * rules.lots.gap.1).round() as i32;
 
     // A centrepiece on the square stands at its heart, the well beside it.
@@ -765,6 +780,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         let mats = kit.mats(ctx, &mut rng);
         let frame = Frame::fit(IVec2::ZERO, extent - 1, Facing::North, rect.min, square_height);
         occupied.push(rect);
+        kept.push(rect);
         lots.push(Lot { spec, rect, frame, floor: square_height, mats, door: None, yard: 0, house: None, centre: centrepiece });
         let side = [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y][rng.below(4) as usize];
         well_at = centre + side * (extent.max_element() / 2 + 3);
@@ -779,7 +795,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         let mut placed = false;
         for at in spots {
             let rect = Rect::new(at - width / 2, extent);
-            if occupied.iter().any(|o| o.gap(&rect) < 1) {
+            if occupied.iter().any(|o| o.gap(&rect) < 1) || lanes.iter().any(|l| l.rect_distance(&rect.grow(RING)) < l.half + 0.5) {
                 continue;
             }
             if level(&mut ground, &rect, def.site.bank, 1).is_none_or(|(low, high)| high - low > 1 || (low - square_height).abs() > 1) {
@@ -788,6 +804,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             let mats = kit.mats(ctx, &mut rng);
             let frame = Frame::fit(IVec2::ZERO, extent - 1, Facing::North, rect.min, square_height);
             occupied.push(rect);
+            kept.push(rect);
             lots.push(Lot { spec, rect, frame, floor: square_height, mats, door: None, yard: 0, house: None, centre: None });
             placed = true;
             break;
@@ -892,7 +909,8 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
                 let angle = dir.to_angle() + side * std::f32::consts::FRAC_PI_2 + (rng.unit() - 0.5) * 0.4 * (1.0 - order);
                 let length = between(&mut rng, size.lane_length) as f32 * 0.6;
                 let start = p + Vec2::from_angle(angle) * (lane.half + 0.5);
-                let points = walk(&mut ground, &lanes, &mut rng, start, angle, length, wiggle, &bounds, lanes_def, &occupied);
+                let avoid: Vec<(Rect, f32)> = occupied.iter().map(|r| (*r, CLEAR)).chain(kept.iter().map(|r| (*r, side_half + RING as f32 + 0.5))).chain([(square_rect, CLEAR)]).collect();
+                let points = walk(&mut ground, &lanes, &mut rng, start, angle, length, wiggle, &bounds, lanes_def, &avoid);
                 if points.len() >= 4 {
                     let mut points = points;
                     points.insert(0, p);
@@ -967,6 +985,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             if let Some(mut lot) = place(&mut town, &mut ground, &mut rng, &Want::Kind(kind), given.clone(), front, Facing::toward(-normal), &occupied, &lanes, None) {
                 if kind == Kind::Centrepiece {
                     lot.centre = centrepiece;
+                    kept.push(lot.rect);
                 }
                 occupied.extend(lot.taken());
                 lots.push(lot);
@@ -1245,6 +1264,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         buildings,
         gates,
         lanes: lanes.iter().map(|l| l.points.clone()).collect(),
+        lane_halves: lanes.iter().map(|l| l.half).collect(),
         min: raster.min,
         max: raster.max,
         raster,
@@ -1273,12 +1293,18 @@ pub(super) fn join_kana(kana: &[KanaJoin], first: &(String, String), last: &(Str
 /// How far graded ground eases back into the land around, in blocks.
 pub const FALLOFF: i32 = 5;
 
+/// How far walked lanes keep from what they avoid, centre line to blocks.
+const CLEAR: f32 = 2.0;
+
+/// The ring of blocks kept clear of lanes round a well or centrepiece.
+const RING: i32 = 1;
+
 
 /// Walks a lane from `from`, heading `angle`, for `length` blocks: it bends a little at
 /// random, more in disorderly places, and steers round water, steep ground and other
 /// lanes, ending early where it cannot go on.
 #[allow(clippy::too_many_arguments)]
-fn walk(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f32, length: f32, wiggle: f32, bounds: &Rect, rules: &LanesDef, avoid: &[Rect]) -> Vec<Vec2> {
+fn walk(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f32, length: f32, wiggle: f32, bounds: &Rect, rules: &LanesDef, avoid: &[(Rect, f32)]) -> Vec<Vec2> {
     let step = rules.step;
     let mut points = vec![from];
     let mut heading = angle;
@@ -1294,7 +1320,10 @@ fn walk(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f
             let a = heading + turn;
             let next = here + Vec2::from_angle(a) * step;
             let at = next.round().as_ivec2();
-            if !bounds.holds(at) || avoid.iter().any(|r| r.distance(next) < 2.0) {
+            // Never nearer than `clear` to what it avoids, nor nearer than it is already
+            // when it sets out closer, as lanes off the square do.
+            let nears = |r: &Rect, clear: f32| (0..=6).map(|k| r.signed(here.lerp(next, k as f32 / 6.0))).fold(f32::MAX, f32::min) < clear.min(r.signed(here) - 0.01);
+            if !bounds.holds(at) || avoid.iter().any(|(r, clear)| nears(r, *clear)) {
                 continue;
             }
             let g = ground.at(at);
@@ -1682,7 +1711,8 @@ fn place(
     if occupied.iter().any(|o| o.gap(&rect) < town.gap) || town.square.gap(&rect) < 1 {
         return miss(2);
     }
-    if lanes.iter().any(|l| l.rect_distance(&rect) < l.half + 0.6) {
+    let ring = if matches!(kind, Kind::Well | Kind::Centrepiece) { RING } else { 0 };
+    if lanes.iter().any(|l| l.rect_distance(&rect.grow(ring)) < l.half + 0.6) {
         return miss(3);
     }
     // Firm, gentle ground under it all, and no water under it or on its banks.

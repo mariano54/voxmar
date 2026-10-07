@@ -58,7 +58,8 @@
 //   biome tags match wins (an empty list matches anywhere). `woods` fill `{wood}` (the
 //   main wood) and `{trim}` (a second wood, sometimes the same) in block names; every
 //   material list is weighed per settlement, which keeps a few of its options, and each
-//   house picks among those.
+//   house picks among those. `chimney`: what a chimney is built of, one block of the list
+//   all the way up (Review, 7 Oct: one stone per chimney, never a mix).
 (
     grid: (spacing: 1024, chance: 0.45, margin: 160),
     // site: where a settlement stands (design wiki, settlements, draft 60).
@@ -211,7 +212,7 @@
         (name: "wing_house", weight: 1.0, lean: {"wealth": 0.6}, width: (6, 8), depth: (7, 9), walls: (3, 3), storeys: (1, 2), wing: 1.0),
         // New outlines.
         (name: "roundhouse", form: Round, weight: 1.0, lean: {"age": 0.6, "wealth": -0.4, "order": -0.5}, width: (7, 9), depth: (7, 9), walls: (3, 3), storeys: (1, 1)),
-        (name: "a_frame", form: AFrame, weight: 0.8, lean: {"green": 0.6, "wealth": -0.2}, width: (5, 7), depth: (6, 9), walls: (3, 3), storeys: (1, 1)),
+        (name: "a_frame", form: AFrame, always: [Chimney], weight: 0.8, lean: {"green": 0.6, "wealth": -0.2}, width: (5, 7), depth: (6, 9), walls: (3, 3), storeys: (1, 1)),
         (name: "courtyard_house", form: Courtyard, sizes: ["village"], weight: 0.35, lean: {"wealth": 1.0, "crowding": -0.5}, width: (11, 12), depth: (11, 13), walls: (3, 3), storeys: (1, 1)),
         (name: "shop_house", form: ShopFront, sizes: ["village"], weight: 0.8, lean: {"wealth": 0.5, "crowding": 0.8}, width: (5, 7), depth: (6, 8), walls: (3, 4), storeys: (2, 2)),
         // Working buildings, one of each to a place (barns two); `work` names the trade.
@@ -411,6 +412,7 @@
             name: "sandstone", biome: ["desert", "dunes"],
             woods: [Name("palm", 2), Name("acacia", 2), Name("baobab", 1)],
             foundation: [Name("sandstone_bricks", 3), Name("cobbled_sandstone", 1)],
+            chimney: [Name("sandstone_bricks", 2), Name("terracotta", 1)],
             floor: [Name("polished_sandstone", 2), Name("terracotta", 1)],
             walls: [Name("sandstone", 3), Name("polished_sandstone", 2), Name("sandstone_bricks", 1), Name("white_terracotta", 1)],
             frame: [Name("sandstone_bricks", 2), Name("{wood}_log", 1)],
@@ -427,6 +429,7 @@
             name: "red_sandstone", biome: ["mesa"],
             woods: [Name("acacia", 3), Name("dark_oak", 1)],
             foundation: [Name("red_sandstone_bricks", 3), Name("cobbled_red_sandstone", 1)],
+            chimney: [Name("red_sandstone_bricks", 2), Name("terracotta", 1)],
             floor: [Name("polished_red_sandstone", 2), Name("terracotta", 1)],
             walls: [Name("red_sandstone", 2), Name("orange_terracotta", 2), Name("terracotta", 2), Name("white_terracotta", 1)],
             frame: [Name("{wood}_log", 2), Name("red_sandstone_bricks", 1)],
@@ -443,6 +446,7 @@
             name: "mudbrick", biome: ["savanna", "scrubland"],
             woods: [Name("acacia", 3), Name("baobab", 1)],
             foundation: [Name("cobbled_sandstone", 2), Name("cobblestone", 1)],
+            chimney: [Name("terracotta", 3), Name("brown_terracotta", 1)],
             floor: [Name("packed_earth", 2), Name("{wood}_planks", 1)],
             walls: [Name("terracotta", 3), Name("orange_terracotta", 1), Name("white_terracotta", 1), Name("brown_terracotta", 1)],
             frame: [Name("{wood}_log", 3), Name("stripped_{wood}_log", 1)],
@@ -459,6 +463,7 @@
             name: "stilts", biome: ["wetland"], stilts: 2,
             woods: [Name("mangrove", 2), Name("willow", 2), Name("cypress", 2), Name("dark_oak", 1)],
             foundation: [Name("{wood}_log", 1)],
+            chimney: [Name("cobblestone", 2), Name("terracotta", 1)],
             floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
             walls: [Name("{wood}_planks", 3), Name("{trim}_planks", 2), Name("stripped_{wood}_log", 1)],
             frame: [Name("{wood}_log", 3)],
@@ -475,6 +480,7 @@
             name: "log_cabin", biome: ["tundra", "conifer", "cold", "snow", "taiga"],
             woods: [Name("spruce", 4), Name("pine", 3), Name("redwood", 1)],
             foundation: [Name("cobblestone", 3), Name("mossy_cobblestone", 1), Name("cobbled_andesite", 1)],
+            chimney: [Name("cobblestone", 1)],
             floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
             walls: [Name("stripped_{wood}_log", 3), Name("{wood}_log", 3), Name("{wood}_planks", 2), Name("cobblestone", 1)],
             frame: [Name("{wood}_log", 3), Name("{trim}_log", 1)],
@@ -491,6 +497,7 @@
             name: "stone_cottage", biome: ["heath", "highland", "rocky", "mountain", "alpine", "erratics"],
             woods: [Name("spruce", 3), Name("oak", 2), Name("dark_oak", 1)],
             foundation: [Name("cobblestone", 3), Name("mossy_cobblestone", 1), Name("cobbled_slate", 1)],
+            chimney: [Name("stone_bricks", 2), Name("cobblestone", 1)],
             floor: [Name("{wood}_planks", 2), Name("cobbled_slate", 1), Name("polished_stone", 1)],
             walls: [Name("cobblestone", 3), Name("cobbled_andesite", 2), Name("cobbled_granite", 1), Name("stone_bricks", 1), Name("cobbled_slate", 1), Name("cobbled_limestone", 1)],
             frame: [Name("stone_bricks", 2), Name("{wood}_log", 2), Name("polished_andesite", 1)],
@@ -507,6 +514,7 @@
             name: "blossom_house", biome: ["blossom"],
             woods: [Name("cherry", 4), Name("dark_oak", 1)],
             foundation: [Name("stone_bricks", 2), Name("polished_andesite", 2), Name("cobbled_andesite", 1)],
+            chimney: [Name("stone_bricks", 2), Name("terracotta", 1)],
             floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
             walls: [Name("polished_calcite", 3), Name("chalk_bricks", 2), Name("{wood}_planks", 1), Name("white_terracotta", 1), Name("stripped_{wood}_log", 1)],
             frame: [Name("{wood}_log", 2), Name("dark_oak_log", 2), Name("stripped_{trim}_log", 1)],
@@ -523,6 +531,7 @@
             name: "birch_cottage", biome: ["birch"],
             woods: [Name("birch", 5), Name("oak", 1)],
             foundation: [Name("cobblestone", 2), Name("cobbled_diorite", 2), Name("mossy_cobblestone", 1)],
+            chimney: [Name("cobblestone", 2), Name("stone_bricks", 1)],
             floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
             walls: [Name("{wood}_planks", 3), Name("stripped_{wood}_log", 2), Name("polished_calcite", 1), Name("cobbled_diorite", 1)],
             frame: [Name("{wood}_log", 3), Name("dark_oak_log", 1)],
@@ -539,6 +548,7 @@
             name: "maple_lodge", biome: ["autumn"],
             woods: [Name("maple", 4), Name("oak", 1), Name("dark_oak", 1)],
             foundation: [Name("cobbled_granite", 2), Name("cobblestone", 2), Name("mossy_cobbled_granite", 1)],
+            chimney: [Name("cobbled_granite", 2), Name("cobblestone", 1)],
             floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
             walls: [Name("{wood}_planks", 3), Name("stripped_{wood}_log", 2), Name("cobbled_granite", 1), Name("granite_bricks", 1), Name("{trim}_planks", 1)],
             frame: [Name("{wood}_log", 3), Name("dark_oak_log", 1)],
@@ -555,6 +565,7 @@
             name: "jungle_stilts", biome: ["jungle", "tropical"], stilts: 2,
             woods: [Name("jungle", 3), Name("palm", 2), Name("mangrove", 1)],
             foundation: [Name("{wood}_log", 1)],
+            chimney: [Name("cobblestone", 2), Name("mossy_cobblestone", 1)],
             floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1)],
             walls: [Name("{wood}_planks", 3), Name("stripped_{wood}_log", 2), Name("{trim}_planks", 1)],
             frame: [Name("{wood}_log", 3), Name("stripped_{trim}_log", 1)],
@@ -571,6 +582,7 @@
             name: "turf_house", biome: ["tundra", "heath"],
             woods: [Name("spruce", 3), Name("pine", 2), Name("birch", 1)],
             foundation: [Name("cobblestone", 3), Name("cobbled_slate", 1), Name("mossy_cobblestone", 1)],
+            chimney: [Name("cobblestone", 2), Name("stone_bricks", 1)],
             floor: [Name("{wood}_planks", 2), Name("packed_earth", 1), Name("cobbled_slate", 1)],
             walls: [Name("cobblestone", 2), Name("{wood}_log", 2), Name("cobbled_slate", 1), Name("packed_earth", 1), Name("stripped_{wood}_log", 1)],
             frame: [Name("{wood}_log", 3), Name("cobbled_slate", 1)],
@@ -587,6 +599,7 @@
             name: "villa", biome: ["warm"],
             woods: [Name("oak", 2), Name("dark_oak", 1), Name("acacia", 1)],
             foundation: [Name("cobbled_limestone", 2), Name("cobbled_travertine", 2), Name("cobblestone", 1)],
+            chimney: [Name("limestone_bricks", 2), Name("cobbled_travertine", 1)],
             floor: [Name("polished_travertine", 2), Name("{wood}_planks", 2), Name("terracotta", 1)],
             walls: [Name("polished_limestone", 2), Name("travertine_bricks", 2), Name("limestone_bricks", 1), Name("polished_calcite", 1), Name("white_terracotta", 1), Name("yellow_terracotta", 1)],
             frame: [Name("polished_travertine", 2), Name("{wood}_log", 2), Name("limestone_bricks", 1)],
@@ -603,6 +616,7 @@
             name: "timber_frame", biome: [],
             woods: [Name("oak", 4), Name("dark_oak", 2), Name("birch", 1), Name("spruce", 1), Name("maple", 1), Name("cherry", 1)],
             foundation: [Name("cobblestone", 3), Name("mossy_cobblestone", 1), Name("stone_bricks", 1), Name("cobbled_limestone", 1)],
+            chimney: [Name("stone_bricks", 2), Name("cobblestone", 1)],
             floor: [Name("{wood}_planks", 3), Name("{trim}_planks", 1), Name("polished_stone", 1)],
             walls: [Name("chalk_bricks", 2), Name("polished_calcite", 2), Name("{wood}_planks", 3), Name("{trim}_planks", 1), Name("white_terracotta", 1), Name("limestone_bricks", 1), Name("cobblestone", 1), Name("travertine_bricks", 1)],
             frame: [Name("{wood}_log", 3), Name("dark_oak_log", 2), Name("stripped_{trim}_log", 1)],

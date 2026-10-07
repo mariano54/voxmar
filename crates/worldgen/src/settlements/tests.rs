@@ -501,6 +501,7 @@ fn house_catalogue() {
         weathered: palette("mossy_cobblestone"),
         hedge: palette("oak_leaves"),
         log: id("oak_log"),
+        chimney: id("cobblestone"),
         crops: Vec::new(),
         fruit: palette("apple_leaves_2"),
     };
@@ -822,4 +823,135 @@ fn every_style_crop_is_sown_somewhere() {
         }
     }
     assert!(wanted.is_empty(), "no field in {seen} settlements grows {wanted:?}");
+}
+
+/// No lane runs through the well or a centrepiece, or within the ring of one block round
+/// them: lanes stop at the square's edge or go round.
+#[test]
+fn lanes_keep_off_wells_and_centrepieces() {
+    use super::house::Kind;
+    let mut looked = 0;
+    for seed in [1u64, 42, 7] {
+        let world = base_world(seed);
+        for cz in -5..5 {
+            for cx in -5..5 {
+                let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
+                let Some(p) = &slot.0 else { continue };
+                for b in p.buildings.iter().filter(|b| matches!(b.kind, Kind::Well | Kind::Centrepiece)) {
+                    looked += 1;
+                    let ring = |q: Vec2| {
+                        let (lo, hi) = (b.min.as_vec2() - 1.5, b.max.as_vec2() + 1.5);
+                        (lo - q).max(q - hi).max(Vec2::ZERO).length()
+                    };
+                    for (lane, half) in p.lanes.iter().zip(&p.lane_halves) {
+                        let near = lane.windows(2).flat_map(|w| (0..=12).map(move |k| w[0].lerp(w[1], k as f32 / 12.0))).map(ring).fold(f32::MAX, f32::min);
+                        assert!(near >= *half, "seed {seed}, {}: a lane runs within {near:.1} of the {} at {}", p.name.0, b.what, b.min);
+                    }
+                }
+            }
+        }
+    }
+    assert!(looked > 20, "only {looked} wells and centrepieces");
+}
+
+/// Chimneys stand inside the walls, one stone all the way up from the hearth, and top out
+/// one or two blocks over the roof beside them, whatever the house, roof and ridge; every
+/// style names what its chimneys are built of.
+#[test]
+fn chimneys_stand_inside_and_just_clear_the_roof() {
+    use super::def::{Extra, Form, Roof};
+    use super::house::{self, Kind, Mats, Spec};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let def = &world_content.settlements;
+    for style in &def.styles {
+        assert!(!style.chimney.0.is_empty(), "the {} style names no chimney stone", style.name);
+    }
+    let fixed = super::fixed(&registry, def).unwrap();
+    let id = |n: &str| registry.id(&format!("base:{n}")).unwrap();
+    let palette = |n: &str| super::canvas::Palette(vec![(id(n), 1.0)]);
+    let (roof_block, stack) = (id("dark_oak_planks"), id("cobbled_granite"));
+    let mats = Mats {
+        foundation: palette("cobblestone"),
+        floor: id("spruce_planks"),
+        wall: id("polished_calcite"),
+        frame: id("dark_oak_log"),
+        roof: roof_block,
+        trim: id("spruce_planks"),
+        window: Some(id("old_glass")),
+        weathered: palette("mossy_cobblestone"),
+        hedge: palette("oak_leaves"),
+        log: id("oak_log"),
+        chimney: stack,
+        crops: Vec::new(),
+        fruit: palette("apple_leaves_2"),
+    };
+    let mut drawn = 0;
+    for (n, h) in def.houses.iter().enumerate() {
+        let roofs: Vec<Roof> = match h.form {
+            Form::Round => vec![Roof::Conical, Roof::Flat],
+            Form::Courtyard => vec![Roof::Hip, Roof::Flat],
+            Form::AFrame => vec![Roof::Gable],
+            _ => vec![Roof::Gable, Roof::HalfHip, Roof::Saltbox, Roof::Gambrel, Roof::Hip, Roof::Flat, Roof::Shed, Roof::Conical],
+        };
+        let boxy = matches!(h.form, Form::Box | Form::ShopFront);
+        for (k, &roof) in roofs.iter().enumerate() {
+            for (ridge_x, wing, size) in [(true, false, 0), (false, false, 1), (false, true, 1), (true, true, 0)] {
+                if (wing && !boxy) || (h.form == Form::AFrame && ridge_x) {
+                    continue;
+                }
+                let mut w = if size == 0 { h.width.0 } else { h.width.1 } as i32;
+                let d = if h.form == Form::Round { w } else if size == 0 { h.depth.1 as i32 } else { h.depth.0 as i32 };
+                if h.form == Form::Round && w % 2 == 0 {
+                    w -= 1;
+                }
+                let mut extras = vec![Extra::Chimney];
+                extras.extend(h.always.iter().copied());
+                let spec = Spec {
+                    kind: Kind::House,
+                    w,
+                    d,
+                    wall: if h.form == Form::AFrame { 0 } else { h.walls.1 as i32 },
+                    storeys: if h.form == Form::AFrame { 1 } else { h.storeys.1 as i32 },
+                    roof,
+                    pitch: 1,
+                    ridge_x,
+                    door: w / 2,
+                    shed: 0,
+                    wing: wing.then_some((3, 4)).filter(|(ww, _)| *ww < w - 1),
+                    stilts: h.stilts.unwrap_or(0) as i32,
+                    extras,
+                    regular: true,
+                    window_chance: 0.6,
+                    form: h.form,
+                    inside: h.inside.clone(),
+                    centre: None,
+                    seed: (n * 31 + k) as u64,
+                };
+                let (low, high) = spec.envelope();
+                let frame = super::canvas::Frame::fit(low, high, super::canvas::Facing::North, low, 0);
+                let mut canvas = super::canvas::Canvas::default();
+                house::draw(&spec, &frame, &mats, &fixed, &mut canvas);
+                let is = |p: &IVec3, b: BlockId| matches!(canvas.absolute.get(p), Some(super::canvas::Put::Set(x)) if *x == b);
+                let cells: Vec<IVec3> = canvas.absolute.keys().filter(|p| is(p, stack)).copied().collect();
+                let what = format!("{} with a {roof:?} roof, ridge {}, {w} by {d}{}", h.name, if ridge_x { "across" } else { "back" }, if wing { ", a wing" } else { "" });
+                let Some(first) = cells.first() else { continue };
+                drawn += 1;
+                for c in &cells {
+                    assert!((c.x, c.z) == (first.x, first.z), "{what}: the chimney is more than one column");
+                    assert!(c.x >= 1 && c.x <= w - 2 && c.z >= 1 && c.z <= d - 2, "{what}: the chimney stands at {c}, outside the walls");
+                }
+                let (bottom, top) = (cells.iter().map(|c| c.y).min().unwrap(), cells.iter().map(|c| c.y).max().unwrap());
+                assert_eq!(cells.len() as i32, top - bottom + 1, "{what}: the chimney has gaps");
+                // The roof beside it, and anything on the roof there (a flat roof's parapet).
+                let top_of = |x: i32, z: i32, only: Option<BlockId>| canvas.absolute.keys().filter(|p| p.x == x && p.z == z && only.is_none_or(|b| is(p, b))).map(|p| p.y).max();
+                let beside = |only| [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().filter_map(|&(dx, dz)| top_of(first.x + dx, first.z + dz, only)).max();
+                let (roof, any) = (beside(Some(roof_block)).unwrap_or_else(|| panic!("{what}: no roof beside the chimney")), beside(None).unwrap());
+                assert!(top - roof <= 2 && top > any, "{what}: the chimney tops out at {top}, the roof beside it at {roof}, anything beside at {any}");
+            }
+        }
+    }
+    assert!(drawn > 100, "only {drawn} chimneys drawn");
 }
