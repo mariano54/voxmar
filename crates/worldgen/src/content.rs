@@ -1441,7 +1441,9 @@ impl WorldContent {
     /// The generator's definitions from loaded content packages, checked against their
     /// blocks.
     pub fn load(content: &Content) -> Result<Self, ContentError> {
-        Self::from_files(content.files.iter(), &content.blocks)
+        let world = Self::from_files(content.files.iter(), &content.blocks)?;
+        world.settlements.check_furnishings(&content.blocks)?;
+        Ok(world)
     }
 
     /// The base package's definitions alone.

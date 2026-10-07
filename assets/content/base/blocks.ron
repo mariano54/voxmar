@@ -344,6 +344,9 @@
         (name: "emerald_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("emerald_ore"), host: "stone", hardness: 0.5, drops: "emerald_ore", color: (40, 170, 100), tags: ["ore_sample", "ore", "gem", "gem:emerald", "natural"]),
         // Building
         (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "building"]),
+        // Settlements' windows: old panes that break to nothing, so a village is no free
+        // glass while glass has no recipe (settlements.ron `window`).
+        (name: "old_glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["building"]),
         (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building"]),
         (name: "sea_lantern", sound: Glass, textures: All("sea_lantern"), light: 15, hardness: 0.3, color: (200, 225, 220), tags: ["light", "building"]),
         // Food made in the crafting grid (recipes.ron).

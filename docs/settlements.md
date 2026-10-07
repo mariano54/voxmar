@@ -6,18 +6,26 @@ in that file; the code only rolls from the lists and draws what it rolled.
 
 ## Where they stand
 
-The world is cut into squares (`grid.spacing`, 1024 blocks). Each square has a
-settlement with chance `grid.chance` (0.33), kept `grid.margin` blocks inside its edges so
+The world is cut into squares (`grid.spacing`, 1024 blocks). Each square rolls a
+settlement with chance `grid.chance` (0.45), kept `grid.margin` blocks inside its edges so
 it never reaches a neighbour's square. Within the square the planner scores spots every
-32 blocks for flat, firm, dry ground near fresh water, and takes the best that:
+`site.step` blocks (16) for flat, firm, dry ground with fresh water near, and takes the
+best of the first `site.tries` (6) that:
 
+- has firm, dry ground (no river bank, crag or terrain shape) within `site.firm` (24)
+  blocks of its middle, and no sea within `site.reach` (48);
+- has a river or lake (not the sea) within `site.water` (48) blocks; a closer look finds
+  the creeks the coarse samples miss;
 - is not in a biome with an `avoid` tag (`no_settlement`, oceans, rivers, peaks, ice,
   fantastical and giant biomes);
-- has a temperature between −8 and 34;
+- has a temperature between −10 and 36 °C: as likely as anywhere between 0 and 26, a
+  quarter as likely at the edges (`site.taper`);
 - has no sinkhole or ravine within 150 blocks.
 
-About half the squares that roll a settlement find no such spot, so about one square in
-six has one.
+Once planned, its buildings keep `site.bank` (3) blocks from water, and the ground under
+them must average `site.fertility` (0.3; 0.15 in cold and desert biomes, `site.poor`).
+These are design's numbers (wiki, settlements, draft 60). With them about one square in
+seven holds a settlement, four hamlets to every village.
 
 ## The levers
 
@@ -54,7 +62,10 @@ The levers are correlated, so a place reads as a whole:
     wide doors), granary (bins, on low stilts), smokehouse (a smoking fire, racks),
     chapel (an altar between two lights, pews; its altar will restore prayer) and
     boathouse (a boat, wide doors; beside water only). Bakeries, mills, tanneries and
-    chapels stand in villages.
+    chapels stand in villages. A building with fittings has one storey;
+  - a house of two or more storeys has stairs up its walls to each floor, clear of the
+    door and the hearth; windows are old glass, which breaks to nothing, so a village is
+    no glass mine.
 - `roofs`: how each shape leans (gable, hip, half-hip, saltbox, gambrel, conical, flat,
   shed), multiplying the weights each style gives it: half-hips and cones where it is
   old, saltboxes where it grew rather than was planned, gambrels in green, roomy places,
@@ -87,20 +98,29 @@ The levers are correlated, so a place reads as a whole:
   for the two woods the settlement picks. Crops are everyday ones: a size's fields grow
   only crops up to its `crop_level` (hamlets 5: wheat and carrot; villages 12: potato
   too), by weight, and always growing, never ripe; loading fails on a crop rarer than
-  uncommon, above every size's level, or a style with nothing a hamlet may grow. A settlement keeps one to three entries of
-  each list, fewer where it is orderly. Where two styles fit a biome, either may be
+  uncommon, above every size's level, or a style with nothing a hamlet may grow. Orchards
+  grow only fruit up to the same level. A settlement keeps one to three entries of each
+  list, fewer where it is orderly. Where two styles fit a biome, either may be
   built.
 - `names`: name parts by biome tag, each with its Japanese reading, small words for
   hamlets ("End", "Cross"), and prefixes that lean on the levers ("Old", "Great"), with
   how often each is used (`small_chance`, `prefix_chance`).
-- `site`: the temperatures, heights and relief a settlement stands on, how far it keeps
-  from sinkholes and ravines, and the glade it opens in the woods.
+- `kana`: how the Japanese parts join where the English runs a consonant into a vowel:
+  Sab + ir is Sabir, so サブ + イル is サビル, not サブイル (Glenach グレナック, Oasis オアシス).
+- `rules`: every other number planning reads, documented in the file: how levers are
+  drawn, how lanes are walked (width, bends, steps, greens, rings, terraces), how lots
+  are laid along them (gaps, setbacks, the steepest ground), the sizes of fields, pens,
+  orchards, smithies and the rest, the inn's and trader's sizes, windows, plinths and
+  moss, and how props are spaced.
+- `site`: where a settlement stands (see above), and the glade it opens in the woods.
 - `furnishings`: the blocks every settlement uses whatever its style (torch, campfire,
   table, farmland, water, dirt, planter, anvil, barrel, bell, altar) and the lists of
   flowers, bushes, stall canopies, compost, boulders, orchard fruit (in blossom or
   unripe, never the ripe leaves), hay, things hung to
   dry, sacks and cloth. Hay, sacks and drying herbs stand in with terracotta and hanging
-  roots until the pack has blocks of their own.
+  roots, the barrel with a stripped log and the altar with polished calcite, until the
+  pack and gameplay have blocks of their own (`base:stone_altar`). Every name must be a
+  block when the game loads its content.
 
 A package adds to every list, and its `grid`, `site` and each furnishing it names replace
 earlier ones, so a mod can add a style, a name culture, a house type or a prop without
@@ -109,7 +129,10 @@ code.
 ## What else knows about them
 
 - Trails join settlements' gates (the ends of their main lanes) to each other and to
-  landmarks within reach.
+  landmarks within reach, and route round their buildings, never through them.
+- The snow blanket stops at roofs, so no snow lies inside a building.
+- Servers on one world in one process share its generator (`Overworld::shared`), so the
+  settlements, trails and rivers round spawn are planned once.
 - Trees and decorations keep out of buildings, lanes and a glade round the houses.
 - `Overworld::settlements_near` lists them with their buildings (each with what it is
   in the lists and the work done in it), doors and gates, for gameplay (villagers,

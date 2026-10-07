@@ -288,8 +288,9 @@ fn settlements_stand_dry_with_open_doors() {
         let registry = base_registry();
         let world = Overworld::new(seed, registry.clone());
         let spawn = world.spawn_point();
-        let found = world.settlements_near(IVec2::new(spawn.x, spawn.z), 2000);
-        assert!(!found.is_empty(), "seed {seed}: no settlement within 2000 blocks of spawn");
+        // The settlements to look over: the squares round spawn hold a few.
+        let found = world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000);
+        assert!(!found.is_empty(), "seed {seed}: no settlement within 3000 blocks of spawn");
         for s in found.iter().take(3) {
             assert!(!s.name.0.is_empty() && !s.name.1.is_empty(), "{:?}", s.name);
             let mut columns: rustc_hash::FxHashMap<ColumnPos, Column> = Default::default();
@@ -363,11 +364,13 @@ fn settlement_wells_hold_water_and_crops_are_everyday() {
                         for y in b.floor - 1..=b.floor + 6 {
                             let name = registry.def(block(IVec3::new(x, y, z))).name.clone();
                             let bare = name.split_once(':').map_or(name.as_str(), |(_, n)| n);
-                            // A ripe crop is `<crop>_crop`, a ripe fruit tree `<fruit>_leaves`.
+                            // A ripe crop is `<crop>_crop`, a ripe fruit tree `<fruit>_leaves`;
+                            // growing ones end in their stage.
+                            let unstaged = bare.rsplit_once('_').filter(|(_, n)| n.parse::<u8>().is_ok()).map_or(bare, |(b, _)| b);
                             let (crop, ripe) = match bare.rsplit_once("_crop") {
                                 Some((crop, stage)) => (crop, stage.is_empty()),
-                                None => match bare.strip_suffix("_leaves") {
-                                    Some(fruit) => (fruit, true),
+                                None => match unstaged.strip_suffix("_leaves") {
+                                    Some(fruit) => (fruit, unstaged == bare),
                                     None => continue,
                                 },
                             };
@@ -379,7 +382,7 @@ fn settlement_wells_hold_water_and_crops_are_everyday() {
                             planted += 1;
                             if ripe {
                                 failures.push(format!("seed {seed} {}: ripe {bare} in the {} at {x} {y} {z}", s.name.0, b.what));
-                            } else if bare.contains("_crop") && (need > most || rarity > voxmar_engine::block::Rarity::Uncommon) {
+                            } else if need > most || rarity > voxmar_engine::block::Rarity::Uncommon {
                                 failures.push(format!("seed {seed} {} ({}): {bare} needs Farming {need}, over {most}", s.name.0, s.size));
                             }
                         }
@@ -484,7 +487,7 @@ fn house_catalogue() {
     let world_content = crate::content::WorldContent::load(&content).unwrap();
     let registry = content.blocks.clone();
     let def = &world_content.settlements;
-    let fixed = super::fixed(&registry, &def.furnishings).unwrap();
+    let fixed = super::fixed(&registry, def).unwrap();
     let id = |n: &str| registry.id(&format!("base:{n}")).unwrap();
     let palette = |n: &str| super::canvas::Palette(vec![(id(n), 1.0)]);
     let mats = Mats {
@@ -494,11 +497,12 @@ fn house_catalogue() {
         frame: id("dark_oak_log"),
         roof: id("dark_oak_planks"),
         trim: id("spruce_planks"),
-        window: Some(id("glass")),
+        window: Some(id("old_glass")),
         weathered: palette("mossy_cobblestone"),
         hedge: palette("oak_leaves"),
         log: id("oak_log"),
         crops: Vec::new(),
+        fruit: palette("apple_leaves_2"),
     };
     // Each house with the roof and extras it is shown with.
     use Extra::*;
@@ -601,6 +605,42 @@ fn house_catalogue() {
     }
 }
 
+
+/// `cargo test --profile iter -p voxmar_worldgen settlement_census -- --ignored --nocapture`
+/// counts the settlements over 24 by 24 squares of three worlds: how many squares hold
+/// one, hamlets to villages, and the layouts and styles drawn.
+#[test]
+#[ignore]
+fn settlement_census() {
+    for seed in [1u64, 42, 7] {
+        let world = base_world(seed);
+        let spacing = world.settlements.def.grid.spacing;
+        let (mut squares, mut hamlets, mut villages) = (0, 0, 0);
+        let mut layouts: std::collections::BTreeMap<String, u32> = Default::default();
+        let mut buildings: std::collections::BTreeMap<String, u32> = Default::default();
+        let start = std::time::Instant::now();
+        for cz in -12..12 {
+            for cx in -12..12 {
+                squares += 1;
+                let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
+                let Some(plan) = &slot.0 else { continue };
+                if plan.size == "hamlet" { hamlets += 1 } else { villages += 1 }
+                *layouts.entry(plan.layout.clone()).or_default() += 1;
+                for b in &plan.buildings {
+                    *buildings.entry(b.what.clone()).or_default() += 1;
+                }
+            }
+        }
+        let given_up: Vec<u32> = super::plan::GIVEN_UP.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
+        println!("  given up (no spot, unfit spots, climate, no lanes, no well, missing a must, few homes, no field or pen, unfit land, poor soil): {given_up:?}");
+        let fails: Vec<u32> = super::plan::PLACE_FAILS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
+        println!("  lots missed (no house fits, out of bounds, too close, on a lane, unfit ground, too steep, off the lane's height): {fails:?}");
+        println!("seed {seed}: {} of {squares} squares settled ({hamlets} hamlets, {villages} villages) in {:?}, {spacing}", hamlets + villages, start.elapsed());
+        println!("  layouts {layouts:?}");
+        println!("  buildings {buildings:?}");
+    }
+}
+
 /// How much of the world a new player waits for: finding spawn and making its column
 /// plans the settlements and lays the trails round it, and the river regions under both.
 /// Trails near settlements read far (each tile the grids of the regions three around),
@@ -647,4 +687,101 @@ fn servers_on_one_world_share_its_planning() {
     let held = std::sync::Arc::downgrade(&first);
     drop((first, second));
     assert!(held.upgrade().is_none(), "a world nothing holds is kept");
+}
+
+/// Japanese names run their parts together as the English does: Sab + ir is サビル, not
+/// サブイル; a consonant into a consonant, or a vowel into a vowel, joins as it is.
+#[test]
+fn japanese_names_join_as_they_are_said() {
+    let world = base_world(1);
+    let kana = &world.settlements.def.kana;
+    let join = |a: (&str, &str), b: (&str, &str)| super::plan::join_kana(kana, &(a.0.into(), a.1.into()), &(b.0.into(), b.1.into()));
+    assert_eq!(join(("Sab", "サブ"), ("ir", "イル")), "サビル");
+    assert_eq!(join(("Glen", "グレン"), ("ach", "アック")), "グレナック");
+    assert_eq!(join(("Oas", "オアス"), ("is", "イス")), "オアシス");
+    assert_eq!(join(("Aber", "アバー"), ("ach", "アック")), "アバラック");
+    assert_eq!(join(("Ush", "ウシュ"), ("ah", "ア")), "ウシャ");
+    assert_eq!(join(("Glen", "グレン"), ("more", "モア")), "グレンモア");
+    assert_eq!(join(("Ma", "マ"), ("ana", "アナ")), "マアナ");
+    assert_eq!(join(("Haw", "ホー"), ("en", "エン")), "ホーエン");
+}
+
+/// What every plan keeps to, over the squares round two seeds: about one square in seven
+/// settled, mostly hamlets; each plan inside its square, its buildings apart, enough
+/// homes for its size, none in a biome settlements avoid or on a river or lake; and every
+/// chapel with its altar (in snowy land too, where the snow blanket once covered it).
+#[test]
+fn plans_keep_to_their_squares_and_rules() {
+    use crate::trails::Land;
+    use super::house::Kind;
+    let (mut squares, mut hamlets, mut villages, mut chapels) = (0, 0, 0, 0);
+    for seed in [1u64, 42] {
+        let world = base_world(seed);
+        let def = &world.settlements.def;
+        let spacing = def.grid.spacing;
+        let land = world.land();
+        let registry = base_registry();
+        let altar = registry.id(def.furnishings.altar.as_deref().unwrap()).unwrap();
+        for cz in -5..5 {
+            for cx in -5..5 {
+                squares += 1;
+                let cell = IVec2::new(cx, cz);
+                let slot = world.settlements.slot(&world, cell);
+                let Some(plan) = &slot.0 else { continue };
+                let size = def.sizes.iter().find(|s| s.name == plan.size).unwrap();
+                if size.name == "hamlet" { hamlets += 1 } else { villages += 1 }
+                let at = format!("seed {seed}, {} at {}", plan.name.0, plan.centre);
+                assert!(plan.min.cmpge(cell * spacing).all() && plan.max.cmplt(cell * spacing + spacing).all(), "{at}: reaches out of its square");
+                let homes = plan.buildings.iter().filter(|b| b.kind == Kind::House && b.work.is_none()).count() as u32;
+                assert!(homes >= size.houses.0, "{at}: {homes} homes, fewer than {:?}", size.houses);
+                for (i, a) in plan.buildings.iter().enumerate() {
+                    for b in &plan.buildings[i + 1..] {
+                        let apart = a.max.x < b.min.x || b.max.x < a.min.x || a.max.y < b.min.y || b.max.y < a.min.y;
+                        assert!(apart, "{at}: {} at {} overlaps {} at {}", a.what, a.min, b.what, b.min);
+                    }
+                    let middle = (a.min + a.max) / 2;
+                    let biome = world.biome_at(middle.x, middle.y);
+                    assert!(!def.avoid.iter().any(|t| biome.has_tag(t)), "{at}: {} in an avoided biome", a.what);
+                    if a.what != "boathouse" {
+                        for p in [a.min, a.max, IVec2::new(a.min.x, a.max.y), IVec2::new(a.max.x, a.min.y), middle] {
+                            let g = land.sample(p.x, p.y);
+                            assert!(!g.submerged() && g.river < 0.5, "{at}: {} at {} stands in water ({p})", a.what, a.min);
+                        }
+                    }
+                    if a.what == "chapel" && chapels < 3 {
+                        chapels += 1;
+                        let area = Area::new(&world, a.min, a.max);
+                        let found = (a.min.y..=a.max.y).any(|z| (a.min.x..=a.max.x).any(|x| (a.floor..a.floor + 4).any(|y| area.block(IVec3::new(x, y, z)) == altar)));
+                        assert!(found, "{at}: the chapel at {} has no altar", a.min);
+                    }
+                }
+            }
+        }
+    }
+    let settled = hamlets + villages;
+    let share = settled as f32 / squares as f32;
+    assert!((0.08..=0.25).contains(&share), "{settled} of {squares} squares settled");
+    assert!(hamlets > villages && villages > 0, "{hamlets} hamlets, {villages} villages");
+    assert!(chapels > 0, "no chapel to look in");
+}
+
+/// The settlements of a few squares, held fixed: a change to planning that moves a single
+/// building shows here, to be looked at in shots and the hash then renewed.
+#[test]
+fn settlements_are_unchanged() {
+    const EXPECTED: u64 = 686260476592137545;
+    let world = base_world(1);
+    let mut text = String::new();
+    for cz in -3..3 {
+        for cx in -3..3 {
+            let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
+            let Some(p) = &slot.0 else { continue };
+            text += &format!("{:?} {} {} {} {} {:?}\n", p.name, p.size, p.layout, p.style, p.centre, p.gates);
+            for b in &p.buildings {
+                text += &format!("  {} {} {} {} {:?} {:?}\n", b.what, b.min, b.max, b.floor, b.door, b.work);
+            }
+        }
+    }
+    let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+    assert_eq!(hash, EXPECTED, "settlements changed:\n{text}");
 }

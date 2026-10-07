@@ -622,6 +622,19 @@ impl trails::Land for RiverLand<'_> {
         self.world.settlements.any_near(self.world, min, max, reach)
     }
 
+    fn built(&self, min: IVec2, max: IVec2) -> Vec<(IVec2, IVec2)> {
+        let centre = (min + max) / 2;
+        let radius = (max - min).max_element() / 2 + 1;
+        self.world
+            .settlements
+            .near(self.world, centre, radius)
+            .iter()
+            .filter_map(|slot| slot.0.as_ref())
+            .flat_map(|p| p.buildings.iter().map(|b| (b.min, b.max)))
+            .filter(|(lo, hi)| lo.cmple(max).all() && hi.cmpge(min).all())
+            .collect()
+    }
+
     fn gates(&self, min: IVec2, max: IVec2) -> Vec<IVec2> {
         let centre = (min + max) / 2;
         let radius = (max - min).max_element() / 2 + 1;

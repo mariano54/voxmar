@@ -148,7 +148,7 @@ impl Raster {
 
     /// A pad at `height` over `core`, held exactly where `inside`, easing out over
     /// `falloff` blocks, its yard kept clear for `yard` blocks round it.
-    fn pad(&mut self, core: &plan::Rect, height: i32, _round: bool, falloff: i32, yard: i32, inside: impl Fn(IVec2) -> bool) {
+    fn pad(&mut self, core: &plan::Rect, height: i32, falloff: i32, yard: i32, inside: impl Fn(IVec2) -> bool) {
         for z in core.min.y - falloff..=core.max.y + falloff {
             for x in core.min.x - falloff..=core.max.x + falloff {
                 let p = IVec2::new(x, z);
@@ -301,7 +301,7 @@ impl Settlements {
             seed: crate::rng::mix(seed ^ 0x5e77_1e5e),
             def: def.clone(),
             resolved: Resolved::new(def, registry),
-            fixed: fixed(registry, &def.furnishings),
+            fixed: fixed(registry, def),
             plans: Cache::new(32 * MB),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
@@ -448,7 +448,8 @@ impl Settlements {
 
 /// The blocks settlements furnish themselves with (`furnishings` in settlements.ron):
 /// none without water and dirt, and only the plain common sorts of flowers and bushes.
-fn fixed(registry: &BlockRegistry, f: &FurnishingsDef) -> Option<Fixed> {
+fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
+    let f: &FurnishingsDef = &def.furnishings;
     let id = |name: &Option<String>| name.as_deref().and_then(|n| registry.id(n));
     let plain = |b: BlockId| {
         let def = registry.def(b);
@@ -487,10 +488,22 @@ fn fixed(registry: &BlockRegistry, f: &FurnishingsDef) -> Option<Fixed> {
         canopies: palette(&f.canopies, &any),
         compost: palette(&f.compost, &any),
         boulder: palette(&f.boulders, &any),
-        fruit: palette(&f.fruit, &any),
+        // Each tree's fruit's level, its leaves' name less the growing stage (`apple_leaves_2`
+        // bears `apple`); none known, none needed.
+        fruit: palette(&f.fruit, &any)
+            .0
+            .into_iter()
+            .map(|(b, w)| {
+                let name = &registry.def(b).name;
+                let leaves = name.rsplit_once('_').filter(|(_, n)| n.parse::<u8>().is_ok()).map_or(name.as_str(), |(l, _)| l);
+                (b, w, def.crops.get(leaves.trim_end_matches("_leaves")).map_or(0, |c| c.0))
+            })
+            .collect(),
         hay: palette(&f.hay, &any),
         hanging: palette(&f.hanging, &any),
         sacks: palette(&f.sacks, &any),
         cloth: palette(&f.cloth, &any),
+        plinth: def.rules.houses.plinth,
+        moss: def.rules.houses.moss,
     })
 }

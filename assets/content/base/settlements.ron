@@ -32,7 +32,8 @@
 // houses: the kinds of house, by size, storeys and form (Box, Round, AFrame, Courtyard,
 //   ShopFront). Working buildings name their `work` (for the people who will work
 //   there) and what stands `inside` (Oven, Millstone, Vats, Racks, Stalls, Bins, Smoke,
-//   Altar, Pews, Boat, Counter); a house may have extras it `always` has, its own
+//   Altar, Pews, Boat, Counter; a house with fittings has one storey, as stairs run
+//   round the walls where fittings stand); a house may have extras it `always` has, its own
 //   `roofs`, the `sizes` that build it, the `most` one place builds, `stilts`, and
 //   `water: true` to stand only beside fresh water.
 // roofs: how every roof shape leans, multiplying the weights styles give them (Gable,
@@ -47,23 +48,102 @@
 //   worn, water, cloth, light, bell; `{wood}` the place's wood; any left out from the style),
 //   or one of your own as `blocks` from its middle. `spot` Square stands it at the heart
 //   of the square, the well beside it; Edge out by the end of a lane.
+// names: by biome (the first list whose tags it has, else the one with none), a first part
+//   and a last, or a hamlet's first part and a small word; now and then a prefix. Each in
+//   English and Japanese.
+// kana: how Japanese names join where the English runs a consonant into a vowel: a first
+//   part ending in `kana` (and its English in `after`, if given) takes `into`'s kana for
+//   ア, イ, ウ, エ or オ opening the last part (Sab + ir is Sabir: サブ + イル, サビル).
 // styles: what a settlement is built of, by the biome it stands in; the first whose
 //   biome tags match wins (an empty list matches anywhere). `woods` fill `{wood}` (the
 //   main wood) and `{trim}` (a second wood, sometimes the same) in block names; every
 //   material list is weighed per settlement, which keeps a few of its options, and each
 //   house picks among those.
 (
-    grid: (spacing: 1024, chance: 0.33, margin: 160),
-    // site: the temperatures, heights over sea level and the most rise and fall across its
-    //   middle a settlement stands on; how far it keeps from sinkholes and ravines; no trees
-    //   within glade.0 blocks of a house, fewer out to glade.1, glade_trees.0 of them left
-    //   past the treeless ring and glade_trees.1 more where it is green.
-    site: (temperature: (-8.0, 34.0), height: (3, 90), relief: 14, caves: 150, glade: (5, 16), glade_trees: (0.08, 0.3)),
+    grid: (spacing: 1024, chance: 0.45, margin: 160),
+    // site: where a settlement stands (design wiki, settlements, draft 60).
+    //   temperature: none outside it (°C); mild: as likely as anywhere inside it, the chance
+    //     falling towards the edges of `temperature` to `taper` of that.
+    //   water: fresh water (a river or lake, not the sea) within this many blocks of its
+    //     middle, or no settlement; bank: blocks every building keeps from water.
+    //   fertility: the least average fertility of the ground under its buildings; `poor`
+    //     lowers it in biomes with a tag.
+    //   height: over sea level; relief: the most its ground rises and falls within `reach`
+    //     of its middle; firm: blocks round its middle that must be dry land; caves: how far
+    //     it keeps from sinkholes and ravines.
+    //   step: blocks between the spots weighed in its square; tries: how many of the best
+    //     are tried; score: what a spot scores (luck, less its spread and relief, more for
+    //     water, less per block over sea level).
+    //   glade: no trees within glade.0 blocks of a house, fewer out to glade.1, glade_trees.0
+    //     of them left past the treeless ring and glade_trees.1 more where it is green.
+    site: (
+        temperature: (-10.0, 36.0), mild: (0.0, 26.0), taper: 0.25,
+        water: 48, bank: 3,
+        fertility: 0.3, poor: {"cold": 0.15, "desert": 0.15},
+        height: (3, 90), relief: 14, reach: 48, firm: 24, caves: 150,
+        step: 16, tries: 6, score: (luck: 3.0, spread: 1.2, relief: 0.25, water: 3.0, height: 0.02),
+        glade: (5, 16), glade_trees: (0.08, 0.3),
+    ),
+    // rules: the rest of the numbers planning reads.
+    //   levers: how each lever is drawn: `luck` times the mean of `rolls` rolls, plus shares
+    //     of fertility, fresh water near, flat ground (flat below `steep`), the wealth drawn
+    //     first, and forest (undergrowth counting `undergrowth` of it); clamped to 0 ..= 1.
+    //   lanes: half the width of side lanes; how much lanes bend (orderly, and more where
+    //     not); blocks per step walked, the most a step rises, how far lanes keep apart; a
+    //     green's radius (square times green.0, plus green.1); a scattered place's square
+    //     and how often its paths branch; a ring lane's distance past the square (and more
+    //     where not crowded), its wobble and the most it rises; a terrace's step up; how far
+    //     a riverside street looks for its water.
+    //   lots: blocks between buildings (and up to more where not crowded); spacing along a
+    //     lane, tightened by `closer` each of `passes` passes; setback from the lane; yard
+    //     kept clear; the most a floor stands off its lane (`road`); tries for each outlying
+    //     building; the most the ground under a house rises and falls (more on stilts).
+    //   specials: each special building's size, across and deep (every `step`), and the
+    //     most its ground may rise and fall.
+    //   houses: the inn's least storeys, width and depth, from houses `grand` wide; the
+    //     trader's width and depth; houses `pitch.0` wide may have a low roof by pitch.1;
+    //     order past `regular` lines houses up, past `middle_door` centres their doors;
+    //     windows: the style's chance times windows.0 plus windows.1 times wealth, at most
+    //     windows.2; `plinth`: the chance of a stone lowest course; `moss`: old walls'
+    //     share of weathered blocks.
+    //   dressing: blocks between things along lanes (and more where poorer, times the
+    //     size's `lamps`), the chance each is a lamp (and more where richer), props in
+    //     yards per building, the most per lane, boats and nets on the bank, and how far
+    //     props keep from lanes (by a lane, in a yard).
+    rules: (
+        levers: (
+            wealth: (luck: 0.45, fertility: 0.25, water: 0.2, flat: 0.1),
+            age: (luck: 1.0, rolls: 2),
+            order: (luck: 0.65, wealth: 0.35),
+            crowding: (luck: 0.75, wealth: 0.25),
+            green: (luck: 0.6, forest: 0.4),
+            steep: 0.6, undergrowth: 0.6,
+        ),
+        lanes: (
+            side: 0.8, wiggle: (0.06, 0.32), step: 3.0, rise: 2, apart: 3.5,
+            green: (1.5, 2), scatter: 2, branch: 0.6,
+            ring: (10.0, 4.0), wobble: 1.2, ring_rise: 6, terrace: (11.0, 4.0), riverside: 144,
+        ),
+        lots: (gap: (1, 3.0), spacing: (7.0, 6.0), closer: 0.7, passes: 3, setback: (1.5, 3.0), yard: (1, 2.0), road: 3, tries: 10, slope: 4),
+        specials: {
+            "smithy": (width: (6, 8), depth: (5, 7), slope: 4),
+            "field": (width: (7, 11), depth: (7, 13), step: 2, slope: 3),
+            "pen": (width: (6, 10), depth: (6, 9), slope: 5),
+            "orchard": (width: (9, 13), depth: (9, 13), slope: 3),
+            "woodyard": (width: (4, 6), depth: (3, 5), slope: 5),
+            "shrine": (width: (3, 3), depth: (3, 3), slope: 5),
+            "stall": (width: (3, 3), depth: (2, 3), slope: 2),
+            "centrepiece": (width: (3, 3), depth: (3, 3), slope: 3),
+        },
+        houses: (inn: (2, 8, 9), grand: 8, trader: ((5, 7), (5, 8)), pitch: (8, 0.45), regular: 0.45, middle_door: 0.6, windows: (0.6, 0.8, 0.95), plinth: 0.35, moss: 0.22),
+        dressing: (every: (9.0, 14.0), lamp: (0.5, 0.4), yards: (0.5, 1.0, 2), per_lane: 6, banks: (1, 3), clearance: (0.4, 0.6)),
+    ),
     // furnishings: blocks every settlement uses whatever its style. A package may name
     //   others; content without one leaves it out (no water or dirt: no settlements).
     furnishings: (
         torch: "torch", campfire: "campfire", table: "crafting_table", farmland: "farmland",
         water: "water", dirt: "dirt", planter: "herb_planter", anvil: "polished_basalt",
+        // altar: a stand-in until gameplay's base:stone_altar lands; chapels' altars then restore prayer.
         barrel: "stripped_spruce_log", altar: "polished_calcite",
         flowers: [Tag("flower", 1)],
         bushes: [Tag("bush", 1)],
@@ -81,15 +161,21 @@
     ),
     avoid: ["no_settlement", "ocean", "water", "river", "peaks", "ice", "frozen", "fantastical", "giant"],
     sizes: [
+        // Homes are `houses`; working buildings (`workshops`, and the `works` it always
+        // has) come on top. Every place has a field or a pen (a field where green, else a
+        // pen, when it rolled neither). Wiki draft 60: hamlets always have a well and a
+        // trader and 3 to 6 homes, villages 8 to 16 homes and a chapel.
         (
             name: "hamlet", weight: 3.0,
-            houses: (2, 5), lanes: (1, 3), lane_length: (16, 34), square: (3, 5), centrepiece: 0.12, crop_level: 5,
-            always: [Well],
-            sometimes: [(Trader, 0.7), (Field, 0.6), (Pen, 0.45), (Woodyard, 0.35), (Orchard, 0.15), (Shrine, 0.1)],
+            houses: (3, 6), workshops: (0, 1), lanes: (2, 3), lane_length: (20, 40), square: (3, 5), centrepiece: 0.12, crop_level: 5,
+            lane_half: 0.9, paving: (0.45, 2.0), well: (3, 3), lamps: 1.5,
+            always: [Well, Trader],
+            sometimes: [(Field, 0.6), (Pen, 0.45), (Woodyard, 0.35), (Orchard, 0.15), (Shrine, 0.1)],
         ),
         (
             name: "village", weight: 1.0, lean: {"wealth": 0.4},
-            houses: (7, 14), lanes: (3, 5), lane_length: (30, 60), square: (6, 9), centrepiece: 0.75, crop_level: 12,
+            houses: (8, 16), workshops: (1, 4), works: ["shrine"], lanes: (4, 6), lane_length: (36, 72), square: (6, 9), centrepiece: 0.75, crop_level: 12,
+            lane_half: 1.4, paving: (0.0, 0.55), well: (3, 4), lamps: 1.0,
             always: [Well, Trader, Inn, Smithy],
             sometimes: [(Stall, 0.8), (Stall, 0.5), (Stall, 0.25), (Field, 0.9), (Field, 0.6), (Pen, 0.7), (Orchard, 0.35), (Woodyard, 0.4), (Shrine, 0.35)],
         ),
@@ -129,7 +215,7 @@
         (name: "courtyard_house", form: Courtyard, sizes: ["village"], weight: 0.35, lean: {"wealth": 1.0, "crowding": -0.5}, width: (11, 12), depth: (11, 13), walls: (3, 3), storeys: (1, 1)),
         (name: "shop_house", form: ShopFront, sizes: ["village"], weight: 0.8, lean: {"wealth": 0.5, "crowding": 0.8}, width: (5, 7), depth: (6, 8), walls: (3, 4), storeys: (2, 2)),
         // Working buildings, one of each to a place (barns two); `work` names the trade.
-        (name: "bakery", work: "bakery", sizes: ["village"], inside: [Oven, Counter], always: [Chimney], most: 1, weight: 0.8, lean: {"wealth": 0.3, "crowding": 0.4}, width: (5, 7), depth: (6, 8), walls: (3, 3), storeys: (1, 2)),
+        (name: "bakery", work: "bakery", sizes: ["village"], inside: [Oven, Counter], always: [Chimney], most: 1, weight: 0.8, lean: {"wealth": 0.3, "crowding": 0.4}, width: (5, 7), depth: (6, 8), walls: (3, 3), storeys: (1, 1)),
         (name: "mill", work: "mill", sizes: ["village"], inside: [Millstone, Bins], always: [Weathervane], most: 1, weight: 0.6, lean: {"green": 0.5}, width: (6, 8), depth: (6, 8), walls: (4, 5), storeys: (1, 1)),
         (name: "tannery", work: "tannery", sizes: ["village"], inside: [Vats, Racks], most: 1, weight: 0.6, lean: {"wealth": -0.4, "age": 0.3}, width: (6, 8), depth: (7, 9), walls: (3, 3), storeys: (1, 1), roofs: [(Gable, 2), (Shed, 1)]),
         (name: "barn", work: "barn", inside: [Stalls], most: 2, weight: 0.8, lean: {"green": 0.8, "crowding": -0.8}, width: (8, 10), depth: (10, 14), walls: (4, 5), storeys: (1, 1), roofs: [(Gambrel, 4), (Gable, 2)]),
@@ -227,7 +313,7 @@
     names: [
         (
             biome: ["desert", "dunes", "mesa", "savanna", "scrubland"],
-            first: [("Sab", "サブ"), ("Kar", "カル"), ("Ama", "アマ"), ("Zir", "ジル"), ("Tal", "タル"), ("Oas", "オア"), ("Ham", "ハム"), ("Dal", "ダル"), ("Mer", "メル"), ("Sur", "スル"), ("Ras", "ラス"), ("Nub", "ヌブ"), ("Kes", "ケス"), ("Yar", "ヤル"), ("Qad", "カド"), ("Bah", "バハ"), ("Jem", "ジェム"), ("Saf", "サフ"), ("Tam", "タム"), ("Azz", "アッズ"), ("Mal", "マル"), ("Har", "ハル"), ("Zab", "ザブ"), ("Imr", "イムル"), ("Wad", "ワド"), ("Sel", "セル"), ("Kufr", "クフル"), ("Num", "ヌム"), ("Ebb", "エッブ"), ("Ush", "ウシュ"), ("Nar", "ナル"), ("Tir", "ティル"), ("Baz", "バズ"), ("Fas", "ファス")],
+            first: [("Sab", "サブ"), ("Kar", "カル"), ("Ama", "アマ"), ("Zir", "ジル"), ("Tal", "タル"), ("Oas", "オアス"), ("Ham", "ハム"), ("Dal", "ダル"), ("Mer", "メル"), ("Sur", "スル"), ("Ras", "ラス"), ("Nub", "ヌブ"), ("Kes", "ケス"), ("Yar", "ヤル"), ("Qad", "カド"), ("Bah", "バハ"), ("Jem", "ジェム"), ("Saf", "サフ"), ("Tam", "タム"), ("Azz", "アッズ"), ("Mal", "マル"), ("Har", "ハル"), ("Zab", "ザブ"), ("Imr", "イムル"), ("Wad", "ワド"), ("Sel", "セル"), ("Kufr", "クフル"), ("Num", "ヌム"), ("Ebb", "エッブ"), ("Ush", "ウシュ"), ("Nar", "ナル"), ("Tir", "ティル"), ("Baz", "バズ"), ("Fas", "ファス")],
             last: [("ah", "ア"), ("ir", "イル"), ("um", "ウム"), ("esh", "エシュ"), ("ara", "アラ"), ("oun", "ウン"), ("ad", "アド"), ("is", "イス"), ("an", "アン"), ("eth", "エス"), ("abad", "アバド"), ("iya", "イヤ"), ("oum", "ウーム"), ("assa", "アッサ"), ("ek", "エク"), ("ul", "ウル"), ("ina", "イナ"), ("ar", "アル"), ("aya", "アヤ"), ("ez", "エズ")],
             small: [("Well", "ウェル"), ("Rest", "レスト"), ("Palms", "パームズ"), ("Spring", "スプリング"), ("Gate", "ゲート"), ("Shade", "シェード")],
             prefixes: [
@@ -263,7 +349,7 @@
         ),
         (
             biome: ["tundra", "conifer", "cold", "snow", "taiga", "frozen"],
-            first: [("Frost", "フロスト"), ("Kald", "カルド"), ("Rav", "ラヴ"), ("Stor", "ストル"), ("Hjal", "ヤル"), ("Grim", "グリム"), ("Ulf", "ウルフ"), ("Bjorn", "ビョルン"), ("Ask", "アスク"), ("Tor", "トル"), ("Skal", "スカル"), ("Hed", "ヘド"), ("Ring", "リング"), ("Ny", "ニュー"), ("Elg", "エルグ"), ("Vind", "ヴィンド"), ("Sva", "スヴァ"), ("Hval", "ヴァル"), ("Lind", "リンド"), ("Bir", "ビル"), ("Gran", "グラン"), ("Haf", "ハフ"), ("Sol", "ソル"), ("Rune", "ルーネ"), ("Varg", "ヴァルグ"), ("Ise", "イーセ"), ("Kvit", "クヴィト"), ("Ormr", "オルム"), ("Fjal", "フィャル"), ("Thor", "トール"), ("Ey", "エイ"), ("Alf", "アルフ")],
+            first: [("Frost", "フロスト"), ("Kald", "カルド"), ("Rav", "ラヴ"), ("Stor", "ストル"), ("Hjal", "ヤル"), ("Grim", "グリム"), ("Ulf", "ウルフ"), ("Bjorn", "ビョルン"), ("Ask", "アスク"), ("Tor", "トル"), ("Skal", "スカル"), ("Hed", "ヘド"), ("Ring", "リング"), ("Ny", "ニュー"), ("Elg", "エルグ"), ("Vind", "ヴィンド"), ("Sva", "スヴァ"), ("Hval", "ヴァル"), ("Lind", "リンド"), ("Bir", "ビル"), ("Gran", "グラン"), ("Haf", "ハフ"), ("Sol", "ソル"), ("Rune", "ルーネ"), ("Varg", "ヴァルグ"), ("Ise", "イーセ"), ("Kvit", "クヴィト"), ("Ormr", "オルム"), ("Fjal", "フィヤル"), ("Thor", "トール"), ("Ey", "エイ"), ("Alf", "アルフ")],
             last: [("vik", "ヴィク"), ("heim", "ヘイム"), ("by", "ビー"), ("stad", "スタッド"), ("dal", "ダル"), ("ness", "ネス"), ("garth", "ガース"), ("thwaite", "スウェイト"), ("fell", "フェル"), ("sund", "スンド"), ("vang", "ヴァング"), ("holm", "ホルム"), ("bo", "ボー"), ("set", "セット"), ("fjord", "フィヨルド"), ("rud", "ルド"), ("lund", "ルンド"), ("berg", "ベルグ"), ("toft", "トフト"), ("hus", "フース")],
             small: [("Holt", "ホルト"), ("Stead", "ステッド"), ("Cairn", "ケアン"), ("Hearth", "ハース"), ("Lodge", "ロッジ")],
             prefixes: [
@@ -286,7 +372,7 @@
         ),
         (
             biome: [],
-            first: [("Ash", "アッシュ"), ("Oak", "オーク"), ("Bram", "ブラム"), ("Hollin", "ホリン"), ("Thorn", "ソーン"), ("Mill", "ミル"), ("Wen", "ウェン"), ("Elm", "エルム"), ("Ald", "オルド"), ("Haw", "ホー"), ("Brook", "ブルック"), ("Wyn", "ウィン"), ("Lark", "ラーク"), ("Fern", "ファーン"), ("Barrow", "バロウ"), ("Copp", "コップ"), ("Har", "ハー"), ("Stan", "スタン"), ("Wych", "ウィッチ"), ("Lin", "リン"), ("Mar", "マー"), ("Cran", "クラン"), ("Bly", "ブライ"), ("Cherry", "チェリー"), ("Wood", "ウッド"), ("Red", "レッド"), ("Kings", "キングス"), ("Bourne", "ボーン"), ("Ox", "オックス"), ("Pidd", "ピッド"), ("Sel", "セル"), ("Tun", "タン"), ("Wil", "ウィル"), ("Pen", "ペン"), ("Brad", "ブラッド"), ("Chal", "チャル"), ("Ather", "アザー"), ("Hen", "ヘン"), ("Rook", "ルック"), ("Swan", "スワン"), ("Apple", "アップル"), ("Hazel", "ヘーゼル"), ("Bell", "ベル"), ("Clay", "クレイ"), ("Dun", "ダン"), ("Lang", "ラング"), ("Nether", "ネザー"), ("Tad", "タッド")],
+            first: [("Ash", "アッシュ"), ("Oak", "オーク"), ("Bram", "ブラム"), ("Hollin", "ホリン"), ("Thorn", "ソーン"), ("Mill", "ミル"), ("Wen", "ウェン"), ("Elm", "エルム"), ("Ald", "オルド"), ("Haw", "ホー"), ("Brook", "ブルック"), ("Wyn", "ウィン"), ("Lark", "ラーク"), ("Fern", "ファーン"), ("Barrow", "バロウ"), ("Copp", "コップ"), ("Har", "ハー"), ("Stan", "スタン"), ("Wych", "ウィッチ"), ("Lin", "リン"), ("Mar", "マー"), ("Cran", "クラン"), ("Bly", "ブライ"), ("Cherry", "チェリー"), ("Wood", "ウッド"), ("Red", "レッド"), ("Kings", "キングス"), ("Bourne", "ボーン"), ("Ox", "オックス"), ("Pidd", "ピッド"), ("Sel", "セル"), ("Tun", "タン"), ("Wil", "ウィル"), ("Pen", "ペン"), ("Brad", "ブラッド"), ("Chal", "チャル"), ("Ather", "アザー"), ("Hen", "ヘン"), ("Rook", "ルック"), ("Swan", "スワン"), ("Apple", "アップル"), ("Hazel", "ヘーゼル"), ("Bell", "ベル"), ("Clay", "クレイ"), ("Dun", "ダン"), ("Lang", "ラング"), ("Tad", "タッド")],
             last: [("ford", "フォード"), ("ley", "リー"), ("ton", "トン"), ("ham", "ハム"), ("wick", "ウィック"), ("field", "フィールド"), ("bury", "ベリー"), ("worth", "ワース"), ("stead", "ステッド"), ("brook", "ブルック"), ("well", "ウェル"), ("hurst", "ハースト"), ("combe", "クーム"), ("dale", "デール"), ("thorpe", "ソープ"), ("cote", "コート"), ("den", "デン"), ("ridge", "リッジ"), ("bridge", "ブリッジ"), ("wold", "ウォルド"), ("shaw", "ショー"), ("hope", "ホープ"), ("minster", "ミンスター"), ("ing", "イング"), ("lock", "ロック"), ("sted", "ステッド"), ("over", "オーヴァー"), ("church", "チャーチ")],
             small: [("End", "エンド"), ("Green", "グリーン"), ("Cross", "クロス"), ("Hollow", "ホロウ"), ("Row", "ロウ"), ("Corner", "コーナー"), ("Bottom", "ボトム"), ("Hill", "ヒル")],
             prefixes: [
@@ -295,11 +381,30 @@
                 (en: "Great", ja: "グレート", weight: 0.5, lean: {"wealth": 1.0, "crowding": 0.5}),
                 (en: "Little", ja: "リトル", weight: 0.6, lean: {"crowding": -1.0}),
                 (en: "Upper", ja: "アッパー", weight: 0.4),
-                (en: "Nether", ja: "ネザー", weight: 0.3),
+                (en: "Lower", ja: "ロウアー", weight: 0.3),
                 (en: "Long", ja: "ロング", weight: 0.3, lean: {"order": 1.0}),
                 (en: "Green", ja: "グリーン", weight: 0.3, lean: {"green": 1.0}),
             ],
         ),
+    ],
+    kana: [
+        (kana: "ブ", into: ("バ", "ビ", "ブ", "ベ", "ボ")),
+        (kana: "プ", into: ("パ", "ピ", "プ", "ペ", "ポ")),
+        (kana: "ル", into: ("ラ", "リ", "ル", "レ", "ロ")),
+        (kana: "ン", into: ("ナ", "ニ", "ヌ", "ネ", "ノ")),
+        (kana: "ド", into: ("ダ", "ディ", "ドゥ", "デ", "ド")),
+        (kana: "ト", into: ("タ", "ティ", "トゥ", "テ", "ト")),
+        (kana: "ム", into: ("マ", "ミ", "ム", "メ", "モ")),
+        (kana: "ス", into: ("サ", "シ", "ス", "セ", "ソ")),
+        (kana: "ズ", into: ("ザ", "ジ", "ズ", "ゼ", "ゾ")),
+        (kana: "シュ", into: ("シャ", "シ", "シュ", "シェ", "ショ")),
+        (kana: "チ", into: ("チャ", "チ", "チュ", "チェ", "チョ")),
+        (kana: "ク", into: ("カ", "キ", "ク", "ケ", "コ")),
+        (kana: "グ", into: ("ガ", "ギ", "グ", "ゲ", "ゴ")),
+        (kana: "フ", into: ("ファ", "フィ", "フ", "フェ", "フォ")),
+        (kana: "ヴ", into: ("ヴァ", "ヴィ", "ヴ", "ヴェ", "ヴォ")),
+        (kana: "ハ", after: "h", into: ("ハ", "ヒ", "フ", "ヘ", "ホ")),
+        (kana: "ー", after: "r", into: ("ラ", "リ", "ル", "レ", "ロ")),
     ],
     styles: [
         (
@@ -312,7 +417,7 @@
             roof: [Name("polished_sandstone", 2), Name("sandstone_bricks", 1)],
             trim: [Name("{trim}_planks", 1), Name("orange_terracotta", 1)],
             roofs: [(Flat, 4), (Shed, 1)],
-            window: Some("glass"), window_chance: 0.5,
+            window: Some("old_glass"), window_chance: 0.5,
             paving: [Name("sandstone", 3), Name("cobbled_sandstone", 2), Name("sand", 1)],
             hedge: [Name("dead_bush", 1)],
             crops: [Name("wheat", 1)],
@@ -328,7 +433,7 @@
             roof: [Name("polished_red_sandstone", 2), Name("brown_terracotta", 1)],
             trim: [Name("{trim}_planks", 1)],
             roofs: [(Flat, 3), (Shed, 1), (Gable, 1)],
-            window: Some("glass"), window_chance: 0.5,
+            window: Some("old_glass"), window_chance: 0.5,
             paving: [Name("red_sandstone", 2), Name("cobbled_red_sandstone", 2), Name("red_sand", 1)],
             hedge: [Name("dead_bush", 1)],
             crops: [Name("wheat", 1)],
@@ -376,7 +481,7 @@
             roof: [Name("dark_oak_planks", 2), Name("{wood}_planks", 2), Name("{trim}_planks", 1)],
             trim: [Name("stripped_{trim}_log", 1), Name("{trim}_planks", 1)],
             roofs: [(Gable, 5), (Hip, 1), (Saltbox, 1.5), (Gambrel, 0.8)],
-            window: Some("glass"), window_chance: 0.6,
+            window: Some("old_glass"), window_chance: 0.6,
             paving: [Name("gravel", 3), Name("cobblestone", 2), Name("packed_earth", 1)],
             hedge: [Name("{wood}_leaves", 1)],
             crops: [Name("potato", 2), Name("carrot", 2), Name("wheat", 1)],
@@ -392,7 +497,7 @@
             roof: [Name("slate_bricks", 2), Name("polished_slate", 1), Name("{trim}_planks", 2), Name("dark_oak_planks", 1)],
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Gable, 5), (Hip, 2), (HalfHip, 2), (Saltbox, 1)],
-            window: Some("glass"), window_chance: 0.45,
+            window: Some("old_glass"), window_chance: 0.45,
             paving: [Name("gravel", 2), Name("cobblestone", 3), Name("cobbled_slate", 1)],
             hedge: [Name("spruce_leaves", 1)],
             crops: [Name("potato", 2), Name("carrot", 1), Name("wheat", 1)],
@@ -408,7 +513,7 @@
             roof: [Name("gray_terracotta", 2), Name("black_terracotta", 1), Name("dark_oak_planks", 2), Name("slate_bricks", 1), Name("pink_terracotta", 1)],
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Hip, 5), (Gable, 2), (HalfHip, 2)],
-            window: Some("glass"), window_chance: 0.4,
+            window: Some("old_glass"), window_chance: 0.4,
             paving: [Name("gravel", 3), Name("polished_andesite", 1), Name("cobbled_andesite", 2)],
             hedge: [Name("cherry_leaves", 2), Name("azalea_leaves", 1)],
             crops: [Name("carrot", 2), Name("wheat", 1)],
@@ -424,7 +529,7 @@
             roof: [Name("dark_oak_planks", 2), Name("spruce_planks", 2), Name("red_terracotta", 1), Name("green_terracotta", 1)],
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Gable, 5), (Hip, 1), (Shed, 1), (Saltbox, 1.5), (Gambrel, 1)],
-            window: Some("glass"), window_chance: 0.6,
+            window: Some("old_glass"), window_chance: 0.6,
             paving: [Name("gravel", 3), Name("packed_earth", 2), Name("cobbled_diorite", 1)],
             hedge: [Name("birch_leaves", 2), Name("golden_birch_leaves", 1)],
             crops: [Name("potato", 2), Name("carrot", 2)],
@@ -440,7 +545,7 @@
             roof: [Name("dark_oak_planks", 2), Name("brown_terracotta", 2), Name("red_terracotta", 1), Name("{trim}_planks", 1)],
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Gable, 5), (Hip, 2), (Gambrel, 1.5), (HalfHip, 1)],
-            window: Some("glass"), window_chance: 0.55,
+            window: Some("old_glass"), window_chance: 0.55,
             paving: [Name("gravel", 2), Name("packed_earth", 2), Name("cobbled_granite", 1)],
             hedge: [Name("maple_leaves", 1), Name("amber_maple_leaves", 1), Name("russet_oak_leaves", 1)],
             crops: [Name("wheat", 2), Name("carrot", 1), Name("potato", 1)],
@@ -472,7 +577,7 @@
             roof: [Name("grass_block", 3), Name("moss_block", 2), Name("podzol", 1)],
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Gable, 4), (Hip, 2), (HalfHip, 1)],
-            window: Some("glass"), window_chance: 0.3,
+            window: Some("old_glass"), window_chance: 0.3,
             paving: [Name("gravel", 3), Name("cobbled_slate", 1), Name("packed_earth", 1)],
             hedge: [Name("spruce_leaves", 1)],
             crops: [Name("potato", 2), Name("carrot", 1)],
@@ -488,7 +593,7 @@
             roof: [Name("red_terracotta", 3), Name("orange_terracotta", 2), Name("brown_terracotta", 1)],
             trim: [Name("{trim}_planks", 1), Name("polished_travertine", 1)],
             roofs: [(Hip, 3), (Gable, 2), (Flat, 1)],
-            window: Some("glass"), window_chance: 0.5,
+            window: Some("old_glass"), window_chance: 0.5,
             paving: [Name("cobbled_travertine", 2), Name("cobbled_limestone", 2), Name("gravel", 1), Name("polished_travertine", 1)],
             hedge: [Name("olive_leaves", 2), Name("azalea_leaves", 1), Name("flowering_azalea_leaves", 1)],
             crops: [Name("wheat", 3), Name("carrot", 1)],
@@ -504,7 +609,7 @@
             roof: [Name("dark_oak_planks", 3), Name("spruce_planks", 2), Name("{trim}_planks", 1), Name("slate_bricks", 1), Name("brown_terracotta", 1), Name("red_terracotta", 1)],
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Gable, 6), (Hip, 2), (Shed, 1), (HalfHip, 2.5), (Saltbox, 1.5), (Gambrel, 1)],
-            window: Some("glass"), window_chance: 0.6,
+            window: Some("old_glass"), window_chance: 0.6,
             paving: [Name("cobblestone", 3), Name("gravel", 2), Name("packed_earth", 2), Name("stone_bricks", 1)],
             hedge: [Name("oak_leaves", 3), Name("{wood}_leaves", 1), Name("azalea_leaves", 1)],
             crops: [Name("wheat", 3), Name("carrot", 2), Name("potato", 2)],

@@ -78,6 +78,8 @@ pub struct Mats {
     pub log: BlockId,
     /// The crops its fields grow, by weight: their stages, the last ripe.
     pub crops: Vec<([BlockId; 4], f32)>,
+    /// The fruit trees it grows: only those of its size's crop level or below.
+    pub fruit: Palette,
 }
 
 impl Mats {
@@ -105,12 +107,16 @@ pub struct Fixed {
     pub canopies: Palette,
     pub compost: Palette,
     pub boulder: Palette,
-    pub fruit: Palette,
+    /// Fruit trees' leaves, by weight, with the Farming level of their fruit.
+    pub fruit: Vec<(BlockId, f32, u32)>,
     pub hay: Palette,
     pub hanging: Palette,
     pub sacks: Palette,
     pub cloth: Palette,
     pub dirt: BlockId,
+    /// The chance of a stone lowest course, and old walls' share of weathered blocks.
+    pub plinth: f32,
+    pub moss: f32,
 }
 
 /// A house rolled before it is placed, so its footprint is known.
@@ -446,7 +452,7 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     let canopy = fixed.canopies.pick(unit(hash3(spec.seed, 7, 7, 7))).unwrap_or(mats.trim);
     // The wall block at a place: old walls take moss and cracks here and there.
     let wall_at = |pen: &Pen, x: i32, y: i32, z: i32| -> BlockId {
-        if moss && pen.roll(x, y, z, 0x3055) < 0.22 {
+        if moss && pen.roll(x, y, z, 0x3055) < fixed.moss {
             mats.weathered.at(pen.seed, pen.frame.at(x, y, z)).unwrap_or(mats.wall)
         } else {
             mats.wall
@@ -482,8 +488,11 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     }
 
     // Walls, storey by storey, with corner posts and beams between storeys.
-    let plinth = mats.wall != mats.frame && rng.chance(0.35);
-    let hatch = if spec.form == Form::Round { (w / 2 + 1, d / 2 + 1) } else { (w - 2, d - 2) };
+    let plinth = mats.wall != mats.frame && rng.chance(fixed.plinth);
+    // A stair up each storey but the top, round the inside of the walls.
+    let door = spec.door.clamp(1, w - 2);
+    let hearth = spec.has(Extra::Chimney).then_some((1, d / 2));
+    let flights = stairs(spec, door, hearth);
     for storey in 0..spec.storeys {
         let base = lift + storey * (spec.wall + 1);
         for y in base + 1..=base + spec.wall {
@@ -517,8 +526,19 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
                     }
                 }
             }
-            // A hatch where a ladder will go.
-            pen.clear(hatch.0, y, hatch.1);
+            // The stair: a step up each block from the floor to the storey above, its
+            // top two under a hole in that storey's floor.
+            if let Some(flight) = flights.get(storey as usize).and_then(|f| f.as_ref()) {
+                for (k, &(x, z)) in flight.iter().enumerate().skip(1) {
+                    let step = y - k as i32;
+                    for up in base + 1..=step {
+                        pen.set(x, up, z, mats.floor);
+                    }
+                    if k <= 2 {
+                        pen.clear(x, y, z);
+                    }
+                }
+            }
         }
         match spec.form {
             Form::Box | Form::ShopFront => windows(spec, &mut pen, mats, base, storey, &mut rng),
@@ -528,7 +548,6 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     }
 
     // A shop's front: a counter open to the street under an awning.
-    let door = spec.door.clamp(1, w - 2);
     if spec.form == Form::ShopFront {
         for x in 1..w - 1 {
             if x == door {
@@ -590,7 +609,7 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
                 }
             }
         }
-        match fixed.fruit.pick(unit(hash3(spec.seed, 0xc2, 0, 0))) {
+        match mats.fruit.pick(unit(hash3(spec.seed, 0xc2, 0, 0))) {
             Some(leaves) if w - 2 * COURT >= 3 && d - 2 * COURT >= 3 => {
                 for up in 1..=3 {
                     pen.ground(cx, up, cz, Put::Set(mats.log));
@@ -697,7 +716,8 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     // Inside: a working building's fittings, or a table, a light and sometimes a planter.
     // The first free floor near a place.
     let free = |x: i32, z: i32| -> (i32, i32) {
-        let ok = |x: i32, z: i32| foot.room(x, z) && !(x == door && z <= 1) && (x, z) != hatch;
+        let stair = |x: i32, z: i32| flights.first().and_then(|f| f.as_ref()).is_some_and(|f| f[1..].contains(&(x, z)));
+        let ok = |x: i32, z: i32| foot.room(x, z) && !(x == door && z <= 1) && !stair(x, z);
         if ok(x, z) {
             return (x, z);
         }
@@ -944,6 +964,45 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 }
 
 /// What stands inside a working building, on its ground floor.
+/// Each storey's stair but the top's: `wall + 1` cells in a run round the inside of the
+/// walls, the first in the floor of the storey above (stepped up onto), the rest steps
+/// down to the floor. Clear of the door, the hearth, the shop's counter and the top of the
+/// stair below; none where no run fits (only four-walled houses have them).
+fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<Option<Vec<(i32, i32)>>> {
+    let (w, d) = (spec.w, spec.d);
+    let run = (spec.wall + 1) as usize;
+    if spec.storeys < 2 || !matches!(spec.form, Form::Box | Form::ShopFront) || w < 4 || d < 4 {
+        return Vec::new();
+    }
+    // The cells inside the walls, round in order: along the back, down the left, along the
+    // front and up the right.
+    let (x0, x1, z0, z1) = (1, w - 2, 1, d - 2);
+    let mut ring: Vec<(i32, i32)> = Vec::new();
+    ring.extend((x0..=x1).rev().map(|x| (x, z1)));
+    ring.extend((z0..z1).rev().map(|z| (x0, z)));
+    ring.extend((x0 + 1..=x1).map(|x| (x, z0)));
+    ring.extend((z0 + 1..z1).map(|z| (x1, z)));
+    ring.dedup();
+    if ring.len() < run + 1 {
+        return Vec::new();
+    }
+    let mut flights = Vec::new();
+    let mut below: Vec<(i32, i32)> = Vec::new();
+    for _ in 0..spec.storeys - 1 {
+        let banned = |&(x, z): &(i32, i32)| {
+            (x == door && z <= 2) || Some((x, z)) == hearth || (spec.form == Form::ShopFront && z <= 2) || below.contains(&(x, z))
+        };
+        let n = ring.len();
+        let found = (0..n).flat_map(|start| [1isize, -1].map(|dir| (start, dir))).find_map(|(start, dir)| {
+            let flight: Vec<(i32, i32)> = (0..run).map(|k| ring[(start as isize + dir * k as isize).rem_euclid(n as isize) as usize]).collect();
+            (!flight.iter().any(banned)).then_some(flight)
+        });
+        below = found.as_ref().map_or_else(Vec::new, |f| f[..3.min(f.len())].to_vec());
+        flights.push(found);
+    }
+    flights
+}
+
 fn fittings(spec: &Spec, pen: &mut Pen, mats: &Mats, fixed: &Fixed, lift: i32, door: i32) {
     let (w, d) = (spec.w, spec.d);
     let y = lift + 1;
@@ -1350,10 +1409,10 @@ fn pen(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Canv
 }
 
 /// An orchard: small fruit trees in rows on grass.
-fn orchard(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Canvas) {
+fn orchard(spec: &Spec, frame: &Frame, mats: &Mats, _fixed: &Fixed, canvas: &mut Canvas) {
     let mut pen = Pen { frame, canvas, seed: spec.seed };
     let (w, d) = (spec.w, spec.d);
-    let leaves = fixed.fruit.pick(unit(hash3(spec.seed, 3, 1, 4))).unwrap_or(mats.trim);
+    let leaves = mats.fruit.pick(unit(hash3(spec.seed, 3, 1, 4))).unwrap_or(mats.trim);
     for z in (1..d - 1).step_by(4) {
         for x in (1..w - 1).step_by(4) {
             if pen.roll(x, 0, z, 0x0c4) < 0.15 {

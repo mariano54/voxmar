@@ -625,13 +625,16 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             if !terrain.frosty(*surface) {
                 continue;
             }
-            let mut open = true;
+            // Through a canopy snow reaches every level; under a roof or an overhang of
+            // rock none falls, however much air lies between.
+            let (mut open, mut sheltered) = (true, false);
             for y in (site.height + 1..(site.height + 48).min(WORLD_HEIGHT)).rev() {
                 let block = blocks.get_local(x, y, z);
-                if open && let Some(snowy) = terrain.blanket[block.0 as usize] {
+                if open && !sheltered && let Some(snowy) = terrain.blanket[block.0 as usize] {
                     blocks.set_local(x, y, z, snowy);
                 }
                 open = block.is_air() || terrain.plants[block.0 as usize];
+                sheltered |= terrain.earth[block.0 as usize];
             }
         }
     }

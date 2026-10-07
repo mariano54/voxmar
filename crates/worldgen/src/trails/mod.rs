@@ -87,6 +87,12 @@ pub trait Land: Sync {
     fn gates(&self, _min: IVec2, _max: IVec2) -> Vec<IVec2> {
         Vec::new()
     }
+
+    /// The ground settlements' buildings take (each from its least corner to its most)
+    /// within or touching the box from `min` to `max`, which trails keep off.
+    fn built(&self, _min: IVec2, _max: IVec2) -> Vec<(IVec2, IVec2)> {
+        Vec::new()
+    }
 }
 
 /// How far from a settlement trails are laid: as far as a trail from its gate reaches,
