@@ -269,9 +269,21 @@ fn settlement_preview() {
 }
 
 
+/// The base game's blocks, from every file the game reads them from: furnishings (the
+/// crate, the barrel) and tools (the altar) as well as `blocks.ron`.
 fn base_registry() -> std::sync::Arc<BlockRegistry> {
-    let source = include_str!("../../../../assets/content/base/blocks.ron");
-    std::sync::Arc::new(BlockRegistry::from_ron("base", source).unwrap())
+    let sources = [
+        include_str!("../../../../assets/content/base/blocks.ron"),
+        include_str!("../../../../assets/content/base/blocks_creatures.ron"),
+        include_str!("../../../../assets/content/base/blocks_farm.ron"),
+        include_str!("../../../../assets/content/base/blocks_food.ron"),
+        include_str!("../../../../assets/content/base/blocks_furnishings.ron"),
+        include_str!("../../../../assets/content/base/blocks_herbs.ron"),
+        include_str!("../../../../assets/content/base/blocks_tools.ron"),
+        include_str!("../../../../assets/content/base/blocks_weapons.ron"),
+    ];
+    let packages = sources.iter().map(|s| ("base".to_owned(), BlockRegistry::read("base", s).unwrap())).collect();
+    std::sync::Arc::new(BlockRegistry::new(BlockRegistry::expand(packages).unwrap()).unwrap())
 }
 
 fn base_world(seed: u64) -> Overworld {
@@ -815,12 +827,13 @@ fn japanese_names_join_as_they_are_said() {
 /// What every plan keeps to, over the squares round two seeds: about one square in seven
 /// settled, mostly hamlets; each plan inside its square, its buildings apart, enough
 /// homes for its size, none in a biome settlements avoid or on a river or lake; and every
-/// chapel with its altar (in snowy land too, where the snow blanket once covered it).
+/// chapel and wayside shrine with its altar (in snowy land too, where the snow blanket
+/// once covered it).
 #[test]
 fn plans_keep_to_their_squares_and_rules() {
     use crate::trails::Land;
     use super::house::Kind;
-    let (mut squares, mut hamlets, mut villages, mut chapels) = (0, 0, 0, 0);
+    let (mut squares, mut hamlets, mut villages, mut chapels, mut shrines) = (0, 0, 0, 0, 0);
     for seed in [1u64, 42] {
         let world = base_world(seed);
         let def = &world.settlements.def;
@@ -854,11 +867,12 @@ fn plans_keep_to_their_squares_and_rules() {
                             assert!(!g.submerged() && g.river < 0.5, "{at}: {} at {} stands in water ({p})", a.what, a.min);
                         }
                     }
-                    if a.what == "chapel" && chapels < 3 {
-                        chapels += 1;
+                    let looked = if a.what == "chapel" { &mut chapels } else { &mut shrines };
+                    if (a.what == "chapel" || a.what == "shrine") && *looked < 3 {
+                        *looked += 1;
                         let area = Area::new(&world, a.min, a.max);
                         let found = (a.min.y..=a.max.y).any(|z| (a.min.x..=a.max.x).any(|x| (a.floor..a.floor + 4).any(|y| area.block(IVec3::new(x, y, z)) == altar)));
-                        assert!(found, "{at}: the chapel at {} has no altar", a.min);
+                        assert!(found, "{at}: the {} at {} has no altar", a.what, a.min);
                     }
                 }
             }
@@ -868,7 +882,7 @@ fn plans_keep_to_their_squares_and_rules() {
     let share = settled as f32 / squares as f32;
     assert!((0.08..=0.25).contains(&share), "{settled} of {squares} squares settled");
     assert!(hamlets > villages && villages > 0, "{hamlets} hamlets, {villages} villages");
-    assert!(chapels > 0, "no chapel to look in");
+    assert!(chapels > 0 && shrines > 0, "{chapels} chapels and {shrines} shrines to look in");
 }
 
 /// The settlements of a few squares, held fixed: a change to planning that moves a single
