@@ -274,15 +274,18 @@ impl Server {
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
-                    if let Some(broken) = self.block(block) {
+                    // What a player put there teaches, counts and forages nothing: taken
+                    // before `picked` and `reward_break` clear the mark.
+                    let plants = supported_by(&Context { server: self, agent }, block);
+                    let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
+                    if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
                         self.discover_broken(agent, broken);
                     }
                     self.picked(agent, block);
                     let instead = self.reward_break(agent, block);
-                    let plants = supported_by(&Context { server: self, agent }, block);
                     // A block that gave something else instead (gravel's flint) drops nothing of its own.
                     let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
-                    self.drop_loot(agent, &cells);
+                    self.drop_loot(agent, &cells, &placed);
                 }
                 (Effect::Throw, ActionTarget::Stack { slot, count }) => self.throw(agent, slot as usize, count),
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
@@ -407,8 +410,13 @@ impl Server {
             (at_table || !r.needs_table())
                 && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
         };
-        let found = recipes.find(&player.inventory.grid()).filter(|r| allowed(r)).map(|r| (r.skill, r.xp, r.output, r.count));
-        let recipe = |grid: &[Option<BlockId>; voxmar_engine::craft::GRID]| recipes.find(grid).filter(|r| allowed(r)).map(|r| (r.output, r.count));
+        // Crafting all goes on only while the grid still makes the same recipe: experience
+        // and tallies are this recipe's, once for each one made.
+        let first = recipes.find(&player.inventory.grid()).filter(|r| allowed(r));
+        let found = first.map(|r| (r.skill, r.xp, r.output, r.count));
+        let recipe = |grid: &[Option<BlockId>; voxmar_engine::craft::GRID]| {
+            recipes.find(grid).filter(|r| first.is_some_and(|f| std::ptr::eq(*r, f))).map(|r| (r.output, r.count))
+        };
         let made = player.inventory.craft(recipe, all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);

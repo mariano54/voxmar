@@ -89,6 +89,16 @@ struct Sites {
     /// Treadwheels and who placed them.
     wheels: Vec<(IVec3, Option<String>)>,
     windmills: Vec<IVec3>,
+    water_wheels: Vec<IVec3>,
+}
+
+/// The faces a water wheel takes water from: its sides, and below.
+const WATER_FACES: [IVec3; 5] = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::NEG_Y];
+
+/// Whether the water wheel at `pos` is the one the water in `cell` turns: of the wheels it
+/// runs past, the first in order, so a fall ringed by wheels turns one of them.
+fn turns_first(wheels: &[IVec3], pos: IVec3, cell: IVec3) -> bool {
+    !wheels.iter().any(|&other| (other.x, other.y, other.z) < (pos.x, pos.y, pos.z) && WATER_FACES.iter().any(|&d| other + d == cell))
 }
 
 impl Server {
@@ -109,6 +119,12 @@ impl Server {
             }
         }
         if self.factory.insert(pos, new, &machines) {
+            // One that needs water or a structure round it is unable until a survey has seen
+            // them, which waits while the land beside it is not loaded.
+            let looks = matches!(machines.get(new).map(|m| &m.role), Some(Role::Processor { water: true, .. })) || self.content.multiblocks.with_core(new).next().is_some();
+            if looks {
+                self.factory.set_condition(pos, 0.0);
+            }
             let sites = self.machine_sites();
             self.survey_machine(pos, &sites, 0.0);
         }
@@ -130,11 +146,12 @@ impl Server {
             Some(Role::Generator { source, .. }) => Some(*source),
             _ => None,
         };
-        let mut sites = Sites { wheels: Vec::new(), windmills: Vec::new() };
+        let mut sites = Sites { wheels: Vec::new(), windmills: Vec::new(), water_wheels: Vec::new() };
         for (pos, block, state) in self.factory.iter() {
             match source(block) {
                 Some(Source::Walked) => sites.wheels.push((pos, state.owner.clone())),
                 Some(Source::Wind) => sites.windmills.push(pos),
+                Some(Source::FlowingWater) => sites.water_wheels.push(pos),
                 _ => {}
             }
         }
@@ -167,6 +184,8 @@ impl Server {
         let rules = &machines.sources;
         // Another windmill's sails near this one's becalm it.
         let becalmed = || sites.windmills.iter().any(|&other| other != pos && (other - pos).abs().max_element() <= rules.wind_spacing);
+        // Another water wheel near this one shares its water and stills it.
+        let crowded = || sites.water_wheels.iter().any(|&other| other != pos && (other - pos).abs().max_element() <= rules.water_spacing);
         if !self.world.contains(ColumnPos::of_block(pos)) {
             match machine.role {
                 Role::Generator { source: Source::Wind, .. } => {
@@ -195,11 +214,13 @@ impl Server {
                 let blocks = &self.content.blocks;
                 // A river's current or a fall of water: not water spreading from a pail, which
                 // would turn a wheel for nothing. Not lava.
+                // Each fall or current turns one wheel: the first in order beside it.
                 let hot = &rules.hot_tag;
-                let flowing = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::NEG_Y].into_iter().any(|d| {
-                    self.block(pos + d).filter(|&b| !blocks.def(b).has_tag(hot)).and_then(|b| blocks.fluid(b)).is_some_and(|f| f.falling || f.current.is_some())
+                let flowing = WATER_FACES.into_iter().any(|d| {
+                    let cell = pos + d;
+                    turns_first(&sites.water_wheels, pos, cell) && self.block(cell).filter(|&b| !blocks.def(b).has_tag(hot)).and_then(|b| blocks.fluid(b)).is_some_and(|f| f.falling || f.current.is_some())
                 });
-                if flowing { 1.0 } else { 0.0 }
+                if flowing && !crowded() { 1.0 } else { 0.0 }
             }
             Role::Generator { source: Source::Wind, .. } => {
                 let at = Vec2::new(pos.x as f32 + 0.5, pos.z as f32 + 0.5);
@@ -449,5 +470,20 @@ impl Server {
         for column in loaded {
             self.reconcile_machines(column);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fall_ringed_by_wheels_turns_one_of_them() {
+        let cell = IVec3::new(0, 10, 0);
+        let wheels = [IVec3::new(1, 10, 0), IVec3::new(-1, 10, 0), IVec3::new(0, 10, 1), IVec3::new(0, 10, -1), IVec3::new(0, 11, 0)];
+        let turning: Vec<IVec3> = wheels.iter().copied().filter(|&w| turns_first(&wheels, w, cell)).collect();
+        assert_eq!(turning, [IVec3::new(-1, 10, 0)]);
+        // Water elsewhere is no other wheel's.
+        assert!(turns_first(&wheels, IVec3::new(1, 10, 0), IVec3::new(2, 10, 0)));
     }
 }

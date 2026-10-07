@@ -194,6 +194,9 @@ pub struct SourceRules {
     pub wind_low_share: f32,
     /// How near (in blocks, any way, diagonals too) another windmill's sails becalm one.
     pub wind_spacing: i32,
+    /// How near (in blocks, any way, diagonals too) another water wheel stills one: wheels
+    /// crowded round one shaft of water share it.
+    pub water_spacing: i32,
     /// The wind (blocks a second) a windmill is reckoned to catch while its land is not
     /// loaded: an average day's, not the gale it was left in.
     pub wind_mean: f32,
@@ -221,6 +224,7 @@ impl Default for SourceRules {
             wind_high: 176.0,
             wind_low_share: 1.0 / 3.0,
             wind_spacing: 4,
+            water_spacing: 4,
             wind_mean: 5.0,
             survey_seconds: 1.0,
             hot_tag: "hot".into(),
@@ -538,6 +542,12 @@ impl MachineRegistry {
         slots.saturating_sub(others).max(1)
     }
 
+    /// Whether `a` and `b` go into `machine`'s recipes as the same input (coal and charcoal
+    /// as a fuel, two logs as `tag:log`): their stacks share that input's room.
+    pub fn same_input(&self, machine: &Machine, a: BlockId, b: BlockId) -> bool {
+        a == b || machine.processes.iter().any(|&p| self.process(p).inputs.iter().any(|(accepts, _)| accepts.binary_search(&a).is_ok() && accepts.binary_search(&b).is_ok()))
+    }
+
     /// Whether `machine` works any recipe `item` goes into.
     pub fn takes(&self, machine: &Machine, item: BlockId) -> bool {
         machine.processes.iter().any(|&p| self.process(p).inputs.iter().any(|(accepts, _)| accepts.binary_search(&item).is_ok()))
@@ -707,5 +717,41 @@ mod tests {
         assert!((rules.wind_share(12.0, 64.0) - 1.0 / 3.0).abs() < 1e-5, "a gale low down gives a third");
         let breeze = rules.wind_share(5.5, 180.0);
         assert!(breeze > 0.4 && breeze < 0.6, "a breeze gives about half: {breeze}");
+    }
+
+    /// Experience follows the ore, not the route: crushed (two dust) or washed (three), an
+    /// ore's dust earns at most what smelting the ore by hand does, washing exactly that.
+    #[test]
+    fn an_ore_earns_no_more_engineering_crushed_or_washed_than_by_hand() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let ingot = |b: BlockId| blocks.def(b).name.ends_with("_ingot");
+        // The most a hand smelt of one of `item` pays: at a station, or in the grid.
+        let hand = |item: BlockId| {
+            let station = content.cooking.iter().filter(|(input, r)| *input == item && ingot(r.output)).map(|(_, r)| r.def.xp);
+            let grid = content.recipes.iter().filter(|r| ingot(r.output) && r.alternatives().into_iter().flatten().any(|a| a.contains(&item))).map(|r| r.xp / r.count as f32);
+            station.chain(grid).fold(0.0f32, f32::max)
+        };
+        let mut checked = 0;
+        for (_, process) in machines.processes().filter(|(_, p)| p.kind == "crush") {
+            let ([(ore, 1)], [(dust, made)]) = (process.inputs.as_slice(), process.outputs.as_slice()) else { continue };
+            for &ore in ore {
+                let by_hand = hand(ore);
+                let dust_xp = hand(*dust);
+                let routes: Vec<f32> = machines
+                    .iter()
+                    .filter_map(|m| match &m.role {
+                        Role::Processor { kinds, extra, .. } if kinds.iter().any(|k| k == "crush") => Some(*made as f32 * (1.0 + extra) * dust_xp),
+                        _ => None,
+                    })
+                    .collect();
+                let name = &blocks.def(ore).name;
+                assert!(routes.iter().all(|&xp| xp <= by_hand + 0.01), "{name}: by hand {by_hand}, by machines {routes:?}");
+                let best = routes.iter().copied().fold(0.0f32, f32::max);
+                assert!((best - by_hand).abs() < 0.01, "{name}: washed it earns {best}, by hand {by_hand}");
+                checked += 1;
+            }
+        }
+        assert!(checked >= 2, "copper and iron at least");
     }
 }
