@@ -315,6 +315,7 @@
     "item.armour_guard": "Guards {stop}% over {arc}°",
     "item.armour_resists": "Strong against {styles}",
     "item.armour_low": "Until then it gives no armour",
+    "item.armour_low_shield": "Until then it neither guards nor gives armour",
     "combat.splat.miss": "Miss",
     "combat.splat.blow.plain": "{damage}",
     "combat.splat.blow.beat": "{damage}",

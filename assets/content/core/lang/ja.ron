@@ -303,6 +303,7 @@
     "item.armour_guard": "{arc}°の範囲で{stop}%防ぐ",
     "item.armour_resists": "{styles}に強い",
     "item.armour_low": "それまでは装甲がない",
+    "item.armour_low_shield": "それまでは防げず、装甲もない",
     "combat.splat.miss": "ミス",
     "combat.splat.blow.plain": "{damage}",
     "combat.splat.blow.beat": "{damage}",
