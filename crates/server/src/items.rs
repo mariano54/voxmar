@@ -128,15 +128,21 @@ impl Surroundings for Around<'_> {
     }
 }
 
-/// A small, fast hash for the spread of popped drops: deterministic for a given tick and
-/// place, like everything else the server does.
+/// A small, fast hash for the spread of popped drops and for chances: deterministic for a
+/// given tick and place, like everything else the server does. Each value goes through
+/// the whole of MurmurHash3's finaliser: with half of it, ticks in a row gave values in a
+/// slow drift, so a one-in-eight chance tried on sixty ticks running could miss them all.
 pub(crate) fn random3(tick: u64, cell: IVec3, salt: u32) -> [f32; 3] {
-    let mut h = tick ^ (cell.x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (cell.y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
+    let mut h = tick.wrapping_mul(0xd6e8_feb8_6659_fd93)
+        ^ (cell.x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ (cell.y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
         ^ (cell.z as u64).wrapping_mul(0x1656_67b1_9e37_79f9)
         ^ (salt as u64).wrapping_mul(0x27d4_eb2f_1656_67c5);
     [0, 1, 2].map(|_| {
         h ^= h >> 33;
         h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
         h ^= h >> 33;
         (h >> 40) as f32 / (1u64 << 24) as f32
     })
