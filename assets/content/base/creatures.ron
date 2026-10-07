@@ -18,6 +18,10 @@
 // - `loot` is what it drops: always (chance 1) or by chance, more with the right tool
 //   (`tools`: the tags of what the killer holds) and, for rarer finds, with level.
 (
+    // How many creatures the world holds (docs/creature-data.md). Animals near a player were
+    // 12: halved (Mariano, 2026-10-07: "too many animals, the world is too crowded"), so the
+    // land feels wild and an animal is something to come upon.
+    limits: (most: 512, animals_near: 6, monsters_near: 6),
     creatures: [
         // --- Small and common: where everyone starts -------------------------------------
         (
