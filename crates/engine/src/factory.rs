@@ -1130,4 +1130,25 @@ mod tests {
         assert_eq!(held(&t, &factory, 0, "ore"), 10);
         assert_eq!(held(&t, &factory, 2, "ore"), 0);
     }
+
+    #[test]
+    fn a_run_moves_items_without_making_or_losing_any() {
+        let t = test();
+        let mut factory = Factory::default();
+        // Two hoppers and two unfired furnaces on one run, a chest beside: dust goes round
+        // into the furnaces, and nothing else moves.
+        build(&t, &mut factory, &["hopper", "conveyor", "furnace", "conveyor", "furnace", "conveyor", "hopper", "conveyor", "chest"]);
+        feed(&t, &mut factory, 0, "dust", 50);
+        feed(&t, &mut factory, 6, "dust", 30);
+        feed(&t, &mut factory, 6, "ore", 7);
+        let total = |factory: &Factory, item: &str| (0..9).map(|x| held(&t, factory, x, item) + made(&t, factory, x, item)).sum::<u32>();
+        for _ in 0..40 {
+            run(&t, &mut factory, 0.5);
+            assert_eq!(total(&factory, "dust"), 80);
+            assert_eq!(total(&factory, "ore"), 7);
+        }
+        assert_eq!(held(&t, &factory, 0, "dust") + held(&t, &factory, 6, "dust"), 0, "the furnaces took all the dust");
+        assert_eq!(held(&t, &factory, 6, "ore"), 7, "nothing takes ore: it stays in its hopper");
+        assert_eq!(held(&t, &factory, 8, "dust"), 0, "hoppers never feed the chest");
+    }
 }

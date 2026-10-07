@@ -1432,6 +1432,15 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
         client.pump_until(|c| !c.chat.is_empty());
     }
     assert_eq!(count(&client, bloom), 1);
+    // One animal walks one wheel: a second wheel beside it, farther from the aurochs, stays
+    // still while the first turns.
+    client.ok("/setblock ~8 ~ ~ treadwheel");
+    let started = Instant::now();
+    while !client.ok("/machine ~8 ~ ~").contains("needs a kept animal") {
+        assert!(started.elapsed() < Duration::from_secs(10), "one aurochs walks two wheels");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    assert!(!client.ok("/machine ~7 ~ ~").contains("needs a kept animal"), "the nearer wheel still turns");
     // The aurochs, kept, can be taken away again; then the wheel stops.
     assert!(client.ok("/creatures remove").contains("for 1 creatures"));
     let started = Instant::now();

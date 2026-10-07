@@ -502,4 +502,46 @@ mod tests {
         let machines = MachineRegistry::read("t", r#"(machines: [(block: "crusher", role: Processor(kinds: ["mill"]))])"#).unwrap();
         assert!(MachineRegistry::new(vec![machines], Vec::new(), &blocks).is_err());
     }
+
+    /// The most ingots one ore can become through the game's machines, each kind at the best
+    /// yield any machine of it has: the iron ladder (1 by hand, 1.5 bloomed and hammered, 2
+    /// crushed, 3 washed) must hold for every ore, so no chain of machines beats it.
+    #[test]
+    fn no_chain_of_machines_gets_more_than_three_ingots_from_an_ore() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let best_yield = |kind: &str| {
+            machines.iter().filter_map(|m| match &m.role {
+                Role::Processor { kinds, extra, .. } if kinds.iter().any(|k| k == kind) => Some(*extra),
+                _ => None,
+            }).fold(0.0f32, f32::max)
+        };
+        // Ingots an item is worth at most, following recipes from it; fuels and other
+        // inputs beside it are free, which only makes the bound looser.
+        fn worth(item: BlockId, blocks: &BlockRegistry, machines: &MachineRegistry, best_yield: &dyn Fn(&str) -> f32, seen: &mut Vec<BlockId>) -> f32 {
+            if blocks.def(item).name.ends_with("_ingot") {
+                return 1.0;
+            }
+            if seen.contains(&item) {
+                return 0.0;
+            }
+            seen.push(item);
+            let mut best = 0.0f32;
+            for (_, process) in machines.processes() {
+                let Some(&(_, count)) = process.inputs.iter().find(|(accepts, _)| accepts.binary_search(&item).is_ok()) else { continue };
+                let made: f32 = process.outputs.iter().map(|&(out, n)| n as f32 * (1.0 + best_yield(&process.kind)) * worth(out, blocks, machines, best_yield, seen)).sum();
+                best = best.max(made / count as f32);
+            }
+            seen.pop();
+            best
+        }
+        let ores: Vec<BlockId> = (0..blocks.len()).map(|i| BlockId(i as u16)).filter(|&b| blocks.def(b).name.ends_with("_ore")).collect();
+        let mut top = 0.0f32;
+        for ore in ores {
+            let most = worth(ore, blocks, machines, &best_yield, &mut Vec::new());
+            assert!(most <= 3.0 + 1e-4, "{} can become {most} ingots", blocks.def(ore).name);
+            top = top.max(most);
+        }
+        assert!((top - 3.0).abs() < 1e-4, "the ladder's top, washing, gives {top}");
+    }
 }

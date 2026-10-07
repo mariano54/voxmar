@@ -133,16 +133,28 @@ impl Server {
                 if open { strength * height } else { 0.0 }
             }
             Role::Generator { source: Source::Walked, .. } => {
-                // A kept animal of a walking kind within reach of the wheel.
+                // A kept animal of a walking kind within reach of the wheel, and walking this
+                // one: an animal walks only the wheel nearest it, so one aurochs among many
+                // wheels turns one of them.
                 let (machines, creatures) = (&self.content.machines, &self.content.creatures);
                 let rules = machines.sources;
-                let centre = pos.as_vec3() + Vec3::splat(0.5);
+                let reach = |wheel: IVec3, at: Vec3| {
+                    let centre = wheel.as_vec3() + Vec3::splat(0.5);
+                    let across = Vec2::new(at.x - centre.x, at.z - centre.z).length();
+                    (across <= rules.walk_reach && (at.y - centre.y).abs() <= rules.walk_height).then(|| at.distance(centre))
+                };
+                let wheels: Vec<IVec3> = self
+                    .factory
+                    .iter()
+                    .filter(|(_, b, _)| machines.get(*b).is_some_and(|m| matches!(m.role, Role::Generator { source: Source::Walked, .. })))
+                    .map(|(p, ..)| p)
+                    .collect();
                 let walked = self.creatures.live.values().any(|c| {
                     let at = c.body.position;
-                    c.owner.is_some()
-                        && Vec2::new(at.x - centre.x, at.z - centre.z).length() <= rules.walk_reach
-                        && (at.y - centre.y).abs() <= rules.walk_height
-                        && machines.walks(&creatures.get(c.species).def.name)
+                    let Some(here) = reach(pos, at) else { return false };
+                    // Nearer wheels, or as near and first in order, take the animal.
+                    let taken = wheels.iter().any(|&other| other != pos && reach(other, at).is_some_and(|d| d < here || (d == here && (other.x, other.y, other.z) < (pos.x, pos.y, pos.z))));
+                    c.owner.is_some() && !taken && machines.walks(&creatures.get(c.species).def.name)
                 });
                 if walked { 1.0 } else { 0.0 }
             }
