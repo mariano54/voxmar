@@ -115,6 +115,10 @@ pub struct Attack {
     /// A heavy blow goes through any guard: only a dodge escapes it.
     #[serde(default)]
     pub heavy: bool,
+    /// Blocks it lunges at its target as the blow lands, so backing off at a walk does not
+    /// escape it (unset, `combat::Feel`'s; quick animals more, big ones less).
+    #[serde(default)]
+    pub lunge: Option<f32>,
 }
 
 fn reach() -> f32 {

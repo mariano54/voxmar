@@ -25,7 +25,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 25;
+pub const PROTOCOL_VERSION: u32 = 26;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -141,9 +141,10 @@ pub enum ServerMessage {
     /// out of range.
     Creatures { changed: Vec<CreatureView>, gone: Vec<CreatureGone> },
     /// The player's blow at a creature landed for `damage` (0: it missed), whether it
-    /// killed, and what kind of blow it was (on the beat, a flourish, a counter: its
-    /// hitsplat). Every swing the server takes is answered, so the client can show it.
-    Struck { creature: u32, damage: u16, killed: bool, blow: voxmar_engine::combat::Blow },
+    /// killed, what kind of blow it was (on the beat, a flourish, a counter: its hitsplat)
+    /// and the rhythm pips the player has after it. Every swing the server takes is
+    /// answered, so the client can show it.
+    Struck { creature: u32, damage: u16, killed: bool, blow: voxmar_engine::combat::Blow, pips: u8 },
     /// A creature's blow at the player came down: for `damage`, or turned aside as
     /// `defended` says. Every blow a creature winds up at the player is answered.
     Hurt { creature: u32, damage: u16, defended: voxmar_engine::combat::Defended },

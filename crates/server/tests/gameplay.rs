@@ -40,17 +40,21 @@ struct Client {
     quick: bool,
     /// Console lines received.
     chat: Vec<(ChatKind, String)>,
-    /// The time of day and how fast it runs, as last told.
+    /// The time of day and how fast it runs, as last told, and the server's tick then.
     day: Option<(u64, f32)>,
+    tick: u64,
     /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
     blows: u32,
-    /// The damage each of our blows did (0 for a miss), and what kind of blow each was.
+    /// The damage each of our blows did (0 for a miss), what kind of blow each was, and our
+    /// rhythm pips after it.
     damage: Vec<u16>,
     kinds: Vec<voxmar_engine::combat::Blow>,
-    /// Creatures' blows at us, and what came of each.
+    pips: Vec<u8>,
+    /// Creatures' blows at us, what came of each, and when we heard.
     hurt: Vec<(u16, voxmar_engine::combat::Defended)>,
+    hurt_at: Vec<Instant>,
     journal: voxmar_engine::journal::Journal,
     quests: Vec<voxmar_engine::quest::QuestState>,
     /// The server, for the first player to join it (dropping it stops the server).
@@ -117,12 +121,15 @@ impl Client {
             quick: false,
             chat: Vec::new(),
             day: None,
+            tick: 0,
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
             damage: Vec::new(),
             kinds: Vec::new(),
+            pips: Vec::new(),
             hurt: Vec::new(),
+            hurt_at: Vec::new(),
             journal: Default::default(),
             quests: Vec::new(),
             _server: server,
@@ -191,7 +198,10 @@ impl Client {
                 self.quick = quick;
             }
             ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
-            ServerMessage::Time { day, day_speed, .. } => self.day = Some((day, day_speed)),
+            ServerMessage::Time { tick, day, day_speed } => {
+                self.day = Some((day, day_speed));
+                self.tick = tick;
+            }
             ServerMessage::Abilities { allow_flight, admin } => {
                 self.allow_flight = allow_flight;
                 self.admin = admin;
@@ -205,12 +215,16 @@ impl Client {
                     self.deaths += gone.died as u32;
                 }
             }
-            ServerMessage::Struck { damage, blow, .. } => {
+            ServerMessage::Struck { damage, blow, pips, .. } => {
                 self.blows += 1;
                 self.damage.push(damage);
                 self.kinds.push(blow);
+                self.pips.push(pips);
             }
-            ServerMessage::Hurt { damage, defended, .. } => self.hurt.push((damage, defended)),
+            ServerMessage::Hurt { damage, defended, .. } => {
+                self.hurt.push((damage, defended));
+                self.hurt_at.push(Instant::now());
+            }
             ServerMessage::Journal { entries } => self.journal.merge(entries),
             ServerMessage::Quests { states } => self.quests = states,
             ServerMessage::Items { changed, gone } => {
@@ -235,6 +249,14 @@ impl Client {
 
     fn send_position(&self, position: Vec3, flying: bool) {
         self.connection.send(ClientMessage::Input(PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }));
+    }
+
+    /// Waits until the server's clock has run at least `seconds` on (it tells the time every
+    /// second, so a little more).
+    fn wait_server(&mut self, seconds: u64) {
+        self.pump_until(|c| c.tick > 0);
+        let until = self.tick + seconds * TICKS_PER_SECOND as u64;
+        self.pump_until(|c| c.tick >= until);
     }
 
     /// Runs a command and returns the console lines it answers with.
@@ -1260,14 +1282,16 @@ fn yaw_toward(from: Vec3, at: Vec3) -> f32 {
     (-d.x).atan2(-d.z)
 }
 
-#[test]
-fn blows_on_the_beat_build_to_a_flourish() {
-    use voxmar_engine::combat::Blow;
-    let mut client = Client::join();
+/// A player with an iron sword at Attack 20, beside a summoned brown bear facing it:
+/// the bear's id and the sword's hotbar slot. Fights are timed on the clock the server takes
+/// players' messages by (`fight`), the wall's, so a fight's waits are the wall's too; what
+/// they wait for is answered by the server.
+fn beside_a_bear(client: &mut Client) -> (u32, usize) {
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
     let sword = client.content.blocks.id("base:iron_sword").unwrap();
-    // Creative, so the bear's blows pass us by; held still, so every swing reaches it.
-    client.ok("/gamemode creative");
+    // A flat floor with room around, so the bear and we stand on the ground.
+    client.ok("/fill ~-8 ~-1 ~-8 ~8 ~-1 ~8 stone");
+    client.ok("/fill ~-8 ~ ~-8 ~8 ~4 ~8 air");
     client.ok("/skill attack 20");
     client.ok("/give iron_sword 1");
     client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == sword)));
@@ -1275,12 +1299,29 @@ fn blows_on_the_beat_build_to_a_flourish() {
     client.ok("/summon brown_bear 1 ~ ~ ~");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
     let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
-    client.ok("/creatures hold");
+    (id, slot)
+}
+
+/// Stands `client` 1.2 blocks from creature `id`, facing it, holding `slot`.
+fn face(client: &mut Client, id: u32, slot: usize, flying: bool) {
     let at = client.creatures[&id].position;
-    client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
-    client.pump_until(|c| c.position.distance(at) < 2.0);
+    if client.position.with_y(0.0).distance(at.with_y(0.0)) > 1.6 || (client.position.y - at.y).abs() > 0.5 {
+        client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
+    }
     let yaw = yaw_toward(client.position, at);
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying }));
+}
+
+#[test]
+fn blows_on_the_beat_build_to_a_flourish() {
+    use voxmar_engine::combat::Blow;
+    let mut client = Client::join();
+    // Creative, so the bear's blows pass us by; held still, so every swing reaches it.
+    client.ok("/gamemode creative");
+    let (id, slot) = beside_a_bear(&mut client);
+    client.ok("/creatures hold");
+    face(&mut client, id, slot, true);
+    client.pump_until(|c| c.creatures[&id].position.with_y(0.0).distance(c.position.with_y(0.0)) < 2.0);
     // A sword's beat is 0.6 s after each swing starts: the first click starts the meter, and
     // each next one comes a little before the beat, in the buffer, so it is held for it.
     let start = Instant::now();
@@ -1294,40 +1335,75 @@ fn blows_on_the_beat_build_to_a_flourish() {
     }
     client.pump_until(|c| c.kinds.len() >= 5 || !c.creatures.contains_key(&id));
     assert_eq!(client.kinds, [Blow::Plain, Blow::Beat, Blow::Beat, Blow::Beat, Blow::Flourish], "damage {:?}", client.damage);
+    // The server tells the pips after each, for the client's meter: one a beat, spent on the
+    // flourish.
+    assert_eq!(client.pips, [0, 1, 2, 3, 0]);
+}
+
+#[test]
+fn a_swing_is_dropped_when_its_weapon_leaves_the_hand() {
+    let mut client = Client::join();
+    client.ok("/gamemode creative");
+    let (id, slot) = beside_a_bear(&mut client);
+    client.ok("/creatures hold");
+    face(&mut client, id, slot, true);
+    let other = (slot + 1) % voxmar_engine::inventory::HOTBAR_SLOTS;
+    // Swung with the sword, then switched to an empty hand before it lands (its wind-up is
+    // 0.1 s): no blow lands, neither the sword's nor a fist's.
+    client.propose("core:attack", ActionTarget::Creature(id));
+    face(&mut client, id, other, true);
+    client.wait_server(2);
+    assert_eq!(client.blows, 0, "the dropped swing still landed, for {:?}", client.damage);
+    // Swung and kept in hand, it lands.
+    face(&mut client, id, slot, true);
+    client.wait_server(1);
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.blows == 1);
+}
+
+#[test]
+fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    client.ok("/fill ~-2 ~-1 ~-2 ~2 ~-1 ~2 stone");
+    client.ok("/tp ~ ~6 ~");
+    client.pump_until(|c| c.teleported.is_some());
+    // Six blocks up and told nothing else, the server has us in the air past the grace.
+    client.wait_server(1);
+    client.teleported = None;
+    client.propose("core:dodge", ActionTarget::None);
+    client.pump_until(|c| c.teleported.is_some());
+    // On the ground it is taken: nothing puts us back.
+    client.ok("/tp ~ ~-6 ~");
+    client.wait_server(1);
+    client.teleported = None;
+    client.propose("core:dodge", ActionTarget::None);
+    client.wait_server(1);
+    assert_eq!(client.teleported, None, "a dodge on the ground was refused");
 }
 
 #[test]
 fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     use voxmar_engine::combat::{Blow, Defended};
     let mut client = Client::join();
-    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
-    let windup = client.content.creatures.get(bear).def.attack.and_then(|a| a.windup).expect("bears wind up in the content");
-    let sword = client.content.blocks.id("base:iron_sword").unwrap();
-    client.ok("/skill attack 20");
     // In survival: creatures' blows pass a player in creative by.
     client.ok("/gamemode survival");
     client.ok("/skill hitpoints 60");
     client.pump_until(|c| c.health >= 100);
-    client.ok("/give iron_sword 1");
-    client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == sword)));
-    let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == sword)).unwrap();
-    client.ok("/summon brown_bear 1 ~ ~ ~");
-    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
-    let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
-    // Waits for the bear to wind up at us (standing beside it, facing it, striking it so it
-    // fights back), then answers `respond` a little before the blow lands; returns what came
-    // of the blow.
-    let fight = |client: &mut Client, respond: &dyn Fn(&Client)| -> Defended {
+    let (id, slot) = beside_a_bear(&mut client);
+    let bear = client.creatures[&id].species;
+    let attack = client.content.creatures.get(bear).def.attack.expect("bears attack");
+    let feel = client.content.combat.feel;
+    let (windup, recovery) = (attack.windup.unwrap_or(feel.creature_windup), attack.recovery.unwrap_or(feel.creature_recovery));
+    // Waits for the bear to wind up at us (standing beside it, facing it, striking it every
+    // few seconds so it fights back), then answers `respond` `after` seconds later; returns
+    // what came of the blow.
+    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> Defended {
         let before = client.hurt.len();
         let mut struck = Instant::now() - Duration::from_secs(5);
         loop {
             assert!(client.creatures.contains_key(&id), "the bear went");
-            let at = client.creatures[&id].position;
-            if client.position.distance(at) > 2.0 {
-                client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
-            }
-            let yaw = yaw_toward(client.position, at);
-            client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+            face(client, id, slot, false);
             if struck.elapsed() > Duration::from_secs(3) {
                 client.propose("core:attack", ActionTarget::Creature(id));
                 struck = Instant::now();
@@ -1338,26 +1414,54 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
                 break;
             }
         }
-        std::thread::sleep(Duration::from_secs_f32(windup - 0.1));
+        std::thread::sleep(Duration::from_secs_f32(after));
         respond(client);
         client.pump_until(|c| c.hurt.len() > before);
         client.hurt[before].1
     };
+    // Each answer's moment moves by what came of the last, so a slow machine is met where
+    // its blows fall: a block not perfect was too soon, a hit too late.
+    let answer = |client: &mut Client, want: Defended, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| {
+        let mut after = windup - 0.1;
+        let mut outcomes = Vec::new();
+        for _ in 0..8 {
+            let outcome = fight(client, after.max(0.0), respond);
+            undo(client);
+            outcomes.push(outcome);
+            if outcome == want {
+                return;
+            }
+            after += if outcome == Defended::Blocked { 0.05 } else { -0.05 };
+            client.wait_server(1);
+        }
+        panic!("answers to the bear's blows came to {outcomes:?}");
+    };
     // Raised just before the blow: a perfect block, and the next blow a counter.
+    let raise = |c: &Client| {
+        let _ = c.connection.send(ClientMessage::Guard { up: true });
+    };
+    let lower = |c: &Client| {
+        let _ = c.connection.send(ClientMessage::Guard { up: false });
+    };
     let health = client.health;
-    let block = fight(&mut client, &|c| { let _ = c.connection.send(ClientMessage::Guard { up: true }); });
-    assert_eq!(block, Defended::Perfect);
-    assert_eq!(client.health, health, "a perfect block takes nothing");
-    client.connection.send(ClientMessage::Guard { up: false });
+    answer(&mut client, Defended::Perfect, &raise, &lower);
+    let perfect = client.hurt.len() - 1;
+    assert_eq!(client.hurt[perfect].0, 0, "a perfect block takes nothing");
+    assert!(client.health <= health);
     let blows = client.kinds.len();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.kinds.len() > blows);
     assert_eq!(client.kinds[blows], Blow::Counter);
     assert!(client.damage[blows] > 0, "a counter cannot miss");
+    // Staggered after its recovery: its next blow comes no sooner than both, and a wind-up.
+    face(&mut client, id, slot, false);
+    client.pump_until(|c| c.hurt.len() > perfect + 1);
+    let gap = client.hurt_at[perfect + 1] - client.hurt_at[perfect];
+    let least = recovery + feel.stagger + windup;
+    assert!(gap.as_secs_f32() > least - 0.1, "its next blow came {:.2}s after the perfect block: under {least:.2}s", gap.as_secs_f32());
     // A dodge just before the blow: it passes through.
-    std::thread::sleep(Duration::from_millis(500));
-    let dodge = fight(&mut client, &|c| c.propose("core:dodge", ActionTarget::None));
-    assert_eq!(dodge, Defended::Dodged);
+    client.wait_server(1);
+    answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
 }
 
 #[test]

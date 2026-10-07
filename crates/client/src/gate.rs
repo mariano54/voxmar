@@ -218,6 +218,9 @@ enum Step {
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
+    /// `/locate settlement` finds a hamlet or village, and the server's world there has
+    /// what its plan says: a well on its square, doors open onto a floor, and houses dry.
+    Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
@@ -295,6 +298,8 @@ struct Gate {
     gorge_reached: bool,
     /// Where `/locate ore` found a sample of ore.
     ore: IVec3,
+    /// Where `/locate settlement` sent the player: the middle of its square.
+    settlement: IVec3,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
@@ -382,6 +387,7 @@ impl Gate {
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
+            settlement: IVec3::ZERO,
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             blows_seen: 0,
@@ -889,6 +895,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
+        Step::Settlements => settlements(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
@@ -2840,7 +2847,7 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         gate.struck_heights = (gate.struck_heights.0.min(view.position.y), gate.struck_heights.1.max(view.position.y));
                     }
                     // Close in to striking reach, then strike.
-                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.6;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
                     // A well-timed click, a full charge apart, as a player swings (spamming
@@ -2958,7 +2965,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             match bear(world) {
                 Some(view) if !stalled => {
                     // Close in and strike a full charge apart, as a player swings.
-                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.4;
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.0;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.6);
                     let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
@@ -3018,7 +3025,10 @@ struct FeelRun {
 
 /// The bear in survival: provoked with a click every few server seconds until it winds up,
 /// then the guard raised (phase 2) or a dodge (phase 4) a moment after the wind-up shows.
-/// A perfect block must take nothing, and the click after it (phase 3) be a counter.
+/// A perfect block must take nothing, and the click after it (phase 3) be a counter. The
+/// dodge dashes forward, past the bear's lunge, so the blow is judged in reach: it must pass
+/// through the dodge, not fall short. Whatever came of it, the bears are killed (phase 5)
+/// and the player put back on the test ground.
 fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use voxmar_engine::combat::{Blow, Defended};
     use voxmar_engine::creature::brain::Pose;
@@ -3059,9 +3069,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let roomy = world.resource::<LocalPlayer>().max_health >= 100;
             if roomy && bear(world).is_some() && select(world, WEAPON) {
                 gate.advance(now);
-            } else if in_phase > 10.0 {
+            } else if gate.server_in_phase() > 10.0 {
                 gate.check("perfect block", Err(format!("the sword, Hitpoints 60 or the bear never came (bear seen: {}, most health {roomy})", bear(world).is_some())));
-                end_feel(world, gate, now);
+                clear_feel(gate, now);
             }
         }
         2 | 4 => {
@@ -3075,12 +3085,12 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     summon(world);
                 } else if gate.feel.bears >= FEEL_BEARS {
                     gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_BEARS} bears died before it came")));
-                    end_feel(world, gate, now);
+                    clear_feel(gate, now);
                 }
                 return;
             };
             let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
-            key(world, KeyCode::KeyW, distance > 2.2 && gate.feel.seen.is_none());
+            key(world, KeyCode::KeyW, distance > 2.0 && gate.feel.seen.is_none());
             aim_at(world, view.position + Vec3::Y * 0.6);
             if view.pose == Pose::Attacking && gate.feel.seen.is_none() && !gate.feel.answered {
                 gate.feel.seen = Some(Instant::now());
@@ -3093,8 +3103,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if blocking {
                     mouse(world, MouseButton::Right, true);
                 } else {
-                    // With no direction held, a step back.
-                    key(world, KeyCode::KeyW, false);
+                    // Forward, through the blow: a step back would take the player out of its
+                    // reach, which proves nothing of the dodge.
+                    key(world, KeyCode::KeyW, true);
                     key(world, dodge_key, true);
                 }
             } else if !blocking {
@@ -3115,10 +3126,11 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.feel.poked = gate.server_now;
             mouse(world, MouseButton::Right, false);
             key(world, dodge_key, false);
+            key(world, KeyCode::KeyW, false);
             let answered = std::mem::take(&mut gate.feel.answered);
             gate.feel.seen = None;
             gate.feel.outcomes.push(defended);
-            let passed = if blocking { defended == Defended::Perfect } else { matches!(defended, Defended::Dodged | Defended::Evaded) };
+            let passed = if blocking { defended == Defended::Perfect } else { defended == Defended::Dodged };
             if passed {
                 let detail = format!("{defended:?} for {damage} damage, answered {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
                 let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
@@ -3128,17 +3140,19 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.feel.tries += 1;
-            // Guarded but not perfect: raised too soon. Hit with an answer given: too late.
+            // Guarded but not perfect: raised too soon. Hit with an answer given: too late, for
+            // a guard; for a dodge, too soon or too late, so it tries either side in turn.
             let shift = match defended {
                 Defended::Blocked => FEEL_STEP,
-                Defended::Hit if answered => -FEEL_STEP,
+                Defended::Hit if answered && blocking => -FEEL_STEP,
+                Defended::Hit if answered => if gate.feel.tries % 2 == 1 { FEEL_STEP * gate.feel.tries as f32 } else { -FEEL_STEP * gate.feel.tries as f32 },
                 _ => 0.0,
             };
             gate.feel.after = (gate.feel.after + shift).clamp(0.0, windup);
             if gate.feel.tries >= FEEL_TRIES {
                 let outcomes = std::mem::take(&mut gate.feel.outcomes);
                 gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}")));
-                end_feel(world, gate, now);
+                clear_feel(gate, now);
             }
         }
         3 => {
@@ -3168,7 +3182,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.advance(now);
                 } else if gate.feel.tries + 1 >= FEEL_TRIES {
                     gate.check("counter", Err(format!("the click after the perfect block was {blow:?} for {damage}")));
-                    end_feel(world, gate, now);
+                    clear_feel(gate, now);
                 } else {
                     // Too late for the window (a server far behind): block again.
                     gate.feel.tries += 1;
@@ -3177,7 +3191,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
             } else if gate.server_in_phase() > UNANSWERED {
                 gate.check("counter", Err(format!("the server answered no blow for {UNANSWERED}s")));
-                end_feel(world, gate, now);
+                clear_feel(gate, now);
             }
         }
         5 => {
@@ -3188,7 +3202,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             match bear(world) {
                 Some(view) if gate.server_in_phase() < UNANSWERED * 2.0 => {
-                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.4;
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.0;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.6);
                     let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
@@ -3205,16 +3219,27 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// Back to survival at the first levels with the hands free, for the steps after.
+/// On a failed check: on to killing the bears (phase 5), so none is left provoked for the
+/// steps after.
+fn clear_feel(gate: &mut Gate, now: f32) {
+    gate.phase = 4;
+    gate.feel.bears = gate.feel.bears.max(1);
+    gate.advance(now);
+}
+
+/// Back to survival at the first levels with the hands free, on the test ground, for the
+/// steps after.
 fn end_feel(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Left, false);
     mouse(world, MouseButton::Right, false);
     key(world, KeyCode::KeyW, false);
     key(world, world.resource::<Settings>().dodge_key.0, false);
+    let feet = gate.feet;
     let net = world.resource::<Net>();
     net.command("gamemode survival");
     net.command("skill attack 1");
     net.command("skill hitpoints 10");
+    net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
     gate.next(Step::Wear, now);
 }
 
@@ -3627,6 +3652,142 @@ const GORGE_LOAD_LIMIT: f32 = 60.0;
 /// being skipped: a skipped check would let a landing in untested.
 const GORGE_OVERLOADED_LIMIT: f32 = 240.0;
 
+/// How far `/locate settlement` looks from the gorge, in blocks: about one 1024-block
+/// square in six holds one.
+const SETTLEMENT_RADIUS: i32 = 3000;
+/// How far around its middle the step needs the world loaded and judges buildings.
+const SETTLEMENT_REACH: i32 = 40;
+
+/// `/locate settlement` names the nearest hamlet or village; the player and the observer go
+/// there, and once the server's world around it has loaded, its blocks are judged against
+/// the plan worldgen gives for it (`Overworld::settlements_near`): its well stands on the
+/// square, every door within reach is open with a floor under it and space behind it, and
+/// no house holds water. Then the player goes back to the test ground.
+fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    match gate.phase {
+        0 => {
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.replies.clear();
+                observer.connection.send(ClientMessage::Command { line: format!("locate settlement {SETTLEMENT_RADIUS}") });
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words| content.english.render(words, &content.blocks);
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("settlement") || r.contains("hamlet or village"))) else {
+                if gate.server_in_phase() > 20.0 {
+                    gate.check("settlements", Err("no answer to /locate settlement".into()));
+                    gate.next(Step::Recipes, now);
+                }
+                return;
+            };
+            let at = reply.split("/tp ").nth(1).and_then(|rest| {
+                let n: Vec<i32> = rest.split_whitespace().take(3).filter_map(|v| v.parse().ok()).collect();
+                (n.len() == 3).then(|| IVec3::new(n[0], n[1], n[2]))
+            });
+            let Some(at) = at else {
+                gate.check("settlements", Err(format!("/locate settlement: {reply}")));
+                gate.next(Step::Recipes, now);
+                return;
+            };
+            gate.settlement = at;
+            world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
+            }
+            gate.advance(now);
+        }
+        2 => {
+            let at = gate.settlement;
+            let (low, high) = (at - IVec3::splat(SETTLEMENT_REACH), at + IVec3::splat(SETTLEMENT_REACH));
+            let (low, high) = (ColumnPos::of_block(low).0, ColumnPos::of_block(high).0);
+            let columns: Vec<ColumnPos> = (low.x..=high.x).flat_map(|x| (low.y..=high.y).map(move |z| ColumnPos::new(x, z))).collect();
+            let held = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
+            if held < columns.len() {
+                // Waits on the server's clock: generating a fresh area takes the cores.
+                if gate.server_in_phase() > 120.0 {
+                    let n = columns.len();
+                    gate.check("settlements", Err(format!("the world around the settlement at {at} did not load: the server sent {held} of its {n} columns in 120 server seconds")));
+                    gate.next(Step::Recipes, now);
+                }
+                return;
+            }
+            let result = judge_settlement(world, gate, at);
+            gate.check("settlements", result);
+            let feet = gate.feet;
+            world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // Back on the test ground.
+        _ => {
+            let home = world.resource::<LocalPlayer>().position.xz().distance(gate.feet.xz().as_vec2() + 0.5) < 2.0;
+            if home || gate.server_in_phase() > 20.0 {
+                if !home {
+                    gate.check("settlements: back", Err("the player never came back to the test ground".into()));
+                }
+                gate.next(Step::Recipes, now);
+            }
+        }
+    }
+}
+
+/// The settlement whose middle is `at`, as worldgen plans it, against the server's blocks.
+fn judge_settlement(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the settlement's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let plans = generator.settlements_near(at.xz(), 64);
+    let Some(plan) = plans.iter().find(|s| s.centre.xz() == at.xz()) else {
+        return Err(format!("worldgen plans no settlement with its middle at {at} ({} near)", plans.len()));
+    };
+    let def = |p: IVec3| observer.world.block(p).map(|b| client.registry.def(b));
+    let solid = |p: IVec3| def(p).is_some_and(|d| d.solid);
+    let wet = |p: IVec3| observer.world.block(p).is_some_and(|b| client.registry.fluid(b).is_some());
+    let within = |p: IVec2| (p - at.xz()).abs().max_element() <= SETTLEMENT_REACH;
+    let mut problems = Vec::new();
+    // The well: something built on its ground above its floor.
+    let well = plan.buildings.iter().find(|b| b.kind.name() == "well");
+    let well_built = well.is_some_and(|b| {
+        (b.min.x..=b.max.x).any(|x| (b.min.y..=b.max.y).any(|z| (b.floor..b.floor + 3).any(|y| def(IVec3::new(x, y, z)).is_some_and(|d| d.name != "core:air"))))
+    });
+    if !well_built {
+        problems.push(format!("no well built on the square ({})", if well.is_some() { "planned, but nothing stands there" } else { "none planned" }));
+    }
+    let (mut doors, mut houses) = (0, 0);
+    for b in plan.buildings.iter().filter(|b| within(b.min) && within(b.max)) {
+        let middle = (b.min + b.max) / 2;
+        if b.door.is_some() {
+            houses += 1;
+            if wet(IVec3::new(middle.x, b.floor + 1, middle.y)) {
+                problems.push(format!("water inside the {} at {middle}", b.kind.name()));
+            }
+        }
+        let Some(door) = b.door else { continue };
+        let step = b.facing.step();
+        let (out, inside) = (door + IVec3::new(step.x, 0, step.y), door - IVec3::new(step.x, 0, step.y));
+        let blocked: Vec<IVec3> = [door, door + IVec3::Y, out, out + IVec3::Y, inside, inside + IVec3::Y].into_iter().filter(|&p| solid(p)).collect();
+        if !blocked.is_empty() {
+            problems.push(format!("the {}'s door at {door} is blocked at {blocked:?}", b.kind.name()));
+        } else if !solid(door - IVec3::Y) || !solid(inside - IVec3::Y) {
+            problems.push(format!("the {}'s door at {door} has no floor under it or behind it", b.kind.name()));
+        } else {
+            doors += 1;
+        }
+    }
+    if doors == 0 && problems.is_empty() {
+        problems.push("no door within reach of the square to judge".into());
+    }
+    let name = &plan.name.0;
+    if problems.is_empty() {
+        Ok(format!("{name}, a {} at {at}: a well on the square, {doors} doors open onto floors, {houses} buildings dry", plan.size))
+    } else {
+        Err(format!("{name}, a {} at {at}: {}", plan.size, problems.join("; ")))
+    }
+}
+
 fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
@@ -3642,7 +3803,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("gorge"))) else {
                 if in_phase > 20.0 {
                     gate.check("gorge", Err("no answer to /locate gorge".into()));
-                    gate.next(Step::Recipes, now);
+                    gate.next(Step::Settlements, now);
                 }
                 return;
             };
@@ -3653,7 +3814,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("gorge", Err(format!("/locate gorge: {reply}")));
-                gate.next(Step::Recipes, now);
+                gate.next(Step::Settlements, now);
                 return;
             };
             gate.gorge = at;
@@ -3694,7 +3855,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                              and the player {reached} {away:.0} blocks away"
                         )),
                     );
-                    gate.next(Step::Recipes, now);
+                    gate.next(Step::Settlements, now);
                 }
                 return;
             }
@@ -3732,7 +3893,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the walls by the water at {} {} {} stand only {walls} blocks high", at.x, water, at.z)),
             };
             gate.check("gorge", result);
-            gate.next(Step::Recipes, now);
+            gate.next(Step::Settlements, now);
         }
         _ => {}
     }

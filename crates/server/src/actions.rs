@@ -70,6 +70,15 @@ pub struct Executor {
     proposals: u64,
 }
 
+impl Server {
+    /// Whether `player` is part way through a timed action that eats (a bite of food).
+    pub(crate) fn eating(&self, player: PlayerId) -> bool {
+        self.executor.timed.iter().any(|t| {
+            t.agent == player && !t.finished && self.content.actions.get(t.action).is_some_and(|def| def.effects.contains(&Effect::EatHeld))
+        })
+    }
+}
+
 /// The validation view of the world from `agent`'s point of view.
 pub(crate) fn context(server: &Server, agent: PlayerId) -> impl ActionContext + '_ {
     Context { server, agent }
