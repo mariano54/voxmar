@@ -108,10 +108,12 @@ impl Terrain {
         let water = id("water");
         let by_id = |f: &dyn Fn(BlockId) -> bool| (0..registry.len()).map(|i| f(BlockId(i as u16))).collect::<Vec<bool>>();
         let water_fluid = registry.fluid_def(registry.fluid(water).expect("water is a fluid").fluid).clone();
+        // Wood grows through standing water and rivers, never through falling or flowing
+        // water (see also `features`: no tree in water by a fall).
         let soft = by_id(&|block| {
             let def = registry.def(block);
             block.is_air()
-                || registry.fluid(block).is_some_and(|s| s.fluid == water_fluid.id)
+                || registry.fluid(block).is_some_and(|s| s.fluid == water_fluid.id && s.source)
                 || def.name.ends_with("_leaves")
                 || def.render == voxmar_engine::block::RenderKind::Plant
         });
@@ -704,7 +706,7 @@ impl Terrain {
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
                 let (wx, wz) = (origin.x + x, origin.z + z);
-                let Some((_, top)) = geology.get(wx, wz).wet() else { continue };
+                let Some((bottom, top)) = geology.get(wx, wz).wet() else { continue };
                 let upper: Vec<(i32, i32)> = [(1, 0), (-1, 0), (0, 1), (0, -1)]
                     .into_iter()
                     .filter_map(|(dx, dz)| geology.get(wx + dx, wz + dz).wet())
@@ -715,7 +717,9 @@ impl Terrain {
                 for y in (top + 1..highest).rev() {
                     let open = blocks.get_local(x, y, z).is_air();
                     let beside = upper.iter().any(|&(bottom, above)| bottom < y && y < above);
-                    pouring = if pouring && (open || self.soft[blocks.get_local(x, y, z).0 as usize]) {
+                    // A curtain pours through anything but ground and rock: trees grow before
+                    // it, and a mangrove's roots in its way left falling water standing on wood.
+                    pouring = if pouring && !self.earth[blocks.get_local(x, y, z).0 as usize] {
                         blocks.set_local(x, y, z, falling);
                         true
                     } else if beside && open {
@@ -724,6 +728,19 @@ impl Terrain {
                     } else {
                         false
                     };
+                }
+                // Where it lands, the column's own water must be water: a tree grown before
+                // the curtain may have sunk its roots through it.
+                if pouring {
+                    for y in (bottom + 1..=top).rev() {
+                        let block = blocks.get_local(x, y, z);
+                        if self.earth[block.0 as usize] {
+                            break;
+                        }
+                        if block.is_air() || !self.soft[block.0 as usize] {
+                            blocks.set_local(x, y, z, self.ids.water);
+                        }
+                    }
                 }
             }
         }

@@ -123,3 +123,45 @@ fn generate(generator: &Overworld, first: ColumnPos) -> VoxelWorld {
     });
     world
 }
+
+/// The next generation version reseeds every world; its water must not move either. Seed
+/// 5 at version 24 stopped a waterfall's curtain on a mangrove's roots, grown before it, so
+/// the falling water stood on wood and wanted to spill sideways.
+#[test]
+fn water_still_settles_at_the_next_version() {
+    let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let world_content = WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let generator = Overworld::with_content_at(5, registry.clone(), &world_content, Overworld::VERSION + 1);
+    let (fluids, _, _) = check_area(&registry, &generator, 5, IVec2::new(851, 1030));
+    assert!(fluids > 0, "no water at the spot that used to fail");
+}
+
+/// One spot, seed and generation version: `SEED`, `X`, `Z`, `VERSION` (default the
+/// waterfall seed 5 left unsettled at version 24, at 851, 1030).
+/// `cargo test -p voxmar_server --test generated_water probe_water -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn probe_water() {
+    let env = |name: &str, default: i64| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
+    let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let world_content = WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let generator = Overworld::with_content_at(env("SEED", 5) as u64, registry.clone(), &world_content, env("VERSION", 24) as u32);
+    let place = IVec2::new(env("X", 851) as i32, env("Z", 1030) as i32);
+    let first = ColumnPos::of_block(IVec3::new(place.x, 0, place.y)).offset(-SIDE / 2, -SIDE / 2);
+    let world = generate(&generator, first);
+    for dz in 1..SIDE - 1 {
+        for dx in 1..SIDE - 1 {
+            for (cell, changes) in unsettled(&registry, &world, first.offset(dx, dz)) {
+                println!("{cell} {}: {:?}", registry.def(world.block(cell).unwrap()).name, changes.iter().map(|&(p, b)| (p, registry.def(b).name.as_str())).collect::<Vec<_>>());
+            }
+        }
+    }
+    let name = |p: IVec3| world.block(p).map_or("?".to_string(), |b| registry.def(b).name.clone());
+    let y0 = env("Y", 135) as i32;
+    for y in (y0 - 6..=y0 + 4).rev() {
+        let row: Vec<String> = (-3..=3).map(|dz| format!("{:>16}", name(IVec3::new(place.x, y, place.y + dz)).trim_start_matches("base:"))).collect();
+        println!("y {y} (x {}, z {}..={}): {}", place.x, place.y - 3, place.y + 3, row.join(" "));
+    }
+}
