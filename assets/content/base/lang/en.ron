@@ -6,7 +6,7 @@
 // `family.base.oak` make Oak Log.
 {
     "effect.base.hearty": "Hearty",
-    "effect.base.hearty.description": "Cooked meat: 4 more health while it lasts.",
+    "effect.base.hearty.description": "Cooked meat: room for a tenth more health while it lasts.",
     "effect.base.hunters_vigour": "Hunter's vigour",
     "effect.base.hunters_vigour.description": "Game cooked over a fire: quicker on your feet.",
     "effect.base.sustained": "Sustained",

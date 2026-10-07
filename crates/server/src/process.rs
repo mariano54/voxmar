@@ -167,11 +167,15 @@ impl Process for Survival {
             let modifiers = effects.modifiers(&active);
             player.modifiers = modifiers;
             let rates = vitals::rates(&modifiers);
-            // Twice the Hitpoints level, and what effects add: what a raised most brings is
-            // health to fill it, what a lowered one takes goes.
-            let max = (max_level.map_or(MAX_HEALTH as i32, |level| 2 * level as i32) + modifiers.max_health as i32).clamp(1, u8::MAX as i32) as u8;
-            if max != player.health.max {
-                let gained = max.saturating_sub(player.health.max);
+            // Twice the Hitpoints level, and what effects add: a level gained brings health
+            // to fill it; what effects add comes empty (Hearty's tenth, design draft 63), and
+            // what a lowered most takes goes.
+            let base = max_level.map_or(MAX_HEALTH as i32, |level| 2 * level as i32).clamp(1, u8::MAX as i32) as u8;
+            let max = (((base as i32 + modifiers.max_health as i32) as f32 * modifiers.max_health_share).round() as i32).clamp(1, u8::MAX as i32) as u8;
+            if base != player.health_base || max != player.health.max {
+                // Just joined: as much as the most went up.
+                let gained = if player.health_base == 0 { max.saturating_sub(player.health.max) } else { base.saturating_sub(player.health_base) };
+                player.health_base = base;
                 player.health.max = max;
                 player.health.current = player.health.current.saturating_add(gained).min(max);
             }
