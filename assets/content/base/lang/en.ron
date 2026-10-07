@@ -2,4 +2,7 @@
 // the id: "water_wheel" is "Water wheel"); the words themselves are in core's lang.
 {
     "block.base.lv_cable": "LV cable",
+    "block.base.mv_cable": "MV cable",
+    "block.base.lv_transformer": "LV transformer",
+    "block.base.mv_battery_bank": "MV battery bank",
 }

@@ -135,6 +135,14 @@ impl Server {
                 let open = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y].into_iter().all(|d| !self.is_solid(pos + d));
                 if open { strength * height } else { 0.0 }
             }
+            Role::Processor { water: true, .. } => {
+                let blocks = &self.content.blocks;
+                // Any water beside or below, still or flowing. Not lava.
+                let wet = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::NEG_Y]
+                    .into_iter()
+                    .any(|d| self.block(pos + d).is_some_and(|b| !blocks.def(b).has_tag("hot") && blocks.fluid(b).is_some()));
+                if wet { 1.0 } else { 0.0 }
+            }
             Role::Processor { .. } if self.content.blocks.def(block).has_tag("multiblock_core") => {
                 if self.station_stands(pos) { 1.0 } else { 0.0 }
             }
@@ -195,6 +203,7 @@ impl Server {
             Role::Generator { source, .. } => Some(source),
             _ => None,
         });
+        let washer = machine.is_some_and(|m| matches!(m.role, Role::Processor { water: true, .. }));
         let key = |key: &str| Words::key(key).with("machine", name.clone());
         match (view.status, machine.map(|m| &m.role)) {
             (_, Some(Role::Store { .. })) => key("machine.holds").with("energy", Words::text(view.energy)).with("capacity", Words::text(view.capacity)),
@@ -209,6 +218,7 @@ impl Server {
             (Status::NoPower, _) => key("machine.no_power"),
             (Status::NoFuel, _) => key("machine.no_fuel"),
             (Status::NoSource, _) if source == Some(Source::Wind) => key("machine.no_wind"),
+            (Status::NoSource, _) if washer => key("machine.needs_water"),
             (Status::NoSource, _) => key("machine.no_water"),
             (Status::Full, _) => key("machine.full"),
             (Status::TooHigh, _) => key("machine.too_high"),

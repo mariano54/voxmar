@@ -554,7 +554,7 @@ fn work(
                 }
             }
         }
-        Role::Processor { speed, extra, burns, .. } => {
+        Role::Processor { speed, extra, burns, water, .. } => {
             let Some(process) = state.process.map(|p| machines.process(p)) else {
                 state.status = Status::Idle;
                 state.supplied = 0.0;
@@ -564,7 +564,8 @@ fn work(
                 return;
             }
             if state.condition <= 0.0 {
-                state.status = Status::Incomplete;
+                // What the world did not give it: water, or the structure round it.
+                state.status = if *water { Status::NoSource } else { Status::Incomplete };
                 state.supplied = 0.0;
                 return;
             }
@@ -714,7 +715,7 @@ mod tests {
     fn test() -> Test {
         let names = [
             "ore", "dust", "log", "wheel", "shaft", "mill", "boiler", "pipe", "engine", "dynamo", "lv_cable", "mv_cable", "crusher",
-            "battery", "mv_battery", "transformer", "furnace", "ingot",
+            "battery", "mv_battery", "transformer", "furnace", "ingot", "washer",
         ];
         let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
         let machines = MachineRegistry::read(
@@ -734,6 +735,7 @@ mod tests {
                 (block: "mv_battery", role: Store(carrier: Electric, tier: 2, capacity: 100000.0, rate: 512.0)),
                 (block: "transformer", role: Transformer(tier: 2, rate: 128.0)),
                 (block: "furnace", role: Processor(kinds: ["smelt"], burns: true)),
+                (block: "washer", role: Processor(kinds: ["crush"], speed: 0.5, yield: 2.0, power: Some((Rotation, 4.0)), water: true)),
             ], fuels: [(item: "tag:log", seconds: 10.0)])"#,
         )
         .unwrap();
@@ -768,6 +770,25 @@ mod tests {
     fn made(t: &Test, factory: &Factory, at: i32, item: &str) -> u32 {
         let (_, state) = factory.get(IVec3::new(at, 0, 0)).unwrap();
         state.outputs.iter().flatten().filter(|s| s.item == t.id(item)).map(|s| s.count as u32).sum()
+    }
+
+    #[test]
+    fn a_washer_needs_water_and_gives_three_dust_an_ore() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["wheel", "washer"]);
+        factory.set_condition(IVec3::ZERO, 1.0);
+        factory.set_condition(IVec3::X, 0.0);
+        feed(&t, &mut factory, 1, "ore", 2);
+        run(&t, &mut factory, 10.0);
+        assert_eq!(factory.get(IVec3::X).unwrap().1.status, Status::NoSource);
+        assert_eq!(made(&t, &factory, 1, "dust"), 0);
+        // Water beside it: half as fast as the recipe, three dust for each ore.
+        factory.set_condition(IVec3::X, 1.0);
+        run(&t, &mut factory, 9.0);
+        assert_eq!(made(&t, &factory, 1, "dust"), 3);
+        run(&t, &mut factory, 9.0);
+        assert_eq!(made(&t, &factory, 1, "dust"), 6);
     }
 
     #[test]

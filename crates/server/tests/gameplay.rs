@@ -1314,3 +1314,59 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
 }
+
+#[test]
+fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
+    let mut client = Client::join();
+    let transformer = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let washer = transformer + IVec3::X;
+    // Boiler and turbine above the transformer (MV in on top), the washer beside it (LV).
+    for line in [
+        "/clear",
+        "/fill ~3 ~ ~-1 ~6 ~1 ~1 air",
+        "/setblock ~3 ~ ~ lv_transformer",
+        "/setblock ~3 ~1 ~ steam_turbine",
+        "/setblock ~4 ~1 ~ boiler",
+        "/setblock ~4 ~ ~ ore_washer",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.world.block(washer) == c.content.blocks.id("base:ore_washer") && c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give coal_ore 4");
+    client.pump_until(|c| count(c, coal) == 4);
+    use_at(&mut client, washer + IVec3::new(0, 1, 0));
+    client.pump_until(|c| count(c, coal) == 0);
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_at(&mut client, washer);
+    client.pump_until(|c| count(c, ore) == 0);
+    // Dry, it waits and says what it needs.
+    let started = Instant::now();
+    loop {
+        assert!(started.elapsed() < Duration::from_secs(20), "the washer never said it needs water: {:?}", client.chat);
+        std::thread::sleep(Duration::from_millis(500));
+        use_at(&mut client, washer);
+        client.pump_until(|c| !c.chat.is_empty());
+        if client.chat.iter().any(|(_, t)| t.contains("needs water")) {
+            break;
+        }
+    }
+    // Water beside it: three dust for the one ore.
+    client.ok("/setblock ~5 ~ ~ water");
+    let started = Instant::now();
+    while count(&client, dust) < 3 {
+        assert!(started.elapsed() < Duration::from_secs(40), "the washer made {} dust: {:?}", count(&client, dust), client.chat);
+        std::thread::sleep(Duration::from_millis(500));
+        use_at(&mut client, washer);
+        client.pump_until(|c| !c.chat.is_empty());
+    }
+    assert_eq!(count(&client, dust), 3);
+}

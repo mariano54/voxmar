@@ -23,6 +23,15 @@ machine block does), `processing.ron` (what machines make) and `recipes_machines
   structure) is looked at once a second where the land is loaded, and kept as it was where
   it is not.
 
+## What there is
+
+| Age | Power | Machines |
+| --- | --- | --- |
+| Bronze | Rotation: water wheel, windmill, shafts | Trip hammer (plates) |
+| Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore) |
+| LV | Dynamo (rotation to LV), LV cable, battery bank | Electric furnace, macerator (2 dust, twice as fast), ore washer (3 dust, half as fast, needs water beside it) |
+| MV | Steam turbine (steam to MV), MV cable, MV battery bank, LV transformer (MV in on top, LV out of the other faces) | LV machines through a transformer |
+
 ## How power moves
 
 Every machine has **ports**: a carrier (rotation, steam or electricity), a tier for

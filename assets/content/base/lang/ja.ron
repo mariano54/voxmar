@@ -943,4 +943,9 @@
     "block.base.iron_plate": "鉄板",
     "block.base.bronze_plate": "青銅板",
     "block.base.copper_wire": "銅線",
+    "block.base.ore_washer": "洗鉱機",
+    "block.base.steam_turbine": "蒸気タービン",
+    "block.base.mv_cable": "中圧ケーブル",
+    "block.base.lv_transformer": "低圧変圧器",
+    "block.base.mv_battery_bank": "中圧蓄電池",
 }

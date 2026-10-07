@@ -110,6 +110,9 @@ pub enum Role {
         /// It burns fuel itself, as a furnace does, rather than drawing power.
         #[serde(default)]
         burns: bool,
+        /// It works only with water beside it (a washer); the world says whether there is.
+        #[serde(default)]
+        water: bool,
     },
 }
 

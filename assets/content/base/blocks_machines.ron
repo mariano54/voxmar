@@ -61,6 +61,28 @@
             name: "macerator", sound: Stone, textures: Sides(top: "macerator_top", bottom: "iron_casing", side: "macerator_side"),
             hardness: 3.5, color: (100, 105, 110), tags: ["machine", "building"],
         ),
+        (
+            name: "ore_washer", sound: Stone, textures: Sides(top: "ore_washer_top", bottom: "iron_casing", side: "ore_washer_side"),
+            hardness: 3.5, color: (90, 110, 130), tags: ["machine", "building"],
+        ),
+        // The MV age: steam turbines give MV straight from steam; transformers step it down
+        // for LV machines; MV cable and battery banks carry and keep it.
+        (
+            name: "steam_turbine", sound: Stone, textures: Sides(top: "steam_turbine_top", bottom: "iron_casing", side: "steam_turbine_side"),
+            hardness: 4.0, color: (110, 100, 90), tags: ["machine", "building"],
+        ),
+        (
+            name: "mv_cable", sound: Wood, textures: Column(end: "mv_cable_end", side: "mv_cable_side"),
+            hardness: 1.0, color: (70, 50, 50), tags: ["machine", "building"],
+        ),
+        (
+            name: "lv_transformer", sound: Stone, textures: Sides(top: "lv_transformer_top", bottom: "lv_transformer_bottom", side: "lv_transformer_side"),
+            hardness: 3.5, color: (90, 90, 80), tags: ["machine", "building"],
+        ),
+        (
+            name: "mv_battery_bank", sound: Stone, textures: Sides(top: "mv_battery_bank_top", bottom: "iron_casing", side: "mv_battery_bank_side"),
+            hardness: 4.0, color: (100, 80, 110), tags: ["machine", "building"],
+        ),
     ],
     families: [
         // Crushed ore: twice the metal from an ore, smelted like the ore.

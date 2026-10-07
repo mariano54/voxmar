@@ -452,4 +452,9 @@
     "block.base.iron_plate": "てっぱん",
     "block.base.bronze_plate": "せいどうばん",
     "block.base.copper_wire": "どうせん",
+    "block.base.ore_washer": "せんこうき",
+    "block.base.steam_turbine": "じょうきタービン",
+    "block.base.mv_cable": "ちゅうあつケーブル",
+    "block.base.lv_transformer": "ていあつへんあつき",
+    "block.base.mv_battery_bank": "ちゅうあつちくでんち",
 }
