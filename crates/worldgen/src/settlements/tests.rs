@@ -600,4 +600,3 @@ fn house_catalogue() {
         }
     }
 }
-
