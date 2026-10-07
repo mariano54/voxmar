@@ -59,7 +59,7 @@ pub use biome::{Biome, BiomeId, Biomes};
 pub use content::{DayTime, Motion, ParticleDef, WeatherWhen};
 pub use caves::{CaveStyle, LAVA_LEVEL};
 pub use climate::LAPSE_RATE;
-pub use content::{ContentError, WorldContent};
+pub use content::{ContentError, Select, WorldContent};
 pub use dials::WorldDials;
 pub use ecology::PlantProperties;
 pub use water::{Body, Cavity, Current, WaterSight};
@@ -276,7 +276,14 @@ impl Overworld {
 
     /// A generator with the world content of loaded packages ([`WorldContent::load`]).
     pub fn with_content(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent) -> Self {
-        let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
+        Self::with_content_at(seed, registry, content, Self::VERSION)
+    }
+
+    /// As [`with_content`](Self::with_content), as generation `version` would seed it: tests
+    /// use it to check a world before `VERSION` is bumped to reseed every world.
+    #[doc(hidden)]
+    pub fn with_content_at(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent, version: u32) -> Self {
+        let stream = rng::stream_seed(seed, Self::ID, version);
         let mut dials = WorldDials::sample(stream);
         dials.pole_distance *= content.climate.zones / WorldDials::POLE_DISTANCE;
         let rocks = Rocks::new(stream, content, &registry, &dials.featured);
@@ -300,7 +307,7 @@ impl Overworld {
             ecology,
             decor,
             trails: trails::Trails::new(stream, content.trails.laid),
-            settlements: settlements::Settlements::new(stream, &content.settlements, &registry),
+            settlements: settlements::Settlements::new(stream, &content.settlements, &registry, trees::tallest(content)),
             caves: caves::Caves::new(stream, &dials),
             underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),

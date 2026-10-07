@@ -128,6 +128,9 @@
         (template: "crop", name: "taro", palettes: {"leaf": "cabbage_leaf"}, without: ["block/{name}_seeds"]),
     ],
     textures: {
+        // Chickpea sprouts as a pulse does, round paired leaflets rather than grass blades.
+        "block/chickpea_crop0": (base: "shape/plant", palettes: {"leaf": "chickpea_leaf"}, layers: [Grid(rows: ["................", "................", "................", "................", "................", "................", "................", "................", "................", "................", "................", "...e.......e....", "..ede.e...ede...", "...c.ede...c..e.", "...c..c....c.ede", "...c..c....c..c."])]),
+        "block/chickpea_crop1": (base: "shape/plant", palettes: {"leaf": "chickpea_leaf"}, layers: [Grid(rows: ["................", "................", "................", "................", "................", "................", "................", "....e.e...e.e...", "...edede.edede..", "....dcd...dcd.e.", "..e..c.e...c.ede", ".ede.cede..c..c.", "..c..c.c...c..c.", "..c..cc...cc..c.", "...c..c...c..c..", "...cc.cc.cc.cc.."])]),
         // The regional crops (content/base/crops.ron), each its own plant: rye tall and blue-green
         // with long awned heads greyer than wheat; chickpea a bushy pulse with puffed pods;
         // rice arching grass with drooping golden panicles, its harvest a heap of white grain;

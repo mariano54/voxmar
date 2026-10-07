@@ -92,6 +92,11 @@ impl Features {
         if area.caves.surface_open(x, z, &geo) {
             return None;
         }
+        // No tree in or by water near a fall: roots sunk through a river at a waterfall
+        // took the water feeding its lip, and the fall would have run dry.
+        if geo.water >= geo.height - 1 && falls_near(area, x, z) {
+            return None;
+        }
         Some(Candidate { x, z, geo, site, rng, roll })
     }
 
@@ -295,4 +300,22 @@ mod tests {
         assert_eq!(colors[0][0], field[0]);
         assert_eq!(colors[0][2], field[2]);
     }
+}
+
+/// How far from a candidate a fall keeps trees in or by water away (blocks): past a
+/// tree's roots and the lip's water.
+const FALL_CLEARANCE: i32 = 4;
+
+/// Whether water stands two or more blocks above a neighbour's within `FALL_CLEARANCE`
+/// of (x, z): a fall, whose curtain and the water feeding it trees must leave alone.
+fn falls_near(area: &Area, x: i32, z: i32) -> bool {
+    let r = FALL_CLEARANCE;
+    (-r..=r).any(|dz| {
+        (-r..=r).any(|dx| {
+            let Some((_, top)) = area.geology.get(x + dx, z + dz).wet() else { return false };
+            [(1, 0), (0, 1)].into_iter().any(|(ox, oz)| {
+                area.geology.get(x + dx + ox, z + dz + oz).wet().is_some_and(|(_, other)| (other - top).abs() >= 2)
+            })
+        })
+    })
 }
