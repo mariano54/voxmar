@@ -1425,6 +1425,10 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
     let ground = feet + IVec3::new(0, -1, 1);
     let sprout = client.content.blocks.expect("base:potato_crop_0");
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    // Sown, and the potato seen gone: block changes go out at once but the inventory only
+    // as the tick ends, so a sprout seen (and broken) within one tick once left the sown
+    // potato showing in hand. When it was the only one (the field's drops not yet picked
+    // up, on a loaded machine), the second sowing then held nothing and was refused.
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && potatoes(c) == before - 1);
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR) && potatoes(c) == before);
