@@ -60,6 +60,9 @@ pub struct Content {
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
     pub english: Arc<Lang>,
+    /// What loading noticed and allowed, for the log: a later package replacing data an
+    /// earlier one set.
+    pub notes: Arc<Vec<String>>,
 }
 
 /// A definition file the engine leaves to another crate.
@@ -92,6 +95,9 @@ impl Content {
         let mut skills = SkillRegistry::default();
         let mut crops = Vec::new();
         let mut creatures = Vec::new();
+        let mut creature_limits = crate::creature::Limits::default();
+        let mut limits_set_by: Option<String> = None;
+        let mut notes = Vec::new();
         let mut cooking = Vec::new();
         let mut recipes = Vec::new();
         let mut effects = Vec::new();
@@ -134,7 +140,18 @@ impl Content {
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "creatures.ron" => {
-                        creatures.extend(CreatureRegistry::read(package, &source)?);
+                        let (defs, set) = CreatureRegistry::read(package, &source)?;
+                        creatures.extend(defs);
+                        // A later package's limits replace an earlier one's (Design, 2026-10-07).
+                        if let Some(set) = set {
+                            let (limits, changed) = creature_limits.with(&set);
+                            if let Some(earlier) = limits_set_by.replace(package.clone()) {
+                                let note = format!("{package}/creatures.ron replaces the creature limits {earlier} set ({})", changed.join(", "));
+                                tracing::info!("{note}");
+                                notes.push(note);
+                            }
+                            creature_limits = limits;
+                        }
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons).
@@ -199,7 +216,7 @@ impl Content {
         skills.validate()?;
         let blocks = BlockRegistry::new(blocks)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
-        let creatures = CreatureRegistry::new(creatures, &blocks, &skills)?;
+        let creatures = CreatureRegistry::new(creatures, creature_limits, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
         let effects = EffectRegistry::new(effects)?;
@@ -210,6 +227,14 @@ impl Content {
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks)?);
+        // A furnishing gives itself back only where a player placed it: one that drops
+        // nothing anyway has no business with the tag.
+        if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag("furnishing") && (blocks.info(id).drops.is_air() || blocks.info(id).drop_count == 0)) {
+            return Err(RegistryError(format!(
+                "block `{}` is a `furnishing` but drops nothing: give it a drop, or remove the tag (village props that drop nothing don't need it)",
+                blocks.def(id).name
+            )));
+        }
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -231,6 +256,7 @@ impl Content {
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
+            notes: Arc::new(notes),
         })
     }
 

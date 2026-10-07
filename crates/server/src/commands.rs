@@ -491,6 +491,10 @@ impl Server {
         };
         let mut placed = 0;
         for i in 0..count {
+            // Summoned ones are wild: they leave room for kept animals waiting in the save.
+            if self.wild_room() == 0 {
+                break;
+            }
             let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
             let cell = (at + offset).floor().as_ivec3();
             // Commands may run before the land around a player has loaded (a capture's,
@@ -531,9 +535,16 @@ impl Server {
             }
             return Ok(Words::key("command.creatures.done").with("count", Words::text(near.len())));
         }
+        // Taming here keeps to the keeper's cap as feeding does.
+        let kept_each = self.content.creatures.limits().kept_each;
+        let mut kept_room = kept_each.saturating_sub(self.kept_by(&name));
+        if what == "tame" && kept_room == 0 {
+            return Err(Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
+        }
         for creature in self.creatures.live.values_mut().filter(|c| c.body.position.distance(at) <= 8.0) {
             match what {
-                "tame" if creature.owner.is_none() => {
+                "tame" if creature.owner.is_none() && kept_room > 0 => {
+                    kept_room -= 1;
                     creature.owner = Some(name.clone());
                     creature.owner_id = Some(player);
                     creature.home = creature.body.position;
