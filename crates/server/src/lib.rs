@@ -356,6 +356,9 @@ pub(crate) struct Server {
     dirty: FxHashSet<ColumnPos>,
     /// Columns whose files could not be read, which saving leaves alone (`Loaded`).
     kept: FxHashSet<ColumnPos>,
+    /// When each address's new players had the starting kit, in ticks (`Server::grant_kit`).
+    /// Kept only while the server runs.
+    kits: FxHashMap<std::net::IpAddr, Vec<u64>>,
     generating: FxHashSet<ColumnPos>,
     generated_tx: Sender<(ColumnPos, Loaded)>,
     generated_rx: Receiver<(ColumnPos, Loaded)>,
@@ -444,6 +447,7 @@ impl Server {
             fluids,
             dirty: FxHashSet::default(),
             kept: if loaded.keep_file { FxHashSet::from_iter([spawn_column]) } else { FxHashSet::default() },
+            kits: FxHashMap::default(),
             generating: FxHashSet::default(),
             generated_tx,
             generated_rx,

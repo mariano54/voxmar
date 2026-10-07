@@ -16,6 +16,11 @@
     // What a new player starts with in the pack's last slots (last first), out of the
     // hotbar's way: the empty coin purse.
     pack_end: [("base:coin_purse", 1)],
+    // How many new players from one address get the starter kit in any `kit_window`
+    // seconds (a real day), so fresh names do not farm it; the rest start with `pack_end`
+    // only. Players on the server's own machine in process always get it.
+    kits_per_address: 1,
+    kit_window: 86400.0,
     // Falls shorter than this many blocks do no damage; each block more costs one.
     safe_fall: 3.0,
     // Lava burns this much health every so many seconds.

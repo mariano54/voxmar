@@ -322,10 +322,26 @@ impl Server {
         player.changed(traits::INVENTORY);
     }
 
+    /// Whether a new player from `address` may have the starting kit: at most
+    /// `kits_per_address` in any `kit_window`, by the server's ticks. Counts it if so.
+    fn grant_kit(&mut self, address: std::net::IpAddr) -> bool {
+        let window = (self.survival.kit_window * TICKS_PER_SECOND as f32) as u64;
+        let tick = self.tick;
+        let given = self.kits.entry(address).or_default();
+        given.retain(|&at| tick.saturating_sub(at) < window);
+        let granted = given.len() < self.survival.kits_per_address as usize;
+        if granted {
+            given.push(tick);
+        }
+        if given.is_empty() {
+            self.kits.remove(&address);
+        }
+        granted
+    }
+
     fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
         let fingerprint = self.content.fingerprint();
         let blocks = &self.content.blocks;
-        let new_inventory = self.survival.new_inventory().expect("checked by load_content");
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
         let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
@@ -372,6 +388,10 @@ impl Server {
                 }
             },
         };
+        // A new player gets the starting kit, but an address gets only so many in a while
+        // (`survival.ron`), so fresh names do not farm it.
+        let kit = saved.is_none() && self.players[&id].connection.peer().is_none_or(|address| self.grant_kit(address));
+        let new_inventory = self.survival.new_inventory(kit).expect("checked by load_content");
         let local_admin = self.config.local_admin;
         let token_admin = self.config.admin_token.as_deref().zip(admin_token.as_deref()).is_some_and(|(ours, theirs)| same_token(ours, theirs));
         let skill_ids = self.content.skills.clone();
@@ -421,7 +441,8 @@ impl Server {
                 player.quests_done = saved.quests;
                 player.tallies = saved.tallies.into_iter().collect();
             }
-            // The coin purse in the pack's last slot, out of the hotbar's way, and the kit.
+            // The coin purse in the pack's last slot, out of the hotbar's way, and the kit
+            // unless this address has had its share.
             None => player.inventory = new_inventory,
         }
         skill_ids.start(&mut player.skills);

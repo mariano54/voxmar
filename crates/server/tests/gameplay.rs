@@ -98,7 +98,11 @@ impl Client {
 
     /// Joins as `name`, giving the server `admin_token`.
     fn greet_with(connection: ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>) -> Self {
-        let content = content();
+        Self::greet_content(connection, name, server, admin_token, content())
+    }
+
+    /// Joins as `name` with `content`, which must be the server's.
+    fn greet_content(connection: ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>, content: Content) -> Self {
         connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: admin_token.map(str::to_owned) });
         let mut client = Self {
             connection,
@@ -1872,6 +1876,30 @@ fn silent_sockets_neither_count_as_players_nor_pile_up() {
     assert!(turned_away(&connection, &guest.content).contains("full"));
     let third = Client::greet(tcp::connect(v6).unwrap(), "third", None);
     drop((guest, second, third, silent));
+}
+
+#[test]
+fn an_address_gets_one_starting_kit_in_a_while() {
+    // A day is too long to wait: a mod sets the window to two seconds.
+    let mut content = content();
+    let mut files = (*content.files).clone();
+    files.push(voxmar_engine::content::ContentFile { package: "test".into(), name: "survival.ron".into(), source: "(kit_window: 2.0)".into() });
+    content.files = std::sync::Arc::new(files);
+    let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
+    let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+    let mut first = Client::greet_content(tcp::connect(addr).unwrap(), "first", Some(server), None, content.clone());
+    let (bread, purse) = (content.blocks.expect("base:bread"), content.blocks.expect("base:coin_purse"));
+    let has = |c: &Client, item| c.inventory.slots.iter().flatten().any(|s| s.item == item);
+    first.pump_until(|c| has(c, bread));
+    // A second fresh name from the same address, inside the window: the purse, no kit.
+    let mut second = Client::greet_content(tcp::connect(addr).unwrap(), "second", None, None, content.clone());
+    second.pump_until(|c| has(c, purse));
+    assert_eq!(second.inventory.slots.iter().flatten().count(), 1, "{:?}", second.inventory);
+    // Once the window has passed by the server's clock, the next one has the kit again.
+    first.after_ticks(2 * TICKS_PER_SECOND as u64);
+    let mut third = Client::greet_content(tcp::connect(addr).unwrap(), "third", None, None, content);
+    third.pump_until(|c| has(c, bread));
+    drop((second, third, first));
 }
 
 #[test]
