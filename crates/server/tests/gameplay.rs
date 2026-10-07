@@ -46,6 +46,8 @@ struct Client {
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
     blows: u32,
+    /// The damage each of our blows did (0 for a miss).
+    damage: Vec<u16>,
     journal: voxmar_engine::journal::Journal,
     quests: Vec<voxmar_engine::quest::QuestState>,
     /// The server, for the first player to join it (dropping it stops the server).
@@ -115,6 +117,7 @@ impl Client {
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
+            damage: Vec::new(),
             journal: Default::default(),
             quests: Vec::new(),
             _server: server,
@@ -197,7 +200,10 @@ impl Client {
                     self.deaths += gone.died as u32;
                 }
             }
-            ServerMessage::Struck { .. } => self.blows += 1,
+            ServerMessage::Struck { damage, .. } => {
+                self.blows += 1;
+                self.damage.push(damage);
+            }
             ServerMessage::Journal { entries } => self.journal.merge(entries),
             ServerMessage::Quests { states } => self.quests = states,
             ServerMessage::Items { changed, gone } => {
@@ -749,6 +755,46 @@ fn strike_a_snail(mut client: Client) {
     client.pump_until(|c| (0..voxmar_engine::inventory::SLOTS).filter_map(|s| c.inventory.get(s)).any(|s| s.item == slime));
 }
 
+/// A weapon hits up to its max hit from the level that wields it; below that level it
+/// strikes as a bare fist (max hit 1, and 1 more for every eight levels).
+#[test]
+fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
+    let mut client = Client::join();
+    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
+    let sword = client.content.blocks.id("base:iron_sword").unwrap();
+    // Creative, so the bear's blows pass us by.
+    client.ok("/gamemode creative");
+    client.ok("/skill attack 19");
+    client.ok("/give iron_sword 1");
+    client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == sword)));
+    let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == sword)).unwrap();
+    client.ok("/summon brown_bear 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
+    let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
+    // Struck a full charge apart, beside it wherever it goes, until `landed` blows land.
+    let strike = |client: &mut Client, landed: usize| {
+        let start = client.damage.len();
+        while client.damage[start..].iter().filter(|&&d| d > 0).count() < landed && client.creatures.contains_key(&id) {
+            assert!(client.damage.len() - start < 80, "{} blows landed {landed}", client.damage.len() - start);
+            let at = client.creatures[&id].position;
+            client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
+            client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+            std::thread::sleep(Duration::from_millis(650));
+            let blows = client.blows;
+            client.propose("core:attack", ActionTarget::Creature(id));
+            let asked = Instant::now();
+            client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || asked.elapsed() > Duration::from_millis(400));
+        }
+        client.damage[start..].iter().copied().filter(|&d| d > 0).collect::<Vec<u16>>()
+    };
+    // Attack 19, a level short of iron: a fist's max hit, 1 + 19 / 8 = 3.
+    let fists = strike(&mut client, 6);
+    assert!(fists.iter().all(|&d| d <= 3), "below the sword's level, blows did {fists:?}");
+    client.ok("/skill attack 20");
+    let swung = strike(&mut client, 8);
+    assert!(swung.iter().all(|&d| d <= 9) && swung.iter().any(|&d| d > 3), "with the sword, blows did {swung:?}");
+}
+
 #[test]
 fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
     let mut client = Client::join();
@@ -1174,4 +1220,29 @@ fn a_sleeping_bag_is_where_the_homeless_wake() {
     client.pump_until(|c| c.health == 0);
     client.propose("core:respawn", ActionTarget::None);
     client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(bag.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
+}
+
+#[test]
+fn gravel_sometimes_breaks_to_flint_instead() {
+    let mut client = Client::join();
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    for line in ["/clear", "/give iron_shovel 1"] {
+        client.ok(line);
+    }
+    let (gravel, flint) = (client.content.blocks.expect("base:gravel"), client.content.blocks.expect("base:flint"));
+    client.pump_until(|c| c.inventory.get(0).is_some());
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    // One break in eight gives flint: in sixty, all but certainly some.
+    let mut flints = 0;
+    for _ in 0..60 {
+        client.ok("/setblock ~ ~-1 ~ gravel");
+        client.pump_until(|c| c.world.block(below) == Some(gravel));
+        client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
+        client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+        flints = client.items.values().filter(|i| i.stack.item == flint).count() + client.inventory.slots.iter().flatten().filter(|s| s.item == flint).count();
+        if flints > 0 {
+            break;
+        }
+    }
+    assert!(flints > 0, "sixty gravel broke without a flint");
 }
