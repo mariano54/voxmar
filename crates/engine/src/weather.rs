@@ -558,6 +558,158 @@ struct WeatherFile {
     /// Ground blocks and the snowy blocks snow lying on them turns them into.
     #[serde(default)]
     snow_cover: Vec<(String, String)>,
+    /// How the weather is simulated, sent and shown (see `WeatherTuning`), in full or only
+    /// the values a package changes.
+    #[serde(default)]
+    tuning: Option<ron::Value>,
+}
+
+/// How the weather is simulated, told to players and shown: the `tuning` section of
+/// `weather.ron`. The base package sets every value; a later package may set any of them
+/// alone (`tuning: (shown: (fractions: {"fog": (settle: 30.0, full: 90.0)}))`) and the
+/// rest stay as they were.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeatherTuning {
+    pub simulation: SimulationTuning,
+    pub shown: ShownTuning,
+    pub air: AirTuning,
+}
+
+/// The server's simulation and what it tells players. Times are in seconds, distances in
+/// blocks.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SimulationTuning {
+    /// Weather cells simulated around each player in every direction.
+    pub range: i32,
+    /// Seconds a cell catches up on when it comes into range, in steps of `catch_up_step`.
+    pub catch_up: i64,
+    pub catch_up_step: i64,
+    /// Mean speed of the prevailing wind that carries air masses, blocks per second.
+    pub mean_wind: f64,
+    /// A player's weather is sent when any value moves this much, or every `resend` seconds.
+    pub report_change: f32,
+    pub resend: u64,
+    /// Chance per second that a cell under the fiercest storm strikes the ground (it
+    /// flashes within the cloud twice as often), and how far players see and hear it.
+    pub lightning: f32,
+    pub lightning_reach: f32,
+    /// Blocks above the ground (or the sea) a flash within a cloud lights it.
+    pub cloud_flash_height: i32,
+    /// Strikes per second near a player at full `lightning` from effects.
+    pub effect_lightning: f32,
+    /// Forced weather covers this far around where it was asked for, fades out over
+    /// `force_edge` more, and when its time is up fades over `force_fade` seconds.
+    pub force_radius: f32,
+    pub force_edge: f32,
+    pub force_fade: u64,
+    /// Seconds after a command changes the weather during which players there are told at
+    /// once and change over quickly.
+    pub command_quick: u64,
+    /// Blocks across the stretches of land an effect's rarity is drawn for.
+    pub effect_region: f64,
+    /// Effects at least this strong are named to players and in `/weather`.
+    pub named: f32,
+    /// Seconds for wet ground to lose half its water, in mild, cloudy weather.
+    pub drying: f32,
+    /// Columns whose lying snow is brought up to date per player each second, and blocks
+    /// changed in one column at most.
+    pub snow_columns: usize,
+    pub snow_changes: usize,
+    /// How much less snow cover snow in shade still lies at.
+    pub shade_lingers: f32,
+    /// Seconds wetness and snow left lying in cells out of range are remembered, and the
+    /// most a returning cell catches up on.
+    pub lying_kept: i64,
+    pub lying_catch_up: i64,
+    /// Seconds for a cell's count of recent lightning to halve.
+    pub lightning_memory: f32,
+    /// Hail's impact for each unit of `hail` squared.
+    pub hail_energy: f32,
+}
+
+/// How clients show the weather they are told: each value gathers speed over `ramp`
+/// seconds, changes at most `most` per second and settles into the report over about
+/// `settle` seconds, so nothing seen or heard jumps.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShownTuning {
+    /// Each fraction of `Weather::fractions`, by name.
+    pub fractions: FxHashMap<String, Swing>,
+    /// Seconds every fraction takes to gather speed.
+    pub fraction_ramp: f32,
+    /// After a command, every fraction at least this quick, gathering speed this fast, for
+    /// `command_for` seconds.
+    pub command: Swing,
+    pub command_ramp: f32,
+    pub command_for: f32,
+    /// The temperature (°C), the top of ground fog (blocks) and each component of the mean
+    /// wind (blocks per second), and the wind after a command.
+    pub temperature: Ease,
+    pub fog_top: Ease,
+    pub wind: Ease,
+    pub command_wind: Ease,
+    /// Seconds after the first report a game waits at most for the land's air before it
+    /// says the weather is ready.
+    pub ready_wait: f32,
+    /// Seconds a lightning bolt stays visible.
+    pub bolt_life: f32,
+}
+
+/// How a fraction follows the report: it settles over about `settle` seconds and swings
+/// fully (0 to 1) over at least `full`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Swing {
+    pub settle: f32,
+    pub full: f32,
+}
+
+/// How a value follows the report: see `ShownTuning`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ease {
+    pub settle: f32,
+    pub most: f32,
+    pub ramp: f32,
+}
+
+/// The land's air (haze, sky tint, ambient particles) on clients.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AirTuning {
+    /// Seconds between samples of the land's air, and to ease most of the way to each.
+    pub sample_every: f32,
+    pub ease: f32,
+    /// Share of nights each night-time particle set (fireflies) comes out on, and of days
+    /// each daytime one (pollen) does.
+    pub nights_out: f32,
+    pub days_out: f32,
+}
+
+impl ShownTuning {
+    /// Each fraction's swing, in the order of `Weather::fractions`.
+    pub fn swings(&self) -> [Swing; 24] {
+        FRACTIONS.map(|name| self.fractions[name])
+    }
+}
+
+/// Lays `over` onto `base`: maps (structs) key by key, anything else replaced.
+fn overlay(base: &mut ron::Value, over: ron::Value) {
+    match (base, over) {
+        (ron::Value::Map(base), ron::Value::Map(over)) => {
+            for (key, value) in over {
+                match base.get_mut(&key) {
+                    Some(old) => overlay(old, value),
+                    None => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (base, over) => *base = over,
+    }
 }
 
 /// Every package's weather effects and kinds of weather.
@@ -571,6 +723,9 @@ pub struct WeatherTable {
     preset_names: FxHashMap<String, usize>,
     winds: Vec<Preset>,
     snow_cover: Vec<(String, String)>,
+    /// The tuning as every package so far has set it, and read, once complete.
+    tuning_source: Option<ron::Value>,
+    tuning: Option<WeatherTuning>,
 }
 
 impl WeatherTable {
@@ -630,11 +785,53 @@ impl WeatherTable {
             self.presets.push(preset);
         }
         self.snow_cover.extend(file.snow_cover);
+        if let Some(tuning) = file.tuning {
+            match &mut self.tuning_source {
+                Some(source) => overlay(source, tuning),
+                None => self.tuning_source = Some(tuning),
+            }
+            // Complete once a package has set every value (checked in `validate`).
+            self.tuning = self.read_tuning().ok();
+        }
         Ok(())
     }
 
-    /// Checks that every effect a preset forces exists, once all packages are loaded.
+    fn read_tuning(&self) -> Result<WeatherTuning, RegistryError> {
+        let source = self.tuning_source.clone().ok_or_else(|| RegistryError("no package's weather.ron sets its `tuning`".into()))?;
+        let tuning: WeatherTuning = source.into_rust().map_err(|e| RegistryError(format!("weather.ron tuning: {e}")))?;
+        let names = &tuning.shown.fractions;
+        if let Some(missing) = FRACTIONS.iter().find(|name| !names.contains_key(**name)) {
+            return Err(RegistryError(format!("weather.ron tuning: no easing for the fraction `{missing}`")));
+        }
+        if let Some(unknown) = names.keys().find(|name| !FRACTIONS.contains(&name.as_str())) {
+            return Err(RegistryError(format!("weather.ron tuning: `{unknown}` is not a fraction of the weather")));
+        }
+        let swings = tuning.shown.swings().into_iter().chain([tuning.shown.command]);
+        let eases = [tuning.shown.temperature, tuning.shown.fog_top, tuning.shown.wind, tuning.shown.command_wind];
+        let positive = swings.flat_map(|s| [s.settle, s.full]).chain(eases.into_iter().flat_map(|e| [e.settle, e.most, e.ramp]));
+        if positive.chain([tuning.shown.fraction_ramp, tuning.shown.command_ramp]).any(|v| v.is_nan() || v <= 0.0) {
+            return Err(RegistryError("weather.ron tuning: easing times and rates must be above 0".into()));
+        }
+        Ok(tuning)
+    }
+
+    /// How the weather is simulated, sent and shown. Content that loaded has it (see
+    /// `validate`).
+    pub fn tuning(&self) -> &WeatherTuning {
+        self.tuning.as_ref().expect("weather.ron sets no complete tuning")
+    }
+
+    /// The tuning, if the packages so far set all of it.
+    pub fn try_tuning(&self) -> Option<&WeatherTuning> {
+        self.tuning.as_ref()
+    }
+
+    /// Checks that every effect a preset forces exists, once all packages are loaded,
+    /// and that the packages' tuning, if any set it, is complete.
     pub fn validate(&self) -> Result<(), RegistryError> {
+        if self.tuning_source.is_some() {
+            self.read_tuning()?;
+        }
         for preset in &self.presets {
             if let Some(missing) = preset.effects.iter().find(|name| self.effect(name).is_none()) {
                 return Err(RegistryError(format!("weather `{}` forces `{missing}`, which no package defines", preset.name)));
@@ -819,6 +1016,53 @@ mod tests {
         let unknown = WeatherTable::from_ron("base", r#"(presets: [(name: "odd", effects: ["nothing"])])"#).unwrap();
         assert!(unknown.validate().is_err());
         assert!(WeatherTable::from_ron("base", r#"(effects: [(name: "flat", when: [(Wind, 1.0, 1.0)], shows: [])])"#).is_err());
+    }
+
+    /// The base package's tuning is what the values were when they were constants in the
+    /// code, and a later package changes only what it sets.
+    #[test]
+    fn tuning_loads_from_data_and_packages_override_parts_of_it() {
+        let base = include_str!("../../../assets/content/base/weather.ron");
+        let mut table = WeatherTable::from_ron("base", base).unwrap();
+        table.validate().unwrap();
+        let t = table.tuning().clone();
+        let sim = &t.simulation;
+        assert_eq!((sim.range, sim.catch_up, sim.catch_up_step, sim.mean_wind), (2, 600, 5, 3.0));
+        assert_eq!((sim.report_change, sim.resend), (0.02, 5));
+        assert_eq!((sim.lightning, sim.lightning_reach, sim.cloud_flash_height, sim.effect_lightning), (0.0009, 1500.0, 160, 1.0 / 15.0));
+        assert_eq!((sim.force_radius, sim.force_edge, sim.force_fade, sim.command_quick), (1024.0, 384.0, 60, 3));
+        assert_eq!((sim.effect_region, sim.named, sim.drying), (1500.0, 0.3, 300.0));
+        assert_eq!((sim.snow_columns, sim.snow_changes, sim.shade_lingers), (2, 256, 0.25));
+        assert_eq!((sim.lying_kept, sim.lying_catch_up, sim.lightning_memory, sim.hail_energy), (3 * 3600, 3600, 600.0, 4.0));
+        let shown = &t.shown;
+        let old: [(f32, f32); 24] = [
+            (20.0, 60.0), (20.0, 40.0), (25.0, 60.0), (15.0, 40.0), (4.0, 10.0), (8.0, 25.0), (8.0, 20.0), (8.0, 20.0),
+            (4.0, 12.0), (6.0, 20.0), (12.0, 35.0), (15.0, 40.0), (8.0, 20.0), (10.0, 40.0), (20.0, 80.0), (25.0, 80.0),
+            (3.0, 8.0), (6.0, 15.0), (10.0, 25.0), (15.0, 40.0), (8.0, 20.0), (5.0, 15.0), (6.0, 15.0), (8.0, 20.0),
+        ];
+        assert_eq!(shown.swings().map(|s| (s.settle, s.full)), old);
+        assert_eq!((shown.fraction_ramp, shown.command, shown.command_ramp, shown.command_for), (2.0, Swing { settle: 1.0, full: 6.0 }, 0.5, 10.0));
+        assert_eq!(shown.temperature, Ease { settle: 20.0, most: 0.5, ramp: 2.0 });
+        assert_eq!(shown.fog_top, Ease { settle: 10.0, most: 3.0, ramp: 2.0 });
+        assert_eq!(shown.wind, Ease { settle: 8.0, most: 1.5, ramp: 2.0 });
+        assert_eq!(shown.command_wind, Ease { settle: 1.0, most: 4.0, ramp: 0.5 });
+        assert_eq!((shown.ready_wait, shown.bolt_life), (5.0, 0.45));
+        assert_eq!(t.air, AirTuning { sample_every: 0.5, ease: 10.0, nights_out: 0.6, days_out: 0.35 });
+
+        // A mod slows the fog and nothing else.
+        table.extend("slow_fog", r#"(tuning: (shown: (fractions: {"fog": (settle: 30.0, full: 90.0)}), simulation: (named: 0.5)))"#).unwrap();
+        table.validate().unwrap();
+        let changed = table.tuning();
+        assert_eq!(changed.shown.fractions["fog"], Swing { settle: 30.0, full: 90.0 });
+        assert_eq!(changed.simulation.named, 0.5);
+        assert_eq!(changed.shown.fractions["cover"], t.shown.fractions["cover"]);
+        assert_eq!((&changed.air, changed.simulation.drying), (&t.air, t.simulation.drying));
+        // Partial tuning alone is not enough, and nonsense is refused.
+        let partial = WeatherTable::from_ron("odd", r#"(tuning: (simulation: (named: 0.5)))"#).unwrap();
+        assert!(partial.try_tuning().is_none() && partial.validate().is_err());
+        table.extend("bad", r#"(tuning: (shown: (fractions: {"fog": (settle: 0.0, full: 90.0)})))"#).unwrap();
+        assert!(table.validate().is_err());
+        assert!(WeatherTable::from_ron("bad", r#"(tuning: (shown: (fractions: {"smog": (settle: 1.0, full: 1.0)})))"#).unwrap().validate().is_err());
     }
 
     #[test]
