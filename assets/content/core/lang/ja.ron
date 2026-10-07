@@ -312,7 +312,7 @@
     "combat.splat.blow.bleed": "{damage}",
     "combat.splat.defended.hit": "-{damage}",
     "combat.splat.defended.missed": "外れ",
-    "combat.splat.defended.blocked": "防御 -{damage}",
+    "combat.splat.defended.blocked": "ガード -{damage}",
     "combat.splat.defended.perfect": "完璧！",
     "combat.splat.defended.dodged": "回避",
     "combat.splat.defended.evaded": "届かず",
