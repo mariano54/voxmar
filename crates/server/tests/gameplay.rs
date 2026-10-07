@@ -1850,27 +1850,25 @@ fn a_full_server_turns_newcomers_away() {
 
 #[test]
 fn silent_sockets_neither_count_as_players_nor_pile_up() {
-    // Listening on both IPv4 and IPv6, so one machine has two addresses to come from.
     let server = spawn(ServerConfig { view_distance: 2, max_players: 3, idle_timeout: SERVER_WAIT, ..Default::default() }, content()).unwrap();
-    let Ok(addr) = tcp::listen("[::]:0", server.connections()) else {
-        eprintln!("skipped: no IPv6 here");
-        return;
-    };
-    let (v4, v6) = (std::net::SocketAddr::from(([127, 0, 0, 1], addr.port())), std::net::SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, addr.port())));
-    let Ok(connection) = tcp::connect(v4) else {
-        eprintln!("skipped: this IPv6 listener takes no IPv4");
-        return;
-    };
-    let guest = Client::hello(connection, "guest", server);
-    // Four connections from one address that never say hello: they are not players, so
-    // two more still fit...
-    let silent: Vec<_> = (0..4).map(|_| std::net::TcpStream::connect(v4).unwrap()).collect();
+    // Listening on IPv4, and on IPv6 too where the machine has it, so one machine has two
+    // addresses to come from.
+    let v4 = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+    let v6 = tcp::listen("[::1]:0", server.connections()).ok();
+    let guest = Client::hello(tcp::connect(v4).unwrap(), "guest", server);
     let second = Client::greet(tcp::connect(v4).unwrap(), "second", None);
-    // ...and with four waiting from that address, its next connection is turned away at
-    // once, while another address is not.
+    // Four connections from that address that never say hello: with them waiting, its next
+    // connection is turned away at once...
+    let silent: Vec<_> = (0..4).map(|_| std::net::TcpStream::connect(v4).unwrap()).collect();
     let connection = tcp::connect(v4).unwrap();
     assert!(turned_away(&connection, &guest.content).contains("full"));
-    let third = Client::greet(tcp::connect(v6).unwrap(), "third", None);
+    // ...while another address is not, and they are not players, so a third still fits
+    // (in process, as from elsewhere, without IPv6).
+    let third = match v6 {
+        Some(v6) => Client::greet(tcp::connect(v6).unwrap(), "third", None),
+        None => guest.another("third"),
+    };
+    assert!(third.health > 0);
     drop((guest, second, third, silent));
 }
 
