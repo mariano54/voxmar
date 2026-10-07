@@ -711,6 +711,19 @@ Music is in `assets/music` (generated offline with `tools/generate_music.py`) an
 then with long quiet gaps; `M` toggles it. Starting a game fades the menu's music out, so a world
 opens in quiet; returning to the menus brings it back.
 
+With the Minecraft assets setting on, the tracks of the player's own Prism Launcher instance join
+Voxmar's (the most recently launched GT New Horizons one, or the instance `prism_instance` names in
+`settings.ron`, in the launcher folder `prism_folder` names, empty for the standard one): the
+vanilla music and records the launcher's asset store holds for its Minecraft version, a music
+mod's soundtrack zip (HorizonMelodies, with the newer Minecraft and the StaTech tracks), and music
+in its resource packs and mod jars. A file name found once is not added again, so packs repeating
+the soundtrack add nothing. Nothing is copied: each track is read from where it is as it is about
+to play. `assets/content/base/music.ron` holds the numbers, where to look, and which moments each
+track suits by its path: menu tracks on the title screen, Nether, End, cave and structure tracks
+deep underground, the rest in the world; Voxmar's own play everywhere, a quarter of the picks.
+`cargo test --profile iter -p voxmar_client prism_music_decodes -- --ignored --nocapture` lists
+what this machine's instance has and checks every track decodes.
+
 Block sounds follow each block's material (`sound: Wood` in its definition; the kinds are listed
 in `blocks.ron`), so new blocks sound right without new audio. Steps, landings, placing, the taps
 while mining and breaking come from the player's own Minecraft install when it has them and the
