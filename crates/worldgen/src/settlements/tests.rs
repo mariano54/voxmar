@@ -1648,5 +1648,3 @@ fn the_spawn_plans_each_square_once() {
         assert!(spawn.early.lock().unwrap().is_empty());
     }
 }
-
-
