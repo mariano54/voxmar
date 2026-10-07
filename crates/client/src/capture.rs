@@ -673,9 +673,11 @@ fn capture(
         || world.voxels.len() < 9
         || lod_tiles < lod_wanted;
     // Flying and digging keep the world busy streaming and remeshing; once started they
-    // run their course. A flight starts with its teleport up: the land it lands among
-    // streams in, and waiting for that to settle would wait out the teleport's own deadline.
-    let flying = state.flight_started.is_some() || state.dig_started.is_some() || state.lift_asked.is_some();
+    // run their course. While a flight's teleport up is unanswered, the world settling
+    // must not hold back the check on its deadline; once the player is up, the land there
+    // settles before the flight is timed, so its frame times are the flight's own.
+    let lift_pending = state.lift_asked.is_some() && state.flight_started.is_none() && player.position.y < FLIGHT_HEIGHT - 1.0;
+    let flying = state.flight_started.is_some() || state.dig_started.is_some() || lift_pending;
     // A mined block's pieces are caught in the air, while its column remeshes.
     let broken = state.broken_at.map(|at| now - at);
     let patience = if state.flicker.is_some() { 300.0 } else { 60.0 };
