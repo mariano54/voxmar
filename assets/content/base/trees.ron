@@ -137,7 +137,7 @@
         ),
         (
             name: "dead_tree", tags: ["snag", "dry"],
-            log: "acacia_log", height: (6, 10), lean: 1.6,
+            log: "dead_log", height: (6, 10), lean: 1.6,
             crown: Dead(branches: (2, 4), reach: (2.0, 3.2), broken: 0.2, fork: 0.65),
             ground: [Soil, Snow, Sand],
         ),
@@ -305,14 +305,14 @@
         (
             // Gnarled and grey-green, of dry warm hills.
             name: "olive", tags: ["gathering", "fruit", "warm", "dry"], rarity: Uncommon,
-            log: "acacia_log", leaves: "olive_leaves", height: (3, 5), lean: 1.4,
+            log: "oak_log", leaves: "olive_leaves", height: (3, 5), lean: 1.4,
             fruit: (leaves: "olives_leaves", share: 0.1),
             crown: Umbrella(reach: (1.6, 2.6), radius: (1.6, 2.2), squash: 0.6, fork: 0.4),
             comfort: (temperature: (12.0, 30.0), moisture: (0.1, 1.0)),
         ),
         (
             name: "fig", tags: ["gathering", "fruit", "warm"], rarity: Rare,
-            log: "acacia_log", leaves: "oak_leaves", height: (3, 5), lean: 1.0,
+            log: "oak_log", leaves: "oak_leaves", height: (3, 5), lean: 1.0,
             fruit: (leaves: "fig_leaves", share: 0.07),
             crown: Round(reach: (2.2, 3.2), radius: (1.6, 2.2), squash: 0.6, start: 0.25),
             comfort: (temperature: (14.0, 32.0), moisture: (0.2, 1.4)),

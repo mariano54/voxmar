@@ -121,6 +121,8 @@ pub struct Live {
     pub reckoned: f64,
     pub fed: f64,
     pub needs: Needs,
+    /// How well its home suits its kind's climate (`Server::settle`).
+    pub climate_fit: f32,
     /// The last view each player was sent, to send only changes.
     sent: Option<CreatureView>,
     pub(crate) changed: bool,
@@ -716,6 +718,7 @@ impl Server {
             reckoned: self.day,
             fed: self.day,
             needs: Needs::default(),
+            climate_fit: 1.0,
             sent: None,
             changed: true,
         };
@@ -953,7 +956,7 @@ fn spawn_factor(rarity: Rarity) -> f32 {
 }
 
 /// The `i`th cell of the square ring `r` blocks out, as (dx, dz).
-fn ring(r: i32, i: i32) -> (i32, i32) {
+pub(crate) fn ring(r: i32, i: i32) -> (i32, i32) {
     if r == 0 {
         return (0, 0);
     }

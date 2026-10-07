@@ -4,9 +4,10 @@
 (
     blocks: [
         // A campfire: logs and embers that cook one thing at a time and keep the cold off.
+        // A `furnishing`: a village's gives nothing, one a player placed gives itself back.
         (
             name: "campfire", render: Plant, solid: false, sound: Wood, textures: All("campfire"),
-            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire"],
+            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "furnishing"],
             // Flames licking a block and more above the logs, a deep yellow core among them,
             // smoke thick over the fire and thinning as it rises a few blocks, embers
             // floating up as high, and now and then a crackle of sparks (`particles`:
@@ -24,11 +25,24 @@
         // the odd ember and wisp of smoke rise from it.
         (
             name: "torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
-            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"],
+            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"], wall: "wall_torch",
             particles: [
                 (style: Flame, rate: 26.0, at: (0.5, 0.78, 0.5), spread: 0.04, size: 1.6, height: 0.35, color: Some((240, 128, 20))),
                 (style: Ember, rate: 0.5, at: (0.5, 0.75, 0.5), spread: 0.04, size: 0.7, height: 2.0, color: Some((226, 84, 16))),
                 (style: Smoke, rate: 0.8, at: (0.5, 0.9, 0.5), spread: 0.02, size: 0.45, color: Some((112, 112, 112))),
+            ],
+        ),
+        // A torch placed against a wall's side: it leans out from the wall, its flame over
+        // its tip. The four facings are blocks of their own (`wall_torch` faces north, -z;
+        // `wall_torch_east`, `_south`, `_west`), so settlements can place them directly.
+        (
+            name: "wall_torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
+            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"], drops: "torch",
+            facing: true, support: Wall, model: Wall,
+            particles: [
+                (style: Flame, rate: 26.0, at: (0.5, 0.84, 0.67), spread: 0.04, size: 1.6, height: 0.35),
+                (style: Ember, rate: 0.5, at: (0.5, 0.81, 0.68), spread: 0.04, size: 0.7, height: 2.0),
+                (style: Smoke, rate: 0.8, at: (0.5, 0.96, 0.63), spread: 0.02, size: 0.45),
             ],
         ),
     ],

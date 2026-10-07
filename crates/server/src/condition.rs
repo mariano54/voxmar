@@ -3,9 +3,10 @@
 //! climate, company) and its condition walks toward what they allow. The rules are the
 //! engine's (`creature::condition`) and the content's numbers.
 
+use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::condition::{self, Met, Needs};
 use voxmar_engine::creature::husbandry::KEPT_LEASH;
-use voxmar_engine::creature;
+use voxmar_engine::creature::{self, CreatureId};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_protocol::{TICKS_PER_DAY, TICKS_PER_SECOND};
 
@@ -14,13 +15,6 @@ use crate::Server;
 /// Ticks between looks at each kept animal's needs. The animals are looked at a share at a
 /// time, every husbandry pass, so a big ranch never costs one tick much.
 pub(crate) const RECKON_EVERY: u64 = 10 * TICKS_PER_SECOND as u64;
-/// Within how many blocks one of its kind keeps a social animal company.
-const COMPANY: f32 = 14.0;
-/// Rain or snow heavier than this wants a roof.
-const WET: f32 = 0.05;
-/// Climate fit at or above this is met, at or above `CLIMATE_PARTLY` partly.
-const CLIMATE_MET: f32 = 0.75;
-const CLIMATE_PARTLY: f32 = 0.25;
 
 impl Server {
     /// In-game days from day-clock `since` to now.
@@ -36,13 +30,19 @@ impl Server {
 
     /// Looks at the kept animals whose id falls in share `which` of `shares`, and moves each
     /// one's condition toward what its needs allow, by the days since it was last looked at.
-    /// Animals whose land is not loaded wait as they are, as their land does.
+    /// An animal standing, or kept, in land that is not loaded is paused as its land is: its
+    /// clocks move on with the day, so it neither hungers nor changes while nobody is near.
     pub(crate) fn reckon_share(&mut self, shares: u64, which: u64) {
         let rules = *self.content.creatures.condition();
+        let day = self.day;
         let ids: Vec<u32> = self.creatures.live.iter().filter(|&(&id, c)| c.owner.is_some() && id as u64 % shares == which).map(|(&id, _)| id).collect();
         for id in ids {
             let creature = &self.creatures.live[&id];
-            if !self.world.contains(voxmar_engine::coords::ColumnPos::of_block(creature.body.position.floor().as_ivec3())) {
+            let loaded = |at: Vec3| self.world.contains(ColumnPos::of_block(at.floor().as_ivec3()));
+            if !loaded(creature.body.position) || !loaded(creature.home) {
+                let creature = self.creatures.live.get_mut(&id).expect("listed");
+                creature.fed += day - creature.reckoned;
+                creature.reckoned = day;
                 continue;
             }
             let needs = self.needs_of(id);
@@ -51,7 +51,6 @@ impl Server {
             let hurt = (creature.health as u32) * 2 < def.health as u32;
             let target = rules.target(&needs, hurt);
             let days = self.days_since(creature.reckoned);
-            let day = self.day;
             let creature = self.creatures.live.get_mut(&id).expect("listed");
             creature.condition = rules.step(creature.condition, target, days);
             creature.reckoned = day;
@@ -63,49 +62,76 @@ impl Server {
     pub(crate) fn needs_of(&mut self, id: u32) -> Needs {
         let rules = *self.content.creatures.condition();
         let creature = &self.creatures.live[&id];
-        let (species, at, home) = (creature.species, creature.body.position, creature.home);
+        let (species, at, home, fit) = (creature.species, creature.body.position, creature.home, creature.climate_fit);
         let def = &self.content.creatures.get(species).def;
-        let site = self.overworld.site(at.x.floor() as i32, at.z.floor() as i32);
-        let fit = creature::fit(&def.habitat.comfort, site.temperature, site.moisture, site.aether);
-        let climate = if fit >= CLIMATE_MET {
-            Met::Yes
-        } else if fit >= CLIMATE_PARTLY {
-            Met::Partly
-        } else {
-            Met::No
-        };
         let food = rules.fed(self.days_since(creature.fed));
         let water = if self.water_near(home, KEPT_LEASH as i32) { Met::Yes } else { Met::No };
-        // Room: the ground within reach shared by every kept animal on it.
+        // Room: the ground within reach against what every kept animal on it wants.
         let reach = rules.space_radius;
-        let sharing = self.creatures.live.values().filter(|c| c.owner.is_some() && c.body.position.distance(at) <= reach).count().max(1);
-        let room = std::f32::consts::PI * reach * reach / sharing as f32;
-        let space = condition::room(room, def.needs.space(def.body.size.0));
+        let wanted: f32 = self
+            .creatures
+            .live
+            .values()
+            .filter(|c| c.owner.is_some() && c.body.position.distance(at) <= reach)
+            .map(|c| {
+                let def = &self.content.creatures.get(c.species).def;
+                def.needs.space(def.body.size.0)
+            })
+            .sum();
+        let space = condition::room(std::f32::consts::PI * reach * reach, wanted);
         let company = if def.needs.company(def.temperament.sociability) {
-            let kin = self.creatures.live.iter().any(|(&other, c)| other != id && c.species == species && c.body.position.distance(at) < COMPANY);
+            let kin = self.creatures.live.iter().any(|(&other, c)| other != id && c.species == species && c.body.position.distance(at) < rules.company);
             if kin { Met::Yes } else { Met::No }
         } else {
             Met::Yes
         };
-        let shelter = if def.needs.shelter() && self.out_in_the_wet(at, def.body.size.1) {
-            // Rain wets it; snow chills it too.
-            if site.temperature < 0.0 { Met::No } else { Met::Partly }
-        } else {
-            Met::Yes
-        };
-        Needs { food, water, shelter, space, climate, company }
+        // Out in the rain it wants a roof near; snow is worse unless its kind is made for
+        // the cold.
+        let hardy = def.habitat.comfort.temperature.0 <= rules.snow_hardy;
+        let (wants_roof, height) = (def.needs.shelter(), def.body.size.1);
+        let wet = if wants_roof { self.out_in_the_wet(at, height, rules.wet) } else { None };
+        let roof = wet.is_some() && self.roof_near(at, height, rules.roof_within);
+        let shelter = condition::shelter(wants_roof, wet, roof, hardy);
+        Needs { food, water, shelter, space, climate: rules.climate(fit), company }
     }
 
-    /// Whether rain or snow falls on a body standing at `at`, `height` tall, with nothing
-    /// over it.
-    fn out_in_the_wet(&mut self, at: Vec3, height: f32) -> bool {
+    /// How well a place suits `species`'s climate: its comfort fit there, which a kept
+    /// animal keeps from its home (set when it is taken in, born or brought back).
+    pub(crate) fn climate_fit(&self, species: CreatureId, at: Vec3) -> f32 {
+        let def = &self.content.creatures.get(species).def;
+        let site = self.overworld.site(at.x.floor() as i32, at.z.floor() as i32);
+        creature::fit(&def.habitat.comfort, site.temperature, site.moisture, site.aether)
+    }
+
+    /// Makes where creature `id` stands its home, and its home's climate the one it lives by.
+    pub(crate) fn settle(&mut self, id: u32) {
+        let Some(creature) = self.creatures.live.get(&id) else { return };
+        let (species, at) = (creature.species, creature.body.position);
+        let fit = self.climate_fit(species, at);
+        let creature = self.creatures.live.get_mut(&id).expect("checked");
+        (creature.home, creature.climate_fit) = (at, fit);
+    }
+
+    /// Whether rain or snow heavier than `wet` falls on a body standing at `at`, `height`
+    /// tall, with nothing over it: `Some(true)` for snow, `Some(false)` for rain.
+    fn out_in_the_wet(&mut self, at: Vec3, height: f32, wet: f32) -> Option<bool> {
         let head = (at + Vec3::Y * height.max(0.5)).floor().as_ivec3();
         if !self.open_sky(head) {
-            return false;
+            return None;
         }
         let (tick, day) = (self.tick, self.day);
         let report = self.weather.local(&mut self.temperature, Vec2::new(at.x, at.z), tick, day);
-        report.weather.precipitation > WET
+        (report.weather.precipitation > wet).then_some(report.weather.snow >= 0.5)
+    }
+
+    /// Whether a roof lies within `within` blocks of `at` at head height, searching outward
+    /// ring by ring and stopping at the first.
+    pub(crate) fn roof_near(&self, at: Vec3, height: f32, within: f32) -> bool {
+        let head = (at + Vec3::Y * height.max(0.5)).floor().as_ivec3();
+        (1..=within.floor() as i32).any(|r| (0..8 * r).any(|i| {
+            let (dx, dz) = crate::creatures::ring(r, i);
+            !self.open_sky(head + IVec3::new(dx, 0, dz))
+        }))
     }
 
     /// Whether water lies within `reach` blocks of `at` across and a few up and down.
@@ -126,5 +152,4 @@ impl Server {
         }
         rules.output(creature.condition)
     }
-
 }

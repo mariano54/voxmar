@@ -541,13 +541,17 @@ impl Server {
         if what == "tame" && kept_room == 0 {
             return Err(Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
         }
-        for creature in self.creatures.live.values_mut().filter(|c| c.body.position.distance(at) <= 8.0) {
+        let (day, tamed_at) = (self.day, self.content.creatures.condition().tamed);
+        let mut tamed = Vec::new();
+        for (&id, creature) in self.creatures.live.iter_mut().filter(|(_, c)| c.body.position.distance(at) <= 8.0) {
             match what {
+                // Taken in as feeding takes one in: newly tamed, just fed, at home here.
                 "tame" if creature.owner.is_none() && kept_room > 0 => {
                     kept_room -= 1;
                     creature.owner = Some(name.clone());
                     creature.owner_id = Some(player);
-                    creature.home = creature.body.position;
+                    (creature.condition, creature.reckoned, creature.fed) = (tamed_at, day, day);
+                    tamed.push(id);
                 }
                 "ready" if creature.owner.is_some() && creature.grows_up.is_none() => {
                     creature.ready_until = tick + 30 * voxmar_protocol::TICKS_PER_SECOND as u64;
@@ -575,6 +579,9 @@ impl Server {
             }
             creature.changed = true;
             count += 1;
+        }
+        for id in tamed {
+            self.settle(id);
         }
         Ok(Words::key("command.creatures.done").with("count", Words::text(count)))
     }

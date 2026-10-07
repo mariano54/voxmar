@@ -8,6 +8,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::husbandry::{self, IN_LOVE_SECONDS, MATE_RANGE, YOUNG_SCALE};
 use voxmar_engine::creature::brain::Mind;
+use voxmar_engine::creature::condition::{self, Met};
 use voxmar_engine::creature::{CreatureId, mix, unit_from};
 use voxmar_engine::crop::level_bonus;
 use voxmar_engine::dropped;
@@ -74,8 +75,9 @@ impl Server {
         }
     }
 
-    /// Whether creature `id` takes `item` from `player`: food that tames it (if wild), food
-    /// that readies it to breed (if theirs and grown), or a tool for a product of its.
+    /// Whether creature `id` takes `item` from `player`: food that tames it (if wild), its
+    /// food when it is hungry or the food could ready it to breed (if theirs), or a tool for
+    /// a product of its.
     pub(crate) fn creature_accepts(&self, player: PlayerId, id: u32, item: BlockId) -> bool {
         let Some(creature) = self.creatures.live.get(&id) else { return false };
         let species = self.content.creatures.get(creature.species);
@@ -87,14 +89,29 @@ impl Server {
         let treat = tags.iter().any(|t| t == "taming_treat");
         let feed = tags.iter().any(|t| t == "breeding_feed");
         let tames = creature.owner.is_none() && can_tame && (treat || species.tame_food.contains(&item));
-        // Nor does a kept one take breeding food it cannot use yet (the player's Farming too
-        // low, or it bred too recently).
-        let can_breed = species.def.breeding.as_ref().is_some_and(|b| self.skill_level(player, "core:farming") >= b.level)
-            && self.tick >= creature.breeds_again
-            && creature.condition > self.content.creatures.condition().breed;
-        let breeds = mine && creature.grows_up.is_none() && can_breed && (feed || species.breed_food.contains(&item));
+        // A kept one eats its food when hungry, and takes it otherwise only if it could
+        // ready it (whether it is kept well enough, and has room for young, `tend` says).
+        let its_food = feed || species.tame_food.contains(&item) || species.breed_food.contains(&item);
+        let eats = mine && its_food && (self.hungry(id) || self.readies(player, id, item));
         let tool = mine && species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
-        tames || breeds || tool
+        tames || eats || tool
+    }
+
+    /// Whether kept creature `id` has gone a day without eating.
+    fn hungry(&self, id: u32) -> bool {
+        let rules = self.content.creatures.condition();
+        self.creatures.live.get(&id).is_some_and(|c| rules.fed(self.days_since(c.fed)) != Met::Yes)
+    }
+
+    /// Whether `item` could ready creature `id` to breed for `player`, its condition and room
+    /// for young aside: its breeding food, a grown one of a kind that breeds, the player's
+    /// Farming level enough, and rested since it last bred.
+    fn readies(&self, player: PlayerId, id: u32, item: BlockId) -> bool {
+        let Some(creature) = self.creatures.live.get(&id) else { return false };
+        let species = self.content.creatures.get(creature.species);
+        let feed = self.content.blocks.def(item).tags.iter().any(|t| t == "breeding_feed");
+        let level = species.def.breeding.as_ref().is_some_and(|b| self.skill_level(player, "core:farming") >= b.level);
+        level && creature.grows_up.is_none() && self.tick >= creature.breeds_again && (feed || species.breed_food.contains(&item))
     }
 
     /// `base:tend`: feeds the creature what the player holds, or takes its product with it.
@@ -114,11 +131,12 @@ impl Server {
             }
             let (item, (low, high), every, xp) = (species.products[index], product.count, product.every, product.xp);
             let [roll, ..] = random3(self.tick, creature.body.position.floor().as_ivec3(), id);
-            let more = creature.traits.yield_ * self.content.creatures.condition().output(creature.condition);
-            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), more, roll);
-            let seed = creature.seed;
+            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, roll);
+            // Condition sets how soon the next is due (0.5 to 1.2 as often), its yield gene
+            // how many come.
+            let (seed, often) = (creature.seed, self.content.creatures.condition().output(creature.condition).max(0.05));
             let creature = self.creatures.live.get_mut(&id).expect("checked");
-            creature.products_due[index] = self.tick + product_ticks(every, seed, index);
+            creature.products_due[index] = self.tick + product_ticks(every / often, seed, index);
             let farming = self.content.skills.id("core:farming");
             if let Some(p) = self.players.get_mut(&player) {
                 let left = p.inventory.add(item, count);
@@ -138,11 +156,38 @@ impl Server {
             self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
             return;
         }
-        // Nor is a kept one readied to breed when no young could come of it.
-        if let Some(keeper) = creature.owner.as_deref()
-            && self.birth_room(keeper) == 0
-        {
-            self.tell(Source::Player(player), ChatKind::Info, self.no_room_for_young(keeper));
+        // A kept one eats a meal when hungry, and its breeding food readies it if it is kept
+        // well enough and has room for young; what it cannot use stays in hand, with why.
+        if let Some(keeper) = creature.owner.clone() {
+            let rules = *self.content.creatures.condition();
+            let (hungry, readies) = (self.hungry(id), self.readies(player, id, item));
+            let well = creature.condition > rules.breed;
+            let room = self.birth_room(&keeper) > 0;
+            let why = match (readies, well, room) {
+                (true, false, _) => Some(self.too_poorly_kept(id)),
+                (true, true, false) => Some(self.no_room_for_young(&keeper)),
+                _ => None,
+            };
+            let ready = readies && well && room;
+            if hungry || ready {
+                if let Some(p) = self.players.get_mut(&player) {
+                    let selected = p.selected;
+                    if p.inventory.take_one(selected).is_none() {
+                        return;
+                    }
+                    p.changed(traits::INVENTORY);
+                }
+                let (day, tick) = (self.day, self.tick);
+                let creature = self.creatures.live.get_mut(&id).expect("checked");
+                creature.fed = day;
+                if ready {
+                    creature.ready_until = tick + (IN_LOVE_SECONDS * TICKS_PER_SECOND as f32) as u64;
+                    creature.changed = true;
+                }
+            }
+            if let Some(why) = why {
+                self.tell(Source::Player(player), ChatKind::Info, why);
+            }
             return;
         }
         // Food: one is eaten.
@@ -157,8 +202,9 @@ impl Server {
         let (day, tamed) = (self.day, self.content.creatures.condition().tamed);
         self.creatures.live.get_mut(&id).expect("checked").fed = day;
         let creature = &self.creatures.live[&id];
-        if creature.owner.is_none() {
+        {
             let Some(taming) = species.def.taming.clone() else { return };
+            let kind = species.def.name.clone();
             let u = unit_from(mix(creature.seed, self.tick ^ 0x7a3e));
             let creature = self.creatures.live.get_mut(&id).expect("checked");
             if creature.trusting != name {
@@ -173,29 +219,38 @@ impl Server {
             if creature.trust >= 1.0 {
                 creature.owner = name;
                 creature.owner_id = Some(player);
-                creature.home = creature.body.position;
                 creature.condition = tamed;
                 creature.reckoned = day;
+                let was_kept = creature.was_kept;
+                self.settle(id);
                 // One let go and taken in again pays nothing more (design draft 99).
-                if creature.was_kept {
+                if was_kept {
                     return;
                 }
                 // For quests that ask for tamed animals.
-                let tamed = species.def.name.clone();
                 let hunter = self.content.skills.id("core:hunter");
                 self.grant(player, hunter, taming.xp);
-                self.tally(player, "tamed", &tamed, 1);
+                self.tally(player, "tamed", &kind, 1);
             }
-            return;
         }
-        // A kept adult fed its breeding food is ready to breed for a while.
-        let Some(breeding) = species.def.breeding.clone() else { return };
-        if self.skill_level(player, "core:farming") < breeding.level || self.tick < creature.breeds_again || creature.condition <= self.content.creatures.condition().breed {
-            return;
+    }
+
+    /// Why kept creature `id` won't breed yet: its condition in a word, and what it wants.
+    fn too_poorly_kept(&self, id: u32) -> Words {
+        let creature = &self.creatures.live[&id];
+        let what = crate::commands::creature_name(&self.content.creatures.get(creature.species).def);
+        let state = Words::key(&format!("condition.{}", condition::word(creature.condition)));
+        match self.wants(id) {
+            Some(wants) => Words::key("husbandry.too_poorly_kept_wants").with("creature", what).with("state", state).with("needs", wants),
+            None => Words::key("husbandry.too_poorly_kept").with("creature", what).with("state", state),
         }
-        let creature = self.creatures.live.get_mut(&id).expect("checked");
-        creature.ready_until = self.tick + (IN_LOVE_SECONDS * TICKS_PER_SECOND as f32) as u64;
-        creature.changed = true;
+    }
+
+    /// What kept creature `id` wants, as its needs were last looked at, if anything.
+    pub(crate) fn wants(&self, id: u32) -> Option<Words> {
+        let creature = self.creatures.live.get(&id)?;
+        let wants: Vec<Words> = creature.needs.all().into_iter().filter(|(_, met)| *met != Met::Yes).map(|(need, _)| Words::key(&format!("need.{need}"))).collect();
+        (!wants.is_empty()).then_some(Words::List(wants))
     }
 
     /// Whether `player` keeps creature `id`.
@@ -295,11 +350,13 @@ impl Server {
                 continue;
             }
             let species = self.content.creatures.get(creature.species);
+            // Condition sets how soon the next is due (0.5 to 1.2 as often), its yield gene
+            // how many come.
+            let often = self.content.creatures.condition().output(creature.condition).max(0.05);
             for (index, product) in species.def.products.iter().enumerate() {
                 if product.tool.is_none() && tick >= creature.products_due[index] {
-                    creature.products_due[index] = tick + product_ticks(product.every, creature.seed ^ tick, index);
-                    let more = creature.traits.yield_ * self.content.creatures.condition().output(creature.condition);
-                    laid.push((creature.body.position, species.products[index], product.count, more, id));
+                    creature.products_due[index] = tick + product_ticks(product.every / often, creature.seed ^ tick, index);
+                    laid.push((creature.body.position, species.products[index], product.count, creature.traits.yield_, id));
                 }
             }
         }
@@ -349,6 +406,8 @@ impl Server {
             return;
         }
         let (low, high) = breeding.litter;
+        // Their young live by the climate of the place they are born.
+        let fit = self.climate_fit(species, at);
         // Parents in better condition have bigger litters, never more than there is room for.
         let rules = *self.content.creatures.condition();
         let fitness = (self.creatures.live[&a].condition + self.creatures.live[&b].condition) / 2.0;
@@ -374,6 +433,7 @@ impl Server {
             }
             young.owner = owner.clone();
             young.condition = fitness;
+            young.climate_fit = fit;
             young.grows_up = Some(grows);
             young.scale = young.adult_scale * YOUNG_SCALE;
             young.body.size = (def.body.size.0 * young.scale, def.body.size.1 * young.scale);
@@ -467,11 +527,13 @@ impl Server {
                 self.creatures.unplaced.push(s);
                 continue;
             };
+            let fit = self.climate_fit(species, Vec3::from_array(s.home));
             let def = &self.content.creatures.get(species).def;
             let (tick, day) = (self.tick, self.day);
             let creature = self.creatures.live.get_mut(&id).expect("just made");
             creature.seed = s.seed;
             creature.home = Vec3::from_array(s.home);
+            creature.climate_fit = fit;
             creature.body.yaw = s.yaw;
             creature.health = s.health.min(def.health).max(1);
             creature.owner = Some(s.owner);
@@ -802,7 +864,7 @@ mod tests {
         assert!(most_at_once <= 2, "{most_at_once} looked at in one pass");
     }
 
-    /// A grown `species` kept by "test" at spawn, its products due.
+    /// A grown `species` kept by "test" at spawn, with its land loaded and its products due.
     fn kept(server: &mut Server, species: &str, salt: u64) -> u32 {
         let at = server.spawn.floor().as_ivec3();
         server.load_area(at, at);
@@ -930,6 +992,130 @@ mod tests {
         server.players.get_mut(&player).unwrap().inventory.add(wheat, 1);
         server.tend(player, hens[0]);
         assert_eq!(server.creatures.live[&hens[0]].ready_until, 0);
+    #[test]
+    fn a_hungry_kept_animal_eats_by_hand_and_a_fed_one_keeps_the_food() {
+        let mut server = test_server();
+        let (player, client) = keeper(&mut server);
+        // A kept fox, which never grazes and does not breed, poorly kept and three days unfed.
+        let fox = kept(&mut server, "base:fox", 1);
+        let meat = server.content.creatures.get(server.creatures.live[&fox].species).tame_food[0];
+        let day = voxmar_protocol::TICKS_PER_DAY as f64;
+        let creature = server.creatures.live.get_mut(&fox).unwrap();
+        (creature.condition, creature.fed) = (0.5, server.day - 3.0 * day);
+        assert_eq!(server.needs_of(fox).food, Met::No);
+        server.players.get_mut(&player).unwrap().inventory.add(meat, 2);
+        let in_hand = |server: &Server| server.players[&player].inventory.get(0).map_or(0, |stack| stack.count);
+        assert!(server.creature_accepts(player, fox, meat), "a hungry kept fox turned its food down");
+        server.tend(player, fox);
+        assert_eq!(in_hand(&server), 1, "the fox ate nothing");
+        assert_eq!(server.needs_of(fox).food, Met::Yes, "a meal did not feed it");
+        // Fed, and nothing to breed for, it leaves the rest in hand, without a word.
+        assert!(!server.creature_accepts(player, fox, meat));
+        server.tend(player, fox);
+        assert_eq!(in_hand(&server), 1);
+        assert!(told(&client).iter().all(|key| !key.starts_with("husbandry.")));
+    }
+
+    #[test]
+    fn a_poorly_kept_animal_eats_but_says_why_it_will_not_breed() {
+        let mut server = test_server();
+        let (player, client) = keeper(&mut server);
+        let rabbit = kept(&mut server, "base:rabbit", 1);
+        let food = server.content.creatures.get(server.creatures.live[&rabbit].species).breed_food[0];
+        server.players.get_mut(&player).unwrap().inventory.add(food, 3);
+        let in_hand = |server: &Server| server.players[&player].inventory.get(0).map_or(0, |stack| stack.count);
+        let day = voxmar_protocol::TICKS_PER_DAY as f64;
+        // Hungry and at 0.4: it eats as a meal, is not readied, and says why.
+        let creature = server.creatures.live.get_mut(&rabbit).unwrap();
+        (creature.condition, creature.fed) = (0.4, server.day - 2.0 * day);
+        creature.needs.water = Met::No;
+        told(&client);
+        server.tend(player, rabbit);
+        assert_eq!((in_hand(&server), server.creatures.live[&rabbit].ready_until), (2, 0));
+        assert_eq!(told(&client), ["husbandry.too_poorly_kept_wants"]);
+        // Fed now, it keeps the food in hand and says why again.
+        server.tend(player, rabbit);
+        assert_eq!((in_hand(&server), server.creatures.live[&rabbit].ready_until), (2, 0));
+        assert_eq!(told(&client), ["husbandry.too_poorly_kept_wants"]);
+        // Kept well, the same food readies it.
+        server.creatures.live.get_mut(&rabbit).unwrap().condition = 0.7;
+        server.tend(player, rabbit);
+        assert_eq!(in_hand(&server), 1);
+        assert!(server.creatures.live[&rabbit].ready_until > server.tick);
+        assert!(told(&client).is_empty());
+    }
+
+    #[test]
+    fn condition_sets_how_often_products_come_not_how_many() {
+        let mut server = test_server();
+        // Two hens, one kept at condition 0 and one at 1.
+        let (poor, fine) = (kept(&mut server, "base:junglefowl", 1), kept(&mut server, "base:junglefowl", 2));
+        let rules = *server.content.creatures.condition();
+        let mut laid = [0u32; 2];
+        server.tick = server.tick.next_multiple_of(EVERY);
+        // Six hours of husbandry passes, counting each time a hen lays (its next egg due later).
+        for _ in 0..(6 * 3600 * TICKS_PER_SECOND as u64 / EVERY) {
+            for (id, condition) in [(poor, 0.0), (fine, 1.0)] {
+                server.creatures.live.get_mut(&id).unwrap().condition = condition;
+            }
+            let due = [poor, fine].map(|id| server.creatures.live[&id].products_due[0]);
+            server.tick_husbandry();
+            for (i, id) in [poor, fine].into_iter().enumerate() {
+                laid[i] += u32::from(server.creatures.live[&id].products_due[0] != due[i]);
+            }
+            server.tick += EVERY;
+        }
+        let ratio = laid[0] as f32 / laid[1] as f32;
+        let expected = rules.output(0.0) / rules.output(1.0);
+        assert!(laid[1] >= 50 && (ratio - expected).abs() < 0.12, "{laid:?} eggs, {ratio:.2} against {expected:.2}");
+    }
+
+    #[test]
+    fn an_animal_in_land_not_loaded_is_paused_as_its_land_is() {
+        let mut server = test_server();
+        let id = kept_rabbit(&mut server, 1);
+        let day = voxmar_protocol::TICKS_PER_DAY as f64;
+        // Its home is far off, where nothing is loaded. Last looked at a day ago, when it had
+        // eaten half a day before: a day passes, and nothing changes.
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        let creature = server.creatures.live.get_mut(&id).unwrap();
+        (creature.condition, creature.reckoned, creature.fed, creature.home) = (0.6, server.day - day, server.day - 1.5 * day, far);
+        server.reckon_condition();
+        let creature = &server.creatures.live[&id];
+        assert_eq!((creature.condition, creature.reckoned), (0.6, server.day));
+        assert!((server.days_since(creature.fed) - 0.5).abs() < 1e-4, "it hungered while its land slept");
+        // Home again, the same day apart moves it.
+        let creature = server.creatures.live.get_mut(&id).unwrap();
+        (creature.reckoned, creature.home, creature.fed) = (server.day - day, server.spawn, server.day - 3.0 * day);
+        server.reckon_condition();
+        assert!(server.creatures.live[&id].condition < 0.6, "a hungry animal at home held its condition");
+    }
+
+    #[test]
+    fn a_roof_within_reach_shelters() {
+        let mut server = test_server();
+        let at = server.spawn;
+        let cell = at.floor().as_ivec3();
+        server.load_area(cell - IVec3::new(8, 0, 8), cell + IVec3::new(8, 0, 8));
+        let stone = server.content.blocks.id("base:stone").expect("stone");
+        // Open sky all round: no roof. A block two off and a little above its head: a roof.
+        let clear = |server: &mut Server| {
+            for dx in -4..=4 {
+                for dz in -4..=4 {
+                    for dy in 0..50 {
+                        server.set_block(cell + IVec3::new(dx, dy, dz), voxmar_engine::block::BlockId::AIR);
+                    }
+                }
+            }
+        };
+        clear(&mut server);
+        assert!(!server.roof_near(at, 0.5, 3.0));
+        server.set_block(cell + IVec3::new(2, 3, 0), stone);
+        assert!(server.roof_near(at, 0.5, 3.0));
+        // Further off than reach shelters nothing.
+        clear(&mut server);
+        server.set_block(cell + IVec3::new(4, 3, 0), stone);
+        assert!(!server.roof_near(at, 0.5, 3.0));
     }
 
     #[test]

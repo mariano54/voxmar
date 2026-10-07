@@ -83,7 +83,8 @@ The same file may set the condition rules of kept animals the same way, field by
 
 ```ron
 condition: (up: 0.15, down: 0.25, met: 1.0, partly: 0.8, unmet: 0.5, tamed: 0.6, hurt: 0.5,
-    output: (0.5, 0.7), breed: 0.5, fed: (1.0, 2.0), space_radius: 5.0),
+    output: (0.5, 0.7), breed: 0.5, fed: (1.0, 2.0), space_radius: 5.0, company: 14.0,
+    climate: (0.75, 0.25), wet: 0.05, roof_within: 3.0, snow_hardy: -10.0),
 ```
 
 A species says what it needs when kept with `needs: (space: 6, shelter: false, company:
@@ -266,8 +267,9 @@ Content fails to load, with the file and a reason, when:
 - `defence` makes a fight last no time (`fought_within` 0 or less) or asks a negative
   `least_level`;
 - the condition rules have a share outside 0..1, a need met counting less than partly
-  met (or that less than unmet), a rate or reach of 0, an output that falls below 0, or
-  `fed` days out of order.
+  met (or that less than unmet), a rate or reach of 0, an output that falls below 0,
+  `fed` days or `climate` fits out of order, no company reach, a negative `wet` or
+  `roof_within`, or no `snow_hardy` temperature.
 
 Test-time checks (in `cargo test`): every species can be spawned and survives a simulated
 day in the sandbox; the supernatural share of species is 15–30% and of encounters, over a

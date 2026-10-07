@@ -316,6 +316,8 @@ struct Gate {
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// Views in a language with line rules where no text had its line breaks checked.
+    unbroken: Vec<String>,
     /// The interface font before the gate tried another, to go back to.
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
@@ -402,6 +404,7 @@ impl Gate {
             fall_judged: false,
             cover_checked: false,
             spills: Vec::new(),
+            unbroken: Vec::new(),
             font: None,
             food_moved: false,
             tame_aim: [0; 3],
@@ -2731,8 +2734,14 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let index = gate.phase as usize;
     let Some((language, view)) = FIT_LANGUAGES.get(index / views.len()).map(|language| (*language, views[index % views.len()])) else {
         let spills: Vec<String> = std::mem::take(&mut gate.spills).into_iter().map(|(_, line)| line).collect();
-        let result = if spills.is_empty() {
-            Ok(format!("every text fits on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+        // Line breaks are checked on every view in the languages with rules (Japanese), or
+        // the pass fails.
+        let breaks = world.remove_resource::<crate::ui::fit::LineBreaksChecked>().unwrap_or_default();
+        let unbroken = std::mem::take(&mut gate.unbroken);
+        let result = if !unbroken.is_empty() {
+            Err(format!("no line breaks checked on {} views in a language with line rules: {}", unbroken.len(), unbroken.join("; ")))
+        } else if spills.is_empty() {
+            Ok(format!("every text fits on {} views in {}; line breaks checked {}", views.len(), FIT_LANGUAGES.join(" and "), breaks.checked))
         } else {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };
@@ -2756,11 +2765,16 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     {
         return;
     }
+    let checked = |world: &World| world.get_resource::<crate::ui::fit::LineBreaksChecked>().copied().unwrap_or_default();
+    let before = checked(world);
     for spill in crate::ui::fit::find(world) {
         let what = format!("{language}: {spill}");
         if !gate.spills.iter().any(|(known, _)| *known == what) {
             gate.spills.push((what, format!("{language}, {view:?}: {spill}")));
         }
+    }
+    if checked(world).none_since(&before) {
+        gate.unbroken.push(format!("{language}, {view:?}"));
     }
     gate.advance(now);
 }
@@ -3503,6 +3517,33 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         4 => {
+            // Looking closely at it with nothing it eats in hand: a newly tamed one is in good
+            // condition.
+            let good = world.resource::<crate::lang::Locale>().get("condition.good").to_owned();
+            let replied = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|line| line.contains(&good));
+            if replied {
+                mouse(world, MouseButton::Right, false);
+                gate.check("condition", Ok(format!("looking closely read \"{good}\" after {in_phase:.1}s")));
+                gate.advance(now);
+            } else if in_phase > 3.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("condition", Err(format!("3 seconds of looking closely at our junglefowl said nothing with \"{good}\"")));
+                gate.next(Step::Ore, now);
+            } else if let Some(view) = hen(world) {
+                let wheat = world.resource::<ClientWorld>().registry.id("base:wheat");
+                let free = {
+                    let player = world.resource::<LocalPlayer>();
+                    (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none_or(|stack| Some(stack.item) != wheat))
+                };
+                if let Some(slot) = free {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                }
+                aim_at(world, view.position + Vec3::Y * 0.3);
+                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
+        5 => {
             // Letting it go: Shift and right click on it, twice (the first only asks).
             let Some(view) = hen(world) else {
                 key(world, KeyCode::ShiftLeft, false);
@@ -3524,7 +3565,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 aim_at(world, view.position + Vec3::Y * 0.3);
                 key(world, KeyCode::ShiftLeft, true);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
-                mouse(world, MouseButton::Right, aimed && ((now - gate.since) * 2.0).fract() < 0.2);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
             }
         }
         _ => {}

@@ -918,7 +918,9 @@ pub fn aim(
         let accepts = player.inventory.get(player.selected).map(|s| s.item).is_some_and(|item| {
             let tags = &launch.content.blocks.def(item).tags;
             let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
-            (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool))
+            // One of yours takes its food as a meal or to breed (the server judges which).
+            let food = species.tame_food.contains(&item) || species.breed_food.contains(&item) || tags.iter().any(|t| t == "breeding_feed");
+            (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
         });
         let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
         let action = if shift && mine {
