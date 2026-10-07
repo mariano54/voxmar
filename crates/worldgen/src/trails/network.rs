@@ -27,35 +27,39 @@ const SNAP: f32 = 18.0;
 const UNSNAP: f32 = 30.0;
 
 /// Whether the trail from `a` to `b` belongs in the network. `near(centre, radius)`
-/// lists the places within `radius` blocks of `centre` (it may list more).
-pub fn keep(a: &Poi, b: &Poi, near: &dyn Fn(Vec2, f32) -> Vec<Poi>) -> bool {
+/// lists the places within `radius` blocks of `centre` (it may list more); `joins` says
+/// which two places a trail may join at all. A place only stands in the way of a trail
+/// where trails could run through it instead: two viewpoints side by side, or a
+/// settlement's other gate, never cut a gate off from the land round it.
+pub fn keep(a: &Poi, b: &Poi, near: &dyn Fn(Vec2, f32) -> Vec<Poi>, joins: &dyn Fn(&Poi, &Poi) -> bool) -> bool {
     let (pa, pb) = (a.at().as_vec2(), b.at().as_vec2());
     let length = pa.distance(pb);
     if length > MAX_EDGE as f32 || length < CELL as f32 {
         return false;
     }
-    gabriel(a, b, near) && !crowded(a, b, near)
+    gabriel(a, b, near, joins) && !crowded(a, b, near, joins)
 }
 
-/// No place lies in the circle whose diameter is the line from `a` to `b`.
-fn gabriel(a: &Poi, b: &Poi, near: &dyn Fn(Vec2, f32) -> Vec<Poi>) -> bool {
+/// No place a trail could pass through on its way lies in the circle whose diameter is
+/// the line from `a` to `b`.
+fn gabriel(a: &Poi, b: &Poi, near: &dyn Fn(Vec2, f32) -> Vec<Poi>, joins: &dyn Fn(&Poi, &Poi) -> bool) -> bool {
     let (pa, pb) = (a.at().as_vec2(), b.at().as_vec2());
     let ab = pa.distance_squared(pb);
     near((pa + pb) / 2.0, pa.distance(pb) / 2.0 + 1.0).iter().all(|c| {
         let pc = c.at().as_vec2();
-        c == a || c == b || pa.distance_squared(pc) + pb.distance_squared(pc) > ab
+        c == a || c == b || !(joins(a, c) && joins(c, b)) || pa.distance_squared(pc) + pb.distance_squared(pc) > ab
     })
 }
 
 /// Whether a shorter edge of the graph leaves `a` within the minimum angle of `b`.
-fn crowded(a: &Poi, b: &Poi, near: &dyn Fn(Vec2, f32) -> Vec<Poi>) -> bool {
+fn crowded(a: &Poi, b: &Poi, near: &dyn Fn(Vec2, f32) -> Vec<Poi>, joins: &dyn Fn(&Poi, &Poi) -> bool) -> bool {
     let (pa, pb) = (a.at().as_vec2(), b.at().as_vec2());
     let (dir, length) = ((pb - pa).normalize(), pa.distance(pb));
     near(pa, length).iter().any(|c| {
         let pc = c.at().as_vec2();
         let d = pa.distance(pc);
         let shorter = d < length || (d == length && (c.cell.x, c.cell.y) < (b.cell.x, b.cell.y));
-        c != a && c != b && d >= CELL as f32 && shorter && (pc - pa).normalize().dot(dir) > MIN_ANGLE_COS && gabriel(a, c, near)
+        c != a && c != b && d >= CELL as f32 && shorter && joins(a, c) && (pc - pa).normalize().dot(dir) > MIN_ANGLE_COS && gabriel(a, c, near, joins)
     })
 }
 
@@ -139,14 +143,28 @@ mod tests {
         let all = [poi(0, 0), poi(20, 0), poi(10, 1), poi(0, 30), poi(25, 3)];
         let near = |_: Vec2, _: f32| all.to_vec();
         // (10, 1) lies in the circle between (0, 0) and (20, 0).
-        assert!(!keep(&all[0], &all[1], &near));
-        assert!(keep(&all[0], &all[2], &near));
-        assert!(keep(&all[0], &all[3], &near));
+        assert!(!keep(&all[0], &all[1], &near, &|_, _| true));
+        assert!(keep(&all[0], &all[2], &near, &|_, _| true));
+        assert!(keep(&all[0], &all[3], &near, &|_, _| true));
         // (20, 0) to (25, 3) and (20, 0) to (10, 1) are fine; (0,0) to (25,3) is too long
         // past others and blocked.
-        assert!(!keep(&all[0], &all[4], &near));
+        assert!(!keep(&all[0], &all[4], &near, &|_, _| true));
         // Too far apart.
-        assert!(!keep(&poi(0, 0), &poi(100, 0), &|_, _| vec![]));
+        assert!(!keep(&poi(0, 0), &poi(100, 0), &|_, _| vec![], &|_, _| true));
+    }
+
+    /// Places a trail could never run through stand in no trail's way: a gate keeps its
+    /// trail to the nearer of two viewpoints side by side, past its settlement's other gate.
+    #[test]
+    fn places_that_cannot_join_stand_in_no_way() {
+        let gate = |x, z| Poi { cell: IVec2::new(x, z), height: 140, kind: Kind::Settlement };
+        let all = [gate(0, 0), gate(3, 1), poi(30, 2), poi(31, 2)];
+        let near = |_: Vec2, _: f32| all.to_vec();
+        // Near settlements: a settlement to anything but its own other gate.
+        let joins = |a: &Poi, b: &Poi| (a.kind == Kind::Settlement) != (b.kind == Kind::Settlement);
+        assert!(!keep(&all[0], &all[3], &near, &|_, _| true));
+        assert!(keep(&all[0], &all[2], &near, &joins));
+        assert!(!keep(&all[0], &all[3], &near, &joins), "the farther viewpoint is crowded out by the nearer");
     }
 
     #[test]

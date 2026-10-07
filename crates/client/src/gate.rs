@@ -308,6 +308,8 @@ struct Gate {
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
+    /// Whether the struck creature's fall was judged.
+    fall_judged: bool,
     /// Whether the loading cover was checked.
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
@@ -397,6 +399,7 @@ impl Gate {
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
+            fall_judged: false,
             cover_checked: false,
             spills: Vec::new(),
             font: None,
@@ -2977,8 +2980,12 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let index = gate.phase as usize;
     let Some((language, view)) = FIT_LANGUAGES.get(index / views.len()).map(|language| (*language, views[index % views.len()])) else {
         let spills: Vec<String> = std::mem::take(&mut gate.spills).into_iter().map(|(_, line)| line).collect();
-        let result = if spills.is_empty() {
-            Ok(format!("every text fits on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+        // Line breaks are checked in the languages with rules (Japanese), or the pass fails.
+        let breaks = world.remove_resource::<crate::ui::fit::LineBreaksChecked>().unwrap_or_default();
+        let result = if breaks.looks > 0 && breaks.checked == 0 {
+            Err(format!("no line breaks checked on {} looks in a language with line rules", breaks.looks))
+        } else if spills.is_empty() {
+            Ok(format!("every text fits on {} views in {}; line breaks checked {}", views.len(), FIT_LANGUAGES.join(" and "), breaks.checked))
         } else {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };
@@ -3404,6 +3411,30 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         1 => {
+            // How its body fell, once it has: over onto its side close to where it stood,
+            // and never drawn around the eye (from close up, its inside showed).
+            if !gate.fall_judged {
+                let fall = world.resource::<crate::creatures::Creatures>().falls.last().copied();
+                if let Some(fall) = fall {
+                    gate.fall_judged = true;
+                    // Judged by what was drawn: every joint of the body, every frame of its fall.
+                    // Watched over several frames, not one: three samples of every joint.
+                    let result = if fall.samples < 3 * fall.joints.max(1) {
+                        Err(format!("its fall was hardly seen: {} joint samples for {} joints", fall.samples, fall.joints))
+                    } else if fall.spread > 1.5 {
+                        Err(format!("a joint of its body was drawn {:.2} of its heights from where it died", fall.spread))
+                    } else if fall.scale > 0.05 {
+                        Err(format!("a joint of its body was drawn {:.0}% off its standing size", fall.scale * 100.0))
+                    } else {
+                        let eye = if fall.around_eye { "the eye was inside it, and it was hidden" } else { "away from the eye" };
+                        Ok(format!("drawn within {:.2} of its heights, joints at most {:.1}% off size; {eye}", fall.spread, fall.scale * 100.0))
+                    };
+                    gate.check("creature falls", result);
+                } else if in_phase > 4.0 {
+                    gate.fall_judged = true;
+                    gate.check("creature falls", Err("its body never finished falling".into()));
+                }
+            }
             // Walk over where it died, as a player picks up loot.
             let feet = world.resource::<LocalPlayer>().position;
             let close = feet.xz().distance(gate.quarry.xz()) < 0.4;

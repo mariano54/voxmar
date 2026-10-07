@@ -607,7 +607,9 @@ fn teleporting() {
     assert!(client.world.block(feet).is_some_and(open) && client.world.block(feet + IVec3::Y).is_some_and(open), "room to stand");
     assert_eq!(client.command("/tp nobody")[0].0, ChatKind::Error);
     // Biomes: where we stand, and the nearest ocean.
-    assert!(client.ok("/biome").starts_with("base:"));
+    // Named in words (Alpine Meadow, not base:alpine_meadow), with its tags and climate.
+    let biome = client.ok("/biome");
+    assert!(!biome.contains("base:") && !biome.contains('_') && biome.contains(" °C mean"), "{biome}");
     assert!(client.ok("/locate biome ocean 8000").contains("/tp "));
     assert_eq!(client.command("/locate biome nowhere")[0].0, ChatKind::Error);
     assert_eq!(client.command("/tp 1 2 3 4 5")[0].0, ChatKind::Error);
@@ -1469,7 +1471,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
     }
     assert!(!client.ok("/machine ~7 ~ ~").contains("needs a kept animal"), "the nearer wheel still turns");
     // The aurochs, kept, can be taken away again; then the wheel stops.
-    assert!(client.ok("/creatures remove aurochs").contains("for 1 creatures"));
+    assert!(client.ok("/creatures remove aurochs").contains("for 1 creature within"));
     let started = client.tick;
     while !client.ok("/machine ~7 ~ ~").contains("needs a kept animal") {
         assert!(server_seconds(&client, started) < 10, "the wheel still turns without its aurochs");
@@ -2478,14 +2480,39 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
 /// A server started on a world another server holds open answers its first player: the
 /// land round spawn, with its rivers, trails and settlements, is planned once per process
 /// (`Overworld::shared`, whose sharing worldgen's `servers_on_one_world_share_its_planning`
-/// proves), so both stand their players on the same spot. The time is only a backstop: a
-/// busy machine stretches it.
+/// proves), so both stand their players on the same spot; the join's own wait
+/// (`SERVER_WAIT`) is the only clock on it.
 #[test]
 fn a_second_server_on_the_same_world_answers_a_join() {
     let first = Client::join();
-    let started = Instant::now();
     let second = Client::join();
-    let took = started.elapsed();
-    assert!(took < Duration::from_secs(10), "joining a second server on the same world took {took:?}");
     assert_eq!(first.position, second.position);
+}
+
+#[test]
+fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
+    let mut client = Client::join();
+    let rabbit = client.content.creatures.find("rabbit").expect("rabbits in the content");
+    let falls = client.content.creatures.get(rabbit).def.death.drops_after();
+    client.ok("/summon rabbit 1 ~ ~ ~-2");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
+    let before = client.items.len();
+    // Judged by the server's clock, with bounds that hold whenever this thread runs: no
+    // reply carries the tick it ran on, but the tick read before the command is no later
+    // than the kill's, and the tick read once the loot is seen is no earlier than its drop.
+    let ticks = |c: &Client| c._server.as_ref().expect("the server").ticks();
+    let asked = ticks(&client);
+    client.ok("/creatures kill");
+    // Less one: the counter is advanced after the tick's work, so loot sent in tick D is
+    // seen while ticks() reads D-1.
+    let fall = (falls * TICKS_PER_SECOND as f32).round() as u64 - 1;
+    // While the server has not run a fall's length since we asked, nothing has dropped.
+    while ticks(&client) < asked + fall {
+        assert_eq!(client.items.len(), before, "loot came out of a body still falling, {} ticks after asking", ticks(&client) - asked);
+        let until = Instant::now() + Duration::from_millis(10);
+        client.pump_until(|_| Instant::now() > until);
+    }
+    // Then its meat is on the ground, and the server had run at least the fall by then.
+    client.pump_until(|c| c.items.len() > before);
+    assert!(ticks(&client) >= asked + fall, "loot seen {} ticks after asking, before the {fall}-tick fall", ticks(&client) - asked);
 }

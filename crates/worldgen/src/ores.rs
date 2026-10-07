@@ -63,7 +63,7 @@ pub struct OresDef {
 
 impl Default for OresDef {
     fn default() -> Self {
-        Self { grid: GridDef { spacing: 112, slots: 2, chance: 0.8 }, veins: Vec::new() }
+        Self { grid: GridDef { spacing: 112, slots: 2, chance: 0.7 }, veins: Vec::new() }
     }
 }
 
@@ -912,6 +912,58 @@ mod tests {
             let pitch = d.y.atan2(d.x.hypot(d.z)).to_degrees();
             let o = camera - eye;
             println!("{ore} at {at}: --pose {:.1},{:.1},{:.1},{yaw:.0},{pitch:.0}", o.x, o.y, o.z);
+        }
+    }
+
+    /// The share of veins of each rarity class (common, uncommon, rare, very rare), in
+    /// percent, over `squares` squares of the grid on each side around the origin, on
+    /// seeds 1 to `seeds`, and how many veins that was.
+    fn vein_mix(seeds: u64, squares: i32) -> ([f32; 4], usize) {
+        let registry = registry();
+        let defs = crate::content::WorldContent::base(&registry).unwrap().ores.veins;
+        let class = |name: &str| defs.iter().find(|d| d.name == name).map_or(0, |d| (d.rarity as usize).min(3));
+        let mut counts = [0usize; 4];
+        for seed in 1..=seeds {
+            let world = Overworld::new(seed, registry.clone());
+            let ores = &world.terrain.ores;
+            let mut veins = Vec::new();
+            for sz in -squares / 2..squares / 2 {
+                for sx in -squares / 2..squares / 2 {
+                    ores.square(&world, IVec2::new(sx, sz), &mut veins);
+                }
+            }
+            for vein in &veins {
+                counts[class(&ores.kinds[vein.kind].name)] += 1;
+            }
+        }
+        let total: usize = counts.iter().sum();
+        (counts.map(|c| 100.0 * c as f32 / total as f32), total)
+    }
+
+    /// Veins come in the mix of rarity classes the design asks for (draft 63): about two
+    /// thirds common, 17% uncommon, 13% rare and 3% very rare. The weights alone make that
+    /// mix within a point; the rock provinces shift what generates (veins that favour the
+    /// volcanic and granite provinces, mostly uncommon ones, gain a few points), so the
+    /// generated mix is held to wider bounds.
+    #[test]
+    fn veins_come_in_the_designed_mix_of_rarities() {
+        let wanted = [67.0, 17.0, 13.0, 3.0];
+        let mut weighed = [0.0f32; 4];
+        for vein in &crate::content::WorldContent::base(&registry()).unwrap().ores.veins {
+            weighed[(vein.rarity as usize).min(3)] += vein.weight * vein.rarity.multiplier();
+        }
+        let total: f32 = weighed.iter().sum();
+        let weighed = weighed.map(|w| 100.0 * w / total);
+        println!("vein mix by weight: common {:.1}%, uncommon {:.1}%, rare {:.1}%, very rare {:.1}%", weighed[0], weighed[1], weighed[2], weighed[3]);
+        for (got, want) in weighed.iter().zip(wanted) {
+            assert!((got - want).abs() <= 1.0, "vein mix by weight {weighed:?}, wanted {wanted:?}");
+        }
+
+        let (mix, veins) = vein_mix(4, 60);
+        println!("vein mix over {veins} veins: common {:.1}%, uncommon {:.1}%, rare {:.1}%, very rare {:.1}%", mix[0], mix[1], mix[2], mix[3]);
+        let tolerance = [4.5, 5.0, 2.0, 1.0];
+        for ((got, want), tolerance) in mix.iter().zip(wanted).zip(tolerance) {
+            assert!((got - want).abs() <= tolerance, "vein mix {mix:?}, wanted about {wanted:?}");
         }
     }
 
