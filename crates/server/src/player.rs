@@ -244,7 +244,9 @@ impl Server {
         let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
         // One who left since the last save that counted is as they left, not as their file.
-        let saved = self.leavers.get(&name).cloned().or_else(|| {
+        let key = crate::player_key(&name);
+        let taken = self.players.values().any(|p| p.joined && p.id != id && crate::player_key(&p.name) == key);
+        let saved = self.leavers.get(&key).map(|(_, saved)| saved.clone()).or_else(|| {
             self.save.as_ref().and_then(|save| {
                 save.read_player(&name, blocks).unwrap_or_else(|e| {
                     tracing::error!("could not load player {name}: {e}");
@@ -264,6 +266,9 @@ impl Server {
             Some(Words::key("net.rejected.protocol").with("theirs", Words::text(protocol)).with("ours", Words::text(PROTOCOL_VERSION)))
         } else if content != fingerprint {
             Some(Words::key("net.rejected.content"))
+        } else if taken {
+            // One player at a time under a name, whatever its case: two would share a file.
+            Some(Words::key("net.rejected.name_taken").with("name", Words::text(&name)))
         } else {
             None
         };
@@ -273,7 +278,7 @@ impl Server {
         }
 
         // Back in play: what they hold is saved with them from now on.
-        self.leavers.remove(&name);
+        self.leavers.remove(&key);
         player.name = name;
         player.joined = true;
         // Only the integrated server's own player can connect in-process.

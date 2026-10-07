@@ -155,6 +155,12 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     Ok(content)
 }
 
+/// What tells players apart: names that differ only in case are one player, as their files
+/// are on a disk that ignores case (and everywhere, once files are named in lower case).
+pub(crate) fn player_key(name: &str) -> String {
+    name.to_lowercase()
+}
+
 /// A running server thread. Dropping it stops the server.
 pub struct ServerHandle {
     connections: Sender<ServerConnection>,
@@ -297,7 +303,8 @@ pub(crate) struct Server {
     last_save: u64,
     /// Players who left, as they were, until a save holding them counts: until then their
     /// files are older than what they left in machines, and a rejoin takes this instead.
-    leavers: FxHashMap<String, SavedPlayer>,
+    /// Keyed by [`player_key`], with the name they played under.
+    leavers: FxHashMap<String, (String, SavedPlayer)>,
     content: Content,
     generator: Arc<dyn Generator>,
     /// The same generator, for what commands ask about the land.
@@ -537,7 +544,7 @@ impl Server {
                         if player.joined {
                             tracing::info!("{} left", player.name);
                             let saved = player.saved(&self.content.skills, &self.content.effects);
-                            self.leavers.insert(player.name.clone(), saved);
+                            self.leavers.insert(player_key(&player.name), (player.name.clone(), saved));
                             self.save_wanted = true;
                         }
                         self.players.remove(&id);
@@ -622,7 +629,7 @@ impl Server {
                 failed(&format!("player {}", player.name), e);
             }
         }
-        for (name, player) in &self.leavers {
+        for (name, player) in self.leavers.values() {
             if let Err(e) = save.write_player(name, player, registry) {
                 failed(&format!("player {name}"), e);
             }

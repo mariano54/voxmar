@@ -749,6 +749,7 @@
     "chat.server": "[サーバー] {text}",
     "net.rejected.protocol": "プロトコル {theirs} には対応していません (サーバーは {ours})",
     "net.rejected.content": "クライアントとサーバーのコンテンツが違います",
+    "net.rejected.name_taken": "{name} という名前のプレイヤーがすでに遊んでいます",
     "language.list_separator": "、",
 
     "command.the_server": "サーバー",

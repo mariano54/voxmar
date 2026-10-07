@@ -480,6 +480,7 @@
     "chat.server": "[Server] {text}",
     "net.rejected.protocol": "protocol {theirs} is not supported (server speaks {ours})",
     "net.rejected.content": "client and server content differ",
+    "net.rejected.name_taken": "a player named {name} is already playing",
     "language.list_separator": ", ",
 
     "command.the_server": "The server",

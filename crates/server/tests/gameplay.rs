@@ -1785,6 +1785,62 @@ fn only_joined_players_leaving_save_the_world_and_many_leaving_at_once_save_it_o
 }
 
 #[test]
+fn a_leaver_back_under_their_name_in_another_case_is_who_they_were_and_one_name_plays_once() {
+    let dir = world_dir("case");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let ore = client.content.blocks.expect("base:iron_ore");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    // Bob puts 54 ore in a chest and keeps 10.
+    let mut bob = client.another("Bob");
+    let chest = bob.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    for line in ["/clear", &format!("/setblock {at} chest"), "/give iron_ore 54"] {
+        bob.ok(line);
+    }
+    bob.pump_until(|c| held(c) == 54 && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    use_machine(&mut bob, chest);
+    bob.pump_until(|c| held(c) == 0);
+    bob.ok("/give iron_ore 10");
+    bob.pump_until(|c| held(c) == 10);
+    machine_says(&mut bob, &at, "holds 54 items", 10);
+    // He leaves while his file can't be written, so he is kept as he left...
+    let before = saved_generation(&dir);
+    let blocked: Vec<_> = (before + 1..before + 40).map(|g| dir.join("players").join(format!("Bob.ron.{g}.new"))).collect();
+    for path in &blocked {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    drop(bob);
+    after_leave_saves(&mut client);
+    assert_eq!(saved_generation(&dir), before, "a save without his file counted");
+    // ... and back as BOB, he is that Bob: 64 in all, not his old file's nor none.
+    let mut bob = client.another("BOB");
+    bob.ok("/seed");
+    let said = bob.ok(&format!("/machine {at}"));
+    assert_eq!(held(&bob) + items_held(&said), 64, "BOB holds {}, the chest: {said}", held(&bob));
+    // While he plays, no one else joins as bob.
+    let (connection, server_side) = local_pair();
+    client._server.as_ref().unwrap().connections().send(server_side).unwrap();
+    connection.send(ClientMessage::Hello { name: "bob".into(), protocol: PROTOCOL_VERSION, content: client.content.fingerprint() });
+    let started = Instant::now();
+    let reason = loop {
+        assert!(started.elapsed() < SERVER_WAIT, "the second bob was neither let in nor turned away");
+        match connection.try_recv() {
+            Ok(Some(ServerMessage::Rejected { reason })) => break reason,
+            Ok(Some(ServerMessage::Welcome { .. })) => panic!("a second bob joined while BOB plays"),
+            Ok(_) => std::thread::sleep(Duration::from_millis(1)),
+            Err(_) => panic!("the server dropped the second bob without a word"),
+        }
+    };
+    assert!(format!("{reason:?}").contains("net.rejected.name_taken"), "{reason:?}");
+    drop(bob);
+    drop(client);
+    for path in &blocked {
+        let _ = std::fs::remove_dir_all(path);
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() {
     let dir = world_dir("cut");
     let config = |cut_saves| ServerConfig { view_distance: 2, world: Some(dir.clone()), cut_saves, ..Default::default() };
