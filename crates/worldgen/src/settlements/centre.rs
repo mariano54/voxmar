@@ -29,7 +29,7 @@ impl Parts {
         let cloth = fixed.cloth.pick(unit(hash3(seed, 0xc1, 0, 0))).or(fixed.canopies.pick(unit(hash3(seed, 0xc1, 0, 0)))).unwrap_or(mats.trim);
         Parts {
             log: named("log").unwrap_or(mats.log),
-            leaves: named("leaves").or(fixed.fruit.pick(unit(hash3(seed, 0x1ea, 0, 0)))),
+            leaves: named("leaves").or(mats.fruit.pick(unit(hash3(seed, 0x1ea, 0, 0)))),
             stone: named("stone").unwrap_or(mats.stone()),
             worn: named("worn"),
             water: named("water").unwrap_or(fixed.water),
