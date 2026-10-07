@@ -12,7 +12,10 @@
 //!   their next is due.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
-//! never leaves a half-written file behind.
+//! never leaves a half-written file behind. A file that cannot be read is never silently
+//! replaced: it is moved aside to `<file>.corrupt-<unix time>` (`set_aside`) and the error
+//! logged, and if it cannot even be moved the server refuses to start (world files) or the
+//! player to join (player files).
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -311,7 +314,18 @@ impl WorldSave {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+        let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+    }
+
+    /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
+    pub fn set_aside_player(&self, name: &str) -> io::Result<PathBuf> {
+        set_aside(&self.player_path(name))
+    }
+
+    /// Moves the column file at `pos` aside, as unreadable (`set_aside`).
+    pub fn set_aside_column(&self, pos: ColumnPos) -> io::Result<PathBuf> {
+        set_aside(&self.column_path(pos))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -418,6 +432,60 @@ impl WorldSave {
         let text = ron::ser::to_string(items).map_err(io::Error::other)?;
         write_atomic(&self.dir.join(ITEMS_FILE), text.as_bytes())
     }
+}
+
+/// What a world keeps besides its columns and players, as read when it opens.
+#[derive(Debug, Default)]
+pub(crate) struct WorldState {
+    pub items: Vec<SavedItem>,
+    pub crops: Vec<SavedCrop>,
+    pub creatures: Vec<crate::husbandry::SavedCreature>,
+}
+
+impl WorldSave {
+    /// The dropped items, crops and kept creatures. A file that cannot be read is moved
+    /// aside and logged, and the world opens without what it held; only a file that can
+    /// neither be read nor moved aside (and so would be overwritten at the next save) is
+    /// an error.
+    pub(crate) fn read_state(&self) -> io::Result<WorldState> {
+        Ok(WorldState {
+            items: self.read_or_set_aside(ITEMS_FILE, Self::read_items)?,
+            crops: self.read_or_set_aside(CROPS_FILE, Self::read_crops)?,
+            creatures: self.read_or_set_aside(CREATURES_FILE, Self::read_creatures)?,
+        })
+    }
+
+    fn read_or_set_aside<T: Default>(&self, file: &str, read: fn(&Self) -> io::Result<T>) -> io::Result<T> {
+        let error = match read(self) {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        let path = self.dir.join(file);
+        match set_aside(&path) {
+            Ok(aside) => {
+                tracing::error!("could not read {}: {error}; kept it as {} and opened the world without it", path.display(), aside.display());
+                Ok(T::default())
+            }
+            Err(moving) => Err(io::Error::new(error.kind(), format!("could not read {}: {error}; nor move it aside: {moving}", path.display()))),
+        }
+    }
+}
+
+/// Moves an unreadable save file aside, to `<file>.corrupt-<unix time>` beside it, so the
+/// next save does not replace it and it can be looked at or restored by hand. Returns
+/// where it went.
+pub fn set_aside(path: &Path) -> io::Result<PathBuf> {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let stamp = unix_time();
+    for n in 0..1000 {
+        let suffix = if n == 0 { String::new() } else { format!("-{n}") };
+        let aside = path.with_file_name(format!("{name}.corrupt-{stamp}{suffix}"));
+        if !aside.exists() {
+            std::fs::rename(path, &aside)?;
+            return Ok(aside);
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} has been set aside too often", path.display())))
 }
 
 /// Every world in `root`, most recently played first. Directories without a readable

@@ -15,7 +15,7 @@ use voxmar_engine::skill::{SkillRegistry, Skills};
 use voxmar_engine::traits::{self, Health, TraitDecl};
 use voxmar_engine::vitals::Vitals;
 use voxmar_protocol::{
-    ClientMessage, MAX_FLY_SPEED, PROTOCOL_VERSION, PlayerId, PlayerInput, PlayerView, ServerConnection, ServerMessage,
+    ChatKind, ClientMessage, MAX_FLY_SPEED, PROTOCOL_VERSION, PlayerId, PlayerInput, PlayerView, ServerConnection, ServerMessage,
     TICKS_PER_SECOND,
 };
 
@@ -242,27 +242,40 @@ impl Server {
         let (seed, allow_flight, tick) = (self.meta.seed, self.config.allow_flight, self.tick);
         let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
-        let saved = self.save.as_ref().and_then(|save| {
-            save.read_player(&name, blocks).unwrap_or_else(|e| {
-                tracing::error!("could not load player {name}: {e}");
-                None
-            })
-        });
+        if self.players[&id].joined {
+            return;
+        }
+        // An unreadable save is moved aside rather than replaced by a new player's at the
+        // next save; if it cannot even be moved, the player is turned away.
+        let (saved, set_aside) = match self.save.as_ref().map(|save| (save, save.read_player(&name, blocks))) {
+            None => (Ok(None), None),
+            Some((_, Ok(saved))) => (Ok(saved), None),
+            Some((save, Err(e))) => match save.set_aside_player(&name) {
+                Ok(aside) => {
+                    tracing::error!("could not load player {name}: {e}; kept it as {} and started them afresh", aside.display());
+                    (Ok(None), aside.file_name().map(|n| n.to_string_lossy().into_owned()))
+                }
+                Err(moving) => {
+                    tracing::error!("could not load player {name}: {e}; nor move it aside: {moving}");
+                    (Err(()), None)
+                }
+            },
+        };
         let local_admin = self.config.local_admin;
         let skill_ids = self.content.skills.clone();
         let effect_ids = self.content.effects.clone();
         let weather_seed = self.weather.seed();
         let player = self.players.get_mut(&id).expect("message from unknown player");
-        if player.joined {
-            return;
-        }
         let reason = if protocol != PROTOCOL_VERSION {
             Some(Words::key("net.rejected.protocol").with("theirs", Words::text(protocol)).with("ours", Words::text(PROTOCOL_VERSION)))
         } else if content != fingerprint {
             Some(Words::key("net.rejected.content"))
+        } else if saved.is_err() {
+            Some(Words::key("net.rejected.save"))
         } else {
             None
         };
+        let saved = saved.unwrap_or_default();
         if let Some(reason) = reason {
             player.connection.send(ServerMessage::Rejected { reason });
             return;
@@ -325,6 +338,10 @@ impl Server {
         self.players[&id].connection.send(time);
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
+        if let Some(file) = set_aside {
+            let text = Words::key("save.player_set_aside").with("file", Words::text(file));
+            self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Error, text });
+        }
     }
 
     /// Accepts the client's predicted movement if it is physically plausible, otherwise

@@ -728,6 +728,8 @@
     "chat.server": "[サーバー] {text}",
     "net.rejected.protocol": "プロトコル {theirs} には対応していません (サーバーは {ours})",
     "net.rejected.content": "クライアントとサーバーのコンテンツが違います",
+    "net.rejected.save": "セーブされたプレイヤーを読み込めず、退避もできませんでした",
+    "save.player_set_aside": "セーブされたプレイヤーを読み込めなかったため、最初から始めます。古いファイルは {file} としてサーバー管理者のために残してあります。",
     "language.list_separator": "、",
 
     "command.the_server": "サーバー",

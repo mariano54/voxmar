@@ -325,7 +325,8 @@ impl Server {
                 }
                 (Effect::Respawn, _) => {
                     // Home, if the player has one, else the bed they last slept in, else
-                    // world spawn.
+                    // world spawn. What they carried is left where they fell first.
+                    self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
                     let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
                     player.buried = false;

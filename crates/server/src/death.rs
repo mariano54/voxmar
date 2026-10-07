@@ -27,6 +27,16 @@ impl Server {
         }
     }
 
+    /// Buries `id` if they are dead and not yet buried. Whatever revives, saves or drops a
+    /// player calls this first, so no order of messages and ticks skips the grave: a
+    /// respawn sent the moment `Died` arrives, before the tick that would bury, still
+    /// leaves everything but the kept items behind.
+    pub(crate) fn bury_if_dead(&mut self, id: PlayerId) {
+        if self.players.get(&id).is_some_and(|p| p.joined && !p.health.alive() && !p.buried) {
+            self.bury(id);
+        }
+    }
+
     fn bury(&mut self, id: PlayerId) {
         let blocks = self.content.blocks.clone();
         let tools = self.content.tools.clone();

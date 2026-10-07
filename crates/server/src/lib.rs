@@ -202,6 +202,7 @@ impl Drop for ServerHandle {
 /// creates it); the server saves it periodically and when the handle is dropped.
 pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
     let (save, meta) = open_world(&mut config)?;
+    let state = save.as_ref().map_or(Ok(save::WorldState::default()), WorldSave::read_state)?;
     let (connections, incoming) = unbounded();
     let (console, lines) = unbounded();
     let stop = Arc::new(AtomicBool::new(false));
@@ -211,7 +212,7 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
         let (stop, tick_times, ticks) = (stop.clone(), tick_times.clone(), ticks.clone());
         std::thread::Builder::new()
             .name("server".into())
-            .spawn(move || Server::new(config, meta, save, content, incoming, lines).run(&stop, &tick_times, &ticks))?
+            .spawn(move || Server::new(config, meta, save, state, content, incoming, lines).run(&stop, &tick_times, &ticks))?
     };
     Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks })
 }
@@ -270,7 +271,11 @@ pub(crate) fn load_column(
                 return Loaded { column, saved: true };
             }
             Ok(None) => {}
-            Err(e) => tracing::error!("could not load column {pos:?}, generating it again: {e}"),
+            // Set aside, so the column generated in its place never overwrites it.
+            Err(e) => match save.set_aside_column(pos) {
+                Ok(aside) => tracing::error!("could not load column {pos:?}: {e}; kept it as {} and generated the column again", aside.display()),
+                Err(moving) => tracing::error!("could not load column {pos:?}: {e}; nor move it aside ({moving}), so an edit will overwrite it"),
+            },
         }
     }
     Loaded { column: generator.generate(pos), saved: false }
@@ -339,6 +344,7 @@ impl Server {
         config: ServerConfig,
         meta: WorldMeta,
         save: Option<WorldSave>,
+        state: save::WorldState,
         content: Content,
         incoming: Receiver<ServerConnection>,
         console: Receiver<String>,
@@ -367,17 +373,9 @@ impl Server {
         let spawn = find_ground(&world, &content.blocks, spawn_block);
         let (generated_tx, generated_rx) = unbounded();
         tracing::info!("world seed {:#x}, spawn at {spawn}", meta.seed);
-        let saved_items = save.as_ref().map_or(Ok(Vec::new()), |save| save.read_items()).unwrap_or_else(|e| {
-            tracing::error!("could not load dropped items: {e}");
-            Vec::new()
-        });
-        let items = items::Items::restore(saved_items, |name| content.blocks.id(name));
-        let saved_crops = save.as_ref().map_or(Ok(Vec::new()), |save| save.read_crops()).unwrap_or_else(|e| {
-            tracing::error!("could not load crops: {e}");
-            Vec::new()
-        });
+        let items = items::Items::restore(state.items, |name| content.blocks.id(name));
         let crops = &content.crops;
-        let farm = farm::Farm::restore(saved_crops, |name| {
+        let farm = farm::Farm::restore(state.crops, |name| {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
@@ -418,11 +416,7 @@ impl Server {
             spawn,
         };
         server.show_grown_crops(spawn_column);
-        let saved_creatures = server.save.as_ref().map_or(Ok(Vec::new()), |save| save.read_creatures()).unwrap_or_else(|e| {
-            tracing::error!("could not load creatures: {e}");
-            Vec::new()
-        });
-        server.restore_creatures(saved_creatures);
+        server.restore_creatures(state.creatures);
         server
     }
 
@@ -497,9 +491,12 @@ impl Server {
                     Ok(Some((at, message))) => self.handle_message(id, message, at),
                     Ok(None) => break,
                     Err(_) => {
+                        // Leaving dead buries first, or rejoining would revive them with
+                        // everything they carried.
+                        self.bury_if_dead(id);
+                        let player = self.players.remove(&id).expect("listed");
                         tracing::info!("{} left", player.name);
-                        self.save_player(player);
-                        self.players.remove(&id);
+                        self.save_player(&player);
                     }
                 }
             }
@@ -539,6 +536,11 @@ impl Server {
     /// Writes edited columns, joined players and the world's metadata. Failures are
     /// logged; columns that failed stay dirty and are tried again at the next save.
     fn save(&mut self) {
+        if self.save.is_none() {
+            return;
+        }
+        // A player who died since the last tick (a command, say) is saved buried.
+        self.bury_the_dead();
         let Some(save) = &self.save else { return };
         let _span = tracing::info_span!("save_world").entered();
         let started = Instant::now();

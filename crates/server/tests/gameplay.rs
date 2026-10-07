@@ -1246,3 +1246,101 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
 }
+
+/// Whatever a player carries, counted.
+fn carried(client: &Client) -> u32 {
+    client.inventory.slots.iter().flatten().map(|s| s.count as u32).sum()
+}
+
+/// Gives the player 47 items over six stacks, three of them worth keeping.
+fn give_a_load(client: &mut Client) {
+    for line in ["/clear", "/give iron_pickaxe 1", "/give iron_ingot 5", "/give dirt 30", "/give stick 10", "/give bread 1"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| carried(c) == 47);
+}
+
+#[test]
+fn a_respawn_sent_the_moment_a_player_dies_still_leaves_their_things_behind() {
+    let mut client = Client::join();
+    give_a_load(&mut client);
+    // Dying and asking to respawn in one breath, before a tick could bury: the server
+    // handles both before its next tick.
+    client.connection.send(ClientMessage::Command { line: "/kill".into() });
+    client.propose("core:respawn", ActionTarget::None);
+    let lying = |c: &Client| c.items.values().map(|i| i.stack.count as u32).sum::<u32>();
+    let wait = Instant::now() + Duration::from_secs(5);
+    client.pump_until(|c| (c.health > 0 && carried(c) == 3 && lying(c) == 44) || Instant::now() > wait);
+    assert_eq!((carried(&client), lying(&client)), (3, 44), "the respawned player kept {:?}", client.inventory);
+}
+
+#[test]
+fn leaving_dead_leaves_their_things_behind_too() {
+    let dir = world_dir("leave-dead");
+    let host = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let mut guest = host.another("guest");
+    give_a_load(&mut guest);
+    // Dying and leaving at once, before a tick could bury.
+    guest.connection.send(ClientMessage::Command { line: "/kill".into() });
+    drop(guest);
+    // Dropping the server saves the world.
+    drop(host);
+    let content = content();
+    let saved = voxmar_server::save::WorldSave::new(&dir).read_player("guest", &content.blocks).unwrap().expect("the guest was saved");
+    let kept: u32 = saved.inventory.slots.iter().flatten().map(|s| s.count as u32).sum();
+    assert_eq!(kept, 3, "the guest left dead with {:?}", saved.inventory);
+    let items = std::fs::read_to_string(dir.join("items.ron")).unwrap();
+    assert!(items.contains("dirt"), "what the guest carried lies where they fell: {items}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The files in `dir` set aside as unreadable.
+fn set_aside(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.contains(".corrupt-")).collect()
+}
+
+#[test]
+fn an_unreadable_player_file_is_set_aside_not_overwritten() {
+    let dir = world_dir("corrupt-player");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    drop(Client::join_with(config()));
+    let file = dir.join("players/test.ron");
+    assert!(file.is_file());
+    std::fs::write(&file, "(position: [1.0, 2.0").unwrap();
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.chat.iter().any(|(kind, _)| *kind == ChatKind::Error));
+    assert!(client.chat.iter().any(|(_, text)| text.contains("test.ron.corrupt-")), "{:?}", client.chat);
+    drop(client);
+    let aside = set_aside(&dir.join("players"));
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(std::fs::read_to_string(dir.join("players").join(&aside[0])).unwrap(), "(position: [1.0, 2.0", "the bad file is kept as it was");
+    assert!(file.is_file(), "the player is saved afresh beside it");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn unreadable_world_files_are_set_aside_and_the_world_still_opens() {
+    let dir = world_dir("corrupt-world");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+    drop(client);
+    let column = ColumnPos::of_block(below);
+    let column_file = dir.join(format!("columns/{}.{}.bin", column.0.x, column.0.y));
+    assert!(column_file.is_file());
+    std::fs::write(&column_file, b"vxc4 not zlib").unwrap();
+    for file in ["items.ron", "crops.ron", "creatures.ron"] {
+        std::fs::write(dir.join(file), "[(oops").unwrap();
+    }
+    let client = Client::join_with(config());
+    drop(client);
+    assert_eq!(set_aside(&dir.join("columns")).len(), 1, "the bad column is set aside");
+    let aside = set_aside(&dir);
+    for file in ["items.ron", "crops.ron", "creatures.ron"] {
+        assert!(aside.iter().any(|n| n.starts_with(&format!("{file}.corrupt-"))), "{file} was not set aside: {aside:?}");
+        assert_ne!(std::fs::read_to_string(dir.join(file)).unwrap(), "[(oops", "{file} is written afresh");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
