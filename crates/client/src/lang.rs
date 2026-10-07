@@ -398,9 +398,9 @@ mod tests {
         for (_, species) in content.creatures.iter().filter(|(_, species)| first_party(&species.def.name)) {
             keys.extend(species.modules.iter().map(|(module, _)| format!("creature.doing.{}", module.name())));
         }
-        // The weather's channels in `/weather` and the F3 screen, from drizzle on, and what falls.
-        let channels = voxmar_engine::weather::Weather::default().fractions();
-        keys.extend(channels[7..].iter().map(|(name, _)| *name).chain(["rain", "snow"]).map(|name| format!("weather.channel.{name}")));
+        // The weather's channels in `/weather` and the F3 screen, and what falls.
+        let channels = voxmar_engine::weather::Weather::default().channels().map(|(name, _)| name);
+        keys.extend(channels.chain(["rain", "snow"]).map(|name| format!("weather.channel.{name}")));
         keys
     }
 
@@ -678,7 +678,7 @@ mod tests {
             let def = loaded.skills.get(id);
             check(locale.skill(def), locale.skill_reading(def));
         }
-        for key in locale.keys().filter(|key| key.split('.').count() == 3 && key.starts_with("effect")) {
+        for key in locale.keys().filter(|key| key.split('.').count() == 3 && key.split('.').next() == Some("effect")) {
             check(locale.get(key).to_owned(), locale.reading(key));
         }
         assert!(unread.is_empty(), "Japanese names without a reading (add them to lang/readings/ja.ron): {}", unread.into_iter().collect::<Vec<_>>().join(", "));

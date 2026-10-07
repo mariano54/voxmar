@@ -1037,9 +1037,7 @@ pub fn weather_numbers(weather: &voxmar_engine::weather::Weather) -> Words {
         .with("precipitation", Words::text(format!("{:.0}", weather.precipitation * 100.0)))
         .with("wind", Words::text(format!("{:.1}", weather.wind.length())))
         .with("visibility", Words::text(format!("{:.0}", weather.visibility())));
-    // The effects' channels, from gusts on.
-    let channels: Vec<Words> =
-        weather.fractions()[7..].iter().filter(|(_, value)| *value >= 0.05).map(|&(name, value)| share(weather_name("channel", name), value)).collect();
+    let channels: Vec<Words> = weather.channels().filter(|&(_, value)| value >= 0.05).map(|(name, value)| share(weather_name("channel", name), value)).collect();
     if !channels.is_empty() {
         numbers = Words::key("command.weather.numbers_and").with("numbers", numbers).with("channels", Words::List(channels));
     }
