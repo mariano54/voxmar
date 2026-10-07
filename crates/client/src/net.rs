@@ -227,6 +227,7 @@ pub(crate) fn receive(
                 }
             }
             ServerMessage::PlayerState { health, inventory, skills, vitals } => {
+                player.states += 1;
                 player.health = health.current;
                 player.max_health = health.max;
                 player.vitals = vitals;

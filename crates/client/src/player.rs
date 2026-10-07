@@ -65,6 +65,9 @@ pub struct LocalPlayer {
     /// Experience in every skill, as the server last said, and whether it has said yet.
     pub skills: Skills,
     pub skills_known: bool,
+    /// How many times the server has said the player's state (inventory, health, skills):
+    /// what was predicted here before a count was taken is the server's once it moves on.
+    pub states: u32,
     /// Hunger, warmth and their effects, as the server last said.
     pub vitals: Vitals,
     /// When the vitals last came, in seconds since startup: timed effects count down from it.
@@ -106,6 +109,7 @@ impl Default for LocalPlayer {
             inventory: Inventory::default(),
             skills: Skills::default(),
             skills_known: false,
+            states: 0,
             vitals: Vitals::default(),
             vitals_at: 0.0,
             selected: 0,

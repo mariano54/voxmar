@@ -146,7 +146,8 @@ pub enum ServerMessage {
     /// answered, so the client can show it.
     Struck { creature: u32, damage: u16, killed: bool, blow: voxmar_engine::combat::Blow, pips: u8 },
     /// A creature's blow at the player came down: for `damage`, or turned aside as
-    /// `defended` says. Every blow a creature winds up at the player is answered.
+    /// `defended` says. Every blow that comes down is answered; a wind-up a daze cuts short
+    /// comes to nothing and is not.
     Hurt { creature: u32, damage: u16, defended: voxmar_engine::combat::Defended },
 }
 
