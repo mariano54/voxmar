@@ -293,8 +293,10 @@ pub(crate) struct Server {
     farm: farm::Farm,
     /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
-    /// Picked wild plants waiting to grow back (see `regrow`).
+    /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
+    /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
+    planter_grown: FxHashSet<IVec3>,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
     /// Animals and monsters about.
@@ -384,6 +386,7 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let mut server = Self {
             config,
             tick,
@@ -399,6 +402,7 @@ impl Server {
             farm,
             placed,
             regrowing,
+            planter_grown,
             arrival: Instant::now(),
             creatures: creatures::Creatures::default(),
             processes,
@@ -571,6 +575,9 @@ impl Server {
         self.meta.time = self.tick;
         self.meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
         self.meta.regrowing = self.saved_regrowing();
+        let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
+        grown.sort();
+        self.meta.planter_grown = grown;
         self.meta.day = Some(self.day as u64);
         self.meta.day_speed = self.day_speed;
         self.meta.last_played = save::unix_time();
@@ -686,6 +693,7 @@ impl Server {
         for &(pos, block) in changes {
             if self.world.set_block(pos, block).is_some() {
                 self.dirty.insert(ColumnPos::of_block(pos));
+                self.forget_placed(pos);
                 done.push((pos, block));
             }
         }
@@ -707,10 +715,18 @@ impl Server {
 
     /// Changes a block, telling only the players who have its column (the others get the
     /// change with the column), and wakes any fluid it lets flow.
+    /// A block changed: whatever a player placed there, or a planter grew, is gone (those
+    /// who place and grow mark it again after setting it).
+    fn forget_placed(&mut self, pos: IVec3) {
+        self.placed.remove(&pos);
+        self.planter_grown.remove(&pos);
+    }
+
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {
         let column = ColumnPos::of_block(pos);
         if self.world.set_block(pos, block).is_some() {
             self.dirty.insert(column);
+            self.forget_placed(pos);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
