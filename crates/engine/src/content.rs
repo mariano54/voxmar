@@ -61,7 +61,7 @@ pub struct Content {
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
     pub english: Arc<Lang>,
     /// What loading noticed and allowed, for the log: a later package replacing data an
-    /// earlier one set (creature limits, Defence training).
+    /// earlier one set (creature limits, Defence training, the level curve).
     pub notes: Arc<Vec<String>>,
 }
 
@@ -191,7 +191,13 @@ impl Content {
                     "actions.ron" => actions.extend(package, &source)?,
                     "commands.ron" => commands.extend(package, &source)?,
                     "weather.ron" => weather.extend(package, &source)?,
-                    "skills.ron" => skills.extend(package, &source)?,
+                    // A later package's curve replaces an earlier one's (Design draft 91).
+                    "skills.ron" => {
+                        if let Some(note) = skills.extend(package, &source)? {
+                            tracing::info!("{note}");
+                            notes.push(note);
+                        }
+                    }
                     "crops.ron" => {
                         crops.extend(CropRegistry::read(package, &source)?);
                         // Kept with the other files too, so the fingerprint covers it.
