@@ -198,6 +198,8 @@
     "settings.font.ledger": "Ledger",
     "settings.font.block": "Block",
     "settings.font.voxmar": "Voxmar",
+    "shader_pack.classic": "Classic",
+    "shader_pack.verdant": "Verdant",
     "settings.ui_sounds": "Interface sounds",
     "settings.ui_sounds.hint": "What buttons and the inventory sound like.",
     "settings.ui_sounds.micro_switch": "Micro switch",

@@ -140,6 +140,14 @@ impl Default for ShaderPack {
     }
 }
 
+impl ShaderPack {
+    /// The key lang names it by (`shader_pack.verdant`); a pack no language names goes by
+    /// its own name.
+    pub fn key(&self) -> String {
+        format!("shader_pack.{}", self.name.to_lowercase().replace(' ', "_"))
+    }
+}
+
 /// Every pack found, the built-in Classic look first.
 #[derive(Resource)]
 pub struct ShaderPacks(pub Vec<ShaderPack>);
