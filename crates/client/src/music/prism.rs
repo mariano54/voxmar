@@ -16,7 +16,9 @@
 //! extension (`minecraft:music/game/calm1`), which the rules in `music.ron` match to
 //! choose where it plays. Packs repeat each other's tracks (a resource pack shipping the
 //! same files as a music mod), so a file found earlier, the same size and checksum, is
-//! skipped later; every skip is kept, with the track it repeats, for the log.
+//! skipped later; every skip is kept, with the track it repeats, for the log. A file's
+//! checksum is only worked out when another track has its size (a zip's directory says
+//! it anyway), so a launch reads no track whole.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -89,9 +91,10 @@ pub struct Track {
     pub file: TrackFile,
     /// The place it was found (`horizonmelodies/Soundtrack.zip`).
     pub place: String,
-    /// The file's size and CRC-32, which say two copies are the same file.
+    /// The file's size and CRC-32, which say two copies are the same file. The CRC is
+    /// known from a zip's directory, or worked out once another track has the same size.
     pub size: u64,
-    pub crc: u32,
+    pub crc: Option<u32>,
 }
 
 /// A track skipped as a copy of one found earlier.
@@ -143,19 +146,34 @@ impl TrackFile {
     }
 }
 
-/// The size and CRC-32 of a file, read a piece at a time.
-fn checksum(path: &Path) -> Option<(u64, u32)> {
+impl Track {
+    /// Works out the track's CRC-32 if it is not known yet.
+    fn checksum(&mut self) -> Option<u32> {
+        if self.crc.is_none() {
+            self.crc = match &self.file {
+                TrackFile::Loose(path) => crc32(path),
+                TrackFile::Zipped { archive, entry } => {
+                    let mut archive = ZipArchive::new(std::fs::File::open(archive).ok()?).ok()?;
+                    let index = archive.index_for_name(entry)?;
+                    archive.by_index_raw(index).ok().map(|file| file.crc32())
+                }
+            };
+        }
+        self.crc
+    }
+}
+
+/// The CRC-32 of a file, read a piece at a time.
+fn crc32(path: &Path) -> Option<u32> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = crc32fast::Hasher::new();
     let mut buffer = vec![0; 1 << 16];
-    let mut size = 0;
     loop {
         let read = file.read(&mut buffer).ok()?;
         if read == 0 {
-            return Some((size, hasher.finalize()));
+            return Some(hasher.finalize());
         }
         hasher.update(&buffer[..read]);
-        size += read as u64;
     }
 }
 
@@ -245,15 +263,22 @@ fn game_folder(instance: &Path) -> PathBuf {
 /// The instance's tracks: the asset store's for its Minecraft version, then the packs'.
 pub fn search(assets: &Path, instance: &Path, rules: &Discovery) -> Found {
     let mut found = Found::default();
-    // The first track found of each size and checksum.
-    let mut seen: FxHashMap<(u64, u32), String> = FxHashMap::default();
+    // The tracks kept, by size.
+    let mut by_size: FxHashMap<u64, Vec<usize>> = FxHashMap::default();
     let mut add = |found: &mut Found, label: String, tracks: Vec<Track>| {
         let mut added = 0;
-        for track in tracks {
-            match seen.get(&(track.size, track.crc)) {
-                Some(of) => found.repeats.push(Repeat { of: of.clone(), track }),
+        for mut track in tracks {
+            let same_size = by_size.get(&track.size).cloned().unwrap_or_default();
+            // A file whose checksum cannot be worked out is taken as new.
+            let crc = if same_size.is_empty() { None } else { track.checksum() };
+            let of = crc.and_then(|crc| {
+                let kept = same_size.into_iter().find(|&i| found.tracks[i].checksum() == Some(crc))?;
+                Some(found.tracks[kept].location.clone())
+            });
+            match of {
+                Some(of) => found.repeats.push(Repeat { of, track }),
                 None => {
-                    seen.insert((track.size, track.crc), track.location.clone());
+                    by_size.entry(track.size).or_default().push(found.tracks.len());
                     found.tracks.push(track);
                     added += 1;
                 }
@@ -326,8 +351,8 @@ fn store_tracks(index: &Path, objects: &Path, place: &str, rules: &Discovery) ->
                 return None;
             }
             let file = objects.join(object.hash.get(..2)?).join(&object.hash);
-            let (size, crc) = checksum(&file)?;
-            Some(Track { location, file: TrackFile::Loose(file), place: place.to_owned(), size, crc })
+            let size = std::fs::metadata(&file).ok().filter(|m| m.is_file())?.len();
+            Some(Track { location, file: TrackFile::Loose(file), place: place.to_owned(), size, crc: None })
         })
         .collect();
     tracks.sort_by(|a, b| a.location.cmp(&b.location));
@@ -361,15 +386,15 @@ impl Pack {
         Some(Pack::Zipped { path: path.to_owned(), archive, names })
     }
 
-    /// A file's size and CRC-32: from a zip's directory, or read from a folder.
-    fn checksum(&mut self, name: &str) -> Option<(u64, u32)> {
+    /// A file's size, and its CRC-32 when a zip's directory says it.
+    fn size(&mut self, name: &str) -> Option<(u64, Option<u32>)> {
         match self {
             Pack::Zipped { archive, .. } => {
                 let index = archive.index_for_name(name)?;
                 let file = archive.by_index_raw(index).ok()?;
-                Some((file.size(), file.crc32()))
+                Some((file.size(), Some(file.crc32())))
             }
-            Pack::Folder { root, .. } => checksum(&root.join(name)),
+            Pack::Folder { root, .. } => Some((std::fs::metadata(root.join(name)).ok()?.len(), None)),
         }
     }
 
@@ -407,7 +432,7 @@ impl Pack {
         sounds
             .into_iter()
             .filter_map(|(location, name)| {
-                let (size, crc) = self.checksum(&name)?;
+                let (size, crc) = self.size(&name)?;
                 Some(Track { file: self.file(&name), location, place: place.to_owned(), size, crc })
             })
             .collect()
@@ -586,7 +611,7 @@ pub(super) mod tests {
             ],
         );
         // A folder resource pack.
-        write(&game.join("resourcepacks/Loose/assets/loose/sounds/music/rain_walk.ogg"), &ogg("rain_walk"));
+        write(&game.join("resourcepacks/Loose/assets/loose/sounds/music/rain_walk.ogg"), &ogg("rain walk, a size of its own"));
         // A mod with a music disc named by its event, and block sounds that are not music.
         zip(
             &game.join("mods/discs.jar"),
@@ -666,14 +691,18 @@ pub(super) mod tests {
         let read = |location: &str| track(location).file.read(1 << 20).unwrap();
         assert_eq!(read("minecraft:records/cat"), ogg("cat"));
         assert_eq!(read("melodies:statech/end/theme"), ogg("end theme"));
-        assert_eq!(read("loose:music/rain_walk"), ogg("rain_walk"));
+        assert_eq!(read("loose:music/rain_walk"), ogg("rain walk, a size of its own"));
         assert_eq!(read("discs:disc/sky"), ogg("sky"));
         assert_eq!(read("st:music/broken/empty"), Vec::<u8>::new());
         // Sizes and checksums are the files' own, whether a zip says them or they are read.
-        for location in ["minecraft:records/cat", "melodies:statech/end/theme", "loose:music/rain_walk"] {
-            let bytes = read(location);
-            assert_eq!((track(location).size, track(location).crc), (bytes.len() as u64, crc32fast::hash(&bytes)), "{location}");
+        for track in found.tracks.iter().chain(found.repeats.iter().map(|r| &r.track)) {
+            let bytes = track.file.read(1 << 20).unwrap();
+            assert_eq!(track.size, bytes.len() as u64, "{}", track.location);
+            assert!(track.crc.is_none_or(|crc| crc == crc32fast::hash(&bytes)), "{}", track.location);
         }
+        // A loose file is checksummed only when another track has its size.
+        assert_eq!(track("minecraft:music/game/calm1").crc, Some(crc32fast::hash(&ogg("calm1"))));
+        assert_eq!(track("loose:music/rain_walk").crc, None);
         // Nothing is read past the limit, from a loose file or a zip.
         let limit = ogg("cat").len() as u64 - 1;
         assert!(track("minecraft:records/cat").file.read(limit).unwrap_err().to_string().contains("more than"));

@@ -509,6 +509,7 @@ mod tests {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
         let rules = MusicRules::load(&content.files).unwrap();
         let found = prism::discover(&Place::default(), &rules.prism);
+        let crc = |crc: Option<u32>| crc.map_or("(unique size)".to_owned(), |crc| format!("{crc:08x}"));
         assert!(found.problems.is_empty(), "{:?}", found.problems);
         let instance = found.instance.clone().expect("a Prism Launcher instance");
         println!("instance {}", instance.display());
@@ -521,11 +522,11 @@ mod tests {
         for place in places.iter().filter(|p| p.starts_with("resourcepacks/") && (p.contains("1.21") || p.to_lowercase().contains("statech"))) {
             println!("{place}:");
             for track in found.tracks.iter().filter(|t| t.place == *place) {
-                println!("  kept   {} {} {:08x}", track.location, track.size, track.crc);
+                println!("  kept   {} {} {}", track.location, track.size, crc(track.crc));
             }
             for repeat in found.repeats.iter().filter(|r| r.track.place == *place) {
                 let track = &repeat.track;
-                println!("  copy   {} {} {:08x} = {}", track.location, track.size, track.crc, repeat.of);
+                println!("  copy   {} {} {} = {}", track.location, track.size, crc(track.crc), repeat.of);
                 assert!(kept.contains(repeat.of.as_str()), "{} repeats {}, which was not kept", track.location, repeat.of);
             }
         }
