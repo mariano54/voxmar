@@ -281,8 +281,9 @@ impl Server {
         self.leavers.remove(&key);
         player.name = name;
         player.joined = true;
-        // Only the integrated server's own player can connect in-process.
-        player.admin = (player.connection.is_local() && local_admin) || self.config.admins.contains(&player.name);
+        // Only the integrated server's own player can connect in-process. A listed admin is
+        // one in any case, as the name is one player in any case.
+        player.admin = (player.connection.is_local() && local_admin) || self.config.admins.iter().any(|admin| crate::player_key(admin) == key);
         player.allow_flight = saved.as_ref().and_then(|saved| saved.mode).map_or(allow_flight, GameMode::allows_flight);
         // Returning players carry on where they left; new ones start at spawn with a kit.
         match saved {
