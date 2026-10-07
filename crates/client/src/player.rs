@@ -408,12 +408,16 @@ fn movement(
         *last_forward = (!double_tap).then_some(now);
     }
     // A dodge (`fight`): with a direction, a dash that way; alone, a step back. Not in the
-    // air, nor eating, nor with the guard up, nor sooner than the last allows.
+    // air (past `dodge_grace` off the ground, as the server judges), nor eating, nor with
+    // the guard up, nor sooner than the last allows.
     let combat = &launch.content.combat;
     let clock = time.elapsed_secs_f64();
+    if player.on_ground && !player.flying {
+        fighting.grounded = clock;
+    }
     if ui.cursor_locked
         && keys.just_pressed(settings.dodge_key.0)
-        && player.on_ground
+        && clock - fighting.grounded <= combat.feel.dodge_grace as f64
         && !player.flying
         && fighting.guard.is_none()
         && now >= target.eating_until
@@ -424,6 +428,7 @@ fn movement(
         let dodge = combat.dodge_of(&player.inventory.worn);
         let dir = if wish == Vec3::ZERO { -forward } else { wish.normalize() };
         fighting.dash = Some((dir, dodge.distance / dodge.time.max(0.05), dodge.time));
+        fighting.dodge_was = fighting.dodge_ready;
         fighting.dodge_ready = clock + dodge.cooldown as f64;
         let held = player.inventory.get(player.selected).map(|s| s.item);
         let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));

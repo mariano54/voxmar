@@ -24,8 +24,12 @@ pub struct Fighting {
     pub guard: Option<f64>,
     /// A dash under way: its direction, speed and seconds left.
     pub dash: Option<(Vec3, f32, f32)>,
-    /// When the next dodge may start.
+    /// When the next dodge may start, and when it might before the last one, which a dodge
+    /// the server refuses gives back.
     pub dodge_ready: f64,
+    pub dodge_was: f64,
+    /// When the player was last on the ground, for `Feel::dodge_grace`.
+    pub grounded: f64,
     /// A right press this frame already did something (opened a table, ate), so it raises
     /// no guard until it is let go.
     pub right_used: bool,

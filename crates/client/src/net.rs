@@ -252,8 +252,11 @@ pub(crate) fn receive(
             ServerMessage::Teleport { position } => {
                 player.position = position;
                 player.velocity = Vec3::ZERO;
-                // Put somewhere, a dash under way stops (a dodge the server refused, too).
-                fighting.dash = None;
+                // Put somewhere, a dash under way stops: a dodge the server refused, whose
+                // cooldown never ran there either.
+                if fighting.dash.take().is_some() {
+                    fighting.dodge_ready = fighting.dodge_was;
+                }
             }
             ServerMessage::Players { players } => {
                 let seen: Vec<PlayerId> = players.iter().map(|p| p.id).collect();

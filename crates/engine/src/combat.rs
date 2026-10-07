@@ -485,9 +485,11 @@ impl Rhythm {
     /// Guarding or dodging cancels a swing not yet landed: the meter starts again from
     /// [`Feel::cancel_to`] of the cooldown. Returns whether one was cancelled.
     pub fn cancel(&mut self, now: f64, timing: &Timing, feel: &Feel) -> bool {
-        if self.pending.take().is_none() {
+        // A swing already due has landed, whether or not it was counted yet.
+        if self.pending.is_none_or(|s| s.lands <= now) {
             return false;
         }
+        self.pending = None;
         self.started = Some(now - (timing.cooldown * feel.cancel_to) as f64);
         true
     }
@@ -1582,6 +1584,11 @@ mod tests {
         assert!(rhythm.cancel(5.05, &t, &feel));
         assert!((rhythm.meter(5.05, &t) - 0.5).abs() < 1e-4);
         assert_eq!(rhythm.landed(9.0), None);
+        // A swing already due is not cancelled, though nothing has counted it yet.
+        let mut rhythm = Rhythm::default();
+        let Click::Swing(swing) = rhythm.click(6.0, &t, &feel) else { panic!() };
+        assert!(!rhythm.cancel(swing.lands + 0.01, &t, &feel));
+        assert_eq!(rhythm.landed(swing.lands + 0.02), Some(swing));
     }
 
     #[test]
