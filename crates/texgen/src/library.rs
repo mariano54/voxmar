@@ -249,18 +249,19 @@ impl Library {
     /// every texture it does not redraw from 16×16 books and still show 32×32 detail.
     pub fn render_at_least(&self, name: &str, texels: u32) -> Option<Result<Image, Error>> {
         self.contains(name).then(|| {
-            let native = self.resolve(name, 0, 1)?;
+            let sizes = Sizes::default();
+            let native = self.resolve(name, 0, 1, &sizes)?;
             let mut k = 1;
             while native.size.0 * k * 2 <= texels {
                 k *= 2;
             }
-            let resolved = if k == 1 { native } else { self.resolve(name, 0, k)? };
+            let resolved = if k == 1 { native } else { self.resolve(name, 0, k, &sizes)? };
             render::render(&resolved).map_err(|Error(e)| Error(format!("{name}: {e}")))
         })
     }
 
     /// The recipe with its bases folded in, drawn `k` times finer than written.
-    fn resolve(&self, name: &str, depth: usize, k: u32) -> Result<Resolved, Error> {
+    fn resolve(&self, name: &str, depth: usize, k: u32, sizes: &Sizes) -> Result<Resolved, Error> {
         if depth > MAX_DEPTH {
             return Err(Error(format!("{name}: `base` chain too deep (a cycle?)")));
         }
@@ -270,10 +271,10 @@ impl Library {
         // HD draws at 32×32, or its bushy leaves stamping HD's 32×32 leaf tile. Its own
         // layers are drawn as much finer as the finest of them, and each of those as much
         // less finer as it already is.
-        let fine = self.fineness(recipe, self.levels[name], usize::MAX, depth);
+        let fine = self.fineness(recipe, self.levels[name], usize::MAX, depth, sizes);
         let k = k * fine.finer;
         let mut resolved = match &recipe.base {
-            Some(base) => self.resolve(base, depth + 1, k / fine.base).map_err(|Error(e)| Error(format!("{name}: {e}")))?,
+            Some(base) => self.resolve(base, depth + 1, k / fine.base, sizes).map_err(|Error(e)| Error(format!("{name}: {e}")))?,
             None => Resolved { size: (16 * k, 16 * k), seed: seed_of(name), palettes: BTreeMap::new(), layers: Vec::new(), stamps: BTreeMap::new() },
         };
         if let Some((w, h)) = recipe.size {
@@ -297,7 +298,7 @@ impl Library {
                 && !resolved.stamps.contains_key(&stamp_key(&stamp.texture, stamp_k(&stamp.texture)))
             {
                 let at = stamp_k(&stamp.texture);
-                let image = self.resolve(&stamp.texture, depth + 1, at).and_then(|r| render::render(&r)).map_err(|Error(e)| Error(format!("{name}: {e}")))?;
+                let image = self.resolve(&stamp.texture, depth + 1, at, sizes).and_then(|r| render::render(&r)).map_err(|Error(e)| Error(format!("{name}: {e}")))?;
                 resolved.stamps.insert(stamp_key(&stamp.texture, at), image);
             }
         }
@@ -320,14 +321,14 @@ impl Library {
 
     /// How much finer than `recipe`'s own layer (`level`) drew them the books up to `cap`
     /// draw what it builds on: its base and each texture it stamps.
-    fn fineness(&self, recipe: &Recipe, level: usize, cap: usize, depth: usize) -> Fineness {
+    fn fineness(&self, recipe: &Recipe, level: usize, cap: usize, depth: usize, sizes: &Sizes) -> Fineness {
         // Each texture it builds on, with its size now and how much finer that is than it was.
         let measure = |name: &str| -> (Option<(u32, u32)>, u32) {
-            let now = self.size_at(name, cap, depth + 1);
+            let now = self.size_at(name, cap, depth + 1, sizes);
             if cap <= level {
                 return (now, 1);
             }
-            let ratio = match (now, self.size_at(name, level, depth + 1)) {
+            let ratio = match (now, self.size_at(name, level, depth + 1, sizes)) {
                 (Some((w, h)), Some((was_w, was_h))) if was_w > 0 && was_h > 0 && w % was_w == 0 && h % was_h == 0 && w / was_w == h / was_h => {
                     (w / was_w).max(1)
                 }
@@ -349,22 +350,39 @@ impl Library {
                 stamps.insert(stamp.texture.clone(), ratio);
             }
         }
-        let finer = stamps.values().copied().fold(base, u32::max);
+        // The least fineness every one of them divides, so each is drawn a whole number of
+        // times less finer than the recipe's own layers.
+        let finer = stamps.values().copied().fold(base, lcm);
         Fineness { finer, base, stamps, base_size, first_stamp_size }
     }
 
     /// The size `name` is drawn at (k = 1) by the books of `cap` and below, drawn finer
     /// where a layer within `cap` redrew what it builds on; `usize::MAX` for the size the
     /// game draws. `None` if it did not exist there.
-    fn size_at(&self, name: &str, cap: usize, depth: usize) -> Option<(u32, u32)> {
+    fn size_at(&self, name: &str, cap: usize, depth: usize, sizes: &Sizes) -> Option<(u32, u32)> {
         if depth > MAX_DEPTH {
             return None;
         }
+        // Each size is worked out once a render. One asked for again while it is still being
+        // worked out is a cycle (a texture built on itself): it has no size, and resolving
+        // reports the cycle, rather than every path round it being walked again and again.
+        let key = (name.to_owned(), cap);
+        if let Some(&known) = sizes.borrow().get(&key) {
+            return known;
+        }
+        sizes.borrow_mut().insert(key.clone(), None);
+        let size = self.measure(name, cap, depth, sizes);
+        sizes.borrow_mut().insert(key, size);
+        size
+    }
+
+    /// [`Self::size_at`], worked out.
+    fn measure(&self, name: &str, cap: usize, depth: usize, sizes: &Sizes) -> Option<(u32, u32)> {
         let (level, recipe) = match self.levels.get(name) {
             Some(&at) if at <= cap => (at, self.recipes.get(name)?),
             _ => self.replaced.get(name)?.iter().rev().find(|(at, _)| *at <= cap).map(|(at, r)| (*at, r))?,
         };
-        let fine = self.fineness(recipe, level, cap, depth);
+        let fine = self.fineness(recipe, level, cap, depth, sizes);
         let times = |(w, h): (u32, u32), by: u32| (w * by, h * by);
         if let Some(size) = recipe.size {
             return Some(times(size, fine.finer));
@@ -417,6 +435,19 @@ fn family_member(recipe: &Recipe, family: &Family) -> Recipe {
         recipe.seed = family.seed.or(recipe.seed).or(Some(seed_of(&family.name)));
     }
     recipe
+}
+
+/// The sizes worked out during one render, by texture and layer (see [`Library::size_at`]).
+type Sizes = std::cell::RefCell<std::collections::HashMap<(String, usize), Option<(u32, u32)>>>;
+
+fn lcm(a: u32, b: u32) -> u32 {
+    let gcd = |mut a: u32, mut b: u32| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a
+    };
+    if a == 0 || b == 0 { a.max(b) } else { a / gcd(a, b) * b }
 }
 
 /// How much finer than written a recipe's own layers are drawn (`finer`), and how much finer
@@ -701,6 +732,27 @@ mod tests {
         let cluster = Library::from_layers([vec![("base", BOOK), ("more", base)], vec![("hd", hd)]]).unwrap().render("block/cluster").unwrap().unwrap();
         assert_eq!((cluster.width, cluster.get(31, 31), cluster.get(63, 63)), (64, [0xff, 0, 0, 0xff], [0xff, 0, 0, 0xff]));
         assert_eq!(cluster.get(40, 8)[3], 0);
+    }
+
+    #[test]
+    fn textures_built_on_each_other_in_a_cycle_are_refused_quickly() {
+        // Review's two books: each texture's base and stamp is the other, and two textures
+        // each stamping both. Walking every path round such a cycle once took minutes.
+        for book in [
+            r##"(textures: {"block/a": (base: "block/b", layers: [Stamp(texture: "block/b")]), "block/b": (base: "block/a", layers: [Stamp(texture: "block/a")])})"##,
+            r##"(textures: {"block/a": (layers: [Stamp(texture: "block/a"), Stamp(texture: "block/b")]), "block/b": (layers: [Stamp(texture: "block/a"), Stamp(texture: "block/b")])})"##,
+        ] {
+            let library = Library::from_books([("cycle", book)]).unwrap();
+            for name in ["block/a", "block/b"] {
+                assert!(library.render(name).unwrap().is_err(), "{name}");
+                assert!(library.render_at_least(name, 32).unwrap().is_err(), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn finenesses_that_do_not_divide_each_other_meet_at_their_least_common_multiple() {
+        assert_eq!((lcm(2, 3), lcm(2, 4), lcm(1, 1), lcm(4, 6)), (6, 4, 1, 12));
     }
 
     #[test]
