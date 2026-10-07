@@ -166,7 +166,14 @@ impl Server {
                 wild && self.check_level(agent, crop.skill) >= crop.def.level
             });
             if let Some(crop) = ripe {
-                self.harvest(agent, crop, cell, i as u32, sown);
+                if sown {
+                    self.harvest(agent, crop, cell, i as u32, true);
+                } else if self.unsown_gives(crop, cell, i as u32) {
+                    // A field nobody sowed (a village's) now and then gives a harvest, but
+                    // never its experience.
+                    let loot = self.content.crops.get(crop).harvest.clone();
+                    self.yield_loot(agent, crop, &loot, cell, i as u32);
+                }
                 continue;
             }
             if let Some((crop, plants)) = self.content.crops.wild_form(block).filter(|_| wild) {
@@ -184,8 +191,8 @@ impl Server {
             // store of free food.
             if wild
                 && !sown
-                && let Some(crop) = self.content.crops.stage_of(block).map(|(crop, _)| &self.content.crops.get(crop).def).filter(|def| !def.fruit)
-                && random3(self.tick, cell, i as u32 ^ 0x5eed)[0] >= crop.unsown.unwrap_or(1.0)
+                && let Some((crop, _)) = self.content.crops.stage_of(block)
+                && !self.unsown_gives(crop, cell, i as u32)
             {
                 continue;
             }
@@ -193,6 +200,13 @@ impl Server {
             let body = dropped::popped(cell, random3(self.tick, cell, i as u32));
             self.items.spawn(stack, body, dropped::PICKUP_DELAY);
         }
+    }
+
+    /// Whether a crop nobody sowed, at `cell`, gives anything this time (`unsown` in
+    /// crops.ron); fruit on trees always does.
+    pub(crate) fn unsown_gives(&self, crop: voxmar_engine::crop::CropId, cell: IVec3, salt: u32) -> bool {
+        let def = &self.content.crops.get(crop).def;
+        def.fruit || random3(self.tick, cell, salt ^ 0x5eed)[0] < def.unsown.unwrap_or(1.0)
     }
 
     /// Throws up to `count` items of `slot` from the player's hand.

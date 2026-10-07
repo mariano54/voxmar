@@ -1362,6 +1362,22 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
     // About one in seven (`unsown` 0.15): enough to start a field, not 28 potatoes.
     let found = potatoes(&client) - 1;
     assert!(found < field.len() / 2, "a field nobody sowed gave {found} potatoes of {}", field.len());
+    // Ripe, as villages grow them: now and then a harvest, and never its experience.
+    let earned = client.earned.len();
+    let ripe = client.content.blocks.expect("base:potato_crop");
+    client.ok("/fill ~-3 ~ ~1 ~3 ~ ~4 potato_crop");
+    client.pump_until(|c| field.iter().all(|&p| c.world.block(p) == Some(ripe)));
+    let before = potatoes(&client);
+    for &cell in &field {
+        client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
+        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+    }
+    for _ in 0..3 {
+        client.settle();
+    }
+    let found = potatoes(&client) - before;
+    assert!(found < field.len() / 2, "a ripe field nobody sowed gave {found} potatoes from {} crops", field.len());
+    assert_eq!(client.earned.len(), earned, "harvesting a field nobody sowed paid experience");
     // One the player sows gives its potato back, every time.
     let before = potatoes(&client);
     let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == potato)).unwrap() as u8;
@@ -1373,6 +1389,20 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
     client.pump_until(|c| potatoes(c) == before);
+    // Sown, grown ripe and harvested: the harvest's experience with the sowing's.
+    let earned = client.earned.len();
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == potato));
+    let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == potato)).unwrap() as u8;
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+    client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout));
+    client.ok("/grow ripe");
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
+    client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
+    let xp = client.content.crops.iter().find(|(_, c)| c.def.name == "base:potato").unwrap().1.def.xp;
+    let paid = ((xp.harvest + xp.plant) * 10.0).round() as u32;
+    client.pump_until(|c| c.earned.len() > earned);
+    assert_eq!(client.earned[earned..], [paid], "a sown potato's harvest paid other than its harvest and sowing");
 }
 
 #[test]
@@ -1396,6 +1426,40 @@ fn a_flower_placed_and_broken_on_a_planter_teaches_nothing() {
     }
     client.settle();
     assert_eq!(client.earned.len(), earned, "placing and breaking a flower on a planter paid experience");
+}
+
+#[test]
+fn a_planter_pays_once_for_each_flower_it_grew_back() {
+    let mut client = Client::join();
+    let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/clear", "/give poppy 2", "/fill ~ ~-1 ~2 ~ ~-1 ~2 herb_planter", "/fill ~ ~ ~2 ~ ~1 ~2 air"] {
+        client.ok(line);
+    }
+    let poppy = client.content.blocks.expect("base:poppy");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == poppy && s.count == 2) && c.world.block(ground) == c.content.blocks.id("base:herb_planter"));
+    let earned = client.earned.len();
+    let at = ground + IVec3::Y;
+    // Placed and picked: nothing, but it will grow back in the planter.
+    client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(poppy));
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    client.settle();
+    assert_eq!(client.earned.len(), earned, "picking a placed flower paid experience");
+    // Grown back and picked: the planter's experience for a common flower, once.
+    client.ok("/grow");
+    client.pump_until(|c| c.world.block(at) == Some(poppy));
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR) && c.earned.len() > earned);
+    let planter_xp = (client.content.regrowth.rules.planter_xp.common * 10.0).round() as u32;
+    // Placed again and picked without growing back: nothing more.
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == poppy));
+    client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(poppy));
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    client.settle();
+    assert_eq!(client.earned[earned..], [planter_xp], "the planter paid other than once for the flower it grew back");
 }
 
 #[test]

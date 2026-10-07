@@ -1,8 +1,10 @@
 //! The regional crops (crops.ron: rye, chickpea, rice, taro) each belong to a part of the
 //! world: a census of where their climate lets them grow, over the land around three
-//! spawns. Each grows on some land but not most of it, has a biome it thrives in, is not
-//! at its best at most spawns, and does not share most of its land with another regional
-//! crop (nor, for rye, with wheat). `CENSUS=1` prints the shares.
+//! spawns (Review's rulings on d506b51). Each grows on some land but not most of it, has a
+//! biome it thrives in, is not at its best at most spawns, shares little of its land with
+//! the other regional crops and has some none of them grows on. Wheat grows almost
+//! everywhere and is held to none of that; rye out-grows it where the cold holds wheat
+//! back. `CENSUS=1` prints the shares.
 
 use rustc_hash::FxHashMap;
 use voxmar_engine::content::Content;
@@ -28,6 +30,8 @@ fn regional_crops_are_regional() {
     let mut land: Vec<(String, u8)> = Vec::new();
     let mut below_best = [0; 4];
     let mut sampled = 0usize;
+    // Land where the cold holds wheat back, and where rye grows faster there.
+    let (mut cold, mut rye_wins) = (0usize, 0usize);
     for seed in SEEDS {
         let world = Overworld::with_content(seed, content.blocks.clone(), &world_content);
         let spawn = world.spawn_point();
@@ -49,7 +53,12 @@ fn regional_crops_are_regional() {
                 if site.height <= SEA_LEVEL {
                     continue;
                 }
-                let bits = grows(&site).iter().enumerate().filter(|(_, r)| **r > 0.0).fold(0u8, |bits, (i, _)| bits | 1 << i);
+                let rates = grows(&site);
+                if site.temperature < crops[4].comfort.temperature.0 {
+                    cold += 1;
+                    rye_wins += (rates[0] > rates[4]) as usize;
+                }
+                let bits = rates.iter().enumerate().filter(|(_, r)| **r > 0.0).fold(0u8, |bits, (i, _)| bits | 1 << i);
                 land.push((world.biomes().get(site.biome).name.clone(), bits));
             }
         }
@@ -60,7 +69,7 @@ fn regional_crops_are_regional() {
             let mine = land.iter().filter(|(_, bits)| bits & 1 << i != 0).count() as f32;
             eprintln!("{name}: {:.1}% of {} land samples, {:.1}% of all {sampled}", mine / total * 100.0, land.len(), mine / sampled as f32 * 100.0);
         }
-        eprintln!("below best at spawns: {below_best:?}");
+        eprintln!("below best at spawns: {below_best:?}; rye out-grows wheat on {rye_wins} of {cold} cold-limited samples");
     }
     let mut wrong = Vec::new();
     for (i, name) in REGIONAL.iter().enumerate() {
@@ -77,22 +86,27 @@ fn regional_crops_are_regional() {
             entry.1 += (bits & 1 << i != 0) as u32;
         }
         let best = biomes.iter().filter(|(_, (all, _))| *all >= 200).map(|(b, (all, grows))| (*grows as f32 / *all as f32, *b)).max_by(|a, b| a.0.total_cmp(&b.0));
-        if !best.is_some_and(|(share, _)| share >= 0.8) {
+        // Rice keeps to wet heat, which no biome is all of (Review accepts 60%).
+        let thrives = if *name == "base:rice" { 0.6 } else { 0.8 };
+        if !best.is_some_and(|(share, _)| share >= thrives) {
             wrong.push(format!("{name} thrives in no biome; best {best:?}"));
         }
         if below_best[i] < 2 {
             wrong.push(format!("{name} is at its best at {} of 3 spawns", 3 - below_best[i]));
         }
-        // Against wheat only for rye, which took wheat's place: wheat grows on three
-        // quarters of the land, and chickpeas and taro are crops of its warm edges (chickpea
-        // land lies wholly inside wheat's for every band tried; Review to rule).
-        let against = if *name == "base:rye" { REGIONAL.len() + 1 } else { REGIONAL.len() };
-        for (j, other) in REGIONAL.iter().chain(["base:wheat"].iter()).enumerate().take(against).filter(|&(j, _)| j != i) {
+        let others: u8 = (0..REGIONAL.len()).filter(|&j| j != i).fold(0, |bits, j| bits | 1 << j);
+        if !land.iter().any(|(_, bits)| bits & 1 << i != 0 && bits & others == 0) {
+            wrong.push(format!("{name} grows nowhere the other regional crops do not"));
+        }
+        for (j, other) in REGIONAL.iter().enumerate().filter(|&(j, _)| j != i) {
             let shared = land.iter().filter(|(_, bits)| bits & 1 << i != 0 && bits & 1 << j != 0).count() as f32;
             if shared / mine >= 0.8 {
                 wrong.push(format!("{name} shares {:.0}% of its land with {other}", shared / mine * 100.0));
             }
         }
+    }
+    if cold == 0 || (rye_wins as f32) < 0.8 * cold as f32 {
+        wrong.push(format!("rye out-grows wheat on only {rye_wins} of {cold} samples where the cold holds wheat back"));
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

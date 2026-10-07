@@ -285,7 +285,14 @@ impl Server {
         let Some(regrow) = crop.def.regrow else { return };
         let block = crop.stages[regrow as usize];
         let sown = self.farm.planted.get(&pos).is_some_and(|p| p.sown);
-        self.harvest(agent, id, pos, 0, false);
+        // A village's tomatoes, which nobody sowed, are picked as its field is broken: now
+        // and then, and for no experience. Fruit on trees is anyone's.
+        if sown || crop.def.fruit {
+            self.harvest(agent, id, pos, 0, false);
+        } else if self.unsown_gives(id, pos, 0) {
+            let loot = crop.harvest.clone();
+            self.yield_loot(agent, id, &loot, pos, 0);
+        }
         self.set_block(pos, block);
         let rate = self.crop_rate(id, pos);
         let due = if rate > 0.0 { self.stage_due(id, pos, regrow, rate) } else { self.tick + RETRY };
@@ -318,7 +325,7 @@ impl Server {
     }
 
     /// Rolls `loot` for `agent`'s level in the crop's skill and pops it out at `pos`.
-    fn yield_loot(&mut self, agent: PlayerId, id: CropId, loot: &[(BlockId, crop::Loot)], pos: IVec3, salt: u32) {
+    pub(crate) fn yield_loot(&mut self, agent: PlayerId, id: CropId, loot: &[(BlockId, crop::Loot)], pos: IVec3, salt: u32) {
         let crop = self.content.crops.get(id);
         let level = self.players.get(&agent).map_or(1, |p| self.content.skills.level(p.skills.xp(crop.skill)));
         let bonus = crop::level_bonus(level, crop.def.level, self.content.skills.max_level());
