@@ -103,6 +103,7 @@ impl Content {
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
         let mut quests = Vec::new();
+        let mut shapes = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -121,6 +122,10 @@ impl Content {
                     // owns (what creatures drop), each read the same way.
                     name if name.starts_with("blocks") => blocks.push((package.clone(), BlockRegistry::read(package, &source)?)),
                     "actions.ron" => actions.extend(package, &source)?,
+                    "shapes.ron" => {
+                        shapes.push((package.clone(), crate::shape::ShapeFile::read(package, &source)?));
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "commands.ron" => commands.extend(package, &source)?,
                     "weather.ron" => weather.extend(package, &source)?,
                     "skills.ron" => skills.extend(package, &source)?,
@@ -197,7 +202,7 @@ impl Content {
         }
         let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?;
         skills.validate()?;
-        let blocks = BlockRegistry::new(blocks)?;
+        let blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes)?)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
         let creatures = CreatureRegistry::new(creatures, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;

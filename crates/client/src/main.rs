@@ -618,12 +618,14 @@ fn setup(
     for warning in textures::see_through_warnings(registry.textures(), &block_textures, &opaque, &source.servers(registry.textures())) {
         warn!("{warning}");
     }
-    // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
+    // Opaque blocks must not show see-through texels; cut-out and translucent ones, and the
+    // quads of shapes, keep them.
     let mut see_through = vec![false; block_textures.len()];
     for id in 0..registry.len() {
-        let info = registry.info(voxmar_engine::block::BlockId(id as u16));
+        let block = voxmar_engine::block::BlockId(id as u16);
+        let info = registry.info(block);
         if !matches!(info.render, RenderKind::Opaque | RenderKind::Invisible) {
-            for layer in info.layers {
+            for &layer in info.layers.iter().chain(registry.shape_layers(block)) {
                 see_through[layer as usize] = true;
             }
         }
@@ -709,7 +711,7 @@ fn setup(
     ui::skin::load(&mut source, &mut images);
     ui::skin::set_font(settings.font, &mut fonts);
     let colormaps = source.colormaps();
-    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &layers);
+    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &layers, render::terrain::shape_table(registry));
     let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
     render::cracks::setup(&mut commands, &mut images, &mut meshes, &mut crack_materials, crack_stages);
     let palette = LodPalette::new(registry, &block_textures, &layers);
@@ -756,8 +758,27 @@ fn setup(
         }
         let (info, def) = (registry.info(block), registry.def(block));
         let own = def.icon.as_ref().and_then(|name| source.read(&format!("item/{name}")));
-        let icon = own.unwrap_or_else(|| match info.render {
-            RenderKind::Plant | RenderKind::Invisible => face_texture(info, Face::PosZ),
+        // A shape as it stands (a barrel's staves, a stair's steps), each quad in its own
+        // texture; a block in facings turned south, so its front faces the icon's left.
+        let shown = registry.facing(block, voxmar_engine::block::Facing::South);
+        let icon = own.unwrap_or_else(|| match (info.render, registry.shape(shown)) {
+            (RenderKind::Plant | RenderKind::Invisible, _) => face_texture(info, Face::PosZ),
+            (RenderKind::Model, Some(shape)) => {
+                let textures: Vec<_> = registry.shape_layers(shown).iter().map(|&layer| as_image(block_textures[layer as usize].clone())).collect();
+                let quads: Vec<_> = shape
+                    .quads
+                    .iter()
+                    .zip(&textures)
+                    .map(|(quad, texture)| voxmar_texgen::icon::IconQuad {
+                        corners: quad.corners.map(|c| c.to_array()),
+                        uvs: quad.uvs,
+                        texture,
+                        light: voxmar_texgen::icon::icon_light(quad.normal.to_array()),
+                    })
+                    .collect();
+                let icon = voxmar_texgen::icon::isometric_quads(&quads, 32);
+                Rgba { width: icon.width, height: icon.height, pixels: icon.pixels }
+            }
             _ => {
                 // Leaves would show only their holes' rims: draw them as a solid bush.
                 let [top, left, right] = [Face::PosY, Face::PosZ, Face::PosX].map(|face| {

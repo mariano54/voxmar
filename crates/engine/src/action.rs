@@ -309,13 +309,35 @@ pub fn placement_cell(ctx: &impl ActionContext, block: IVec3, face: Face) -> IVe
     if ctx.block(block).is_some_and(|b| ctx.info(b).replaceable) { block } else { block + face.normal() }
 }
 
-/// The block placing `held` against `face` of `block` puts there: what it goes on walls as
-/// (a wall torch, facing out) against a side it does not go into, otherwise itself.
+/// The block placing `held` against `face` of `block` puts there: against a side it does
+/// not go into, what it goes on walls as (a wall torch, facing out); otherwise itself,
+/// upside down against the underside of a block if it comes that way (a top slab), and
+/// facing the actor if it comes in facings (stairs climb away from whoever placed them).
 pub fn placed_block(ctx: &impl ActionContext, held: BlockId, block: IVec3, face: Face) -> BlockId {
-    match (ctx.info(held).wall, Facing::of_face(face)) {
-        (Some(wall), Some(facing)) if placement_cell(ctx, block, face) != block => ctx.blocks().facing(wall, facing),
-        _ => held,
+    let blocks = ctx.blocks();
+    let cell = placement_cell(ctx, block, face);
+    let against = cell != block;
+    if let (Some(wall), Some(facing)) = (ctx.info(held).wall, Facing::of_face(face))
+        && against
+    {
+        return blocks.facing(wall, facing);
     }
+    let mut placed = held;
+    if against && face == Face::NegY {
+        placed = blocks.flipped(held).unwrap_or(held);
+    }
+    if ctx.info(placed).facing.is_some() && ctx.info(placed).support != Support::Wall {
+        let toward = ctx.actor_eye() - (cell.as_vec3() + Vec3::splat(0.5));
+        let facing = if toward.x.abs() > toward.z.abs() {
+            if toward.x > 0.0 { Facing::East } else { Facing::West }
+        } else if toward.z > 0.0 {
+            Facing::South
+        } else {
+            Facing::North
+        };
+        placed = blocks.facing(placed, facing);
+    }
+    placed
 }
 
 /// Whether the actor may harvest what is at `cell`: a ripe crop (or fruit) asks for its
@@ -591,6 +613,25 @@ mod tests {
     }
 
     const TORCH: BlockId = BlockId(4);
+
+    #[test]
+    fn stairs_face_whoever_places_them_and_go_upside_down_under_a_ceiling() {
+        let file = crate::shape::ShapeFile::read("test", r#"(limits: (boxes: 2, quads: 64), shapes: {"stairs": (boxes: [(to: (16, 8, 16)), (from: (0, 8, 8))])})"#);
+        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file.unwrap())]).unwrap();
+        let stairs = BlockDef { name: "test:stairs".into(), render: RenderKind::Model, shape: Some("test:stairs".into()), facing: true, flips: true, ..Default::default() };
+        let registry = BlockRegistry::with_shapes(vec![BlockDef { name: "test:stone".into(), ..Default::default() }, stairs], &shapes).unwrap();
+        let held = registry.expect("test:stairs");
+        let blocks = [(IVec3::ZERO, STONE)].into_iter().collect();
+        let world = World { registry, blocks, held, crops: CropRegistry::default() };
+        let name = |block: BlockId| world.registry.def(block).name.clone();
+        // On top of the stone, with the actor's eye south of it (+z): they climb northwards,
+        // away from the actor.
+        assert_eq!(name(placed_block(&world, held, IVec3::ZERO, Face::PosY)), "test:stairs_south");
+        // Against the stone's west side, the actor still to the south.
+        assert_eq!(name(placed_block(&world, held, IVec3::ZERO, Face::NegX)), "test:stairs_south");
+        // Against its underside they hang upside down.
+        assert_eq!(name(placed_block(&world, held, IVec3::ZERO, Face::NegY)), "test:stairs_top_south");
+    }
 
     #[test]
     fn a_torch_against_a_wall_is_a_wall_torch_facing_out_and_goes_with_the_wall() {

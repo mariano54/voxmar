@@ -389,6 +389,46 @@ blades went from about 2.5 ms of GPU vertex time to a fraction of that. They are
 at the root and lighter at the tip, receive shadows but cast none, and part around the
 player's feet.
 
+## Block shapes
+
+Blocks that are not whole cubes (a slab, stairs, a barrel, a crate, a sack) are drawn as
+boxes, as Minecraft's block models are. A package's `shapes.ron` names each shape's boxes
+in 16ths of a block (`from`, `to`); a block takes one with `render: Model` and
+`shape: "<name>"` (voxmar_engine::shape). The boxes come from the package that defines the
+block, which the server loads too, so what a block hides, what light it stops and (from
+phase 2) what it collides with are never something a texture pack can change.
+
+At load each shape is made into quads once for each facing and way up a block takes it in
+(blocks that share one, the stairs of every wood, share its quads) and checked: every box
+runs from less to more within the cell; a box may hide behind a solid neighbour (`cull`)
+only with a face on the cell's side; a box turned about the vertical (`turn`: a barrel is a
+square and the same turned 45°) hides nothing and counts, for what it hides and will
+collide with, as its unturned bound; and the caps on boxes per shape and on quads in all
+are data (core's `shapes.ron`). Which of the cell's six sides the boxes cover whole is
+worked out by sampling every 16th, never read from a flag: only a shape covering all six
+hides its neighbours' faces and stops light as a cube does, so a slab's top or a stair's
+side never hides a face, and slabs and stairs neither darken what they touch nor stop
+torchlight.
+
+The renderer keeps every shape's quads in one storage buffer (`shape_quads`, binding 17 of
+the terrain bind group: each quad's corners, texture coordinates, normal and the cube face
+it is lit as). The mesher emits a shaped block's quads as plant faces of a seventh plant
+model (`PLANT_SHAPE`), with the quad's number in word 1 bits 12..23 where a plant keeps its
+tint and height, so the vertex stays 8 bytes and the cut-out pass draws them with its alpha
+test; the vertex shader looks each corner up. A quad on the cell's side takes the brighter
+light of its cell and the one beyond, as a cube face takes the light in front of it; one
+inside the cell takes the cell's. Shapes have no ambient occlusion yet. In the coarse
+meshes of far chunks a shape is drawn as its block's cube, too small there to make out.
+Inventory icons draw a shape's own quads at the cube icon's angle (texgen
+`isometric_quads`), so a barrel shows its staves and stairs their steps.
+
+A block that `flips` also comes upside down (`<name>_top`: a top slab, stairs under a
+ceiling), and one with `facing` in four facings. Placed against the underside of a block
+it goes upside down, and it faces whoever places it, so stairs climb away from the player
+(engine `action::placed_block`, which client and server both run). Phase 2 takes collision
+and selection from the same boxes, stepping up by `movement.ron`'s `step_up`; phase 3
+brings doors and beds.
+
 ## Leaves
 
 What made the shader-pack screenshots' trees look better than ours was mostly the leaves'
