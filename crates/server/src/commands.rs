@@ -533,8 +533,9 @@ impl Server {
         }
         // Killed outright, as a blow would kill them: their death, their drops.
         if what == "kill" {
-            // Never another player's kept animals: only wild ones and the admin's own.
-            let killed: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| near(c) && c.owner.as_ref().is_none_or(|owner| *owner == name)).map(|(&id, _)| id).collect();
+            // Never another player's kept animals: only wild ones and the admin's own, by who
+            // keeps them (an animal whose keeper is away is nobody's here to kill).
+            let killed: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| near(c) && (c.owner.is_none() || c.owner_id == Some(player))).map(|(&id, _)| id).collect();
             for &id in &killed {
                 self.creature_dies(id);
             }

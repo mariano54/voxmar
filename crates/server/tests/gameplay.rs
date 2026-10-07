@@ -2131,14 +2131,19 @@ fn a_treasure_chest_opens_to_a_pick_of_its_age_or_the_one_before_and_holds_its_t
     client.pump_until(|c| picks(c, "base:copper_lockpick") == 1 && c.world.block(bronze) == blocks.id("base:bronze_treasure_chest"));
     assert!(pick_lock(&mut client, bronze).contains("The lock gives"));
     client.pump_until(|c| c.world.block(bronze) == blocks.id("base:chest") && picks(c, "base:copper_lockpick") == 0);
-    // A plain chest now, holding the Bronze table's finds: 6 to 16 gold always.
+    // A plain chest now, holding the Bronze table's finds: always its gold, as much as a
+    // Common thing of the chest's level is worth, times a share (treasure.ron).
+    let (low, high) = client.content.treasure.chest(blocks.expect("base:bronze_treasure_chest")).unwrap().gold;
+    assert!(low >= 1 && low < high, "{low}..={high}");
     let said = client.ok(&format!("/machine {}", at(bronze)));
-    assert!(items_held(&said) >= 6, "{said}");
+    assert!(items_held(&said) >= low, "{said}");
     use_machine(&mut client, bronze);
     client.pump_until(|c| picks(c, "base:gold_coin") > 0);
-    assert!((6..=16).contains(&picks(&client, "base:gold_coin")), "{} gold", picks(&client, "base:gold_coin"));
-    // The Iron chest's lock is no machine and nothing breaks it.
-    assert!(client.content.blocks.def(blocks.expect("base:iron_treasure_chest")).hardness < 0.0);
+    assert!((low..=high).contains(&picks(&client, "base:gold_coin")), "{} gold, not {low}..={high}", picks(&client, "base:gold_coin"));
+    // Nothing mines the Iron chest's lock away: three seconds at it, and it stands.
+    client.propose("core:mine", ActionTarget::Block { block: iron, face: Face::NegX });
+    wait_server(&mut client, 3);
+    assert_eq!(client.world.block(iron), blocks.id("base:iron_treasure_chest"), "the locked chest was mined");
 }
 
 #[test]
@@ -3088,4 +3093,37 @@ fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
     // Then its meat is on the ground, and the server had run at least the fall by then.
     client.pump_until(|c| c.items.len() > before);
     assert!(ticks(&client) >= asked + fall, "loot seen {} ticks after asking, before the {fall}-tick fall", ticks(&client) - asked);
+}
+
+/// `/creatures kill` spares another player's kept animals, judged by who keeps them, not
+/// by how a name is written: a rabbit Ann tamed is refused to the host while she is here,
+/// and is killed for ANN, who is Ann come back with her name in capitals.
+#[test]
+fn creatures_kill_spares_another_players_kept_animals_whatever_the_case_of_their_name() {
+    let mut host = Client::join_remote("host", &["host", "ann"]);
+    let mut ann = host.another("Ann");
+    let rabbit = ann.content.creatures.find("rabbit").expect("rabbits in the content");
+    let kept = |c: &Client| c.creatures.values().find(|v| v.species == rabbit && v.kept).map(|v| v.id);
+    // Held still beside the players while it is tamed and the host tries it.
+    ann.ok("/summon rabbit 1 ~ ~ ~-2");
+    ann.ok("/creatures hold rabbit");
+    ann.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
+    ann.ok("/creatures tame rabbit");
+    ann.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit && v.owner == Some(c.id)));
+    let id = kept(&ann).expect("the tamed rabbit");
+    // The host, an admin too, may not kill it.
+    host.pump_until(|c| c.creatures.contains_key(&id));
+    host.ok("/creatures kill rabbit");
+    wait_server(&mut host, 1);
+    assert!(host.creatures.get(&id).is_some_and(|v| v.kept), "the host killed Ann's rabbit");
+    // Ann leaves, and comes back as ANN: the rabbit is hers again, and hers to kill.
+    drop(ann);
+    let mut ann = host.another("ANN");
+    ann.pump_until(|c| c.creatures.get(&id).is_some_and(|v| v.owner == Some(c.id)));
+    // Beside it, wherever it has hopped to.
+    let to = ann.creatures[&id].position;
+    ann.ok(&format!("/tp {} {} {}", to.x, to.y, to.z));
+    let said = ann.ok("/creatures kill rabbit");
+    assert!(!said.contains("for 0 creatures"), "{said}");
+    ann.pump_until(|c| !c.creatures.contains_key(&id) && c.deaths >= 1);
 }

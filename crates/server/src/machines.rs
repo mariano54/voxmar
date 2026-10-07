@@ -248,7 +248,10 @@ impl Server {
                     let across = Vec2::new(at.x - centre.x, at.z - centre.z).length();
                     (across <= rules.walk_reach && (at.y - centre.y).abs() <= rules.walk_height).then(|| at.distance(centre))
                 };
-                let keeps = |wheel_owner: &Option<String>, animal_owner: &Option<String>| animal_owner.is_some() && (wheel_owner.is_none() || wheel_owner == animal_owner);
+                let keeps = |wheel_owner: &Option<String>, animal_owner: &Option<String>| {
+                    let key = |owner: &Option<String>| owner.as_deref().map(crate::player_key);
+                    animal_owner.is_some() && (wheel_owner.is_none() || key(wheel_owner) == key(animal_owner))
+                };
                 // Fed by a player within the last few days, or it will not walk.
                 let fed = |c: &Live| self.day - c.fed <= (rules.walk_fed_days * TICKS_PER_DAY as f32) as f64;
                 let walker = self.creatures.live.iter().find(|(_, c)| {

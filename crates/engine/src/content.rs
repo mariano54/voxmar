@@ -240,16 +240,18 @@ impl Content {
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
         }
-        let treasure = crate::treasure::Treasure::new(treasure, &blocks)?;
-        // An opened chest becomes a bin with room for all its table can give.
+        let value = crate::value::Value::merge(value);
+        let limits = stack_limits(&blocks, &stacking)?;
+        let treasure = crate::treasure::Treasure::new(treasure, &blocks, &value, &limits)?;
+        // An opened chest becomes a bin with room for all it can give.
         for (block, chest) in treasure.chests() {
             let room = machines.get(chest.opens_to).map_or(0, |m| m.bin_slots());
-            let most = treasure.tables[chest.table].most_stacks();
+            let most = treasure.most_stacks(chest);
             if room < most {
                 return Err(RegistryError(format!("treasure.ron: `{}` opens to a bin of {room} stacks, but its table gives up to {most}", blocks.def(block).name)));
             }
         }
-        crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
+        crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks));
         crate::inventory::set_worn_slots(combat.worn_slots());
         Ok(Self {
@@ -269,7 +271,7 @@ impl Content {
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
             treasure: Arc::new(treasure),
-            value: Arc::new(crate::value::Value::merge(value)),
+            value: Arc::new(value),
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
