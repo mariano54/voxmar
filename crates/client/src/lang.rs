@@ -447,7 +447,8 @@ mod tests {
     /// `alchemy:<property>` tag is called (`alchemy.<property>`, in item tooltips), each
     /// biome tag (`biome.tag.<tag>`, in `/biome`), what creatures are doing
     /// (`creature.doing.<module>`), animals' genes and alleles (`gene.<species>.<gene>`, in
-    /// `/inspect`) and the weather's channels (`weather.channel.<name>`).
+    /// `/inspect`), the weather's channels (`weather.channel.<name>`) and the quest book's
+    /// chapters (`quest.age.<age>`).
     fn built_keys(content: &voxmar_engine::content::Content) -> BTreeSet<String> {
         let blocks = &content.blocks;
         let mut keys = BTreeSet::new();
@@ -479,6 +480,8 @@ mod tests {
         // The weather's channels in `/weather` and the F3 screen, and what falls.
         let channels = voxmar_engine::weather::Weather::default().channels().map(|(name, _)| name);
         keys.extend(channels.chain(["rain", "snow"]).map(|name| format!("weather.channel.{name}")));
+        // The quest book's chapters, one per age the first-party quests name.
+        keys.extend(content.quests.iter().filter(|quest| first_party(&quest.name)).map(|quest| format!("quest.age.{}", quest.age)));
         keys
     }
 

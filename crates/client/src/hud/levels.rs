@@ -68,7 +68,7 @@ fn label(
     mut health: Query<&mut Node, (With<LevelHealth>, Without<LevelLabel>)>,
 ) {
     let Ok((mut node, mut visibility)) = plate.single_mut() else { return };
-    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open || player.dead;
+    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
     // The nearest creature along the crosshair, before any solid block (grass is seen through).
     let (eye_at, look) = (player.eye(), player.look_direction().normalize_or_zero());
     let block = voxmar_engine::physics::raycast(eye_at, look, SIGHT, |p| world.block(p).is_some_and(|b| world.registry.info(b).solid)).map_or(f32::MAX, |hit| hit.distance);
