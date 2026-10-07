@@ -990,6 +990,7 @@
     "creature.doing.return_home": "帰巣中",
     "creature.doing.resting": "休憩中",
     "creature.doing.roam": "遠出中",
+    "creature.doing.routine": "日々の務め中",
     "creature.doing.court": "求愛中",
     "command.core.summon.help": "指定した種類の生き物 (ウサギ、オオカミ、月ウサギなど) を目の前の地面か、指定したブロック (~ は今いる場所) に呼び出します。数の指定がなければ1体、最大16体。",
     "command.core.summon.help.summary": "生き物を呼び出します。",

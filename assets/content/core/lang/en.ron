@@ -750,6 +750,7 @@
     "creature.doing.resting": "resting",
     "creature.doing.return_home": "heading home",
     "creature.doing.roam": "roaming",
+    "creature.doing.routine": "going about their day",
     "creature.doing.sentinel": "keeping watch",
     "creature.doing.stand_to_look": "standing up to look",
     "creature.doing.tempted": "drawn by food",
