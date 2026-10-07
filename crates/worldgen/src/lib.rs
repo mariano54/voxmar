@@ -1832,10 +1832,11 @@ mod tests {
         }
     }
 
-    /// A meadow is well carpeted (about three blocks of open grass in ten carry a plant, since
+    /// Plains are well carpeted (about three blocks of open grass in ten carry a plant, since
     /// plants grow at half the biomes' own density), and few of the plants are flowers.
+    /// Measured on the open grass of `base:plains` near two seeds' origins.
     #[test]
-    fn meadows_are_carpeted_and_flowers_stay_sparse() {
+    fn plains_are_carpeted_and_flowers_stay_sparse() {
         let registry = registry();
         let (grass, air) = (registry.expect("base:grass_block"), BlockId::AIR);
         let (mut open, mut planted, mut flowers, mut implied) = (0, 0, 0, 0);
