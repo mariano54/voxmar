@@ -310,7 +310,7 @@
     "item.armour_shield": "Shield",
     "item.armour_guard": "Guards {stop}% over {arc}°",
     "item.armour_resists": "Strong against {styles}",
-    "item.armour_low": "Below Defence {level} it gives no armour",
+    "item.armour_low": "Until then it gives no armour",
     "item.slot.head": "Head",
     "item.slot.body": "Body",
     "item.slot.legs": "Legs",

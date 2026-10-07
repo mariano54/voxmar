@@ -834,7 +834,11 @@ pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Co
         return Vec::new();
     };
     let ready = level >= needs;
-    let mut lines = vec![(head, SOFT), (locale.format("item.armour_needs", &[("level", &needs)]), if ready { SOFT } else { ERROR })];
+    let mut lines = vec![(head, SOFT)];
+    // What anyone can wear needs no saying.
+    if needs > 1 {
+        lines.push((locale.format("item.armour_needs", &[("level", &needs)]), if ready { SOFT } else { ERROR }));
+    }
     if armour > 0 {
         lines.push((locale.format("item.armour_value", &[("armour", &armour)]), SOFT));
     }
@@ -847,7 +851,7 @@ pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Co
         lines.push((locale.format("item.armour_resists", &[("styles", &styles.join(locale.get("language.comma")))]), SOFT));
     }
     if !ready {
-        lines.push((locale.format("item.armour_low", &[("level", &needs)]), ERROR));
+        lines.push((locale.get("item.armour_low").to_owned(), ERROR));
     }
     lines
 }

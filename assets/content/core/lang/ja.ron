@@ -298,7 +298,7 @@
     "item.armour_shield": "盾",
     "item.armour_guard": "{arc}°の範囲で{stop}%防ぐ",
     "item.armour_resists": "{styles}に強い",
-    "item.armour_low": "防御{level}未満では防御力がない",
+    "item.armour_low": "それまでは装甲がない",
     "item.slot.head": "頭",
     "item.slot.body": "胴",
     "item.slot.legs": "脚",
