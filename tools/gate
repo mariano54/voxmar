@@ -94,6 +94,7 @@ SLOW_TESTS=(
   voxmar_worldgen fluids_are_contained          # 177 s
   voxmar_worldgen decorations_rest_on_the_ground # 23 s
   voxmar_worldgen wood_never_floats             # 17 s
+  voxmar_worldgen rare_herbs_grow_at_their_rates # herb biomes in 3 places a seed, up to 16 seeds
 )
 
 started=$(date +%s)

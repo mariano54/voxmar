@@ -567,6 +567,18 @@ pub enum Habitat {
     Shore,
     /// At the edge of warm shallows, rooted under water.
     Shallows,
+    /// On the banks of still lakes (not rivers or creeks), just above the water: mountain
+    /// tarns for the sky lotus.
+    LakeShore,
+}
+
+impl Habitat {
+    /// Whether it runs along the edge of water, a thin line through the land: trees of
+    /// such a habitat grow beside a forest rather than in it, and a rare herb's patches
+    /// start from it where it crosses their cell rather than at a random spot.
+    pub fn edge(self) -> bool {
+        matches!(self, Self::Water | Self::Shore | Self::Shallows | Self::LakeShore)
+    }
 }
 
 /// The climate something grows best in: inside both ranges it thrives, and it fades out
@@ -801,7 +813,31 @@ pub struct PlantDef {
     /// do not grow under snow.
     #[serde(default)]
     pub snowy: Option<String>,
+    /// Grows only in the biomes that name it (in their plants or wonders), never through a
+    /// tag, the forage sweep, a decoration's selector or the wonders every biome takes by
+    /// default: a rare herb that keeps to its one or two biomes.
+    #[serde(default)]
+    pub named_only: bool,
+    /// How it grows in the biomes that name it: in small patches, at a rate of its own
+    /// (see `Patches`), rather than by the biome's weight among its other plants.
+    #[serde(default)]
+    pub patches: Option<Patches>,
 }
+
+/// A rare herb's patches: about `rate` plants per million blocks where it can root, times
+/// the weight a biome names it with, in patches of `size` plants (1 to 25). `aim` is the
+/// rate design wants it to reach per million blocks of each biome naming it, which the
+/// census test holds it to.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Patches {
+    pub rate: f32,
+    pub size: (u32, u32),
+    pub aim: f32,
+}
+
+/// The most plants a patch may have.
+pub const PATCH_MOST: u32 = 25;
 
 /// What a biome grows, drawn from the shared pools of trees and plants.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -2107,6 +2143,20 @@ impl WorldContent {
                 block(&at, snowy)?;
             }
             comfort(&at, &plant.comfort)?;
+            if let Some(p) = &plant.patches {
+                if !(p.rate.is_finite() && p.rate > 0.0) {
+                    return Err(ContentError(format!("{}: the patch rate {} must be a number above 0", at(), p.rate)));
+                }
+                if !(1 <= p.size.0 && p.size.0 <= p.size.1 && p.size.1 <= PATCH_MOST) {
+                    return Err(ContentError(format!("{}: a patch has 1 to {PATCH_MOST} plants, the least first, not {:?}", at(), p.size)));
+                }
+                if !(p.aim.is_finite() && p.aim > 0.0) {
+                    return Err(ContentError(format!("{}: the patch aim {} must be a number above 0", at(), p.aim)));
+                }
+                if !plant.named_only {
+                    return Err(ContentError(format!("{}: grows in patches only where named, so it needs `named_only: true`", at())));
+                }
+            }
         }
         for (i, particles) in self.particles.iter().enumerate() {
             let at = || format!("ambient.ron: particles `{}`", particles.name);
@@ -2121,6 +2171,29 @@ impl WorldContent {
         for biome in &self.biomes {
             let file = file_of(&biome.name);
             let at = || format!("{file}: biome `{}`", biome.name);
+            // A patch plant's weight here may make at most one patch a cell (ecology.rs
+            // `in_patch`): its rate times the weight, over a mean patch, fills a cell at most.
+            // One along water (`edge_patches`) may at most grow on every column of its habitat.
+            for select in biome.flora.plants.iter().chain(biome.flora.wonders.iter().flatten()) {
+                let Select::Name(name, weight) = select else { continue };
+                let Some(plant) = self.plants.iter().find(|p| p.name == *name) else { continue };
+                let Some(p) = &plant.patches else { continue };
+                if !(weight.is_finite() && *weight > 0.0) {
+                    return Err(ContentError(format!("{}: plant `{name}` at weight {weight}: a weight must be above 0", at())));
+                }
+                if plant.habitat.edge() {
+                    let share = p.rate * weight / 1e6;
+                    if share > 1.0 {
+                        return Err(ContentError(format!("{}: plant `{name}` at weight {weight} asks for {share:.2} plants a column of its habitat; at most 1", at())));
+                    }
+                    continue;
+                }
+                let cell = (crate::ecology::PATCH_CELL * crate::ecology::PATCH_CELL) as f32;
+                let chance = p.rate * weight * cell / ((p.size.0 + p.size.1) as f32 / 2.0) / 1e6;
+                if chance > 1.0 {
+                    return Err(ContentError(format!("{}: plant `{name}` at weight {weight} asks for {chance:.2} patches a {}-block cell; at most 1", at(), crate::ecology::PATCH_CELL)));
+                }
+            }
             let air = &biome.atmosphere;
             for (what, value, range) in [("haze_density", air.haze_density, 0.0..=4.0), ("warmth", air.warmth, -1.0..=1.0), ("saturation", air.saturation, 0.0..=2.0)] {
                 if value.is_some_and(|v| !range.contains(&v)) {
@@ -2870,6 +2943,62 @@ mod tests {
         for (file, source, expected) in cases {
             let message = load(file, &source);
             assert!(message.contains(expected), "expected `{expected}` in: {message}");
+        }
+    }
+
+    /// A rare herb's patches are refused at load unless they make sense: a rate above 0, 1
+    /// to 25 plants a patch, an aim, `named_only`, and no biome naming it so heavily that a
+    /// cell would need more than one patch.
+    #[test]
+    fn bad_patches_are_refused() {
+        let registry = registry();
+        let load = |patches: &str, weight: f32| {
+            let mut files = base_files();
+            files.iter_mut().find(|f| f.name == "biomes.ron").unwrap().source = biomes(&format!("(name: \"herbs\", climate: [()], flora: (plants: [Name(\"mod:herb\", {weight:?})]), {GROUND})"));
+            let plant = format!("(plants: [(name: \"herb\", block: \"base:poppy\", {patches})])");
+            files.push(ContentFile { package: "mod".into(), name: "plants.ron".into(), source: plant });
+            WorldContent::from_files(files.iter(), &registry).map(|_| ()).map_err(|e| e.0)
+        };
+        assert_eq!(load("named_only: true, patches: (rate: 200.0, size: (3, 6), aim: 200.0)", 1.0), Ok(()));
+        let cases = [
+            ("named_only: true, patches: (rate: 0.0, size: (3, 6), aim: 200.0)", 1.0, "patch rate 0"),
+            ("named_only: true, patches: (rate: inf, size: (3, 6), aim: 200.0)", 1.0, "patch rate inf"),
+            ("named_only: true, patches: (rate: 200.0, size: (0, 6), aim: 200.0)", 1.0, "1 to 25 plants"),
+            ("named_only: true, patches: (rate: 200.0, size: (6, 3), aim: 200.0)", 1.0, "1 to 25 plants"),
+            ("named_only: true, patches: (rate: 200.0, size: (3, 26), aim: 200.0)", 1.0, "1 to 25 plants"),
+            ("named_only: true, patches: (rate: 200.0, size: (3, 6), aim: -1.0)", 1.0, "patch aim"),
+            ("patches: (rate: 200.0, size: (3, 6), aim: 200.0)", 1.0, "named_only"),
+            // 200 plants a million blocks at weight 30, in patches of 4.5 on average: 1.37
+            // patches a 32-block cell.
+            ("named_only: true, patches: (rate: 200.0, size: (3, 6), aim: 200.0)", 30.0, "plant `mod:herb` at weight 30"),
+        ];
+        for (patches, weight, expected) in cases {
+            let message = load(patches, weight).unwrap_err();
+            assert!(message.contains(expected), "expected `{expected}` in: {message}");
+            assert!(message.contains("mod:herb") || message.contains("`herb`"), "no plant named in: {message}");
+        }
+    }
+
+    /// Tarn data is refused at load unless it makes sense, naming what is wrong.
+    #[test]
+    fn bad_tarns_are_refused() {
+        let registry = registry();
+        let load = |tarns: &str| {
+            let mut files = base_files();
+            files.push(ContentFile { package: "mod".into(), name: "terrain.ron".into(), source: format!("#![enable(implicit_some)]\n(shapes: [], tarns: ({tarns}))") });
+            WorldContent::from_files(files.iter(), &registry).map(|c| c.tarns.unwrap().chance).map_err(|e| e.0)
+        };
+        let good = "climate: [(temperature: (\"frozen\", \"cool\"))], floor: 56.0, depth: 2.0, chance: 0.3, country: (scale: 1000.0, share: 0.5)";
+        assert_eq!(load(good), Ok(0.3), "a later package's tarns replace the base's");
+        for (from, to, expected) in [
+            ("chance: 0.3", "chance: 1.5", "chance 1.5"),
+            ("floor: 56.0", "floor: -3.0", "floor -3"),
+            ("depth: 2.0", "depth: 0.0", "depth 0"),
+            ("share: 0.5", "share: 2.0", "country share 2"),
+            ("\"cool\"", "\"balmy\"", "unknown Temperature band `balmy`"),
+        ] {
+            let message = load(&good.replace(from, to)).unwrap_err();
+            assert!(message.contains("terrain.ron: tarns") && message.contains(expected), "expected `{expected}` in: {message}");
         }
     }
 
