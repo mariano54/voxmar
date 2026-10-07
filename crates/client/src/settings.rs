@@ -135,6 +135,8 @@ pub struct Settings {
     pub ui_scale: i32,
     /// The tips shown already (`hud::tips`), each once.
     pub tips_seen: Vec<String>,
+    /// The quests followed on screen (`hud::quests`), at most three.
+    pub pinned_quests: Vec<String>,
     /// The sounds buttons and the inventory make.
     pub ui_sounds: UiSounds,
     /// Key that opens and closes the inventory.
@@ -142,6 +144,7 @@ pub struct Settings {
     /// Key that opens and closes the character screen (skills and how you are).
     pub character_key: Key,
     pub journal_key: Key,
+    pub quests_key: Key,
     /// Keys that show, over an item, the recipes that make it and the ones it goes into.
     pub recipes_key: Key,
     pub uses_key: Key,
@@ -324,10 +327,12 @@ impl Default for Settings {
             // A little smaller than the art's own size: still whole pixels on a Retina screen.
             ui_scale: 75,
             tips_seen: Vec::new(),
+            pinned_quests: Vec::new(),
             ui_sounds: UiSounds::default(),
             inventory_key: Key(KeyCode::KeyE),
             character_key: Key(KeyCode::KeyC),
             journal_key: Key(KeyCode::KeyJ),
+            quests_key: Key(KeyCode::KeyL),
             recipes_key: Key(KeyCode::KeyR),
             uses_key: Key(KeyCode::KeyU),
             screenshot_key: Key(KeyCode::F2),
@@ -717,6 +722,7 @@ enum Binding {
     Inventory,
     Character,
     Journal,
+    Quests,
     Recipes,
     Uses,
     Screenshot,
@@ -731,6 +737,7 @@ impl Binding {
             Binding::Inventory => "settings.key.inventory",
             Binding::Character => "settings.key.character",
             Binding::Journal => "settings.key.journal",
+            Binding::Quests => "settings.key.quests",
             Binding::Recipes => "settings.key.recipes",
             Binding::Uses => "settings.key.uses",
             Binding::Screenshot => "settings.key.screenshot",
@@ -745,6 +752,7 @@ impl Binding {
             Binding::Inventory => settings.inventory_key,
             Binding::Character => settings.character_key,
             Binding::Journal => settings.journal_key,
+            Binding::Quests => settings.quests_key,
             Binding::Recipes => settings.recipes_key,
             Binding::Uses => settings.uses_key,
             Binding::Screenshot => settings.screenshot_key,
@@ -759,6 +767,7 @@ impl Binding {
             Binding::Inventory => &mut settings.inventory_key,
             Binding::Character => &mut settings.character_key,
             Binding::Journal => &mut settings.journal_key,
+            Binding::Quests => &mut settings.quests_key,
             Binding::Recipes => &mut settings.recipes_key,
             Binding::Uses => &mut settings.uses_key,
             Binding::Screenshot => &mut settings.screenshot_key,
@@ -887,6 +896,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Key(Binding::Inventory),
             Control::Key(Binding::Character),
             Control::Key(Binding::Journal),
+            Control::Key(Binding::Quests),
             Control::Key(Binding::Recipes),
             Control::Key(Binding::Uses),
             Control::Key(Binding::Screenshot),

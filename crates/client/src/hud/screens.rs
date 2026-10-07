@@ -1,5 +1,5 @@
 //! The in-game screens and the keys between them: the inventory (E), the character
-//! screen (C), the journal (J) and the menu (Esc). Each key opens its screen from play or from another
+//! screen (C), the journal (J), the quest book (L) and the menu (Esc). Each key opens its screen from play or from another
 //! screen, and closes it again; every screen shows the keys to the others along its foot,
 //! and the keys can be clicked too. The keys are the player's bindings (`Settings`).
 
@@ -31,11 +31,12 @@ pub enum GameScreen {
     Inventory,
     Character,
     Journal,
+    Quests,
     Menu,
 }
 
 impl GameScreen {
-    const ALL: [GameScreen; 4] = [GameScreen::Inventory, GameScreen::Character, GameScreen::Journal, GameScreen::Menu];
+    const ALL: [GameScreen; 5] = [GameScreen::Inventory, GameScreen::Character, GameScreen::Journal, GameScreen::Quests, GameScreen::Menu];
 
     /// The key of its name (see `lang`).
     fn title(self) -> &'static str {
@@ -43,6 +44,7 @@ impl GameScreen {
             GameScreen::Inventory => "screen.inventory",
             GameScreen::Character => "screen.character",
             GameScreen::Journal => "screen.journal",
+            GameScreen::Quests => "screen.quests",
             GameScreen::Menu => "screen.menu",
         }
     }
@@ -52,6 +54,7 @@ impl GameScreen {
             GameScreen::Inventory => settings.inventory_key.label(),
             GameScreen::Character => settings.character_key.label(),
             GameScreen::Journal => settings.journal_key.label(),
+            GameScreen::Quests => settings.quests_key.label(),
             GameScreen::Menu => "Esc",
         }
     }
@@ -61,6 +64,7 @@ impl GameScreen {
             GameScreen::Inventory => ui.inventory_open,
             GameScreen::Character => ui.character_open,
             GameScreen::Journal => ui.journal_open,
+            GameScreen::Quests => ui.quests_open,
             GameScreen::Menu => ui.menu_open,
         }
     }
@@ -72,6 +76,7 @@ fn toggle(ui: &mut UiState, screen: GameScreen) {
     ui.inventory_open = open && screen == GameScreen::Inventory;
     ui.character_open = open && screen == GameScreen::Character;
     ui.journal_open = open && screen == GameScreen::Journal;
+    ui.quests_open = open && screen == GameScreen::Quests;
     ui.menu_open = open && screen == GameScreen::Menu;
 }
 
@@ -82,6 +87,7 @@ fn switch(keys: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, player: Res<
         ui.inventory_open = false;
         ui.character_open = false;
         ui.journal_open = false;
+        ui.quests_open = false;
         return;
     }
     if ui.console_open {
@@ -93,6 +99,8 @@ fn switch(keys: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, player: Res<
         toggle(&mut ui, GameScreen::Character);
     } else if keys.just_pressed(settings.journal_key.0) {
         toggle(&mut ui, GameScreen::Journal);
+    } else if keys.just_pressed(settings.quests_key.0) {
+        toggle(&mut ui, GameScreen::Quests);
     }
 }
 

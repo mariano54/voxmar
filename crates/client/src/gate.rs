@@ -221,6 +221,9 @@ enum Step {
     Guides,
     /// The journal key opens the journal, whose Plants page lists what there is to find.
     Journal,
+    /// The quest key opens the quest book on its first chapter's web; a quest pinned
+    /// stands at the right of the screen with its progress.
+    Quests,
     /// In creative mode the inventory's catalogue finds an item by its English name and by
     /// its Japanese reading, and a click on it gives a stack; in survival it gives nothing.
     Catalogue,
@@ -879,6 +882,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Journal => journal(world, gate, now, in_phase),
+        Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit | Step::FitJournal => fit(world, gate, now, in_phase),
@@ -2271,6 +2275,52 @@ fn journal(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let found = world.resource::<LocalPlayer>().journal.entries().count();
             gate.check("journal", if open { Ok(format!("J opened the journal ({found} things found so far, {cells} buttons drawn)")) } else { Err("J did not open the journal".into()) });
             world.resource_mut::<UiState>().journal_open = false;
+            gate.next(Step::Quests, now);
+        }
+    }
+}
+
+fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::quests::{QuestView, toggle_pin};
+    let key_code = world.resource::<crate::settings::Settings>().quests_key.0;
+    let first = world.resource::<Launch>().content.quests.iter().next().map(|q| q.name.clone());
+    let Some(first) = first else {
+        gate.check("quests", Err("no quests in the content".into()));
+        gate.next(Step::Catalogue, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked: Some(first.clone()) };
+            key(world, key_code, true);
+            gate.advance(now);
+        }
+        1 => {
+            key(world, key_code, false);
+            let open = world.resource::<UiState>().quests_open;
+            let nodes = world.query_filtered::<(), With<Button>>().iter(world).count();
+            if !open && in_phase < 2.0 {
+                return;
+            }
+            gate.check("quests: book", if open { Ok(format!("L opened the quest book ({nodes} buttons drawn)")) } else { Err("L did not open the quest book".into()) });
+            // Pinned, and the book shut: it stands on screen.
+            let mut settings = world.resource_mut::<crate::settings::Settings>();
+            settings.pinned_quests.clear();
+            toggle_pin(&mut settings, &first);
+            world.resource_mut::<UiState>().quests_open = false;
+            gate.advance(now);
+        }
+        _ => {
+            let title = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                launch.content.quests.get(&first).map(|quest| crate::hud::quests::title(locale, quest)).unwrap_or_default()
+            };
+            let shown = world.query::<&Text>().iter(world).any(|text| text.0 == title);
+            if !shown && in_phase < 2.0 {
+                return;
+            }
+            gate.check("quests: pinned", if shown { Ok(format!("pinned, {title} stands on screen")) } else { Err(format!("pinned, {title} is nowhere on screen")) });
+            world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
             gate.next(Step::Catalogue, now);
         }
     }
@@ -2397,6 +2447,8 @@ enum View {
     Guide(usize),
     /// The journal on one page.
     Journal(usize),
+    /// The quest book on its first chapter, its first quest picked.
+    Quests,
     /// The menu on one settings tab.
     Menu(usize),
     /// Dead, waiting to respawn.
@@ -2434,6 +2486,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
+            .chain([View::Quests])
             .chain((0..crate::settings::TABS).map(View::Menu))
             .collect()
     };
@@ -2496,18 +2549,23 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         world.resource_mut::<crate::settings::Settings>().debug_overlay = debug;
     }
     let mut ui = world.resource_mut::<UiState>();
-    (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open, ui.journal_open) = (false, false, false, false, false);
+    (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open, ui.journal_open, ui.quests_open) = (false, false, false, false, false, false);
     match view {
         Some(View::Inventory) => ui.inventory_open = true,
         Some(View::Character | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
         Some(View::Journal(_)) => ui.journal_open = true,
+        Some(View::Quests) => ui.quests_open = true,
         Some(View::Console) => ui.console_open = true,
         Some(View::Recipes(_)) => (ui.inventory_open, ui.recipes_open) = (true, true),
         _ => {}
     }
     if !matches!(view, Some(View::Recipes(_))) {
         ui.recipes_open = false;
+    }
+    if let Some(View::Quests) = view {
+        let first = world.resource::<Launch>().content.quests.iter().next().map(|q| q.name.clone());
+        *world.resource_mut::<crate::hud::quests::QuestView>() = crate::hud::quests::QuestView { chapter: 0, picked: first };
     }
     if let Some(View::Journal(page)) = view {
         world.resource_mut::<crate::hud::journal::JournalView>().page = page;
