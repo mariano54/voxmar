@@ -2,6 +2,7 @@
 //! inventory screen and the console, all in the interface's pixel look (`crate::ui`).
 
 pub mod character;
+pub mod combat;
 pub mod console;
 pub mod creative;
 pub mod death;
@@ -41,7 +42,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
-            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin))
+            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, combat::CombatHudPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,

@@ -200,8 +200,9 @@ pub fn hurt_words(locale: &Locale, damage: u16, defended: Defended) -> String {
     locale.format(&format!("combat.splat.defended.{}", defended_name(defended)), &[("damage", &damage)])
 }
 
+/// The meter and its pips.
 #[derive(Component)]
-struct MeterRoot;
+pub struct MeterRoot;
 #[derive(Component)]
 struct MeterFill;
 #[derive(Component)]
@@ -299,7 +300,7 @@ fn meter(
     let last = fighting.struck.iter().map(|s| s.3).chain(fighting.hurt.iter().map(|h| h.3)).fold(f64::MIN, f64::max);
     let full = fighting.rhythm.meter(now, &timing);
     let lit = fighting.rhythm.pips(now, &combat.feel);
-    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
+    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open || player.dead;
     let fight = now - last < style.meter.linger as f64 || fighting.rhythm.pending().is_some() || lit > 0;
     visibility.set_if_neq(if fight && !screen { Visibility::Inherited } else { Visibility::Hidden });
     if !fight || screen {
@@ -389,7 +390,7 @@ fn splats(
         shown.hurt.push((damage, defended, words.clone()));
         add(&mut commands, None, words, style.defended(defended), at);
     }
-    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
+    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open || player.dead;
     let Ok((camera, eye)) = camera.single() else { return };
     let size = area.size() * area.inverse_scale_factor();
     for (entity, mark, mut node, mut color, mut visibility) in &mut marks {

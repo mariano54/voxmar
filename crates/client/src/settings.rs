@@ -112,6 +112,9 @@ pub struct Settings {
     pub cinematic_zoom: bool,
     /// Whether zooming works in survival too, not only in creative.
     pub zoom_in_survival: bool,
+    /// Whether a right click raises the guard and the next lowers it, rather than holding
+    /// the button.
+    pub toggle_guard: bool,
     /// How far the hotbar and hearts sit above the bottom edge, in HUD pixels.
     pub hud_raise: i32,
     /// Name of the shader pack in use (see `render::pack`).
@@ -314,6 +317,7 @@ impl Default for Settings {
             zoom: 400,
             cinematic_zoom: true,
             zoom_in_survival: false,
+            toggle_guard: false,
             hud_raise: 3,
             shader_pack: DEFAULT_PACK.into(),
             shadows: ShadowQuality::default(),
@@ -571,6 +575,7 @@ enum Toggle {
     DebugOverlay,
     CinematicZoom,
     ZoomInSurvival,
+    ToggleGuard,
     DoubleTapSprint,
     FovEffects,
 }
@@ -583,6 +588,7 @@ impl Toggle {
             Toggle::DebugOverlay => "settings.debug_overlay",
             Toggle::CinematicZoom => "settings.cinematic_zoom",
             Toggle::ZoomInSurvival => "settings.zoom_in_survival",
+            Toggle::ToggleGuard => "settings.toggle_guard",
             Toggle::DoubleTapSprint => "settings.double_tap_sprint",
             Toggle::FovEffects => "settings.fov_effects",
         }
@@ -595,6 +601,7 @@ impl Toggle {
             Toggle::DebugOverlay => settings.debug_overlay,
             Toggle::CinematicZoom => settings.cinematic_zoom,
             Toggle::ZoomInSurvival => settings.zoom_in_survival,
+            Toggle::ToggleGuard => settings.toggle_guard,
             Toggle::DoubleTapSprint => settings.double_tap_sprint,
             Toggle::FovEffects => settings.fov_effects,
         }
@@ -607,6 +614,7 @@ impl Toggle {
             Toggle::DebugOverlay => &mut settings.debug_overlay,
             Toggle::CinematicZoom => &mut settings.cinematic_zoom,
             Toggle::ZoomInSurvival => &mut settings.zoom_in_survival,
+            Toggle::ToggleGuard => &mut settings.toggle_guard,
             Toggle::DoubleTapSprint => &mut settings.double_tap_sprint,
             Toggle::FovEffects => &mut settings.fov_effects,
         } = on;
@@ -885,6 +893,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Slider(Slider::Zoom),
             Control::Switch(Toggle::CinematicZoom),
             Control::Switch(Toggle::ZoomInSurvival),
+            Control::Switch(Toggle::ToggleGuard),
             Control::Slider(Slider::FlySpeed),
         ],
     ),
