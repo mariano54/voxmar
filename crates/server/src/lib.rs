@@ -75,9 +75,61 @@ pub struct ServerConfig {
     /// saved world's game mode replaces `allow_flight`. `None` keeps the world in memory
     /// only.
     pub world: Option<PathBuf>,
+    /// How much any one connection may send and how many may wait to say hello (the
+    /// dedicated server reads them from `--limits FILE`).
+    pub limits: Limits,
     /// Makes the server run behind, to see how clients cope, as on a busy machine. None
     /// but in tests.
     pub lag: Lag,
+}
+
+/// How much any one connection may ask of the server: a server operator's numbers, read
+/// by the dedicated server from a RON file (`--limits FILE`) that sets any of them.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Limits {
+    /// Messages a player's handled per tick, at most; the rest wait for the next (and a
+    /// connection whose queue fills is cut off). Inputs come one a tick.
+    pub messages_per_tick: u32,
+    /// Lines of chat in a burst, and per second after it.
+    pub chat_burst: f32,
+    pub chat_per_second: f32,
+    /// Seconds a connection may take to say hello before it is closed, how many may be
+    /// waiting to at once, and how many of those from one address.
+    pub hello_seconds: f32,
+    pub max_pending: usize,
+    pub max_pending_per_address: usize,
+    /// Characters of a player's name kept.
+    pub name_length: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32 }
+    }
+}
+
+impl Limits {
+    /// Limits from a RON file's text, refusing any that would shut everyone out or let
+    /// one connection hold the server up.
+    pub fn from_ron(source: &str) -> Result<Self, String> {
+        let limits: Limits = ron::from_str(source).map_err(|e| e.to_string())?;
+        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length } = limits;
+        let rates = [chat_burst, chat_per_second, hello_seconds];
+        if rates.iter().any(|n| !n.is_finite() || *n < 0.0) {
+            Err("chat_burst, chat_per_second and hello_seconds must be zero or more".into())
+        } else if !(2..=1024).contains(&messages_per_tick) {
+            Err("messages_per_tick must be from 2 to 1024 (a player sends an input and more every tick)".into())
+        } else if !(0.5..=60.0).contains(&hello_seconds) {
+            Err("hello_seconds must be from 0.5 to 60".into())
+        } else if max_pending == 0 || max_pending_per_address == 0 {
+            Err("max_pending and max_pending_per_address must be at least 1, or nobody could join".into())
+        } else if !(1..=64).contains(&name_length) {
+            Err("name_length must be from 1 to 64".into())
+        } else {
+            Ok(limits)
+        }
+    }
 }
 
 /// How a server made to run behind does so (see `ServerConfig::lag`).
@@ -114,6 +166,7 @@ impl Default for ServerConfig {
             admin_token: None,
             idle_timeout: Duration::from_secs(15),
             world: None,
+            limits: Limits::default(),
             lag: Lag::default(),
         }
     }
@@ -507,15 +560,15 @@ impl Server {
             // everyone else (players are counted at hello).
             let pending = || self.players.values().filter(|p| !p.joined);
             let peer = connection.peer();
-            if pending().count() >= player::MAX_PENDING
-                || peer.is_some() && pending().filter(|p| p.connection.peer() == peer).count() >= player::MAX_PENDING_PER_ADDRESS
+            let limits = &self.config.limits;
+            if pending().count() >= limits.max_pending || peer.is_some() && pending().filter(|p| p.connection.peer() == peer).count() >= limits.max_pending_per_address
             {
                 connection.send(ServerMessage::Rejected { reason: voxmar_engine::lang::Words::key("net.rejected.full") });
                 continue;
             }
             let id = self.next_player;
             self.next_player += 1;
-            self.players.insert(id, Player::new(id, connection, self.spawn, self.config.view_distance, self.tick, self.survival.max_health));
+            self.players.insert(id, Player::new(id, connection, self.spawn, self.config.view_distance, self.tick, self.survival.max_health, &self.config.limits));
         }
     }
 
@@ -844,6 +897,16 @@ fn ring_positions(center: ColumnPos, ring: i32) -> impl Iterator<Item = ColumnPo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_limits_file_sets_what_it_names_and_refuses_numbers_that_shut_everyone_out() {
+        let limits = Limits::from_ron("(chat_burst: 4.0, max_pending_per_address: 2)").unwrap();
+        assert_eq!(limits, Limits { chat_burst: 4.0, max_pending_per_address: 2, ..Limits::default() });
+        assert_eq!(Limits::from_ron("()").unwrap(), Limits::default());
+        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(chat_brust: 4.0)"] {
+            assert!(Limits::from_ron(bad).is_err(), "{bad} is accepted");
+        }
+    }
 
     #[test]
     fn rings_cover_square_once() {

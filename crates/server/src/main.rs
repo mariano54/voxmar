@@ -1,5 +1,5 @@
 //! Dedicated server:
-//! `voxmar-server [--world DIR] [--bind ADDR] [--seed N] [--no-flight] [--view-distance N] [--max-players N] [--admin-token-file FILE] [--admin NAME]...`.
+//! `voxmar-server [--world DIR] [--bind ADDR] [--seed N] [--no-flight] [--view-distance N] [--max-players N] [--idle-seconds N] [--limits FILE] [--admin-token-file FILE] [--admin NAME]...`.
 //!
 //! The world lives in `DIR` (default `./world`) and is created there if it does not exist
 //! yet, with `--seed` and, given `--no-flight`, in survival mode; an existing world keeps
@@ -48,6 +48,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             "--max-players" => config.max_players = value()?.parse()?,
+            "--idle-seconds" => {
+                // Under the keepalive's interval, players whose games are fine would be let go.
+                config.idle_timeout = std::time::Duration::try_from_secs_f32(value()?.parse()?)?;
+                if config.idle_timeout <= voxmar_protocol::KEEPALIVE {
+                    return Err(format!("--idle-seconds must be more than {} (clients say they are there that often)", voxmar_protocol::KEEPALIVE.as_secs()).into());
+                }
+            }
+            "--limits" => {
+                let path = value()?;
+                let text = std::fs::read_to_string(&path).map_err(|e| format!("could not read the limits from {path}: {e}"))?;
+                config.limits = voxmar_server::Limits::from_ron(&text).map_err(|e| format!("{path}: {e}"))?;
+            }
             _ => return Err(format!("unknown argument {arg}").into()),
         }
     }

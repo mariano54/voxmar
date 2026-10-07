@@ -22,7 +22,7 @@ use voxmar_engine::vitals::Vitals;
 use voxmar_engine::traits::Health;
 use voxmar_engine::world::Column;
 
-pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
+pub use transport::{ClientConnection, Connection, Disconnected, KEEPALIVE, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
 // 28: teleports are numbered (27 is the server hardening, 26 armour).

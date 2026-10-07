@@ -13,7 +13,7 @@ use voxmar_protocol::{
     ChatKind, ClientConnection, ClientMessage, ItemView, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND,
     Weather, local_pair, tcp,
 };
-use voxmar_server::{ServerConfig, ServerHandle, load_content, spawn};
+use voxmar_server::{Limits, ServerConfig, ServerHandle, load_content, spawn};
 
 struct Client {
     connection: ClientConnection,
@@ -1880,27 +1880,20 @@ fn a_full_server_turns_newcomers_away() {
 
 #[test]
 fn silent_sockets_neither_count_as_players_nor_pile_up() {
-    // Listening on both IPv4 and IPv6, so one machine has two addresses to come from.
-    let server = spawn(ServerConfig { view_distance: 2, max_players: 3, idle_timeout: SERVER_WAIT, ..Default::default() }, content()).unwrap();
-    let Ok(addr) = tcp::listen("[::]:0", server.connections()) else {
-        eprintln!("skipped: no IPv6 here");
-        return;
-    };
-    let (v4, v6) = (std::net::SocketAddr::from(([127, 0, 0, 1], addr.port())), std::net::SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, addr.port())));
-    let Ok(connection) = tcp::connect(v4) else {
-        eprintln!("skipped: this IPv6 listener takes no IPv4");
-        return;
-    };
-    let guest = Client::hello(connection, "guest", server);
-    // Four connections from one address that never say hello: they are not players, so
-    // two more still fit...
-    let silent: Vec<_> = (0..4).map(|_| std::net::TcpStream::connect(v4).unwrap()).collect();
-    let second = Client::greet(tcp::connect(v4).unwrap(), "second", None);
-    // ...and with four waiting from that address, its next connection is turned away at
-    // once, while another address is not.
-    let connection = tcp::connect(v4).unwrap();
+    // The operator lets two connections from one address wait to say hello.
+    let limits = Limits { max_pending_per_address: 2, ..Default::default() };
+    let server = spawn(ServerConfig { view_distance: 2, max_players: 3, idle_timeout: SERVER_WAIT, limits, ..Default::default() }, content()).unwrap();
+    let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+    let guest = Client::hello(tcp::connect(addr).unwrap(), "guest", server);
+    let second = Client::greet(tcp::connect(addr).unwrap(), "second", None);
+    // Two connections from that address that never say hello: with them waiting, its next
+    // connection is turned away at once...
+    let silent: Vec<_> = (0..2).map(|_| std::net::TcpStream::connect(addr).unwrap()).collect();
+    let connection = tcp::connect(addr).unwrap();
     assert!(turned_away(&connection, &guest.content).contains("full"));
-    let third = Client::greet(tcp::connect(v6).unwrap(), "third", None);
+    // ...and they are not players, so a third still fits (in process, as from elsewhere).
+    let third = guest.another("third");
+    assert!(third.health > 0);
     drop((guest, second, third, silent));
 }
 

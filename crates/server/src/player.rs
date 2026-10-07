@@ -20,20 +20,8 @@ use voxmar_protocol::{
     TICKS_PER_SECOND,
 };
 
-use crate::Server;
+use crate::{Limits, Server};
 use crate::save::{GameMode, SavedPlayer};
-
-/// Messages a player's handled per tick, at most; the rest wait for the next (and a
-/// connection whose queue fills is cut off). Inputs come one a tick.
-pub const MESSAGES_PER_TICK: u32 = 64;
-/// Lines of chat in a burst, and per second after it.
-const CHAT_BURST: f32 = 8.0;
-const CHAT_PER_SECOND: f32 = 2.0;
-/// Ticks a connection may take to say hello before it is closed, how many may be waiting
-/// to at once, and how many of those from one address.
-pub const HELLO_TICKS: u64 = 3 * TICKS_PER_SECOND as u64;
-pub const MAX_PENDING: usize = 16;
-pub const MAX_PENDING_PER_ADDRESS: usize = 4;
 
 pub struct Player {
     pub id: PlayerId,
@@ -126,7 +114,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(id: PlayerId, connection: ServerConnection, spawn: Vec3, view_distance: i32, tick: u64, max_health: u8) -> Self {
+    pub fn new(id: PlayerId, connection: ServerConnection, spawn: Vec3, view_distance: i32, tick: u64, max_health: u8, limits: &Limits) -> Self {
         Self {
             id,
             name: String::new(),
@@ -169,8 +157,8 @@ impl Player {
             last_ground: None,
             connected_tick: tick,
             last_heard: Instant::now(),
-            messages_left: MESSAGES_PER_TICK,
-            chat_allowance: CHAT_BURST,
+            messages_left: limits.messages_per_tick,
+            chat_allowance: limits.chat_burst,
             chat_at: None,
             told_to_slow: false,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
@@ -333,7 +321,7 @@ impl Server {
         let fingerprint = self.content.fingerprint();
         let blocks = &self.content.blocks;
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
-        let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
+        let name: String = name.chars().filter(|c| !c.is_control()).take(self.config.limits.name_length).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
         if self.players[&id].joined {
             return;
@@ -469,10 +457,11 @@ impl Server {
     /// Gives every player their share of messages for the tick, and closes connections
     /// that have not said hello in time.
     pub(crate) fn limit_players(&mut self) {
-        let tick = self.tick;
+        let (tick, limits) = (self.tick, &self.config.limits);
+        let hello_ticks = (limits.hello_seconds * TICKS_PER_SECOND as f32) as u64;
         self.players.retain(|_, player| {
-            player.messages_left = MESSAGES_PER_TICK;
-            player.joined || tick.saturating_sub(player.connected_tick) <= HELLO_TICKS
+            player.messages_left = limits.messages_per_tick;
+            player.joined || tick.saturating_sub(player.connected_tick) <= hello_ticks
         });
     }
 
@@ -487,7 +476,8 @@ impl Server {
             return true;
         }
         let since = player.chat_at.map_or(0.0, |then| at.saturating_duration_since(then).as_secs_f32());
-        player.chat_allowance = (player.chat_allowance + since * CHAT_PER_SECOND).min(CHAT_BURST);
+        let Limits { chat_burst, chat_per_second, .. } = self.config.limits;
+        player.chat_allowance = (player.chat_allowance + since * chat_per_second).min(chat_burst);
         player.chat_at = Some(player.chat_at.map_or(at, |then| then.max(at)));
         if player.chat_allowance < 1.0 {
             if !player.told_to_slow {
