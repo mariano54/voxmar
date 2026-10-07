@@ -1431,8 +1431,9 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
     // up, on a loaded machine), the second sowing then held nothing and was refused.
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && potatoes(c) == before - 1);
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
-    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR) && potatoes(c) == before);
-    assert_eq!(client.quiet(potatoes), before, "a sown sprout broken did not give its potato back");
+    // At least, so a count that overshoots fails on the exact check below, not a timeout.
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR) && potatoes(c) >= before);
+    assert_eq!(client.quiet(potatoes), before, "a sown sprout broken gave other than its potato back");
     // Sown, grown ripe and harvested: the harvest's experience with the sowing's.
     let earned = client.earned.len();
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == potato));
