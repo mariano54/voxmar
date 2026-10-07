@@ -1,0 +1,72 @@
+// Background music: when tracks play, how loud, and where. Voxmar's own tracks are the
+// files in `assets/music`. With Minecraft assets on in the settings, tracks from the
+// player's own Prism Launcher instance join them, read where they are and never copied
+// (crates/client/src/music/prism.rs). A later package's numbers replace these, and its
+// rules come before these.
+(
+    // Linear gain of a track at 100% music volume.
+    volume: 0.35,
+    // Borrowed tracks' gain relative to Voxmar's own.
+    borrowed_volume: 1.0,
+    // Seconds before the title screen's first track, and of quiet between tracks.
+    first_menu_delay: (2.0, 6.0),
+    gap: (180.0, 420.0),
+    // Seconds a track takes to fade out when a game starts or ends.
+    fade_out: 1.5,
+    // Seconds before another pick when a borrowed track cannot be read or played, and
+    // before a track when music is turned back on with M.
+    retry_after: 2.0,
+    resume_after: 2.0,
+    // The chance a pick is one of Voxmar's own tracks while borrowed ones suit too.
+    own_share: 0.25,
+    own_contexts: [Menu, Game, Underground],
+    // Tracks played lately that are passed over while others suit.
+    recent: 12,
+    // Underground: this many blocks below the surface, with this little of the air
+    // around open to the sky.
+    underground: (depth: 12.0, max_sky: 0.05),
+
+    prism: (
+        // Instances whose folder or display name contains one of these, any case; the
+        // most recently launched plays. The settings may name another.
+        instances: ["gt_new_horizons", "gt new horizons", "gtnh"],
+        // Folders of the instance's game folder to look in, after the asset store's
+        // music for its Minecraft version. A file name found earlier is skipped, so a
+        // resource pack repeating the soundtrack adds only what is new.
+        sources: [
+            // HorizonMelodies' soundtrack zip: every sound in it is a track.
+            (folder: "horizonmelodies", all_music: true),
+            (folder: "resourcepacks"),
+            (folder: "mods"),
+        ],
+        // In other packs, sounds are tracks by their path, or by the sound event naming
+        // them (its name, or its category).
+        music_paths: ["*music/*", "*records/*", "*record/*", "*music_disc*"],
+        music_events: ["music*", "*.music*", "record*", "*.record*", "music_disc*", "*.music_disc*"],
+        music_categories: ["music", "record"],
+        // The most bytes a file is read to (64 MiB); a bigger one is passed over.
+        max_bytes: 67108864,
+        // How many folders deep a resource pack that is a folder is looked through.
+        folder_depth: 12,
+    ),
+
+    // Where each borrowed track plays, by its path in its pack, less the namespace: for
+    // `minecraft:music/game/calm1`, `music/game/calm1`; for HorizonMelodies' StaTech
+    // tracks, `music_and_melody/music/overworld/<name>`. The first match decides.
+    rules: [
+        (category: "menu", paths: ["*music/menu/*", "*end/credits*"], contexts: [Menu]),
+        // The unsettling discs only below.
+        (category: "eerie records", paths: ["*records/11", "*records/13", "*music_disc/11", "*music_disc/13"], contexts: [Underground], weight: 0.5),
+        (category: "records", paths: ["*records/*", "*record/*", "*music_disc*"], contexts: [Game, Underground], weight: 0.5),
+        // Nether, End, caves and strongholds: the music of being deep down.
+        (category: "deep", paths: [
+            "*nether*", "*crimson_forest*", "*warped_forest*", "*soulsand_valley*", "*soul_sand_valley*", "*basalt_deltas*",
+            "*/end/*", "*dragon*", "*boss*",
+            "*caves/*", "*deep_dark*", "*dripstone*", "*structure/*", "*ancient_city*", "*trial_chambers*", "*stronghold*",
+        ], contexts: [Underground]),
+        (category: "creative", paths: ["*creative*"], contexts: [Game]),
+        (category: "water", paths: ["*under_water*", "*underwater*", "*/water/*"], contexts: [Game]),
+        // Everything else is the world's: the game, overworld biome and misc tracks.
+        (category: "world", paths: ["*"], contexts: [Game, Underground]),
+    ],
+)

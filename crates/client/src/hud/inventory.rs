@@ -241,7 +241,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     let inset = (SLOT + 4.0 * PX - 16.0 * PX) / 2.0;
                     let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
                     cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
-                    cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() }, shadowed(font, "", BODY, TEXT), OutputCount));
+                    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() };
+                    super::spawn_count(cell, font, corner, OutputCount);
                 });
                 // What the grid makes and how to take it, or how to find a recipe.
                 let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
@@ -716,8 +717,14 @@ fn details(locale: &Locale, def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
         lines.push((uses.join(locale.get("language.dot")), SOFT));
     }
     let package = def.name.split(':').next().unwrap_or("");
-    lines.push((if ids { def.name.clone() } else { package.to_owned() }, MUTED));
+    lines.push((if ids { def.name.clone() } else { package_name(locale, package) }, MUTED));
     lines
+}
+
+/// What a package is called, in the player's language (`package.<id>`); a mod that names
+/// itself nowhere goes by its id.
+pub fn package_name(locale: &Locale, package: &str) -> String {
+    locale.get_or(&format!("package.{package}"), package).to_owned()
 }
 
 /// Names joined as the language lists them, at most `most` of them and how many more.
@@ -815,19 +822,23 @@ pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Co
     let combat = &content.combat;
     let defence = content.skills.ids().find(|&id| content.skills.get(id).name == "core:defence");
     let level = defence.map_or(1, |id| content.skills.level(player.skills.xp(id)));
-    // What it is and who wears it (red below the player's Defence), then what it stops.
+    // What it is, the Defence it needs (red above the player's), then what it stops.
     let (head, needs, armour, guard, resists) = if let Some(piece) = combat.piece(item) {
         let set = combat.set(piece.set);
         let name = locale.get_or(&format!("armour_set.{}", set.name), &voxmar_engine::lang::title_from_id(&set.name)).to_owned();
         let weight = locale.get_or(&format!("item.weight.{}", piece.weight.key()), piece.weight.key()).to_owned();
-        (locale.format("item.armour", &[("set", &name), ("weight", &weight), ("level", &piece.level)]), piece.level, piece.armour, None, set.resists.clone())
+        (locale.format("item.armour", &[("set", &name), ("weight", &weight)]), piece.level, piece.armour, None, set.resists.clone())
     } else if let Some(shield) = combat.shield(item) {
-        (locale.format("item.armour_shield", &[("level", &shield.level)]), shield.level, shield.armour, Some(shield.guard), Vec::new())
+        (locale.get("item.armour_shield").to_owned(), shield.level, shield.armour, Some(shield.guard), Vec::new())
     } else {
         return Vec::new();
     };
     let ready = level >= needs;
-    let mut lines = vec![(head, if ready { SOFT } else { ERROR })];
+    let mut lines = vec![(head, SOFT)];
+    // What anyone can wear needs no saying.
+    if needs > 1 {
+        lines.push((locale.format("item.armour_needs", &[("level", &needs)]), if ready { SOFT } else { ERROR }));
+    }
     if armour > 0 {
         lines.push((locale.format("item.armour_value", &[("armour", &armour)]), SOFT));
     }
@@ -840,7 +851,7 @@ pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Co
         lines.push((locale.format("item.armour_resists", &[("styles", &styles.join(locale.get("language.comma")))]), SOFT));
     }
     if !ready {
-        lines.push((locale.format("item.armour_low", &[("level", &needs)]), ERROR));
+        lines.push((locale.get("item.armour_low").to_owned(), ERROR));
     }
     lines
 }
@@ -858,7 +869,9 @@ fn pouch_lines(locale: &Locale, registry: &voxmar_engine::block::BlockRegistry, 
         .map(|&(held, count)| (locale.format("pouch.holds", &[("count", &count), ("item", &locale.block(registry.def(held)))]), SOFT))
         .collect();
     let empty = carried.is_empty().then(|| (locale.get("pouch.nothing").to_owned(), MUTED));
-    carried.into_iter().chain(empty).chain([(locale.get("pouch.hint").to_owned(), MUTED)]).collect()
+    // Empty, it says what fills it: what it holds (`holds:<kind>`), picked up.
+    let fills = carried.is_empty().then(|| registry.def(item).tags.iter().find_map(|tag| tag.strip_prefix("holds:")).and_then(|kind| locale.find(&format!("pouch.fills.{kind}"))).map(|words| (words.to_owned(), MUTED))).flatten();
+    carried.into_iter().chain(empty).chain(fills).chain([(locale.get("pouch.hint").to_owned(), MUTED)]).collect()
 }
 
 /// The mouse and key moves the inventory takes, as key caps with what each does, two to a
@@ -1043,6 +1056,27 @@ mod tests {
         assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.5);
         files.push(file("(worn_glyph_alpha: 2.0)"));
         assert!(InterfaceStyle::load(&files).is_err());
+    }
+
+    /// No item's tooltip, in any language, has a line that is only a package's id: every
+    /// word on it is the language's (the package by its name, Voxmar).
+    #[test]
+    fn tooltips_name_packages_not_their_ids() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let blocks = &content.blocks;
+        let packages: std::collections::BTreeSet<&str> = (0..blocks.len()).filter_map(|i| blocks.def(BlockId(i as u16)).name.split(':').next()).collect();
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&assets.join("content"), code);
+            for id in (0..blocks.len()).map(|i| BlockId(i as u16)) {
+                let def = blocks.def(id);
+                for (line, _) in details(&locale, def, false) {
+                    assert!(!packages.contains(line.as_str()), "{code}: {}'s tooltip has a line reading only {line:?}", def.name);
+                }
+            }
+            assert_ne!(package_name(&locale, "base"), "base");
+            assert_eq!(package_name(&locale, "some_mod"), "some_mod", "{code}: a mod that names itself nowhere goes by its id");
+        }
     }
 
     fn held(count: u8) -> Inventory {

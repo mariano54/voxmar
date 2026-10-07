@@ -77,3 +77,7 @@ serde_json.workspace = true
 sys-locale = "0.3"
 tracing.workspace = true
 zip.workspace = true
+# Checksums of borrowed music files, to tell copies apart (music/prism.rs).
+crc32fast = "1.5"
+# Bevy's audio decoder, to check a borrowed track decodes before it plays (music.rs).
+rodio = { version = "0.22.2", default-features = false }

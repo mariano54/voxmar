@@ -59,7 +59,7 @@ pub use biome::{Biome, BiomeId, Biomes};
 pub use content::{DayTime, Motion, ParticleDef, WeatherWhen};
 pub use caves::{CaveStyle, LAVA_LEVEL};
 pub use climate::LAPSE_RATE;
-pub use content::{ContentError, WorldContent};
+pub use content::{ContentError, Select, WorldContent};
 pub use dials::WorldDials;
 pub use ecology::PlantProperties;
 pub use water::{Body, Cavity, Current, WaterSight};
@@ -276,7 +276,14 @@ impl Overworld {
 
     /// A generator with the world content of loaded packages ([`WorldContent::load`]).
     pub fn with_content(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent) -> Self {
-        let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
+        Self::with_content_at(seed, registry, content, Self::VERSION)
+    }
+
+    /// As [`with_content`](Self::with_content), as generation `version` would seed it: tests
+    /// use it to check a world before `VERSION` is bumped to reseed every world.
+    #[doc(hidden)]
+    pub fn with_content_at(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent, version: u32) -> Self {
+        let stream = rng::stream_seed(seed, Self::ID, version);
         let mut dials = WorldDials::sample(stream);
         dials.pole_distance *= content.climate.zones / WorldDials::POLE_DISTANCE;
         let rocks = Rocks::new(stream, content, &registry, &dials.featured);
@@ -313,6 +320,27 @@ impl Overworld {
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
             seed: stream,
         }
+    }
+
+    /// The generator of the world with this seed made from `content` (`world` being its
+    /// world content), shared with whatever else in the process asks for the same while
+    /// any of them holds it. Generation is a pure function of the seed and the content,
+    /// so a shared generator makes exactly what a new one would; what sharing saves is
+    /// planning the same rivers, trails and settlements again. A server started on a world
+    /// another holds open (each gameplay test starts its own on one seed) finds the land
+    /// round its spawn already planned rather than keeping its first player waiting.
+    pub fn shared(seed: u64, content: &voxmar_engine::content::Content, world: &WorldContent) -> Arc<Self> {
+        type Held = ((u64, u64), std::sync::Weak<Overworld>);
+        static SHARED: std::sync::Mutex<Vec<Held>> = std::sync::Mutex::new(Vec::new());
+        let key = (seed, content.fingerprint());
+        let mut shared = SHARED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        shared.retain(|(_, held)| held.strong_count() > 0);
+        if let Some(found) = shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade()) {
+            return found;
+        }
+        let made = Arc::new(Self::with_content(seed, content.blocks.clone(), world));
+        shared.push((key, Arc::downgrade(&made)));
+        made
     }
 
     /// The biomes of this world.
@@ -601,6 +629,19 @@ impl trails::Land for RiverLand<'_> {
         self.world.settlements.any_near(self.world, min, max, reach)
     }
 
+    fn built(&self, min: IVec2, max: IVec2) -> Vec<(IVec2, IVec2)> {
+        let centre = (min + max) / 2;
+        let radius = (max - min).max_element() / 2 + 1;
+        self.world
+            .settlements
+            .near(self.world, centre, radius)
+            .iter()
+            .filter_map(|slot| slot.0.as_ref())
+            .flat_map(|p| p.buildings.iter().map(|b| (b.min, b.max)))
+            .filter(|(lo, hi)| lo.cmple(max).all() && hi.cmpge(min).all())
+            .collect()
+    }
+
     fn gates(&self, min: IVec2, max: IVec2) -> Vec<IVec2> {
         let centre = (min + max) / 2;
         let radius = (max - min).max_element() / 2 + 1;
@@ -863,7 +904,23 @@ impl Generator for Overworld {
     }
 
     fn spawn_point(&self) -> IVec3 {
-        // Walk outwards on a spiral until we find open, temperate grassland on dry land.
+        self.spawn_search(true)
+    }
+}
+
+impl Overworld {
+    /// Near where a new player spawns, from the land alone, before trails and
+    /// settlements: the spawn point unless it would fall on a trail or in a settlement,
+    /// and then a step or two along the same search. Settlements plan by it, so the
+    /// square a player spawns in can always be settled.
+    pub(crate) fn spawn_estimate(&self) -> IVec2 {
+        let at = self.spawn_search(false);
+        IVec2::new(at.x, at.z)
+    }
+
+    /// Walks outwards on a spiral until it finds open, temperate grassland on dry land;
+    /// `built`: also off trails and outside settlements, which plan by the search without.
+    fn spawn_search(&self, built: bool) -> IVec3 {
         for ring in 0..256 {
             for step in 0..(ring * 8).max(1) {
                 let (x, z) = spiral(ring, step);
@@ -879,8 +936,9 @@ impl Generator for Overworld {
                 let site = self.site(x, z);
                 let pleasant = (8.0..20.0).contains(&site.temperature) && (0.6..1.6).contains(&site.soil_moisture());
                 let open = site.slope == 0 && site.forest < 0.35 && site.river < 0.1;
-                // Not on a trail, whose tread is no grass (sites leave trails out).
-                if pleasant && open && self.terrain.is_grass(self.surface_layers(&site, x, z).top) && self.geo(x, z).trail.is_none() {
+                // Not on a trail, whose tread is no grass (sites leave trails out), nor in
+                // a settlement: a new player walks into it.
+                if pleasant && open && self.terrain.is_grass(self.surface_layers(&site, x, z).top) && (!built || self.geo(x, z).trail.is_none() && !self.settlements.covers(self, x, z)) {
                     return IVec3::new(x, height + 1, z);
                 }
             }
