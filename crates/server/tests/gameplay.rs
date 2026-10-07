@@ -1545,6 +1545,41 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
 
     let mut client = Client::join_with(config());
     machine_says(&mut client, &at, "holds 5 items", 10);
+
+    // Work half done is not done again after a restart.
+    let crusher = chest + IVec3::new(0, 0, 2);
+    let crusher_at = format!("{} {} {}", crusher.x, crusher.y, crusher.z);
+    for line in [
+        "/clear".to_string(),
+        format!("/setblock {} {} {} boiler", crusher.x + 1, crusher.y, crusher.z),
+        format!("/setblock {crusher_at} steam_crusher"),
+        "/give coal_ore 1".to_string(),
+    ] {
+        client.ok(&line);
+    }
+    let coal = client.content.blocks.expect("base:coal_ore");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == coal) && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    use_machine(&mut client, crusher + IVec3::X);
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give iron_ore 1");
+    client.pump_until(|c| c.inventory.slots.iter().any(Option::is_some));
+    use_machine(&mut client, crusher);
+    let progress = |said: &str| said.split(", ").find_map(|part| part.strip_suffix("% done")).and_then(|p| p.trim_end_matches('.').parse::<u32>().ok());
+    let started = Instant::now();
+    let done = loop {
+        let said = client.ok(&format!("/machine {crusher_at}"));
+        if let Some(done) = progress(&said).filter(|&p| p >= 40) {
+            break done;
+        }
+        assert!(started.elapsed() < Duration::from_secs(20), "the crusher never got going: {said}");
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    drop(client);
+    let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
+    assert!(save.contains("base:iron_dust"), "the save keeps the work: {save}");
+    let mut client = Client::join_with(config());
+    let said = client.ok(&format!("/machine {crusher_at}"));
+    assert!(progress(&said).is_none_or(|p| p >= done), "the crusher began again: {said}, was {done}% done");
     drop(client);
 
     // A machines file that cannot be read is kept aside before the next save writes over it.
@@ -1648,4 +1683,31 @@ fn a_windmill_within_four_blocks_of_another_is_becalmed_and_both_turn_once_it_mo
     client.ok("/setblock ~8 ~4 ~ windmill");
     machine_says(&mut client, &at(3), "idle", 20);
     machine_says(&mut client, &at(8), "idle", 20);
+}
+
+#[test]
+fn a_full_hopper_leaves_the_stack_in_hand_and_gives_nothing_back() {
+    let mut client = Client::join();
+    let hopper = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    for line in ["/clear", "/setblock ~2 ~ ~ hopper"] {
+        client.ok(line);
+    }
+    let ore = client.content.blocks.expect("base:copper_ore");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(hopper) == c.content.blocks.id("base:hopper"));
+    // Five stacks fill its five slots.
+    for filled in 1..=5 {
+        client.ok("/give copper_ore 64");
+        client.pump_until(|c| held(c) == 64);
+        use_machine(&mut client, hopper);
+        client.pump_until(|c| held(c) == 0);
+        machine_says(&mut client, "~2 ~ ~", &format!("holds {} items", filled * 64), 5);
+    }
+    // A sixth stays in hand, and the hopper keeps what it holds.
+    client.ok("/give copper_ore 64");
+    client.pump_until(|c| held(c) == 64);
+    use_machine(&mut client, hopper);
+    std::thread::sleep(Duration::from_millis(500));
+    machine_says(&mut client, "~2 ~ ~", "holds 320 items", 5);
+    assert_eq!(held(&client), 64, "the full hopper emptied into the inventory");
 }

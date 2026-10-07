@@ -28,7 +28,7 @@ Everything a mod might want to change is in that data, not in code.
 - **What it holds is never lost or made.** A save that cannot be read is copied to
   `machines.unreadable.ron` before the server refuses to start, so nothing is overwritten.
   A machine whose block is gone when its land loads (edited, or lost to a crash) drops
-  what it held, as breaking it would.
+  what it held, as breaking it would. Work half done is saved with it and goes on.
 
 ## What there is
 
@@ -87,7 +87,8 @@ line: ore and coal in the hopper, ingots in the chest.
 
 Right click (`base:use_machine`):
 
-- with something in hand that it burns or works, the whole stack goes in;
+- with something in hand that it burns or works, the whole stack goes in (what has no
+  room stays in hand, and nothing comes out);
 - with an empty hand (or anything it neither takes nor can place), what it made comes out
   into the inventory;
 - with a block it does not take, the block is placed against it.

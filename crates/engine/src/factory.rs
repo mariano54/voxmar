@@ -266,7 +266,11 @@ impl Factory {
             prepare(node, machine, machines);
             let state = &mut node.state;
             if matches!(state.status, Status::Idle | Status::NoFuel) {
-                if state.process.is_some() {
+                if state.process.is_some() && state.condition <= 0.0 {
+                    // What the world does not give it yet: water, or the structure round it.
+                    let water = matches!(machine.role, Role::Processor { water: true, .. });
+                    state.status = if water { Status::NoSource } else { Status::Incomplete };
+                } else if state.process.is_some() {
                     state.status = Status::Working;
                 } else if state.burning > 0.0 {
                     state.status = Status::Generating;
@@ -274,6 +278,13 @@ impl Factory {
             }
         }
         (left > 0).then_some(ItemStack { count: left, ..stack })
+    }
+
+    /// Whether the machine at `pos` would take `item` at all, room or not: something it
+    /// burns or works, or anything, for a bin.
+    pub fn accepts(&self, pos: IVec3, item: BlockId, machines: &MachineRegistry) -> bool {
+        let Some(machine) = self.nodes.get(&pos).and_then(|node| machines.get(node.block)) else { return false };
+        (machine.burns() && machines.burn_seconds(item).is_some()) || (machine.is_processor() && machines.takes(machine, item)) || machine.bin_slots() > 0
     }
 
     /// Puts a stack back where it was taken from (what a player could not carry): a bin,
@@ -300,16 +311,17 @@ impl Factory {
         let Some(&network) = self.joined.get(&pos).and_then(|ports| ports.get(port)) else { return Grid::default() };
         let network = &self.networks[network];
         let mut grid = Grid { carrier: Some(network.carrier), ..Grid::default() };
+        // A machine broken since the networks were last joined is skipped until they are.
         for member in &network.members {
-            let node = &self.nodes[&member.pos];
-            let port = node.ports[member.port];
+            let Some(node) = self.nodes.get(&member.pos) else { continue };
+            let Some(&port) = node.ports.get(member.port) else { continue };
             match port.role {
                 PortRole::Gives(power) => {
                     grid.tier = grid.tier.max(port.tier);
                     grid.supply += power * offer_share(node);
                 }
                 PortRole::Holds { .. } => grid.tier = grid.tier.max(port.tier),
-                PortRole::Takes(power) => grid.demand += power * node.state.supplied.max(0.0),
+                PortRole::Takes(power) => grid.demand += power * ask_share(node, port),
                 PortRole::Carries => {}
             }
         }
@@ -964,6 +976,8 @@ mod tests {
         factory.set_condition(IVec3::ZERO, 1.0);
         factory.set_condition(IVec3::X, 0.0);
         feed(&t, &mut factory, 1, "ore", 2);
+        // Dry, it says so as the ore goes in, not that it works.
+        assert_eq!(factory.get(IVec3::X).unwrap().1.status, Status::NoSource);
         run(&t, &mut factory, 10.0);
         assert_eq!(factory.get(IVec3::X).unwrap().1.status, Status::NoSource);
         assert_eq!(made(&t, &factory, 1, "dust"), 0);
@@ -973,6 +987,22 @@ mod tests {
         assert_eq!(made(&t, &factory, 1, "dust"), 3);
         run(&t, &mut factory, 9.0);
         assert_eq!(made(&t, &factory, 1, "dust"), 6);
+    }
+
+    #[test]
+    fn a_machine_beside_a_broken_shaft_can_be_looked_at_before_the_networks_are_joined_again() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["wheel", "shaft", "shaft", "mill"]);
+        factory.set_condition(IVec3::ZERO, 1.0);
+        feed(&t, &mut factory, 3, "ore", 1);
+        run(&t, &mut factory, 1.0);
+        factory.remove(IVec3::X);
+        for x in [0, 2, 3] {
+            assert!(factory.view(IVec3::new(x, 0, 0), &t.machines).is_some());
+        }
+        run(&t, &mut factory, 1.0);
+        assert_eq!(factory.view(IVec3::new(2, 0, 0), &t.machines).unwrap().grid.supply, 0.0, "the wheel no longer reaches it");
     }
 
     #[test]

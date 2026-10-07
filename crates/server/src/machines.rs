@@ -78,6 +78,9 @@ pub struct SavedMachine {
     /// Whether its standing structure was counted for quests already (a multiblock's core).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub counted: bool,
+    /// The work it was doing, by what it makes first, and the seconds done of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<(String, f32)>,
 }
 
 /// Where the machines that look at their neighbours stand, gathered once a survey.
@@ -165,6 +168,16 @@ impl Server {
             }
             return;
         }
+        // What it looks at around it must be loaded too, or it stays as it was last seen.
+        let reach = match machine.role {
+            Role::Generator { source: Source::Walked, .. } => rules.walk_reach.ceil() as i32,
+            Role::Processor { water: false, .. } => self.content.multiblocks.with_core(block).map(|m| m.reach()).max().unwrap_or(0),
+            _ => 1,
+        };
+        let loaded = (-reach..=reach).all(|x| (-reach..=reach).all(|z| self.world.contains(ColumnPos::of_block(pos + IVec3::new(x, 0, z)))));
+        if !loaded {
+            return;
+        }
         let condition = match machine.role {
             Role::Generator { source: Source::FlowingWater, .. } => {
                 let blocks = &self.content.blocks;
@@ -201,7 +214,7 @@ impl Server {
                     let Some(here) = reach(pos, at) else { return false };
                     // Nearer wheels it may walk, or as near and first in order, take the animal.
                     let taken = sites.wheels.iter().any(|(other, other_owner)| {
-                        *other != pos && keeps(other_owner, &c.owner) && reach(*other, at).is_some_and(|d| d < here || (d == here && (other.x, other.y, other.z) < (pos.x, pos.y, pos.z)))
+                        *other != pos && self.world.contains(ColumnPos::of_block(*other)) && keeps(other_owner, &c.owner) && reach(*other, at).is_some_and(|d| d < here || (d == here && (other.x, other.y, other.z) < (pos.x, pos.y, pos.z)))
                     });
                     keeps(&owner, &c.owner) && !taken && machines.walks(&creatures.get(c.species).def.name)
                 });
@@ -232,10 +245,16 @@ impl Server {
     /// what it made comes out; then they are told how it is doing.
     pub(crate) fn use_machine(&mut self, agent: PlayerId, pos: IVec3) {
         let machines = self.content.machines.clone();
+        // What the world gives it now, so what it says as things go in is so.
+        let sites = self.machine_sites();
+        self.survey_machine(pos, &sites);
         let Some(player) = self.players.get_mut(&agent) else { return };
         let selected = player.selected;
         let mut moved = None;
+        // Something it takes but has no room for stays in hand, and nothing comes out.
+        let mut refused = false;
         if let Some(stack) = player.inventory.get(selected) {
+            refused = self.factory.accepts(pos, stack.item, &machines);
             let left = self.factory.put(pos, stack, &machines);
             let put = stack.count - left.map_or(0, |l| l.count);
             if put > 0 {
@@ -244,7 +263,7 @@ impl Server {
                 moved = Some(Words::key("machine.put").with("count", Words::text(put)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
             }
         }
-        if moved.is_none() {
+        if moved.is_none() && !refused {
             let outputs = self.factory.take_outputs(pos);
             let mut took: Vec<ItemStack> = Vec::new();
             for stack in outputs {
@@ -336,6 +355,7 @@ impl Server {
     /// The machines, as a save keeps them.
     pub(crate) fn saved_machines(&self) -> Vec<SavedMachine> {
         let blocks = &self.content.blocks;
+        let machines = &self.content.machines;
         let stack = |s: &ItemStack| (blocks.def(s.item).name.clone(), s.count);
         let mut saved: Vec<SavedMachine> = self
             .factory
@@ -353,6 +373,7 @@ impl Server {
                 bin: state.bin.iter().flatten().map(stack).collect(),
                 owner: state.owner.clone(),
                 counted: state.counted,
+                work: state.process.and_then(|p| machines.process(p).outputs.first()).map(|&(item, _)| (blocks.def(item).name.clone(), state.progress)),
             })
             .collect();
         saved.sort_by_key(|m| m.position);
@@ -396,6 +417,12 @@ impl Server {
             state.outputs = machine.outputs.iter().map(stack).collect();
             state.fuel = machine.fuel.as_ref().and_then(stack);
             state.bin = machine.bin.iter().map(stack).collect();
+            // The work it was doing goes on where it was: the recipe of this machine that makes
+            // the same thing (the next step drops it if what it holds no longer does).
+            if let (Some((made, progress)), Some(def)) = (&machine.work, machines.get(block)) {
+                state.process = def.processes.iter().copied().find(|&p| machines.process(p).outputs.first().is_some_and(|&(item, _)| blocks.def(item).name == *made));
+                state.progress = if state.process.is_some() { *progress } else { 0.0 };
+            }
             self.factory.insert_state(IVec3::from_array(machine.position), block, state, &machines);
         }
         // The land already loaded (round the spawn) is checked now, the rest as it loads.
