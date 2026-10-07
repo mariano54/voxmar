@@ -91,6 +91,9 @@ pub struct Live {
     /// miss train that player's Defence for a while (`DefenceTraining`). With two players
     /// at it, only the last hitter's is kept. Not saved.
     pub fought: Option<(PlayerId, u64)>,
+    /// Once kept and let go (`release`): taming it again pays no Hunter xp and counts for
+    /// no quest. Only wild creatures carry it, and those are never saved.
+    pub was_kept: bool,
     /// Seconds without getting nearer its goal, to notice being stuck.
     pub stuck: f32,
     /// The player who keeps it, by name (tamed or bred), and the id they have now.
@@ -179,6 +182,9 @@ pub struct Creatures {
     pub unplaced: Vec<crate::husbandry::SavedCreature>,
     /// Loot waiting for its body to finish falling: the tick it drops, and what.
     falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
+    /// The animal each player last asked to let go, and the tick: a second ask soon after
+    /// lets it go (`release`).
+    pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
 }
 
 impl Creatures {
@@ -692,6 +698,7 @@ impl Server {
             seed,
             hurt_by: None,
             fought: None,
+            was_kept: false,
             stuck: 0.0,
             owner: None,
             owner_id: None,

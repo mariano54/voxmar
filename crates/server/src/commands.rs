@@ -17,7 +17,7 @@ use crate::save::GameMode;
 use crate::{Server, load_column, wear};
 
 /// What players call a species: its name in their language, or its own title.
-fn creature_name(def: &voxmar_engine::creature::CreatureDef) -> Words {
+pub(crate) fn creature_name(def: &voxmar_engine::creature::CreatureDef) -> Words {
     Words::Own(voxmar_engine::lang::def_key("creature", &def.name), def.title.clone())
 }
 

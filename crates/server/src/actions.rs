@@ -147,6 +147,10 @@ impl ActionContext for Context<'_> {
         self.server.creature_accepts(self.agent, id, item)
     }
 
+    fn creature_is_mine(&self, id: u32) -> bool {
+        self.server.keeps(self.agent, id)
+    }
+
     fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
         self.server.creatures.reach_box(id)
     }
@@ -290,6 +294,7 @@ impl Server {
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
+                (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     for pos in std::iter::once(block).chain(plants) {

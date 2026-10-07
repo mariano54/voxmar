@@ -11,6 +11,9 @@
         // Looking closely at a creature (right click with nothing it wants in hand): more
         // with Farming level (server inspect.rs).
         (name: "inspect", duration: Instant, requires: [Alive, CreatureInReach], effects: [Inspect]),
+        // Letting one of your own animals go wild again (Shift and right click on it, twice):
+        // it leaves your keeping and gives nothing (design draft 99, server husbandry.rs).
+        (name: "release", duration: Instant, requires: [Alive, CreatureInReach, CreatureIsMine], effects: [Release]),
         // Cooking what is in hand on a station that cooks it (cooking.ron).
         (name: "cook", duration: Instant, requires: [Alive, InReach, Cookable, CookingLevel], effects: [Cook]),
         // Tilling soil into farmland with a hoe (right click), where crops are sown.
