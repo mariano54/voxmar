@@ -80,8 +80,8 @@
     // Kept animals that walk a treadwheel: the big, steady grazers. A later package may
     // add to them, or take one away with `not_walkers`.
     walkers: ["aurochs", "wild_horse", "camel", "bison"],
-    // The last fuel that takes an item says how long it burns, so the broad tags come first
-    // and a later package can change any of them.
+    // How long each burns: the last entry naming an item says, else the last tag taking it,
+    // so a tag never shortens an item's own entry and a later package can change any of them.
     fuels: [
         (item: "tag:fuel", seconds: 2.0),
         (item: "tag:planks", seconds: 4.0),

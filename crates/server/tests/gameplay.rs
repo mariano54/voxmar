@@ -1807,11 +1807,17 @@ fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_whee
         "/creatures tame aurochs",
         "/creatures hold aurochs",
         "/give coal_ore 2",
+        "/fill ~2 ~3 ~-6 ~4 ~5 ~-4 air",
+        "/setblock ~3 ~4 ~-5 windmill",
+        "/wind calm 600",
     ] {
         client.ok(line);
     }
     let blocks = &client.content.blocks;
     let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    // In calm air the windmill does not turn.
+    let windmill = format!("{} {} {}", start.x + 3, start.y + 4, start.z - 5);
+    machine_says(&mut client, &windmill, "no wind", 20);
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     client.pump_until(|c| count(c, coal) == 2 && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
     let wheel = format!("{} {} {}", start.x + 3, start.y, start.z + 4);
@@ -1832,6 +1838,9 @@ fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_whee
     client.ok(&format!("/tp {} {}", start.x + 3000, start.z));
     machine_says(&mut client, &wheel, "needs a kept animal", 60);
     machine_says(&mut client, &at, "idle", 60);
+    // Unloaded, the windmill is reckoned to catch an average wind (`wind_mean`), not the
+    // calm it was left in.
+    machine_says(&mut client, &windmill, "idle", 20);
     client.ok(&format!("/tp {} {} {}", start.x, start.y, start.z));
     client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
     use_machine(&mut client, crusher);
@@ -1844,7 +1853,7 @@ fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_whee
 fn a_windmill_within_four_blocks_of_another_is_becalmed_and_both_turn_once_it_moves_away() {
     let mut client = Client::join();
     let start = client.position.floor().as_ivec3();
-    for line in ["/clear", "/fill ~3 ~3 ~-2 ~12 ~6 ~2 air", "/wind gale w 30", "/setblock ~3 ~4 ~ windmill"] {
+    for line in ["/clear", "/fill ~3 ~3 ~-2 ~12 ~6 ~5 air", "/wind gale w 30", "/setblock ~3 ~4 ~ windmill"] {
         client.ok(line);
     }
     let at = |dx: i32| format!("{} {} {}", start.x + dx, start.y + 4, start.z);
@@ -1854,11 +1863,53 @@ fn a_windmill_within_four_blocks_of_another_is_becalmed_and_both_turn_once_it_mo
     client.ok("/setblock ~7 ~4 ~ windmill");
     machine_says(&mut client, &at(3), "no wind", 20);
     machine_says(&mut client, &at(7), "no wind", 20);
-    // Five blocks off, both turn.
+    // Four off on both ways (diagonals count), the same.
     client.ok("/setblock ~7 ~4 ~ air");
+    client.ok("/setblock ~7 ~4 ~4 windmill");
+    machine_says(&mut client, &at(3), "no wind", 20);
+    // Five blocks off, both turn.
+    client.ok("/setblock ~7 ~4 ~4 air");
     client.ok("/setblock ~8 ~4 ~ windmill");
     machine_says(&mut client, &at(3), "idle", 20);
     machine_says(&mut client, &at(8), "idle", 20);
+}
+
+#[test]
+fn a_treadwheel_a_player_placed_is_walked_only_by_their_own_animals() {
+    let config = ServerConfig { view_distance: 2, admins: vec!["other".into()], ..Default::default() };
+    let mut owner = Client::join_with(config);
+    let mut other = owner.another("other");
+    let wheel = owner.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let at = format!("{} {} {}", wheel.x, wheel.y, wheel.z);
+    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/fill ~2 ~-1 ~-1 ~4 ~-1 ~3 stone", "/give treadwheel 1"] {
+        owner.ok(line);
+    }
+    let treadwheel = owner.content.blocks.expect("base:treadwheel");
+    owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel - IVec3::Y) == c.content.blocks.id("base:stone"));
+    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
+    owner.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
+    // Another player's aurochs beside it does not walk it.
+    for line in ["/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+        other.ok(line);
+    }
+    machine_says(&mut owner, &at, "needs a kept animal", 10);
+    wait_server(&mut owner, 3);
+    machine_says(&mut owner, &at, "needs a kept animal", 1);
+    // Their own wheel in its place, it does.
+    owner.ok(&format!("/setblock {at} air"));
+    for line in ["/clear", "/give treadwheel 1"] {
+        other.ok(line);
+    }
+    other.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel).is_some_and(|b| b.is_air()));
+    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    other.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
+    other.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
+    let started = owner.tick;
+    while owner.ok(&format!("/machine {at}")).contains("needs a kept animal") {
+        assert!(server_seconds(&owner, started) < 10, "the other player's aurochs never walked their own wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
 }
 
 #[test]

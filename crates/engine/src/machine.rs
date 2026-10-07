@@ -392,7 +392,8 @@ impl Machine {
 pub struct MachineRegistry {
     machines: Vec<Machine>,
     by_block: FxHashMap<BlockId, usize>,
-    fuels: Vec<(Accepts, f32)>,
+    /// What burns, for how long, and whether it was named by a tag.
+    fuels: Vec<(Accepts, f32, bool)>,
     processes: Vec<Process>,
     walkers: Vec<String>,
     /// How the world drives wind and walked machines.
@@ -484,7 +485,7 @@ impl MachineRegistry {
                 registry.machines.push(Machine { block, role: def.role, processes });
             }
             for fuel in file.fuels {
-                registry.fuels.push((accepts(&fuel.item, blocks)?, fuel.seconds.max(0.0)));
+                registry.fuels.push((accepts(&fuel.item, blocks)?, fuel.seconds.max(0.0), fuel.item.contains("tag:")));
             }
             registry.walkers.extend(file.walkers);
             registry.walkers.retain(|w| !file.not_walkers.contains(w));
@@ -522,10 +523,12 @@ impl MachineRegistry {
         self.walkers.iter().any(|w| w == species)
     }
 
-    /// How long one of `item` burns at full output, if it burns: the last fuel that takes it,
-    /// so a later package may change what an earlier one said.
+    /// How long one of `item` burns at full output, if it burns: the last fuel naming it,
+    /// else the last tag taking it, so an item's own entry is never shortened by a tag and a
+    /// later package may change what an earlier one said.
     pub fn burn_seconds(&self, item: BlockId) -> Option<f32> {
-        self.fuels.iter().rev().find(|(accepts, _)| accepts.binary_search(&item).is_ok()).map(|&(_, s)| s)
+        let last = |tagged: bool| self.fuels.iter().rev().find(|(accepts, _, tag)| *tag == tagged && accepts.binary_search(&item).is_ok()).map(|&(_, s, _)| s);
+        last(false).or_else(|| last(true))
     }
 
     /// How many of its `slots` input stacks `item` may fill: enough to leave one for each
@@ -604,6 +607,23 @@ mod tests {
         assert_eq!(registry.burn_seconds(blocks.id("t:log").unwrap()), Some(15.0));
         assert_eq!(registry.burn_seconds(blocks.id("t:ore").unwrap()), None);
         assert_eq!(crusher.ports(), vec![Port { carrier: Carrier::Electric, tier: 1, faces: ALL_FACES, role: PortRole::Takes(8.0) }]);
+    }
+
+    /// An item's own fuel entry beats a tag listed after it, and a later package's
+    /// `not_walkers` takes an earlier one's walker away.
+    #[test]
+    fn a_named_fuel_beats_a_tag_and_a_package_can_take_a_walker_away() {
+        let blocks = blocks();
+        let base = MachineRegistry::read(
+            "t",
+            r#"(machines: [], fuels: [(item: "log", seconds: 15.0), (item: "tag:log", seconds: 2.0)], walkers: ["aurochs", "camel"])"#,
+        )
+        .unwrap();
+        let package = MachineRegistry::read("m", r#"(machines: [], walkers: ["goat"], not_walkers: ["t:camel"])"#).unwrap();
+        let registry = MachineRegistry::new(vec![base, package], Vec::new(), &blocks).unwrap();
+        assert_eq!(registry.burn_seconds(blocks.id("t:log").unwrap()), Some(15.0));
+        assert!(registry.walks("t:aurochs") && registry.walks("m:goat"));
+        assert!(!registry.walks("t:camel"), "taken away by the later package");
     }
 
     #[test]

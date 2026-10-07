@@ -122,5 +122,6 @@ Machines are saved in the world folder's `machines.ron`, by block and item names
 pack that renames or drops a machine loses only that machine. A machine remembers who
 placed it, and a multiblock counts towards `built:` quests once per standing structure.
 
-Fuels: the last entry in `fuels` that takes an item says how long it burns, so broad tags
-come first and a later package can change any of them.
+Fuels: the last entry in `fuels` naming an item says how long it burns, else the last tag
+taking it, so a tag never shortens an item's own entry and a later package can change any of
+them.
