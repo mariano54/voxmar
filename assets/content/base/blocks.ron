@@ -193,6 +193,13 @@
             tags: ["soil", "snow", "cold", "natural", "surface"],
         ),
         (name: "snow_block", texture_variety: (turn: true, mirror: true), sound: Snow, textures: All("snow"), hardness: 0.2, color: (240, 245, 250), tags: ["snow", "cold", "natural", "surface"]),
+        // A long-dead trunk, bare and weathered grey, of snags in dry and cold land: no
+        // wood of any kind, so it never enters an inventory; breaking it gives a stick
+        // instead (tools.ron), and no region's timber turns up where its trees do not grow.
+        (
+            name: "dead_log", sound: Wood, textures: Column(end: "dead_log_top", side: "dead_log"),
+            hardness: 1.6, drops: "core:air", color: (128, 124, 116), tags: ["log", "natural", "fuel", "dead"],
+        ),
         (name: "powder_snow", texture_variety: (turn: true, mirror: true), sound: Snow, textures: All("powder_snow"), hardness: 0.25, color: (248, 253, 253), tags: ["snow", "cold", "natural", "surface"]),
         (name: "ice", sound: Glass, textures: All("ice"), render: Translucent, light_filter: 2, hardness: 0.5, color: (150, 190, 250), tags: ["ice", "cold", "natural"]),
         (name: "packed_ice", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("packed_ice"), hardness: 0.5, color: (141, 180, 250), tags: ["ice", "cold", "natural"]),

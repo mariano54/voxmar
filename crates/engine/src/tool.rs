@@ -253,4 +253,16 @@ mod tests {
         assert!(tools.rule(id("log")).is_none());
         assert_eq!(tools.first_of(iron.tool.unwrap(), 2), Some(id("stone_pickaxe")));
     }
+
+    /// A dead snag's trunk (`base:dead_log`) is never an item: it drops nothing of its own
+    /// and breaking it gives a stick instead, every time.
+    #[test]
+    fn dead_logs_break_to_sticks() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let dead = content.blocks.expect("base:dead_log");
+        assert!(content.blocks.info(dead).drops.is_air());
+        let rule = content.tools.rule(dead).expect("a rule for dead logs");
+        assert_eq!(rule.instead, Some((content.blocks.expect("base:stick"), 1.0)));
+    }
 }
