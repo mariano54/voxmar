@@ -2295,6 +2295,10 @@ fn screenshot(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// A screen or state the text-fit tour opens.
+/// The journal pages the text-fit tour opens: animals, plants and bosses (empty yet). The
+/// other pages are drawn the same way, and all fourteen would make the tour too slow.
+const FIT_JOURNAL: [usize; 3] = [0, 4, 2];
+
 #[derive(Clone, Copy, Debug)]
 enum View {
     /// The HUD alone, with experience, a refusal and a level-up showing.
@@ -2342,7 +2346,8 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
-            .chain((0..voxmar_engine::journal::Page::ALL.len()).map(View::Journal))
+            // The journal's kinds of page: creatures, items, and one with nothing yet.
+            .chain(FIT_JOURNAL.map(View::Journal))
             .chain((0..crate::settings::TABS).map(View::Menu))
             .collect()
     };
