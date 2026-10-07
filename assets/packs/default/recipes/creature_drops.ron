@@ -99,6 +99,8 @@
             "....hhmmmmhh....", "...jhjmmmmhhj...", ".....hhmmhh.....", "....hhhffhhh....",
             "..jhh......hhj..", "...h........h...", "................", "................",
         ])]),
+        // Fur in general, for the consolidated `fur` item: a warm brown pelt.
+        "block/fur": (base: "block/fox_fur", palettes: {"fruit": "bear_brown", "wood": "fur_light"}),
         "block/wolf_pelt": (base: "block/fox_fur", palettes: {"fruit": "wolf_grey", "wood": "fur_light"}),
         "block/bear_pelt": (base: "block/fox_fur", palettes: {"fruit": "bear_brown", "wood": "bear_brown"}),
         "block/snow_fur": (base: "block/fox_fur", palettes: {"fruit": "snow_white", "wood": "fur_light"}),
