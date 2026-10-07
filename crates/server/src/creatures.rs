@@ -174,7 +174,7 @@ pub struct Creatures {
     /// lost.
     pub unplaced: Vec<crate::husbandry::SavedCreature>,
     /// Loot waiting for its body to finish falling: the tick it drops, and what.
-    falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
+    pub(crate) falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
 }
 
 impl Creatures {

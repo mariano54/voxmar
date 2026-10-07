@@ -27,6 +27,7 @@ mod weather;
 mod wear;
 
 use std::collections::VecDeque;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -78,12 +79,82 @@ pub struct ServerConfig {
     /// saved world's game mode replaces `allow_flight`. `None` keeps the world in memory
     /// only.
     pub world: Option<PathBuf>,
+    /// How much any one connection may send and how many may wait to say hello (the
+    /// dedicated server reads them from `--limits FILE`).
+    pub limits: Limits,
     /// Makes the server run behind, to see how clients cope, as on a busy machine. None
     /// but in tests.
     pub lag: Lag,
     /// Cuts every save short once its machines are written, as a crash would. Only in
     /// tests.
     pub cut_saves: bool,
+}
+
+/// How much any one connection may ask of the server: a server operator's numbers, read
+/// by the dedicated server from a RON file (`--limits FILE`) that sets any of them.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Limits {
+    /// Messages a player's handled per tick, at most; the rest wait for the next (and a
+    /// connection whose queue fills is cut off). Inputs come one a tick.
+    pub messages_per_tick: u32,
+    /// Lines of chat in a burst, and per second after it.
+    pub chat_burst: f32,
+    pub chat_per_second: f32,
+    /// Seconds a connection may take to say hello before it is closed, how many may be
+    /// waiting to at once, and how many of those from one address.
+    pub hello_seconds: f32,
+    pub max_pending: usize,
+    pub max_pending_per_address: usize,
+    /// Characters of a player's name kept.
+    pub name_length: usize,
+    /// How many leading bits of an IPv6 address the limits per address count by: one
+    /// host usually holds a whole /64, so each of its addresses is not another player.
+    pub ipv6_prefix: u8,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32, ipv6_prefix: 64 }
+    }
+}
+
+impl Limits {
+    /// Limits from a RON file's text, refusing any that would shut everyone out or let
+    /// one connection hold the server up.
+    pub fn from_ron(source: &str) -> Result<Self, String> {
+        let limits: Limits = ron::from_str(source).map_err(|e| e.to_string())?;
+        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length, ipv6_prefix } = limits;
+        let rates = [chat_burst, chat_per_second, hello_seconds];
+        if rates.iter().any(|n| !n.is_finite() || *n < 0.0) {
+            Err("chat_burst, chat_per_second and hello_seconds must be zero or more".into())
+        } else if !(2..=1024).contains(&messages_per_tick) {
+            Err("messages_per_tick must be from 2 to 1024 (a player sends an input and more every tick)".into())
+        } else if !(0.5..=60.0).contains(&hello_seconds) {
+            Err("hello_seconds must be from 0.5 to 60".into())
+        } else if max_pending == 0 || max_pending_per_address == 0 {
+            Err("max_pending and max_pending_per_address must be at least 1, or nobody could join".into())
+        } else if !(1..=64).contains(&name_length) {
+            Err("name_length must be from 1 to 64".into())
+        } else if !(16..=128).contains(&ipv6_prefix) {
+            Err("ipv6_prefix must be from 16 to 128".into())
+        } else {
+            Ok(limits)
+        }
+    }
+
+    /// The address the limits per address count `ip` under: an IPv4 address (an IPv4
+    /// client of a dual-stack listener too) as itself, an IPv6 one by its first
+    /// `ipv6_prefix` bits.
+    pub fn address_key(&self, ip: IpAddr) -> IpAddr {
+        match ip.to_canonical() {
+            IpAddr::V6(v6) => {
+                let mask = u128::MAX.checked_shl(128 - self.ipv6_prefix.min(128) as u32).unwrap_or(0);
+                IpAddr::V6((u128::from(v6) & mask).into())
+            }
+            v4 => v4,
+        }
+    }
 }
 
 /// How a server made to run behind does so (see `ServerConfig::lag`).
@@ -120,6 +191,7 @@ impl Default for ServerConfig {
             admin_token: None,
             idle_timeout: Duration::from_secs(15),
             world: None,
+            limits: Limits::default(),
             lag: Lag::default(),
             cut_saves: false,
         }
@@ -178,7 +250,16 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
     rules::SurvivalRules::load(&content.files, &content.blocks)?;
+    for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
+        tracing::warn!("the fluid {} is neither swum in (swim: true) nor burns (tagged \"lava\"): players wade through it unharmed", fluid.name);
+    }
     Ok(content)
+}
+
+/// Whether players swim in `fluid` or are burned by it: one that does neither (a mod's
+/// lava that lost its tag, say) is only waded through.
+fn swum_or_burns(blocks: &voxmar_engine::block::BlockRegistry, fluid: &voxmar_engine::fluid::Fluid) -> bool {
+    fluid.def.swim || blocks.def(fluid.source).has_tag("lava")
 }
 
 /// A running server thread. Dropping it stops the server.
@@ -232,7 +313,20 @@ impl Drop for ServerHandle {
 /// Starts a server thread. With `config.world` set, opens the world saved there (or
 /// creates it); the server saves it periodically and when the handle is dropped.
 pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
-    let (save, meta) = open_world(&mut config)?;
+    let (save, mut meta) = open_world(&mut config)?;
+    // Land made from different worldgen data than before may not line up with it: warned
+    // about, never refused (content-only changes keep the generator's version).
+    let worldgen_content = WorldContent::fingerprint(content.files.iter(), &content.blocks);
+    let generation_changed = meta.worldgen_content.is_some_and(|before| before != worldgen_content);
+    if meta.worldgen_content != Some(worldgen_content) {
+        meta.worldgen_content = Some(worldgen_content);
+        if let Some(save) = &save {
+            if generation_changed {
+                tracing::warn!("{}: {}", save.dir().display(), content.english.render(&voxmar_engine::lang::Words::key("world.generation_changed"), &content.blocks));
+            }
+            save.write_meta(&meta)?;
+        }
+    }
     let state = save.as_ref().map_or(Ok(save::WorldState::default()), WorldSave::read_state)?;
     let (connections, incoming) = unbounded();
     let (console, lines) = unbounded();
@@ -243,7 +337,11 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
         let (stop, tick_times, ticks) = (stop.clone(), tick_times.clone(), ticks.clone());
         std::thread::Builder::new()
             .name("server".into())
-            .spawn(move || Server::new(config, meta, save, state, content, incoming, lines).run(&stop, &tick_times, &ticks))?
+            .spawn(move || {
+                let mut server = Server::new(config, meta, save, state, content, incoming, lines);
+                server.generation_changed = generation_changed;
+                server.run(&stop, &tick_times, &ticks)
+            })?
     };
     Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks })
 }
@@ -374,6 +472,12 @@ pub(crate) struct Server {
     dirty: FxHashSet<ColumnPos>,
     /// Columns whose files could not be read, which saving leaves alone (`Loaded`).
     kept: FxHashSet<ColumnPos>,
+    /// The world's worldgen data changed since land was last made in it, so admins who
+    /// join are warned that new land may not line up (`WorldMeta::worldgen_content`).
+    generation_changed: bool,
+    /// When each address's new players had the starting kit, in ticks (`Server::grant_kit`).
+    /// Kept only while the server runs.
+    kits: FxHashMap<std::net::IpAddr, Vec<u64>>,
     generating: FxHashSet<ColumnPos>,
     generated_tx: Sender<(ColumnPos, Loaded)>,
     generated_rx: Receiver<(ColumnPos, Loaded)>,
@@ -466,6 +570,8 @@ impl Server {
             fluids,
             dirty: FxHashSet::default(),
             kept: if loaded.keep_file { FxHashSet::from_iter([spawn_column]) } else { FxHashSet::default() },
+            generation_changed: false,
+            kits: FxHashMap::default(),
             generating: FxHashSet::default(),
             generated_tx,
             generated_rx,
@@ -529,16 +635,17 @@ impl Server {
             // any one address, so sockets left silent cannot fill the server or crowd out
             // everyone else (players are counted at hello).
             let pending = || self.players.values().filter(|p| !p.joined);
-            let peer = connection.peer();
-            if pending().count() >= player::MAX_PENDING
-                || peer.is_some() && pending().filter(|p| p.connection.peer() == peer).count() >= player::MAX_PENDING_PER_ADDRESS
+            let limits = &self.config.limits;
+            let key = |connection: &ServerConnection| connection.peer().map(|ip| limits.address_key(ip));
+            let peer = key(&connection);
+            if pending().count() >= limits.max_pending || peer.is_some() && pending().filter(|p| key(&p.connection) == peer).count() >= limits.max_pending_per_address
             {
                 connection.send(ServerMessage::Rejected { reason: voxmar_engine::lang::Words::key("net.rejected.full") });
                 continue;
             }
             let id = self.next_player;
             self.next_player += 1;
-            self.players.insert(id, Player::new(id, connection, self.spawn, self.config.view_distance, self.tick, self.survival.max_health));
+            self.players.insert(id, Player::new(id, connection, self.spawn, self.config.view_distance, self.tick, self.survival.max_health, &self.config.limits));
         }
     }
 
@@ -603,6 +710,23 @@ impl Server {
         self.players.remove(&id);
     }
 
+    /// The dropped items to save, and loot still waiting for a creature's body to fall,
+    /// saved as lying where it will drop, or a server stopped in that moment would lose it
+    /// (the creature is gone).
+    fn saved_items(&self) -> Vec<save::SavedItem> {
+        let blocks = &self.content.blocks;
+        let mut saved = self.items.saved(|item| blocks.def(item).name.clone());
+        saved.extend(self.creatures.falling_loot.iter().map(|(_, stack, body)| save::SavedItem {
+            item: blocks.def(stack.item).name.clone(),
+            count: stack.count,
+            position: body.position.to_array(),
+            age: 0.0,
+            owner: None,
+            lifetime: None,
+        }));
+        saved
+    }
+
     fn tick(&mut self) {
         let _span = tracing::info_span!("server_tick").entered();
         self.tick += 1;
@@ -629,6 +753,9 @@ impl Server {
         }
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();
+        }
+        if self.tick.is_multiple_of(60 * TICKS_PER_SECOND as u64) {
+            self.forget_old_kits();
         }
     }
 
@@ -688,7 +815,7 @@ impl Server {
                 failed(&format!("player {}", player.name), e);
             }
         }
-        if let Err(e) = save.write_items(&self.items.saved(|item| registry.def(item).name.clone())) {
+        if let Err(e) = save.write_items(&self.saved_items()) {
             failed("dropped items", e);
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
@@ -923,6 +1050,84 @@ pub(crate) fn test_server() -> Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loot_waiting_for_a_body_to_fall_is_saved_where_it_will_drop() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let dir = std::env::temp_dir().join(format!("voxmar-falling-loot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let meta = WorldMeta::new("loot", 1, GameMode::Survival);
+        let save = WorldSave::new(&dir);
+        save.create(&meta).unwrap();
+        let ((_, incoming), (_, console)) = (unbounded(), unbounded());
+        let config = ServerConfig { view_distance: 2, ..Default::default() };
+        let mut server = Server::new(config, meta, Some(save), save::WorldState::default(), content.clone(), incoming, console);
+        let slime = content.blocks.expect("base:lumen_slime");
+        let at = Vec3::new(3.5, 70.0, -2.5);
+        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack { item: slime, count: 2 }, voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
+        server.save();
+        let saved = WorldSave::new(&dir).read_items().unwrap();
+        assert_eq!(saved.len(), 1, "{saved:?}");
+        assert_eq!((saved[0].item.as_str(), saved[0].count, saved[0].position), ("base:lumen_slime", 2, at.to_array()));
+        // Saving takes nothing from the queue: the loot still drops when its body has fallen.
+        assert_eq!(server.creatures.falling_loot.len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn every_shipped_fluid_is_swum_in_or_burns() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let blocks = &content.blocks;
+        assert!(blocks.fluids().iter().all(|fluid| swum_or_burns(blocks, fluid)));
+        // Water that is not swum in would be named at load.
+        let mut water = blocks.fluid_def(blocks.fluid(blocks.expect("base:water")).unwrap().fluid).clone();
+        water.def.swim = false;
+        assert!(!swum_or_burns(blocks, &water));
+    }
+
+    #[test]
+    fn addresses_count_together_by_ipv4_address_or_ipv6_prefix() {
+        let limits = Limits::default();
+        let key = |ip: &str| limits.address_key(ip.parse().unwrap());
+        assert_eq!(key("::ffff:127.0.0.1"), key("127.0.0.1"));
+        assert_eq!(key("::ffff:127.0.0.1"), "127.0.0.1".parse::<IpAddr>().unwrap());
+        // One host's /64 shares a kit and a share of those waiting to say hello...
+        assert_eq!(key("2001:db8:1:2::1"), key("2001:db8:1:2:abcd:ef01:2345:6789"));
+        // ...while the next /64, and other IPv4 addresses, do not.
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        assert_ne!(key("10.0.0.1"), key("10.0.0.2"));
+        let whole = Limits { ipv6_prefix: 128, ..Limits::default() };
+        assert_ne!(whole.address_key("2001:db8::1".parse().unwrap()), whole.address_key("2001:db8::2".parse().unwrap()));
+    }
+
+    #[test]
+    fn one_ipv6_host_or_one_machine_over_both_gets_one_kit_and_old_kits_are_forgotten() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let ((_, incoming), (_, console)) = (unbounded(), unbounded());
+        let config = ServerConfig { view_distance: 2, ..Default::default() };
+        let mut server = Server::new(config, WorldMeta::new("kits", 1, GameMode::Survival), None, save::WorldState::default(), content, incoming, console);
+        let mut grant = |ip: &str| server.grant_kit(ip.parse().unwrap());
+        assert!(grant("2001:db8:1:2::1"));
+        assert!(!grant("2001:db8:1:2::77"), "the same /64");
+        assert!(grant("2001:db8:1:3::1"), "the next /64");
+        assert!(grant("127.0.0.1"));
+        assert!(!grant("::ffff:127.0.0.1"), "the same machine through a dual-stack listener");
+        server.forget_old_kits();
+        assert_eq!(server.kits.len(), 3);
+        server.tick += (server.survival.kit_window * TICKS_PER_SECOND as f32) as u64;
+        server.forget_old_kits();
+        assert!(server.kits.is_empty());
+    }
+
+    #[test]
+    fn a_limits_file_sets_what_it_names_and_refuses_numbers_that_shut_everyone_out() {
+        let limits = Limits::from_ron("(chat_burst: 4.0, max_pending_per_address: 2)").unwrap();
+        assert_eq!(limits, Limits { chat_burst: 4.0, max_pending_per_address: 2, ..Limits::default() });
+        assert_eq!(Limits::from_ron("()").unwrap(), Limits::default());
+        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(ipv6_prefix: 8)", "(ipv6_prefix: 129)", "(chat_brust: 4.0)"] {
+            assert!(Limits::from_ron(bad).is_err(), "{bad} is accepted");
+        }
+    }
 
     #[test]
     fn rings_cover_square_once() {

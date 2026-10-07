@@ -530,6 +530,7 @@
     "net.rejected.full": "the server is full",
     "net.rejected.save": "your saved player could not be read and the server could not keep it aside",
     "save.player_set_aside": "Your saved player could not be read, so you start afresh. The old file is kept as {file} for the server admin.",
+    "world.generation_changed": "This world's terrain data has changed since land was last made here, so land explored from now on may not line up with land explored before.",
     "language.list_separator": ", ",
 
     "command.the_server": "The server",

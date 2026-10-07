@@ -10,6 +10,7 @@ use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
 use voxmar_engine::lang::Words;
+use voxmar_engine::movement::Checks;
 use voxmar_engine::physics::{Aabb, player as dims};
 use voxmar_engine::skill::{SkillRegistry, Skills};
 use voxmar_engine::traits::{self, Health, TraitDecl};
@@ -19,43 +20,8 @@ use voxmar_protocol::{
     TICKS_PER_SECOND,
 };
 
-use crate::Server;
+use crate::{Limits, Server};
 use crate::save::{GameMode, SavedPlayer};
-
-/// How much faster than the content's top speeds a player's movement may be, for rounding,
-/// currents and network jitter.
-const SPEED_MARGIN: f32 = 1.25;
-/// Seconds of top speed a player's movement may run ahead in one go: a client that
-/// hitched sends one long step, and inputs bunch up on their way.
-const MOVE_BURST: f32 = 2.0;
-/// Blocks of movement allowed besides.
-const MOVE_SLACK: f32 = 0.5;
-/// How far a player on foot may rise above where they last stood, besides the height of
-/// their jump; out of water, the lift onto a bank as well (`STEP_OUT`).
-const RISE_SLACK: f32 = 0.25;
-/// Seconds a player on foot may go without ground or water under them before they must be
-/// coming down, and how fast (blocks a second) the height they may keep sinks after that:
-/// nobody hovers over a ravine.
-const HOVER_GRACE: f32 = 2.0;
-const HOVER_SINK: f32 = 1.0;
-/// Seconds after being let down before the height they may keep sinks again.
-const LET_DOWN_PAUSE: f32 = 0.25;
-/// How far above ground a player still counts as having just touched it, for the hover
-/// clock: a hop touches the ground for a moment only.
-const NEAR_GROUND: f32 = 0.5;
-/// Longest step a movement is checked for walls in, in blocks.
-const SWEEP_STEP: f32 = 0.25;
-/// Messages a player's handled per tick, at most; the rest wait for the next (and a
-/// connection whose queue fills is cut off). Inputs come one a tick.
-pub const MESSAGES_PER_TICK: u32 = 64;
-/// Lines of chat in a burst, and per second after it.
-const CHAT_BURST: f32 = 8.0;
-const CHAT_PER_SECOND: f32 = 2.0;
-/// Ticks a connection may take to say hello before it is closed, how many may be waiting
-/// to at once, and how many of those from one address.
-pub const HELLO_TICKS: u64 = 3 * TICKS_PER_SECOND as u64;
-pub const MAX_PENDING: usize = 16;
-pub const MAX_PENDING_PER_ADDRESS: usize = 4;
 
 pub struct Player {
     pub id: PlayerId,
@@ -122,6 +88,9 @@ pub struct Player {
     /// or a respawn, starts afresh); the height they last stood, swam or flew at, which on
     /// foot they may rise above by a jump only, whether that was in water, and when.
     pub accepted: Vec3,
+    /// How many times the server has moved the player (`Player::teleport`); inputs that
+    /// do not echo it are stale.
+    pub teleports: u32,
     pub support: Support,
     /// The last place they stood on ground out of lava: where a death in the void or in
     /// lava leaves their things (`Server::grave_site`).
@@ -145,7 +114,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(id: PlayerId, connection: ServerConnection, spawn: Vec3, view_distance: i32, tick: u64, max_health: u8) -> Self {
+    pub fn new(id: PlayerId, connection: ServerConnection, spawn: Vec3, view_distance: i32, tick: u64, max_health: u8, limits: &Limits) -> Self {
         Self {
             id,
             name: String::new(),
@@ -183,12 +152,13 @@ impl Player {
             budgets: Budgets::default(),
             budget_at: None,
             accepted: spawn,
+            teleports: 0,
             support: Support { y: spawn.y, fluid: false, at: None },
             last_ground: None,
             connected_tick: tick,
             last_heard: Instant::now(),
-            messages_left: MESSAGES_PER_TICK,
-            chat_allowance: CHAT_BURST,
+            messages_left: limits.messages_per_tick,
+            chat_allowance: limits.chat_burst,
             chat_at: None,
             told_to_slow: false,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
@@ -223,6 +193,14 @@ impl Player {
         if !self.dirty.iter().any(|d| d.name == decl.name) {
             self.dirty.push(decl);
         }
+    }
+
+    /// Moves the player to `position` and tells their client, numbering the teleport so
+    /// inputs they sent before seeing it are dropped (`PlayerInput::teleport`).
+    pub fn teleport(&mut self, position: Vec3) {
+        self.position = position;
+        self.teleports = self.teleports.wrapping_add(1);
+        self.connection.send(ServerMessage::Teleport { position, seq: self.teleports });
     }
 
     /// Whether a player playing from elsewhere has sent nothing, not even the keepalive
@@ -322,12 +300,39 @@ impl Server {
         player.changed(traits::INVENTORY);
     }
 
+    /// Whether a new player from `address` may have the starting kit: at most
+    /// `kits_per_address` in any `kit_window`, by the server's ticks. Counts it if so.
+    pub(crate) fn grant_kit(&mut self, address: std::net::IpAddr) -> bool {
+        let address = self.config.limits.address_key(address);
+        let window = (self.survival.kit_window * TICKS_PER_SECOND as f32) as u64;
+        let tick = self.tick;
+        let given = self.kits.entry(address).or_default();
+        given.retain(|&at| tick.saturating_sub(at) < window);
+        let granted = given.len() < self.survival.kits_per_address as usize;
+        if granted {
+            given.push(tick);
+        }
+        if given.is_empty() {
+            self.kits.remove(&address);
+        }
+        granted
+    }
+
+    /// Forgets the addresses whose kits are all older than `kit_window`, so the list does
+    /// not grow with every address that ever joined.
+    pub(crate) fn forget_old_kits(&mut self) {
+        let (window, tick) = ((self.survival.kit_window * TICKS_PER_SECOND as f32) as u64, self.tick);
+        self.kits.retain(|_, given| {
+            given.retain(|&at| tick.saturating_sub(at) < window);
+            !given.is_empty()
+        });
+    }
+
     fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
         let fingerprint = self.content.fingerprint();
         let blocks = &self.content.blocks;
-        let new_inventory = self.survival.new_inventory().expect("checked by load_content");
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
-        let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
+        let name: String = name.chars().filter(|c| !c.is_control()).take(self.config.limits.name_length).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
         if self.players[&id].joined {
             return;
@@ -372,6 +377,10 @@ impl Server {
                 }
             },
         };
+        // A new player gets the starting kit, but an address gets only so many in a while
+        // (`survival.ron`), so fresh names do not farm it.
+        let kit = saved.is_none() && self.players[&id].connection.peer().is_none_or(|address| self.grant_kit(address));
+        let new_inventory = self.survival.new_inventory(kit).expect("checked by load_content");
         let local_admin = self.config.local_admin;
         let token_admin = self.config.admin_token.as_deref().zip(admin_token.as_deref()).is_some_and(|(ours, theirs)| same_token(ours, theirs));
         let skill_ids = self.content.skills.clone();
@@ -421,7 +430,8 @@ impl Server {
                 player.quests_done = saved.quests;
                 player.tallies = saved.tallies.into_iter().collect();
             }
-            // The coin purse in the pack's last slot, out of the hotbar's way, and the kit.
+            // The coin purse in the pack's last slot, out of the hotbar's way, and the kit
+            // unless this address has had its share.
             None => player.inventory = new_inventory,
         }
         skill_ids.start(&mut player.skills);
@@ -453,15 +463,19 @@ impl Server {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));
             self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Error, text });
         }
+        if admin && self.generation_changed {
+            self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("world.generation_changed") });
+        }
     }
 
     /// Gives every player their share of messages for the tick, and closes connections
     /// that have not said hello in time.
     pub(crate) fn limit_players(&mut self) {
-        let tick = self.tick;
+        let (tick, limits) = (self.tick, &self.config.limits);
+        let hello_ticks = (limits.hello_seconds * TICKS_PER_SECOND as f32) as u64;
         self.players.retain(|_, player| {
-            player.messages_left = MESSAGES_PER_TICK;
-            player.joined || tick.saturating_sub(player.connected_tick) <= HELLO_TICKS
+            player.messages_left = limits.messages_per_tick;
+            player.joined || tick.saturating_sub(player.connected_tick) <= hello_ticks
         });
     }
 
@@ -476,7 +490,8 @@ impl Server {
             return true;
         }
         let since = player.chat_at.map_or(0.0, |then| at.saturating_duration_since(then).as_secs_f32());
-        player.chat_allowance = (player.chat_allowance + since * CHAT_PER_SECOND).min(CHAT_BURST);
+        let Limits { chat_burst, chat_per_second, .. } = self.config.limits;
+        player.chat_allowance = (player.chat_allowance + since * chat_per_second).min(chat_burst);
         player.chat_at = Some(player.chat_at.map_or(at, |then| then.max(at)));
         if player.chat_allowance < 1.0 {
             if !player.told_to_slow {
@@ -502,31 +517,37 @@ impl Server {
         if !player.health.alive() || !input.position.is_finite() || !input.yaw.is_finite() || !input.pitch.is_finite() {
             return;
         }
+        // Sent before the client saw the server move them: judged from where they were
+        // moved to, it could undo a short teleport, so it counts for nothing.
+        if input.teleport != player.teleports {
+            return;
+        }
         // Quicker on foot as their effects say, as the client moves them.
         let tuning = &self.content.movement.on_foot(player.modifiers.speed.max(1.0));
+        let checks = tuning.checks;
         let flying = input.flying && player.allow_flight;
         // Flying, across is as fast diagonally as the client flies (both keys held), and up
         // and down as fast as flight or a fall.
         let fly = tuning.fly_sprint_speed * player.fly_speed;
         let rates = if flying {
             Budgets {
-                across: SPEED_MARGIN * fly * std::f32::consts::SQRT_2,
-                rise: SPEED_MARGIN * fly.max(tuning.jump_velocity),
-                fall: SPEED_MARGIN * fly.max(tuning.terminal_velocity),
+                across: checks.speed_margin * fly * std::f32::consts::SQRT_2,
+                rise: checks.speed_margin * fly.max(tuning.jump_velocity),
+                fall: checks.speed_margin * fly.max(tuning.terminal_velocity),
             }
         } else {
             Budgets {
-                across: SPEED_MARGIN * tuning.top_ground_speed(),
-                rise: SPEED_MARGIN * tuning.jump_velocity,
-                fall: SPEED_MARGIN * tuning.terminal_velocity,
+                across: checks.speed_margin * tuning.top_ground_speed(),
+                rise: checks.speed_margin * tuning.jump_velocity,
+                fall: checks.speed_margin * tuning.terminal_velocity,
             }
         };
         let gap = player.budget_at.map_or(1.0 / TICKS_PER_SECOND as f32, |then| at.saturating_duration_since(then).as_secs_f32());
-        let since = gap.min(MOVE_BURST);
+        let since = gap.min(checks.burst);
         let from = player.position;
         // Moved by the server since their last input (a teleport, a respawn): afresh.
         let afresh = from != player.accepted || player.budget_at.is_none();
-        let budgets = rates.refilled(&player.budgets, since, afresh);
+        let budgets = rates.refilled(&player.budgets, since, afresh, &checks);
         let mut support = if afresh || (player.flying && player.allow_flight) {
             Support { y: from.y, fluid: self.standing(from) == Some(true), at: Some(at) }
         } else {
@@ -540,7 +561,7 @@ impl Server {
         // stalled connection, a hitch), so silence neither sinks them nor buys more time.
         if self.near_ground(from) {
             support.at = Some(at);
-        } else if gap > HOVER_GRACE {
+        } else if gap > checks.hover_grace {
             let paused = std::time::Duration::from_secs_f32(gap);
             support.at = support.at.map(|then| (then + paused).min(at));
         }
@@ -583,10 +604,10 @@ impl Server {
         } else {
             player.budgets = budgets;
             if let_down && lowered != from {
-                player.position = lowered;
                 player.accepted = lowered;
             }
-            player.connection.send(ServerMessage::Teleport { position: player.position });
+            let back = if let_down { lowered } else { player.position };
+            player.teleport(back);
         }
     }
 
@@ -596,9 +617,7 @@ impl Server {
     pub(crate) fn grave_site(&self, id: PlayerId) -> Vec3 {
         let player = &self.players[&id];
         let blocks = &self.content.blocks;
-        let lava = blocks.id("base:lava").and_then(|b| blocks.fluid(b)).map(|f| f.fluid);
-        let in_lava = lava.is_some()
-            && player.aabb().intersects(|cell| self.block(cell).and_then(|b| blocks.fluid(b)).is_some_and(|f| Some(f.fluid) == lava));
+        let in_lava = player.aabb().intersects(|cell| self.block(cell).and_then(|b| blocks.fluid(b)).is_some_and(|f| crate::process::is_lava(blocks, f.fluid)));
         if player.position.y < self.survival.void_below || in_lava { player.last_ground.unwrap_or(self.spawn) } else { player.position }
     }
 
@@ -613,8 +632,7 @@ impl Server {
         let ground = Aabb { min: feet - Vec3::new(dims::WIDTH / 2.0, 0.1, dims::WIDTH / 2.0), max: feet + Vec3::new(dims::WIDTH / 2.0, 0.0, dims::WIDTH / 2.0) };
         // In water, even on its bottom, a swimmer may be lifted out onto a bank: water as the
         // client swims in it (`movement::water_around`), so not lava.
-        let water = blocks.id("base:water").unwrap_or(voxmar_engine::block::BlockId::AIR);
-        let (depth, _) = voxmar_engine::movement::water_around(blocks, water, |cell| self.block(cell), &Aabb::standing(feet, dims::WIDTH, dims::HEIGHT));
+        let (depth, _) = voxmar_engine::movement::water_around(blocks, |cell| self.block(cell), &Aabb::standing(feet, dims::WIDTH, dims::HEIGHT));
         if depth > 0.0 {
             Some(true)
         } else if ground.intersects(|cell| self.is_solid(cell)) {
@@ -624,10 +642,10 @@ impl Server {
         }
     }
 
-    /// Whether there is ground within `NEAR_GROUND` under a player at `feet`.
+    /// Whether there is ground within `Checks::near_ground` under a player at `feet`.
     fn near_ground(&self, feet: Vec3) -> bool {
         let half = dims::WIDTH / 2.0;
-        let below = Aabb { min: feet - Vec3::new(half, NEAR_GROUND, half), max: feet + Vec3::new(half, 0.0, half) };
+        let below = Aabb { min: feet - Vec3::new(half, self.content.movement.checks.near_ground, half), max: feet + Vec3::new(half, 0.0, half) };
         below.intersects(|cell| self.is_solid(cell))
     }
 
@@ -642,9 +660,10 @@ impl Server {
     }
 
     /// Whether a player at `feet` would be in a wall (with a slightly smaller box than
-    /// theirs, for rounding).
+    /// theirs, for rounding: `Checks::wall_box`).
     fn inside(&self, feet: Vec3) -> bool {
-        Aabb::standing(feet, dims::WIDTH * 0.9, dims::HEIGHT * 0.95).intersects(|cell| self.is_solid(cell))
+        let (width, height) = self.content.movement.checks.wall_box;
+        Aabb::standing(feet, dims::WIDTH * width, dims::HEIGHT * height).intersects(|cell| self.is_solid(cell))
     }
 
     /// Whether a player could have got from `from` to `to` without passing through a wall.
@@ -658,8 +677,9 @@ impl Server {
         if self.inside(from) {
             return !self.inside(to);
         }
+        let sweep_step = self.content.movement.checks.sweep_step;
         let clear = |a: Vec3, b: Vec3| {
-            let steps = ((b - a).length() / SWEEP_STEP).ceil().max(1.0) as u32;
+            let steps = ((b - a).length() / sweep_step).ceil().max(1.0) as u32;
             (1..=steps).all(|i| !self.inside(a.lerp(b, i as f32 / steps as f32)))
         };
         let across_first = Vec3::new(to.x, from.y, to.z);
@@ -685,11 +705,11 @@ pub struct Budgets {
 }
 
 impl Budgets {
-    /// These rates' budgets after `since` seconds more of `left`, each up to `MOVE_BURST`
-    /// seconds' worth and a little slack; full when starting afresh.
-    fn refilled(&self, left: &Budgets, since: f32, afresh: bool) -> Budgets {
+    /// These rates' budgets after `since` seconds more of `left`, each up to
+    /// `Checks::burst` seconds' worth and a little slack; full when starting afresh.
+    fn refilled(&self, left: &Budgets, since: f32, afresh: bool, checks: &Checks) -> Budgets {
         let fill = |left: f32, rate: f32| {
-            let cap = rate * MOVE_BURST + MOVE_SLACK;
+            let cap = rate * checks.burst + checks.slack;
             if afresh { cap } else { (left + since * rate).min(cap) }
         };
         Budgets { across: fill(left.across, self.across), rise: fill(left.rise, self.rise), fall: fill(left.fall, self.fall) }
@@ -719,7 +739,8 @@ impl Support {
     /// ground longer than a jump or a fall from it takes.
     fn ceiling(&self, tuning: &voxmar_engine::movement::Tuning, now: Instant, sinking: bool) -> f32 {
         let aloft = self.at.map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f32());
-        let sink = if sinking { (aloft - HOVER_GRACE).max(0.0) * HOVER_SINK } else { 0.0 };
+        let checks = &tuning.checks;
+        let sink = if sinking { (aloft - checks.hover_grace).max(0.0) * checks.hover_sink } else { 0.0 };
         self.y + Self::rise(tuning, self.fluid) - sink
     }
 
@@ -727,13 +748,13 @@ impl Support {
     /// water the step onto a bank.
     fn rise(tuning: &voxmar_engine::movement::Tuning, fluid: bool) -> f32 {
         let jump = tuning.jump_velocity * tuning.jump_velocity / (2.0 * tuning.gravity);
-        jump + RISE_SLACK + if fluid { voxmar_engine::movement::STEP_OUT } else { 0.0 }
+        jump.max(tuning.step_up) + tuning.checks.rise_slack + if fluid { tuning.step_out } else { 0.0 }
     }
 
     /// The support of a player let down to `y` at `now`: the height they may keep is `y`,
-    /// for `LET_DOWN_PAUSE`, and sinks on from there.
+    /// for `Checks::let_down_pause`, and sinks on from there.
     fn let_down_to(&self, y: f32, tuning: &voxmar_engine::movement::Tuning, now: Instant) -> Support {
-        let pause = std::time::Duration::from_secs_f32(HOVER_GRACE - LET_DOWN_PAUSE);
+        let pause = std::time::Duration::from_secs_f32(tuning.checks.hover_grace - tuning.checks.let_down_pause);
         Support { y: y - Self::rise(tuning, false), fluid: false, at: Some(now.checked_sub(pause).unwrap_or(now)) }
     }
 }

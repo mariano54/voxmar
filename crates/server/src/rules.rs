@@ -18,6 +18,10 @@ pub(crate) struct SurvivalRules {
     /// out of the hotbar's way) before it.
     pub starter_kit: Vec<(BlockId, u8)>,
     pub pack_end: Vec<(BlockId, u8)>,
+    /// How many new players from one address get the starting kit in any `kit_window`
+    /// seconds; the rest start with `pack_end` only.
+    pub kits_per_address: u32,
+    pub kit_window: f32,
     pub safe_fall: f32,
     pub burn: u8,
     /// Seconds.
@@ -37,6 +41,8 @@ struct SurvivalFile {
     max_health: Option<u8>,
     starter_kit: Option<Vec<(String, u8)>>,
     pack_end: Option<Vec<(String, u8)>>,
+    kits_per_address: Option<u32>,
+    kit_window: Option<f32>,
     safe_fall: Option<f32>,
     burn: Option<u8>,
     burn_every: Option<f32>,
@@ -57,7 +63,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan);
         }
         macro_rules! set {
             ($field:ident) => {
@@ -82,6 +88,8 @@ impl SurvivalRules {
             max_health: set!(max_health),
             starter_kit: items(set!(starter_kit), "starter_kit")?,
             pack_end: items(merged.pack_end.take().unwrap_or_default(), "pack_end")?,
+            kits_per_address: set!(kits_per_address),
+            kit_window: set!(kit_window),
             safe_fall: set!(safe_fall),
             burn: set!(burn),
             burn_every: set!(burn_every),
@@ -96,6 +104,7 @@ impl SurvivalRules {
             (rules.max_health > 0, "max_health must be above 0"),
             (rules.safe_fall.is_finite() && rules.safe_fall >= 0.0, "safe_fall must be 0 or more"),
             (rules.burn_every.is_finite() && rules.burn_every > 0.0, "burn_every must be above 0"),
+            (rules.kit_window.is_finite() && (0.0..=31_536_000.0).contains(&rules.kit_window), "kit_window must be 0 to a year of seconds"),
             (rules.void_below.is_finite(), "void_below must be a number"),
             (rules.heat_emission <= 15, "heat_emission is a light level, 0 to 15"),
             (rules.heat.is_finite() && rules.heat >= 0.0, "heat must be 0 or more"),
@@ -103,7 +112,7 @@ impl SurvivalRules {
             (rules.water_chill.is_finite(), "water_chill must be a number"),
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
             (rules.pack_end.len() <= SLOTS - HOTBAR_SLOTS, "pack_end holds at most as many items as the pack has slots besides the hotbar"),
-            (rules.new_inventory().is_some(), "pack_end and starter_kit together do not fit in an inventory"),
+            (rules.new_inventory(true).is_some(), "pack_end and starter_kit together do not fit in an inventory"),
         ];
         match checks.into_iter().find(|(ok, _)| !ok) {
             Some((_, problem)) => Err(format!("{FILE}: {problem}")),
@@ -111,14 +120,14 @@ impl SurvivalRules {
         }
     }
 
-    /// A new player's inventory: `pack_end` in the pack's last slots, then the starter kit.
-    /// `None` if they do not fit (refused at load, so never once the server runs).
-    pub(crate) fn new_inventory(&self) -> Option<Inventory> {
+    /// A new player's inventory: `pack_end` in the pack's last slots, then the starter kit
+    /// if `kit`. `None` if they do not fit (refused at load, so never once the server runs).
+    pub(crate) fn new_inventory(&self, kit: bool) -> Option<Inventory> {
         let mut inventory = Inventory::default();
         for (slot, &(item, count)) in (0..SLOTS).rev().zip(&self.pack_end) {
             inventory.slots[slot] = Some(ItemStack { item, count });
         }
-        for &(item, count) in &self.starter_kit {
+        for &(item, count) in self.starter_kit.iter().filter(|_| kit) {
             if inventory.add(item, count) > 0 {
                 return None;
             }
@@ -164,7 +173,7 @@ mod tests {
     fn a_new_player_gets_tools_bread_torches_planks_and_the_purse() {
         let blocks = blocks();
         let rules = SurvivalRules::load(&[file("core", SHIPPED)], &blocks).unwrap();
-        let inventory = rules.new_inventory().unwrap();
+        let inventory = rules.new_inventory(true).unwrap();
         let id = |name: &str| blocks.id(name).unwrap();
         let carried = |item| inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
         assert_eq!([carried(id("base:bread")), carried(id("base:torch")), carried(id("base:oak_planks"))], [4, 8, 16]);

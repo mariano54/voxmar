@@ -13,7 +13,7 @@ use voxmar_protocol::{
     ChatKind, ClientConnection, ClientMessage, ItemView, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND,
     Weather, local_pair, tcp,
 };
-use voxmar_server::{ServerConfig, ServerHandle, load_content, spawn};
+use voxmar_server::{Limits, ServerConfig, ServerHandle, load_content, spawn};
 
 struct Client {
     connection: ClientConnection,
@@ -30,6 +30,8 @@ struct Client {
     allow_flight: bool,
     /// The last position the server corrected us to.
     teleported: Option<Vec3>,
+    /// The last teleport applied, which inputs echo.
+    teleports: u32,
     health: u8,
     max_health: u8,
     vitals: voxmar_engine::vitals::Vitals,
@@ -100,7 +102,11 @@ impl Client {
 
     /// Joins as `name`, giving the server `admin_token`.
     fn greet_with(connection: ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>) -> Self {
-        let content = content();
+        Self::greet_content(connection, name, server, admin_token, content())
+    }
+
+    /// Joins as `name` with `content`, which must be the server's.
+    fn greet_content(connection: ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>, content: Content) -> Self {
         connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: admin_token.map(str::to_owned) });
         let mut client = Self {
             connection,
@@ -114,6 +120,7 @@ impl Client {
             admin: false,
             allow_flight: false,
             teleported: None,
+            teleports: 0,
             health: 0,
             max_health: 0,
             vitals: Default::default(),
@@ -172,8 +179,9 @@ impl Client {
                 self.admin = admin;
                 self.allow_flight = allow_flight;
             }
-            ServerMessage::Teleport { position } => {
+            ServerMessage::Teleport { position, seq } => {
                 self.position = position;
+                self.teleports = seq;
                 self.teleported = Some(position);
             }
             ServerMessage::Column { pos, column } => self.world.insert(pos, column),
@@ -265,12 +273,24 @@ impl Client {
     }
 
     fn propose(&self, action: &str, target: ActionTarget) {
+        self.propose_at(action, target, Instant::now());
+    }
+
+    /// Proposes as if the player clicked at `at`: in process, the clock the server times
+    /// actions and blows by (see `Connection::send_at`), so a test spaces clicks exactly
+    /// without waiting.
+    fn propose_at(&self, action: &str, target: ActionTarget, at: Instant) {
         let action: ActionId = self.content.actions.expect(action);
-        self.connection.send(ClientMessage::Propose { action, target });
+        self.connection.send_at(ClientMessage::Propose { action, target }, at);
     }
 
     fn send_position(&self, position: Vec3, flying: bool) {
-        self.connection.send(ClientMessage::Input(PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }));
+        self.send_position_at(position, flying, Instant::now());
+    }
+
+    /// Sends a move as made at `at` (see `propose_at`).
+    fn send_position_at(&self, position: Vec3, flying: bool, at: Instant) {
+        self.connection.send_at(ClientMessage::Input(PlayerInput { teleport: self.teleports, position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }), at);
     }
 
     /// Runs a command and returns the console lines it answers with.
@@ -356,7 +376,7 @@ fn break_and_place_blocks() {
 
     // Place the first hotbar item back on the block underneath the hole.
     let item = client.inventory.get(0).unwrap();
-    client.connection.send(ClientMessage::Input(PlayerInput {
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports,
         position: client.position,
         yaw: 0.0,
         pitch: 0.0,
@@ -409,7 +429,7 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     let farmland = blocks.expect("base:farmland");
     assert_eq!(client.inventory.get(0).map(|s| s.item), blocks.id("base:wheat_seeds"));
     let hold = |client: &Client, slot: u8| {
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
 
     // Seeds go on farmland only: sowing on dirt is refused, and a hoe tills it.
@@ -469,12 +489,12 @@ fn a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started() {
     let stone = client.world.block(a).unwrap();
     let hardness = client.content.blocks.info(stone).hardness;
     assert!(Duration::from_secs_f32(hardness) > CATCH_UP * 2, "stone mines too fast for this test");
-    let mine = |client: &Client, block: IVec3| client.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
-    mine(&client, c);
-    std::thread::sleep(Duration::from_millis(50));
-    mine(&client, a);
-    std::thread::sleep(Duration::from_secs_f32(hardness * 0.85));
-    mine(&client, b);
+    // Clicked 50 ms apart, then the next once 85% of the second's time has passed.
+    let mine = |client: &Client, block: IVec3, at: Instant| client.propose_at("core:mine", ActionTarget::Block { block, face: Face::PosY }, at);
+    let start = Instant::now();
+    mine(&client, c, start);
+    mine(&client, a, start + Duration::from_millis(50));
+    mine(&client, b, start + Duration::from_millis(50) + Duration::from_secs_f32(hardness * 0.85));
     client.pump_until(|cl| cl.world.block(a) == Some(BlockId::AIR) && cl.world.block(b) == Some(BlockId::AIR));
     assert_eq!(client.world.block(c), Some(stone), "a block only begun was broken");
 }
@@ -514,7 +534,7 @@ fn falling_hurts() {
     // A tick or two up there, so the fall is counted from the top.
     client.after_server_ticks(2);
     for y in (0..height).rev() {
-        client.connection.send(ClientMessage::Input(PlayerInput {
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports,
             position: start + Vec3::Y * y as f32,
             yaw: 0.0,
             pitch: 0.0,
@@ -537,10 +557,9 @@ fn only_admins_fly_fast() {
     for (mut client, admin) in clients {
         assert_eq!(client.admin, admin);
         client.connection.send(ClientMessage::Settings { view_distance: 2, fly_speed: 4.0 });
-        // A second after the last move, rise faster than normal flight allows but within
-        // four times its speed, then make an impossible move so the server answers with
-        // where it thinks we are.
-        std::thread::sleep(Duration::from_millis(1100));
+        // The first move since joining (a full allowance), rise faster than normal flight
+        // allows but within four times its speed, then make an impossible move so the server
+        // answers with where it thinks we are.
         let start = client.position;
         let up = start + Vec3::Y * 100.0;
         client.send_position(up, true);
@@ -588,6 +607,86 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
     assert_eq!(client.world.block(below), Some(BlockId::AIR), "the mined block stays mined");
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A creature's loot waits for its body to fall; a server stopped in that moment saves it
+/// where it will drop. The server runs behind, so it stops well before the loot is due.
+#[test]
+fn loot_still_falling_when_the_server_stops_is_there_after_a_restart() {
+    let dir = world_dir("falling-loot");
+    let lag = voxmar_server::Lag { per_tick: Duration::from_millis(100), ..Default::default() };
+    let config = |lag| ServerConfig { view_distance: 2, world: Some(dir.clone()), lag, ..Default::default() };
+    let mut client = Client::join_with(config(lag));
+    let slime = client.content.blocks.id("base:lumen_slime").unwrap();
+    let snail = client.content.creatures.find("lumen_snail").unwrap();
+    // Out of reach, so the loot stays on the ground to be counted.
+    client.ok("/summon lumen_snail 1 ~5 ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == snail));
+    client.ok("/creatures kill");
+    assert!(!client.items.values().any(|i| i.stack.item == slime), "the loot dropped before the server stopped");
+    drop(client);
+
+    let mut client = Client::join_with(config(Default::default()));
+    client.pump_until(|c| c.items.values().any(|i| i.stack.item == slime));
+    // Once: the save wrote it lying, not also still to fall.
+    client.after_server_ticks(40);
+    assert_eq!(client.items.values().filter(|i| i.stack.item == slime).count(), 1, "{:?}", client.items);
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A world opened with other worldgen data than its land was last made from tells the
+/// admin who joins that new land may not line up, once for each change, and still opens.
+#[test]
+fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
+    let dir = world_dir("worldgen-content");
+    let tuned = {
+        let mut content = content();
+        let mut files = (*content.files).clone();
+        files.iter_mut().find(|f| f.package == "base" && f.name == "ores.ron").unwrap().source.push_str("\n// a vein tuned\n");
+        content.files = std::sync::Arc::new(files);
+        content
+    };
+    let warned = |content: Content| {
+        let server = spawn(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() }, content.clone()).unwrap();
+        let (connection, server_side) = local_pair();
+        server.connections().send(server_side).unwrap();
+        let client = Client::greet_content(connection, "test", Some(server), None, content);
+        let warning = client.content.english.render(&voxmar_engine::lang::Words::key("world.generation_changed"), &client.content.blocks);
+        client.chat.iter().any(|(_, line)| *line == warning)
+    };
+    assert!(!warned(content()), "a new world");
+    assert!(!warned(content()), "the same data");
+    assert!(warned(tuned.clone()), "ores.ron changed");
+    assert!(!warned(tuned), "the change was told");
+    assert!(warned(content()), "changed back");
+    // Land picks blocks by their tags, so a block given another tag warns too.
+    let assets = world_dir("tagged-content");
+    copy_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), &assets.join("content"));
+    let blocks = assets.join("content/base/blocks.ron");
+    let source = std::fs::read_to_string(&blocks).unwrap();
+    let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet"]"#;
+    assert!(source.contains(mossy));
+    std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "tagged"]"#)).unwrap();
+    let tagged = load_content(&assets).expect("content loads");
+    assert!(warned(tagged), "a block's tags changed");
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// Copies a content directory's definitions and languages (not its sounds) to `to`.
+fn copy_content(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let (path, name) = (entry.path(), entry.file_name());
+        if path.is_dir() {
+            if name != "sounds" {
+                copy_content(&path, &to.join(&name));
+            }
+        } else {
+            std::fs::copy(&path, to.join(&name)).unwrap();
+        }
+    }
 }
 
 #[test]
@@ -827,9 +926,12 @@ fn walking_wears_a_path() {
     assert_eq!(before, id("grass_block"), "spawn is on {}, not grass", blocks.def(before).name);
     // Each crossing is a step onto the other block: forty steps on each.
     let (here, there) = (start + step.as_vec3() * 0.3, start + step.as_vec3() * 0.7);
+    // A step a tick at most is seen (wear looks once a tick), so each waits for the tick
+    // after it; stamped 110 ms apart, the walking pace the moves are judged by.
+    let start = Instant::now();
     for i in 0..80 {
-        client.send_position(if i % 2 == 0 { there } else { here }, false);
-        std::thread::sleep(Duration::from_millis(110));
+        client.send_position_at(if i % 2 == 0 { there } else { here }, false, start + Duration::from_millis(110) * i);
+        client.after_server_ticks(0);
     }
     client.pump_until(|c| c.world.block(under).is_some_and(|b| worn.contains(&b)));
     // Plants on the path are trampled away.
@@ -897,17 +999,19 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
     client.ok("/summon brown_bear 1 ~ ~ ~");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
     let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
-    // Struck a full charge apart, beside it wherever it goes, until `landed` blows land.
-    let strike = |client: &mut Client, landed: usize| {
+    // Struck a full charge (650 ms) apart, beside it wherever it goes, until `landed` blows
+    // land. The clicks are stamped apart rather than waited for.
+    let mut click = Instant::now();
+    let mut strike = |client: &mut Client, landed: usize| {
         let start = client.damage.len();
         while client.damage[start..].iter().filter(|&&d| d > 0).count() < landed && client.creatures.contains_key(&id) {
             assert!(client.damage.len() - start < 80, "{} blows landed {landed}", client.damage.len() - start);
             let at = client.creatures[&id].position;
             client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
-            client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-            std::thread::sleep(Duration::from_millis(650));
+            client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+            click += Duration::from_millis(650);
             let blows = client.blows;
-            client.propose("core:attack", ActionTarget::Creature(id));
+            client.propose_at("core:attack", ActionTarget::Creature(id), click);
             let asked = Instant::now();
             client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || asked.elapsed() > Duration::from_millis(400));
         }
@@ -931,7 +1035,7 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
     client.ok("/give wheat 64");
     client.pump_until(|c| c.creatures.values().filter(|v| v.species == hen).count() == 2 && c.inventory.get(0).is_some_and(|s| s.item == wheat));
     // Hold the wheat.
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let hens: Vec<u32> = client.creatures.iter().filter(|(_, v)| v.species == hen).map(|(&id, _)| id).collect();
     // Feed each until it is ours: three to five feedings at level 1.
     for &id in &hens {
@@ -1038,16 +1142,18 @@ fn placing_or_throwing_while_mining_does_not_cancel_the_mining() {
     client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 stone");
     client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
     let hardness = client.content.blocks.info(client.world.block(a).unwrap()).hardness;
+    // Each click half the break's time after the last, by the clock the server judges by.
+    let (mut at, half) = (Instant::now(), Duration::from_secs_f32(hardness * 0.5));
     for (block, instant) in [(a, "core:drop"), (b, "core:place")] {
         let target = ActionTarget::Block { block, face: Face::PosY };
-        client.propose("core:mine", target);
-        std::thread::sleep(Duration::from_secs_f32(hardness * 0.5));
+        client.propose_at("core:mine", target, at);
+        at += half;
         match instant {
-            "core:drop" => client.propose(instant, ActionTarget::Stack { slot: 0, count: 1 }),
-            _ => client.propose(instant, ActionTarget::Block { block: feet + IVec3::new(2, -1, 0), face: Face::PosY }),
+            "core:drop" => client.propose_at(instant, ActionTarget::Stack { slot: 0, count: 1 }, at),
+            _ => client.propose_at(instant, ActionTarget::Block { block: feet + IVec3::new(2, -1, 0), face: Face::PosY }, at),
         }
-        std::thread::sleep(Duration::from_secs_f32(hardness * 0.5));
-        client.connection.send(ClientMessage::Finished { target });
+        at += half;
+        client.connection.send_at(ClientMessage::Finished { target }, at);
     }
     client.pump_until(|cl| cl.world.block(a) == Some(BlockId::AIR) && cl.world.block(b) == Some(BlockId::AIR));
 }
@@ -1089,7 +1195,7 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     let iron = client.world.block(ore).unwrap();
     let mine = |client: &Client| client.propose("core:mine", ActionTarget::Block { block: ore, face: Face::PosY });
     let hold = |client: &Client, slot: u8| {
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
     // How long a break takes, in server ticks, with the pickaxe and by hand: a refusal
     // waits that long and more before it says nothing broke.
@@ -1174,7 +1280,7 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
         client.ok(line);
     }
     client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(0).is_some_and(|s| s.item == c.content.blocks.expect("base:fishing_rod")));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
     // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
     for _ in 0..6 {
@@ -1201,7 +1307,7 @@ fn a_seed_pouch_carries_seeds_in_one_slot_and_sows_from_it() {
     client.pump_until(|c| c.inventory.pouched(seeds) == 100 && c.world.block(ground) == c.content.blocks.id("base:farmland"));
     assert!(client.inventory.slots.iter().flatten().all(|s| s.item != seeds), "seeds took slots with a pouch carried");
     // The pouch in hand sows its seeds.
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && c.inventory.pouched(seeds) == 99);
     // Right click empties it into the pack.
@@ -1323,6 +1429,116 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table")));
 }
 
+/// A content directory with one more package, `zz_test`, holding `files`: what a mod adds.
+/// Returns where it is (to remove) and the content loaded from it.
+fn with_mod(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Content) {
+    let assets = world_dir(name);
+    copy_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), &assets.join("content"));
+    let package = assets.join("content/zz_test");
+    std::fs::create_dir_all(&package).unwrap();
+    for (file, source) in files {
+        std::fs::write(package.join(file), source).unwrap();
+    }
+    let content = load_content(&assets).expect("content loads");
+    (assets, content)
+}
+
+/// Joins a new in-process server of `content`.
+fn join_content(content: Content) -> Client {
+    let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
+    let (connection, server_side) = local_pair();
+    server.connections().send(server_side).unwrap();
+    Client::greet_content(connection, "test", Some(server), None, content)
+}
+
+const TEST_QUESTS: &str = r#"(quests: [
+    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("base:stick", 3)]], rewards: [Item("base:torch", 2)]),
+    (name: "miner", age: "nomad", branch: "main", title: "Miner", why: "", tasks: [[Level("mining", 10)]], rewards: [Xp("crafting", 50.0)]),
+    (name: "laden", age: "nomad", branch: "main", title: "Laden", why: "", tasks: [[Have("base:cobblestone", 2304)]], rewards: [Item("base:apple", 3)]),
+])"#;
+
+/// Quests are checked once a second by the server's clock: one a goal short is still open
+/// after a check, and one whose goal holds is done at the next, rewarded once, and stays
+/// done when what it asked for is gone.
+#[test]
+fn a_quest_is_done_at_the_next_check_once_its_goal_holds_and_rewards_once() {
+    let (assets, content) = with_mod("quests-have", &[("quests.ron", TEST_QUESTS)]);
+    let mut client = join_content(content);
+    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
+    let torch = client.content.blocks.expect("base:torch");
+    let carried = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| !c.quests.is_empty());
+    client.ok("/clear");
+    client.ok("/give stick 2");
+    // A whole second of the server's ticks: a check has run, and two sticks are not three.
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    assert!(!done(&client, "zz_test:sticks"), "two sticks finished it");
+    assert_eq!(carried(&client, torch), 0);
+    client.chat.clear();
+    client.ok("/give stick 1");
+    client.pump_until(|c| done(c, "zz_test:sticks") && carried(c, torch) == 2);
+    assert!(client.chat.iter().any(|(_, line)| line.contains("Three Sticks")), "{:?}", client.chat);
+    // Without the sticks, two checks later: still done, and the torches came once.
+    client.ok("/clear stick");
+    client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
+    assert!(done(&client, "zz_test:sticks"));
+    assert_eq!(carried(&client, torch), 2);
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// A level goal holds from that level, not a level before, and its experience comes once.
+#[test]
+fn a_level_quest_waits_for_the_level_and_grants_its_experience() {
+    let (assets, content) = with_mod("quests-level", &[("quests.ron", TEST_QUESTS)]);
+    let mut client = join_content(content);
+    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
+    client.pump_until(|c| !c.quests.is_empty());
+    client.ok("/skill mining 9");
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    assert!(!done(&client, "zz_test:miner"), "level 9 finished a level 10 quest");
+    client.earned.clear();
+    client.ok("/skill mining 10");
+    client.pump_until(|c| done(c, "zz_test:miner") && c.earned.contains(&500));
+    client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
+    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == 500).count(), 1, "{:?}", client.earned);
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// A reward that does not fit lies at the player's feet rather than being lost.
+#[test]
+fn a_quest_reward_that_does_not_fit_drops_at_the_players_feet() {
+    let (assets, content) = with_mod("quests-full", &[("quests.ron", TEST_QUESTS)]);
+    let mut client = join_content(content);
+    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
+    let apple = client.content.blocks.expect("base:apple");
+    client.pump_until(|c| !c.quests.is_empty());
+    client.ok("/clear");
+    // Every slot full of cobblestone.
+    client.ok("/give cobblestone 2304");
+    client.pump_until(|c| done(c, "zz_test:laden"));
+    client.pump_until(|c| c.items.values().any(|i| i.stack.item == apple && i.stack.count == 3));
+    assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == apple));
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// Every age a first-party quest belongs to names its chapter in English and Japanese
+/// (`quest.age.<age>`), which the quest book heads its chapters with.
+#[test]
+fn every_quest_age_is_named_in_english_and_japanese() {
+    let content = content();
+    let japanese = voxmar_engine::lang::Lang::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), "ja");
+    let ages: std::collections::BTreeSet<&str> = content.quests.iter().map(|quest| quest.age.as_str()).collect();
+    assert!(!ages.is_empty());
+    for age in ages {
+        let key = format!("quest.age.{age}");
+        assert!(content.english.find(&key).is_some(), "no English for {key}");
+        assert!(japanese.find(&key).is_some(), "no Japanese for {key}");
+    }
+}
+
 #[test]
 fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     let mut client = Client::join();
@@ -1337,7 +1553,7 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     client.pump_until(|c| c.world.block(core) == Some(crucible) && count(c, ore) == 2);
     let smelt = |client: &mut Client| {
         client.chat.clear();
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
         client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
     };
     // A crucible alone smelts nothing, and says what the kiln needs.
@@ -1451,7 +1667,7 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     let (gravel, flint) = (client.content.blocks.expect("base:gravel"), client.content.blocks.expect("base:flint"));
     let shovel = client.content.blocks.expect("base:iron_shovel");
     client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == shovel));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     // One break in eight gives flint: in sixty, all but certainly some.
     let mut flints = 0;
     for _ in 0..60 {
@@ -1770,6 +1986,28 @@ fn nobody_hovers_over_a_ravine() {
 }
 
 #[test]
+fn a_move_sent_before_a_teleport_does_not_undo_it() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let to = start + Vec3::X * 5.0;
+    // The command and a step from where they stood, sent together: the step was made
+    // before the client knew of the teleport, and is well within a burst back from it.
+    client.connection.send(ClientMessage::Command { line: format!("/tp {} {} {}", to.x, to.y, to.z) });
+    client.send_position(start + Vec3::X * 0.1, false);
+    client.pump_until(|c| c.position == to);
+    client.after_server_ticks(2);
+    // Where the server has them: a teleport to where they are says.
+    client.teleported = None;
+    client.connection.send(ClientMessage::Command { line: "/tp ~ ~ ~".into() });
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported, Some(to), "the stale step undid the teleport");
+    // Moves sent after it count as ever.
+    client.teleported = None;
+    client.send_position(to + Vec3::X * 0.2, false);
+    assert!(client.all_accepted(), "{:?}", client.teleported);
+}
+
+#[test]
 fn going_silent_does_not_buy_more_time_hovering() {
     let mut client = on_a_test_floor();
     let start = client.position;
@@ -2004,16 +2242,18 @@ fn a_full_server_turns_newcomers_away() {
 
 #[test]
 fn silent_sockets_neither_count_as_players_nor_pile_up() {
-    let server = spawn(ServerConfig { view_distance: 2, max_players: 3, idle_timeout: SERVER_WAIT, ..Default::default() }, content()).unwrap();
+    // The operator lets two connections from one address wait to say hello.
+    let limits = Limits { max_pending_per_address: 2, ..Default::default() };
+    let server = spawn(ServerConfig { view_distance: 2, max_players: 3, idle_timeout: SERVER_WAIT, limits, ..Default::default() }, content()).unwrap();
     // Listening on IPv4, and on IPv6 too where the machine has it, so one machine has two
     // addresses to come from.
     let v4 = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
     let v6 = tcp::listen("[::1]:0", server.connections()).ok();
     let guest = Client::hello(tcp::connect(v4).unwrap(), "guest", server);
     let second = Client::greet(tcp::connect(v4).unwrap(), "second", None);
-    // Four connections from that address that never say hello: with them waiting, its next
+    // Two connections from that address that never say hello: with them waiting, its next
     // connection is turned away at once...
-    let silent: Vec<_> = (0..4).map(|_| std::net::TcpStream::connect(v4).unwrap()).collect();
+    let silent: Vec<_> = (0..2).map(|_| std::net::TcpStream::connect(v4).unwrap()).collect();
     let connection = tcp::connect(v4).unwrap();
     assert!(turned_away(&connection, &guest.content).contains("full"));
     // ...while another address is not, and they are not players, so a third still fits
@@ -2024,6 +2264,30 @@ fn silent_sockets_neither_count_as_players_nor_pile_up() {
     };
     assert!(third.health > 0);
     drop((guest, second, third, silent));
+}
+
+#[test]
+fn an_address_gets_one_starting_kit_in_a_while() {
+    // A day is too long to wait: a mod sets the window to two seconds.
+    let mut content = content();
+    let mut files = (*content.files).clone();
+    files.push(voxmar_engine::content::ContentFile { package: "test".into(), name: "survival.ron".into(), source: "(kit_window: 2.0)".into() });
+    content.files = std::sync::Arc::new(files);
+    let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
+    let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+    let mut first = Client::greet_content(tcp::connect(addr).unwrap(), "first", Some(server), None, content.clone());
+    let (bread, purse) = (content.blocks.expect("base:bread"), content.blocks.expect("base:coin_purse"));
+    let has = |c: &Client, item| c.inventory.slots.iter().flatten().any(|s| s.item == item);
+    first.pump_until(|c| has(c, bread));
+    // A second fresh name from the same address, inside the window: the purse, no kit.
+    let mut second = Client::greet_content(tcp::connect(addr).unwrap(), "second", None, None, content.clone());
+    second.pump_until(|c| has(c, purse));
+    assert_eq!(second.inventory.slots.iter().flatten().count(), 1, "{:?}", second.inventory);
+    // Once the window has passed by the server's clock, the next one has the kit again.
+    first.after_server_ticks(2 * TICKS_PER_SECOND as u64);
+    let mut third = Client::greet_content(tcp::connect(addr).unwrap(), "third", None, None, content);
+    third.pump_until(|c| has(c, bread));
+    drop((second, third, first));
 }
 
 #[test]
@@ -2954,7 +3218,7 @@ fn breaking_a_sprout_teaches_nothing_and_sowing_pays_at_harvest() {
     }
     let (seeds, sprout) = (client.content.blocks.expect("base:wheat_seeds"), client.content.blocks.expect("base:wheat_crop_0"));
     client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == seeds) && c.world.block(ground) == c.content.blocks.id("base:farmland"));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let earned = client.earned.len();
     for _ in 0..3 {
         client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
@@ -3189,7 +3453,7 @@ fn a_placed_wild_flower_gives_itself_back_and_no_forage() {
     }
     let moonbloom = client.content.blocks.expect("base:moonbloom");
     client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == moonbloom) && c.world.block(ground) == c.content.blocks.id("base:grass_block"));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(moonbloom));
     let earned = client.earned.len();

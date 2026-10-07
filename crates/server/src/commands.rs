@@ -309,9 +309,8 @@ impl Server {
             return Err(Words::key("command.error.too_far").with("place", at));
         }
         let player = self.players.get_mut(&who).unwrap();
-        player.position = position;
         player.fall_start = None;
-        player.connection.send(ServerMessage::Teleport { position });
+        player.teleport(position);
         let name = player.name.clone();
         let place = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
         if id == Source::Player(who) {

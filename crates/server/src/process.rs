@@ -38,6 +38,11 @@ pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
 /// players stand.
 struct Falling;
 
+/// Whether `fluid` burns like lava: its source block is tagged `lava`.
+pub(crate) fn is_lava(blocks: &voxmar_engine::block::BlockRegistry, fluid: FluidId) -> bool {
+    blocks.def(blocks.fluid_def(fluid).source).has_tag("lava")
+}
+
 impl Process for Falling {
     fn tier(&self) -> Tier {
         Tier::High
@@ -45,8 +50,6 @@ impl Process for Falling {
 
     fn run(&mut self, server: &mut Server) {
         let blocks = &server.content.blocks;
-        let fluid = |name: &str| blocks.id(name).and_then(|b| blocks.fluid(b)).map(|f| f.fluid);
-        let (water, lava) = (fluid("base:water"), fluid("base:lava"));
         let rules = server.survival.clone();
         let burns = server.tick.is_multiple_of(rules.burn_ticks());
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
@@ -60,11 +63,10 @@ impl Process for Falling {
             let mut below = aabb;
             below.translate(Vec3::new(0.0, -0.05, 0.0));
             let on_ground = below.intersects(|p| server.is_solid(p));
-            // Any state of the fluid counts: flowing water breaks a fall, flowing lava burns.
-            let touching = |fluid: Option<FluidId>| {
-                fluid.is_some() && aabb.intersects(|p| server.block(p).and_then(|b| blocks.fluid(b)).is_some_and(|f| Some(f.fluid) == fluid))
-            };
-            let (in_water, in_lava) = (touching(water), touching(lava));
+            // Any state of the fluid counts: flowing water (any fluid swum in) breaks a fall,
+            // flowing lava burns.
+            let touching = |kind: &dyn Fn(FluidId) -> bool| aabb.intersects(|p| server.block(p).and_then(|b| blocks.fluid(b)).is_some_and(|f| kind(f.fluid)));
+            let (in_water, in_lava) = (touching(&|f| blocks.fluid_def(f).def.swim), touching(&|f| is_lava(blocks, f)));
 
             let player = server.players.get_mut(&id).unwrap();
             // Where a grave would go: never in lava, nor on anything below the void.

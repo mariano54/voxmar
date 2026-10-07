@@ -105,6 +105,11 @@ pub struct WorldMeta {
     /// The last whole save: files of a later one were cut short and are not used.
     #[serde(default)]
     pub generation: u64,
+    /// The fingerprint of the content land was last made from (`WorldContent::fingerprint`):
+    /// a world opened with different worldgen data warns that new land may not line up.
+    /// `None` until a world is first opened with it.
+    #[serde(default)]
+    pub worldgen_content: Option<u64>,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -138,6 +143,7 @@ impl WorldMeta {
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
             generation: 0,
+            worldgen_content: None,
         }
     }
 }

@@ -60,7 +60,14 @@ impl<Out, In> Connection<Out, In> {
     /// its queue fill (it stopped reading) is cut off: the connection then reads as
     /// disconnected, rather than holding ever more messages for it.
     pub fn send(&self, message: Out) -> bool {
-        match self.tx.try_send((Instant::now(), message)) {
+        self.send_at(message, Instant::now())
+    }
+
+    /// Queues a message as sent at `at`, which in process is when it counts as arriving
+    /// (over TCP the receiving end stamps what it reads, and `at` is not sent): a test's way
+    /// to space a player's messages by the clock they are judged on without waiting.
+    pub fn send_at(&self, message: Out, at: Instant) -> bool {
+        match self.tx.try_send((at, message)) {
             Ok(()) => true,
             Err(TrySendError::Full(_)) => {
                 if !self.overflowed.swap(true, Ordering::Relaxed) {

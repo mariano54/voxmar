@@ -254,9 +254,13 @@ use it on networks you trust. `op NAME` typed at the server (or by an admin in g
 anyone else an admin until they leave, and `deop NAME` undoes it (an admin by name or token is
 one again when they come back). Cap render distance with `--view-distance N` (default 32) and players with
 `--max-players N` (default 64). Each name plays once at a time, whatever its case (Ada and ada
-are one player, with one save); at most 16 connections may be waiting to say hello, and a
-player from elsewhere whose connection sends nothing for 15 seconds is let go (the game's
-network thread says it is there every 5 seconds, even while the game is minimized).
+are one player, with one save); at most 16 connections may be waiting to say hello (4 from
+one address), and a player from elsewhere whose connection sends nothing for 15 seconds is
+let go (`--idle-seconds N`; the game's network thread says it is there every 5 seconds, even
+while the game is minimized). `--limits FILE` changes how much one connection may ask of the
+server, from a RON file naming any of `messages_per_tick` (64), `chat_burst` (8 lines) and
+`chat_per_second` (2), `hello_seconds` (3), `max_pending` (16), `max_pending_per_address`
+(4) and `name_length` (32), as in `(chat_burst: 4.0, max_pending_per_address: 2)`.
 
 ### Saved worlds
 
