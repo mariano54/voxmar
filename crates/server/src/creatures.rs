@@ -56,8 +56,10 @@ const SPAWN_EVERY: u64 = 2 * TICKS_PER_SECOND as u64;
 /// Spawn spots lie this far from the player, in blocks.
 const SPAWN_NEAR: f32 = 20.0;
 const SPAWN_FAR: f32 = 56.0;
-/// At most this many animals and monsters within `NEAR` of a player.
-const ANIMAL_CAP: usize = 12;
+/// At most this many animals and monsters within `NEAR` of a player. Animals were 12:
+/// halved (Mariano, 2026-10-07: "too many animals, the world is too crowded"), so the
+/// land feels wild and an animal is something to come upon.
+const ANIMAL_CAP: usize = 6;
 const MONSTER_CAP: usize = 6;
 /// Most creatures alive at once, whatever the players.
 const MAX_CREATURES: usize = 512;
@@ -728,7 +730,9 @@ impl Server {
         }
         // Often nothing: most spots stay empty, so the land feels rare, not crowded.
         let total: f32 = choices.iter().map(|c| c.1).sum();
-        let nothing = 2.0;
+        // Animals are drawn half as often as they were, so the land fills slowly and gaps
+        // stay; monsters as before.
+        let nothing = if choices.iter().all(|&(id, _)| self.content.creatures.get(id).def.kind == Kind::Monster) { 2.0 } else { 5.0 };
         let mut pick = unit_from(mix(seed, 2)) * (total + nothing);
         let Some(&(species, _)) = choices.iter().find(|c| {
             pick -= c.1;
@@ -746,6 +750,9 @@ impl Server {
         } else {
             group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
         };
+        // Never past the cap: a herd arriving near it comes smaller.
+        let room = if self.content.creatures.get(species).def.kind == Kind::Monster { MONSTER_CAP.saturating_sub(monsters) } else { ANIMAL_CAP.saturating_sub(animals) };
+        let count = count.min(room.max(1) as u8);
         for i in 0..count.max(1) {
             let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
             let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
