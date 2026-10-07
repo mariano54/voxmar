@@ -209,7 +209,7 @@ impl Content {
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
-        quests.resolve(&blocks, &skills)?;
+        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks })?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks));
         Ok(Self {
