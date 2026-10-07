@@ -25,7 +25,7 @@
 
 use std::time::{Duration, Instant};
 
-use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placement_cell, supported_by};
+use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
@@ -299,7 +299,8 @@ impl Server {
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
-                    self.set_block(cell, item);
+                    let placed = placed_block(&Context { server: self, agent }, item, block, face);
+                    self.set_block(cell, placed);
                     if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) {
                         self.placed.insert(cell);
                     }
