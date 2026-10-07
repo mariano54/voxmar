@@ -2156,9 +2156,12 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
+            // Plain dirt round it, so no water the earlier steps left is near.
+            let (low, high) = (plot - IVec3::new(4, 2, 4), plot + IVec3::new(4, 0, 4));
             for line in [
                 "skill farming 10".to_owned(),
                 "give rice 2".to_owned(),
+                format!("fill {} {} {} {} {} {} dirt", low.x, low.y, low.z, high.x, high.y, high.z),
                 format!("setblock {} {} {} farmland", plot.x, plot.y, plot.z),
                 format!("fill {} {} {} {} {} {} air", plot.x, plot.y + 1, plot.z, plot.x, plot.y + 2, plot.z),
             ] {
@@ -2180,7 +2183,11 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came")));
                     gate.next(Step::Effects, now);
                 }
-                _ => {}
+                (ready, slot) => {
+                    if gate.frames % 120 == 0 {
+                        info!("gate: refusal: farmland {tilled}, Farming 10 {level} (ready {ready}), rice in the hotbar at {slot:?}");
+                    }
+                }
             }
         }
         2 => {
@@ -2205,6 +2212,17 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.advance(now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                if gate.frames % 120 == 0 {
+                    let (target, player, toasts, client) =
+                        (world.resource::<crate::interact::Target>(), world.resource::<LocalPlayer>(), world.resource::<crate::hud::skills::SkillToasts>(), world.resource::<ClientWorld>());
+                    let above = client.block(plot + IVec3::Y).map(|b| client.registry.def(b).name.clone());
+                    info!(
+                        "gate: refusal: aiming at {:?}, holding {:?}, above the plot {above:?}, refusals showing {:?}",
+                        target.hit.as_ref().map(|hit| (hit.block - gate.feet, hit.face)),
+                        player.inventory.get(player.selected).map(|s| s.item),
+                        toasts.refusals().collect::<Vec<_>>()
+                    );
+                }
             }
         }
         _ => {
