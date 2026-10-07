@@ -54,6 +54,12 @@ impl Net {
         Self { connection, server, input_timer: 0.0 }
     }
 
+    /// The next message from the server, for tests that play without the app.
+    #[cfg(test)]
+    pub fn try_recv(&self) -> Result<Option<voxmar_protocol::ServerMessage>, voxmar_protocol::Disconnected> {
+        self.connection.try_recv()
+    }
+
     /// Whether this is a remote server rather than singleplayer's own.
     pub fn is_remote(&self) -> bool {
         self.server.is_none()

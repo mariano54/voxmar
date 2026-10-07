@@ -85,6 +85,12 @@ impl SkillToasts {
         self.lines.iter().any(|l| matches!(&l.kind, LineKind::Refused(w) if w == why))
     }
 
+    /// The refusals showing, for tests.
+    #[cfg(test)]
+    pub fn refusals(&self) -> Vec<&str> {
+        self.lines.iter().filter_map(|l| if let LineKind::Refused(why) = &l.kind { Some(why.as_str()) } else { None }).collect()
+    }
+
     pub fn refused(&mut self, why: String, now: f32) {
         if let Some(line) = self.lines.iter_mut().find(|l| l.kind == LineKind::Refused(why.clone())) {
             line.at = now;

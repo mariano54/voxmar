@@ -386,8 +386,9 @@ impl Settings {
 
     /// The settings with every value within its slider's range, a listed resolution, and
     /// no two bindings on one key, nor one on a key the game keeps for itself: a binding
-    /// that collides goes back to its default (one moved off its default first), so a
-    /// hand-edited file or a key a new screen took never leaves a screen that cannot open.
+    /// that collides goes back to its default (one moved off its default first), or to the
+    /// first free key if another holds its default, so a hand-edited file or a key a new
+    /// screen took never leaves a screen that cannot open.
     /// Only what is read changes; nothing is written.
     pub fn clamped(mut self) -> Self {
         self.resolution = nearest_resolution(self.resolution);
@@ -399,9 +400,14 @@ impl Settings {
         for (i, &binding) in order.iter().enumerate() {
             let key = binding.get(&self);
             let taken = FIXED_KEYS.contains(&key.0) || order[..i].iter().any(|other| other.get(&self) == key);
+            if !taken {
+                continue;
+            }
+            let free = |key: Key, settings: &Settings| !FIXED_KEYS.contains(&key.0) && !Binding::ALL.iter().any(|other| other.get(settings) == key);
             let default = binding.get(&defaults);
-            if taken && key != default && !Binding::ALL.iter().any(|other| other.get(&self) == default) {
-                binding.set(&mut self, default);
+            let moved = if free(default, &self) { Some(default) } else { Key::all().find(|&k| free(k, &self)) };
+            if let Some(moved) = moved {
+                binding.set(&mut self, moved);
             }
         }
         for slider in Slider::ALL {
@@ -722,6 +728,8 @@ fn cycle<T: Copy + PartialEq>(all: &[T], current: T, forward: bool) -> T {
 
 /// Keys the game keeps for itself, which no binding may take: moving, jumping and
 /// descending, flight, dropping, the music, the debug overlay, the hotbar and commands.
+/// (R, which respawns on the death screen, stays bindable: it is the recipes key's default,
+/// and while dead no screen opens, so a binding on R does nothing else there.)
 const FIXED_KEYS: [KeyCode; 20] = [
     KeyCode::KeyW,
     KeyCode::KeyA,
@@ -1822,5 +1830,11 @@ mod tests {
         // Two moved bindings on one key: the later yields.
         let (read, _) = Settings::parse("(recipes_key: \"KeyG\", uses_key: \"KeyG\")");
         assert_eq!((read.recipes_key, read.uses_key), (Key(KeyCode::KeyG), Key(KeyCode::KeyU)));
+        // Chat on the inventory's E and the journal on chat's T: chat cannot go back to T,
+        // so it goes to the first key nobody holds.
+        let (read, _) = Settings::parse("(chat_key: \"KeyE\", journal_key: \"KeyT\")");
+        assert_eq!((read.inventory_key, read.journal_key), (Key(KeyCode::KeyE), Key(KeyCode::KeyT)));
+        let keys = Binding::ALL.map(|b| b.get(&read));
+        assert!(!FIXED_KEYS.contains(&read.chat_key.0) && keys.iter().filter(|&&k| k == read.chat_key).count() == 1, "chat on {:?} with {keys:?}", read.chat_key);
     }
 }

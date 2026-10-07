@@ -16,6 +16,11 @@ impl Key {
         KEYS.iter().any(|&(k, _)| k == key)
     }
 
+    /// Every bindable key, in the menu's order.
+    pub fn all() -> impl Iterator<Item = Key> {
+        KEYS.iter().map(|&(k, _)| Key(k))
+    }
+
     /// What the menu calls it.
     pub fn label(self) -> &'static str {
         KEYS.iter().find(|&&(k, _)| k == self.0).map_or("?", |&(_, label)| label)

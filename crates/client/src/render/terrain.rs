@@ -152,6 +152,14 @@ pub struct Terrain {
     tx: Sender<Message>,
 }
 
+#[cfg(test)]
+impl Terrain {
+    /// A handle that draws nothing, for tests without a renderer.
+    pub fn detached() -> Self {
+        Self { tx: unbounded().0 }
+    }
+}
+
 enum Message {
     Upload { chunk: ChunkPos, pass: TerrainPass, mesh: MeshBuffers },
     Remove { chunk: ChunkPos, pass: TerrainPass },
