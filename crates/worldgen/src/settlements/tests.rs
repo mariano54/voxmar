@@ -1586,6 +1586,38 @@ fn naming_never_repeats_near() {
     }
 }
 
+/// A name is never one a neighbour offers while the list has another. Thirty names and
+/// two dozen neighbours offering three each leave a few free: draws alone often miss
+/// them, so a square past its own offers walks the list to one.
+#[test]
+fn a_taken_name_only_when_the_list_has_no_other() {
+    use super::plan::{NAME_OFFERS, offered_name, unique_name};
+    let world = base_world(1);
+    let mut def = world.settlements.def.clone();
+    let mut list = def.names[0].clone();
+    list.first = vec![("Ash".to_owned(), "アッシュ".to_owned())];
+    list.last = (0..30).map(|i| (format!("b{i}"), format!("ブ{i}"))).collect();
+    list.small = Vec::new();
+    def.names = vec![list];
+    // A five by five block of squares, all promised (no roll settles any other), all
+    // within `names_apart` of the middle one.
+    (def.grid.chance, def.rules.names_apart) = (0.0, def.grid.spacing * 3);
+    let promised: Vec<IVec2> = (-2..=2).flat_map(|z| (-2..=2).map(move |x| IVec2::new(x, z))).collect();
+    let (def, mut walked) = (&def, 0);
+    for seed in 0..400u64 {
+        let taken: std::collections::HashSet<String> =
+            promised.iter().filter(|&&c| c != IVec2::ZERO).flat_map(|&c| (0..NAME_OFFERS).map(move |k| offered_name(def, seed, c, 0, k, false).0)).collect();
+        if taken.len() == 30 {
+            continue;
+        }
+        let name = unique_name(def, seed, &promised, IVec2::ZERO, 0, false).0;
+        assert!(!taken.contains(&name), "seed {seed}: took {name}, which a neighbour offers, though {} were free", 30 - taken.len());
+        walked += usize::from(!(0..NAME_OFFERS + 32).any(|k| offered_name(def, seed, IVec2::ZERO, 0, k, false).0 == name));
+    }
+    // Some found their name only by walking the list.
+    assert!(walked > 0);
+}
+
 /// Settling the spawn plans each square in its reach once: the plans made finding the
 /// spawn's square are the squares' own. Prints how long settling the spawn takes once the
 /// land round it is known (design's bar: under 300 ms on the cloud machine); a print, not

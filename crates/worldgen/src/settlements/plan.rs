@@ -532,27 +532,37 @@ const SPAWN_SALTS: u64 = 8;
 const NAMING: u64 = 0x4a3e_5eed;
 
 /// How many names each square offers to take; its neighbours keep off all of them.
-const NAME_OFFERS: u32 = 3;
+pub(super) const NAME_OFFERS: u32 = 3;
 
 /// The `k`th name square `cell` may take from names list `list`: a first part and a last
 /// (never "Brookbrook"), or a hamlet's first part and a small word.
-fn offered_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, k: u32, small: bool) -> (String, String) {
+pub(super) fn offered_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, k: u32, small: bool) -> (String, String) {
     let names = &def.names[list];
     let mut rng = Rng::new(seed, NAMING + 1 + (list as u64) * 1024 + k as u64, cell.x, cell.y);
     let first = &names.first[rng.below(names.first.len() as u32) as usize];
     if small {
         let word = &names.small[rng.below(names.small.len() as u32) as usize];
-        return (format!("{} {}", first.0, word.0), format!("{}・{}", first.1, word.1));
+        return small_name(first, word);
     }
     let mut last = &names.last[rng.below(names.last.len() as u32) as usize];
     for _ in 0..4 {
-        let (a, b) = (first.0.to_lowercase(), last.0.to_lowercase());
-        if !a.contains(&b) && !b.contains(&a) {
+        if !echoes(first, last) {
             break;
         }
         last = &names.last[rng.below(names.last.len() as u32) as usize];
     }
     (format!("{}{}", first.0, last.0), join_kana(&def.kana, first, last))
+}
+
+/// A hamlet's name of a first part and a word: "Ash Well", アッシュ・ウェル.
+fn small_name(first: &(String, String), word: &(String, String)) -> (String, String) {
+    (format!("{} {}", first.0, word.0), format!("{}・{}", first.1, word.1))
+}
+
+/// Whether one part holds the other ("Brook" and "brook"), which reads badly joined.
+fn echoes(first: &(String, String), last: &(String, String)) -> bool {
+    let (a, b) = (first.0.to_lowercase(), last.0.to_lowercase());
+    a.contains(&b) || b.contains(&a)
 }
 
 /// The name of square `cell`'s settlement, drawn from names list `list`: the first it
@@ -561,6 +571,8 @@ fn offered_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, k: u3
 /// none needs another planned to know it. Only where every offer is taken (rare) does it
 /// look further, still keeping off its neighbours' offers; a hamlet takes a first and
 /// last part it offered before that, rather than a taken small name.
+/// Past its offers it walks the whole list, so it gives a taken name only when the list
+/// has no other.
 pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], cell: IVec2, list: usize, small: bool) -> (String, String) {
     let (grid, apart) = (&def.grid, def.rules.names_apart);
     let first = offered_name(def, seed, cell, list, 0, small);
@@ -600,7 +612,20 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
     let forms = if small { vec![true, false] } else { vec![false] };
     let own = forms.iter().flat_map(|&f| offers(f, 0..NAME_OFFERS));
     let further = forms.iter().flat_map(|&f| offers(f, NAME_OFFERS..NAME_OFFERS + 32));
-    own.chain(further).find(|n| !taken.contains(&n.0)).unwrap_or(first)
+    // Past those, every name the list makes, in order: a taken name only where the list
+    // has none left (it makes hundreds; the neighbours offer a few each).
+    let names = &def.names[list];
+    let every = forms.iter().flat_map(move |&f| {
+        names.first.iter().flat_map(move |a| {
+            let words: Box<dyn Iterator<Item = (String, String)>> = if f {
+                Box::new(names.small.iter().map(move |w| small_name(a, w)))
+            } else {
+                Box::new(names.last.iter().filter(move |b| !echoes(a, b)).map(move |b| (format!("{}{}", a.0, b.0), join_kana(&def.kana, a, b))))
+            };
+            words
+        })
+    });
+    own.chain(further).chain(every).find(|n| !taken.contains(&n.0)).unwrap_or(first)
 }
 
 /// Lays out the settlement of the square `cell` round `centre`, if it can.
