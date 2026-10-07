@@ -302,7 +302,8 @@ impl Server {
 
     /// Whether a new player from `address` may have the starting kit: at most
     /// `kits_per_address` in any `kit_window`, by the server's ticks. Counts it if so.
-    fn grant_kit(&mut self, address: std::net::IpAddr) -> bool {
+    pub(crate) fn grant_kit(&mut self, address: std::net::IpAddr) -> bool {
+        let address = self.config.limits.address_key(address);
         let window = (self.survival.kit_window * TICKS_PER_SECOND as f32) as u64;
         let tick = self.tick;
         let given = self.kits.entry(address).or_default();
@@ -315,6 +316,16 @@ impl Server {
             self.kits.remove(&address);
         }
         granted
+    }
+
+    /// Forgets the addresses whose kits are all older than `kit_window`, so the list does
+    /// not grow with every address that ever joined.
+    pub(crate) fn forget_old_kits(&mut self) {
+        let (window, tick) = ((self.survival.kit_window * TICKS_PER_SECOND as f32) as u64, self.tick);
+        self.kits.retain(|_, given| {
+            given.retain(|&at| tick.saturating_sub(at) < window);
+            !given.is_empty()
+        });
     }
 
     fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {

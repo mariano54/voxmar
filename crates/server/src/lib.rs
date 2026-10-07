@@ -24,6 +24,7 @@ mod weather;
 mod wear;
 
 use std::collections::VecDeque;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -101,11 +102,14 @@ pub struct Limits {
     pub max_pending_per_address: usize,
     /// Characters of a player's name kept.
     pub name_length: usize,
+    /// How many leading bits of an IPv6 address the limits per address count by: one
+    /// host usually holds a whole /64, so each of its addresses is not another player.
+    pub ipv6_prefix: u8,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32 }
+        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32, ipv6_prefix: 64 }
     }
 }
 
@@ -114,7 +118,7 @@ impl Limits {
     /// one connection hold the server up.
     pub fn from_ron(source: &str) -> Result<Self, String> {
         let limits: Limits = ron::from_str(source).map_err(|e| e.to_string())?;
-        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length } = limits;
+        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length, ipv6_prefix } = limits;
         let rates = [chat_burst, chat_per_second, hello_seconds];
         if rates.iter().any(|n| !n.is_finite() || *n < 0.0) {
             Err("chat_burst, chat_per_second and hello_seconds must be zero or more".into())
@@ -126,8 +130,23 @@ impl Limits {
             Err("max_pending and max_pending_per_address must be at least 1, or nobody could join".into())
         } else if !(1..=64).contains(&name_length) {
             Err("name_length must be from 1 to 64".into())
+        } else if !(16..=128).contains(&ipv6_prefix) {
+            Err("ipv6_prefix must be from 16 to 128".into())
         } else {
             Ok(limits)
+        }
+    }
+
+    /// The address the limits per address count `ip` under: an IPv4 address (an IPv4
+    /// client of a dual-stack listener too) as itself, an IPv6 one by its first
+    /// `ipv6_prefix` bits.
+    pub fn address_key(&self, ip: IpAddr) -> IpAddr {
+        match ip.to_canonical() {
+            IpAddr::V6(v6) => {
+                let mask = u128::MAX.checked_shl(128 - self.ipv6_prefix.min(128) as u32).unwrap_or(0);
+                IpAddr::V6((u128::from(v6) & mask).into())
+            }
+            v4 => v4,
         }
     }
 }
@@ -580,9 +599,10 @@ impl Server {
             // any one address, so sockets left silent cannot fill the server or crowd out
             // everyone else (players are counted at hello).
             let pending = || self.players.values().filter(|p| !p.joined);
-            let peer = connection.peer();
             let limits = &self.config.limits;
-            if pending().count() >= limits.max_pending || peer.is_some() && pending().filter(|p| p.connection.peer() == peer).count() >= limits.max_pending_per_address
+            let key = |connection: &ServerConnection| connection.peer().map(|ip| limits.address_key(ip));
+            let peer = key(&connection);
+            if pending().count() >= limits.max_pending || peer.is_some() && pending().filter(|p| key(&p.connection) == peer).count() >= limits.max_pending_per_address
             {
                 connection.send(ServerMessage::Rejected { reason: voxmar_engine::lang::Words::key("net.rejected.full") });
                 continue;
@@ -696,6 +716,9 @@ impl Server {
         }
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();
+        }
+        if self.tick.is_multiple_of(60 * TICKS_PER_SECOND as u64) {
+            self.forget_old_kits();
         }
     }
 
@@ -931,11 +954,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn addresses_count_together_by_ipv4_address_or_ipv6_prefix() {
+        let limits = Limits::default();
+        let key = |ip: &str| limits.address_key(ip.parse().unwrap());
+        assert_eq!(key("::ffff:127.0.0.1"), key("127.0.0.1"));
+        assert_eq!(key("::ffff:127.0.0.1"), "127.0.0.1".parse::<IpAddr>().unwrap());
+        // One host's /64 shares a kit and a share of those waiting to say hello...
+        assert_eq!(key("2001:db8:1:2::1"), key("2001:db8:1:2:abcd:ef01:2345:6789"));
+        // ...while the next /64, and other IPv4 addresses, do not.
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        assert_ne!(key("10.0.0.1"), key("10.0.0.2"));
+        let whole = Limits { ipv6_prefix: 128, ..Limits::default() };
+        assert_ne!(whole.address_key("2001:db8::1".parse().unwrap()), whole.address_key("2001:db8::2".parse().unwrap()));
+    }
+
+    #[test]
+    fn one_ipv6_host_or_one_machine_over_both_gets_one_kit_and_old_kits_are_forgotten() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let ((_, incoming), (_, console)) = (unbounded(), unbounded());
+        let config = ServerConfig { view_distance: 2, ..Default::default() };
+        let mut server = Server::new(config, WorldMeta::new("kits", 1, GameMode::Survival), None, save::WorldState::default(), content, incoming, console);
+        let mut grant = |ip: &str| server.grant_kit(ip.parse().unwrap());
+        assert!(grant("2001:db8:1:2::1"));
+        assert!(!grant("2001:db8:1:2::77"), "the same /64");
+        assert!(grant("2001:db8:1:3::1"), "the next /64");
+        assert!(grant("127.0.0.1"));
+        assert!(!grant("::ffff:127.0.0.1"), "the same machine through a dual-stack listener");
+        server.forget_old_kits();
+        assert_eq!(server.kits.len(), 3);
+        server.tick += (server.survival.kit_window * TICKS_PER_SECOND as f32) as u64;
+        server.forget_old_kits();
+        assert!(server.kits.is_empty());
+    }
+
+    #[test]
     fn a_limits_file_sets_what_it_names_and_refuses_numbers_that_shut_everyone_out() {
         let limits = Limits::from_ron("(chat_burst: 4.0, max_pending_per_address: 2)").unwrap();
         assert_eq!(limits, Limits { chat_burst: 4.0, max_pending_per_address: 2, ..Limits::default() });
         assert_eq!(Limits::from_ron("()").unwrap(), Limits::default());
-        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(chat_brust: 4.0)"] {
+        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(ipv6_prefix: 8)", "(ipv6_prefix: 129)", "(chat_brust: 4.0)"] {
             assert!(Limits::from_ron(bad).is_err(), "{bad} is accepted");
         }
     }
