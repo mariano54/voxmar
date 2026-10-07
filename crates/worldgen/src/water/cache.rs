@@ -61,6 +61,12 @@ impl<K: Copy + Eq + Hash, V: Clone + Weigh> Cache<K, V> {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// How many values are cached or being made.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.lock().slots.len()
+    }
+
     /// Whether the value for `key` is cached or being made.
     pub fn has(&self, key: K) -> bool {
         self.lock().slots.contains_key(&key)
