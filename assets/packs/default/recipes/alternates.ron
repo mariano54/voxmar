@@ -1,0 +1,23 @@
+// Other drawings of the plainest ground and rock, which variants.ron (the pack's root)
+// lets each block pick among by its position, so a wall or a floor does not repeat one
+// motif. Each is its texture drawn again from another seed.
+(
+    textures: {
+        "block/stone_2": (base: "block/stone", seed: 101),
+        "block/stone_3": (base: "block/stone", seed: 202),
+        "block/cobblestone_2": (base: "block/cobblestone", seed: 101),
+        "block/cobblestone_3": (base: "block/cobblestone", seed: 202),
+        "block/andesite_2": (base: "block/andesite", seed: 101),
+        "block/andesite_3": (base: "block/andesite", seed: 202),
+        "block/granite_2": (base: "block/granite", seed: 101),
+        "block/granite_3": (base: "block/granite", seed: 202),
+        "block/diorite_2": (base: "block/diorite", seed: 101),
+        "block/diorite_3": (base: "block/diorite", seed: 202),
+        "block/dirt_2": (base: "block/dirt", seed: 101),
+        "block/dirt_3": (base: "block/dirt", seed: 202),
+        "block/sand_2": (base: "block/sand", seed: 101),
+        "block/sand_3": (base: "block/sand", seed: 202),
+        "block/gravel_2": (base: "block/gravel", seed: 101),
+        "block/gravel_3": (base: "block/gravel", seed: 202),
+    },
+)
