@@ -420,7 +420,7 @@
             window: Some("old_glass"), window_chance: 0.5,
             paving: [Name("sandstone", 3), Name("cobbled_sandstone", 2), Name("sand", 1)],
             hedge: [Name("dead_bush", 1)],
-            crops: [Name("wheat", 1)],
+            crops: [Name("wheat", 1), Name("chickpea", 1)],
             weathered: [Name("cobbled_sandstone", 2), Name("cracked_sandstone_bricks", 1)],
         ),
         (
@@ -436,7 +436,7 @@
             window: Some("old_glass"), window_chance: 0.5,
             paving: [Name("red_sandstone", 2), Name("cobbled_red_sandstone", 2), Name("red_sand", 1)],
             hedge: [Name("dead_bush", 1)],
-            crops: [Name("wheat", 1)],
+            crops: [Name("wheat", 1), Name("chickpea", 1)],
             weathered: [Name("cobbled_red_sandstone", 2), Name("cracked_red_sandstone_bricks", 1)],
         ),
         (
@@ -452,7 +452,7 @@
             window: None, window_chance: 0.4,
             paving: [Name("packed_earth", 3), Name("coarse_dirt", 2), Name("red_sand", 1)],
             hedge: [Name("acacia_leaves", 1)],
-            crops: [Name("wheat", 2), Name("potato", 1)],
+            crops: [Name("wheat", 2), Name("chickpea", 1), Name("potato", 1)],
             weathered: [Name("coarse_dirt", 1), Name("cobbled_sandstone", 1)],
         ),
         (
@@ -468,7 +468,7 @@
             window: None, window_chance: 0.45,
             paving: [Name("mud", 2), Name("{wood}_planks", 2), Name("coarse_dirt", 1)],
             hedge: [Name("{wood}_leaves", 1)],
-            crops: [Name("carrot", 2), Name("potato", 1)],
+            crops: [Name("rice", 2), Name("carrot", 2), Name("potato", 1)],
             weathered: [Name("mossy_cobblestone", 1)],
         ),
         (
@@ -484,7 +484,7 @@
             window: Some("old_glass"), window_chance: 0.6,
             paving: [Name("gravel", 3), Name("cobblestone", 2), Name("packed_earth", 1)],
             hedge: [Name("{wood}_leaves", 1)],
-            crops: [Name("potato", 2), Name("carrot", 2), Name("wheat", 1)],
+            crops: [Name("rye", 2), Name("potato", 2), Name("carrot", 1)],
             weathered: [Name("mossy_cobblestone", 2), Name("cobbled_andesite", 1)],
         ),
         (
@@ -564,7 +564,7 @@
             window: None, window_chance: 0.45,
             paving: [Name("mud", 2), Name("coarse_dirt", 2), Name("{wood}_planks", 1)],
             hedge: [Name("jungle_leaves", 2), Name("palm_leaves", 1)],
-            crops: [Name("carrot", 2), Name("potato", 1)],
+            crops: [Name("taro", 2), Name("rice", 1), Name("carrot", 1)],
             weathered: [Name("mossy_cobblestone", 1)],
         ),
         (
@@ -580,7 +580,7 @@
             window: Some("old_glass"), window_chance: 0.3,
             paving: [Name("gravel", 3), Name("cobbled_slate", 1), Name("packed_earth", 1)],
             hedge: [Name("spruce_leaves", 1)],
-            crops: [Name("potato", 2), Name("carrot", 1)],
+            crops: [Name("potato", 2), Name("rye", 1), Name("carrot", 1)],
             weathered: [Name("mossy_cobblestone", 2), Name("mossy_cobbled_slate", 1)],
         ),
         (
@@ -596,7 +596,7 @@
             window: Some("old_glass"), window_chance: 0.5,
             paving: [Name("cobbled_travertine", 2), Name("cobbled_limestone", 2), Name("gravel", 1), Name("polished_travertine", 1)],
             hedge: [Name("olive_leaves", 2), Name("azalea_leaves", 1), Name("flowering_azalea_leaves", 1)],
-            crops: [Name("wheat", 3), Name("carrot", 1)],
+            crops: [Name("wheat", 3), Name("chickpea", 1), Name("carrot", 1)],
             weathered: [Name("mossy_cobbled_limestone", 2), Name("cracked_travertine_bricks", 1)],
         ),
         (

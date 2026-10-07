@@ -1448,13 +1448,6 @@ impl SettlementsDef {
             {
                 return fail(format!("style `{}`'s window `{window}` is no block", style.name));
             }
-            for (crop, _) in &style.crops {
-                for stage in ["_crop_0", "_crop_1", "_crop_2", "_crop"] {
-                    if registry.id(&format!("{crop}{stage}")).is_none() {
-                        return fail(format!("style `{}`'s crop `{crop}` has no `{crop}{stage}` block", style.name));
-                    }
-                }
-            }
         }
         // Fields and orchards hold only everyday crops: no rarer than uncommon, no higher
         // than the largest size's crop level, one in every style a hamlet may grow, and
@@ -1490,11 +1483,20 @@ impl SettlementsDef {
         Ok(())
     }
 
-    /// Checks every furnishing names a block, so a typo fails loading rather than leaving
-    /// it out. Only for whole content: the built-in base files are also read with blocks.ron
-    /// alone (tools and tests), where the furnishings of other block files are missing.
+    /// Checks every furnishing and every style's crop names blocks, so a typo fails loading
+    /// rather than leaving it out. Only for whole content: the built-in base files are also
+    /// read with blocks.ron alone (tools and tests), where other block files' are missing.
     pub fn check_furnishings(&self, registry: &BlockRegistry) -> Result<(), ContentError> {
         let fail = |what: String| Err(ContentError(format!("settlements.ron: {what}")));
+        for style in &self.styles {
+            for (crop, _) in &style.crops {
+                for stage in ["_crop_0", "_crop_1", "_crop_2", "_crop"] {
+                    if registry.id(&format!("{crop}{stage}")).is_none() {
+                        return fail(format!("style `{}`'s crop `{crop}` has no `{crop}{stage}` block", style.name));
+                    }
+                }
+            }
+        }
         let f = &self.furnishings;
         for (what, name) in [
             ("torch", &f.torch),

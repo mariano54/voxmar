@@ -95,9 +95,11 @@ The levers are correlated, so a place reads as a whole:
   jungle stilts, turf house, villa, and timber frame anywhere else). A style names its
   woods, its roof shapes by weight, and a weighted list per part (foundation, floor,
   walls, frame, roof, trim, paving, hedge, weathered, crops); `{wood}` and `{trim}` stand
-  for the two woods the settlement picks. Crops are everyday ones: a size's fields grow
-  only crops up to its `crop_level` (hamlets 5: wheat and carrot; villages 12: potato
-  too), by weight, and always growing, never ripe; loading fails on a crop rarer than
+  for the two woods the settlement picks. Crops are everyday ones, by region (design
+  draft 64): rye by log cabins and turf houses, chickpea in sandstone, mudbrick and
+  villa country, rice on stilts in wetlands and jungles, taro in jungles, wheat, carrot
+  and potato elsewhere. A size's fields grow only crops up to its `crop_level` (hamlets 5:
+  wheat, carrot, rye; villages 12: the rest), by weight, always growing, never ripe; loading fails on a crop rarer than
   uncommon, above every size's level, or a style with nothing a hamlet may grow. Orchards
   grow only fruit up to the same level. A settlement keeps one to three entries of each
   list, fewer where it is orderly. Where two styles fit a biome, either may be

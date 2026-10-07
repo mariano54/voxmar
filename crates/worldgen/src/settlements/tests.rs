@@ -785,3 +785,41 @@ fn settlements_are_unchanged() {
     let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
     assert_eq!(hash, EXPECTED, "settlements changed:\n{text}");
 }
+
+/// Every crop a style names is sown in some settlement's fields: they are where a player
+/// first finds rye, chickpea, rice and taro. Slow (seed 1 finds chickpea, grown only in
+/// warm villages, 19 squares out), so run by hand:
+/// `cargo test --profile iter -p voxmar_worldgen every_style_crop -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn every_style_crop_is_sown_somewhere() {
+    use super::canvas::Put;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let world = Overworld::with_content(1, content.blocks.clone(), &world_content);
+    let registry = &content.blocks;
+    let mut wanted: std::collections::BTreeSet<String> = world.settlements.def.styles.iter().flat_map(|s| s.crops.iter().map(|(c, _)| c.clone())).collect();
+    let mut seen = 0;
+    'search: for ring in 0..40 {
+        for step in 0..(ring * 8).max(1) {
+            let (cx, cz) = crate::spiral(ring, step);
+            let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
+            let Some(plan) = &slot.0 else { continue };
+            seen += 1;
+            for v in plan.voxels.values().flatten() {
+                if let Put::Set(b) = v.put {
+                    let name = &registry.def(b).name;
+                    if let Some(crop) = name.strip_suffix("_crop_0").or_else(|| name.strip_suffix("_crop_1")).or_else(|| name.strip_suffix("_crop_2")) {
+                        wanted.remove(crop);
+                    }
+                }
+            }
+            if wanted.is_empty() {
+                println!("every style crop sown within {seen} settlements, {ring} squares out");
+                break 'search;
+            }
+        }
+    }
+    assert!(wanted.is_empty(), "no field in {seen} settlements grows {wanted:?}");
+}
