@@ -140,7 +140,7 @@
     "settings.textures.voxmar": "Voxmar",
     "settings.textures.voxmar_hd": "Voxmar HD",
     "settings.minecraft_assets": "Minecraft assets (on restart)",
-    "settings.minecraft_assets.hint": "Borrow textures, block sounds and music from your own Minecraft and Prism Launcher. Takes effect when the game next starts.",
+    "settings.minecraft_assets.hint": "Borrow textures, block sounds and music from your own Minecraft and Prism Launcher, if you have them. Takes effect on the next start.",
 
     "settings.shader_pack": "Shader pack",
     "settings.shader_pack.hint": "The look of light, sky, water and colour.",

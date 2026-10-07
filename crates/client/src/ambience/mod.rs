@@ -469,10 +469,17 @@ fn short(name: &str) -> &str {
 }
 
 /// Leaving a game silences the beds and forgets the place.
-fn leave(mut commands: Commands, segments: Query<Entity, With<BedSegment>>, ambient: Option<ResMut<Ambient>>) {
+fn leave(
+    mut commands: Commands,
+    segments: Query<Entity, With<BedSegment>>,
+    ambient: Option<ResMut<Ambient>>,
+    mut surroundings: ResMut<Surroundings>,
+) {
     for entity in &segments {
         commands.entity(entity).despawn();
     }
+    // The next world starts from nothing found, not deep under the last one.
+    *surroundings = Surroundings::default();
     let Some(mut ambient) = ambient else { return };
     let groups = ambient.ambience.groups.len();
     ambient.mixer = Mixer::new(&ambient.ambience, 0x616d_6269);
