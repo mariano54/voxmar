@@ -303,7 +303,9 @@ impl Server {
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
                     self.set_block(cell, item);
-                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) {
+                    // Marked as the player's: an ore teaches nothing broken again, and a
+                    // furnishing gives itself back (where the world placed one, it does not).
+                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) || self.content.blocks.def(item).has_tag("furnishing") {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);

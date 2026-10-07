@@ -42,6 +42,8 @@ struct Client {
     chat: Vec<(ChatKind, String)>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
+    /// The server's tick as last told (once a second).
+    server_tick: u64,
     /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
@@ -114,6 +116,7 @@ impl Client {
             quick: false,
             chat: Vec::new(),
             day: None,
+            server_tick: 0,
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
@@ -186,7 +189,10 @@ impl Client {
                 self.quick = quick;
             }
             ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
-            ServerMessage::Time { day, day_speed, .. } => self.day = Some((day, day_speed)),
+            ServerMessage::Time { tick, day, day_speed } => {
+                self.day = Some((day, day_speed));
+                self.server_tick = tick;
+            }
             ServerMessage::Abilities { allow_flight, admin } => {
                 self.allow_flight = allow_flight;
                 self.admin = admin;
@@ -242,6 +248,30 @@ impl Client {
     /// actions included), by a command's answer coming back after them.
     fn settle(&mut self) {
         self.ok("/time");
+    }
+
+    /// Waits until at least `ticks` server ticks have passed from now, by the server's own
+    /// clock (it tells it once a second).
+    fn after_ticks(&mut self, ticks: u64) {
+        let told = self.server_tick;
+        self.pump_until(|c| c.server_tick > told);
+        let from = self.server_tick;
+        self.pump_until(|c| c.server_tick >= from + ticks);
+    }
+
+    /// Waits until `count` holds still across 20 server ticks after everything sent was
+    /// handled (drops still landing, pick-ups on the way), and returns it.
+    fn quiet(&mut self, count: impl Fn(&Self) -> usize) -> usize {
+        for _ in 0..30 {
+            self.settle();
+            let before = count(self);
+            self.after_ticks(20);
+            self.settle();
+            if count(self) == before {
+                return before;
+            }
+        }
+        panic!("a count never held still for 20 ticks");
     }
 
     /// Runs a command that should succeed, returning its answer.
@@ -505,6 +535,40 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
     assert_eq!(client.position, moved);
     client.pump_until(|c| c.inventory == inventory);
     assert_eq!(client.world.block(below), Some(BlockId::AIR), "the mined block stays mined");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_world_placed_altar_drops_nothing_and_a_players_drops_itself_across_restarts() {
+    let dir = world_dir("altar");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let feet = client.position.floor().as_ivec3();
+    let (village, own) = (feet + IVec3::new(1, 0, 1), feet + IVec3::new(-1, 0, 1));
+    // One set by the world (a village chapel's, as /setblock sets it), one the player places.
+    for line in ["/clear", "/give stone_altar 1", "/setblock ~1 ~ ~1 stone_altar", "/fill ~-1 ~ ~1 ~-1 ~1 ~1 air", "/fill ~-1 ~-1 ~1 ~-1 ~-1 ~1 stone"] {
+        client.ok(line);
+    }
+    let altar = client.content.blocks.expect("base:stone_altar");
+    client.pump_until(|c| c.world.block(village) == Some(altar) && c.inventory.get(0).is_some_and(|s| s.item == altar));
+    client.propose("core:place", ActionTarget::Block { block: own - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(altar));
+    let altars = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == altar).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == altar).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    // The village's: nothing.
+    client.propose("core:mine", ActionTarget::Block { block: village, face: Face::PosY });
+    client.pump_until(|c| c.world.block(village) == Some(BlockId::AIR));
+    assert_eq!(client.quiet(altars), 0, "a village's altar dropped itself");
+    // Saved and loaded, the player's is still the player's: it gives itself back.
+    drop(client);
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(own) == Some(altar));
+    client.propose("core:mine", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(BlockId::AIR));
+    assert_eq!(client.quiet(altars), 1, "a player's altar did not give itself back");
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
