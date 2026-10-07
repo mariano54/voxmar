@@ -16,6 +16,7 @@ impl Server {
         let multiblocks = self.content.multiblocks.clone();
         let candidates: Vec<_> = multiblocks.with_core(block).collect();
         let standing = candidates.iter().find(|m| m.stands(core, |p| self.block(p)));
+        tracing::debug!("player {agent} lights {core}: {}", standing.map_or("nothing stands", |m| m.name.as_str()));
         let words = match (standing, candidates.first()) {
             (Some(lit), _) => {
                 let name = lit.name.clone();

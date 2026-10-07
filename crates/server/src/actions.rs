@@ -167,7 +167,8 @@ impl Server {
             self.supersede_action(agent, at);
         }
         let context = Context { server: self, agent };
-        if def.validate(&context, target).is_err() {
+        if let Err(why) = def.validate(&context, target) {
+            tracing::debug!("player {agent}: {} refused at {target:?}: {why:?}", def.name);
             self.reject(agent, target);
         } else if !timed {
             self.commit(agent, &def, target);

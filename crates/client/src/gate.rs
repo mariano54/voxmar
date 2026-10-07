@@ -265,8 +265,10 @@ struct Gate {
     /// (in server seconds) that last went up.
     fell: Vec3,
     gathered: (u32, f32),
-    /// The crucible of the kiln the workshop builds and lights.
+    /// The crucible of the kiln the workshop builds and lights, and when (server seconds)
+    /// it was first lit.
     kiln: IVec3,
+    kiln_since: f32,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -356,6 +358,7 @@ impl Gate {
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
+            kiln_since: 0.0,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -643,7 +646,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Strike => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
-        Step::Workshop => 160.0,
+        Step::Workshop => 220.0,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -1582,7 +1585,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 // A Crucible Kiln built in the air over the player's head, clear of the
                 // test ground and the pool, to light.
-                let kiln = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 3, 0);
+                let kiln = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 4, 0);
                 let at = |dx: i32, dy: i32, dz: i32| format!("{} {} {}", kiln.x + dx, kiln.y + dy, kiln.z + dz);
                 let net = world.resource::<Net>();
                 for line in [
@@ -1616,17 +1619,29 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
+            if gate.kiln_since == 0.0 {
+                gate.kiln_since = gate.server_now;
+            }
             if gate.frames % 30 == 0 {
                 let actions = world.resource::<crate::Actions>().0.clone();
                 world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
             }
-            if lit(world) {
-                gate.check("workshop: kiln", Ok("lighting the crucible lit the Crucible Kiln round it".into()));
+            // Quests are checked once a second of the server's time, which a loaded machine
+            // stretches: the wait is by its clock.
+            let done = lit(world);
+            let late = gate.server_now - gate.kiln_since > 20.0;
+            if done || late {
+                // Taken down again either way, so the pool's bank is clear for the swim.
                 let (a, b) = (kiln - IVec3::new(1, 0, 1), kiln + IVec3::new(1, 1, 1));
                 world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z));
+            }
+            if done {
+                gate.check("workshop: kiln", Ok("lighting the crucible lit the Crucible Kiln round it".into()));
                 end_workshop(world, gate, now);
-            } else if in_phase > WORKSHOP_WAIT + 4.0 {
-                fail(world, gate, "kiln", "lighting the crucible in its kiln never lit it".into());
+            } else if late {
+                let quests = &world.resource::<LocalPlayer>().quests;
+                let state = quests.iter().find(|q| q.name == "base:crucible_kiln").cloned();
+                fail(world, gate, "kiln", format!("lighting the crucible in its kiln never counted: {} quests, the kiln's {state:?}", quests.len()));
             }
         }
         _ => {}
