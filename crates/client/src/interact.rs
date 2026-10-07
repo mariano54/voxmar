@@ -298,7 +298,7 @@ fn break_and_place(
 
     // Food in hand is eaten when it would not be placed: an item, or nothing in reach to
     // put it on. Eating takes a moment, so it starts on the press, not again while held.
-    target.used_right = false;
+    // (`used_right` was cleared by `creatures::aim`, which runs first.)
     if mouse.just_pressed(MouseButton::Right) && ui.cursor_locked && !player.dead {
         let content = &launch.content;
         // A crafting table opens the inventory with its three-by-three grid.
@@ -377,8 +377,13 @@ fn break_and_place(
             }
             return;
         }
-        // Armour or a shield in hand goes on, swapped for what was worn there.
-        if let Some(at) = held.and_then(voxmar_engine::inventory::worn_slot).filter(|_| target.creature.is_none()) {
+        // Armour or a shield in hand goes on, swapped for what was worn there, unless a
+        // creature or a ripe crop is looked at (it is tended or picked).
+        let ripe = hit.zip(actions.0.id("base:pick")).is_some_and(|(hit, pick)| {
+            let context = ClientContext { world: &world, player: &player, content };
+            actions.0.get(pick).is_some_and(|def| def.validate(&context, ActionTarget::Block { block: hit.block, face: hit.face }).is_ok())
+        });
+        if let Some(at) = held.and_then(voxmar_engine::inventory::worn_slot).filter(|_| target.creature.is_none() && !ripe) {
             let to = voxmar_engine::inventory::WORN + at;
             let slots = ActionTarget::Slots { from: player.selected as u8, to: to as u8, count: 1 };
             net.propose_from(&player, actions.0.expect("core:transfer"), slots);

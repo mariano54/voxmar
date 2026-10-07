@@ -1287,7 +1287,12 @@ fn yaw_toward(from: Vec3, at: Vec3) -> f32 {
 /// players' messages by (`fight`), the wall's, so a fight's waits are the wall's too; what
 /// they wait for is answered by the server.
 fn beside_a_bear(client: &mut Client) -> (u32, usize) {
-    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
+    beside(client, "brown_bear")
+}
+
+/// As [`beside_a_bear`], beside a summoned creature of species `name`.
+fn beside(client: &mut Client, name: &str) -> (u32, usize) {
+    let bear = client.content.creatures.find(name).unwrap_or_else(|| panic!("a {name} in the content"));
     let sword = client.content.blocks.id("base:iron_sword").unwrap();
     // A flat floor with room around, so the bear and we stand on the ground.
     client.ok("/fill ~-8 ~-1 ~-8 ~8 ~-1 ~8 stone");
@@ -1296,7 +1301,7 @@ fn beside_a_bear(client: &mut Client) -> (u32, usize) {
     client.ok("/give iron_sword 1");
     client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == sword)));
     let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == sword)).unwrap();
-    client.ok("/summon brown_bear 1 ~ ~ ~");
+    client.ok(&format!("/summon {name} 1 ~ ~ ~"));
     client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
     let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
     (id, slot)
@@ -1373,8 +1378,18 @@ fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
     client.teleported = None;
     client.propose("core:dodge", ActionTarget::None);
     client.pump_until(|c| c.teleported.is_some());
+    // Landing, told just before the dodge (between the server's ticks), counts as ground.
+    client.ok("/tp ~ ~-5 ~");
+    client.wait_server(1);
+    client.teleported = None;
+    let landed = client.position - Vec3::Y;
+    client.connection.send(ClientMessage::Input(PlayerInput { position: landed, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.position = landed;
+    client.propose("core:dodge", ActionTarget::None);
+    client.wait_server(1);
+    assert_eq!(client.teleported, None, "a dodge as the player landed was refused");
     // On the ground it is taken: nothing puts us back.
-    client.ok("/tp ~ ~-6 ~");
+    client.ok("/tp ~ ~ ~");
     client.wait_server(1);
     client.teleported = None;
     client.propose("core:dodge", ActionTarget::None);
@@ -1526,4 +1541,156 @@ fn armour_goes_on_from_the_hand_a_shield_guards_and_death_counts_what_is_worn() 
     client.pump_until(|c| c.inventory.worn.iter().all(Option::is_none));
     let carried = |item| client.inventory.slots.iter().flatten().any(|s| s.item == item);
     assert!(carried(shirt) && carried(shield) && carried(sword), "the shirt, the shield and the sword are kept");
+}
+
+#[test]
+fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
+    use voxmar_engine::combat::Defended;
+    // The wiki's draft 65: a wind-up follows its target at a run for its first part and
+    // the blow lunges as it lands, so stepping back at a walk (4.7 blocks a second) as it
+    // winds up is still within its reach; only a dodge passes it (the test above). Big and
+    // slow (a bear, a frost stag) and small and quick (a cave crawler, an ember salamander).
+    let walk = 4.7;
+    for name in ["brown_bear", "frost_stag", "cave_crawler", "ember_salamander"] {
+        let mut client = Client::join();
+        client.ok("/gamemode survival");
+        client.ok("/skill hitpoints 60");
+        client.pump_until(|c| c.health >= 100);
+        let (id, slot) = beside(&mut client, name);
+        let mut outcomes = Vec::new();
+        for _ in 0..2 {
+            let before = client.hurt.len();
+            let mut struck = Instant::now() - Duration::from_secs(5);
+            loop {
+                assert!(client.creatures.contains_key(&id), "the {name} went");
+                face(&mut client, id, slot, false);
+                if struck.elapsed() > Duration::from_secs(3) {
+                    client.propose("core:attack", ActionTarget::Creature(id));
+                    struck = Instant::now();
+                }
+                let asked = Instant::now();
+                client.pump_until(|c| c.creatures.get(&id).is_none_or(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking) || asked.elapsed() > Duration::from_millis(200));
+                if client.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking) {
+                    break;
+                }
+            }
+            // Straight back from it, facing it, until the blow lands.
+            let away = (client.position - client.creatures[&id].position).with_y(0.0).normalize_or_zero();
+            let mut last = Instant::now();
+            let started = client.tick;
+            while client.hurt.len() == before {
+                assert!(client.tick < started + 5 * TICKS_PER_SECOND as u64, "the {name}'s blow never came: {:?}", client.creatures.get(&id).map(|v| v.pose));
+                let step = last.elapsed().as_secs_f32();
+                last = Instant::now();
+                client.position += away * walk * step;
+                let yaw = yaw_toward(client.position, client.creatures[&id].position);
+                client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+                let asked = Instant::now();
+                client.pump_until(|c| c.hurt.len() > before || asked.elapsed() > Duration::from_millis(30));
+            }
+            outcomes.push(client.hurt[before].1);
+            client.wait_server(1);
+        }
+        assert!(outcomes.iter().all(|&o| matches!(o, Defended::Hit | Defended::Missed)), "backing off a {name} at a walk came to {outcomes:?}");
+    }
+}
+
+/// Waits for the bear `id` to strike while the guard is up and the player looks `off`
+/// radians away from it, holding `slot`; returns what came of the blow.
+fn guarded_blow(client: &mut Client, id: u32, slot: usize, off: f32) -> voxmar_engine::combat::Defended {
+    let before = client.hurt.len();
+    let blows = client.kinds.len();
+    // Struck once so it fights back; then the guard goes up while it is not winding up.
+    let mut struck = Instant::now() - Duration::from_secs(5);
+    let mut guarded = false;
+    client.pump_until(|c| c.tick > 0);
+    let started = client.tick;
+    while client.hurt.len() == before {
+        assert!(client.tick < started + 30 * TICKS_PER_SECOND as u64, "no blow came (guard up: {guarded}, our blows {})", client.kinds.len() - blows);
+        assert!(client.creatures.contains_key(&id), "the bear went");
+        let at = client.creatures[&id].position;
+        if client.position.with_y(0.0).distance(at.with_y(0.0)) > 1.6 || (client.position.y - at.y).abs() > 0.5 {
+            client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
+        }
+        let yaw = yaw_toward(client.position, at) + off;
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+        if client.kinds.len() == blows && struck.elapsed() > Duration::from_millis(1500) {
+            client.propose("core:attack", ActionTarget::Creature(id));
+            struck = Instant::now();
+        }
+        let winding = client.creatures[&id].pose == voxmar_engine::creature::brain::Pose::Attacking;
+        if !guarded && client.kinds.len() > blows && !winding {
+            let _ = client.connection.send(ClientMessage::Guard { up: true });
+            guarded = true;
+        }
+        let asked = Instant::now();
+        client.pump_until(|c| c.hurt.len() > before || asked.elapsed() > Duration::from_millis(50));
+    }
+    let _ = client.connection.send(ClientMessage::Guard { up: false });
+    let outcome = client.hurt[before].1;
+    client.wait_server(1);
+    outcome
+}
+
+#[test]
+fn a_shield_guards_wider_than_a_sword_but_not_below_its_level_or_beside_a_spear() {
+    use voxmar_engine::combat::Defended;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    client.ok("/skill hitpoints 60");
+    client.ok("/skill defence 20");
+    client.ok("/skill attack 20");
+    client.pump_until(|c| c.health >= 100);
+    let (id, sword) = beside_a_bear(&mut client);
+    let [shield, spear] = ["base:iron_shield", "base:bronze_spear"].map(|n| client.content.blocks.id(n).unwrap());
+    client.ok("/give iron_shield 1");
+    client.ok("/give bronze_spear 1");
+    let slot = |c: &Client, item| (0..HOTBAR_SLOTS).find(|&s| c.inventory.get(s).is_some_and(|s| s.item == item));
+    client.pump_until(|c| slot(c, shield).is_some() && slot(c, spear).is_some());
+    let from = slot(&client, shield).unwrap();
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + 5) as u8, count: 1 });
+    client.pump_until(|c| c.inventory.worn[5].is_some_and(|s| s.item == shield));
+    let spear = slot(&client, spear).unwrap();
+    // Looking 60 degrees off the bear: inside the shield's 150 but outside a sword's 90.
+    let off = 60f32.to_radians();
+    // A guarded blow inside the guard's arc is blocked even when the defence roll turns it.
+    assert_eq!(guarded_blow(&mut client, id, sword, off), Defended::Blocked, "the iron shield at Defence 20 guards 60 degrees off");
+    let two_handed = guarded_blow(&mut client, id, spear, off);
+    assert!(matches!(two_handed, Defended::Hit | Defended::Missed), "a spear takes both hands, but the shield guarded: {two_handed:?}");
+    client.ok("/skill defence 1");
+    let below = guarded_blow(&mut client, id, sword, off);
+    assert!(matches!(below, Defended::Hit | Defended::Missed), "below its level the shield guarded: {below:?}");
+}
+
+#[test]
+fn a_dodge_waits_longer_in_heavier_armour() {
+    use voxmar_engine::inventory::WORN;
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    client.ok("/fill ~-2 ~-1 ~-2 ~2 ~-1 ~2 stone");
+    let shirt = client.content.blocks.id("base:chainmail_shirt").unwrap();
+    client.ok("/give chainmail_shirt 1");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == shirt));
+    client.wait_server(1);
+    // Two dodges 1.0 s apart (the fight's clock is the wall's): unarmoured (light, 1.0 s
+    // less the 0.1 a client's clock may run ahead) the second is taken; in chainmail
+    // (medium, 1.2 s less 0.1) it is refused and puts us back.
+    let twice = |client: &mut Client| {
+        client.teleported = None;
+        client.propose("core:dodge", ActionTarget::None);
+        let first = Instant::now();
+        client.pump_until(|_| first.elapsed() > Duration::from_millis(1000));
+        client.propose("core:dodge", ActionTarget::None);
+        client.wait_server(1);
+        let refused = client.teleported.is_some();
+        // Past any cooldown before the next pair.
+        client.wait_server(1);
+        refused
+    };
+    assert!(!twice(&mut client), "unarmoured, a dodge 1.0 s after the last was refused");
+    let from = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == shirt)).unwrap();
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + 1) as u8, count: 1 });
+    client.pump_until(|c| c.inventory.worn[1].is_some_and(|s| s.item == shirt));
+    assert!(twice(&mut client), "in chainmail, a dodge 1.0 s after the last was taken");
 }

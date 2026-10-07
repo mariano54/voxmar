@@ -67,11 +67,6 @@ const MAX_CREATURES: usize = 512;
 const KIN_RANGE: f32 = 14.0;
 /// How far creatures look for food.
 const FOOD_RANGE: i32 = 6;
-/// How far, in blocks, a blow may reach past a creature's box on the server: the client
-/// aims at where it last drew the creature, which a server running behind has moved on
-/// from. Plus how far the creature moves in this many seconds.
-const REACH_SLACK: f32 = 1.0;
-const REACH_LAG: f32 = 0.6;
 /// Seconds a player must keep within `SETTLE_RADIUS` blocks of one spot before hunters
 /// there leave them be (RuneScape's ten minutes in 21 × 21 squares).
 const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
@@ -180,12 +175,13 @@ pub struct Creatures {
 }
 
 impl Creatures {
-    /// The box a blow at a creature may land in: its own, widened by what the player's
-    /// view of it may lag behind (`REACH_SLACK`, `REACH_LAG`).
-    pub fn reach_box(&self, id: u32) -> Option<Aabb> {
+    /// The box a blow at a creature may land in: its own, widened by how far it moves in
+    /// `lag` seconds, which a player's view of it may run behind (`Feel::reach_lag`; the
+    /// reach itself adds `Feel::reach_slack`).
+    pub fn reach_box(&self, id: u32, lag: f32) -> Option<Aabb> {
         let creature = self.live.get(&id).filter(|c| c.health > 0)?;
         let mut aabb = creature.body.aabb();
-        let slack = REACH_SLACK + creature.body.velocity.length() * REACH_LAG;
+        let slack = creature.body.velocity.length() * lag.max(0.0);
         aabb.min -= Vec3::splat(slack);
         aabb.max += Vec3::splat(slack);
         Some(aabb)
@@ -502,7 +498,7 @@ impl Server {
     /// A creature's blow comes down on a player (`fight`): a hit rolled from its level
     /// against the player's Defence, its damage times `share` (what a guard lets through).
     /// Returns the damage, or `None` for a miss, which trains Defence.
-    pub(crate) fn creature_strikes(&mut self, species: CreatureId, player: PlayerId, share: f32) -> Option<u16> {
+    pub(crate) fn creature_strikes(&mut self, creature: u32, species: CreatureId, player: PlayerId, share: f32) -> Option<u16> {
         let def = &self.content.creatures.get(species).def;
         let attack = def.attack?;
         let target = self.players.get(&player)?;
@@ -514,9 +510,10 @@ impl Server {
         let [hit, amount] = combat_roll(self.tick, species.0 as u32, player as u64 ^ 0xa7);
         let (low, high) = attack.damage;
         // Worn armour adds to the defence roll, by the wearer's own Defence level.
-        let armour = self.content.combat.armour_of(&target.inventory.worn, attack.style, |skill| self.content.skills.level(target.skills.xp(skill)));
-        if hit >= voxmar_engine::combat::hit_chance(def.level, 0, defence, armour) {
-            self.defence_xp(player, species);
+        let armour = self.content.combat.armour_of(target.held(), &target.inventory.worn, attack.style, |skill| self.content.skills.level(target.skills.xp(skill)));
+        let accuracy = attack.accuracy.unwrap_or((self.content.combat.feel.creature_accuracy * def.level as f32).round() as u16);
+        if hit >= voxmar_engine::combat::hit_chance(def.level, accuracy, defence, armour) {
+            self.defence_xp(player, creature, species);
             return None;
         }
         let rolled = low + ((amount * (high - low + 1) as f32) as u8).min(high - low);
@@ -530,13 +527,20 @@ impl Server {
     }
 
     /// Experience in Defence for a creature's blow turned aside: four a point of the damage
-    /// it would do.
-    pub(crate) fn defence_xp(&mut self, player: PlayerId, species: CreatureId) {
-        let Some(attack) = self.content.creatures.get(species).def.attack else { return };
+    /// it would do, while the player fights it back and it is a match for them (the wiki,
+    /// draft 63: `feel.defence_xp_window`, `feel.defence_xp_level`).
+    pub(crate) fn defence_xp(&mut self, player: PlayerId, creature: u32, species: CreatureId) {
+        let def = &self.content.creatures.get(species).def;
+        let Some(attack) = def.attack else { return };
         let Some(skill) = self.skill("core:defence") else { return };
         let (low, high) = attack.damage;
         // Nothing for turning aside what could never hurt.
         if high == 0 {
+            return;
+        }
+        let feel = self.content.combat.feel;
+        let defence = self.level(player, Some(skill));
+        if (def.level as f32) < feel.defence_xp_level * defence as f32 || !self.fights.fought(player, creature, feel.defence_xp_window) {
             return;
         }
         let tenths = (40 * (low as u32 + high as u32) / 2).max(10);
@@ -945,7 +949,7 @@ mod combat_tests {
     #[test]
     fn blows_at_a_steady_beat_land_as_often_as_the_odds_say() {
         // A player swinging every seven ticks at a level-1 creature that stands still.
-        let chance = creature::hit_chance(1, 1);
+        let chance = voxmar_engine::combat::hit_chance(1, 0, 1, 0);
         for creature in 0..20u32 {
             let (mut landed, mut misses, mut longest) = (0, 0, 0);
             for blow in 0..400u64 {

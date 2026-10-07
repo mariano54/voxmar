@@ -797,6 +797,9 @@ pub fn aim(
     mut target: ResMut<Target>,
     mut fighting: ResMut<crate::fight::Fighting>,
 ) {
+    // What the right button did this frame, if anything, is said afresh: here, then in
+    // `interact::break_and_place`; `fight::guard` raises no guard if it did something.
+    target.used_right = false;
     let eye = player.eye();
     let look = player.look_direction().normalize_or_zero();
     let block = target.hit.map_or(f32::MAX, |hit| hit.distance);
@@ -816,8 +819,9 @@ pub fn aim(
     }
     // A right click tends it with what is in hand: food that tames it or readies a kept one
     // to breed, or a tool for its product (the server judges; this only asks when it may).
-    // With a weapon that guards, the button guards (`fight`); with anything else, or
-    // nothing, in hand, it looks closely at it.
+    // At a creature fighting the player (it struck or was struck lately, or is winding up)
+    // with a weapon or shield that guards, the button guards (`fight`); otherwise it looks
+    // closely at it.
     if let Some(id) = target.creature
         && ui.cursor_locked
         && !player.dead
@@ -831,9 +835,12 @@ pub fn aim(
             let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
             (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool))
         });
-        let action = if accepts { Some("base:tend") } else if combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_none() { Some("base:inspect") } else { None };
+        let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
+        let engaged = !view.kept && (view.pose == Pose::Attacking || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
+        let action = if accepts { Some("base:tend") } else if !(guards && engaged) { Some("base:inspect") } else { None };
         if let Some(action) = action.and_then(|a| actions.0.id(a)) {
             net.propose_from(&player, action, ActionTarget::Creature(id));
+            target.used_right = true;
         }
     }
     // A left click swings: at once, or held for the beat (the server keeps the same

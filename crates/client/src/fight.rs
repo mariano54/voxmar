@@ -40,6 +40,8 @@ pub struct Fighting {
     pub hurt_count: u32,
     /// The item last swung, to lose the pips on a switch as the server does.
     held: Option<voxmar_engine::block::BlockId>,
+    /// When the player and each creature last traded blows, either way (app seconds).
+    fought: std::collections::HashMap<u32, f64>,
 }
 
 impl Fighting {
@@ -47,6 +49,7 @@ impl Fighting {
     /// them.
     pub fn struck(&mut self, creature: u32, damage: u16, blow: Blow, pips: u8, now: f64) {
         self.rhythm.set_pips(pips, now);
+        self.fought.insert(creature, now);
         self.struck.retain(|s| now - s.3 < KEPT);
         self.struck.push((creature, damage, blow, now));
         self.struck_count += 1;
@@ -57,9 +60,17 @@ impl Fighting {
         if defended == Defended::Hit && damage > 0 {
             self.rhythm.lose_pips();
         }
+        self.fought.insert(creature, now);
         self.hurt.retain(|h| now - h.3 < KEPT);
         self.hurt.push((creature, damage, defended, now));
         self.hurt_count += 1;
+    }
+
+    /// Whether `creature` and the player have traded blows within `feel.engaged` of `now`:
+    /// a right click at it guards rather than looks closely.
+    pub fn engaged(&mut self, creature: u32, now: f64, feel: &voxmar_engine::combat::Feel) -> bool {
+        self.fought.retain(|_, at| now - *at < feel.engaged as f64);
+        self.fought.contains_key(&creature)
     }
 
     /// A click at a creature at `now`: whether a swing starts (or is held for the beat), so

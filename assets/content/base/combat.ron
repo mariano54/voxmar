@@ -41,7 +41,7 @@
         (item: "copper_sword", class: "sword", level: 5, max_hit: 5),
         (item: "copper_axe", class: "axe", level: 5, max_hit: 6),
         // A wolf's or a boar's fang on a haft, Attack 10.
-        (item: "fang_dagger", class: "dagger", level: 10, max_hit: 5),
+        (item: "fang_dagger", class: "dagger", level: 10, max_hit: 4),
         // Bronze, Attack 15: a sword, and a spear that reaches further.
         (item: "bronze_sword", class: "sword", level: 15, max_hit: 7),
         (item: "bronze_spear", class: "spear", level: 15, max_hit: 8),
@@ -74,31 +74,57 @@
         dodge_early: 0.1,
         dodge_grace: 0.15,
         // The wiki's "Reach" (draft 58): 2.8 blocks for a class that sets none (a fist or
-        // dagger 2.5, a spear 3.8), and 0.6 more for the lag of a view of the fight.
+        // dagger 2.5, a spear 3.8), and 0.6 more for the lag of a view of the fight; at a
+        // moving creature, also as far as it goes in 0.15 s.
         reach: 2.8,
         reach_slack: 0.6,
+        reach_lag: 0.15,
         cleave_cone: 0.5,
-        // The wiki's "No walking away" (draft 58): an attack lunges as it lands (1.2 blocks
-        // unless the creature says: quick animals 1.5, big ones 1.0), and a wind-up follows
-        // its target for its first 60%, walking at it, then locks.
+        // The wiki's "No walking away" (drafts 58 and 65): an attack lunges as it lands (1.2
+        // blocks unless the creature says: quick animals 1.5, big ones 1.0), and a wind-up
+        // follows its target for its first 60%, running at it (slow creatures walk), then
+        // locks. A creature adds 0.8 of its level to its attack roll unless it says (draft 62).
         creature_windup: 0.5,
         creature_recovery: 0.6,
         creature_lunge: 1.2,
         creature_tracking: 0.6,
-        tracking_pace: Walk,
+        tracking_pace: Run,
+        creature_accuracy: 0.8,
         creature_clearance: 0.2,
+        // Seconds after trading blows with a creature that a right click at it guards
+        // (with something that guards) rather than looks closely at it.
+        engaged: 6.0,
+        // The wiki's draft 63: Defence experience only while fighting back (a blow at the
+        // creature within 10 s) and from creatures of at least half the Defence level.
+        defence_xp_window: 10.0,
+        defence_xp_level: 0.5,
     ),
     dodges: [
         (weight: "light", distance: 3.0, time: 0.25, safe: (0.04, 0.22), cooldown: 1.0),
         (weight: "medium", distance: 2.6, time: 0.25, safe: (0.04, 0.20), cooldown: 1.2),
         (weight: "heavy", distance: 2.2, time: 0.25, safe: (0.04, 0.18), cooldown: 1.5),
     ],
+    // How armour counts (the wiki, drafts 59 and 62): each slot's share of a bronze set's
+    // 36; each weight, lightest first, with the share of its armour that counts against each
+    // style (1 unless listed) and the dodge it wears, the heaviest worn picking it; and what
+    // a style a set resists counts.
+    armour: (
+        slots: {Head: 6.0, Body: 14.0, Legs: 10.0, Hands: 3.0, Feet: 3.0},
+        weights: [
+            (weight: Robe, against: {Stab: 0.5, Slash: 0.5, Crush: 0.5, Ranged: 0.7, Magic: 1.5}, dodge: "light"),
+            (weight: Light, against: {Crush: 0.8}, dodge: "light"),
+            (weight: Medium, dodge: "medium"),
+            (weight: Heavy, against: {Stab: 1.2, Slash: 1.2, Crush: 1.2, Ranged: 1.2, Magic: 0.6}, dodge: "heavy"),
+        ],
+        resisted: 1.5,
+    ),
     // Armour (the wiki's "Items" tab: sets, weights and Defence levels; "Armour x" from its
-    // material tiers). A piece's armour is its slot's share of a bronze set's 36 (head 6,
-    // body 14, legs 10, hands 3, feet 3) times the set's `armour`. Worn below its Defence
-    // level a piece gives nothing.
+    // material tiers). A piece's armour is its slot's share times the set's `armour`. Worn
+    // below its Defence level a piece gives nothing, but keeps its weight for the dodge.
+    // Hide wraps are raw hide at Crafting 1, so a new player has armour before tanning
+    // (0.5, draft 62: a whole set 19).
     sets: [
-        (name: "hide_wraps", weight: Light, level: 1, armour: 0.4,
+        (name: "hide_wraps", weight: Light, level: 1, armour: 0.5,
             pieces: [(Head, "hide_hood"), (Body, "hide_tunic"), (Legs, "hide_trousers"), (Hands, "hide_gloves"), (Feet, "hide_boots")]),
         (name: "copper", weight: Medium, level: 10, armour: 0.7,
             pieces: [(Head, "copper_helmet"), (Body, "copper_chestplate"), (Legs, "copper_leggings"), (Hands, "copper_gauntlets"), (Feet, "copper_boots")]),

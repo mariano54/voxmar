@@ -48,6 +48,8 @@ struct Fighter {
     /// perfect dodge).
     counter_until: f64,
     riposte_until: f64,
+    /// When the player's blows last reached each creature, for Defence experience.
+    fought: FxHashMap<u32, f64>,
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +110,12 @@ impl Default for Fights {
 impl Fights {
     fn secs(&self, at: Instant) -> f64 {
         at.saturating_duration_since(self.epoch).as_secs_f64()
+    }
+
+    /// Whether `player`'s blows reached `creature` within `seconds`.
+    pub(crate) fn fought(&self, player: PlayerId, creature: u32, seconds: f32) -> bool {
+        let now = self.now();
+        self.fighters.get(&player).and_then(|f| f.fought.get(&creature)).is_some_and(|&at| now - at <= seconds as f64)
     }
 
     fn now(&self) -> f64 {
@@ -210,7 +218,11 @@ impl Server {
         let Some(weapon) = self.wielded_by(player) else { return };
         let Some(p) = self.players.get(&player) else { return };
         let feel = self.content.combat.feel;
-        let grounded = self.tick <= p.grounded + ticks(feel.dodge_grace);
+        // On the ground where the player is now (a landing told between ticks counts), or
+        // left it no longer than the grace ago.
+        let mut below = p.aabb();
+        below.translate(voxmar_engine::glam::Vec3::new(0.0, -0.05, 0.0));
+        let grounded = below.intersects(|cell| self.is_solid(cell)) || self.tick <= p.grounded + ticks(feel.dodge_grace);
         let may = p.health.alive() && !p.flying && grounded && !self.eating(player);
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
@@ -260,7 +272,7 @@ impl Server {
         let def = &self.content.creatures.get(live.species).def;
         let to = (target - live.body.position).with_y(0.0);
         let touching = live.body.size.0 * 0.5 + PLAYER_HALF + self.content.combat.feel.creature_clearance;
-        let pace = match self.content.combat.feel.tracking_pace {
+        let pace = match def.attack.and_then(|a| a.pace).unwrap_or(self.content.combat.feel.tracking_pace) {
             Pace::Walk => def.movement.walk,
             Pace::Run => def.movement.run,
         };
@@ -293,18 +305,21 @@ impl Server {
                 fighter.held = held;
             }
         }
-        // Players' swings.
+        // Players' swings. One at the air counts as off the beat: it earns no pip and spends
+        // no flourish.
         let mut landing = Vec::new();
         for (&player, fighter) in &mut self.fights.fighters {
             if let Some(swing) = fighter.rhythm.landed(now) {
                 let Some(aim) = fighter.aim.take() else { continue };
-                let on_beat = swing.on_beat || aim.riposte || aim.counter;
+                let eye = self.players.get(&player).map(|p| p.eye());
+                let in_reach = eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| eye.distance(eye.clamp(aabb.min, aabb.max)) <= aim.weapon.reach + feel.reach_slack);
+                let on_beat = in_reach && (swing.on_beat || aim.riposte || aim.counter);
                 let kind = fighter.rhythm.blow(&Swing { on_beat, ..swing }, now, &feel);
-                landing.push((player, aim, swing.strength, on_beat, kind));
+                landing.push((player, aim, swing.strength, on_beat, kind, in_reach));
             }
         }
-        for (player, aim, strength, on_beat, kind) in landing {
-            self.land_swing(player, aim, strength, on_beat, kind);
+        for (player, aim, strength, on_beat, kind, in_reach) in landing {
+            self.land_swing(player, aim, strength, on_beat, kind, in_reach);
         }
         // Creatures' blows, each judged at the moment it lands.
         let (due, waiting): (Vec<Windup>, Vec<Windup>) = std::mem::take(&mut self.fights.windups).into_iter().partition(|w| w.lands <= now);
@@ -331,18 +346,20 @@ impl Server {
 
     /// A player's swing lands: at the creature it was aimed at, if still in reach, with the
     /// weapon it was swung with and what its rhythm made it.
-    fn land_swing(&mut self, player: PlayerId, aim: Aim, strength: f32, on_beat: bool, kind: Blow) {
+    fn land_swing(&mut self, player: PlayerId, aim: Aim, strength: f32, on_beat: bool, kind: Blow, in_reach: bool) {
         let feel = self.content.combat.feel;
         let weapon = aim.weapon;
         let Some(p) = self.players.get(&player) else { return };
-        let eye = p.eye();
         let falling = p.fall_start.is_some_and(|top| p.position.y < top - feel.falling_drop);
-        let in_reach = self.creatures.reach_box(aim.creature).is_some_and(|aabb| eye.distance(eye.clamp(aabb.min, aabb.max)) <= weapon.reach + feel.reach_slack);
         if !in_reach {
             // Swung at the air: still answered, as a miss.
             self.struck(player, aim.creature, 0, false, Blow::Plain);
             return;
         }
+        let now = self.fights.now();
+        let fighter = self.fights.fighters.entry(player).or_default();
+        fighter.fought.retain(|_, at| now - *at < feel.defence_xp_window as f64);
+        fighter.fought.insert(aim.creature, now);
         let stroke = Stroke::of(kind, strength, on_beat, aim.counter, aim.riposte, falling, &feel);
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
         if kind == Blow::Flourish && damage > 0 {
@@ -448,12 +465,12 @@ impl Server {
             _ => {}
         }
         let damage = match defended {
-            Defended::Hit => self.creature_strikes(species, player, 1.0),
-            Defended::Blocked => self.creature_strikes(species, player, 1.0 - guard.map_or(0.0, |g| g.stops(attack.style, &feel))),
+            Defended::Hit => self.creature_strikes(creature, species, player, 1.0),
+            Defended::Blocked => self.creature_strikes(creature, species, player, 1.0 - guard.map_or(0.0, |g| g.stops(attack.style, &feel))),
             Defended::Perfect => {
                 // Staggered once it has recovered: the whole stagger is the player's to use.
                 self.stagger(creature, recovery + feel.stagger);
-                self.defence_xp(player, species);
+                self.defence_xp(player, creature, species);
                 Some(0)
             }
             _ => Some(0),
