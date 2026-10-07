@@ -45,6 +45,9 @@
 // pack gives other drawings of.
 const ANIMATED: u32 = 32u;
 const VARIED: u32 = 16u;
+// How bright a glowing block's brightest channel gets: the display transform rolls off
+// gently up to here, and turns colours white past it.
+const GLOW_PEAK: f32 = 1.15;
 #endif
 @group(3) @binding(0) var<storage, read> vertex_chunks: array<u32>;
 
@@ -844,6 +847,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     let glow = entry.a;
     if glow > 0.0 {
         color += self_glow(base, albedo.rgb, glow);
+        // Its colour kept: the brightest channel held a little past where the display
+        // transform starts rolling it towards white (display.wgsl), which turned a torch's
+        // orange core pale peach.
+        let peak = max(color.r, max(color.g, color.b));
+        color *= min(1.0, GLOW_PEAK / max(peak, 1e-4));
     }
     var alpha = albedo.a;
 
