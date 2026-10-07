@@ -517,25 +517,30 @@ impl Server {
         }
     }
 
-    /// A player strikes a creature (`core:attack`): a hit rolled from Attack against its
-    /// defence, damage from the Attack level, experience in Attack and Hitpoints.
+    /// A player strikes a creature (`core:attack`) with what they hold (`combat`): a hit
+    /// rolled from the weapon's skill and accuracy against the creature's defence (half
+    /// against the style it is weak to), damage up to the weapon's max hit for their level,
+    /// experience in the weapon's skill and Hitpoints.
     pub(crate) fn player_strikes(&mut self, player: PlayerId, id: u32) {
+        let Some(striker) = self.players.get(&player) else { return };
+        let weapon = self.content.combat.wielded(striker.held(), |skill| self.content.skills.level(striker.skills.xp(skill)));
         // Timed by when the player's click arrived (see `actions`), so a busy server does
         // not shorten the wait between blows.
         let at = self.arrival;
         let since = self.creatures.struck.get(&player).map(|&last| at.saturating_duration_since(last).as_secs_f32());
-        if since.is_some_and(|s| s < voxmar_engine::combat::QUICKEST - 0.02) {
+        if since.is_some_and(|s| s < weapon.quickest() - 0.02) {
             return;
         }
         self.creatures.struck.insert(player, at);
-        let strength = voxmar_engine::combat::strength(since.filter(|&s| s < 5.0));
+        let strength = voxmar_engine::combat::strength_for(since.filter(|&s| s < 5.0), weapon.cooldown);
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species = self.content.creatures.get(creature.species);
-        let attack_skill = self.skill("core:attack");
+        let attack_skill = weapon.skill;
         let attack = self.level(player, attack_skill);
+        let defence = voxmar_engine::combat::defence_against(species.def.defence, species.def.weak, weapon.style);
         let [hit, amount] = combat_roll(self.tick, id, player as u64 ^ 0x5717);
         let creature = self.creatures.live.get_mut(&id).expect("checked above");
-        if hit >= creature::hit_chance(attack, species.def.defence) {
+        if hit >= voxmar_engine::combat::hit_chance(attack, weapon.accuracy, defence, 0) {
             creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
             if let Some(p) = self.players.get(&player) {
                 p.connection.send(ServerMessage::Struck { creature: id, damage: 0, killed: false });
@@ -544,8 +549,8 @@ impl Server {
         }
         // No knockback: the creature stays where the blow found it.
         creature.changed = true;
-        let max_hit = 1 + attack / 8;
-        let full = (1 + (amount * max_hit as f32) as u16).min(max_hit as u16 + 1);
+        let max_hit = weapon.max_hit(attack);
+        let full = (1 + (amount * max_hit as f32) as u16).min(max_hit);
         // A blow struck too soon after the last lands lighter (`combat`).
         let damage = voxmar_engine::combat::scaled(full, strength, unit_from(mix(amount.to_bits() as u64, 0x5e1f))).min(creature.health);
         creature.health -= damage;

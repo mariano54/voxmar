@@ -250,6 +250,10 @@ pub trait ActionContext {
     fn crops(&self) -> &CropRegistry;
     /// The actor's level in `skill`.
     fn actor_level(&self, skill: SkillId) -> u8;
+    /// The actor's own level in `skill`, without boosts (what wields a weapon).
+    fn actor_own_level(&self, skill: SkillId) -> u8 {
+        self.actor_level(skill)
+    }
     fn actor_eye(&self) -> Vec3;
     fn actor_alive(&self) -> bool;
     fn actor_held(&self) -> Option<BlockId>;
@@ -298,6 +302,10 @@ pub trait ActionContext {
     }
     /// The box of a living creature, if there is one with that id.
     fn creature_box(&self, _id: u32) -> Option<crate::physics::Aabb> {
+        None
+    }
+    /// Weapons, where the context knows them.
+    fn combat(&self) -> Option<&crate::combat::CombatRegistry> {
         None
     }
 }
@@ -445,9 +453,11 @@ impl ActionDef {
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
+                // A spear reaches further, for one who can wield it.
+                let reach = ctx.combat().map_or(0.0, |combat| combat.wielded(ctx.actor_held(), |skill| ctx.actor_own_level(skill)).reach);
                 ctx.creature_box(id).is_some_and(|aabb| {
                     let nearest = ctx.actor_eye().clamp(aabb.min, aabb.max);
-                    ctx.actor_eye().distance(nearest) <= REACH_CREATURE
+                    ctx.actor_eye().distance(nearest) <= REACH_CREATURE + reach
                 })
             }
             Requirement::Replaceable => {

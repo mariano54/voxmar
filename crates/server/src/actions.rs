@@ -102,6 +102,10 @@ impl ActionContext for Context<'_> {
         self.server.check_level(self.agent, skill)
     }
 
+    fn actor_own_level(&self, skill: SkillId) -> u8 {
+        self.server.content.skills.level(self.server.players[&self.agent].skills.xp(skill))
+    }
+
     fn actor_eye(&self) -> Vec3 {
         self.server.players[&self.agent].eye()
     }
@@ -149,6 +153,10 @@ impl ActionContext for Context<'_> {
 
     fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
         self.server.creatures.reach_box(id)
+    }
+
+    fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
+        Some(&self.server.content.combat)
     }
 }
 

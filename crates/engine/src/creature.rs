@@ -102,6 +102,10 @@ pub struct Attack {
     /// Seconds between attacks.
     #[serde(default = "every")]
     pub every: f32,
+    /// How it strikes, which armour resists (`combat::Style`): a bite stabs, claws slash,
+    /// horns and hooves crush.
+    #[serde(default)]
+    pub style: crate::combat::Style,
 }
 
 fn reach() -> f32 {
@@ -389,6 +393,9 @@ pub struct CreatureDef {
     /// Its defence level, against which hits are rolled.
     #[serde(default = "first")]
     pub defence: u8,
+    /// The style of blow its defence counts half against (`combat::defence_against`).
+    #[serde(default)]
+    pub weak: Option<crate::combat::Style>,
     pub body: BodyDef,
     #[serde(default)]
     pub movement: Movement,
