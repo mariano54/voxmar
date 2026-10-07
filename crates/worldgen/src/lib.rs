@@ -1851,6 +1851,21 @@ mod tests {
         for (herb, biome, rate, size, n, columns) in rare_herb_counts(&seeds, chunks) {
             println!("{herb:>13} {biome:<18} {rate:>6.0} per million columns, {n:>4} plants in {columns:>6} columns, {size:.1} a patch");
         }
+        // WILDTAG=tag and WILDBIOMES=a,b: every plant carrying the tag in those biomes, as
+        // placed blocks per square kilometre (a million columns) and one in how many columns.
+        if let (Ok(tag), Ok(biomes)) = (std::env::var("WILDTAG"), std::env::var("WILDBIOMES")) {
+            let registry = registry();
+            let content = crate::content::WorldContent::base(&registry).unwrap();
+            let names: Vec<String> = content.plants.iter().filter(|p| content.plant_tags(p, &registry).any(|t| t == tag)).map(|p| p.name.trim_start_matches("base:").to_owned()).collect();
+            let plants: Vec<&str> = names.iter().map(String::as_str).collect();
+            let biomes: Vec<&str> = biomes.split(',').collect();
+            println!("{} plants tagged {tag}: {}", plants.len(), plants.join(", "));
+            for (plant, biome, rate, size, n, columns) in plant_counts(&seeds, chunks, &plants, &biomes) {
+                if n > 0 {
+                    println!("{plant:>16} {biome:<18} {rate:>6.0} per km², 1 in {:>6.0} columns, {n:>4} plants in {columns:>7} columns, {size:.1} a patch", 1e6 / rate);
+                }
+            }
+        }
         // WILD=plant,plant: those plants over a spread of climates, every biome they appear in.
         if let Ok(wild) = std::env::var("WILD") {
             let plants: Vec<&str> = wild.split(',').collect();
