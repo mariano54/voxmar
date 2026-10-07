@@ -3378,10 +3378,25 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         5 => {
+            // The shirt's tooltip shown, in English and then Japanese, for the shots.
+            world.insert_resource(crate::hud::inventory::HoverSlot(WORN + WORN_SHIRT.1));
             if in_phase < 0.5 {
                 return;
             }
-            gate.check("wear: worn slots", worn_drawn(world));
+            if !gate.requested.contains(&"worn-en") {
+                gate.check("wear: worn slots", worn_drawn(world));
+            }
+            if gate.shot(world, "worn-en").is_some() {
+                set_language(world, "ja");
+                gate.advance(now);
+            }
+        }
+        6 => {
+            if in_phase < 0.5 || gate.shot(world, "worn-ja").is_none() {
+                return;
+            }
+            set_language(world, "en");
+            world.remove_resource::<crate::hud::inventory::HoverSlot>();
             world.resource_mut::<UiState>().inventory_open = false;
             end_wear(world, gate, now);
         }

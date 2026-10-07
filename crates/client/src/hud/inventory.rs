@@ -126,7 +126,9 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let columns = HOTBAR_SLOTS as f32;
     let grid_width = columns * SLOT + (columns - 1.0) * PX;
     commands.spawn((InventoryScreen, screen(SCRIM), Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
-        let mut card = panel(grid_width + 76.0 * PX);
+        // Room for the worn wells, two across, beside the crafting square.
+        let worn_width = 2.0 * SLOT + PX + space::SECTION;
+        let mut card = panel(grid_width + 76.0 * PX + worn_width);
         card.0.align_items = AlignItems::Center;
         root.spawn((card, InventoryCard, RelativeCursorPosition::default())).with_children(|card| {
             card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() })
