@@ -418,7 +418,7 @@ mod tests {
         keys.extend(content.quests.iter().filter(|quest| first_party(&quest.name)).map(|quest| format!("quest.age.{}", quest.age)));
         // The interface fonts and the shader packs the game ships, as the settings name them.
         keys.extend(crate::ui::skin::InterfaceFont::ALL.map(|font| font.key().to_owned()));
-        keys.extend(crate::render::pack::ShaderPacks::load(&assets()).0.iter().map(crate::render::pack::ShaderPack::key));
+        keys.extend(crate::render::pack::ShaderPacks::load(&assets()).0.iter().filter(|pack| pack.shipped).map(crate::render::pack::ShaderPack::key));
         keys
     }
 
