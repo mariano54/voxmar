@@ -316,6 +316,8 @@ const DETAIL_HEIGHT: f32 = 120.0 * PX;
 const WEB_ROOM: Vec2 = Vec2::new(WIDTH - CHAPTERS - 4.0 * space::OUTER, WEB_HEIGHT - 2.0 * space::GAP);
 const STEP_LEAST: Vec2 = Vec2::new(SLOT + 10.0 * PX, SLOT + 5.0 * PX);
 const STEP_MOST: Vec2 = Vec2::new(SLOT + 90.0 * PX, SLOT + 20.0 * PX);
+/// How far the picked quest's glow reaches past it.
+const GLOW: f32 = 4.0 * PX;
 /// The width of the Pin button.
 const PIN: f32 = 52.0 * PX;
 
@@ -561,10 +563,23 @@ fn draw(
                         Standing::Waiting => Piece::Well,
                     };
                     let tint = if standing == Standing::Waiting || i >= ours { Color::srgba(1.0, 1.0, 1.0, 0.35) } else { Color::WHITE };
+                    let picked = view.picked.as_deref() == Some(quest.name.as_str());
+                    // The quest picked glows, whatever it stands at, under its ring.
+                    if picked {
+                        let glow = Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(at.x - GLOW),
+                            top: Val::Px(at.y - GLOW),
+                            width: Val::Px(SLOT + 2.0 * GLOW),
+                            height: Val::Px(SLOT + 2.0 * GLOW),
+                            ..default()
+                        };
+                        area.spawn((glow, BackgroundColor(ACCENT.with_alpha(0.45))));
+                    }
                     area.spawn((Button, crate::ui::widgets::HoverLight, QuestNode(quest.name.clone()), node, piece.image())).with_children(|cell| {
                         cell.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
                         // The quest picked, ringed.
-                        if view.picked.as_deref() == Some(quest.name.as_str()) {
+                        if picked {
                             let ring = Node { position_type: PositionType::Absolute, left: Val::Px(-2.0 * PX), top: Val::Px(-2.0 * PX), width: Val::Px(SLOT + 4.0 * PX), height: Val::Px(SLOT + 4.0 * PX), ..default() };
                             cell.spawn((ring, Piece::Selection.image()));
                         }
