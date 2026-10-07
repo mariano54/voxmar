@@ -136,6 +136,17 @@ const LIGHT_STONE: u8 = 140;
 /// The share of a rock's blocks of its second stone.
 const ROCK_MOTTLE: f32 = 0.33;
 
+/// A rock's second stone: another of the palette than `first` where it has another.
+fn second_stone(stones: &Palette, first: BlockId, rng: &mut Rng) -> BlockId {
+    for _ in 0..4 {
+        let other = stones.pick(rng.unit().min(0.9999));
+        if other != first {
+            return other;
+        }
+    }
+    first
+}
+
 fn ground_bit(ground: Ground) -> u8 {
     1 << ground as u8
 }
@@ -380,8 +391,10 @@ impl Decor {
                 let r = lerp(*radius, rng.unit());
                 let stones = self.stones(area, site, stones);
                 let block = stones.pick(rng.unit().min(0.9999));
-                let other = stones.pick(rng.unit().min(0.9999));
-                let centre = base.as_vec3() + Vec3::new(0.5, -0.35 + 0.1 * r, 0.5);
+                let other = second_stone(stones, block, rng);
+                // Sunk about a block, standing two or three blocks above the grass: a mound,
+                // never a slab.
+                let centre = base.as_vec3() + Vec3::new(0.5, -0.2 + 0.6 * r, 0.5);
                 let damp = *moss * dampness(site);
                 self.rock(area, centre, Vec3::new(r, r * 0.8, r), [block, other], damp, rng.next_u64(), blocks);
             }
@@ -394,7 +407,7 @@ impl Decor {
                     let (x, z) = ((base.x as f32 + 0.5 + a.cos() * d).floor() as i32, (base.z as f32 + 0.5 + a.sin() * d).floor() as i32);
                     let r = lerp(*size, rng.unit());
                     let block = stones.pick(rng.unit().min(0.9999));
-                    let other = stones.pick(rng.unit().min(0.9999));
+                    let other = second_stone(stones, block, rng);
                     let seed = rng.next_u64();
                     if area.unfit(x, z) || (area.height(x, z) - base.y + 1).abs() > 2 {
                         continue;
