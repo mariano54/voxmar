@@ -254,7 +254,7 @@ impl Factory {
         }
         if left > 0 && machine.is_processor() && machines.takes(machine, stack.item) {
             let room = machines.input_room(machine, stack.item, node.state.inputs.len());
-            left = fill_within(&mut node.state.inputs, stack.item, left, room);
+            left = fill_within(&mut node.state.inputs, stack.item, left, room, |other| machines.same_input(machine, stack.item, other));
         }
         if left > 0 && !node.state.bin.is_empty() {
             let left = fill(&mut node.state.bin, stack.item, left);
@@ -813,15 +813,15 @@ fn finish(pos: IVec3, state: &mut MachineState, process: &crate::machine::Proces
     state.progress = 0.0;
 }
 
-/// Puts `count` of `item` into `slots`, topping up stacks first and filling no more than
-/// `room` slots with it; returns how many did not fit.
-fn fill_within(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8, room: usize) -> u8 {
+/// Puts `count` of `item` into `slots`, topping up its stacks first, while no more than
+/// `room` stacks hold it or what goes in `same` as it; returns how many did not fit.
+fn fill_within(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8, room: usize, same: impl Fn(BlockId) -> bool) -> u8 {
     for stack in slots.iter_mut().flatten().filter(|s| s.item == item) {
         let moved = count.min(max_stack(item).saturating_sub(stack.count));
         stack.count += moved;
         count -= moved;
     }
-    let mut held = slots.iter().flatten().filter(|s| s.item == item).count();
+    let mut held = slots.iter().flatten().filter(|s| same(s.item)).count();
     for slot in slots.iter_mut().filter(|s| s.is_none()) {
         if count == 0 || held >= room {
             break;
@@ -1269,5 +1269,20 @@ mod tests {
         assert_eq!(by_hand.len(), 1);
         assert_eq!(by_hand[0].count, 2);
         assert_eq!(by_hand[0].alternatives().into_iter().flatten().count(), 1, "one bloom");
+    }
+
+    /// Coal and charcoal are one input of the bloomery's recipe: together they fill no more
+    /// than its room, and the ore always gets in.
+    #[test]
+    fn coal_and_charcoal_share_the_fuels_room_so_ore_still_goes_in() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let stack = |name: &str, count| ItemStack { item: blocks.id(name).unwrap_or_else(|| panic!("no {name}")), count };
+        let mut factory = Factory::default();
+        assert!(factory.insert(IVec3::ZERO, blocks.id("base:bloomery").unwrap(), machines));
+        assert_eq!(factory.put(IVec3::ZERO, stack("base:coal_ore", 64), machines), None);
+        assert_eq!(factory.put(IVec3::ZERO, stack("base:charcoal", 64), machines), None);
+        assert_eq!(factory.put(IVec3::ZERO, stack("base:coal_ore", 64), machines), Some(stack("base:coal_ore", 64)), "a third stack of fuel finds no room");
+        assert_eq!(factory.put(IVec3::ZERO, stack("base:iron_ore", 64), machines), None, "the ore gets in");
     }
 }

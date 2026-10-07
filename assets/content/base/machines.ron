@@ -57,18 +57,17 @@
         (block: "lv_transformer", role: Transformer(tier: 2, rate: 128.0)),
         (block: "mv_battery_bank", role: Store(carrier: Electric, tier: 2, capacity: 400000.0, rate: 128.0)),
     ],
-    // What burns, and for how many seconds at a generator's full output; the first that
-    // takes an item counts.
     // How the world drives machines: wind (blocks a second) under which windmills stall and
     // at which they give all they can, the heights between which they catch from a third
-    // of it to all, how near another windmill's sails becalm one (blocks, any way), the
-    // wind reckoned while a windmill's land is not loaded, how near (across and up or down)
-    // a kept animal walks a treadwheel, seconds between looks at the world, and the tag of
-    // fluids (lava) that neither turn wheels nor wash ore. A later package's `sources`
-    // replaces these.
+    // of it to all, how near another windmill's sails becalm one (blocks, any way), how near
+    // another water wheel stills one (blocks, any way; each fall or current turns one wheel
+    // at most), the wind reckoned while a windmill's land is not loaded, how near (across
+    // and up or down) a kept animal walks a treadwheel, seconds between looks at the world,
+    // and the tag of fluids (lava) that neither turn wheels nor wash ore. A later package's
+    // `sources` replaces these.
     sources: Some((
         wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 0.333, wind_spacing: 4, wind_mean: 5.0,
-        walk_reach: 3.0, walk_height: 2.0, survey_seconds: 1.0, hot_tag: "hot",
+        water_spacing: 4, walk_reach: 3.0, walk_height: 2.0, survey_seconds: 1.0, hot_tag: "hot",
     )),
     // Kept animals that walk a treadwheel: the big, steady grazers. A later package may
     // add to them, or take one away with `not_walkers`.

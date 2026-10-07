@@ -552,6 +552,11 @@ impl Server {
         let Some(save) = &self.save else { return };
         let _span = tracing::info_span!("save_world").entered();
         let started = Instant::now();
+        // What machines hold before the land they stand in: a save cut short between the two
+        // loses what a machine held rather than keeping it twice.
+        if let Err(e) = save.write_machines(&self.saved_machines()) {
+            tracing::error!("could not save machines: {e}");
+        }
         let (world, registry) = (&self.world, &self.content.blocks);
         let columns = self.dirty.len();
         self.dirty.retain(|&pos| {
@@ -571,9 +576,6 @@ impl Server {
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
             tracing::error!("could not save creatures: {e}");
-        }
-        if let Err(e) = save.write_machines(&self.saved_machines()) {
-            tracing::error!("could not save machines: {e}");
         }
         let crops = &self.content.crops;
         if let Err(e) = save.write_crops(&self.farm.saved(|id| crops.get(id).def.name.clone())) {

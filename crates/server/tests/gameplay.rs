@@ -1578,8 +1578,29 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
     assert!(save.contains("base:iron_dust"), "the save keeps the work: {save}");
     let mut client = Client::join_with(config());
-    let said = client.ok(&format!("/machine {crusher_at}"));
-    assert!(progress(&said).is_none_or(|p| p >= done), "the crusher began again: {said}, was {done}% done");
+    // Until its first step it says it is idle; then it goes on from where it was.
+    let said = machine_says(&mut client, &crusher_at, "making", 20);
+    assert!(progress(&said).is_some_and(|p| p >= done), "the crusher began again: {said}, was {done}% done");
+    // Finished, the one ore made two dust: not two lots of it, nor none. The limit follows
+    // the work, not the clock: a crowded test machine runs the server slow.
+    let (mut moved, mut last) = (Instant::now(), progress(&said));
+    loop {
+        let said = client.ok(&format!("/machine {crusher_at}"));
+        if said.contains("idle") {
+            break;
+        }
+        if progress(&said) != last {
+            (moved, last) = (Instant::now(), progress(&said));
+        }
+        assert!(moved.elapsed() < Duration::from_secs(20), "the crusher stopped after the restart: {said}");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    let dust = client.content.blocks.expect("base:iron_dust");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == dust).map(|s| s.count as u32).sum::<u32>();
+    use_machine(&mut client, crusher);
+    client.pump_until(|c| held(c) > 0);
+    let made = held(&client);
+    assert_eq!(made, 2, "one iron ore crushed across a restart");
     drop(client);
 
     // A machines file that cannot be read is kept aside before the next save writes over it.
@@ -1633,6 +1654,35 @@ fn a_water_wheel_turns_on_falling_water_but_not_on_water_poured_out_on_flat_grou
         assert!(started.elapsed() < Duration::from_secs(15), "falling water never turned the wheel");
         std::thread::sleep(Duration::from_millis(300));
     }
+}
+
+#[test]
+fn water_wheels_within_four_blocks_of_another_share_its_water_and_both_turn_once_it_moves_away() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    for line in ["/clear", "/fill ~2 ~ ~-2 ~10 ~4 ~2 air", "/fill ~2 ~-1 ~-2 ~10 ~-1 ~2 stone", "/setblock ~3 ~4 ~ water", "/setblock ~4 ~1 ~ water_wheel"] {
+        client.ok(line);
+    }
+    let at = |dx: i32, dz: i32| format!("{} {} {}", start.x + dx, start.y + 1, start.z + dz);
+    // Alone beside the fall it turns: idle, with nothing to drive.
+    machine_says(&mut client, &at(4, 0), "idle", 20);
+    // A second wheel on the same fall shares it, and neither turns.
+    client.ok("/setblock ~2 ~1 ~ water_wheel");
+    machine_says(&mut client, &at(4, 0), "needs flowing water", 20);
+    machine_says(&mut client, &at(2, 0), "needs flowing water", 20);
+    client.ok("/setblock ~2 ~1 ~ air");
+    machine_says(&mut client, &at(4, 0), "idle", 20);
+    // On a fall of its own four blocks off (the data's `water_spacing`, diagonals too),
+    // it stills the first all the same.
+    client.ok("/setblock ~8 ~4 ~ water");
+    client.ok("/setblock ~8 ~1 ~1 water_wheel");
+    machine_says(&mut client, &at(4, 0), "needs flowing water", 20);
+    machine_says(&mut client, &at(8, 1), "needs flowing water", 20);
+    // Five blocks off, both turn.
+    client.ok("/setblock ~8 ~1 ~1 air");
+    client.ok("/setblock ~9 ~1 ~ water_wheel");
+    machine_says(&mut client, &at(4, 0), "idle", 20);
+    machine_says(&mut client, &at(9, 0), "idle", 20);
 }
 
 #[test]

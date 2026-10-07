@@ -51,7 +51,9 @@ Each factory step (every 4 server ticks) every network shares out its power:
 
 1. Generators say what they can give: their power times their condition. A water wheel
    turns on falling or flowing water (1 or 0; still water poured on flat ground does not
-   turn it). Wind is the wind's strength times a height factor, and no other windmill may
+   turn it). Each falling or current cell turns one wheel (the first in block order beside
+   it), and no other water wheel may stand within `water_spacing` blocks (4) any way, or
+   both are still. Wind is the wind's strength times a height factor, and no other windmill may
    stand within `wind_spacing` blocks (4) any way, or both are becalmed. A treadwheel
    needs a kept walker (`walkers`, less any `not_walkers`) within `walk_reach`; its owner
    must own the wheel if the wheel has one, and an animal walks only its nearest wheel.
