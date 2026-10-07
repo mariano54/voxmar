@@ -681,6 +681,19 @@ pub enum Roots {
     Stilts,
 }
 
+/// Where each wood comes from (`woods` in trees.ron), so a region's timber is its own
+/// trees': a wood named after a tree builds a tree of another family only where a tree of
+/// its own family grows too, which the base content's tests hold it to. The common woods
+/// grow almost everywhere and may build any tree anywhere.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct WoodsDef {
+    /// Woods (log blocks) that build any tree anywhere.
+    pub common: Vec<String>,
+    /// Every other wood a tree is built of, and the trees of its family.
+    pub families: std::collections::BTreeMap<String, Vec<String>>,
+}
+
 /// A kind of tree: a handful of shape parameters, its blocks, and where it grows.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1345,6 +1358,9 @@ struct TreeFile {
     /// replaces an earlier one's.
     #[serde(default)]
     density: Option<f32>,
+    /// Where the woods come from; each package's add to the earlier ones'.
+    #[serde(default)]
+    woods: WoodsDef,
     trees: Vec<TreeDef>,
 }
 
@@ -1382,6 +1398,8 @@ pub struct WorldContent {
     /// How densely trees grow in forests, a factor on every biome's tree cover (`density`
     /// in `trees.ron`).
     pub tree_density: f32,
+    /// Where each wood comes from (`woods` in `trees.ron`).
+    pub woods: WoodsDef,
     pub plants: Vec<PlantDef>,
     pub particles: Vec<ParticleDef>,
     pub shapes: Vec<ShapeDef>,
@@ -1483,6 +1501,7 @@ impl WorldContent {
         let mut trails = None;
         let mut land = None;
         let mut tree_density = None;
+        let mut woods = WoodsDef::default();
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles, mut shapes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut decorations, mut rule_sets) = (Vec::new(), Vec::new());
@@ -1530,8 +1549,12 @@ impl WorldContent {
                         }
                         tree_density = Some(density);
                     }
+                    let q = |n: &str| qualify(&file.package, n);
+                    woods.common.extend(def.woods.common.iter().map(|n| q(n)));
+                    for (wood, family) in &def.woods.families {
+                        woods.families.entry(q(wood)).or_default().extend(family.iter().map(|n| q(n)));
+                    }
                     trees.extend(def.trees.into_iter().map(|t| {
-                        let q = |n: &str| qualify(&file.package, n);
                         TreeDef {
                             name: q(&t.name),
                             log: q(&t.log),
@@ -1640,7 +1663,7 @@ impl WorldContent {
         }
         let snow_cover = weather.snow_cover().to_vec();
         let tree_density = tree_density.unwrap_or(1.0);
-        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements };
+        let content = Self { climate, provinces, biomes, trees, tree_density, woods, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements };
         content.ores.check(registry, &content.provinces)?;
         if !content.settlements.styles.is_empty() {
             content.settlements.check(registry)?;
@@ -1978,6 +2001,19 @@ impl WorldContent {
                 return Err(ContentError(format!("{}: the stand range ({lo}, {hi}) is empty or outside 0..=1", at())));
             }
             comfort(&at, &tree.comfort)?;
+        }
+        for wood in &self.woods.common {
+            block(&|| "trees.ron: the common woods".to_string(), wood)?;
+        }
+        for (wood, family) in &self.woods.families {
+            let at = || format!("trees.ron: the family of wood `{wood}`");
+            block(&at, wood)?;
+            if self.woods.common.contains(wood) {
+                return Err(ContentError(format!("{}: it is a common wood too", at())));
+            }
+            if let Some(tree) = family.iter().find(|t| !self.trees.iter().any(|d| d.name == **t)) {
+                return Err(ContentError(format!("{}: no tree is named `{tree}`", at())));
+            }
         }
         for (i, plant) in self.plants.iter().enumerate() {
             let at = || format!("plants.ron: plant `{}`", plant.name);
@@ -2647,28 +2683,40 @@ mod tests {
         assert!(content.provinces.len() >= 6);
     }
 
-    /// A wood is found only where its tree grows: no biome grows a tree of acacia wood
-    /// (acacia, olive, fig, …) unless acacia itself grows there, so acacia logs never turn
-    /// up in taiga or tundra (dead snags there are `dead_log`, which breaks to sticks).
+    /// A wood is found only where its tree grows: a biome grows a tree built of a wood
+    /// named after a tree of another family (lemons of jungle wood, olives of acacia)
+    /// only where a tree of the wood's own family grows too, so acacia logs never turn up
+    /// in taiga (dead snags there are `dead_log`, which breaks to sticks) and jungle
+    /// timber never in a laurel forest. Common woods build any tree anywhere, and every
+    /// wood a tree is built of is common or has a family (`woods` in trees.ron).
     #[test]
-    fn acacia_wood_grows_only_where_acacia_does() {
+    fn woods_grow_only_where_their_trees_do() {
         let content = WorldContent::base(&registry()).unwrap();
+        let woods = &content.woods;
         let picks = |select: &Select, tree: &TreeDef| match select {
             Select::Name(name, _) => *name == tree.name,
             Select::Tag(tag, _) => tree.tags.contains(tag),
         };
-        let acacia = |tree: &TreeDef| [Some(&tree.log), tree.root_block.as_ref()].into_iter().flatten().any(|b| b == "base:acacia_log");
         let mut failures = Vec::new();
-        for biome in &content.biomes {
-            let grows: Vec<&TreeDef> = content.trees.iter().filter(|t| biome.flora.trees.iter().any(|s| picks(s, t))).collect();
-            let has_acacia = grows.iter().any(|t| t.name == "base:acacia");
-            for tree in grows.iter().filter(|t| acacia(t)) {
-                if !has_acacia {
-                    failures.push(format!("{} grows {}, of acacia wood, without acacia", biome.name, tree.name));
+        for tree in &content.trees {
+            for wood in [Some(&tree.log), tree.root_block.as_ref()].into_iter().flatten() {
+                if !woods.common.contains(wood) && !woods.families.contains_key(wood) {
+                    failures.push(format!("{} is built of {wood}, which is neither common nor of a family", tree.name));
                 }
             }
         }
-        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        for biome in &content.biomes {
+            let grows: Vec<&TreeDef> = content.trees.iter().filter(|t| biome.flora.trees.iter().any(|s| picks(s, t))).collect();
+            for tree in &grows {
+                for wood in [Some(&tree.log), tree.root_block.as_ref()].into_iter().flatten() {
+                    let Some(family) = woods.families.get(wood) else { continue };
+                    if !family.contains(&tree.name) && !grows.iter().any(|t| family.contains(&t.name)) {
+                        failures.push(format!("{} grows {} of {wood}, with none of {family:?}", biome.name, tree.name));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{} woods out of place:\n{}", failures.len(), failures.join("\n"));
         let dead = content.trees.iter().find(|t| t.name == "base:dead_tree").expect("dead_tree");
         assert_eq!(dead.log, "base:dead_log");
         let registry = registry();
@@ -2756,6 +2804,9 @@ mod tests {
             ("trees.ron", tree("leaves: \"base:oak_leaves\", lean: 3.0, crown: Palm(fronds: (2, 3), length: (6.0, 7.0))"), "reaches 10"),
             ("trees.ron", tree("crown: Bare, comfort: (temperature: (20.0, 10.0))"), "comfort range"),
             ("trees.ron", tree("crown: Bare, colour: 1"), "colour"),
+            ("trees.ron", "(woods: (common: [\"base:oak_lgo\"]), trees: [])".into(), "unknown block `base:oak_lgo`"),
+            ("trees.ron", "(woods: (families: {\"base:acacia_log\": [\"baobob\"]}), trees: [])".into(), "no tree is named `mod:baobob`"),
+            ("trees.ron", "(woods: (families: {\"base:oak_log\": [\"base:oak\"]}), trees: [])".into(), "a common wood too"),
             ("plants.ron", "(plants: [(name: \"p\", block: \"base:poppy\", top: \"base:poppy\", stack: (1, 2))])".into(), "a stack"),
         ];
         for (file, source, expected) in cases {
