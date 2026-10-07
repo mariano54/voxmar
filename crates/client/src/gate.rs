@@ -552,7 +552,7 @@ fn run(world: &mut World) {
         gate.killed_on_purpose = false;
     }
     // (The text-fit steps put the player through the death screen on purpose.)
-    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitMenus | Step::Leave | Step::Done) {
+    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus | Step::Leave | Step::Done) {
         watch_health(world, &mut gate);
     }
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
