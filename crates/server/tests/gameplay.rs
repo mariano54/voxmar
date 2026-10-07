@@ -1343,8 +1343,22 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     client.propose("core:craft", ActionTarget::Slot(0));
     let (table, stick) = (client.content.blocks.expect("base:crafting_table"), client.content.blocks.expect("base:stick"));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == table));
-    let wait = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > wait);
+    // The first table also finishes the Crafting Table quest, whose reward (18 Engineering)
+    // comes at the next quest check: wait for it, so both grants are counted exactly.
+    client.pump_until(|c| c.quests.iter().any(|q| q.name == "base:crafting_table" && q.done));
+    client.ok("/time");
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
-    assert_eq!(client.earned[earned..], [80], "one table's Engineering, once");
+    assert_eq!(client.earned[earned..], [80, 180], "one table's Engineering, once, then the quest's reward");
+}
+
+/// A server started on a world another server holds open answers its first player: the
+/// land round spawn, with its rivers, trails and settlements, is planned once per process
+/// (`Overworld::shared`, whose sharing worldgen's `servers_on_one_world_share_its_planning`
+/// proves), so both stand their players on the same spot; the join's own wait
+/// (`SERVER_WAIT`) is the only clock on it.
+#[test]
+fn a_second_server_on_the_same_world_answers_a_join() {
+    let first = Client::join();
+    let second = Client::join();
+    assert_eq!(first.position, second.position);
 }

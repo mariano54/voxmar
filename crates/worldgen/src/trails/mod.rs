@@ -87,6 +87,12 @@ pub trait Land: Sync {
     fn gates(&self, _min: IVec2, _max: IVec2) -> Vec<IVec2> {
         Vec::new()
     }
+
+    /// The ground settlements' buildings take (each from its least corner to its most)
+    /// within or touching the box from `min` to `max`, which trails keep off.
+    fn built(&self, _min: IVec2, _max: IVec2) -> Vec<(IVec2, IVec2)> {
+        Vec::new()
+    }
 }
 
 /// How far from a settlement trails are laid: as far as a trail from its gate reaches,
@@ -303,7 +309,7 @@ impl Trails {
             for from in self.places(land, region).iter() {
                 let mut ends = self.places_near(land, from.at().as_vec2(), network::MAX_EDGE as f32);
                 ends.sort_by_key(|p| (p.cell.x, p.cell.y));
-                for to in ends.iter().filter(|to| from.below(to) && self.joins(from, to) && network::keep(from, to, &near)) {
+                for to in ends.iter().filter(|to| from.below(to) && self.joins(from, to) && network::keep(from, to, &near, &|a, b| self.joins(a, b))) {
                     let margin = (from.cell - to.cell).abs().max_element() / 3;
                     let margin = margin.clamp(6, 16);
                     let (min, max) = (from.cell.min(to.cell) - margin, from.cell.max(to.cell) + margin);
@@ -345,13 +351,23 @@ impl Trails {
 
     /// Makes on every core what the trails of the regions around `region` are planned
     /// from and not made yet: in turn the grids of the regions three around, the places
-    /// and routes of those two around and the paths next door. A tile in `region` reads
+    /// and routes of those two around (of each, only those beside a region that lays
+    /// trails) and the paths next door. A tile in `region` reads
     /// all of them (see `paths`, `routes` and `sites::places`); it may read some further
     /// out too, as the places it joins lie, which are left to be made when asked for, so
     /// that nothing is made that is not needed.
     fn prepare(&self, land: &dyn Land, region: IVec2) {
         let around = |reach: i32| (-reach..=reach).flat_map(move |dz| (-reach..=reach).map(move |dx| region + IVec2::new(dx, dz)));
-        let missing = |reach: i32, has: &dyn Fn(IVec2) -> bool| around(reach).filter(|&r| !has(r)).collect::<Vec<IVec2>>();
+        // Which of the regions two around lay trails (asking plans the settlements near
+        // them): only their places and routes, and the grids and places next to them, are
+        // read, so where trails keep near settlements the rest are not made at all.
+        let regions: Vec<IVec2> = around(2).collect();
+        crate::parallel::for_each(&regions, |&r| {
+            self.laid_in(land, r);
+        });
+        let laid: Vec<IVec2> = regions.into_iter().filter(|&r| self.laid_in(land, r)).collect();
+        let beside = |r: IVec2| laid.iter().any(|l| (*l - r).abs().max_element() <= 1);
+        let missing = |reach: i32, has: &dyn Fn(IVec2) -> bool| around(reach).filter(|&r| beside(r) && !has(r)).collect::<Vec<IVec2>>();
         crate::parallel::for_each(&missing(3, &|r| self.grids.has(r)), |&r| {
             self.grid(land, r);
         });
@@ -364,6 +380,13 @@ impl Trails {
         crate::parallel::for_each(&missing(1, &|r| self.paths.has(r)), |&r| {
             self.paths(land, r);
         });
+    }
+
+    /// How many regions' grids and routes are made, for tests of how much a piece of
+    /// generation needs.
+    #[cfg(test)]
+    pub(crate) fn made(&self) -> (usize, usize) {
+        (self.grids.len(), self.routes.len())
     }
 
     /// Whether trails are laid in the region `region`: everywhere, or within reach of a
@@ -538,7 +561,7 @@ mod tests {
                             continue;
                         }
                         candidates += 1;
-                        if !network::keep(from, &to, &near) {
+                        if !network::keep(from, &to, &near, &|a, b| trails.joins(a, b)) {
                             continue;
                         }
                         kept += 1;
