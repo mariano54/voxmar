@@ -1438,14 +1438,14 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
 fn a_hopper_feeds_a_crusher_by_conveyor_and_a_crate_above_collects_its_dust() {
     let mut client = Client::join();
     let start = client.position.floor().as_ivec3();
-    let (boiler, hopper) = (start + IVec3::new(3, 0, 0), start + IVec3::new(6, 0, 0));
+    let (boiler, hopper) = (start + IVec3::new(4, 0, -1), start + IVec3::new(2, 0, 0));
     for line in [
         "/clear",
-        "/fill ~3 ~ ~-1 ~6 ~2 ~1 air",
-        "/setblock ~3 ~ ~ boiler",
+        "/fill ~2 ~ ~-1 ~4 ~2 ~1 air",
+        "/setblock ~4 ~ ~-1 boiler",
         "/setblock ~4 ~ ~ steam_crusher",
-        "/setblock ~5 ~ ~ conveyor",
-        "/setblock ~6 ~ ~ hopper",
+        "/setblock ~3 ~ ~ conveyor",
+        "/setblock ~2 ~ ~ hopper",
         "/setblock ~4 ~1 ~ chute",
         "/setblock ~4 ~2 ~ crate",
     ] {
@@ -1460,7 +1460,7 @@ fn a_hopper_feeds_a_crusher_by_conveyor_and_a_crate_above_collects_its_dust() {
         client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
     };
     client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(start + IVec3::new(4, 2, 0)) == c.content.blocks.id("base:crate"));
-    let conveyor_says = client.ok("/machine ~5 ~ ~");
+    let conveyor_says = client.ok("/machine ~3 ~ ~");
     assert!(conveyor_says.contains("moves up to 4 items a second"), "{conveyor_says}");
     client.ok("/give coal_ore 2");
     client.pump_until(|c| count(c, coal) == 2);
@@ -1481,5 +1481,5 @@ fn a_hopper_feeds_a_crusher_by_conveyor_and_a_crate_above_collects_its_dust() {
         assert!(started.elapsed() < Duration::from_secs(40), "the crate got no dust: {crate_says}; crusher: {}", client.ok("/machine ~4 ~ ~"));
         std::thread::sleep(Duration::from_millis(500));
     }
-    assert!(client.ok("/machine ~6 ~ ~").contains("holds 0 items"));
+    assert!(client.ok("/machine ~2 ~ ~").contains("holds 0 items"));
 }

@@ -4,8 +4,10 @@ Phases 6 and 7 of the build plan: the Bronze, Iron and Steam ages' rotation and 
 the LV to HV ages' electricity. The code is `crates/engine/src/machine.rs` (definitions),
 `crates/engine/src/factory.rs` (networks and work) and `crates/server/src/machines.rs`
 (the world, saves and players). The data is `assets/content/base/machines.ron` (what each
-machine block does), `processing.ron` (what machines make) and `recipes_machines.ron`
-(how they are built).
+machine block does, what burns, which kept animals walk a treadwheel, and how wind and
+walkers drive machines), `processing.ron` (what machines make), `multiblocks*.ron` (the
+shapes multiblock machines stand in) and `recipes_machines.ron` (how they are built).
+Everything a mod might want to change is in that data, not in code.
 
 ## The rules it keeps
 
@@ -27,7 +29,7 @@ machine block does), `processing.ron` (what machines make) and `recipes_machines
 
 | Age | Power | Machines |
 | --- | --- | --- |
-| Bronze | Rotation: water wheel, windmill, shafts | Trip hammer (plates) |
+| Bronze | Rotation: water wheel, windmill, treadwheel (walked by a kept aurochs, horse, camel or bison beside it), shafts, bellows | Trip hammer (plates); the Bellows Bloomery (a multiblock: two iron ore and a fuel into an iron bloom, which a trip hammer beats into three ingots, a crafting table into two) |
 | Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore) |
 | LV | Dynamo (rotation to LV), LV cable, battery bank | Electric furnace, macerator (2 dust, twice as fast), ore washer (3 dust, half as fast, needs water beside it) |
 | MV | Steam turbine (steam to MV), MV cable, MV battery bank, LV transformer (MV in on top, LV out of the other faces) | LV machines through a transformer |
@@ -55,6 +57,20 @@ Fuel burns only as fast as its power is used. A boiler nobody draws on keeps its
 Converters give on the next step what they were given on this one, so a chain of them
 lags by a step each.
 
+## How items move
+
+Blocks have no facing, so items move by what each machine is. A run of **chutes** (or
+**conveyors**, four times as fast) joins the machines beside it; a run moves as many items
+a second as its slowest piece (`Chute(rate)` in `machines.ron`).
+
+- A **hopper** gives what players put in it; a processor gives what it made.
+- Each item goes, in turn, to a machine on the run that works it or burns it.
+- What a processor made that no machine on the run takes goes to a **crate**.
+- Bins (hoppers, crates) never feed bins, so a hopper and a crate on one run do nothing.
+
+A furnace fed from a hopper on one run and emptied into a crate on another is the simplest
+line: ore and coal in the hopper, ingots in the crate.
+
 ## Using a machine
 
 Right click (`base:use_machine`):
@@ -64,8 +80,11 @@ Right click (`base:use_machine`):
   into the inventory;
 - with a block it does not take, the block is placed against it.
 
+A hopper or crate takes whatever is in hand, and gives back everything with an empty hand.
 Either way the player is told, in chat, how the machine is doing: working and how far,
-no power, no fuel, no wind, no water, full, too high a voltage, overloaded or idle. A
+no power, no fuel, no wind, no water, no animal walking it, its structure unfinished,
+full, too high a voltage, overloaded or idle; a bin says what it holds, a chute how fast
+its run moves. `/machine x y z` says the same from anywhere. A
 conduit says what its network offers and asks. A machine screen will replace the chat
 lines (a `ServerMessage::Machine` carrying `factory::MachineView`, sent while the player
 watches it).

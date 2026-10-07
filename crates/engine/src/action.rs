@@ -447,7 +447,8 @@ impl ActionDef {
                     Some(item) => {
                         let fuel = machine.burns() && machines.burn_seconds(item).is_some();
                         let input = machine.is_processor() && machines.takes(machine, item);
-                        fuel || input || !ctx.info(item).placeable
+                        // A bin takes anything.
+                        fuel || input || machine.bin_slots() > 0 || !ctx.info(item).placeable
                     }
                 }
             }
