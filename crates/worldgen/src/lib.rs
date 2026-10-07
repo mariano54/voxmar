@@ -37,6 +37,7 @@ mod ores;
 mod rng;
 mod rocks;
 mod router;
+mod settlements;
 mod shapes;
 mod stage;
 mod surface;
@@ -67,6 +68,7 @@ pub use geology::Form;
 pub use rocks::ProvinceId;
 pub use shapes::ShapeId;
 pub use trails::{Kind as PlaceKind, Poi, TrailMark};
+pub use settlements::{Building as SettlementBuilding, Facing as SettlementFacing, Kind as BuildingKind};
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
@@ -236,6 +238,7 @@ pub struct Overworld {
     geology: Geology,
     rivers: water::Rivers,
     trails: trails::Trails,
+    settlements: settlements::Settlements,
     ecology: Ecology,
     decor: decor::Decor,
     biomes: Biomes,
@@ -297,6 +300,7 @@ impl Overworld {
             ecology,
             decor,
             trails: trails::Trails::new(stream, content.trails.laid),
+            settlements: settlements::Settlements::new(stream, &content.settlements, &registry),
             caves: caves::Caves::new(stream, &dials),
             underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
@@ -450,7 +454,8 @@ impl Overworld {
             self.ground(x, z)
         };
         let _stage = stage::enter(Stage::Trails);
-        self.trails.apply(&self.land(), sample, x, z)
+        let sample = self.trails.apply(&self.land(), sample, x, z);
+        self.settlements.apply(self, sample, x, z)
     }
 
     /// The ground over the `size`×`size` positions from (x, z), row by row.
@@ -462,14 +467,37 @@ impl Overworld {
         };
         let _stage = stage::enter(Stage::Trails);
         for (i, sample) in area.iter_mut().enumerate() {
-            *sample = self.trails.apply(&land, *sample, x + i as i32 % size, z + i as i32 / size);
+            let (sx, sz) = (x + i as i32 % size, z + i as i32 / size);
+            *sample = self.settlements.apply(self, self.trails.apply(&land, *sample, sx, sz), sx, sz);
         }
         area
     }
 
     /// The land trails are planned over: the ground with its rivers and lakes.
     fn land(&self) -> RiverLand<'_> {
-        RiverLand { rivers: &self.rivers, stages: self.stages() }
+        RiverLand { rivers: &self.rivers, stages: self.stages(), world: self }
+    }
+
+    /// The settlements whose squares lie within `radius` blocks of `centre`: their names
+    /// (English and Japanese), sizes, middles and buildings.
+    pub fn settlements_near(&self, centre: IVec2, radius: i32) -> Vec<SettlementInfo> {
+        self.settlements
+            .near(self, centre, radius)
+            .iter()
+            .filter_map(|slot| slot.0.as_ref())
+            .map(|p| SettlementInfo {
+                id: p.id,
+                name: p.name.clone(),
+                size: p.size.clone(),
+                style: p.style.clone(),
+                layout: p.layout.clone(),
+                centre: IVec3::new(p.centre.x, p.height, p.centre.y),
+                buildings: p.buildings.clone(),
+                gates: p.gates.clone(),
+                lanes: p.lanes.clone(),
+                levers: p.levers.0,
+            })
+            .collect()
     }
 
     /// What is built beside trails within the blocks from `min` to `max`.
@@ -557,6 +585,7 @@ pub(crate) fn steepness(height: impl Fn(i32, i32) -> i32) -> f32 {
 struct RiverLand<'a> {
     rivers: &'a water::Rivers,
     stages: water::Stages<'a>,
+    world: &'a Overworld,
 }
 
 impl trails::Land for RiverLand<'_> {
@@ -567,6 +596,44 @@ impl trails::Land for RiverLand<'_> {
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
         self.rivers.grid(self.stages, origin, step, size)
     }
+
+    fn settled(&self, min: IVec2, max: IVec2, reach: i32) -> bool {
+        self.world.settlements.any_near(self.world, min, max, reach)
+    }
+
+    fn gates(&self, min: IVec2, max: IVec2) -> Vec<IVec2> {
+        let centre = (min + max) / 2;
+        let radius = (max - min).max_element() / 2 + 1;
+        self.world
+            .settlements
+            .near(self.world, centre, radius)
+            .iter()
+            .filter_map(|slot| slot.0.as_ref())
+            .flat_map(|p| p.gates.iter().copied())
+            .filter(|g| g.cmpge(min).all() && g.cmple(max).all())
+            .collect()
+    }
+}
+
+/// A settlement, as gameplay and tools see it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettlementInfo {
+    pub id: u64,
+    /// In English and in Japanese.
+    pub name: (String, String),
+    /// `hamlet` or `village` (the size's name in settlements.ron), and its style and
+    /// layout.
+    pub size: String,
+    pub style: String,
+    pub layout: String,
+    /// The middle of its square or green, on the ground.
+    pub centre: IVec3,
+    pub buildings: Vec<SettlementBuilding>,
+    /// Where its lanes leading out end.
+    pub gates: Vec<IVec2>,
+    pub lanes: Vec<Vec<voxmar_engine::glam::Vec2>>,
+    /// Wealth, age, order, crowding and green, each 0 ..= 1.
+    pub levers: [f32; 5],
 }
 
 /// Samples sites over an area, computing the regional climate once per lattice point.
@@ -3035,6 +3102,7 @@ mod tests {
                     PlaceKind::Waterfall => [30, 90, 255],
                     PlaceKind::Viewpoint => [255, 230, 40],
                     PlaceKind::Trailhead => [60, 220, 60],
+                    PlaceKind::Settlement => [255, 90, 200],
                 };
                 paint(place.at().as_vec2(), rgb, 2);
             }
