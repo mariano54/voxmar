@@ -32,6 +32,12 @@
         // inside its standing shaft (multiblocks_machines.ron).
         (block: "bellows", role: Conduit(carrier: Rotation)),
         (block: "bloomery", role: Processor(kinds: ["bloom"], power: Some((Rotation, 6.0)))),
+        // Iron: a coke oven bakes coal by its own heat, with no power, inside its standing
+        // chamber; a blast furnace, blown through its bellows inside its standing shaft;
+        // a sawmill on rotation, half as many planks again as an axe.
+        (block: "coke_oven", role: Processor(kinds: ["coke"])),
+        (block: "blast_furnace", role: Processor(kinds: ["blast"], power: Some((Rotation, 12.0)))),
+        (block: "sawmill", role: Processor(kinds: ["saw"], yield: 0.5, power: Some((Rotation, 6.0)))),
         // Items: hoppers feed, chests collect, chutes and conveyors carry.
         (block: "hopper", role: Bin(slots: 5, feeds: true)),
         (block: "chest", role: Bin(slots: 27)),
@@ -80,6 +86,6 @@
         (item: "tag:fuel", seconds: 2.0),
         (item: "tag:planks", seconds: 4.0),
         (item: "tag:log", seconds: 15.0),
-        (item: "coal_ore|charcoal", seconds: 80.0),
+        (item: "coal_ore|charcoal|coke", seconds: 80.0),
     ],
 )

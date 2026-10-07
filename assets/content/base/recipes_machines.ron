@@ -28,6 +28,11 @@
         (pattern: [["kiln_bricks", "", "kiln_bricks"], ["kiln_bricks", "charcoal", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "bloomery", skill: "core:engineering", level: 22, xp: 80.0),
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["hide", "hide", "hide"], ["{name}_planks", "shaft", "{name}_planks"]], output: "bellows", skill: "core:engineering", level: 20, xp: 40.0),
         (ingredients: ["iron_bloom"], output: "iron_ingot", count: 2, skill: "core:engineering", level: 15, xp: 10.0),
+        // The Iron age: a coke oven of kiln bricks round an iron door, a blast furnace raised
+        // from a bloomery in iron plates, and a sawmill with an iron blade on a shaft.
+        (pattern: [["kiln_bricks", "kiln_bricks", "kiln_bricks"], ["kiln_bricks", "iron_plate", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "coke_oven", skill: "core:engineering", level: 28, xp: 90.0),
+        (pattern: [["kiln_bricks", "iron_plate", "kiln_bricks"], ["iron_plate", "bloomery", "iron_plate"], ["kiln_bricks", "iron_plate", "kiln_bricks"]], output: "blast_furnace", skill: "core:engineering", level: 34, xp: 150.0),
+        (pattern: [["", "iron_plate", ""], ["{name}_planks", "shaft", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "sawmill", skill: "core:engineering", level: 26, xp: 60.0),
         // The Iron and Steam ages: a boiler over a fire, pipes, an engine, a crusher.
         (pattern: [["copper_plate", "copper_plate", "copper_plate"]], output: "steam_pipe", count: 4, skill: "core:engineering", level: 30, xp: 8.0),
         (pattern: [["iron_plate", "iron_plate", "iron_plate"], ["iron_plate", "", "iron_plate"], ["tag:cobbled", "campfire", "tag:cobbled"]], output: "boiler", skill: "core:engineering", level: 32, xp: 80.0),

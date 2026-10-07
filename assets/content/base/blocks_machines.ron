@@ -35,6 +35,21 @@
             name: "bellows", sound: Wood, textures: Sides(top: "bellows_top", bottom: "bellows_top", side: "bellows_side"),
             hardness: 1.5, color: (120, 85, 55), tags: ["machine", "wood", "building"],
         ),
+        // The Iron age: a coke oven bakes coal into coke in its sealed brick chamber; a blast
+        // furnace, blown by bellows up a tall shaft, makes two iron ingots of every ore with
+        // coke; a sawmill cuts more planks from a log than an axe.
+        (
+            name: "coke_oven", sound: Stone, textures: Sides(top: "kiln_bricks", bottom: "kiln_bricks", side: "coke_oven_side"),
+            hardness: 3.0, color: (110, 60, 45), light: 6, tags: ["machine", "multiblock_core", "heat", "building"],
+        ),
+        (
+            name: "blast_furnace", sound: Stone, textures: Sides(top: "kiln_bricks", bottom: "kiln_bricks", side: "blast_furnace_side"),
+            hardness: 3.5, color: (150, 70, 45), light: 12, tags: ["machine", "multiblock_core", "heat", "building"],
+        ),
+        (
+            name: "sawmill", sound: Wood, textures: Sides(top: "sawmill_top", bottom: "sawmill_bottom", side: "sawmill_side"),
+            hardness: 2.5, color: (140, 110, 80), tags: ["machine", "wood", "building"],
+        ),
         // Items between machines: a hopper feeds what is put in it along chutes to the
         // machines beside them, a chest collects what they made; a conveyor is a faster
         // chute (machines.ron says how fast).
@@ -118,6 +133,9 @@
         ),
     ],
     families: [
+        // Coke: coal baked in a coke oven, which a blast furnace needs; it burns as long as
+        // the coal it came from.
+        (template: "drop", name: "coke", tags: ["coke", "fuel"], all: (color: (70, 70, 75))),
         // An iron bloom from the bloomery: spongy iron and slag, hammered into ingots.
         (template: "drop", name: "iron_bloom", tags: ["bloom", "metal:iron"], all: (color: (110, 90, 80))),
         // Crushed ore: twice the metal from an ore, smelted like the ore.

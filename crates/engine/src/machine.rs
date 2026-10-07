@@ -424,7 +424,26 @@ impl MachineRegistry {
 
     pub fn new(files: Vec<MachineFile>, processes: Vec<ProcessFile>, blocks: &BlockRegistry) -> Result<Self, RegistryError> {
         let mut registry = Self::default();
-        for def in processes.into_iter().flat_map(|f| f.recipes) {
+        // A family (a name with `{name}` in it, as crafting recipes have): one recipe for
+        // every name that fits all of the recipe's blocks, `{name}_log` into `{name}_planks`.
+        let defs = processes.into_iter().flat_map(|f| f.recipes).flat_map(|def| {
+            let names: Vec<&String> = def.inputs.iter().map(|(n, _)| n).chain(def.outputs.iter().map(|(n, _)| n)).chain(def.byproducts.iter().map(|(n, ..)| n)).collect();
+            let Some(template) = names.iter().find(|n| n.contains("{name}")) else { return vec![def] };
+            let (prefix, suffix) = template.split_once("{name}").expect("it holds the placeholder");
+            (0..blocks.len())
+                .filter_map(|i| blocks.def(BlockId(i as u16)).name.strip_prefix(prefix)?.strip_suffix(suffix).map(str::to_owned))
+                .filter(|fill| names.iter().all(|n| n.starts_with("tag:") || n.split('|').all(|n| blocks.id(&n.replace("{name}", fill)).is_some())))
+                .map(|fill| {
+                    let mut def = def.clone();
+                    let fill_in = |n: &mut String| *n = n.replace("{name}", &fill);
+                    def.inputs.iter_mut().for_each(|(n, _)| fill_in(n));
+                    def.outputs.iter_mut().for_each(|(n, _)| fill_in(n));
+                    def.byproducts.iter_mut().for_each(|(n, ..)| fill_in(n));
+                    def
+                })
+                .collect()
+        });
+        for def in defs {
             let bad = |what: String| RegistryError(format!("processing recipe {} for {:?}: {what}", def.kind, def.outputs.first().map(|o| &o.0)));
             if def.seconds <= 0.0 || def.inputs.is_empty() || def.outputs.is_empty() {
                 return Err(bad("needs inputs, outputs and seconds".into()));

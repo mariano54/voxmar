@@ -1307,4 +1307,56 @@ mod tests {
         assert_eq!(by_hand[0].count, 2);
         assert_eq!(by_hand[0].alternatives().into_iter().flatten().count(), 1, "one bloom");
     }
+
+    /// The Iron age's machines from the game's content: a coke oven bakes coal by its own
+    /// heat, a blast furnace blows two ore and a coke into four ingots (two an ore) and
+    /// takes no dust, and a sawmill cuts a log into six planks of its wood on average.
+    #[test]
+    fn a_blast_furnace_makes_two_ingots_an_ore_from_ore_alone_and_a_sawmill_six_planks_a_log() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let stack = |name: &str, count| ItemStack { item: id(name), count };
+        let mut factory = Factory::default();
+        // The coke oven, standing (its structure's condition), with no power at all.
+        let oven = IVec3::new(0, 0, 10);
+        assert!(factory.insert(oven, id("base:coke_oven"), machines));
+        factory.set_condition(oven, 1.0);
+        assert_eq!(factory.put(oven, stack("base:coal_ore", 2), machines), None);
+        for _ in 0..(65 * 5) {
+            factory.step(4, 20.0, machines);
+        }
+        assert_eq!(factory.take_outputs(oven), vec![stack("base:coke", 2)]);
+        // The blast furnace on a water wheel: two ore and a coke, four ingots.
+        let (wheel, furnace) = (IVec3::ZERO, IVec3::X);
+        assert!(factory.insert(wheel, id("base:water_wheel"), machines) && factory.insert(furnace, id("base:blast_furnace"), machines));
+        factory.set_condition(wheel, 1.0);
+        factory.set_condition(furnace, 1.0);
+        let furnace_def = machines.get(id("base:blast_furnace")).unwrap();
+        assert!(!machines.takes(furnace_def, id("base:iron_dust")), "a blast furnace takes no dust");
+        assert_eq!(factory.put(furnace, stack("base:iron_ore", 4), machines), None);
+        assert_eq!(factory.put(furnace, stack("base:coke", 2), machines), None);
+        // A water wheel gives 8 of the 12 it draws: two blasts of 16 s take 48 s.
+        for _ in 0..(55 * 5) {
+            factory.step(4, 20.0, machines);
+        }
+        assert_eq!(factory.take_outputs(furnace), vec![stack("base:iron_ingot", 8)]);
+        // The sawmill beside the wheel: each wood's own planks, half as many again as by hand.
+        let saw = IVec3::NEG_X;
+        assert!(factory.insert(saw, id("base:sawmill"), machines));
+        let mut planks = 0;
+        for _ in 0..10 {
+            assert_eq!(factory.put(saw, stack("base:oak_log", 10), machines), None);
+            for _ in 0..(25 * 5) {
+                factory.step(4, 20.0, machines);
+            }
+            for s in factory.take_outputs(saw) {
+                assert_eq!(s.item, id("base:oak_planks"), "a log makes planks of its own wood");
+                planks += s.count as u32;
+            }
+        }
+        assert!((560..=640).contains(&planks), "a hundred logs made {planks} planks, not about 600");
+        let birch = machines.processes().filter(|(_, p)| p.kind == "saw").any(|(_, p)| p.outputs[0].0 == id("base:birch_planks"));
+        assert!(birch, "every wood has its sawing recipe");
+    }
 }
