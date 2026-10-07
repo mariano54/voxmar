@@ -1,28 +1,29 @@
 // Armour and shields, at a crafting table (combat.ron says what each gives). Hide and wood
-// are Crafting's; metal is Engineering's, at the level that works the metal. A piece costs
-// what Minecraft's does (a body eight), its xp by the material.
+// are Crafting's; metal is Engineering's, at the level that works the metal. A set costs 25
+// (the wiki, draft 62): a hood 5, a body 8, legs 7, gloves 2 and boots 3, its xp by the
+// material.
 (
     recipes: [
         (pattern: [["hide", "hide", "hide"], ["hide", "", "hide"]], output: "hide_hood", skill: "core:crafting", level: 1, xp: 15.0),
         (pattern: [["hide", "", "hide"], ["hide", "hide", "hide"], ["hide", "hide", "hide"]], output: "hide_tunic", skill: "core:crafting", level: 1, xp: 24.0),
         (pattern: [["hide", "hide", "hide"], ["hide", "", "hide"], ["hide", "", "hide"]], output: "hide_trousers", skill: "core:crafting", level: 1, xp: 21.0),
-        (pattern: [["", "hide", ""], ["hide", "", "hide"]], output: "hide_gloves", skill: "core:crafting", level: 1, xp: 9.0),
-        (pattern: [["hide", "", "hide"], ["hide", "", "hide"]], output: "hide_boots", skill: "core:crafting", level: 1, xp: 12.0),
+        (pattern: [["hide", "", "hide"]], output: "hide_gloves", skill: "core:crafting", level: 1, xp: 6.0),
+        (pattern: [["hide", "", "hide"], ["", "hide", ""]], output: "hide_boots", skill: "core:crafting", level: 1, xp: 9.0),
         (pattern: [["copper_ingot", "copper_ingot", "copper_ingot"], ["copper_ingot", "", "copper_ingot"]], output: "copper_helmet", skill: "core:engineering", level: 5, xp: 40.0),
         (pattern: [["copper_ingot", "", "copper_ingot"], ["copper_ingot", "copper_ingot", "copper_ingot"], ["copper_ingot", "copper_ingot", "copper_ingot"]], output: "copper_chestplate", skill: "core:engineering", level: 5, xp: 64.0),
         (pattern: [["copper_ingot", "copper_ingot", "copper_ingot"], ["copper_ingot", "", "copper_ingot"], ["copper_ingot", "", "copper_ingot"]], output: "copper_leggings", skill: "core:engineering", level: 5, xp: 56.0),
-        (pattern: [["", "copper_ingot", ""], ["copper_ingot", "", "copper_ingot"]], output: "copper_gauntlets", skill: "core:engineering", level: 5, xp: 24.0),
-        (pattern: [["copper_ingot", "", "copper_ingot"], ["copper_ingot", "", "copper_ingot"]], output: "copper_boots", skill: "core:engineering", level: 5, xp: 32.0),
+        (pattern: [["copper_ingot", "", "copper_ingot"]], output: "copper_gauntlets", skill: "core:engineering", level: 5, xp: 16.0),
+        (pattern: [["copper_ingot", "", "copper_ingot"], ["", "copper_ingot", ""]], output: "copper_boots", skill: "core:engineering", level: 5, xp: 24.0),
         (pattern: [["bronze_ingot", "bronze_ingot", "bronze_ingot"], ["bronze_ingot", "", "bronze_ingot"]], output: "bronze_helmet", skill: "core:engineering", level: 12, xp: 60.0),
         (pattern: [["bronze_ingot", "", "bronze_ingot"], ["bronze_ingot", "bronze_ingot", "bronze_ingot"], ["bronze_ingot", "bronze_ingot", "bronze_ingot"]], output: "bronze_scale_shirt", skill: "core:engineering", level: 12, xp: 96.0),
         (pattern: [["bronze_ingot", "bronze_ingot", "bronze_ingot"], ["bronze_ingot", "", "bronze_ingot"], ["bronze_ingot", "", "bronze_ingot"]], output: "bronze_leggings", skill: "core:engineering", level: 12, xp: 84.0),
-        (pattern: [["", "bronze_ingot", ""], ["bronze_ingot", "", "bronze_ingot"]], output: "bronze_gauntlets", skill: "core:engineering", level: 12, xp: 36.0),
-        (pattern: [["bronze_ingot", "", "bronze_ingot"], ["bronze_ingot", "", "bronze_ingot"]], output: "bronze_boots", skill: "core:engineering", level: 12, xp: 48.0),
+        (pattern: [["bronze_ingot", "", "bronze_ingot"]], output: "bronze_gauntlets", skill: "core:engineering", level: 12, xp: 24.0),
+        (pattern: [["bronze_ingot", "", "bronze_ingot"], ["", "bronze_ingot", ""]], output: "bronze_boots", skill: "core:engineering", level: 12, xp: 36.0),
         (pattern: [["iron_ingot", "iron_ingot", "iron_ingot"], ["iron_ingot", "", "iron_ingot"]], output: "chainmail_coif", skill: "core:engineering", level: 15, xp: 80.0),
         (pattern: [["iron_ingot", "", "iron_ingot"], ["iron_ingot", "iron_ingot", "iron_ingot"], ["iron_ingot", "iron_ingot", "iron_ingot"]], output: "chainmail_shirt", skill: "core:engineering", level: 15, xp: 128.0),
         (pattern: [["iron_ingot", "iron_ingot", "iron_ingot"], ["iron_ingot", "", "iron_ingot"], ["iron_ingot", "", "iron_ingot"]], output: "chainmail_leggings", skill: "core:engineering", level: 15, xp: 112.0),
-        (pattern: [["", "iron_ingot", ""], ["iron_ingot", "", "iron_ingot"]], output: "chainmail_gloves", skill: "core:engineering", level: 15, xp: 48.0),
-        (pattern: [["iron_ingot", "", "iron_ingot"], ["iron_ingot", "", "iron_ingot"]], output: "chainmail_boots", skill: "core:engineering", level: 15, xp: 64.0),
+        (pattern: [["iron_ingot", "", "iron_ingot"]], output: "chainmail_gloves", skill: "core:engineering", level: 15, xp: 32.0),
+        (pattern: [["iron_ingot", "", "iron_ingot"], ["", "iron_ingot", ""]], output: "chainmail_boots", skill: "core:engineering", level: 15, xp: 48.0),
         (pattern: [["", "hide", ""], ["hide", "stick", "hide"], ["", "hide", ""]], output: "hide_buckler", skill: "core:crafting", level: 1, xp: 12.0),
         (pattern: [["tag:planks", "tag:planks", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"], ["", "tag:planks", ""]], output: "wooden_shield", skill: "core:crafting", level: 3, xp: 14.0),
         (pattern: [["copper_ingot", "tag:planks", "copper_ingot"], ["copper_ingot", "copper_ingot", "copper_ingot"], ["", "copper_ingot", ""]], output: "copper_shield", skill: "core:engineering", level: 5, xp: 48.0),

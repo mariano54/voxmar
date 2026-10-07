@@ -7,8 +7,10 @@
 //! window just after is on it too. On the beat, a blow gains accuracy and a rhythm pip;
 //! with all the pips, the next on-beat blow is a flourish, with more max hit and its
 //! class's effect (bleed, cleave, pin, sunder, daze). A click earlier than the buffer, but
-//! past half the cooldown, fires at once at part strength: the quickest at 45%, so spam-
-//! clicking deals about 90% of timed damage per second (Mariano, 6 Oct) ([`Rhythm`]).
+//! past half the cooldown, fires at once at part strength: 45% at the quickest, rising in a
+//! straight line to full at the cooldown, so spam-clicking deals about 90% of timed damage
+//! per second and no click off the beat beats waiting for it (Mariano, 6 Oct)
+//! ([`Feel::strength`], [`Rhythm`]).
 //!
 //! **Guard and dodge.** Holding a melee weapon (or, later, a shield) up guards an arc in
 //! front, stopping a share of melee blows (less of crush); raised just before a blow lands
@@ -21,7 +23,7 @@
 //! creature attacks in one and may be weak to one, against which its defence counts half.
 //!
 //! **Weapons** are content (each package's `combat.ron`): a class (sword, dagger, bow) sets
-//! the style, the cooldown and any extra reach; each weapon names its item, the level that
+//! the style, the cooldown and its reach; each weapon names its item, the level that
 //! wields it (Attack for melee, Ranged, Magic) and its max hit at that level, which rises by
 //! one for every eight levels above it, as a bare fist's does from 1. A weapon held below
 //! its level strikes as a fist.
@@ -32,7 +34,9 @@
 //! reverse) and half again against a style its set resists. A piece worn below its Defence
 //! level gives nothing, as a weapon held below its level strikes as a fist. A **shield** goes
 //! in the off-hand: it guards in place of the weapon (stopping more, over a wider arc, and
-//! arrows too) unless the weapon takes both hands. The heaviest armour worn picks the dodge.
+//! arrows too), and adds its armour, unless the weapon takes both hands. The heaviest armour
+//! worn picks the dodge. Slot shares, what each weight is good against and what resisting
+//! adds are content too (`combat.ron`'s `armour:`, [`ArmourRules`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -44,12 +48,19 @@ pub const FULL_CHARGE: f32 = 0.6;
 /// Whole damage from `full` scaled by `strength`, the fraction rounded up with chance equal
 /// to it (drawn as `roll` in 0..1), so the average is exact even for small blows.
 pub fn scaled(full: u16, strength: f32, roll: f32) -> u16 {
-    let exact = full as f32 * strength.clamp(0.0, 1.0);
+    by_chance(full as f32 * strength.clamp(0.0, 1.0), roll)
+}
+
+/// `exact` as a whole number, rounded up with chance equal to its fraction (drawn as `roll`
+/// in 0..1): a bonus of a share is worth exactly that share on average, however small the
+/// number it raises.
+pub fn by_chance(exact: f32, roll: f32) -> u16 {
+    let exact = exact.max(0.0);
     exact.floor() as u16 + u16::from(roll < exact.fract())
 }
 
 /// How a blow is struck.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Style {
     /// Melee: daggers, spears, fangs and beaks.
     Stab,
@@ -116,9 +127,9 @@ pub struct ClassDef {
     pub style: Style,
     /// Seconds from one swing to the next on the beat: the cooldown meter's length.
     pub cooldown: f32,
-    /// Blocks it reaches past an arm's length.
+    /// Blocks it reaches from the eye to a creature's nearest edge (unset, [`Feel::reach`]).
     #[serde(default)]
-    pub reach: f32,
+    pub reach: Option<f32>,
     /// Seconds a swing winds up before its blow lands.
     #[serde(default)]
     pub windup: f32,
@@ -177,6 +188,13 @@ impl GuardDef {
         a.dot(b) >= (self.arc.to_radians() / 2.0).cos() - 1e-4
     }
 
+    /// This guard, facing `facing`, if it can take a blow in `style` from `from`: not a
+    /// heavy one, which goes through any guard, nor one from outside its arc, nor one in a
+    /// style it stops none of (magic; missiles, but for a shield).
+    pub fn takes(self, style: Style, heavy: bool, facing: glam::Vec3, from: glam::Vec3, feel: &Feel) -> Option<GuardDef> {
+        (!heavy && self.covers(facing, from) && self.stops(style, feel) > 0.0).then_some(self)
+    }
+
     /// The share of a blow in `style` it stops: melee (half of it against crush, which
     /// breaks guards), and missiles only if it is a shield; never magic.
     pub fn stops(&self, style: Style, feel: &Feel) -> f32 {
@@ -222,65 +240,133 @@ impl Default for DodgeDef {
     }
 }
 
-/// How fighting feels beyond each class: every share and timing of the rhythm, guard and
-/// creatures' attacks, as content sets them (a package's `combat.ron`; the last package
-/// to set it wins, and what it leaves out keeps these defaults).
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields, default)]
-pub struct Feel {
-    /// A click this share of the cooldown after the last swing is the soonest that fires,
-    /// at [`Feel::spam_strength`]; strength rises to full at the buffer.
-    pub quickest: f32,
-    pub spam_strength: f32,
-    /// What a blow on the beat adds to the attack roll.
-    pub beat_accuracy: f32,
-    /// Rhythm pips: how many make a flourish, and the seconds after the last blow they go.
-    pub pips: u8,
-    pub pip_timeout: f32,
-    /// What a flourish, a counter and an on-beat falling blow add to the max hit.
-    pub flourish_max_hit: f32,
-    pub counter_max_hit: f32,
-    pub falling_max_hit: f32,
-    /// Guarding or dodging in your own wind-up cancels the swing, and the meter starts again
-    /// from this share.
-    pub cancel_to: f32,
-    /// Of what a guard stops, the share crush blows put through anyway.
-    pub crush_through: f32,
-    /// A raise this soon after lowering opens no perfect window, so tapping does nothing.
-    pub no_flicker: f32,
-    /// Seconds a perfect block staggers the attacker (a boss), and seconds after it a blow
-    /// is a counter.
-    pub stagger: f32,
-    pub boss_stagger: f32,
-    pub counter: f32,
-    /// Seconds after a perfect dodge a blow is a riposte (on the beat by itself).
-    pub riposte: f32,
-    /// A creature's attack: seconds winding up and recovering, unless it says.
-    pub creature_windup: f32,
-    pub creature_recovery: f32,
+/// Declares [`Feel`] with its defaults, and [`FeelPatch`], what one package's `feel` sets.
+macro_rules! feel {
+    ($($(#[$doc:meta])* $field:ident: $ty:ty = $default:expr,)*) => {
+        /// How fighting feels beyond each class: every share, distance and timing of the
+        /// rhythm, guard and creatures' attacks, as content sets them (a package's
+        /// `combat.ron`; each field a package sets replaces an earlier one's, and what none
+        /// sets keeps these defaults).
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub struct Feel {
+            $($(#[$doc])* pub $field: $ty,)*
+        }
+
+        impl Default for Feel {
+            fn default() -> Self {
+                Self { $($field: $default,)* }
+            }
+        }
+
+        /// One package's `feel`: the fields it sets.
+        #[derive(Clone, Copy, Debug, Default, Deserialize)]
+        #[serde(deny_unknown_fields, default)]
+        pub struct FeelPatch {
+            $(pub $field: Option<$ty>,)*
+        }
+
+        impl Feel {
+            /// `patch` laid over this: what it sets replaces, what it leaves out stays.
+            pub fn patch(&mut self, patch: &FeelPatch) {
+                $(if let Some(value) = patch.$field {
+                    self.$field = value;
+                })*
+            }
+        }
+    };
 }
 
-impl Default for Feel {
-    fn default() -> Self {
-        Self {
-            quickest: 0.5,
-            spam_strength: 0.45,
-            beat_accuracy: 0.05,
-            pips: 3,
-            pip_timeout: 2.0,
-            flourish_max_hit: 0.2,
-            counter_max_hit: 0.25,
-            falling_max_hit: 0.15,
-            cancel_to: 0.5,
-            crush_through: 0.5,
-            no_flicker: 0.4,
-            stagger: 0.8,
-            boss_stagger: 0.3,
-            counter: 1.0,
-            riposte: 0.8,
-            creature_windup: 0.5,
-            creature_recovery: 0.6,
-        }
+feel! {
+    /// A click this share of the cooldown after the last swing is the soonest that fires,
+    /// at `spam_strength`; strength rises in a straight line to full at the cooldown.
+    quickest: f32 = 0.5,
+    spam_strength: f32 = 0.45,
+    /// What a blow on the beat adds to the attack roll.
+    beat_accuracy: f32 = 0.05,
+    /// Rhythm pips: how many make a flourish, and the seconds after the last blow they go.
+    pips: u8 = 3,
+    pip_timeout: f32 = 2.0,
+    /// What a flourish, a counter and an on-beat falling blow add to the max hit.
+    flourish_max_hit: f32 = 0.2,
+    counter_max_hit: f32 = 0.25,
+    falling_max_hit: f32 = 0.15,
+    /// Blocks below the top of a fall a player must be for a blow to be a falling one.
+    falling_drop: f32 = 0.3,
+    /// Guarding or dodging in your own wind-up cancels the swing, and the meter starts again
+    /// from this share.
+    cancel_to: f32 = 0.5,
+    /// Of what a guard stops, the share crush blows put through anyway.
+    crush_through: f32 = 0.5,
+    /// A raise this soon after lowering opens no perfect window, so tapping does nothing.
+    no_flicker: f32 = 0.4,
+    /// Seconds a perfect block staggers the attacker (a boss), after its recovery, and
+    /// seconds after it a blow is a counter.
+    stagger: f32 = 0.8,
+    boss_stagger: f32 = 0.3,
+    counter: f32 = 1.0,
+    /// Seconds after a perfect dodge a blow is a riposte (on the beat by itself).
+    riposte: f32 = 0.8,
+    /// Seconds early a dodge may arrive on the server's clock, for a client's clock running
+    /// ahead of it.
+    dodge_early: f32 = 0.1,
+    /// Seconds after leaving the ground a dodge may still start (stepping off an edge as
+    /// you press it).
+    dodge_grace: f32 = 0.15,
+    /// Player reach, blocks from the eye to a creature's nearest edge, for classes that set
+    /// none (the wiki's "Reach": Minecraft's 3, less a little), and how much further a blow
+    /// may still land, for the time a view of the fight lags.
+    reach: f32 = 2.8,
+    reach_slack: f32 = 0.6,
+    /// Seconds a player's view of a moving creature may run behind the server's: a blow at
+    /// one moving also reaches as far as it goes in that time (counted once, on top of
+    /// `reach_slack`).
+    reach_lag: f32 = 0.15,
+    /// How far in front a flourish's cleave finds a second creature: the least cosine
+    /// between the look and the way to it (0.5: within 60 degrees either side).
+    cleave_cone: f32 = 0.5,
+    /// A creature's attack: seconds winding up and recovering, and blocks it lunges as the
+    /// blow lands, unless it says.
+    creature_windup: f32 = 0.5,
+    creature_recovery: f32 = 0.6,
+    creature_lunge: f32 = 1.2,
+    /// The share of a wind-up a creature turns to follow its target and goes at it (at
+    /// `tracking_pace`, unless it says: a run, so backing off at a walk does not escape it,
+    /// the wiki's draft 65); after it, its aim is locked.
+    creature_tracking: f32 = 0.6,
+    tracking_pace: Pace = Pace::Run,
+    /// What a creature adds to its attack roll, as a share of its level, unless it says
+    /// (the wiki, draft 62: a level-70 creature hits a resisted Defence 70 heavy set about a
+    /// third of the time, a bare target more than half).
+    creature_accuracy: f32 = 0.8,
+    /// How far, past touching, a dashing player stops short of a creature's body.
+    creature_clearance: f32 = 0.2,
+    /// Seconds after a creature and the player last traded blows that a right click at it
+    /// still guards (with something that guards) rather than looks closely.
+    engaged: f32 = 6.0,
+    /// Defence experience comes only while the player fights back, their blow at that
+    /// creature this many seconds ago or less, and only from a creature of this share of
+    /// their Defence level or more (the wiki, draft 63: no standing in a cave of bats).
+    defence_xp_window: f32 = 10.0,
+    defence_xp_level: f32 = 0.5,
+}
+
+/// How fast a creature goes: its species' walk or run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum Pace {
+    #[default]
+    Walk,
+    Run,
+}
+
+impl Feel {
+    /// The share of its full damage a blow deals `since` seconds after the last swing
+    /// started, with a weapon whose meter fills in `cooldown`: from `spam_strength` at the
+    /// quickest in a straight line to full at the cooldown. Damage per second, strength over
+    /// the time between blows, is then highest on the beat.
+    pub fn strength(&self, since: f32, cooldown: f32) -> f32 {
+        let quickest = cooldown * self.quickest;
+        let t = ((since - quickest) / (cooldown - quickest).max(1e-3)).clamp(0.0, 1.0);
+        self.spam_strength + (1.0 - self.spam_strength) * t
     }
 }
 
@@ -372,10 +458,7 @@ impl Rhythm {
                 } else if beat - now <= timing.buffer as f64 {
                     Swing { starts: beat, lands: 0.0, strength: 1.0, on_beat: true }
                 } else if since >= timing.cooldown * feel.quickest {
-                    // From the quickest to the buffer, strength rises to full.
-                    let full_at = (timing.cooldown - timing.buffer).max(timing.cooldown * feel.quickest + 1e-3);
-                    let t = ((since - timing.cooldown * feel.quickest) / (full_at - timing.cooldown * feel.quickest)).clamp(0.0, 1.0);
-                    Swing { starts: now, lands: 0.0, strength: feel.spam_strength + (1.0 - feel.spam_strength) * t, on_beat: false }
+                    Swing { starts: now, lands: 0.0, strength: feel.strength(since, timing.cooldown), on_beat: false }
                 } else {
                     return Click::Ignored;
                 }
@@ -402,9 +485,11 @@ impl Rhythm {
     /// Guarding or dodging cancels a swing not yet landed: the meter starts again from
     /// [`Feel::cancel_to`] of the cooldown. Returns whether one was cancelled.
     pub fn cancel(&mut self, now: f64, timing: &Timing, feel: &Feel) -> bool {
-        if self.pending.take().is_none() {
+        // A swing already due has landed, whether or not it was counted yet.
+        if self.pending.is_none_or(|s| s.lands <= now) {
             return false;
         }
+        self.pending = None;
         self.started = Some(now - (timing.cooldown * feel.cancel_to) as f64);
         true
     }
@@ -425,9 +510,9 @@ impl Rhythm {
         self.started.map(|s| s + timing.cooldown as f64)
     }
 
-    /// A swing landed at `now`: what kind of blow it is by the pips, which it moves on.
-    /// `riposte` and `counter` blows count as on the beat; a counter adds a pip besides.
-    pub fn blow(&mut self, swing: &Swing, now: f64, bonus_pip: bool, feel: &Feel) -> Blow {
+    /// A swing landed at `now`: what kind of blow it is by the pips, which it moves on: a
+    /// pip for one on the beat (a counter or riposte is on it by itself), none off it.
+    pub fn blow(&mut self, swing: &Swing, now: f64, feel: &Feel) -> Blow {
         if now - self.last_blow > feel.pip_timeout as f64 {
             self.pips = 0;
         }
@@ -442,10 +527,13 @@ impl Rhythm {
             self.pips += 1;
             Blow::Beat
         };
-        if bonus_pip {
-            self.pips = (self.pips + 1).min(feel.pips);
-        }
         kind
+    }
+
+    /// The pips as the server counts them, told at `now`, for a client's mirror.
+    pub fn set_pips(&mut self, pips: u8, now: f64) {
+        self.pips = pips;
+        self.last_blow = now;
     }
 
     /// Pips are lost: a hit taken unguarded, a weapon switched.
@@ -456,6 +544,173 @@ impl Rhythm {
     /// The pips at `now`, counting their timeout.
     pub fn pips(&self, now: f64, feel: &Feel) -> u8 {
         if now - self.last_blow > feel.pip_timeout as f64 { 0 } else { self.pips }
+    }
+}
+
+/// How a blow is struck, beyond the weapon: from its swing and what made it special.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stroke {
+    /// Its strength, 0 to 1, for clicks earlier than the buffer.
+    pub strength: f32,
+    /// Added to the attack roll, and to the max hit, as shares.
+    pub accuracy: f32,
+    pub max_hit: f32,
+    /// A counter cannot miss.
+    pub certain: bool,
+    pub blow: Blow,
+}
+
+impl Stroke {
+    /// The stroke of a swing of `strength` that landed as `kind` by the pips: on the beat or
+    /// not, a counter (after a perfect block) or a riposte (after a perfect dodge), struck
+    /// falling. A counter or riposte is a full blow and on the beat; a counter cannot miss.
+    pub fn of(kind: Blow, strength: f32, on_beat: bool, counter: bool, riposte: bool, falling: bool, feel: &Feel) -> Stroke {
+        let on_beat = on_beat || counter || riposte;
+        let flourish = kind == Blow::Flourish;
+        let mut max_hit = 0.0;
+        if flourish {
+            max_hit += feel.flourish_max_hit;
+        }
+        if counter {
+            max_hit += feel.counter_max_hit;
+        }
+        if on_beat && falling {
+            max_hit += feel.falling_max_hit;
+        }
+        Stroke {
+            strength: if counter || riposte { 1.0 } else { strength },
+            accuracy: if on_beat { feel.beat_accuracy } else { 0.0 },
+            max_hit,
+            certain: counter,
+            blow: if flourish { Blow::Flourish } else if counter { Blow::Counter } else { kind },
+        }
+    }
+
+    /// The most this stroke's blow does with a weapon whose max hit is `max_hit`, the bonus
+    /// rounded by chance (`roll` in 0..1), never under 1.
+    pub fn max_hit(&self, max_hit: u16, roll: f32) -> u16 {
+        by_chance(max_hit as f32 * (1.0 + self.max_hit), roll).max(1)
+    }
+}
+
+/// What a flourish does to its target, worked out from the damage its blow did.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Effect {
+    /// `points` more, one at a time, `every` seconds apart.
+    Bleed { points: u16, every: f32 },
+    /// A second creature in front takes `points`.
+    Cleave { points: u16 },
+    /// Slower by the share, for the seconds.
+    Pin { slow: f32, seconds: f32 },
+    /// Defence lower by the share, for the seconds.
+    Sunder { defence: f32, seconds: f32 },
+    /// Its wind-up undone, held still for the seconds.
+    Daze { seconds: f32 },
+}
+
+impl Flourish {
+    /// What this flourish does after a blow of `damage`, shares of it rounded by chance
+    /// (`roll` in 0..1); nothing for a bleed or cleave that comes to no points.
+    pub fn effect(&self, damage: u16, roll: f32) -> Option<Effect> {
+        match *self {
+            Flourish::Bleed { share, seconds } => {
+                let points = by_chance(damage as f32 * share, roll);
+                (points > 0).then(|| Effect::Bleed { points, every: (seconds / points as f32).max(0.05) })
+            }
+            Flourish::Cleave { share } => {
+                let points = by_chance(damage as f32 * share, roll);
+                (points > 0).then_some(Effect::Cleave { points })
+            }
+            Flourish::Pin { slow, seconds } => Some(Effect::Pin { slow: slow.clamp(0.0, 1.0), seconds }),
+            Flourish::Sunder { defence, seconds } => Some(Effect::Sunder { defence: defence.clamp(0.0, 1.0), seconds }),
+            Flourish::Daze { stagger } => Some(Effect::Daze { seconds: stagger }),
+        }
+    }
+}
+
+/// Which of `others` a cleave from `eye` looking along `look` reaches: the nearest within
+/// `reach` of the eye whose middle lies within the cone (`cone`, the least cosine from the
+/// look, flat), and that is wild (`kept` ones are never cleft). Each is `(id, box, kept)`.
+pub fn cleave_target(eye: glam::Vec3, look: glam::Vec3, reach: f32, cone: f32, others: impl Iterator<Item = (u32, crate::physics::Aabb, bool)>) -> Option<u32> {
+    let look = look.with_y(0.0).normalize_or_zero();
+    others
+        .filter(|&(_, _, kept)| !kept)
+        .filter_map(|(id, aabb, _)| {
+            let d = eye.distance(eye.clamp(aabb.min, aabb.max));
+            let to = ((aabb.min + aabb.max) / 2.0 - eye).with_y(0.0).normalize_or_zero();
+            (d <= reach && to.dot(look) > cone).then_some((id, d))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
+}
+
+/// A player's guard and dodges over time, on one clock, so a creature's blow is judged by
+/// the moment it lands, not by when the server gets to it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Guarding {
+    /// When the guard went up, while it is up, and whether that raise may be perfect.
+    up: Option<(f64, bool)>,
+    /// The last raise that came down: when it went up and down, and whether it could be
+    /// perfect.
+    last: Option<(f64, f64, bool)>,
+    /// When blows pass through the latest dodge, and when the next may start.
+    dodging: (f64, f64),
+    dodge_ready: f64,
+}
+
+impl Guarding {
+    pub fn is_up(&self) -> bool {
+        self.up.is_some()
+    }
+
+    /// The guard goes up at `now`; a raise sooner than [`Feel::no_flicker`] after the last
+    /// came down opens no perfect window. Returns whether it went up (it was down).
+    pub fn raise(&mut self, now: f64, feel: &Feel) -> bool {
+        if self.up.is_some() {
+            return false;
+        }
+        let perfect = self.last.is_none_or(|(_, down, _)| now - down >= feel.no_flicker as f64);
+        self.up = Some((now, perfect));
+        true
+    }
+
+    /// The guard comes down at `now`. Returns whether it was up.
+    pub fn lower(&mut self, now: f64) -> bool {
+        let Some((up, perfect)) = self.up.take() else { return false };
+        self.last = Some((up, now, perfect));
+        true
+    }
+
+    /// A dodge at `now`, if one may start: not with the guard up, nor before the last one's
+    /// cooldown is out (less [`Feel::dodge_early`], for a client's clock ahead of this one).
+    pub fn dodge(&mut self, now: f64, dodge: &DodgeDef, feel: &Feel) -> bool {
+        if self.up.is_some() || now + (feel.dodge_early as f64) < self.dodge_ready {
+            return false;
+        }
+        self.dodging = (now + dodge.safe.0 as f64, now + dodge.safe.1 as f64);
+        self.dodge_ready = now + dodge.cooldown as f64;
+        true
+    }
+
+    /// What a blow landing at `lands` meets: a dodge it passes through, a guard that takes
+    /// it (perfectly, raised within its window before), or nothing. `guard` is the guard
+    /// that could take it, if any: see [`GuardDef::takes`].
+    pub fn meets(&self, lands: f64, guard: Option<&GuardDef>) -> Defended {
+        if self.dodging.0 <= lands && lands <= self.dodging.1 {
+            return Defended::Dodged;
+        }
+        let Some(guard) = guard else { return Defended::Hit };
+        // The raise up as it landed: the one still up, or the last, if it came down after.
+        let raise = match (self.up, self.last) {
+            (Some((up, perfect)), _) if up <= lands => Some((up, perfect)),
+            (_, Some((up, down, perfect))) if up <= lands && lands <= down => Some((up, perfect)),
+            _ => None,
+        };
+        match raise {
+            Some((up, true)) if lands - up <= guard.perfect as f64 => Defended::Perfect,
+            Some(_) => Defended::Blocked,
+            None => Defended::Hit,
+        }
     }
 }
 
@@ -490,17 +745,19 @@ pub struct CombatFile {
     #[serde(default)]
     pub weapons: Vec<WeaponDef>,
     #[serde(default)]
-    pub feel: Option<Feel>,
+    pub feel: Option<FeelPatch>,
     #[serde(default)]
     pub dodges: Vec<DodgeDef>,
     #[serde(default)]
     pub sets: Vec<SetDef>,
     #[serde(default)]
     pub shields: Vec<ShieldDef>,
+    #[serde(default)]
+    pub armour: Option<ArmourFile>,
 }
 
 /// Where a piece of armour is worn: the inventory's worn slots, in this order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Slot {
     Head,
     Body,
@@ -517,18 +774,6 @@ impl Slot {
     /// Its worn slot, counted from the first (`inventory::WORN`).
     pub fn index(self) -> usize {
         self as usize
-    }
-
-    /// The armour a piece in this slot gives from a set of armour 1.0 (bronze): a whole
-    /// set gives 36, as RuneScape's bronze does about.
-    pub fn base(self) -> f32 {
-        match self {
-            Slot::Head => 6.0,
-            Slot::Body => 14.0,
-            Slot::Legs => 10.0,
-            Slot::Hands | Slot::Feet => 3.0,
-            Slot::Shield => 0.0,
-        }
     }
 
     /// Its lang key's last part.
@@ -559,20 +804,6 @@ pub enum Weight {
 }
 
 impl Weight {
-    /// The share of its armour that counts against a blow of `style`.
-    pub fn against(self, style: Style) -> f32 {
-        match (self, style) {
-            (Weight::Medium, _) => 1.0,
-            (Weight::Light, Style::Ranged | Style::Magic) => 1.0,
-            (Weight::Light, _) => 0.8,
-            (Weight::Heavy, Style::Magic) => 0.6,
-            (Weight::Heavy, _) => 1.2,
-            (Weight::Robe, Style::Magic) => 1.5,
-            (Weight::Robe, Style::Ranged) => 0.7,
-            (Weight::Robe, _) => 0.5,
-        }
-    }
-
     /// Its lang key's last part.
     pub fn key(self) -> &'static str {
         match self {
@@ -584,8 +815,91 @@ impl Weight {
     }
 }
 
-/// How much more armour counts against a style its set resists.
-pub const RESISTED: f32 = 1.5;
+/// How armour counts, as content sets it (`combat.ron`'s `armour:`; each package's sets
+/// what it names, slot by slot and weight by weight).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArmourRules {
+    /// The armour a piece in each slot gives from a set of armour 1.0 (bronze): the wiki's
+    /// 6, 14, 10, 3 and 3, so a whole set gives 36, as RuneScape's bronze does about.
+    pub slots: std::collections::BTreeMap<Slot, f32>,
+    /// Each weight, lightest first: the share of its armour that counts against each style
+    /// (1 unless it says), and the dodge it wears (`dodges:`). The heaviest worn picks the
+    /// dodge.
+    pub weights: Vec<WeightDef>,
+    /// How much more armour counts against a style its set resists.
+    pub resisted: f32,
+}
+
+/// A weight of armour as content defines it.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WeightDef {
+    pub weight: Weight,
+    #[serde(default)]
+    pub against: std::collections::BTreeMap<Style, f32>,
+    pub dodge: String,
+}
+
+/// One package's `armour:`.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ArmourFile {
+    pub slots: std::collections::BTreeMap<Slot, f32>,
+    pub weights: Vec<WeightDef>,
+    pub resisted: Option<f32>,
+}
+
+impl Default for ArmourRules {
+    /// The wiki's (drafts 59 and 62), which `combat.ron` restates.
+    fn default() -> Self {
+        use Style::*;
+        let all = |share: f32| [Stab, Slash, Crush, Ranged, Magic].map(|s| (s, share)).into_iter().collect::<std::collections::BTreeMap<_, _>>();
+        let with = |mut base: std::collections::BTreeMap<Style, f32>, more: &[(Style, f32)]| {
+            base.extend(more.iter().copied());
+            base
+        };
+        let weights = vec![
+            WeightDef { weight: Weight::Robe, against: with(all(0.5), &[(Ranged, 0.7), (Magic, 1.5)]), dodge: "light".into() },
+            WeightDef { weight: Weight::Light, against: with(Default::default(), &[(Crush, 0.8)]), dodge: "light".into() },
+            WeightDef { weight: Weight::Medium, against: Default::default(), dodge: "medium".into() },
+            WeightDef { weight: Weight::Heavy, against: with(all(1.2), &[(Magic, 0.6)]), dodge: "heavy".into() },
+        ];
+        let slots = [(Slot::Head, 6.0), (Slot::Body, 14.0), (Slot::Legs, 10.0), (Slot::Hands, 3.0), (Slot::Feet, 3.0)].into_iter().collect();
+        Self { slots, weights, resisted: 1.5 }
+    }
+}
+
+impl ArmourRules {
+    fn patch(&mut self, file: ArmourFile) {
+        self.slots.extend(file.slots);
+        for def in file.weights {
+            match self.weights.iter_mut().find(|w| w.weight == def.weight) {
+                Some(earlier) => *earlier = def,
+                None => self.weights.push(def),
+            }
+        }
+        self.resisted = file.resisted.unwrap_or(self.resisted);
+    }
+
+    /// The armour a piece in `slot` gives from a set of armour 1.0.
+    pub fn slot(&self, slot: Slot) -> f32 {
+        self.slots.get(&slot).copied().unwrap_or(0.0)
+    }
+
+    /// The share of armour of `weight` that counts against a blow of `style`.
+    pub fn against(&self, weight: Weight, style: Style) -> f32 {
+        self.weight(weight).and_then(|w| w.against.get(&style).copied()).unwrap_or(1.0)
+    }
+
+    fn weight(&self, weight: Weight) -> Option<&WeightDef> {
+        self.weights.iter().find(|w| w.weight == weight)
+    }
+
+    /// How heavy `weight` ranks: its place in the list, lightest first.
+    fn rank(&self, weight: Weight) -> usize {
+        self.weights.iter().position(|w| w.weight == weight).unwrap_or(0)
+    }
+}
 
 /// A set of armour as content defines it.
 #[derive(Clone, Debug, Deserialize)]
@@ -641,6 +955,8 @@ pub struct Piece {
 
 /// The class bare fists fight as, if content defines one by this name.
 pub const FIST_CLASS: &str = "fist";
+/// Bare fists' reach without a fist class (the wiki's "Reach": a fist or dagger 2.5).
+pub const FIST_REACH: f32 = 2.5;
 
 /// What a blow is struck with.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -649,6 +965,7 @@ pub struct Weapon {
     pub class: Option<usize>,
     pub style: Style,
     pub cooldown: f32,
+    /// Blocks it reaches from the eye to a creature's nearest edge.
     pub reach: f32,
     pub skill: Option<SkillId>,
     pub level: u8,
@@ -658,7 +975,7 @@ pub struct Weapon {
 
 impl Weapon {
     /// A bare fist: crushing, a sword's speed, a max hit of 1 that rises with Attack.
-    pub const FISTS: Weapon = Weapon { class: None, style: Style::Crush, cooldown: FULL_CHARGE, reach: 0.0, skill: None, level: 0, max_hit: 1, accuracy: 0 };
+    pub const FISTS: Weapon = Weapon { class: None, style: Style::Crush, cooldown: FULL_CHARGE, reach: FIST_REACH, skill: None, level: 0, max_hit: 1, accuracy: 0 };
 
     /// The most a blow does for a striker at `level` in the weapon's skill: one more for
     /// every eight levels above the weapon's.
@@ -688,6 +1005,7 @@ pub struct CombatRegistry {
     fist: Option<usize>,
     /// Dodges by armour weight; the first is for no armour.
     dodges: Vec<DodgeDef>,
+    pub armour: ArmourRules,
 }
 
 impl CombatRegistry {
@@ -714,16 +1032,24 @@ impl CombatRegistry {
 
     pub fn new(files: Vec<CombatFile>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
         let (mut classes, mut defs, mut feel, mut dodges, mut sets, mut shield_defs) = (Vec::new(), Vec::new(), Feel::default(), Vec::<DodgeDef>::new(), Vec::new(), Vec::new());
+        let mut armour = ArmourRules::default();
         for file in files {
             classes.extend(file.classes);
             defs.extend(file.weapons);
             sets.extend(file.sets);
             shield_defs.extend(file.shields);
-            feel = file.feel.unwrap_or(feel);
+            if let Some(patch) = &file.feel {
+                feel.patch(patch);
+            }
+            if let Some(patch) = file.armour {
+                armour.patch(patch);
+            }
             for dodge in file.dodges {
-                // A later package's dodge for a weight replaces an earlier one's.
-                dodges.retain(|d| d.weight != dodge.weight);
-                dodges.push(dodge);
+                // A later package's dodge for a weight replaces an earlier one's, in its place.
+                match dodges.iter_mut().find(|d| d.weight == dodge.weight) {
+                    Some(earlier) => *earlier = dodge,
+                    None => dodges.push(dodge),
+                }
             }
         }
         if dodges.is_empty() {
@@ -732,6 +1058,7 @@ impl CombatRegistry {
         if let Some(class) = classes.iter().find(|c| c.windup < 0.0 || c.windup >= c.cooldown || c.buffer < 0.0 || c.beat < 0.0) {
             return Err(RegistryError(format!("combat.ron: class `{}`: its wind-up must be under its cooldown, and no time may be negative", class.name)));
         }
+        let rules = &armour;
         let mut pieces = vec![None; blocks.len()];
         for (index, set) in sets.iter().enumerate() {
             for (slot, name) in &set.pieces {
@@ -740,7 +1067,7 @@ impl CombatRegistry {
                 if pieces[item.0 as usize].is_some() {
                     return Err(error("listed twice"));
                 }
-                let armour = (slot.base() * set.armour).round().max(1.0) as u16;
+                let armour = (rules.slot(*slot) * set.armour).round().max(1.0) as u16;
                 pieces[item.0 as usize] = Some(Piece { set: index, slot: *slot, weight: set.weight, level: set.level, armour });
             }
         }
@@ -767,7 +1094,7 @@ impl CombatRegistry {
                 class: Some(index),
                 style: class.style,
                 cooldown: class.cooldown.max(0.1),
-                reach: class.reach,
+                reach: class.reach.unwrap_or(feel.reach),
                 skill,
                 level: def.level,
                 max_hit: def.max_hit.max(1),
@@ -775,7 +1102,7 @@ impl CombatRegistry {
             });
         }
         let fist = classes.iter().position(|c| c.name == FIST_CLASS);
-        Ok(Self { classes, weapons, attack: skills.id("core:attack"), defence: skills.id("core:defence"), feel, fist, dodges, sets, shields, pieces })
+        Ok(Self { classes, weapons, attack: skills.id("core:attack"), defence: skills.id("core:defence"), feel, fist, dodges, sets, shields, pieces, armour })
     }
 
     /// What `item` is as a weapon, if it is one.
@@ -787,8 +1114,10 @@ impl CombatRegistry {
     /// is `level(skill)`: the weapon, or fists when nothing is held, the item is no weapon
     /// or the striker's level is below it. Boosts never help to wield a weapon.
     pub fn wielded(&self, item: Option<BlockId>, level: impl Fn(SkillId) -> u8) -> Weapon {
-        let cooldown = self.fist.map_or(Weapon::FISTS.cooldown, |i| self.classes[i].cooldown);
-        let fists = Weapon { skill: self.attack, cooldown, ..Weapon::FISTS };
+        let fist = self.fist.map(|i| &self.classes[i]);
+        let cooldown = fist.map_or(Weapon::FISTS.cooldown, |c| c.cooldown);
+        let reach = fist.map_or(Weapon::FISTS.reach, |c| c.reach.unwrap_or(self.feel.reach));
+        let fists = Weapon { skill: self.attack, cooldown, reach, ..Weapon::FISTS };
         match item.and_then(|item| self.weapon(item)) {
             Some(weapon) if weapon.skill.is_none_or(|skill| level(skill) >= weapon.level) => *weapon,
             _ => fists,
@@ -809,6 +1138,11 @@ impl CombatRegistry {
         self.shields.get(item.0 as usize).and_then(Option::as_ref)
     }
 
+    /// The Defence level that wears `item`, if it is armour or a shield.
+    pub fn wear_level(&self, item: BlockId) -> Option<u8> {
+        self.piece(item).map(|p| p.level).or(self.shield(item).map(|s| s.level))
+    }
+
     /// Each block id's worn slot, if it is armour or a shield (`inventory::set_worn_slots`).
     pub fn worn_slots(&self) -> Vec<Option<u8>> {
         let shield = Slot::Shield.index() as u8;
@@ -817,18 +1151,19 @@ impl CombatRegistry {
 
     /// What `piece` adds to the defence roll against a blow of `style`.
     pub fn armour_against(&self, piece: &Piece, style: Style) -> f32 {
-        let resisted = if self.sets[piece.set].resists.contains(&style) { RESISTED } else { 1.0 };
-        piece.armour as f32 * piece.weight.against(style) * resisted
+        let resisted = if self.sets[piece.set].resists.contains(&style) { self.armour.resisted } else { 1.0 };
+        piece.armour as f32 * self.armour.against(piece.weight, style) * resisted
     }
 
     /// The armour `worn` gives against a blow of `style`, for a wearer whose own Defence
-    /// level is `level`: pieces worn below their level give nothing.
-    pub fn worn_armour(&self, worn: impl IntoIterator<Item = BlockId>, style: Style, level: u8) -> u16 {
+    /// level is `level`: pieces worn below their level give nothing, and a shield nothing
+    /// beside a weapon in both hands (`two_handed`), which it cannot guard with.
+    pub fn worn_armour(&self, worn: impl IntoIterator<Item = BlockId>, style: Style, level: u8, two_handed: bool) -> u16 {
         let total: f32 = worn
             .into_iter()
             .map(|item| match (self.piece(item), self.shield(item)) {
                 (Some(p), _) if level >= p.level => self.armour_against(p, style),
-                (_, Some(s)) if level >= s.level => s.armour as f32,
+                (_, Some(s)) if level >= s.level && !two_handed => s.armour as f32,
                 _ => 0.0,
             })
             .sum();
@@ -844,9 +1179,10 @@ impl CombatRegistry {
     }
 
     /// The armour `worn` (the inventory's worn slots) gives against a blow of `style`, by
-    /// the wearer's own Defence level.
-    pub fn armour_of(&self, worn: &[Option<crate::inventory::ItemStack>], style: Style, level: impl Fn(SkillId) -> u8) -> u16 {
-        self.worn_armour(worn.iter().flatten().map(|s| s.item), style, self.defence.map_or(1, level))
+    /// the wearer's own levels, holding `held`.
+    pub fn armour_of(&self, held: Option<BlockId>, worn: &[Option<crate::inventory::ItemStack>], style: Style, level: impl Fn(SkillId) -> u8) -> u16 {
+        let two_handed = self.class_of(&self.wielded(held, &level)).is_some_and(|c| c.two_handed);
+        self.worn_armour(worn.iter().flatten().map(|s| s.item), style, self.defence.map_or(1, level), two_handed)
     }
 
     /// The dodge in `worn` (the inventory's worn slots).
@@ -854,20 +1190,15 @@ impl CombatRegistry {
         self.dodge_in(worn.iter().flatten().map(|s| s.item))
     }
 
-    /// The heaviest weight among `worn`, if any of it is armour.
+    /// The heaviest weight among `worn` (by the armour rules' order), if any of it is
+    /// armour. Pieces worn below their level still count: they keep their weight.
     pub fn heaviest(&self, worn: impl IntoIterator<Item = BlockId>) -> Option<Weight> {
-        let rank = |w: Weight| match w {
-            Weight::Robe => 0,
-            Weight::Light => 1,
-            Weight::Medium => 2,
-            Weight::Heavy => 3,
-        };
-        worn.into_iter().filter_map(|item| self.piece(item)).map(|p| p.weight).max_by_key(|&w| rank(w))
+        worn.into_iter().filter_map(|item| self.piece(item)).map(|p| p.weight).max_by_key(|&w| self.armour.rank(w))
     }
 
-    /// The dodge in `worn`: by its heaviest weight (robes dodge as light armour).
+    /// The dodge in `worn`: the one its heaviest weight wears (robes, light armour's).
     pub fn dodge_in(&self, worn: impl IntoIterator<Item = BlockId>) -> &DodgeDef {
-        self.dodge(self.heaviest(worn).map(|w| if w == Weight::Robe { "light" } else { w.key() }))
+        self.dodge(self.heaviest(worn).and_then(|w| self.armour.weight(w)).map(|w| w.dodge.as_str()))
     }
 
     /// The class `weapon` fights as: its own, or for fists the fist class, if any.
@@ -924,6 +1255,150 @@ mod tests {
     use super::*;
 
     #[test]
+    fn timed_blows_beat_spam_by_a_tenth_and_waiting_longer_gains_nothing() {
+        // Every class in combat.ron, and a slow one: clicking every `t` seconds, damage per
+        // second is the swing's strength over the time from one swing's start to the next.
+        let feel = Feel::default();
+        for (cooldown, buffer) in [(0.6, 0.15), (0.4, 0.12), (0.73, 0.15), (0.8, 0.18), (0.87, 0.18), (1.2, 0.18)] {
+            let timing = Timing { cooldown, windup: 0.05, buffer, beat: 0.1 };
+            let dps = |t: f32| {
+                let mut rhythm = Rhythm::default();
+                rhythm.click(0.0, &timing, &feel);
+                rhythm.landed(0.06);
+                let Click::Swing(swing) = rhythm.click(t as f64, &timing, &feel) else { panic!("{cooldown} {t}") };
+                swing.strength / swing.starts as f32
+            };
+            let timed = 1.0 / cooldown;
+            assert!((dps(cooldown) - timed).abs() < 1e-4);
+            assert!((dps(cooldown / 2.0) / timed - 0.9).abs() < 1e-3, "{cooldown}: spam is 90% of timed");
+            for share in [0.58, 0.67, 0.75, 0.83, 0.92, 0.99] {
+                let t = cooldown * share;
+                let held = cooldown - t <= buffer;
+                assert!(dps(t) > 0.9 * timed - 1e-4, "{cooldown} {t}");
+                assert!(if held { (dps(t) - timed).abs() < 1e-4 } else { dps(t) < timed }, "{cooldown} {t}: no click off the beat beats it");
+            }
+            assert!(dps(cooldown * 2.0) < timed, "waiting past the beat only loses damage per second");
+        }
+        assert_eq!(feel.strength(0.6, 0.6), 1.0);
+        assert!((feel.strength(0.3, 0.6) - 0.45).abs() < 1e-6);
+    }
+
+    #[test]
+    fn bonuses_round_by_chance_so_small_ones_count() {
+        let mean = |exact: f32| (0..1000).map(|i| by_chance(exact, i as f32 / 1000.0) as f32).sum::<f32>() / 1000.0;
+        // A flourish's +20% on a max hit of 3, which rounding would lose: 3.6 on average.
+        assert!((mean(3.0 * 1.2) - 3.6).abs() < 0.01);
+        assert!((mean(0.25) - 0.25).abs() < 0.01);
+        assert_eq!(by_chance(-1.0, 0.0), 0);
+    }
+
+    #[test]
+    fn a_blow_is_judged_by_when_it_lands() {
+        use glam::Vec3;
+        let feel = Feel::default();
+        let sword = GuardDef { stop: 0.35, arc: 90.0, perfect: 0.15, speed: 0.5, missiles: false };
+        let dodge = DodgeDef::default();
+        // Raised 0.1 s before it lands: perfect; 0.2 s before: a block; after: nothing.
+        for (raised, lands, want) in [(10.0, 10.1, Defended::Perfect), (10.0, 10.2, Defended::Blocked), (10.2, 10.1, Defended::Hit)] {
+            let mut g = Guarding::default();
+            g.raise(raised, &feel);
+            assert_eq!(g.meets(lands, Some(&sword)), want, "raised {raised}, lands {lands}");
+        }
+        // Lowered after it landed (before the server got to it): the guard still took it.
+        let mut g = Guarding::default();
+        g.raise(10.0, &feel);
+        g.lower(10.3);
+        assert_eq!(g.meets(10.25, Some(&sword)), Defended::Blocked);
+        assert_eq!(g.meets(10.35, Some(&sword)), Defended::Hit, "lowered before it landed");
+        // Raised again within 0.4 s of lowering: no perfect window, so tapping does nothing.
+        g.raise(10.6, &feel);
+        assert_eq!(g.meets(10.65, Some(&sword)), Defended::Blocked);
+        g.lower(10.7);
+        g.raise(11.2, &feel);
+        assert_eq!(g.meets(11.25, Some(&sword)), Defended::Perfect, "0.5 s after lowering");
+        assert_eq!(g.meets(11.25, None), Defended::Hit, "nothing that guards it");
+        // A dodge: blows pass through from 0.04 to 0.22 s after it starts, judged at landing.
+        let mut g = Guarding::default();
+        assert!(g.dodge(20.0, &dodge, &feel));
+        assert_eq!(g.meets(20.1, Some(&sword)), Defended::Dodged);
+        assert_eq!(g.meets(20.03, None), Defended::Hit);
+        assert_eq!(g.meets(20.23, None), Defended::Hit);
+        // The next waits out its cooldown (1 s), less 0.1 s for a client's clock ahead.
+        assert!(!g.dodge(20.85, &dodge, &feel));
+        assert!(g.dodge(20.92, &dodge, &feel));
+        g.raise(30.0, &feel);
+        assert!(!g.dodge(35.0, &dodge, &feel), "not with the guard up");
+        // What a guard takes: 35% of a slash in its arc, half that of a crush; no magic, no
+        // heavy blow, nothing from beside; missiles only with a shield.
+        let ahead = Vec3::Z;
+        assert_eq!(sword.takes(Style::Slash, false, Vec3::Z, ahead, &feel).map(|g| g.stops(Style::Slash, &feel)), Some(0.35));
+        assert_eq!(sword.takes(Style::Crush, false, Vec3::Z, ahead, &feel).map(|g| g.stops(Style::Crush, &feel)), Some(0.175));
+        assert_eq!(sword.takes(Style::Magic, false, Vec3::Z, ahead, &feel), None);
+        assert_eq!(sword.takes(Style::Slash, true, Vec3::Z, ahead, &feel), None, "a heavy blow goes through");
+        assert_eq!(sword.takes(Style::Slash, false, Vec3::Z, Vec3::X, &feel), None, "from beside");
+        assert_eq!(sword.takes(Style::Ranged, false, Vec3::Z, ahead, &feel), None);
+        assert!(GuardDef { missiles: true, ..sword }.takes(Style::Ranged, false, Vec3::Z, ahead, &feel).is_some());
+    }
+
+    #[test]
+    fn packages_patch_the_feel_field_by_field_and_dodges_in_place() {
+        use crate::block::BlockDef;
+        let blocks = BlockRegistry::new(vec![BlockDef { name: "t:air".into(), ..Default::default() }]).unwrap();
+        let skills = SkillRegistry::default();
+        let files = [
+            r#"(feel: (pips: 4, reach: 3.0), dodges: [(weight: "light", distance: 3.0, time: 0.25, safe: (0.04, 0.22), cooldown: 1.0), (weight: "heavy", distance: 2.2, time: 0.25, safe: (0.04, 0.18), cooldown: 1.5)])"#,
+            r#"(feel: (stagger: 1.0), dodges: [(weight: "light", distance: 3.5, time: 0.25, safe: (0.04, 0.22), cooldown: 1.0)])"#,
+        ];
+        let files = files.iter().map(|f| CombatRegistry::read("t", f).unwrap()).collect();
+        let combat = CombatRegistry::new(files, &blocks, &skills).unwrap();
+        assert_eq!((combat.feel.pips, combat.feel.reach, combat.feel.stagger), (4, 3.0, 1.0), "the later package keeps what it leaves out");
+        assert_eq!(combat.feel.riposte, Feel::default().riposte);
+        assert_eq!(combat.dodge(None).distance, 3.5, "the light dodge replaced, still first");
+        assert_eq!(combat.dodge(Some("heavy")).distance, 2.2);
+    }
+
+    #[test]
+    fn counters_ripostes_flourishes_and_falling_blows_strike_as_the_feel_says() {
+        let feel = Feel::default();
+        // A counter: full strength whatever the meter, on the beat, +25% max hit, sure.
+        let counter = Stroke::of(Blow::Beat, 0.45, false, true, false, false, &feel);
+        assert_eq!((counter.strength, counter.accuracy, counter.max_hit, counter.certain, counter.blow), (1.0, 0.05, 0.25, true, Blow::Counter));
+        // Its max hit with an iron sword's 9: 11.25, so 11 or 12, 11.25 on average.
+        let mean = (0..1000).map(|i| counter.max_hit(9, i as f32 / 1000.0) as f32).sum::<f32>() / 1000.0;
+        assert!((mean - 11.25).abs() < 0.01, "{mean}");
+        // A riposte: full and on the beat, but it can miss and adds no max hit.
+        let riposte = Stroke::of(Blow::Beat, 0.5, false, false, true, false, &feel);
+        assert_eq!((riposte.strength, riposte.max_hit, riposte.certain), (1.0, 0.0, false));
+        // A flourish, struck falling on the beat: +20% and +15%.
+        let flourish = Stroke::of(Blow::Flourish, 1.0, true, false, false, true, &feel);
+        assert!((flourish.max_hit - 0.35).abs() < 1e-6 && flourish.blow == Blow::Flourish);
+        // Off the beat: no accuracy, and falling adds nothing.
+        let plain = Stroke::of(Blow::Plain, 0.7, false, false, false, true, &feel);
+        assert_eq!((plain.strength, plain.accuracy, plain.max_hit), (0.7, 0.0, 0.0));
+        assert_eq!(plain.max_hit(1, 0.0), 1);
+    }
+
+    #[test]
+    fn each_flourish_does_what_its_class_says() {
+        // combat.ron's: dagger, sword, spear, axe, mace.
+        assert_eq!(Flourish::Bleed { share: 0.25, seconds: 3.0 }.effect(8, 0.5), Some(Effect::Bleed { points: 2, every: 1.5 }));
+        assert_eq!(Flourish::Bleed { share: 0.25, seconds: 3.0 }.effect(2, 0.9), None, "half a point, rounded down this time");
+        assert_eq!(Flourish::Bleed { share: 0.25, seconds: 3.0 }.effect(2, 0.1), Some(Effect::Bleed { points: 1, every: 3.0 }));
+        assert_eq!(Flourish::Cleave { share: 0.5 }.effect(9, 0.6), Some(Effect::Cleave { points: 4 }));
+        assert_eq!(Flourish::Cleave { share: 0.5 }.effect(9, 0.4), Some(Effect::Cleave { points: 5 }));
+        assert_eq!(Flourish::Pin { slow: 0.4, seconds: 1.5 }.effect(1, 0.0), Some(Effect::Pin { slow: 0.4, seconds: 1.5 }));
+        assert_eq!(Flourish::Sunder { defence: 0.1, seconds: 6.0 }.effect(1, 0.0), Some(Effect::Sunder { defence: 0.1, seconds: 6.0 }));
+        assert_eq!(Flourish::Daze { stagger: 0.6 }.effect(1, 0.0), Some(Effect::Daze { seconds: 0.6 }));
+        // A cleave finds the nearest wild creature in front, within reach.
+        use crate::physics::Aabb;
+        let eye = glam::Vec3::new(0.0, 1.6, 0.0);
+        let at = |x: f32, z: f32| Aabb::standing(glam::Vec3::new(x, 0.0, z), 1.0, 1.0);
+        let others = [(1, at(0.0, -2.0), true), (2, at(1.0, -2.5), false), (3, at(0.0, 2.0), false), (4, at(0.0, -6.0), false)];
+        assert_eq!(cleave_target(eye, glam::Vec3::NEG_Z, 2.8, 0.5, others.into_iter()), Some(2), "not the kept one, nor behind, nor out of reach");
+        assert_eq!(cleave_target(eye, glam::Vec3::NEG_Z, 2.8, 0.5, others.into_iter().filter(|o| o.0 != 2)), None);
+    }
+
+    #[test]
     fn scaled_damage_averages_exactly() {
         let mean: f32 = (0..1000).map(|i| scaled(3, 0.45, i as f32 / 1000.0) as f32).sum::<f32>() / 1000.0;
         assert!((mean - 1.35).abs() < 0.01, "{mean}");
@@ -937,8 +1412,6 @@ mod tests {
         assert!(hit_chance(1, 0, 60, 0) < 0.1);
         assert!(hit_chance(20, 18, 20, 0) > hit_chance(20, 0, 20, 0));
         assert!(hit_chance(20, 0, 20, 30) < hit_chance(20, 0, 20, 0));
-        // The creatures' rolls are the same with nothing worn or held.
-        assert_eq!(hit_chance(12, 0, 7, 0), crate::creature::hit_chance(12, 7));
     }
 
     #[test]
@@ -973,7 +1446,7 @@ mod tests {
     fn weapons_are_wielded_from_their_level_and_otherwise_strike_as_fists() {
         let (combat, blocks) = registry(
             r#"(
-                classes: [(name: "sword", style: Slash, cooldown: 0.6), (name: "spear", style: Stab, cooldown: 0.73, reach: 1.0)],
+                classes: [(name: "sword", style: Slash, cooldown: 0.6), (name: "spear", style: Stab, cooldown: 0.73, reach: 3.8)],
                 weapons: [(item: "sword", class: "sword", level: 5, max_hit: 5), (item: "spear", class: "spear", max_hit: 3, accuracy: 10)],
             )"#,
         )
@@ -987,7 +1460,9 @@ mod tests {
         assert_eq!(combat.wielded(Some(stick), at(99)).class, None);
         assert_eq!(combat.wielded(None, at(99)).max_hit(99), 13);
         let spear = combat.wielded(Some(spear), at(1));
-        assert_eq!((spear.reach, spear.accuracy, spear.cooldown), (1.0, 10, 0.73));
+        assert_eq!((spear.reach, spear.accuracy, spear.cooldown), (3.8, 10, 0.73));
+        assert_eq!(combat.wielded(Some(sword), at(5)).reach, Feel::default().reach, "a class without a reach has the feel's");
+        assert_eq!(combat.wielded(None, at(1)).reach, FIST_REACH, "fists without a fist class");
         assert!(registry(r#"(weapons: [(item: "nothing", class: "sword", max_hit: 1)])"#).is_err());
         assert!(registry(r#"(classes: [(name: "sword", style: Slash, cooldown: 0.6)], weapons: [(item: "sword", class: "axe", max_hit: 1)])"#).is_err());
     }
@@ -1006,11 +1481,11 @@ mod tests {
         assert_eq!((piece.slot, piece.armour, piece.level), (Slot::Body, 17, 20));
         assert_eq!(combat.worn_slots()[hood.0 as usize], Some(Slot::Head.index() as u8));
         // 17 + 7 against a stab, half again against the slash chain resists.
-        assert_eq!(combat.worn_armour([shirt, hood], Style::Stab, 20), 24);
-        assert_eq!(combat.worn_armour([shirt, hood], Style::Slash, 20), 36);
-        assert_eq!(combat.worn_armour([shirt, hood], Style::Slash, 19), 0, "below its level armour gives nothing");
+        assert_eq!(combat.worn_armour([shirt, hood], Style::Stab, 20, false), 24);
+        assert_eq!(combat.worn_armour([shirt, hood], Style::Slash, 20, false), 36);
+        assert_eq!(combat.worn_armour([shirt, hood], Style::Slash, 19, false), 0, "below its level armour gives nothing");
         // Plate turns blades better than spells.
-        assert_eq!((combat.worn_armour([legs], Style::Crush, 1), combat.worn_armour([legs], Style::Magic, 1)), (12, 6));
+        assert_eq!((combat.worn_armour([legs], Style::Crush, 1, false), combat.worn_armour([legs], Style::Magic, 1, false)), (12, 6));
         assert!(hit_chance(20, 0, 20, 36) < hit_chance(20, 0, 20, 0) * 0.8);
         assert!(registry(r#"(sets: [(name: "x", armour: 1.0, pieces: [(Head, "nothing")])])"#).is_err());
         assert!(registry(r#"(sets: [(name: "x", armour: 1.0, pieces: [(Head, "sword"), (Body, "sword")])])"#).is_err());
@@ -1038,7 +1513,8 @@ mod tests {
         assert_eq!(combat.guard_with(&sword, Some(shield), 5).map(|g| g.stop), Some(0.65));
         assert_eq!(combat.guard_with(&sword, Some(shield), 4).map(|g| g.stop), Some(0.35), "below its level the sword guards");
         assert_eq!(combat.guard_with(&spear, Some(shield), 5).map(|g| g.stop), Some(0.35), "a spear takes both hands");
-        assert_eq!(combat.worn_armour([plate, shield], Style::Stab, 5), 21, "plate turns a stab by 1.2: 16.8, and the shield 4");
+        assert_eq!(combat.worn_armour([plate, shield], Style::Stab, 5, false), 21, "plate turns a stab by 1.2: 16.8, and the shield 4");
+        assert_eq!(combat.worn_armour([plate, shield], Style::Stab, 5, true), 17, "no shield beside a spear");
         assert_eq!(combat.dodge_in([plate, shield]).distance, 2.2);
         assert_eq!(combat.dodge_in([shield]).distance, 3.0);
     }
@@ -1086,19 +1562,33 @@ mod tests {
         let t = sword();
         let mut rhythm = Rhythm::default();
         let swing = |on_beat| Swing { starts: 0.0, lands: 0.0, strength: 1.0, on_beat };
-        let kinds: Vec<Blow> = (0..5).map(|i| rhythm.blow(&swing(true), i as f64 * 0.6, false, &feel)).collect();
+        let kinds: Vec<Blow> = (0..5).map(|i| rhythm.blow(&swing(true), i as f64 * 0.6, &feel)).collect();
         assert_eq!(kinds, [Blow::Beat, Blow::Beat, Blow::Beat, Blow::Flourish, Blow::Beat]);
-        assert_eq!(rhythm.blow(&swing(false), 3.0, false, &feel), Blow::Plain);
+        assert_eq!(rhythm.blow(&swing(false), 3.0, &feel), Blow::Plain);
         assert_eq!(rhythm.pips, 0, "off the beat loses them");
-        rhythm.blow(&swing(true), 3.6, true, &feel);
-        assert_eq!(rhythm.pips(3.6, &feel), 2, "a counter adds a pip");
-        assert_eq!(rhythm.pips(6.0, &feel), 0, "two seconds after the last blow they go");
+        // A counter or riposte is on the beat by itself: one pip, as any on-beat blow.
+        rhythm.blow(&swing(true), 3.6, &feel);
+        assert_eq!(rhythm.pips(3.6, &feel), 1);
+        assert_eq!(rhythm.pips(5.6, &feel), 1, "they last two seconds after the last blow");
+        assert_eq!(rhythm.pips(5.7, &feel), 0, "and then go");
+        rhythm.blow(&swing(true), 4.0, &feel);
+        rhythm.lose_pips();
+        assert_eq!(rhythm.pips(4.0, &feel), 0, "a hit taken or a weapon switched loses them");
+        // A client's mirror takes the server's count.
+        let mut mirror = Rhythm::default();
+        mirror.set_pips(2, 100.0);
+        assert_eq!((mirror.pips(101.0, &feel), mirror.pips(102.5, &feel)), (2, 0));
         // Guarding mid wind-up cancels it; the meter is then half full.
         let mut rhythm = Rhythm::default();
         rhythm.click(5.0, &t, &feel);
         assert!(rhythm.cancel(5.05, &t, &feel));
         assert!((rhythm.meter(5.05, &t) - 0.5).abs() < 1e-4);
         assert_eq!(rhythm.landed(9.0), None);
+        // A swing already due is not cancelled, though nothing has counted it yet.
+        let mut rhythm = Rhythm::default();
+        let Click::Swing(swing) = rhythm.click(6.0, &t, &feel) else { panic!() };
+        assert!(!rhythm.cancel(swing.lands + 0.01, &t, &feel));
+        assert_eq!(rhythm.landed(swing.lands + 0.02), Some(swing));
     }
 
     #[test]

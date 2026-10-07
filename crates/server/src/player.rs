@@ -75,6 +75,8 @@ pub struct Player {
     pub food_clock: f32,
     /// Highest point of the current fall, if airborne.
     pub fall_start: Option<f32>,
+    /// The last tick they stood on something, on foot (a dodge needs it, or nearly).
+    pub grounded: u64,
     pub last_input_tick: u64,
     /// Owner-replicated traits changed since they were last sent.
     pub dirty: Vec<TraitDecl>,
@@ -118,6 +120,7 @@ impl Player {
             heal_clock: 0.0,
             hurt_clock: 0.0,
             fall_start: None,
+            grounded: 0,
             last_input_tick: 0,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
@@ -240,6 +243,7 @@ impl Server {
                 .into_iter()
                 .filter_map(|(name, count)| blocks.id(name).map(|id| (id, count)))
                 .collect();
+        let purse = blocks.id("base:coin_purse");
         let (seed, allow_flight, tick) = (self.meta.seed, self.config.allow_flight, self.tick);
         let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
@@ -301,6 +305,10 @@ impl Server {
             None => {
                 for (block, count) in start_kit {
                     player.inventory.add(block, count);
+                }
+                // A coin purse, in the pack's last slot, out of the hotbar's way.
+                if let Some(purse) = purse {
+                    player.inventory.slots[voxmar_engine::inventory::SLOTS - 1] = Some(ItemStack { item: purse, count: 1 });
                 }
             }
         }

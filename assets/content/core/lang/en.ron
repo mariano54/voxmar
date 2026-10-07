@@ -244,7 +244,7 @@
     "item.plants": "Plants {crop} · {skill} {level}",
     "item.weapon": "{class} · {style} · {skill} {level}",
     "item.weapon_hit": "Max hit {hit} · a blow every {seconds} s",
-    "item.weapon_reach": "Reaches a block further",
+    "item.weapon_reach": "Reaches {reach} blocks",
     "item.class.dagger": "Dagger",
     "item.class.sword": "Sword",
     "item.class.spear": "Spear",

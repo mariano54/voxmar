@@ -115,6 +115,18 @@ pub struct Attack {
     /// A heavy blow goes through any guard: only a dodge escapes it.
     #[serde(default)]
     pub heavy: bool,
+    /// Blocks it lunges at its target as the blow lands, so backing off at a walk does not
+    /// escape it (unset, `combat::Feel`'s; quick animals more, big ones less).
+    #[serde(default)]
+    pub lunge: Option<f32>,
+    /// How fast it follows its target through the first part of a wind-up (unset,
+    /// `combat::Feel`'s, a run; slow creatures walk).
+    #[serde(default)]
+    pub pace: Option<crate::combat::Pace>,
+    /// What it adds to its attack roll (unset, `combat::Feel::creature_accuracy` of its
+    /// level), as a weapon's accuracy does a player's.
+    #[serde(default)]
+    pub accuracy: Option<u16>,
 }
 
 fn reach() -> f32 {
@@ -714,13 +726,6 @@ pub fn daylight(day: u64) -> f32 {
     ((elevation + 0.1) / 0.35).clamp(0.0, 1.0)
 }
 
-/// A creature's chance to hit, RuneScape-style: attack and defence rolls from levels.
-pub fn hit_chance(attack_level: u8, defence_level: u8) -> f32 {
-    let a = (attack_level as f32 + 8.0) * 64.0;
-    let d = (defence_level as f32 + 8.0) * 64.0;
-    if a > d { 1.0 - (d + 2.0) / (2.0 * (a + 1.0)) } else { a / (2.0 * (d + 1.0)) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -794,12 +799,5 @@ mod tests {
         assert!(daylight(0) > 0.0 && daylight(0) < 1.0);
         assert!(daylight(16_000) > 0.0 && daylight(16_000) < 1.0);
         assert_eq!(daylight(30_000), 1.0);
-    }
-
-    #[test]
-    fn hits_follow_levels() {
-        assert!((hit_chance(1, 1) - 0.4975).abs() < 0.01);
-        assert!(hit_chance(60, 1) > 0.9);
-        assert!(hit_chance(1, 60) < 0.1);
     }
 }

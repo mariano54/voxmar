@@ -56,6 +56,8 @@ pub struct Content {
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
+    /// What things are worth (`value`).
+    pub value: Arc<crate::value::Value>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -97,6 +99,7 @@ impl Content {
         let mut effects = Vec::new();
         let mut tools = Vec::new();
         let mut combat = Vec::new();
+        let mut value = Vec::new();
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
@@ -171,6 +174,10 @@ impl Content {
                         tools.push(ToolRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "value.ron" => {
+                        value.push(crate::value::Value::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "combat.ron" => {
                         combat.push(crate::combat::CombatRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -192,6 +199,9 @@ impl Content {
         }
         let blocks = BlockRegistry::expand(blocks)?;
         weather.validate()?;
+        if weather.try_tuning().is_none() {
+            return Err(RegistryError("no package's weather.ron sets its `tuning`".to_owned()));
+        }
         let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?;
         skills.validate()?;
         let blocks = BlockRegistry::new(blocks)?;
@@ -224,6 +234,7 @@ impl Content {
             combat: Arc::new(combat),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            value: Arc::new(crate::value::Value::merge(value)),
             multiblocks: Arc::new(multiblocks),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),

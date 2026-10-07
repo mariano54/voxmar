@@ -2,51 +2,54 @@
 //! feel"): each player's swings in rhythm, their guard and dodges, creatures winding up
 //! before every blow and recovering after, and what flourishes do.
 //!
-//! A click on a creature starts a swing, or is held for the beat; its blow lands when the
-//! wind-up is done, if the creature is still in reach. A creature that decides to attack
-//! winds up first, standing still and showing it (the attacking pose); its blow lands only
-//! then, and it stands to recover. On a player out of reach the blow falls short; on one
-//! mid-dodge it passes through (a perfect dodge, and the next blow is a riposte); a guard
-//! facing it stops part, or, raised just in time, all of it, staggering the creature and
-//! making the next blow a counter.
+//! A click on a creature starts a swing with what is in hand, or is held for the beat; its
+//! blow lands with that weapon when the wind-up is done, if the creature is still in reach.
+//! Switching what is in hand first drops the swing. A creature that decides to attack winds
+//! up first, showing it (the attacking pose): for the first part of the wind-up it turns to
+//! follow its target and walks at it, then its aim locks; as the blow lands it lunges, then
+//! stands to recover. On a player out of reach the blow falls short; on one mid-dodge it
+//! passes through (a perfect dodge, and the next blow is a riposte); a guard facing it stops
+//! part, or, raised just in time, all of it, staggering the creature after its recovery and
+//! making the next blow a counter. Each is judged by the moment the blow lands.
 //!
 //! Times are seconds since the server started, on the clock player messages arrive by
-//! (`Server::arrival`), so a busy server neither hurries nor slows anyone's rhythm.
+//! (`Server::arrival`), so a busy server neither hurries nor slows anyone's rhythm. A
+//! creature's blow lands on the same clock, a wind-up after it began.
 
 use std::time::Instant;
 
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
-use voxmar_engine::combat::{Blow, Click, Defended, Flourish, Rhythm, Weapon};
-use voxmar_engine::creature::brain;
+use voxmar_engine::combat::{Blow, Click, Defended, Effect, Guarding, Pace, Rhythm, Stroke, Swing, Weapon};
+use voxmar_engine::creature::{brain, mix, unit_from};
+use voxmar_engine::glam::Vec3;
+use voxmar_engine::physics::Aabb;
+use voxmar_engine::skill::SkillId;
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 
-/// How far past its reach a blow may still land, for the time a view of the fight lags.
-const SLACK: f32 = 0.6;
+/// Half a player's width: how close a creature's lunge comes to them.
+const PLAYER_HALF: f32 = 0.3;
+/// The step a lunge is tried in, so it stops at a wall.
+const LUNGE_STEP: f32 = 0.1;
 
 /// One player's side of fights.
 #[derive(Default)]
 struct Fighter {
     rhythm: Rhythm,
-    /// The swing under way: the creature it is aimed at, and whether it is a counter or a
-    /// riposte.
+    /// The swing under way: the creature it is aimed at, what it is struck with, and
+    /// whether it is a counter or a riposte.
     aim: Option<Aim>,
     /// The item last swung, to lose the pips on a switch.
     held: Option<BlockId>,
-    /// When the guard went up, while it is up, whether that raise may be a perfect block,
-    /// and when it last came down.
-    guard: Option<f64>,
-    perfect_ok: bool,
-    lowered: f64,
-    /// When blows pass through a dodge, and when the next dodge may start.
-    dodging: (f64, f64),
-    dodge_ready: f64,
+    guarding: Guarding,
     /// Until when a blow is a counter (after a perfect block) or a riposte (after a
     /// perfect dodge).
     counter_until: f64,
     riposte_until: f64,
+    /// When the player's blows last reached each creature, for Defence experience.
+    fought: FxHashMap<u32, f64>,
 }
 
 #[derive(Clone, Copy)]
@@ -54,6 +57,9 @@ struct Aim {
     creature: u32,
     counter: bool,
     riposte: bool,
+    /// What the swing started with: the blow lands with it, and a switch drops it.
+    weapon: Weapon,
+    held: Option<BlockId>,
 }
 
 /// A creature's blow on its way.
@@ -63,10 +69,12 @@ struct Windup {
     lands: f64,
 }
 
-/// Bleeding from a flourish: so much more, a point at a time, a second apart.
+/// Bleeding from a flourish: so much more, a point at a time, a second apart, training the
+/// skill of the weapon that drew it.
 struct Bleed {
     creature: u32,
     player: PlayerId,
+    skill: Option<SkillId>,
     left: u16,
     every: f64,
     next: f64,
@@ -81,6 +89,8 @@ pub(crate) struct Fights {
     /// lower by the share, until when).
     pinned: FxHashMap<u32, (f32, f64)>,
     sundered: FxHashMap<u32, (f32, f64)>,
+    /// Draws for what rounds by chance (`combat::by_chance`).
+    draws: u64,
 }
 
 impl Default for Fights {
@@ -92,6 +102,7 @@ impl Default for Fights {
             bleeds: Vec::new(),
             pinned: FxHashMap::default(),
             sundered: FxHashMap::default(),
+            draws: 0,
         }
     }
 }
@@ -99,6 +110,12 @@ impl Default for Fights {
 impl Fights {
     fn secs(&self, at: Instant) -> f64 {
         at.saturating_duration_since(self.epoch).as_secs_f64()
+    }
+
+    /// Whether `player`'s blows reached `creature` within `seconds`.
+    pub(crate) fn fought(&self, player: PlayerId, creature: u32, seconds: f32) -> bool {
+        let now = self.now();
+        self.fighters.get(&player).and_then(|f| f.fought.get(&creature)).is_some_and(|&at| now - at <= seconds as f64)
     }
 
     fn now(&self) -> f64 {
@@ -116,19 +133,22 @@ impl Fights {
         let now = self.now();
         self.sundered.get(&creature).filter(|&&(_, until)| now <= until).map_or(0.0, |&(share, _)| share)
     }
+
+    /// The rhythm pips `player` has now, for what the server tells them of a blow.
+    pub(crate) fn pips(&self, player: PlayerId, feel: &voxmar_engine::combat::Feel) -> u8 {
+        let now = self.now();
+        self.fighters.get(&player).map_or(0, |f| f.rhythm.pips(now, feel))
+    }
+
+    /// A draw in 0..1 for rounding by chance, different each time.
+    fn draw(&mut self, salt: u64) -> f32 {
+        self.draws += 1;
+        unit_from(mix(self.draws, salt))
+    }
 }
 
-/// How a blow is struck, beyond the weapon: from its swing and what made it special.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Stroke {
-    /// Its strength, 0 to 1, for clicks earlier than the buffer.
-    pub strength: f32,
-    /// Added to the attack roll, and to the max hit, as shares.
-    pub accuracy: f32,
-    pub max_hit: f32,
-    /// A counter cannot miss.
-    pub certain: bool,
-    pub blow: Blow,
+fn ticks(seconds: f32) -> u64 {
+    (seconds.max(0.0) * TICKS_PER_SECOND as f32).ceil() as u64
 }
 
 impl Server {
@@ -147,8 +167,8 @@ impl Server {
         Some(self.content.combat.wielded(p.held(), |skill| self.content.skills.level(p.skills.xp(skill))))
     }
 
-    /// A player clicked a creature to strike it (`core:attack`): a swing starts, or waits
-    /// for the beat. Nothing while their guard is up.
+    /// A player clicked a creature to strike it (`core:attack`): a swing starts with what
+    /// is in hand, or waits for the beat. Nothing while their guard is up.
     pub(crate) fn swing_at(&mut self, player: PlayerId, creature: u32) {
         let Some(weapon) = self.wielded_by(player) else { return };
         let held = self.players.get(&player).and_then(|p| p.held());
@@ -156,7 +176,7 @@ impl Server {
         let now = self.fight_arrival();
         let feel = self.content.combat.feel;
         let fighter = self.fights.fighters.entry(player).or_default();
-        if fighter.guard.is_some() {
+        if fighter.guarding.is_up() {
             return;
         }
         if fighter.held != held {
@@ -168,7 +188,7 @@ impl Server {
             let riposte = now <= fighter.riposte_until;
             fighter.counter_until = 0.0;
             fighter.riposte_until = 0.0;
-            fighter.aim = Some(Aim { creature, counter, riposte });
+            fighter.aim = Some(Aim { creature, counter, riposte, weapon, held });
         }
     }
 
@@ -180,64 +200,88 @@ impl Server {
         let now = self.fight_arrival();
         let feel = self.content.combat.feel;
         let fighter = self.fights.fighters.entry(player).or_default();
-        match (up, fighter.guard) {
-            (true, None) => {
-                fighter.guard = Some(now);
-                fighter.perfect_ok = now - fighter.lowered >= feel.no_flicker as f64;
-                if fighter.rhythm.cancel(now, &timing, &feel) {
-                    fighter.aim = None;
-                }
+        if up {
+            if fighter.guarding.raise(now, &feel) && fighter.rhythm.cancel(now, &timing, &feel) {
+                fighter.aim = None;
             }
-            (false, Some(_)) => {
-                fighter.guard = None;
-                fighter.lowered = now;
-            }
-            _ => {}
+        } else {
+            fighter.guarding.lower(now);
         }
     }
 
     /// A player dodged (`core:dodge`): for a moment no blow lands on them. Their client
-    /// carries the dash itself, within what movement allows. Not while guarding; it
-    /// cancels their own wind-up.
+    /// carries the dash itself, within what movement allows. Only on foot on the ground (or
+    /// just off it), not flying, eating or guarding, and not sooner than the last allows;
+    /// it cancels their own wind-up. A dodge refused puts the player back where the server
+    /// has them, so their screen never shows a dash no blow passes through.
     pub(crate) fn dodge(&mut self, player: PlayerId) {
         let Some(weapon) = self.wielded_by(player) else { return };
+        let Some(p) = self.players.get(&player) else { return };
+        let feel = self.content.combat.feel;
+        // On the ground where the player is now (a landing told between ticks counts), or
+        // left it no longer than the grace ago.
+        let mut below = p.aabb();
+        below.translate(voxmar_engine::glam::Vec3::new(0.0, -0.05, 0.0));
+        let grounded = below.intersects(|cell| self.is_solid(cell)) || self.tick <= p.grounded + ticks(feel.dodge_grace);
+        let may = p.health.alive() && !p.flying && grounded && !self.eating(player);
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
-        let feel = self.content.combat.feel;
-        // The heaviest armour worn sets the dodge; without armour, the first. Not falling
-        // (the client also keeps it to the ground; this stops one far into a fall).
-        let Some(p) = self.players.get(&player) else { return };
-        if p.fall_start.is_some_and(|top| p.position.y < top - 1.0) {
-            return;
-        }
+        // The heaviest armour worn sets the dodge; without armour, the first.
         let dodge = self.content.combat.dodge_of(&p.inventory.worn).clone();
         let fighter = self.fights.fighters.entry(player).or_default();
-        // A little early is the client's clock running ahead of the arrival clock.
-        if fighter.guard.is_some() || now + 0.1 < fighter.dodge_ready {
+        if !(may && fighter.guarding.dodge(now, &dodge, &feel)) {
+            if let Some(p) = self.players.get(&player) {
+                p.connection.send(ServerMessage::Teleport { position: p.position });
+            }
             return;
         }
-        fighter.dodging = (now + dodge.safe.0 as f64, now + dodge.safe.1 as f64);
-        fighter.dodge_ready = now + dodge.cooldown as f64;
         if fighter.rhythm.cancel(now, &timing, &feel) {
             fighter.aim = None;
         }
     }
 
-    /// A creature decided to strike a player: it winds up first, held still and showing it.
+    /// A creature decided to strike a player: it winds up first, showing it, following them
+    /// for the first part of it.
     pub(crate) fn wind_up(&mut self, creature: u32, player: PlayerId) {
         let Some(live) = self.creatures.live.get(&creature) else { return };
         let Some(attack) = self.content.creatures.get(live.species).def.attack else { return };
         if self.fights.windups.iter().any(|w| w.creature == creature) {
             return;
         }
-        let windup = attack.windup.unwrap_or(self.content.combat.feel.creature_windup).max(0.0);
+        let feel = self.content.combat.feel;
+        let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
         let lands = self.fights.now() + windup as f64;
-        let ticks = (windup * TICKS_PER_SECOND as f32).ceil() as u64;
+        let tick = self.tick;
         let live = self.creatures.live.get_mut(&creature).expect("checked above");
         live.winding = true;
-        live.held_until = live.held_until.max(self.tick + ticks);
+        live.held_until = live.held_until.max(tick + ticks(windup));
+        live.tracking = Some((player, tick + ticks(windup * feel.creature_tracking.clamp(0.0, 1.0))));
         live.changed = true;
         self.fights.windups.push(Windup { creature, player, lands });
+    }
+
+    /// Where a creature winding up at a player goes this tick, while it still follows them:
+    /// at them, at the feel's pace, until it touches them; then it stands and faces them.
+    pub(crate) fn tracking_drive(&self, creature: u32) -> Option<voxmar_engine::creature::motion::Drive> {
+        let live = self.creatures.live.get(&creature)?;
+        let (player, until) = live.tracking?;
+        if self.tick >= until {
+            return None;
+        }
+        let target = self.players.get(&player)?.position;
+        let def = &self.content.creatures.get(live.species).def;
+        let to = (target - live.body.position).with_y(0.0);
+        let touching = live.body.size.0 * 0.5 + PLAYER_HALF + self.content.combat.feel.creature_clearance;
+        let pace = match def.attack.and_then(|a| a.pace).unwrap_or(self.content.combat.feel.tracking_pace) {
+            Pace::Walk => def.movement.walk,
+            Pace::Run => def.movement.run,
+        };
+        let walking = to.length() > touching;
+        Some(voxmar_engine::creature::motion::Drive {
+            wish: if walking { to.normalize_or_zero() } else { Vec3::ZERO },
+            speed: if walking { pace * live.scale.max(0.5) * (1.0 - self.fights.slow(creature)) } else { 0.0 },
+            face: Some(to),
+        })
     }
 
     /// Lands every swing, creature blow and bleed that is due. Runs each tick, after
@@ -249,31 +293,48 @@ impl Server {
         let live = &self.creatures.live;
         self.fights.pinned.retain(|id, &mut (_, until)| now <= until && live.contains_key(id));
         self.fights.sundered.retain(|id, &mut (_, until)| now <= until && live.contains_key(id));
-        // Players' swings.
+        // A swing whose weapon left the hand is dropped, and the pips with it.
+        for (&player, fighter) in &mut self.fights.fighters {
+            let Some(aim) = fighter.aim else { continue };
+            let held = self.players.get(&player).and_then(|p| p.held());
+            if held != aim.held {
+                let timing = self.content.combat.timing(&aim.weapon);
+                fighter.rhythm.cancel(now, &timing, &feel);
+                fighter.rhythm.lose_pips();
+                fighter.aim = None;
+                fighter.held = held;
+            }
+        }
+        // Players' swings. One at the air counts as off the beat: it earns no pip and spends
+        // no flourish.
         let mut landing = Vec::new();
         for (&player, fighter) in &mut self.fights.fighters {
             if let Some(swing) = fighter.rhythm.landed(now) {
                 let Some(aim) = fighter.aim.take() else { continue };
-                let on_beat = swing.on_beat || aim.riposte || aim.counter;
-                let kind = fighter.rhythm.blow(&voxmar_engine::combat::Swing { on_beat, ..swing }, now, aim.counter || aim.riposte, &feel);
-                landing.push((player, aim, swing.strength, on_beat, kind));
+                let eye = self.players.get(&player).map(|p| p.eye());
+                let in_reach = eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| eye.distance(eye.clamp(aabb.min, aabb.max)) <= aim.weapon.reach + feel.reach_slack);
+                let on_beat = in_reach && (swing.on_beat || aim.riposte || aim.counter);
+                let kind = fighter.rhythm.blow(&Swing { on_beat, ..swing }, now, &feel);
+                landing.push((player, aim, swing.strength, on_beat, kind, in_reach));
             }
         }
-        for (player, aim, strength, on_beat, kind) in landing {
-            self.land_swing(player, aim, strength, on_beat, kind);
+        for (player, aim, strength, on_beat, kind, in_reach) in landing {
+            self.land_swing(player, aim, strength, on_beat, kind, in_reach);
         }
-        // Creatures' blows.
+        // Creatures' blows, each judged at the moment it lands.
         let (due, waiting): (Vec<Windup>, Vec<Windup>) = std::mem::take(&mut self.fights.windups).into_iter().partition(|w| w.lands <= now);
         self.fights.windups = waiting;
         for windup in due {
-            self.creature_blow(windup.creature, windup.player, now);
+            self.creature_blow(windup.creature, windup.player, windup.lands);
         }
         // Bleeding.
         let (due, waiting): (Vec<Bleed>, Vec<Bleed>) = std::mem::take(&mut self.fights.bleeds).into_iter().partition(|b| b.next <= now);
         self.fights.bleeds = waiting;
         for mut bleed in due {
-            let Some(weapon) = self.wielded_by(bleed.player) else { continue };
-            if self.hurt_creature(bleed.player, bleed.creature, 1, weapon.skill, Blow::Bleed).is_some() {
+            if !self.players.contains_key(&bleed.player) {
+                continue;
+            }
+            if self.hurt_creature(bleed.player, bleed.creature, 1, bleed.skill, Blow::Bleed).is_some() {
                 bleed.left -= 1;
                 bleed.next += bleed.every;
                 if bleed.left > 0 {
@@ -283,153 +344,133 @@ impl Server {
         }
     }
 
-    /// A player's swing lands: at the creature it was aimed at, if still in reach, with
-    /// what its rhythm made it.
-    fn land_swing(&mut self, player: PlayerId, aim: Aim, strength: f32, on_beat: bool, kind: Blow) {
+    /// A player's swing lands: at the creature it was aimed at, if still in reach, with the
+    /// weapon it was swung with and what its rhythm made it.
+    fn land_swing(&mut self, player: PlayerId, aim: Aim, strength: f32, on_beat: bool, kind: Blow, in_reach: bool) {
         let feel = self.content.combat.feel;
-        let Some(weapon) = self.wielded_by(player) else { return };
+        let weapon = aim.weapon;
         let Some(p) = self.players.get(&player) else { return };
-        let eye = p.eye();
-        let falling = p.fall_start.is_some_and(|top| p.position.y < top - 0.3);
-        let in_reach = self.creatures.reach_box(aim.creature).is_some_and(|aabb| {
-            eye.distance(eye.clamp(aabb.min, aabb.max)) <= voxmar_engine::action::REACH_CREATURE + weapon.reach + SLACK
-        });
+        let falling = p.fall_start.is_some_and(|top| p.position.y < top - feel.falling_drop);
         if !in_reach {
             // Swung at the air: still answered, as a miss.
-            p.connection.send(ServerMessage::Struck { creature: aim.creature, damage: 0, killed: false, blow: Blow::Plain });
+            self.struck(player, aim.creature, 0, false, Blow::Plain);
             return;
         }
-        let flourish = kind == Blow::Flourish;
-        let mut max_hit = 0.0;
-        if flourish {
-            max_hit += feel.flourish_max_hit;
-        }
-        if aim.counter {
-            max_hit += feel.counter_max_hit;
-        }
-        if on_beat && falling {
-            max_hit += feel.falling_max_hit;
-        }
-        let blow = if flourish { Blow::Flourish } else if aim.counter { Blow::Counter } else { kind };
-        // A counter or riposte is a full blow, whatever the meter says.
-        let strength = if aim.counter || aim.riposte { 1.0 } else { strength };
-        let stroke = Stroke { strength, accuracy: if on_beat { feel.beat_accuracy } else { 0.0 }, max_hit, certain: aim.counter, blow };
+        let now = self.fights.now();
+        let fighter = self.fights.fighters.entry(player).or_default();
+        fighter.fought.retain(|_, at| now - *at < feel.defence_xp_window as f64);
+        fighter.fought.insert(aim.creature, now);
+        let stroke = Stroke::of(kind, strength, on_beat, aim.counter, aim.riposte, falling, &feel);
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
-        if flourish && damage > 0 {
+        if kind == Blow::Flourish && damage > 0 {
             self.flourish(player, aim.creature, &weapon, damage);
+        }
+    }
+
+    /// Tells a player what came of their blow, with their pips as the server counts them.
+    pub(crate) fn struck(&self, player: PlayerId, creature: u32, damage: u16, killed: bool, blow: Blow) {
+        if let Some(p) = self.players.get(&player) {
+            let pips = self.fights.pips(player, &self.content.combat.feel);
+            p.connection.send(ServerMessage::Struck { creature, damage, killed, blow, pips });
         }
     }
 
     /// What a flourish does besides its max hit, by the weapon's class.
     fn flourish(&mut self, player: PlayerId, creature: u32, weapon: &Weapon, damage: u16) {
         let now = self.fights.now();
-        match self.content.combat.flourish(weapon) {
-            Some(Flourish::Bleed { share, seconds }) => {
-                let left = (damage as f32 * share).round() as u16;
-                if left > 0 {
-                    let every = (seconds / left as f32).max(0.05) as f64;
-                    self.fights.bleeds.push(Bleed { creature, player, left, every, next: now + every });
-                }
+        let feel = self.content.combat.feel;
+        let Some(flourish) = self.content.combat.flourish(weapon) else { return };
+        let roll = self.fights.draw(0xf10u64 ^ creature as u64);
+        match flourish.effect(damage, roll) {
+            Some(Effect::Bleed { points, every }) => {
+                let every = every as f64;
+                self.fights.bleeds.push(Bleed { creature, player, skill: weapon.skill, left: points, every, next: now + every });
             }
-            Some(Flourish::Cleave { share }) => {
-                // The nearest other creature in front, within reach.
+            Some(Effect::Cleave { points }) => {
                 let Some(p) = self.players.get(&player) else { return };
-                let (eye, look) = (p.eye(), p.look());
-                let reach = voxmar_engine::action::REACH_CREATURE + weapon.reach;
-                let other = self
-                    .creatures
-                    .live
-                    .iter()
-                    .filter(|&(&id, c)| id != creature && c.health > 0)
-                    .filter_map(|(&id, c)| {
-                        let aabb = c.body.aabb();
-                        let nearest = eye.clamp(aabb.min, aabb.max);
-                        let to = (aabb.min + aabb.max) / 2.0 - eye;
-                        (eye.distance(nearest) <= reach && to.with_y(0.0).normalize_or_zero().dot(look.with_y(0.0).normalize_or_zero()) > 0.5).then_some((id, eye.distance(nearest)))
-                    })
-                    .min_by(|a, b| a.1.total_cmp(&b.1));
-                let cleft = (damage as f32 * share).round() as u16;
-                if let Some((other, _)) = other.filter(|_| cleft > 0) {
-                    self.hurt_creature(player, other, cleft, weapon.skill, Blow::Flourish);
+                let others = self.creatures.live.iter().filter(|&(&id, c)| id != creature && c.health > 0).map(|(&id, c)| (id, c.body.aabb(), c.owner.is_some()));
+                if let Some(other) = voxmar_engine::combat::cleave_target(p.eye(), p.look(), weapon.reach + feel.reach_slack, feel.cleave_cone, others) {
+                    self.hurt_creature(player, other, points, weapon.skill, Blow::Flourish);
                 }
             }
-            Some(Flourish::Pin { slow, seconds }) => {
-                self.fights.pinned.insert(creature, (slow.clamp(0.0, 1.0), now + seconds as f64));
+            Some(Effect::Pin { slow, seconds }) => {
+                self.fights.pinned.insert(creature, (slow, now + seconds as f64));
             }
-            Some(Flourish::Sunder { defence, seconds }) => {
-                self.fights.sundered.insert(creature, (defence.clamp(0.0, 1.0), now + seconds as f64));
+            Some(Effect::Sunder { defence, seconds }) => {
+                self.fights.sundered.insert(creature, (defence, now + seconds as f64));
             }
-            Some(Flourish::Daze { stagger }) => {
+            Some(Effect::Daze { seconds }) => {
                 self.fights.windups.retain(|w| w.creature != creature);
-                self.stagger(creature, stagger);
+                self.stagger(creature, seconds);
             }
             None => {}
         }
     }
 
-    /// Holds a creature still for `seconds`, its wind-up, if any, undone.
+    /// Holds a creature still for `seconds` from now, its wind-up, if any, undone (a longer
+    /// hold it is already in, other than a wind-up, stands).
     fn stagger(&mut self, creature: u32, seconds: f32) {
-        let ticks = (seconds * TICKS_PER_SECOND as f32).ceil() as u64;
+        let tick = self.tick;
         if let Some(live) = self.creatures.live.get_mut(&creature) {
+            live.held_until = if live.winding { tick + ticks(seconds) } else { live.held_until.max(tick + ticks(seconds)) };
             live.winding = false;
+            live.tracking = None;
             live.decision.pose = brain::Pose::Idle;
-            live.held_until = live.held_until.max(self.tick + ticks);
             live.changed = true;
         }
     }
 
-    /// A creature's wound-up blow comes down on a player, then it recovers.
-    fn creature_blow(&mut self, creature: u32, player: PlayerId, now: f64) {
+    /// A creature's wound-up blow comes down on a player at `lands`: it lunges at them, then
+    /// recovers; what came of it is judged by that moment.
+    fn creature_blow(&mut self, creature: u32, player: PlayerId, lands: f64) {
         let feel = self.content.combat.feel;
         let Some(live) = self.creatures.live.get(&creature) else { return };
         let species = live.species;
         let def = &self.content.creatures.get(species).def;
         let Some(attack) = def.attack else { return };
-        let (at, scale, size) = (live.body.position, live.scale, def.body.size);
         // It stands to recover: the moment for the player's blows. Its next attack waits
         // out the rest of its `every`, as the brain counts it.
         let recovery = attack.recovery.unwrap_or(feel.creature_recovery).max(0.0);
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
+        let lunge = attack.lunge.unwrap_or(feel.creature_lunge).max(0.0);
+        let tick = self.tick;
         let live = self.creatures.live.get_mut(&creature).expect("checked above");
         // The telegraph ends as the blow comes down, so the wind-up reads as long as it is.
         live.winding = false;
+        live.tracking = None;
         live.decision.pose = brain::Pose::Idle;
-        live.held_until = live.held_until.max(self.tick + (recovery * TICKS_PER_SECOND as f32).ceil() as u64);
+        live.held_until = live.held_until.max(tick + ticks(recovery));
         live.mind.cooldown = (attack.every - windup - recovery).max(0.0);
         live.changed = true;
         let Some(target) = self.players.get(&player) else { return };
         if !target.health.alive() || target.allow_flight {
             return;
         }
-        // As the brain judges reach (`brain::modules::strike`), with slack for the lag.
-        let reach = attack.reach + size.0 * scale * 0.5 + 0.3 + SLACK;
-        let flat = (target.position - at).with_y(0.0).length();
-        let tall = (target.position.y - at.y).abs() < size.1 * scale + 1.5;
-        let (look, facing) = (target.look(), at - target.position);
-        let guard = self.guard_of(player).filter(|g| !attack.heavy && g.covers(look, facing));
+        let (to, look) = (target.position, target.look());
+        let size = def.body.size;
+        let at = self.lunge(creature, to, lunge);
+        let Some(live) = self.creatures.live.get(&creature) else { return };
+        let scale = live.scale;
+        // As the brain judges reach (`brain::modules::strike`), from where the lunge ended,
+        // with slack for the lag.
+        let reach = attack.reach + size.0 * scale * 0.5 + 0.3 + feel.reach_slack;
+        let flat = (to - at).with_y(0.0).length();
+        let tall = (to.y - at.y).abs() < size.1 * scale + 1.5;
+        let guard = self.guard_of(player).and_then(|g| g.takes(attack.style, attack.heavy, look, at - to, &feel));
         let fighter = self.fights.fighters.entry(player).or_default();
-        let raised = fighter.guard;
-        let defended = if flat > reach || !tall {
-            Defended::Evaded
-        } else if now >= fighter.dodging.0 && now <= fighter.dodging.1 {
-            fighter.riposte_until = now + feel.riposte as f64;
-            Defended::Dodged
-        } else if let (Some(guard), Some(raised)) = (guard, raised) {
-            if fighter.perfect_ok && now - raised <= guard.perfect as f64 {
-                fighter.counter_until = now + feel.counter as f64;
-                Defended::Perfect
-            } else {
-                Defended::Blocked
-            }
-        } else {
-            Defended::Hit
-        };
+        let defended = if flat > reach || !tall { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
+        match defended {
+            Defended::Dodged => fighter.riposte_until = lands + feel.riposte as f64,
+            Defended::Perfect => fighter.counter_until = lands + feel.counter as f64,
+            _ => {}
+        }
         let damage = match defended {
-            Defended::Hit => self.creature_strikes(species, player, 1.0),
-            Defended::Blocked => self.creature_strikes(species, player, 1.0 - guard.map_or(0.0, |g| g.stops(attack.style, &feel))),
+            Defended::Hit => self.creature_strikes(creature, species, player, 1.0),
+            Defended::Blocked => self.creature_strikes(creature, species, player, 1.0 - guard.map_or(0.0, |g| g.stops(attack.style, &feel))),
             Defended::Perfect => {
-                self.stagger(creature, feel.stagger);
-                self.defence_xp(player, species);
+                // Staggered once it has recovered: the whole stagger is the player's to use.
+                self.stagger(creature, recovery + feel.stagger);
+                self.defence_xp(player, creature, species);
                 Some(0)
             }
             _ => Some(0),
@@ -447,5 +488,34 @@ impl Server {
         if let Some(p) = self.players.get(&player) {
             p.connection.send(ServerMessage::Hurt { creature, damage, defended });
         }
+    }
+
+    /// A creature lunges up to `lunge` blocks the way it faces (its aim locked), stopping
+    /// where it would touch the player at `to`, or at a wall. Returns where it ends.
+    fn lunge(&mut self, creature: u32, to: Vec3, lunge: f32) -> Vec3 {
+        let Some(live) = self.creatures.live.get(&creature) else { return to };
+        let body = live.body;
+        let forward = body.forward();
+        let touching = body.size.0 * 0.5 + PLAYER_HALF + self.content.combat.feel.creature_clearance;
+        // As far as its nearest pass by the player, short of touching them.
+        let along = (to - body.position).with_y(0.0).dot(forward);
+        let side = ((to - body.position).with_y(0.0) - forward * along).length();
+        let room = (touching * touching - side * side).max(0.0).sqrt();
+        let go = lunge.min((along - room).max(0.0));
+        let mut at = body.position;
+        let steps = (go / LUNGE_STEP).ceil() as u32;
+        for i in 1..=steps {
+            let next = body.position + forward * (go * i as f32 / steps as f32);
+            if Aabb::standing(next, body.size.0, body.size.1).intersects(|p| self.is_solid(p)) {
+                break;
+            }
+            at = next;
+        }
+        if at != body.position {
+            let live = self.creatures.live.get_mut(&creature).expect("checked above");
+            live.body.position = at;
+            live.changed = true;
+        }
+        at
     }
 }

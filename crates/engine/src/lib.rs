@@ -42,6 +42,7 @@ pub mod schedule;
 pub mod skill;
 pub mod tool;
 pub mod traits;
+pub mod value;
 pub mod vitals;
 pub mod visibility;
 pub mod weather;

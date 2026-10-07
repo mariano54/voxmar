@@ -24,8 +24,12 @@ pub struct Fighting {
     pub guard: Option<f64>,
     /// A dash under way: its direction, speed and seconds left.
     pub dash: Option<(Vec3, f32, f32)>,
-    /// When the next dodge may start.
+    /// When the next dodge may start, and when it might before the last one, which a dodge
+    /// the server refuses gives back.
     pub dodge_ready: f64,
+    pub dodge_was: f64,
+    /// When the player was last on the ground, for `Feel::dodge_grace`.
+    pub grounded: f64,
     /// A right press this frame already did something (opened a table, ate), so it raises
     /// no guard until it is let go.
     pub right_used: bool,
@@ -40,17 +44,16 @@ pub struct Fighting {
     pub hurt_count: u32,
     /// The item last swung, to lose the pips on a switch as the server does.
     held: Option<voxmar_engine::block::BlockId>,
+    /// When the player and each creature last traded blows, either way (app seconds).
+    fought: std::collections::HashMap<u32, f64>,
 }
 
 impl Fighting {
-    /// The player's blow at `creature` was answered.
-    pub fn struck(&mut self, creature: u32, damage: u16, blow: Blow, now: f64) {
-        self.rhythm.pips = match blow {
-            Blow::Beat | Blow::Counter => self.rhythm.pips + 1,
-            Blow::Plain | Blow::Flourish => 0,
-            Blow::Bleed => self.rhythm.pips,
-        }
-        .min(3);
+    /// The player's blow at `creature` was answered, with their pips as the server counts
+    /// them.
+    pub fn struck(&mut self, creature: u32, damage: u16, blow: Blow, pips: u8, now: f64) {
+        self.rhythm.set_pips(pips, now);
+        self.fought.insert(creature, now);
         self.struck.retain(|s| now - s.3 < KEPT);
         self.struck.push((creature, damage, blow, now));
         self.struck_count += 1;
@@ -61,9 +64,17 @@ impl Fighting {
         if defended == Defended::Hit && damage > 0 {
             self.rhythm.lose_pips();
         }
+        self.fought.insert(creature, now);
         self.hurt.retain(|h| now - h.3 < KEPT);
         self.hurt.push((creature, damage, defended, now));
         self.hurt_count += 1;
+    }
+
+    /// Whether `creature` and the player have traded blows within `feel.engaged` of `now`:
+    /// a right click at it guards rather than looks closely.
+    pub fn engaged(&mut self, creature: u32, now: f64, feel: &voxmar_engine::combat::Feel) -> bool {
+        self.fought.retain(|_, at| now - *at < feel.engaged as f64);
+        self.fought.contains_key(&creature)
     }
 
     /// A click at a creature at `now`: whether a swing starts (or is held for the beat), so
@@ -72,11 +83,20 @@ impl Fighting {
         if self.guard.is_some() {
             return false;
         }
+        self.holding(now, timing, held, feel);
+        matches!(self.rhythm.click(now, timing, feel), Click::Swing(_))
+    }
+
+    /// What is in hand at `now`: switching it drops the swing under way and the pips, as the
+    /// server does. `timing` is the rhythm of what was held.
+    pub fn holding(&mut self, now: f64, timing: &Timing, held: Option<voxmar_engine::block::BlockId>, feel: &voxmar_engine::combat::Feel) {
         if held != self.held {
+            if self.rhythm.pending().is_some() {
+                self.rhythm.cancel(now, timing, feel);
+            }
             self.rhythm.lose_pips();
             self.held = held;
         }
-        matches!(self.rhythm.click(now, timing, feel), Click::Swing(_))
     }
 }
 
@@ -99,6 +119,8 @@ pub fn guard(
     let held = player.inventory.get(player.selected).map(|s| s.item);
     let level = |skill| launch.content.skills.level(player.skills.xp(skill));
     let weapon = combat.wielded(held, level);
+    let was = combat.wielded(fighting.held, level);
+    fighting.holding(now, &combat.timing(&was), held, &combat.feel);
     let can = combat.guard_of(held, &player.inventory.worn, level).is_some() && ui.cursor_locked && !player.dead && player.joined;
     if mouse.just_pressed(MouseButton::Right) {
         fighting.right_used = target.used_right;

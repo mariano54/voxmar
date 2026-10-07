@@ -208,7 +208,7 @@
         ),
         (
             name: "aurochs", title: "Aurochs", level: 6, health: 14, rarity: Uncommon, weak: Some(Stab),
-            attack: (windup: 0.7, recovery: 0.9, damage: (2, 4), reach: 1.2, every: 1.6, style: Crush),
+            attack: (windup: 0.7, recovery: 0.9, damage: (2, 4), reach: 1.2, every: 1.6, lunge: 1.0, style: Crush),
             defence: 4,
             body: (
                 size: (1.1, 1.45),
@@ -279,7 +279,7 @@
         ),
         (
             name: "fox", level: 4, health: 6, rarity: Uncommon, weak: Some(Crush),
-            attack: (windup: 0.35, recovery: 0.4, damage: (1, 2), reach: 0.8, every: 1.0, style: Stab),
+            attack: (windup: 0.35, recovery: 0.4, damage: (1, 2), reach: 0.8, every: 1.0, lunge: 1.5, style: Stab),
             body: (
                 size: (0.55, 0.6),
                 model: Quadruped(body: (0.28, 0.3, 0.6), head: (0.26, 0.22, 0.24), legs: 0.26, ears: (0.1, 0.15), ear_lean: 10.0, snout: (0.11, 0.09, 0.15), tail: (0.16, 0.16, 0.44), tail_droop: 25.0),
@@ -310,7 +310,7 @@
         ),
         (
             name: "wolf", level: 12, health: 16, rarity: Uncommon, weak: Some(Crush),
-            attack: (damage: (2, 4), reach: 1.0, every: 1.1, style: Stab),
+            attack: (damage: (2, 4), reach: 1.0, every: 1.1, lunge: 1.5, style: Stab),
             defence: 8,
             body: (
                 size: (0.7, 0.9),
@@ -348,7 +348,7 @@
         ),
         (
             name: "brown_bear", level: 28, health: 40, rarity: Rare, weak: Some(Stab),
-            attack: (windup: 0.7, recovery: 0.9, damage: (2, 6), reach: 1.4, every: 1.4, style: Slash),
+            attack: (windup: 0.7, recovery: 0.9, damage: (2, 6), reach: 1.4, every: 1.4, lunge: 1.0, style: Slash),
             defence: 20,
             body: (
                 size: (1.2, 1.4),
@@ -607,7 +607,7 @@
         ),
         (
             name: "arctic_fox", title: "Arctic fox", level: 3, health: 5, rarity: Uncommon, weak: Some(Crush),
-            attack: (windup: 0.35, recovery: 0.4, damage: (1, 2), reach: 0.8, every: 1.0, style: Stab),
+            attack: (windup: 0.35, recovery: 0.4, damage: (1, 2), reach: 0.8, every: 1.0, lunge: 1.5, style: Stab),
             body: (
                 size: (0.5, 0.55),
                 model: Quadruped(body: (0.28, 0.28, 0.54), head: (0.26, 0.22, 0.22), legs: 0.2, ears: (0.09, 0.1), ear_lean: 18.0, snout: (0.1, 0.08, 0.12), tail: (0.18, 0.18, 0.4), tail_droop: 25.0),
@@ -631,7 +631,7 @@
         ),
         (
             name: "lynx", level: 14, health: 18, rarity: Uncommon, weak: Some(Crush),
-            attack: (damage: (2, 4), reach: 0.9, every: 1.0, style: Slash),
+            attack: (damage: (2, 4), reach: 0.9, every: 1.0, lunge: 1.5, style: Slash),
             defence: 9,
             body: (
                 size: (0.7, 0.75),
@@ -655,7 +655,7 @@
         ),
         (
             name: "badger", level: 7, health: 12, weak: Some(Crush),
-            attack: (windup: 0.35, recovery: 0.4, damage: (1, 3), reach: 0.9, every: 1.1, style: Slash),
+            attack: (windup: 0.35, recovery: 0.4, damage: (1, 3), reach: 0.9, every: 1.1, lunge: 1.5, style: Slash),
             defence: 7,
             body: (
                 size: (0.6, 0.45),
@@ -680,7 +680,7 @@
         // --- Supernatural -------------------------------------------------------------------
         (
             name: "ember_salamander", supernatural: true, level: 8, health: 9, rarity: Uncommon, weak: Some(Crush),
-            attack: (windup: 0.35, recovery: 0.4, damage: (1, 3), reach: 0.8, every: 1.2, style: Magic),
+            attack: (windup: 0.35, recovery: 0.4, damage: (1, 3), reach: 0.8, every: 1.2, style: Magic, lunge: 1.5),
             defence: 5,
             body: (
                 size: (0.4, 0.25),
@@ -913,7 +913,7 @@
         ),
         (
             name: "bison", title: "Bison", level: 10, health: 18, rarity: Uncommon, weak: Some(Stab),
-            attack: (windup: 0.7, recovery: 0.9, damage: (2, 4), reach: 1.2, every: 1.6, style: Crush),
+            attack: (windup: 0.7, recovery: 0.9, damage: (2, 4), reach: 1.2, every: 1.6, lunge: 1.0, style: Crush),
             defence: 6,
             body: (
                 size: (1.0, 1.4),
@@ -972,7 +972,7 @@
         ),
         (
             name: "crocodile", level: 18, health: 26, rarity: Uncommon, weak: Some(Crush),
-            attack: (windup: 0.7, recovery: 0.9, damage: (3, 6), reach: 1.2, every: 1.6, style: Stab),
+            attack: (windup: 0.7, recovery: 0.9, damage: (3, 6), reach: 1.2, every: 1.6, lunge: 1.0, style: Stab),
             defence: 14,
             body: (
                 size: (1.0, 0.5),
@@ -1024,7 +1024,7 @@
         ),
         (
             name: "frost_stag", supernatural: true, level: 20, health: 20, rarity: Rare, weak: Some(Slash),
-            attack: (windup: 0.7, recovery: 0.9, damage: (2, 5), reach: 1.2, every: 1.4, style: Crush),
+            attack: (windup: 0.7, recovery: 0.9, damage: (2, 5), reach: 1.2, every: 1.4, style: Crush, lunge: 1.0),
             defence: 12,
             body: (
                 size: (0.8, 1.6),
@@ -1119,7 +1119,7 @@
         ),
         (
             name: "snow_leopard", level: 22, health: 26, rarity: Rare, weak: Some(Stab),
-            attack: (damage: (2, 5), reach: 1.0, every: 1.0, style: Slash),
+            attack: (damage: (2, 5), reach: 1.0, every: 1.0, lunge: 1.5, style: Slash),
             defence: 14,
             body: (
                 size: (0.7, 0.75),
@@ -1237,7 +1237,7 @@
         // --- Monsters: darkness only ---------------------------------------------------------
         (
             name: "cave_crawler", kind: Monster, level: 6, health: 8, weak: Some(Crush),
-            attack: (windup: 0.35, recovery: 0.4, damage: (1, 3), reach: 1.0, every: 1.0, style: Stab),
+            attack: (windup: 0.35, recovery: 0.4, damage: (1, 3), reach: 1.0, every: 1.0, style: Stab, lunge: 1.5),
             defence: 4,
             body: (
                 size: (0.9, 0.6),
@@ -1254,7 +1254,7 @@
         ),
         (
             name: "cave_bat", kind: Monster, level: 3, health: 4, weak: Some(Slash),
-            attack: (windup: 0.35, recovery: 0.4, damage: (1, 1), reach: 0.6, every: 0.9, style: Stab),
+            attack: (windup: 0.35, recovery: 0.4, damage: (1, 1), reach: 0.6, every: 0.9, lunge: 1.5, style: Stab),
             body: (
                 size: (0.4, 0.4),
                 model: Boxes([
@@ -1278,7 +1278,7 @@
         ),
         (
             name: "shambler", kind: Monster, supernatural: true, level: 5, health: 10, weak: Some(Slash),
-            attack: (damage: (1, 3), reach: 1.0, every: 1.3, style: Crush),
+            attack: (damage: (1, 3), reach: 1.0, every: 1.3, style: Crush, pace: Walk),
             defence: 3,
             body: (
                 size: (0.6, 1.8),

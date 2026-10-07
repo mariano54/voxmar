@@ -67,11 +67,6 @@ const MAX_CREATURES: usize = 512;
 const KIN_RANGE: f32 = 14.0;
 /// How far creatures look for food.
 const FOOD_RANGE: i32 = 6;
-/// How far, in blocks, a blow may reach past a creature's box on the server: the client
-/// aims at where it last drew the creature, which a server running behind has moved on
-/// from. Plus how far the creature moves in this many seconds.
-const REACH_SLACK: f32 = 1.0;
-const REACH_LAG: f32 = 0.6;
 /// Seconds a player must keep within `SETTLE_RADIUS` blocks of one spot before hunters
 /// there leave them be (RuneScape's ten minutes in 21 × 21 squares).
 const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
@@ -108,6 +103,8 @@ pub struct Live {
     pub held_until: u64,
     /// Winding up an attack (`fight`): shown in the attacking pose until it lands.
     pub winding: bool,
+    /// Following the player it winds up at, until a tick, before its aim locks (`fight`).
+    pub tracking: Option<(PlayerId, u64)>,
     /// Its genes, and what shows of them.
     pub genome: genes::Genome,
     pub traits: genes::Traits,
@@ -178,12 +175,13 @@ pub struct Creatures {
 }
 
 impl Creatures {
-    /// The box a blow at a creature may land in: its own, widened by what the player's
-    /// view of it may lag behind (`REACH_SLACK`, `REACH_LAG`).
-    pub fn reach_box(&self, id: u32) -> Option<Aabb> {
+    /// The box a blow at a creature may land in: its own, widened by how far it moves in
+    /// `lag` seconds, which a player's view of it may run behind (`Feel::reach_lag`; the
+    /// reach itself adds `Feel::reach_slack`).
+    pub fn reach_box(&self, id: u32, lag: f32) -> Option<Aabb> {
         let creature = self.live.get(&id).filter(|c| c.health > 0)?;
         let mut aabb = creature.body.aabb();
-        let slack = REACH_SLACK + creature.body.velocity.length() * REACH_LAG;
+        let slack = creature.body.velocity.length() * lag.max(0.0);
         aabb.min -= Vec3::splat(slack);
         aabb.max += Vec3::splat(slack);
         Some(aabb)
@@ -409,15 +407,17 @@ impl Server {
         let mut body = creature.body;
         let decision = creature.decision;
         let held = self.tick < creature.held_until;
+        // Winding up, it still turns and walks at its target until its aim locks.
+        let tracking = if held { self.tracking_drive(id) } else { None };
         let drive = match decision.goal {
-            _ if held => Drive::default(),
+            _ if held => tracking.unwrap_or_default(),
             Some(goal) if goal.with_y(0.0).distance(body.position.with_y(0.0)) > 0.4 => {
                 let wish = (goal - body.position).with_y(if species.def.habitat.water == Water::Swim { goal.y - body.position.y } else { 0.0 });
                 Drive { wish: wish.normalize_or_zero(), speed: decision.speed * (1.0 - self.fights.slow(id)), face: decision.face.map(|f| f - body.position) }
             }
             _ => Drive { wish: Vec3::ZERO, speed: 0.0, face: decision.face.map(|f| f - body.position) },
         };
-        if held {
+        if held && tracking.is_none() {
             // Held still: nothing carries it along, neither its legs nor a neighbour's push.
             body.velocity.x = 0.0;
             body.velocity.z = 0.0;
@@ -498,7 +498,7 @@ impl Server {
     /// A creature's blow comes down on a player (`fight`): a hit rolled from its level
     /// against the player's Defence, its damage times `share` (what a guard lets through).
     /// Returns the damage, or `None` for a miss, which trains Defence.
-    pub(crate) fn creature_strikes(&mut self, species: CreatureId, player: PlayerId, share: f32) -> Option<u16> {
+    pub(crate) fn creature_strikes(&mut self, creature: u32, species: CreatureId, player: PlayerId, share: f32) -> Option<u16> {
         let def = &self.content.creatures.get(species).def;
         let attack = def.attack?;
         let target = self.players.get(&player)?;
@@ -510,9 +510,10 @@ impl Server {
         let [hit, amount] = combat_roll(self.tick, species.0 as u32, player as u64 ^ 0xa7);
         let (low, high) = attack.damage;
         // Worn armour adds to the defence roll, by the wearer's own Defence level.
-        let armour = self.content.combat.armour_of(&target.inventory.worn, attack.style, |skill| self.content.skills.level(target.skills.xp(skill)));
-        if hit >= voxmar_engine::combat::hit_chance(def.level, 0, defence, armour) {
-            self.defence_xp(player, species);
+        let armour = self.content.combat.armour_of(target.held(), &target.inventory.worn, attack.style, |skill| self.content.skills.level(target.skills.xp(skill)));
+        let accuracy = attack.accuracy.unwrap_or((self.content.combat.feel.creature_accuracy * def.level as f32).round() as u16);
+        if hit >= voxmar_engine::combat::hit_chance(def.level, accuracy, defence, armour) {
+            self.defence_xp(player, creature, species);
             return None;
         }
         let rolled = low + ((amount * (high - low + 1) as f32) as u8).min(high - low);
@@ -526,11 +527,22 @@ impl Server {
     }
 
     /// Experience in Defence for a creature's blow turned aside: four a point of the damage
-    /// it would do.
-    pub(crate) fn defence_xp(&mut self, player: PlayerId, species: CreatureId) {
-        let Some(attack) = self.content.creatures.get(species).def.attack else { return };
+    /// it would do, while the player fights it back and it is a match for them (the wiki,
+    /// draft 63: `feel.defence_xp_window`, `feel.defence_xp_level`).
+    pub(crate) fn defence_xp(&mut self, player: PlayerId, creature: u32, species: CreatureId) {
+        let def = &self.content.creatures.get(species).def;
+        let Some(attack) = def.attack else { return };
         let Some(skill) = self.skill("core:defence") else { return };
         let (low, high) = attack.damage;
+        // Nothing for turning aside what could never hurt.
+        if high == 0 {
+            return;
+        }
+        let feel = self.content.combat.feel;
+        let defence = self.level(player, Some(skill));
+        if (def.level as f32) < feel.defence_xp_level * defence as f32 || !self.fights.fought(player, creature, feel.defence_xp_window) {
+            return;
+        }
         let tenths = (40 * (low as u32 + high as u32) / 2).max(10);
         let Some(target) = self.players.get_mut(&player) else { return };
         target.skills.grant(skill, tenths);
@@ -548,23 +560,23 @@ impl Server {
     /// from the weapon's skill and accuracy against the creature's defence (half against
     /// the style it is weak to), damage up to the weapon's max hit for their level, as the
     /// stroke raises them. Returns the damage, 0 for a miss, `None` if it is gone.
-    pub(crate) fn land_blow(&mut self, player: PlayerId, id: u32, weapon: &voxmar_engine::combat::Weapon, stroke: crate::fight::Stroke) -> Option<u16> {
+    pub(crate) fn land_blow(&mut self, player: PlayerId, id: u32, weapon: &voxmar_engine::combat::Weapon, stroke: voxmar_engine::combat::Stroke) -> Option<u16> {
         let creature = self.creatures.live.get(&id)?;
         let species = self.content.creatures.get(creature.species);
         let attack = self.level(player, weapon.skill);
         let sunder = self.fights.sunder(id);
         let defence = voxmar_engine::combat::defence_against(species.def.defence, species.def.weak, weapon.style);
-        let defence = (defence as f32 * (1.0 - sunder)).round() as u8;
         let [hit, amount] = combat_roll(self.tick, id, player as u64 ^ 0x5717);
+        // Shares of a level or a max hit round by chance, so a small one still counts.
+        let defence = voxmar_engine::combat::by_chance(defence as f32 * (1.0 - sunder), unit_from(mix(hit.to_bits() as u64, 0x5d)))
+            .min(u8::MAX as u16) as u8;
         if !stroke.certain && hit >= voxmar_engine::combat::hit_chance_with(attack, weapon.accuracy, defence, 0, stroke.accuracy) {
             let creature = self.creatures.live.get_mut(&id).expect("checked above");
             creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
-            if let Some(p) = self.players.get(&player) {
-                p.connection.send(ServerMessage::Struck { creature: id, damage: 0, killed: false, blow: stroke.blow });
-            }
+            self.struck(player, id, 0, false, stroke.blow);
             return Some(0);
         }
-        let max_hit = (weapon.max_hit(attack) as f32 * (1.0 + stroke.max_hit)).round().max(1.0) as u16;
+        let max_hit = stroke.max_hit(weapon.max_hit(attack), unit_from(mix(amount.to_bits() as u64, 0x3a7)));
         let full = (1 + (amount * max_hit as f32) as u16).min(max_hit);
         // A blow struck sooner than the buffer lands lighter (`combat`).
         let damage = voxmar_engine::combat::scaled(full, stroke.strength, unit_from(mix(amount.to_bits() as u64, 0x5e1f)));
@@ -594,9 +606,7 @@ impl Server {
             target.changed(traits::SKILLS);
         }
         let killed = self.creatures.live[&id].health == 0;
-        if let Some(p) = self.players.get(&player) {
-            p.connection.send(ServerMessage::Struck { creature: id, damage, killed, blow });
-        }
+        self.struck(player, id, damage, killed, blow);
         if killed {
             self.creature_dies(id);
         }
@@ -683,6 +693,7 @@ impl Server {
             ready_until: 0,
             held_until: 0,
             winding: false,
+            tracking: None,
             genome,
             traits,
             breeds_again: 0,
@@ -938,7 +949,7 @@ mod combat_tests {
     #[test]
     fn blows_at_a_steady_beat_land_as_often_as_the_odds_say() {
         // A player swinging every seven ticks at a level-1 creature that stands still.
-        let chance = creature::hit_chance(1, 1);
+        let chance = voxmar_engine::combat::hit_chance(1, 0, 1, 0);
         for creature in 0..20u32 {
             let (mut landed, mut misses, mut longest) = (0, 0, 0);
             for blow in 0..400u64 {

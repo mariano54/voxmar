@@ -232,7 +232,7 @@
     "item.plants": "{crop}を植える・{skill} {level}",
     "item.weapon": "{class}・{style}・{skill} {level}",
     "item.weapon_hit": "最大ダメージ {hit}・{seconds}秒ごとに一撃",
-    "item.weapon_reach": "一ブロック遠くまで届く",
+    "item.weapon_reach": "{reach}ブロック先まで届く",
     "item.class.dagger": "短剣",
     "item.class.sword": "剣",
     "item.class.spear": "槍",

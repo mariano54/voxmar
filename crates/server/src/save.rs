@@ -567,6 +567,9 @@ mod tests {
         let mut inventory = Inventory::default();
         inventory.add(registry.expect("base:cobblestone"), 70);
         inventory.pouched.push((registry.expect("base:cobblestone"), 300));
+        // What is worn keeps its slot (the save keeps names; content judges what fits).
+        inventory.worn[1] = Some(ItemStack { item: registry.expect("base:dirt"), count: 1 });
+        inventory.worn[5] = Some(ItemStack { item: registry.expect("base:cobblestone"), count: 1 });
         let player = SavedPlayer {
             position: Vec3::new(1.5, 80.0, -20.25),
             yaw: 1.25,

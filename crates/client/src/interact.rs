@@ -55,6 +55,8 @@ pub struct Target {
     pub used_right: bool,
     /// Block being broken and progress in 0..1.
     pub breaking: Option<(IVec3, f32)>,
+    /// Until when (seconds of game time) the player is eating: no dodge before.
+    pub eating_until: f32,
     /// The target the mining in progress was proposed at, which its `Finished` names.
     mining: Option<ActionTarget>,
     mining_seconds: f32,
@@ -271,7 +273,7 @@ fn break_and_place(
             }
             // A block that asks for a skill level or a better tool says so on a fresh click.
             _ if mouse.just_pressed(MouseButton::Left)
-                && let Err(Rejection::Unmet(need @ (Requirement::BlockLevel | Requirement::ToolGood))) = def.validate(&context, action_target) =>
+                && let Err(Rejection::Unmet(need @ (Requirement::BlockLevel | Requirement::CropLevel | Requirement::ToolGood))) = def.validate(&context, action_target) =>
             {
                 if let Some(words) = refusal(&world, &launch.content, &locale, hit.block, need) {
                     toasts.refused(words, time.elapsed_secs());
@@ -296,7 +298,7 @@ fn break_and_place(
 
     // Food in hand is eaten when it would not be placed: an item, or nothing in reach to
     // put it on. Eating takes a moment, so it starts on the press, not again while held.
-    target.used_right = false;
+    // (`used_right` was cleared by `creatures::aim`, which runs first.)
     if mouse.just_pressed(MouseButton::Right) && ui.cursor_locked && !player.dead {
         let content = &launch.content;
         // A crafting table opens the inventory with its three-by-three grid.
@@ -362,6 +364,9 @@ fn break_and_place(
                     // Eating takes the player's hands: the server drops (or, if nearly
                     // done, completes) any mining it replaces, and so does the client.
                     net.propose_from(&player, eat, ActionTarget::None);
+                    if let Some(voxmar_engine::action::Duration::Seconds(seconds)) = actions.0.get(eat).map(|def| def.duration) {
+                        target.eating_until = time.elapsed_secs() + seconds;
+                    }
                     target.used_right = true;
                     target.breaking = None;
                     target.mine_cooldown = 1.2;
@@ -372,8 +377,13 @@ fn break_and_place(
             }
             return;
         }
-        // Armour or a shield in hand goes on, swapped for what was worn there.
-        if let Some(at) = held.and_then(voxmar_engine::inventory::worn_slot).filter(|_| target.creature.is_none()) {
+        // Armour or a shield in hand goes on, swapped for what was worn there, unless a
+        // creature or a ripe crop is looked at (it is tended or picked).
+        let ripe = hit.zip(actions.0.id("base:pick")).is_some_and(|(hit, pick)| {
+            let context = ClientContext { world: &world, player: &player, content };
+            actions.0.get(pick).is_some_and(|def| def.validate(&context, ActionTarget::Block { block: hit.block, face: hit.face }).is_ok())
+        });
+        if let Some(at) = held.and_then(voxmar_engine::inventory::worn_slot).filter(|_| target.creature.is_none() && !ripe) {
             let to = voxmar_engine::inventory::WORN + at;
             let slots = ActionTarget::Slots { from: player.selected as u8, to: to as u8, count: 1 };
             net.propose_from(&player, actions.0.expect("core:transfer"), slots);
@@ -496,6 +506,13 @@ fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
 /// What to tell a player whose click a block refused: the skill level it asks for, or the
 /// least tool that would do.
 fn refusal(world: &ClientWorld, content: &Content, locale: &Locale, block: IVec3, need: Requirement) -> Option<String> {
+    // A ripe crop above the player's Farming level.
+    if need == Requirement::CropLevel {
+        let (crop, _) = content.crops.stage_of(world.block(block)?)?;
+        let crop = content.crops.get(crop);
+        let skill = locale.skill(content.skills.get(crop.skill));
+        return Some(locale.format("skills.needs", &[("skill", &skill), ("level", &crop.def.level)]));
+    }
     let rule = content.tools.rule(world.block(block)?)?;
     match need {
         Requirement::BlockLevel => {
