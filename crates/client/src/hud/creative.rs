@@ -143,7 +143,7 @@ impl Catalogue {
 
 /// Lower case, and katakana as hiragana, so アイテム finds あいてむ and the other way round.
 fn fold(text: &str) -> String {
-    text.to_lowercase().chars().map(|c| if ('\u{30A1}'..='\u{30F6}').contains(&c) { char::from_u32(c as u32 - 0x60).unwrap_or(c) } else { c }).collect()
+    text.to_lowercase().chars().filter(|&c| c != '\u{2060}').map(|c| if ('\u{30A1}'..='\u{30F6}').contains(&c) { char::from_u32(c as u32 - 0x60).unwrap_or(c) } else { c }).collect()
 }
 
 /// Puts `item` on the pointer (one, or a stack) or a stack of it into the inventory, if the

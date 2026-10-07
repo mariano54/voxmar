@@ -57,6 +57,11 @@ impl Lang {
         for problem in problems {
             tracing::warn!("{problem}");
         }
+        if code == "ja" {
+            for words in lang.strings.values_mut() {
+                *words = join_katakana(words);
+            }
+        }
         for (package, _, source) in read_files(content_dir, "lang/readings", |file_code| file_code == code) {
             match parse(&source) {
                 // As with strings, the first package to give a reading keeps it.
@@ -329,6 +334,23 @@ pub fn title_from_id(name: &str) -> String {
 
 /// The key a definition's name is looked up by: `kind` `block` and name `base:oak_log`
 /// make `block.base.oak_log`.
+/// Japanese with a word joiner (U+2060) between each two katakana, so a line never breaks
+/// inside a katakana word (クリック, not ク / リック): kanji and kana may break anywhere, but
+/// a loanword reads as one.
+pub fn join_katakana(words: &str) -> String {
+    let katakana = |c: char| ('\u{30A0}'..='\u{30FF}').contains(&c);
+    let mut joined = String::with_capacity(words.len());
+    let mut last = None;
+    for c in words.chars() {
+        if last.is_some_and(katakana) && katakana(c) {
+            joined.push('\u{2060}');
+        }
+        joined.push(c);
+        last = Some(c);
+    }
+    joined
+}
+
 pub fn def_key(kind: &str, name: &str) -> String {
     let mut key = String::with_capacity(kind.len() + 1 + name.len());
     key.push_str(kind);
@@ -424,6 +446,15 @@ fn read_files(content_dir: &Path, sub: &str, wanted: impl Fn(&str) -> bool) -> V
         }
     }
     files
+}
+
+#[cfg(test)]
+mod join_tests {
+    #[test]
+    fn katakana_words_hold_together() {
+        assert_eq!(super::join_katakana("Shift＋クリック"), "Shift＋ク\u{2060}リ\u{2060}ッ\u{2060}ク");
+        assert_eq!(super::join_katakana("種をまく"), "種をまく");
+    }
 }
 
 #[cfg(test)]

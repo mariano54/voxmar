@@ -29,6 +29,8 @@ pub struct Spill {
     pub lines: Vec2,
     /// Another text it runs into, if that is the trouble.
     pub over: Option<String>,
+    /// A katakana word its lines break inside, if that is the trouble (ク / リック).
+    pub broken: Option<String>,
 }
 
 impl std::fmt::Display for Spill {
@@ -37,6 +39,9 @@ impl std::fmt::Display for Spill {
         let past: Vec<String> = self.past.iter().zip(sides).filter(|(by, _)| **by > 0.5).map(|(by, side)| format!("{by:.0} px {side}")).collect();
         if let Some(other) = &self.over {
             return write!(f, "{:?} runs into {other:?}", self.text);
+        }
+        if let Some(word) = &self.broken {
+            return write!(f, "{:?} breaks a line inside {word:?}", self.text);
         }
         let what = if self.own { "its own box" } else { "the element it sits in" };
         let (size, lines) = (self.size, self.lines);
@@ -109,6 +114,27 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             Some((entity, text.0.clone(), Rect { min: min + ink.min * scale, max: min + ink.max * scale }, own))
         })
         .collect();
+    // A line may break between any two kanji or kana, but never inside a katakana word.
+    let katakana = |c: char| ('\u{30A0}'..='\u{30FF}').contains(&c);
+    for (_, text, layout, _, _, visible) in texts.iter(world) {
+        if !visible.get() || !text.0.chars().any(katakana) {
+            continue;
+        }
+        let chars: Vec<char> = text.0.chars().filter(|&c| !c.is_whitespace() && c != '\u{2060}').collect();
+        // Glyph for character, where the layout gives one each.
+        if chars.len() != layout.glyphs.len() {
+            continue;
+        }
+        for k in 1..chars.len() {
+            if layout.glyphs[k].line_index != layout.glyphs[k - 1].line_index && katakana(chars[k - 1]) && katakana(chars[k]) {
+                let start = chars[..k].iter().rposition(|&c| !katakana(c)).map_or(0, |i| i + 1);
+                let end = chars[k..].iter().position(|&c| !katakana(c)).map_or(chars.len(), |i| k + i);
+                let word: String = chars[start..end].iter().collect();
+                found.push(Spill { text: text.0.clone(), past: [0.0; 4], own: true, size: Vec2::ZERO, lines: layout.size, over: None, broken: Some(word) });
+                break;
+            }
+        }
+    }
     // Texts running into one another, as far as each shows (a scrolling list hides what
     // lies past its edges).
     let shown: Vec<(usize, Rect)> = candidates
@@ -121,7 +147,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             let both = first.intersect(second);
             if both.width() > slack && both.height() > slack {
                 let text = candidates[i].1.clone();
-                found.push(Spill { text, past: [0.0; 4], own: false, size: second.size(), lines: first.size(), over: Some(candidates[j].1.clone()) });
+                found.push(Spill { text, past: [0.0; 4], own: false, size: second.size(), lines: first.size(), over: Some(candidates[j].1.clone()), broken: None });
             }
         }
     }
@@ -132,7 +158,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         for &(i, seen) in &shown {
             let by = past(seen, screen.inflate(-ROOM));
             if spills(&by, true, slack) {
-                found.push(Spill { text: candidates[i].1.clone(), past: by, own: false, size: screen.size(), lines: seen.size(), over: None });
+                found.push(Spill { text: candidates[i].1.clone(), past: by, own: false, size: screen.size(), lines: seen.size(), over: None, broken: None });
             }
         }
     }
@@ -159,7 +185,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             let both = seen.intersect(**icon);
             both.width() > slack && both.height() > slack
         }) {
-            found.push(Spill { text: text.clone(), past: [0.0; 4], own: false, size: icon.size(), lines: seen.size(), over: Some("an icon".into()) });
+            found.push(Spill { text: text.clone(), past: [0.0; 4], own: false, size: icon.size(), lines: seen.size(), over: Some("an icon".into()), broken: None });
         }
     }
     for (entity, text, lines, own) in candidates {
@@ -170,7 +196,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         // screen pixels, and their smoothed edge can show a pixel either side of the box.
         let by = past(lines, own);
         if spills(&by, false, slack + units_per_pixel) {
-            found.push(Spill { text, past: by, own: true, size: own.size(), lines: lines.size(), over: None });
+            found.push(Spill { text, past: by, own: true, size: own.size(), lines: lines.size(), over: None, broken: None });
             continue;
         }
         // Past a scrolling list, lines may be cut off above and below by every box out to
@@ -192,7 +218,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             let inner = if drawn { outer.inflate(-(FRAME + ROOM)) } else { outer };
             let by = past(lines, inner);
             if node.size().min_element() > 0.0 && spills(&by, vertical, slack) {
-                found.push(Spill { text, past: by, own: false, size: outer.size(), lines: lines.size(), over: None });
+                found.push(Spill { text, past: by, own: false, size: outer.size(), lines: lines.size(), over: None, broken: None });
                 break;
             }
         }

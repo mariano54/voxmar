@@ -551,7 +551,9 @@ mod tests {
         }
         assert!(unread.is_empty(), "Japanese names without a reading (add them to lang/readings/ja.ron): {}", unread.into_iter().collect::<Vec<_>>().join(", "));
         let oak = blocks.id("base:oak_log").map(|id| blocks.def(id)).unwrap();
-        assert_eq!((locale.block(oak).as_str(), locale.block_reading(oak).as_deref()), ("オークの原木", Some("オークのげんぼく")));
+        // Katakana words hold together with word joiners (`join_katakana`), which draw nothing.
+        let plain = |words: String| words.replace('\u{2060}', "");
+        assert_eq!((plain(locale.block(oak)), locale.block_reading(oak).map(plain)), ("オークの原木".to_owned(), Some("オークのげんぼく".to_owned())));
         assert_eq!(Locale::load(&content(), "en").block_reading(oak), None);
     }
 
