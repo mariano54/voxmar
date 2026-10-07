@@ -148,12 +148,15 @@ impl Lang {
     /// or, for a block made from a template, the template member's name with the family's
     /// filled in (`block.base.{name}_log` with `family.base.oak`), so a language names a
     /// whole family of woods or rocks in two lines; another look of a plant goes by the
-    /// plant's name. Without any of those, a name made from its id: "Oak Log".
+    /// plant's name, and a block turned to face another way goes by the block's (a wall
+    /// torch facing east is a wall torch). Without any of those, a name made from its id:
+    /// "Oak Log".
     pub fn block(&self, def: &BlockDef) -> String {
-        if let Some(name) = self.find(&def_key("block", &def.name)) {
+        let name = def.facing_of().unwrap_or(&def.name);
+        if let Some(name) = self.find(&def_key("block", name)) {
             return name.to_owned();
         }
-        let (namespace, local) = def.name.split_once(':').unwrap_or(("", &def.name));
+        let (namespace, local) = name.split_once(':').unwrap_or(("", name));
         if let Some(family) = &def.family {
             let family_local = family.rsplit(':').next().unwrap_or(family);
             let pattern = local.replacen(family_local, "{name}", 1);
@@ -164,7 +167,7 @@ impl Lang {
         if let Some(plant) = def.variant_of.as_deref().and_then(|plant| self.find(&def_key("block", plant))) {
             return plant.to_owned();
         }
-        title_from_id(&def.name)
+        title_from_id(name)
     }
 
     /// How the name at `key` reads, for a name written with kanji (`lang/readings/<code>.ron`):
@@ -177,7 +180,7 @@ impl Lang {
     /// How a block or item's name reads (see [`Lang::reading`]), made as its name is (see
     /// [`Lang::block`]): a template's reading is its member's with the family's filled in.
     pub fn block_reading(&self, def: &BlockDef) -> Option<String> {
-        let key = def_key("block", &def.name);
+        let key = def_key("block", def.facing_of().unwrap_or(&def.name));
         if self.find(&key).is_some() {
             return self.reading(&key);
         }

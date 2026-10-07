@@ -167,6 +167,8 @@ pub struct Particle {
     pub light: [u8; 2],
     /// How it is drawn over what is behind it.
     pub blend: ParticleBlend,
+    /// How much of what lies behind it a particle that adds light hides, 0..1.
+    pub hides: f32,
 }
 
 impl Default for Particle {
@@ -188,6 +190,7 @@ impl Default for Particle {
             cools: false,
             light: [15, 0],
             blend: ParticleBlend::Cutout,
+            hides: 0.0,
         }
     }
 }
@@ -213,7 +216,8 @@ struct GpuParticle {
     sprite: u32,
     /// sRGB colour and opacity, 8 bits each.
     color: u32,
-    /// For motions that wander.
+    /// For motions that wander (the bits from 12 up), and in the low 8 how much of what
+    /// lies behind it the particle hides, in 255ths.
     seed: u32,
 }
 
@@ -256,7 +260,7 @@ impl GpuParticle {
             surface: surface | shape | block << 24 | sky << 28,
             sprite: sprite | (particle.motion as u32) << 24 | blend_bits(particle.blend) << 26 | flags << 28,
             color: u32::from_le_bytes(particle.color),
-            seed,
+            seed: seed & !0xFF | (particle.hides.clamp(0.0, 1.0) * 255.0).round() as u32,
         }
     }
 }
@@ -554,7 +558,10 @@ impl ParticleGpu {
             }
             Some(cache.queue_render_pipeline(descriptor))
         };
-        let add = BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
+        // Light added over what is behind, which it also partly hides (by the alpha the
+        // shader gives, `HIDES`): a flame against the bright day sky stays orange instead of
+        // adding up with the sky's blue into peach.
+        let add = BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::OneMinusSrcAlpha, operation: BlendOperation::Add };
         let keep = BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
         let ids = [
             make("add", "BLEND_ADD", BlendState { color: add, alpha: keep })?,

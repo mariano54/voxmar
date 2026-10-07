@@ -5,7 +5,7 @@
 
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
-use voxmar_engine::action::{ActionContext, ActionId, ActionTarget, Effect, Rejection, Requirement, placement_cell, supported_by};
+use voxmar_engine::action::{ActionContext, ActionId, ActionTarget, Effect, Rejection, Requirement, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::content::Content;
 use voxmar_engine::crop::CropRegistry;
@@ -422,9 +422,10 @@ fn break_and_place(
         let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
         if let Some(item) = held.filter(|_| allowed) {
             let cell = placement_cell(&context, hit.block, hit.face);
+            let placed = placed_block(&context, item, hit.block, hit.face);
             net.propose_from(&player, place, action_target);
             cues.write(SoundCue::for_block(&world, item, Cue::Place));
-            world.set_block(cell, item);
+            world.set_block(cell, placed);
             let selected = player.selected;
             player.inventory.take_one(selected);
         }
