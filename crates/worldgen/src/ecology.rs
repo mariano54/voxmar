@@ -74,7 +74,7 @@ const WONDER_PLANT_CHANCE: f32 = 0.003;
 /// Rare herbs grow in small patches (`PlantDef::patches`): the land is cut into cells this
 /// many blocks across, and each cell holds at most one patch of each herb, its plants
 /// within two blocks of its centre and its centre this far inside the cell.
-const PATCH_CELL: i32 = 32;
+pub(crate) const PATCH_CELL: i32 = 32;
 const PATCH_MARGIN: i32 = 3;
 const PATCHES: u64 = 0x3b5d;
 /// Wonder trees outside the biomes that name them are a find: a lone tree or a tiny grove
@@ -242,6 +242,7 @@ fn habitat(habitat: Habitat, site: &Site) -> f32 {
         Habitat::Water => smoothstep(0.35, 0.7, site.river) * yes(above <= 3),
         Habitat::Shore => yes((0..=3).contains(&above) && (coast || site.river > 0.5)),
         Habitat::Shallows => yes((-2..=1).contains(&above) && (coast || site.river > 0.3)),
+        Habitat::LakeShore => yes(site.body == crate::Body::Lake && (0..=2).contains(&above)),
     }
 }
 
@@ -288,7 +289,7 @@ impl Ecology {
                     habitat: p.habitat,
                     comfort: p.comfort.clone(),
                     snowy: p.snowy.as_deref().map(|n| registry.expect(n)),
-                    patches: p.patches.as_ref().map(|q| (q.rate, q.size.0.max(1), q.size.1.max(q.size.0.max(1)))),
+                    patches: p.patches.as_ref().map(|q| (q.rate, q.size.0, q.size.1)),
                 }
             })
             .collect();

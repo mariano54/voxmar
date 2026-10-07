@@ -539,6 +539,9 @@ pub enum Habitat {
     Shore,
     /// At the edge of warm shallows, rooted under water.
     Shallows,
+    /// On the banks of still lakes (not rivers or creeks), just above the water: mountain
+    /// tarns for the sky lotus.
+    LakeShore,
 }
 
 /// The climate something grows best in: inside both ranges it thrives, and it fades out
@@ -784,15 +787,20 @@ pub struct PlantDef {
     pub patches: Option<Patches>,
 }
 
-/// A rare herb's patches: about `rate` plants per million blocks of a biome that names it
-/// (times the weight the biome names it with), in patches of `size` plants, as many of
-/// them as the ground and climate where each would stand suit it.
+/// A rare herb's patches: about `rate` plants per million blocks where it can root, times
+/// the weight a biome names it with, in patches of `size` plants (1 to 25). `aim` is the
+/// rate design wants it to reach per million blocks of each biome naming it, which the
+/// census test holds it to.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Patches {
     pub rate: f32,
     pub size: (u32, u32),
+    pub aim: f32,
 }
+
+/// The most plants a patch may have.
+pub const PATCH_MOST: u32 = 25;
 
 /// What a biome grows, drawn from the shared pools of trees and plants.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -1989,6 +1997,20 @@ impl WorldContent {
                 block(&at, snowy)?;
             }
             comfort(&at, &plant.comfort)?;
+            if let Some(p) = &plant.patches {
+                if !(p.rate.is_finite() && p.rate > 0.0) {
+                    return Err(ContentError(format!("{}: the patch rate {} must be a number above 0", at(), p.rate)));
+                }
+                if !(1 <= p.size.0 && p.size.0 <= p.size.1 && p.size.1 <= PATCH_MOST) {
+                    return Err(ContentError(format!("{}: a patch has 1 to {PATCH_MOST} plants, the least first, not {:?}", at(), p.size)));
+                }
+                if !(p.aim.is_finite() && p.aim > 0.0) {
+                    return Err(ContentError(format!("{}: the patch aim {} must be a number above 0", at(), p.aim)));
+                }
+                if !plant.named_only {
+                    return Err(ContentError(format!("{}: grows in patches only where named, so it needs `named_only: true`", at())));
+                }
+            }
         }
         for (i, particles) in self.particles.iter().enumerate() {
             let at = || format!("ambient.ron: particles `{}`", particles.name);
@@ -2003,6 +2025,17 @@ impl WorldContent {
         for biome in &self.biomes {
             let file = file_of(&biome.name);
             let at = || format!("{file}: biome `{}`", biome.name);
+            // A patch plant's weight here may make at most one patch a cell (ecology.rs
+            // `in_patch`): its rate times the weight, over a mean patch, fills a cell at most.
+            for select in biome.flora.plants.iter().chain(biome.flora.wonders.iter().flatten()) {
+                let Select::Name(name, weight) = select else { continue };
+                let Some(p) = self.plants.iter().find(|p| p.name == *name).and_then(|p| p.patches.as_ref()) else { continue };
+                let cell = (crate::ecology::PATCH_CELL * crate::ecology::PATCH_CELL) as f32;
+                let chance = p.rate * weight * cell / ((p.size.0 + p.size.1) as f32 / 2.0) / 1e6;
+                if !(weight.is_finite() && *weight > 0.0 && chance <= 1.0) {
+                    return Err(ContentError(format!("{}: plant `{name}` at weight {weight} asks for {chance:.2} patches a {}-block cell; at most 1", at(), crate::ecology::PATCH_CELL)));
+                }
+            }
             let air = &biome.atmosphere;
             for (what, value, range) in [("haze_density", air.haze_density, 0.0..=4.0), ("warmth", air.warmth, -1.0..=1.0), ("saturation", air.saturation, 0.0..=2.0)] {
                 if value.is_some_and(|v| !range.contains(&v)) {
