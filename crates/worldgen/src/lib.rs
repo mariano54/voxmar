@@ -276,7 +276,14 @@ impl Overworld {
 
     /// A generator with the world content of loaded packages ([`WorldContent::load`]).
     pub fn with_content(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent) -> Self {
-        let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
+        Self::with_content_at(seed, registry, content, Self::VERSION)
+    }
+
+    /// As [`with_content`](Self::with_content), as generation `version` would seed it: tests
+    /// use it to check a world before `VERSION` is bumped to reseed every world.
+    #[doc(hidden)]
+    pub fn with_content_at(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent, version: u32) -> Self {
+        let stream = rng::stream_seed(seed, Self::ID, version);
         let mut dials = WorldDials::sample(stream);
         dials.pole_distance *= content.climate.zones / WorldDials::POLE_DISTANCE;
         let rocks = Rocks::new(stream, content, &registry, &dials.featured);
