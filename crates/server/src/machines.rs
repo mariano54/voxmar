@@ -13,14 +13,14 @@
 //! their inventory. Either way they are told how it is doing.
 
 use serde::{Deserialize, Serialize};
-use voxmar_engine::block::BlockId;
+use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, local_index};
 use voxmar_engine::dropped;
-use voxmar_engine::factory::{MachineState, MachineView, Status};
+use voxmar_engine::factory::{MachineState, MachineView, Status, inputs_hold};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::lang::{Words, def_key};
-use voxmar_engine::machine::{Role, Source};
+use voxmar_engine::machine::{Machine, MachineRegistry, ProcessId, Role, Source};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
@@ -90,6 +90,14 @@ struct Sites {
     wheels: Vec<(IVec3, Option<String>)>,
     windmills: Vec<IVec3>,
     water_wheels: Vec<IVec3>,
+}
+
+/// The recipe of `machine` that makes `made` (by name) to go on with, preferring one whose
+/// inputs `inputs` hold.
+fn resumed(machine: &Machine, machines: &MachineRegistry, blocks: &BlockRegistry, made: &str, inputs: &[Option<ItemStack>]) -> Option<ProcessId> {
+    let makes = |p: &ProcessId| machines.process(*p).outputs.first().is_some_and(|&(item, _)| blocks.def(item).name == made);
+    let mut making = machine.processes.iter().copied().filter(makes);
+    making.clone().find(|&p| inputs_hold(inputs, machines.process(p))).or_else(|| making.next())
 }
 
 /// The faces a water wheel takes water from: its sides, and below.
@@ -331,10 +339,19 @@ impl Server {
                 lines.push(Words::Own(format!("{}.hint", def_key("multiblock", &structure.name)), structure.hint.clone()));
             }
             Some(structure) => {
-                // Counted once a build, not on every use.
-                if let Some(state) = self.factory.state_mut(pos).filter(|s| !s.counted) {
-                    state.counted = true;
-                    self.tally(agent, "built", &structure.name, 1);
+                // Counted once a build, not on every use, for whoever placed the core (whoever
+                // uses it, if nobody did), and only while they are about.
+                let owner = self.factory.get(pos).filter(|(_, s)| !s.counted).map(|(_, s)| s.owner.clone());
+                let builder = match owner {
+                    Some(Some(name)) => self.players.iter().find(|(_, p)| p.joined && p.name == name).map(|(&id, _)| id),
+                    Some(None) => Some(agent),
+                    None => None,
+                };
+                if let Some(builder) = builder {
+                    if let Some(state) = self.factory.state_mut(pos) {
+                        state.counted = true;
+                    }
+                    self.tally(builder, "built", &structure.name, 1);
                 }
                 lines.push(self.machine_words(&view));
             }
@@ -484,9 +501,10 @@ impl Server {
             state.fuel = machine.fuel.as_ref().and_then(stack);
             state.bin = machine.bin.iter().map(stack).collect();
             // The work it was doing goes on where it was: the recipe of this machine that makes
-            // the same thing (the next step drops it if what it holds no longer does).
+            // the same thing from what it holds (a furnace makes an ingot from ore or from dust;
+            // the next step drops it if what it holds no longer does).
             if let (Some((made, progress)), Some(def)) = (&machine.work, machines.get(block)) {
-                state.process = def.processes.iter().copied().find(|&p| machines.process(p).outputs.first().is_some_and(|&(item, _)| blocks.def(item).name == *made));
+                state.process = resumed(def, &machines, &blocks, made, &state.inputs);
                 state.progress = if state.process.is_some() { *progress } else { 0.0 };
             }
             self.factory.insert_state(IVec3::from_array(machine.position), block, state, &machines);
@@ -505,6 +523,18 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_furnace_restored_mid_ingot_goes_on_with_the_recipe_its_inputs_make() {
+        let content = voxmar_engine::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let furnace = machines.get(blocks.expect("base:electric_furnace")).unwrap();
+        for input in ["base:iron_ore", "base:iron_dust"] {
+            let inputs = [Some(ItemStack { item: blocks.expect(input), count: 1 }), None, None];
+            let process = resumed(furnace, machines, blocks, "base:iron_ingot", &inputs).map(|p| machines.process(p));
+            assert!(process.is_some_and(|p| p.inputs[0].0.contains(&blocks.expect(input))), "an ingot from {input}");
+        }
+    }
 
     #[test]
     fn a_fall_ringed_by_wheels_turns_one_of_them() {

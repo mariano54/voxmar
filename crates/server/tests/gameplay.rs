@@ -1661,6 +1661,40 @@ fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() 
 }
 
 #[test]
+fn a_multiblock_counts_as_built_for_whoever_placed_its_core_not_whoever_uses_it_first() {
+    let dir = world_dir("builder");
+    let mut owner = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let core = owner.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~1 ~ ~-1 ~6 ~2 ~1 air", "/fill ~1 ~-1 ~-1 ~6 ~-1 ~1 stone", "/give bloomery 1"] {
+        owner.ok(line);
+    }
+    let bloomery = owner.content.blocks.expect("base:bloomery");
+    owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == bloomery) && c.world.block(core - IVec3::Y) == c.content.blocks.id("base:stone"));
+    // The core placed by hand on open ground, then the shaft built round it.
+    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.propose("core:place", ActionTarget::Block { block: core - IVec3::Y, face: Face::PosY });
+    owner.pump_until(|c| c.world.block(core) == Some(bloomery));
+    for line in ["/fill ~3 ~ ~-1 ~5 ~2 ~-1 kiln_bricks", "/fill ~3 ~ ~1 ~5 ~2 ~1 kiln_bricks", "/fill ~3 ~ ~ ~3 ~2 ~ kiln_bricks", "/fill ~5 ~1 ~ ~5 ~2 ~ kiln_bricks", "/setblock ~5 ~ ~ bellows"] {
+        owner.ok(line);
+    }
+    owner.pump_until(|c| c.world.block(core + IVec3::X) == c.content.blocks.id("base:bellows"));
+    // Another player uses it first: the build is the owner's.
+    let mut other = owner.another("other");
+    other.pump_until(|c| c.world.block(core) == Some(bloomery));
+    // Empty-handed (its starting kit's first slot holds what a bloomery does not take).
+    let empty = other.inventory.slots.iter().take(9).position(Option::is_none).expect("an empty hotbar slot") as u8;
+    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: empty, flying: false }));
+    other.propose("base:use_machine", ActionTarget::Block { block: core, face: Face::NegX });
+    other.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Bloomery")));
+    drop(other);
+    drop(owner);
+    let read = |name: &str| std::fs::read_to_string(dir.join("players").join(format!("{name}.ron"))).unwrap();
+    assert!(read("test").contains("built:base:bellows_bloomery"), "the owner built it: {}", read("test"));
+    assert!(!read("other").contains("built:"), "the first to use it did not: {}", read("other"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_broken_chest_drops_what_it_held_and_a_chute_in_hand_is_not_put_in() {
     let mut client = Client::join();
     let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);

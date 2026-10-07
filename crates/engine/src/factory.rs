@@ -877,7 +877,7 @@ fn fill(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8) -> u8 {
 }
 
 /// Whether the inputs hold all a recipe takes, each item counted once.
-fn inputs_hold(inputs: &[Option<ItemStack>], process: &crate::machine::Process) -> bool {
+pub fn inputs_hold(inputs: &[Option<ItemStack>], process: &crate::machine::Process) -> bool {
     let mut left: Vec<Option<ItemStack>> = inputs.to_vec();
     process.inputs.iter().all(|(accepts, count)| {
         let mut need = *count;
