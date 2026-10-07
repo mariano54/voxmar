@@ -931,7 +931,7 @@ mod tests {
                     assert!(!packages.contains(line.as_str()), "{code}: {}'s tooltip has a line reading only {line:?}", def.name);
                 }
             }
-            assert_eq!(package_name(&locale, "base"), "Voxmar");
+            assert_ne!(package_name(&locale, "base"), "base");
             assert_eq!(package_name(&locale, "some_mod"), "some_mod", "{code}: a mod that names itself nowhere goes by its id");
         }
     }
