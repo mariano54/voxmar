@@ -41,7 +41,8 @@ use voxmar_engine::glam::{IVec2, IVec3, Vec2};
 pub use self::canvas::Facing;
 use self::canvas::{Palette, Put, Voxel};
 pub use self::def::{Levers, SettlementsDef};
-use self::def::Resolved;
+use self::def::{FurnishingsDef, Resolved};
+use crate::content::Select;
 pub use self::house::Kind;
 use self::house::Fixed;
 use crate::Overworld;
@@ -294,7 +295,7 @@ impl Settlements {
             seed: crate::rng::mix(seed ^ 0x5e77_1e5e),
             def: def.clone(),
             resolved: Resolved::new(def, registry),
-            fixed: fixed(registry),
+            fixed: fixed(registry, &def.furnishings),
             plans: Cache::new(32 * MB),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
@@ -432,41 +433,44 @@ impl Settlements {
     }
 }
 
-/// Blocks every settlement needs, and the lists every style shares.
-fn fixed(registry: &BlockRegistry) -> Option<Fixed> {
-    let id = |name: &str| registry.id(&format!("base:{name}"));
-    let palette = |names: &[&str]| Palette(names.iter().filter_map(|n| id(n)).map(|b| (b, 1.0)).collect());
+/// The blocks settlements furnish themselves with (`furnishings` in settlements.ron):
+/// none without water and dirt, and only the plain common sorts of flowers and bushes.
+fn fixed(registry: &BlockRegistry, f: &FurnishingsDef) -> Option<Fixed> {
+    let id = |name: &Option<String>| name.as_deref().and_then(|n| registry.id(n));
     let plain = |b: BlockId| {
         let def = registry.def(b);
         !def.has_tag("wonder") && !def.has_tag("supernatural") && !def.name.ends_with("_pair") && !def.name.ends_with("_clump") && def.rarity == voxmar_engine::block::Rarity::Common
     };
-    let flowers = Palette(registry.tagged("flower").filter(|&b| plain(b) && registry.def(b).render == RenderKind::Plant).map(|b| (b, 1.0)).collect());
-    let bushes = Palette(registry.tagged("bush").filter(|&b| plain(b) && registry.def(b).render == RenderKind::Plant).map(|b| (b, 1.0)).collect());
-    let fruit = Palette(
-        registry
-            .tagged("fruit_leaves")
-            .filter(|&b| registry.def(b).has_tag("ripe") && !registry.def(b).has_tag("wonder"))
-            .filter(|&b| ["apple", "pear", "plum", "cherries", "orange", "lemon"].iter().any(|f| registry.def(b).name == format!("base:{f}_leaves")))
-            .map(|b| (b, 1.0))
-            .collect(),
-    );
-    // Torches, campfires, tables and farmland are other files' blocks: content without
-    // them (worldgen's own tests) leaves lamps bare, hearths cold and fields on dirt.
-    let dirt = id("dirt")?;
+    let palette = |list: &[Select], filter: &dyn Fn(BlockId) -> bool| {
+        Palette(
+            list.iter()
+                .flat_map(|s| -> Vec<(BlockId, f32)> {
+                    match s {
+                        Select::Name(name, w) => registry.id(name).map(|b| (b, *w)).into_iter().collect(),
+                        Select::Tag(tag, w) => registry.tagged(tag).filter(|&b| filter(b)).map(|b| (b, *w)).collect(),
+                    }
+                })
+                .filter(|(_, w)| *w > 0.0)
+                .collect(),
+        )
+    };
+    let small_plant = |b: BlockId| plain(b) && registry.def(b).render == RenderKind::Plant;
+    let any = |_: BlockId| true;
+    let dirt = id(&f.dirt)?;
     Some(Fixed {
-        torch: id("torch").unwrap_or(BlockId::AIR),
-        campfire: id("campfire").unwrap_or(BlockId::AIR),
-        table: id("crafting_table").unwrap_or(BlockId::AIR),
-        farmland: id("farmland").unwrap_or(dirt),
-        water: id("water")?,
-        planter: id("herb_planter"),
-        anvil: id("polished_basalt").or(id("polished_stone"))?,
+        torch: id(&f.torch).unwrap_or(BlockId::AIR),
+        campfire: id(&f.campfire).unwrap_or(BlockId::AIR),
+        table: id(&f.table).unwrap_or(BlockId::AIR),
+        farmland: id(&f.farmland).unwrap_or(dirt),
+        water: id(&f.water)?,
+        planter: id(&f.planter),
+        anvil: id(&f.anvil).unwrap_or(BlockId::AIR),
         dirt,
-        flowers,
-        bushes,
-        canopies: palette(&["red_terracotta", "orange_terracotta", "yellow_terracotta", "white_terracotta", "light_blue_terracotta", "cyan_terracotta", "lime_terracotta", "magenta_terracotta", "pink_terracotta", "green_terracotta", "blue_terracotta"]),
-        compost: palette(&["coarse_dirt", "rooted_dirt", "podzol"]),
-        boulder: palette(&["cobblestone", "mossy_cobblestone", "cobbled_andesite"]),
-        fruit,
+        flowers: palette(&f.flowers, &small_plant),
+        bushes: palette(&f.bushes, &small_plant),
+        canopies: palette(&f.canopies, &any),
+        compost: palette(&f.compost, &any),
+        boulder: palette(&f.boulders, &any),
+        fruit: palette(&f.fruit, &any),
     })
 }

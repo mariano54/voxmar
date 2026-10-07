@@ -27,7 +27,8 @@
 //   Shrine, Field, Pen, Orchard, Woodyard).
 // layouts: how lanes are laid out (Spokes, Line, Green, Scatter, Fork).
 // houses: the kinds of house, by size, storeys, roof and extras.
-// props: what stands in yards and along lanes.
+// props: what stands in yards and along lanes: one the code draws by its name, or one of
+//   your own as `blocks` from its spot (y 1 the block on the ground).
 // styles: what a settlement is built of, by the biome it stands in; the first whose
 //   biome tags match wins (an empty list matches anywhere). `woods` fill `{wood}` (the
 //   main wood) and `{trim}` (a second wood, sometimes the same) in block names; every
@@ -35,6 +36,23 @@
 //   house picks among those.
 (
     grid: (spacing: 1024, chance: 0.33, margin: 160),
+    // site: the temperatures, heights over sea level and the most rise and fall across its
+    //   middle a settlement stands on; how far it keeps from sinkholes and ravines; no trees
+    //   within glade.0 blocks of a house, fewer out to glade.1, glade_trees.0 of them left
+    //   past the treeless ring and glade_trees.1 more where it is green.
+    site: (temperature: (-8.0, 34.0), height: (3, 90), relief: 14, caves: 150, glade: (5, 16), glade_trees: (0.08, 0.3)),
+    // furnishings: blocks every settlement uses whatever its style. A package may name
+    //   others; content without one leaves it out (no water or dirt: no settlements).
+    furnishings: (
+        torch: "torch", campfire: "campfire", table: "crafting_table", farmland: "farmland",
+        water: "water", dirt: "dirt", planter: "herb_planter", anvil: "polished_basalt",
+        flowers: [Tag("flower", 1)],
+        bushes: [Tag("bush", 1)],
+        canopies: [Name("red_terracotta", 1), Name("orange_terracotta", 1), Name("yellow_terracotta", 1), Name("white_terracotta", 1), Name("light_blue_terracotta", 1), Name("cyan_terracotta", 1), Name("lime_terracotta", 1), Name("magenta_terracotta", 1), Name("pink_terracotta", 1), Name("green_terracotta", 1), Name("blue_terracotta", 1)],
+        compost: [Name("coarse_dirt", 1), Name("rooted_dirt", 1), Name("podzol", 1)],
+        boulders: [Name("cobblestone", 1), Name("mossy_cobblestone", 1), Name("cobbled_andesite", 1)],
+        fruit: [Name("apple_leaves", 1), Name("pear_leaves", 1), Name("plum_leaves", 1), Name("cherries_leaves", 1), Name("orange_leaves", 1), Name("lemon_leaves", 1)],
+    ),
     avoid: ["no_settlement", "ocean", "water", "river", "peaks", "ice", "frozen", "fantastical", "giant"],
     sizes: [
         (
@@ -86,16 +104,22 @@
         (name: Wing, chance: 0.1, lean: {"wealth": 0.5}),
     ],
     props: [
-        (name: Woodpile, weight: 2.0, lean: {"wealth": -0.2}),
-        (name: Crates, weight: 1.5, lean: {"wealth": 0.5}),
-        (name: StonePile, weight: 1.0, lean: {"age": 0.6}),
-        (name: FlowerBed, weight: 1.5, lean: {"green": 1.0}),
-        (name: HerbPlanter, weight: 1.0, lean: {"green": 0.4, "wealth": 0.3}),
-        (name: Campfire, weight: 0.8, lean: {"wealth": -0.6, "order": -0.4}),
-        (name: Lamp, weight: 2.0, lean: {"wealth": 0.8, "order": 0.5}),
-        (name: Bush, weight: 1.2, lean: {"green": 0.8, "order": -0.3}),
-        (name: Compost, weight: 0.8, lean: {"green": 0.4}),
-        (name: Boulder, weight: 0.6, lean: {"order": -0.8}),
+        (name: "Woodpile", weight: 2.0, lean: {"wealth": -0.2}),
+        (name: "Crates", weight: 1.5, lean: {"wealth": 0.5}),
+        (name: "StonePile", weight: 1.0, lean: {"age": 0.6}),
+        (name: "FlowerBed", weight: 1.5, lean: {"green": 1.0}),
+        (name: "HerbPlanter", weight: 1.0, lean: {"green": 0.4, "wealth": 0.3}),
+        (name: "Campfire", weight: 0.8, lean: {"wealth": -0.6, "order": -0.4}),
+        (name: "Lamp", weight: 2.0, lean: {"wealth": 0.8, "order": 0.5}),
+        (name: "Bush", weight: 1.2, lean: {"green": 0.8, "order": -0.3}),
+        (name: "Compost", weight: 0.8, lean: {"green": 0.4}),
+        (name: "Boulder", weight: 0.6, lean: {"order": -0.8}),
+        // Props of their own: blocks from the spot, y 1 on the ground.
+        (name: "log_bench", weight: 0.8, lean: {"order": 0.4}, blocks: [((0, 1, 0), "stripped_oak_log"), ((1, 1, 0), "stripped_oak_log")]),
+        (name: "stone_cairn", weight: 0.4, lean: {"age": 1.0, "order": -0.4}, blocks: [((0, 1, 0), "cobblestone"), ((0, 2, 0), "mossy_cobblestone"), ((0, 3, 0), "cobblestone")]),
+        (name: "drying_rack", weight: 0.5, lean: {"wealth": -0.4, "green": 0.3}, blocks: [((0, 1, 0), "spruce_log"), ((0, 2, 0), "spruce_log"), ((2, 1, 0), "spruce_log"), ((2, 2, 0), "spruce_log"), ((1, 2, 0), "spruce_planks")]),
+        (name: "trough", weight: 0.5, lean: {"green": 0.4}, blocks: [((0, 1, 0), "oak_planks"), ((1, 1, 0), "water"), ((2, 1, 0), "oak_planks")]),
+        (name: "stacked_stone", weight: 0.5, lean: {"wealth": 0.3, "order": 0.5}, blocks: [((0, 1, 0), "stone_bricks"), ((1, 1, 0), "stone_bricks"), ((0, 2, 0), "stone_bricks")]),
     ],
     // Names: a first part and a last part, each with its Japanese reading, by the biome's
     // tags (the first list whose tags match; an empty list matches anywhere). Hamlets

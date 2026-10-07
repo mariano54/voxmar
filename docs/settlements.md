@@ -44,7 +44,9 @@ The levers are correlated, so a place reads as a whole:
 - `extras`: chimney, porch, lean-to shed, flower boxes, garden, hedge, lamp, woodpile,
   moss, wing.
 - `props`: woodpile, crates, stone pile, flower bed, herb planter, campfire, lamp, bush,
-  compost, boulder.
+  compost, boulder, drawn by the code; and props of a package's own, given as `blocks`
+  (positions from the spot, y 1 on the ground, and block names), like the log bench,
+  cairn, drying rack, trough and stacked stone in base.
 - `styles`: the building materials of a place by biome tag (sandstone, red sandstone,
   mudbrick, stilts, log cabin, stone cottage, blossom house, birch cottage, maple lodge,
   jungle stilts, turf house, villa, and timber frame anywhere else). A style names its
@@ -53,7 +55,17 @@ The levers are correlated, so a place reads as a whole:
   settlement picks. A settlement keeps one to three entries of each list, fewer where it
   is orderly. Where two styles fit a biome, either may be built.
 - `names`: name parts by biome tag, each with its Japanese reading, small words for
-  hamlets ("End", "Cross"), and prefixes that lean on the levers ("Old", "Great").
+  hamlets ("End", "Cross"), and prefixes that lean on the levers ("Old", "Great"), with
+  how often each is used (`small_chance`, `prefix_chance`).
+- `site`: the temperatures, heights and relief a settlement stands on, how far it keeps
+  from sinkholes and ravines, and the glade it opens in the woods.
+- `furnishings`: the blocks every settlement uses whatever its style (torch, campfire,
+  table, farmland, water, dirt, planter, anvil) and the lists of flowers, bushes, stall
+  canopies, compost, boulders and orchard fruit.
+
+A package adds to every list, and its `grid`, `site` and each furnishing it names replace
+earlier ones, so a mod can add a style, a name culture, a house type or a prop without
+code.
 
 ## What else knows about them
 

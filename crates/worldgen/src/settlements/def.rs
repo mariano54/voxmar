@@ -151,6 +151,71 @@ impl Default for GridDef {
     }
 }
 
+/// The ground a settlement may stand on, and the glade it opens in the woods.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct SiteDef {
+    /// The temperatures it stands in.
+    pub temperature: (f32, f32),
+    /// How high over sea level its ground may lie.
+    pub height: (i32, i32),
+    /// The most its ground may rise and fall across its middle.
+    pub relief: i32,
+    /// How far it keeps from sinkholes and ravines.
+    pub caves: i32,
+    /// No trees within the first many blocks of a house, fewer out to the second.
+    pub glade: (i32, i32),
+    /// The share of trees left just past the treeless ring, and how many more where it is
+    /// green.
+    pub glade_trees: (f32, f32),
+}
+
+impl Default for SiteDef {
+    fn default() -> Self {
+        Self { temperature: (-8.0, 34.0), height: (3, 90), relief: 14, caves: 150, glade: (5, 16), glade_trees: (0.08, 0.3) }
+    }
+}
+
+/// Blocks every settlement furnishes itself with whatever its style: a name each, or a
+/// list (by name or tag) to pick from. Content without one leaves it out.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+struct FurnishingsFile {
+    torch: Option<String>,
+    campfire: Option<String>,
+    table: Option<String>,
+    farmland: Option<String>,
+    water: Option<String>,
+    dirt: Option<String>,
+    planter: Option<String>,
+    anvil: Option<String>,
+    flowers: Vec<Select>,
+    bushes: Vec<Select>,
+    canopies: Vec<Select>,
+    compost: Vec<Select>,
+    boulders: Vec<Select>,
+    fruit: Vec<Select>,
+}
+
+/// [`FurnishingsFile`], its names qualified.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FurnishingsDef {
+    pub torch: Option<String>,
+    pub campfire: Option<String>,
+    pub table: Option<String>,
+    pub farmland: Option<String>,
+    pub water: Option<String>,
+    pub dirt: Option<String>,
+    pub planter: Option<String>,
+    pub anvil: Option<String>,
+    pub flowers: Vec<Select>,
+    pub bushes: Vec<Select>,
+    pub canopies: Vec<Select>,
+    pub compost: Vec<Select>,
+    pub boulders: Vec<Select>,
+    pub fruit: Vec<Select>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SizeFile {
@@ -207,8 +272,13 @@ struct ExtraFile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropFile {
-    name: Prop,
+    /// One of the props the code draws, or (with `blocks`) a name for a prop of one's own.
+    name: String,
     weight: f32,
+    /// A prop's own blocks: (x, y, z) from its spot, y 1 the block on the ground, and the
+    /// block's name.
+    #[serde(default)]
+    blocks: Vec<((i32, i32, i32), String)>,
     #[serde(default)]
     lean: BTreeMap<String, f32>,
 }
@@ -224,6 +294,20 @@ struct NamesFile {
     small: Vec<(String, String)>,
     #[serde(default)]
     prefixes: Vec<PrefixFile>,
+    /// How often a hamlet takes a small word for its last part.
+    #[serde(default = "small_chance")]
+    small_chance: f32,
+    /// How often a name takes a prefix.
+    #[serde(default = "prefix_chance")]
+    prefix_chance: f32,
+}
+
+fn small_chance() -> f32 {
+    0.3
+}
+
+fn prefix_chance() -> f32 {
+    0.14
 }
 
 #[derive(Deserialize)]
@@ -265,6 +349,9 @@ struct StyleFile {
 #[serde(deny_unknown_fields)]
 struct SettlementFile {
     grid: Option<GridDef>,
+    site: Option<SiteDef>,
+    #[serde(default)]
+    furnishings: FurnishingsFile,
     #[serde(default)]
     avoid: Vec<String>,
     #[serde(default)]
@@ -329,9 +416,16 @@ pub struct ExtraDef {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PropDef {
-    pub name: Prop,
+    pub kind: PropKind,
     pub weight: f32,
     pub lean: Lean,
+}
+
+/// A prop the code draws, or one a package made of blocks.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PropKind {
+    Drawn(Prop),
+    Blocks(String, Vec<(voxmar_engine::glam::IVec3, String)>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -342,6 +436,8 @@ pub struct NamesDef {
     pub small: Vec<(String, String)>,
     /// Words put before a name ("Old", "Upper"), in English and Japanese, by weight.
     pub prefixes: Vec<(String, String, f32, Lean)>,
+    pub small_chance: f32,
+    pub prefix_chance: f32,
 }
 
 /// A material: block names, some with `{wood}` or `{trim}` in them, by weight.
@@ -373,6 +469,8 @@ pub struct StyleDef {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SettlementsDef {
     pub grid: GridDef,
+    pub site: SiteDef,
+    pub furnishings: FurnishingsDef,
     pub avoid: Vec<String>,
     pub sizes: Vec<SizeDef>,
     pub layouts: Vec<LayoutDef>,
@@ -404,6 +502,47 @@ impl SettlementsDef {
         if let Some(grid) = file.grid {
             self.grid = grid;
         }
+        if let Some(site) = file.site {
+            self.site = site;
+        }
+        // Each furnishing a later package names replaces the earlier one; lists replace
+        // lists.
+        let f = file.furnishings;
+        let one = |mine: &mut Option<String>, theirs: Option<String>| {
+            if let Some(name) = theirs {
+                *mine = Some(qualify(package, &name));
+            }
+        };
+        let mut furnishings = std::mem::take(&mut self.furnishings);
+        one(&mut furnishings.torch, f.torch);
+        one(&mut furnishings.campfire, f.campfire);
+        one(&mut furnishings.table, f.table);
+        one(&mut furnishings.farmland, f.farmland);
+        one(&mut furnishings.water, f.water);
+        one(&mut furnishings.dirt, f.dirt);
+        one(&mut furnishings.planter, f.planter);
+        one(&mut furnishings.anvil, f.anvil);
+        let qualified = |list: Vec<Select>| -> Vec<Select> {
+            list.into_iter()
+                .map(|s| match s {
+                    Select::Name(name, w) => Select::Name(qualify(package, &name), w),
+                    tag => tag,
+                })
+                .collect()
+        };
+        for (mine, theirs) in [
+            (&mut furnishings.flowers, f.flowers),
+            (&mut furnishings.bushes, f.bushes),
+            (&mut furnishings.canopies, f.canopies),
+            (&mut furnishings.compost, f.compost),
+            (&mut furnishings.boulders, f.boulders),
+            (&mut furnishings.fruit, f.fruit),
+        ] {
+            if !theirs.is_empty() {
+                *mine = qualified(theirs);
+            }
+        }
+        self.furnishings = furnishings;
         self.avoid.extend(file.avoid);
         for s in file.sizes {
             self.sizes.push(SizeDef {
@@ -438,7 +577,16 @@ impl SettlementsDef {
             self.extras.push(ExtraDef { lean: Lean::parse(at, &e.lean)?, name: e.name, chance: e.chance });
         }
         for p in file.props {
-            self.props.push(PropDef { lean: Lean::parse(at, &p.lean)?, name: p.name, weight: p.weight });
+            let kind = if p.blocks.is_empty() {
+                let drawn = ron::from_str::<Prop>(&p.name).map_err(|_| {
+                    ContentError(format!("{at}: no prop is called `{}`; give it `blocks` to make one of your own", p.name))
+                })?;
+                PropKind::Drawn(drawn)
+            } else {
+                let blocks = p.blocks.iter().map(|&((x, y, z), ref name)| (voxmar_engine::glam::IVec3::new(x, y, z), qualify(package, name))).collect();
+                PropKind::Blocks(qualify(package, &p.name), blocks)
+            };
+            self.props.push(PropDef { lean: Lean::parse(at, &p.lean)?, kind, weight: p.weight });
         }
         for n in file.names {
             let prefixes = n
@@ -446,7 +594,7 @@ impl SettlementsDef {
                 .into_iter()
                 .map(|p| Ok((p.en, p.ja, p.weight, Lean::parse(at, &p.lean)?)))
                 .collect::<Result<_, ContentError>>()?;
-            self.names.push(NamesDef { biome: n.biome, first: n.first, last: n.last, small: n.small, prefixes });
+            self.names.push(NamesDef { biome: n.biome, first: n.first, last: n.last, small: n.small, prefixes, small_chance: n.small_chance, prefix_chance: n.prefix_chance });
         }
         for s in file.styles {
             let m = |list: &[Select]| names(package, at, list).map(Material);
@@ -495,6 +643,22 @@ impl SettlementsDef {
         for h in &self.houses {
             if h.width.0 < 4 || h.depth.0 < 4 || h.width.1 > 12 || h.depth.1 > 16 || h.width.0 > h.width.1 || h.depth.0 > h.depth.1 || h.walls.0 < 2 || h.walls.1 > 6 || h.storeys.0 < 1 || h.storeys.1 > 3 {
                 return fail(format!("house `{}` is out of bounds (width 4..=12, depth 4..=16, walls 2..=6, storeys 1..=3)", h.name));
+            }
+        }
+        let site = &self.site;
+        if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 {
+            return fail(format!("the site needs ranges low to high and a glade of at most 48 blocks, its treeless ring the smaller: {site:?}"));
+        }
+        for p in &self.props {
+            if let PropKind::Blocks(name, blocks) = &p.kind {
+                for (at, block) in blocks {
+                    if at.x.abs() > 2 || at.z.abs() > 2 || !(0..=6).contains(&at.y) {
+                        return fail(format!("prop `{name}` reaches past 2 blocks round its spot or 6 up, at {at}"));
+                    }
+                    if registry.id(block).is_none() {
+                        return fail(format!("prop `{name}` names `{block}`, which is no block"));
+                    }
+                }
             }
         }
         for n in &self.names {
@@ -582,6 +746,15 @@ impl Resolved {
                 && let Some(id) = registry.id(window)
             {
                 map.insert(window.clone(), id);
+            }
+        }
+        for p in &def.props {
+            if let PropKind::Blocks(_, blocks) = &p.kind {
+                for (_, name) in blocks {
+                    if let Some(id) = registry.id(name) {
+                        map.insert(name.clone(), id);
+                    }
+                }
             }
         }
         Self(map)

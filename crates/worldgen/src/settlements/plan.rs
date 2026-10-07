@@ -10,7 +10,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::glam::{IVec2, IVec3, Vec2};
 
 use super::canvas::{Canvas, Facing, Frame, Palette, Put, unit};
-use super::def::{Extra, Lean, Lever, Levers, Prop, Roof, SettlementsDef, Shape, Special, StyleDef, fill};
+use super::def::{Extra, Lean, Lever, Levers, Prop, PropKind, Roof, SettlementsDef, Shape, Special, StyleDef, fill};
 use super::house::{self, Fixed, Kind, Mats, Spec};
 use super::{Building, Plan, Raster};
 use crate::geology::GeoSample;
@@ -195,7 +195,8 @@ fn site(ctx: &Ctx, cell: IVec2, rng: &mut Rng) -> Option<(IVec2, bool)> {
             }
             let mean = heights.iter().sum::<i32>() as f32 / heights.len() as f32;
             let range = heights.iter().max().unwrap() - heights.iter().min().unwrap();
-            if mean < (SEA_LEVEL + 3) as f32 || mean > (SEA_LEVEL + 90) as f32 || range > 14 {
+            let site = &ctx.def.site;
+            if mean < (SEA_LEVEL + site.height.0) as f32 || mean > (SEA_LEVEL + site.height.1) as f32 || range > site.relief {
                 continue;
             }
             let spread = (heights.iter().map(|&h| (h as f32 - mean).powi(2)).sum::<f32>() / heights.len() as f32).sqrt();
@@ -224,11 +225,12 @@ fn site(ctx: &Ctx, cell: IVec2, rng: &mut Rng) -> Option<(IVec2, bool)> {
             continue;
         }
         let site = ctx.world.site(at.x, at.y);
-        if !(-8.0..=34.0).contains(&site.temperature) {
+        let (cold, hot) = ctx.def.site.temperature;
+        if !(cold..=hot).contains(&site.temperature) {
             continue;
         }
         // Not beside a sinkhole or a ravine, which would open under its buildings.
-        if ctx.world.caves.opens_near((at.x, at.y), 150) {
+        if ctx.world.caves.opens_near((at.x, at.y), ctx.def.site.caves) {
             continue;
         }
         return Some((at, fresh));
@@ -406,7 +408,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let names = def.names.iter().find(|n| tagged(&n.biome)).unwrap_or(&def.names[0]);
     let name = {
         let first = &names.first[rng.below(names.first.len() as u32) as usize];
-        let small = size_index == 0 && !names.small.is_empty() && rng.chance(0.3);
+        let small = size_index == 0 && !names.small.is_empty() && rng.chance(names.small_chance);
         let name = if small {
             let word = &names.small[rng.below(names.small.len() as u32) as usize];
             (format!("{} {}", first.0, word.0), format!("{}・{}", first.1, word.1))
@@ -424,7 +426,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         };
         // Now and then a word before it, leaning on the levers ("Old" where it is old).
         let prefixes: Vec<(usize, f32)> = names.prefixes.iter().enumerate().map(|(i, p)| (i, p.3.weigh(p.2, &levers))).collect();
-        match (rng.chance(0.14), pick(&mut rng, &prefixes)) {
+        match (rng.chance(names.prefix_chance), pick(&mut rng, &prefixes)) {
             (true, Some(i)) => {
                 let p = &names.prefixes[i];
                 (format!("{} {}", p.0, name.0), format!("{}・{}", p.1, name.1))
@@ -673,8 +675,9 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
 
     // Props by the lanes and in the yards.
     let mut canvas = Canvas::default();
-    let mut props: Vec<(IVec2, Prop)> = Vec::new();
-    let prop_weights: Vec<(Prop, f32)> = def.props.iter().map(|p| (p.name, p.lean.weigh(p.weight, &levers))).collect();
+    let mut props: Vec<(IVec2, usize)> = Vec::new();
+    let prop_weights: Vec<(usize, f32)> = def.props.iter().enumerate().map(|(i, p)| (i, p.lean.weigh(p.weight, &levers))).collect();
+    let lamp = def.props.iter().position(|p| p.kind == PropKind::Drawn(Prop::Lamp));
     let mut lamps_every = 9.0 + 14.0 * (1.0 - wealth);
     if !village {
         lamps_every *= 1.5;
@@ -689,7 +692,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             let spot = Rect::new(at, IVec2::ONE);
             let free = occupied.iter().all(|o| o.gap(&spot) >= 0) && lanes.iter().all(|l| l.distance(at.as_vec2()) > l.half + 0.4) && firm(&ground.at(at));
             if free {
-                let prop = if rng.chance(0.5 + 0.4 * wealth) { Some(Prop::Lamp) } else { pick(&mut rng, &prop_weights) };
+                let prop = if rng.chance(0.5 + 0.4 * wealth) && lamp.is_some() { lamp } else { pick(&mut rng, &prop_weights) };
                 if let Some(prop) = prop {
                     props.push((at, prop));
                     occupied.push(spot);
@@ -730,7 +733,16 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     }
     let prop_mats = kit.mats(ctx, &mut rng);
     for &(at, prop) in &props {
-        draw_prop(ctx, &prop_mats, &mut canvas, at, prop, hash3(ctx.seed ^ 0x9409, at.x, 0, at.y));
+        match &def.props[prop].kind {
+            PropKind::Drawn(drawn) => draw_prop(ctx, &prop_mats, &mut canvas, at, *drawn, hash3(ctx.seed ^ 0x9409, at.x, 0, at.y)),
+            PropKind::Blocks(_, blocks) => {
+                for (offset, name) in blocks {
+                    if let Some(block) = ctx.resolved.get(name) {
+                        canvas.on_ground(at.x + offset.x, at.y + offset.z, offset.y, Put::Set(block));
+                    }
+                }
+            }
+        }
     }
     // Paving: the square, and the main lanes of rich villages.
     let pave_square = shape != Shape::Green && (village || wealth > 0.45) && !kit.paving.is_empty();
@@ -762,8 +774,8 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         }
     }
     for lot in &lots {
-        min = min.min(lot.rect.min - (FALLOFF + 4).max(GLADE));
-        max = max.max(lot.rect.max + (FALLOFF + 4).max(GLADE));
+        min = min.min(lot.rect.min - (FALLOFF + 4).max(def.site.glade.1));
+        max = max.max(lot.rect.max + (FALLOFF + 4).max(def.site.glade.1));
     }
     for &(at, _) in &props {
         min = min.min(at - 2);
@@ -806,7 +818,9 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     }
     // A clearing in the woods, leafier where the place is green.
     let rects: Vec<Rect> = lots.iter().map(|l| l.rect).collect();
-    raster.glade(&rects, 5, GLADE, 0.08 + 0.3 * levers.get(Lever::Green), seed);
+    let (near, far) = def.site.glade;
+    let (trees, greener) = def.site.glade_trees;
+    raster.glade(&rects, near, far, trees + greener * levers.get(Lever::Green), seed);
     // Paved lanes.
     for lane in lanes.iter().filter(|l| l.paved) {
         for z in raster.min.y..=raster.max.y {
@@ -844,8 +858,6 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
 /// How far graded ground eases back into the land around, in blocks.
 pub const FALLOFF: i32 = 5;
 
-/// How far round its buildings a settlement thins the trees, in blocks.
-pub const GLADE: i32 = 16;
 
 /// Walks a lane from `from`, heading `angle`, for `length` blocks: it bends a little at
 /// random, more in disorderly places, and steers round water, steep ground and other
