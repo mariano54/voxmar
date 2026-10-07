@@ -2608,10 +2608,6 @@ mod tests {
         println!("{:#?}\ncentre {centre}, spawn {spawn}", world.cave_style());
     }
 
-    /// `cargo test --release -p voxmar_worldgen cave_sights -- --ignored --nocapture`
-    /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`, and a place `X`, `Z` other than
-    /// spawn, or `NEAR=biome` for the nearest of that biome) prints `--pose` arguments for
-    /// in-game captures of caves near spawn: inside the largest open space under each sight.
     /// The stone pieces standing on the ground around `AT=x,z` (seed `SEED`): each piece's
     /// lowest block, its size, height above the ground and blocks, to find what made one.
     #[test]
@@ -2791,6 +2787,10 @@ mod tests {
         }
     }
 
+    /// `cargo test --release -p voxmar_worldgen cave_sights -- --ignored --nocapture`
+    /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`, and a place `X`, `Z` other than
+    /// spawn, or `NEAR=biome` for the nearest of that biome) prints `--pose` arguments for
+    /// in-game captures of caves near spawn: inside the largest open space under each sight.
     #[test]
     #[ignore]
     fn cave_sights() {
