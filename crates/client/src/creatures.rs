@@ -689,10 +689,11 @@ fn show(
             let death = &def.death;
             let t = (*dying / death.seconds.max(0.05)).min(1.0);
             root.rotation *= Quat::from_rotation_z(shown.fall_side * (t * 2.0).min(1.0) * death.roll.to_radians());
-            root.translation.y -= (t * 2.0 - 1.0).max(0.0) * death.sink * height;
-            // How far it strays from where it stood, in heights, for the gate.
+            // How far it strays from where it stood as it falls, in heights, for the gate
+            // (before it sinks away, which is meant to take it out of sight).
             let middle = root.translation + root.rotation * Vec3::Y * height * 0.5;
             let strayed = middle.distance(shown.position + Vec3::Y * height * 0.5) / height.max(0.1);
+            root.translation.y -= (t * 2.0 - 1.0).max(0.0) * death.sink * height;
             creatures_dying_check(&mut shown.death_strayed, strayed);
             if t >= 1.0 {
                 finished.push(id);
