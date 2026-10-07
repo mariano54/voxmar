@@ -17,10 +17,11 @@ use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
-use voxmar_protocol::{ChatKind, PlayerId, TICKS_PER_SECOND};
+use voxmar_protocol::{ChatKind, PlayerId, TICKS_PER_DAY, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::commands::Source;
+use crate::condition::RECKON_EVERY;
 use crate::creatures::product_ticks;
 use crate::items::random3;
 
@@ -47,6 +48,12 @@ pub struct SavedCreature {
     /// Its genes; none in saves from before genes, which restore as wild ones of the place.
     #[serde(default)]
     pub genome: Option<genes::Genome>,
+    /// How well it was kept, and in-game days since it last ate; none in saves from before
+    /// condition, which restore as newly tamed and just fed.
+    #[serde(default)]
+    pub condition: Option<f32>,
+    #[serde(default)]
+    pub fed_days_ago: Option<f32>,
 }
 
 impl Server {
@@ -80,7 +87,9 @@ impl Server {
         let tames = creature.owner.is_none() && can_tame && (treat || species.tame_food.contains(&item));
         // Nor does a kept one take breeding food it cannot use yet (the player's Farming too
         // low, or it bred too recently).
-        let can_breed = species.def.breeding.as_ref().is_some_and(|b| self.skill_level(player, "core:farming") >= b.level) && self.tick >= creature.breeds_again;
+        let can_breed = species.def.breeding.as_ref().is_some_and(|b| self.skill_level(player, "core:farming") >= b.level)
+            && self.tick >= creature.breeds_again
+            && creature.condition > self.content.creatures.condition().breed;
         let breeds = mine && creature.grows_up.is_none() && can_breed && (feed || species.breed_food.contains(&item));
         let tool = mine && species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
         tames || breeds || tool
@@ -103,7 +112,8 @@ impl Server {
             }
             let (item, (low, high), every, xp) = (species.products[index], product.count, product.every, product.xp);
             let [roll, ..] = random3(self.tick, creature.body.position.floor().as_ivec3(), id);
-            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, roll);
+            let more = creature.traits.yield_ * self.content.creatures.condition().output(creature.condition);
+            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), more, roll);
             let seed = creature.seed;
             let creature = self.creatures.live.get_mut(&id).expect("checked");
             creature.products_due[index] = self.tick + product_ticks(every, seed, index);
@@ -142,6 +152,8 @@ impl Server {
             p.changed(traits::INVENTORY);
         }
         let name = self.player_name(player);
+        let (day, tamed) = (self.day, self.content.creatures.condition().tamed);
+        self.creatures.live.get_mut(&id).expect("checked").fed = day;
         let creature = &self.creatures.live[&id];
         if creature.owner.is_none() {
             let Some(taming) = species.def.taming.clone() else { return };
@@ -160,6 +172,8 @@ impl Server {
                 creature.owner = name;
                 creature.owner_id = Some(player);
                 creature.home = creature.body.position;
+                creature.condition = tamed;
+                creature.reckoned = day;
                 // For quests that ask for tamed animals.
                 let tamed = species.def.name.clone();
                 let hunter = self.content.skills.id("core:hunter");
@@ -170,7 +184,7 @@ impl Server {
         }
         // A kept adult fed its breeding food is ready to breed for a while.
         let Some(breeding) = species.def.breeding.clone() else { return };
-        if self.skill_level(player, "core:farming") < breeding.level || self.tick < creature.breeds_again {
+        if self.skill_level(player, "core:farming") < breeding.level || self.tick < creature.breeds_again || creature.condition <= self.content.creatures.condition().breed {
             return;
         }
         let creature = self.creatures.live.get_mut(&id).expect("checked");
@@ -200,6 +214,9 @@ impl Server {
             return;
         }
         let tick = self.tick;
+        // A share of the kept animals each pass, each one every `RECKON_EVERY` ticks.
+        let shares = RECKON_EVERY / EVERY;
+        self.reckon_share(shares, tick / EVERY % shares);
         // Owners' ids, for the players here now.
         let ids: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.owner.is_some()).map(|(&id, _)| id).collect();
         for &id in &ids {
@@ -234,7 +251,8 @@ impl Server {
             for (index, product) in species.def.products.iter().enumerate() {
                 if product.tool.is_none() && tick >= creature.products_due[index] {
                     creature.products_due[index] = tick + product_ticks(product.every, creature.seed ^ tick, index);
-                    laid.push((creature.body.position, species.products[index], product.count, creature.traits.yield_, id));
+                    let more = creature.traits.yield_ * self.content.creatures.condition().output(creature.condition);
+                    laid.push((creature.body.position, species.products[index], product.count, more, id));
                 }
             }
         }
@@ -284,7 +302,11 @@ impl Server {
             return;
         }
         let (low, high) = breeding.litter;
-        let count = (low + ((unit_from(mix(seed, self.tick)) * (high - low + 1) as f32) as u8).min(high - low)).max(1).min(room.min(u8::MAX as usize) as u8);
+        // Parents in better condition have bigger litters, never more than there is room for.
+        let rules = *self.content.creatures.condition();
+        let fitness = (self.creatures.live[&a].condition + self.creatures.live[&b].condition) / 2.0;
+        let odds = (unit_from(mix(seed, self.tick)) * rules.output(fitness)).min(0.9999);
+        let count = (low + ((odds * (high - low + 1) as f32) as u8).min(high - low)).max(1).min(room.min(u8::MAX as usize) as u8);
         let grows = self.tick + (breeding.growth * 60.0 * TICKS_PER_SECOND as f32) as u64;
         let (mother, father) = (self.creatures.live[&a].genome.clone(), self.creatures.live[&b].genome.clone());
         // Mutations are likelier where aether is high (docs/breeding.md, "Mutation").
@@ -304,6 +326,7 @@ impl Server {
                 young.adult_scale = young.traits.scale.max(0.5);
             }
             young.owner = owner.clone();
+            young.condition = fitness;
             young.grows_up = Some(grows);
             young.scale = young.adult_scale * YOUNG_SCALE;
             young.body.size = (def.body.size.0 * young.scale, def.body.size.1 * young.scale);
@@ -360,6 +383,8 @@ impl Server {
                     grows_in: c.grows_up.map(|t| t.saturating_sub(tick)),
                     products_in: c.products_due.iter().map(|t| t.saturating_sub(tick)).collect(),
                     genome: Some(c.genome.clone()),
+                    condition: Some(c.condition),
+                    fed_days_ago: Some(self.days_since(c.fed)),
                 })
             })
             .chain(waiting)
@@ -396,7 +421,7 @@ impl Server {
                 continue;
             };
             let def = &self.content.creatures.get(species).def;
-            let tick = self.tick;
+            let (tick, day) = (self.tick, self.day);
             let creature = self.creatures.live.get_mut(&id).expect("just made");
             creature.seed = s.seed;
             creature.home = Vec3::from_array(s.home);
@@ -414,6 +439,11 @@ impl Server {
                 creature.traits = genes::express(&def.genes, &genome);
                 creature.genome = genome;
             }
+            if let Some(condition) = s.condition {
+                creature.condition = condition.clamp(0.0, 1.0);
+            }
+            creature.fed = day - s.fed_days_ago.unwrap_or(0.0).max(0.0) as f64 * TICKS_PER_DAY as f64;
+            creature.reckoned = day;
         }
     }
 }
@@ -429,6 +459,7 @@ fn yielded(count: u8, yield_: f32, roll: f32) -> u8 {
 mod tests {
     use super::*;
     use crate::{Server, test_server};
+    use voxmar_engine::creature::condition::Met;
     use voxmar_engine::glam::IVec3;
 
     fn rabbit(at: Vec3) -> SavedCreature {
@@ -445,6 +476,8 @@ mod tests {
             grows_in: None,
             products_in: Vec::new(),
             genome: None,
+            condition: None,
+            fed_days_ago: None,
         }
     }
 
@@ -672,5 +705,68 @@ mod tests {
             }
         }
         assert_eq!(trimmed, 8, "too few groups came to judge");
+    }
+
+    #[test]
+    fn condition_walks_a_day_at_a_time_toward_what_its_needs_allow() {
+        let mut server = test_server();
+        let id = kept_rabbit(&mut server, 1);
+        let rules = *server.content.creatures.condition();
+        let day = voxmar_protocol::TICKS_PER_DAY as f64;
+        // A day since it was last reckoned, three since it ate.
+        let creature = server.creatures.live.get_mut(&id).unwrap();
+        (creature.condition, creature.reckoned, creature.fed) = (0.6, server.day - day, server.day - 3.0 * day);
+        let needs = server.needs_of(id);
+        assert_eq!(needs.food, Met::No, "three days unfed is hungry");
+        server.reckon_condition();
+        let creature = &server.creatures.live[&id];
+        assert_eq!(creature.needs, needs);
+        let expected = rules.step(0.6, rules.target(&needs, false), 1.0);
+        assert!((creature.condition - expected).abs() < 1e-4, "{} against {expected}", creature.condition);
+        assert!(creature.condition < 0.6, "a hungry animal lost no condition");
+        // Fed again, its food need is met.
+        server.creatures.live.get_mut(&id).unwrap().fed = server.day;
+        assert_eq!(server.needs_of(id).food, Met::Yes);
+        // Below half health it is held to half however well kept.
+        let creature = server.creatures.live.get_mut(&id).unwrap();
+        (creature.condition, creature.health, creature.reckoned) = (0.9, 1, server.day - 10.0 * day);
+        server.reckon_condition();
+        assert!(server.creatures.live[&id].condition <= rules.hurt + 1e-6);
+    }
+
+    #[test]
+    fn work_and_the_save_follow_condition() {
+        let mut server = test_server();
+        let id = kept_rabbit(&mut server, 1);
+        let rules = *server.content.creatures.condition();
+        let day = voxmar_protocol::TICKS_PER_DAY as f64;
+        let creature = server.creatures.live.get_mut(&id).unwrap();
+        (creature.condition, creature.fed) = (1.0, server.day - 0.5 * day);
+        assert!((server.working_share(id) - rules.output(1.0)).abs() < 1e-6);
+        // Unfed past two days it stops walking; a wild one never works.
+        server.creatures.live.get_mut(&id).unwrap().fed = server.day - 2.5 * day;
+        assert_eq!(server.working_share(id), 0.0);
+        server.creatures.live.get_mut(&id).unwrap().owner = None;
+        assert_eq!(server.working_share(id), 0.0);
+        server.creatures.live.get_mut(&id).unwrap().owner = Some("test".into());
+        // The save keeps its condition and when it ate, and brings both back.
+        let creature = server.creatures.live.get_mut(&id).unwrap();
+        (creature.condition, creature.fed) = (0.42, server.day - 1.5 * day);
+        let saved = server.saved_creatures();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].condition, Some(0.42));
+        assert!((saved[0].fed_days_ago.unwrap() - 1.5).abs() < 1e-3);
+        server.creatures.live.clear();
+        server.restore_creatures(saved);
+        let back = server.creatures.live.values().next().expect("restored");
+        assert_eq!(back.condition, 0.42);
+        assert!((server.days_since(back.fed) - 1.5).abs() < 1e-3);
+        // One saved before condition comes back newly tamed and just fed.
+        let old = rabbit(server.spawn);
+        server.creatures.live.clear();
+        server.restore_creatures(vec![old]);
+        let back = server.creatures.live.values().next().expect("restored");
+        assert_eq!(back.condition, rules.tamed);
+        assert!(server.days_since(back.fed).abs() < 1e-3);
     }
 }

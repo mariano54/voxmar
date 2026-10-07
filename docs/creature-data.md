@@ -57,9 +57,10 @@ animals and monsters spawning for anyone:
   they are under it. The per-species caps by Farming level planned in P31 will sit inside
   it.
 - `most` is the most alive at once, wild and kept, and must hold `wild_most` and `keepers`
-  players' `kept_each`; a server for more players raises `keepers` and `most` together. Wild ones (spawned or summoned) and births also stop short of it by
-  the kept animals still waiting in the save, so those always have room to come back; past
-  `keepers` players at their cap, wild ones get fewer.
+  players' `kept_each`; a server for more players raises `keepers` and `most` together.
+  Wild ones (spawned or summoned) and births also stop short of it by the kept animals
+  still waiting in the save, so those always have room to come back; past `keepers`
+  players at their cap, wild ones get fewer.
 - `animals_near` and `monsters_near` cap each kind within 64 blocks of a player.
 
 What no package sets keeps the defaults above.
@@ -76,6 +77,17 @@ very creature within `fought_within` seconds, and only from a creature of at lea
 `least_level` times their Defence level. Standing among weak monsters, or tapping a penned
 hen between a strong one's blows, trains nothing; with two players at one creature, only
 the last to hurt it trains on its blows.
+
+The same file may set the condition rules of kept animals the same way, field by field
+(see breeding.md, "Keeping animals"):
+
+```ron
+condition: (up: 0.15, down: 0.25, met: 1.0, partly: 0.8, unmet: 0.5, tamed: 0.6, hurt: 0.5,
+    output: (0.5, 0.7), breed: 0.5, fed: (1.0, 2.0), space_radius: 5.0),
+```
+
+A species says what it needs when kept with `needs: (space: 6, shelter: false, company:
+true)`, each optional: room from its width, shelter wanted, company if it is social.
 
 ## A creature
 
@@ -252,7 +264,10 @@ Content fails to load, with the file and a reason, when:
   and `monsters_near` together are more than `wild_most`, or `most` is less than
   `wild_most` and `keepers` players' `kept_each`;
 - `defence` makes a fight last no time (`fought_within` 0 or less) or asks a negative
-  `least_level`.
+  `least_level`;
+- the condition rules have a share outside 0..1, a need met counting less than partly
+  met (or that less than unmet), a rate or reach of 0, an output that falls below 0, or
+  `fed` days out of order.
 
 Test-time checks (in `cargo test`): every species can be spawned and survives a simulated
 day in the sandbox; the supernatural share of species is 15–30% and of encounters, over a

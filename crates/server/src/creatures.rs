@@ -26,6 +26,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::block::{BlockId, Rarity};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::brain::{self, Decision, Mind, Seen, Situation};
+use voxmar_engine::creature::condition::Needs;
 use voxmar_engine::creature::motion::{self, Body, Drive};
 use voxmar_engine::creature::{self, CreatureId, Kind, Water, mix, unit_from};
 use voxmar_engine::crop::level_bonus;
@@ -111,6 +112,12 @@ pub struct Live {
     pub adult_scale: f32,
     /// Tick each of its species' products is next due.
     pub products_due: Vec<u64>,
+    /// How well it is kept, 0 to 1 (crate::condition): the day clock when it was last
+    /// reckoned and when it last ate, and its needs as last looked at.
+    pub condition: f32,
+    pub reckoned: f64,
+    pub fed: f64,
+    pub needs: Needs,
     /// The last view each player was sent, to send only changes.
     sent: Option<CreatureView>,
     pub(crate) changed: bool,
@@ -458,6 +465,10 @@ impl Server {
             self.creature_strikes(id, player);
         }
         if let Some(cell) = decision.eat {
+            let day = self.day;
+            if let Some(creature) = self.creatures.live.get_mut(&id) {
+                creature.fed = day;
+            }
             // Grazing wears the land: now and then a tuft goes for good.
             let roll = unit_from(mix(self.creatures.live[&id].seed, self.tick ^ 0x6a2e));
             let block = self.block(cell);
@@ -694,6 +705,10 @@ impl Server {
             grows_up: None,
             adult_scale: scale,
             products_due: def.products.iter().enumerate().map(|(i, p)| self.tick + product_ticks(p.every, seed, i)).collect(),
+            condition: self.content.creatures.condition().tamed,
+            reckoned: self.day,
+            fed: self.day,
+            needs: Needs::default(),
             sent: None,
             changed: true,
         };
@@ -901,6 +916,13 @@ impl Server {
 impl Ground<'_> {
     fn water_at(&self, cell: IVec3) -> bool {
         motion::Surroundings::water(self, cell)
+    }
+}
+
+impl Server {
+    /// Whether `cell` holds water a creature could drink or swim in.
+    pub(crate) fn is_water(&self, cell: IVec3) -> bool {
+        Ground(self).water_at(cell)
     }
 }
 
