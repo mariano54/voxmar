@@ -311,7 +311,7 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
     let (save, mut meta) = open_world(&mut config)?;
     // Land made from different worldgen data than before may not line up with it: warned
     // about, never refused (content-only changes keep the generator's version).
-    let worldgen_content = WorldContent::fingerprint(content.files.iter());
+    let worldgen_content = WorldContent::fingerprint(content.files.iter(), &content.blocks);
     let generation_changed = meta.worldgen_content.is_some_and(|before| before != worldgen_content);
     if meta.worldgen_content != Some(worldgen_content) {
         meta.worldgen_content = Some(worldgen_content);
@@ -963,6 +963,29 @@ fn ring_positions(center: ColumnPos, ring: i32) -> impl Iterator<Item = ColumnPo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loot_waiting_for_a_body_to_fall_is_saved_where_it_will_drop() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let dir = std::env::temp_dir().join(format!("voxmar-falling-loot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let meta = WorldMeta::new("loot", 1, GameMode::Survival);
+        let save = WorldSave::new(&dir);
+        save.create(&meta).unwrap();
+        let ((_, incoming), (_, console)) = (unbounded(), unbounded());
+        let config = ServerConfig { view_distance: 2, ..Default::default() };
+        let mut server = Server::new(config, meta, Some(save), save::WorldState::default(), content.clone(), incoming, console);
+        let slime = content.blocks.expect("base:lumen_slime");
+        let at = Vec3::new(3.5, 70.0, -2.5);
+        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack { item: slime, count: 2 }, voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
+        server.save_items();
+        let saved = WorldSave::new(&dir).read_items().unwrap();
+        assert_eq!(saved.len(), 1, "{saved:?}");
+        assert_eq!((saved[0].item.as_str(), saved[0].count, saved[0].position), ("base:lumen_slime", 2, at.to_array()));
+        // Saving takes nothing from the queue: the loot still drops when its body has fallen.
+        assert_eq!(server.creatures.falling_loot.len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn every_shipped_fluid_is_swum_in_or_burns() {

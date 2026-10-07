@@ -568,7 +568,8 @@ fn loot_still_falling_when_the_server_stops_is_there_after_a_restart() {
     let mut client = Client::join_with(config(lag));
     let slime = client.content.blocks.id("base:lumen_slime").unwrap();
     let snail = client.content.creatures.find("lumen_snail").unwrap();
-    client.ok("/summon lumen_snail 1 ~ ~ ~");
+    // Out of reach, so the loot stays on the ground to be counted.
+    client.ok("/summon lumen_snail 1 ~5 ~ ~");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == snail));
     client.ok("/creatures kill");
     assert!(!client.items.values().any(|i| i.stack.item == slime), "the loot dropped before the server stopped");
@@ -576,6 +577,9 @@ fn loot_still_falling_when_the_server_stops_is_there_after_a_restart() {
 
     let mut client = Client::join_with(config(Default::default()));
     client.pump_until(|c| c.items.values().any(|i| i.stack.item == slime));
+    // Once: the save wrote it lying, not also still to fall.
+    client.after_ticks(40);
+    assert_eq!(client.items.values().filter(|i| i.stack.item == slime).count(), 1, "{:?}", client.items);
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -605,7 +609,33 @@ fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
     assert!(warned(tuned.clone()), "ores.ron changed");
     assert!(!warned(tuned), "the change was told");
     assert!(warned(content()), "changed back");
+    // Land picks blocks by their tags, so a block given another tag warns too.
+    let assets = world_dir("tagged-content");
+    copy_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), &assets.join("content"));
+    let blocks = assets.join("content/base/blocks.ron");
+    let source = std::fs::read_to_string(&blocks).unwrap();
+    let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet"]"#;
+    assert!(source.contains(mossy));
+    std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "tagged"]"#)).unwrap();
+    let tagged = load_content(&assets).expect("content loads");
+    assert!(warned(tagged), "a block's tags changed");
     std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// Copies a content directory's definitions and languages (not its sounds) to `to`.
+fn copy_content(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let (path, name) = (entry.path(), entry.file_name());
+        if path.is_dir() {
+            if name != "sounds" {
+                copy_content(&path, &to.join(&name));
+            }
+        } else {
+            std::fs::copy(&path, to.join(&name)).unwrap();
+        }
+    }
 }
 
 #[test]
