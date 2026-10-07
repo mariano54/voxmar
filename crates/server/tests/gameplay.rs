@@ -1573,10 +1573,15 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
     let walk = 4.7;
     for name in ["brown_bear", "frost_stag", "cave_crawler", "ember_salamander"] {
         let mut client = Client::join();
+        client.ok("/clear");
         client.ok("/gamemode survival");
         client.ok("/skill hitpoints 60");
         client.pump_until(|c| c.health >= 100);
-        let (id, slot) = beside(&mut client, name);
+        let (id, _) = beside(&mut client, name);
+        // Provoked with bare hands at Attack 1, so a small one (a salamander has 9
+        // hitpoints, an iron sword's max hit) lives to strike twice.
+        client.ok("/skill attack 1");
+        let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_none()).expect("an empty hand");
         let mut outcomes = Vec::new();
         for _ in 0..2 {
             let before = client.hurt.len();
