@@ -284,6 +284,8 @@ struct Gate {
     machines_stage: u8,
     machines_since: f32,
     machines_asked: f32,
+    /// Whether the player has been seen holding what this machine stage puts in.
+    machines_seen: bool,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -378,6 +380,7 @@ impl Gate {
             machines_stage: 0,
             machines_since: 0.0,
             machines_asked: f32::MIN,
+            machines_seen: false,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -1672,6 +1675,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 gate.machines_stage = 0;
                 gate.machines_since = gate.server_now;
+                gate.machines_asked = f32::MIN;
+                gate.machines_seen = false;
                 gate.advance(now);
             } else if late {
                 let quests = &world.resource::<LocalPlayer>().quests;
@@ -1693,10 +1698,19 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             let (coal, ore, dust) = (holding(world, "coal_ore").0, holding(world, "copper_ore").0, holding(world, "copper_dust").0);
-            // Each stage is done by what the player holds, as the server says it.
+            // Each stage is done by what the player holds, as the server says it: what goes in
+            // must first be seen in hand (it comes a few frames after it is given), then gone
+            // after the machine was used.
+            let held = match gate.machines_stage {
+                0 => coal,
+                1 => ore,
+                _ => 0,
+            };
+            gate.machines_seen |= held > 0;
+            let put_in = gate.machines_seen && held == 0 && gate.machines_asked > f32::MIN;
             let (done, target, holds) = match gate.machines_stage {
-                0 => (coal == 0, boiler, Some("coal_ore")),
-                1 => (ore == 0, crusher, Some("copper_ore")),
+                0 => (put_in, boiler, Some("coal_ore")),
+                1 => (put_in, crusher, Some("copper_ore")),
                 _ => (dust >= 2, crusher, None),
             };
             if done {
@@ -1722,6 +1736,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.machines_stage += 1;
                 gate.machines_since = gate.server_now;
                 gate.machines_asked = f32::MIN;
+                gate.machines_seen = false;
                 return;
             }
             // Waits for what it holds to arrive before using the machine with it.
@@ -1736,7 +1751,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let actions = world.resource::<crate::Actions>().0.clone();
                 world.resource::<Net>().propose(actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
             }
-            if gate.server_now - gate.machines_since > 30.0 || in_phase > 90.0 {
+            // No progress for 30 seconds of the server's time (a loaded machine stretches it);
+            // the game's clock only catches a server that stopped.
+            if gate.server_now - gate.machines_since > 30.0 || in_phase > 300.0 {
                 let what = ["the boiler never took the coal", "the crusher never took the ore", "the crusher never gave back two dust"][gate.machines_stage.min(2) as usize];
                 let waited = (gate.server_now - gate.machines_since, in_phase);
                 fail(world, gate, "machines", format!("{what} ({:.1} server s, {:.1} game s): holding coal {coal}, ore {ore}, dust {dust}", waited.0, waited.1));
