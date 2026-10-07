@@ -98,9 +98,6 @@ fn despawn(commands: &mut Commands, shown: &Shown) {
     }
 }
 
-/// The least seconds between a player's blows; how hard each lands for the wait is the
-/// server's (`voxmar_engine::combat`).
-const SWING: f32 = voxmar_engine::combat::QUICKEST;
 /// Creatures built a frame at most; more coming into view wait for the next frames.
 const SPAWNS: usize = 3;
 /// Creatures further than this are not drawn.
@@ -222,9 +219,10 @@ pub struct Creatures {
     heart: Option<(Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>)>,
     /// Creatures seen to die since joining.
     pub deaths: u32,
-    /// Blows of ours the server took since joining, and how many landed.
+    /// Blows of ours the server took since joining, how many landed, and the most one did.
     pub blows: u32,
     pub landed: u32,
+    pub hardest: u16,
     /// The creature we last struck at, and when, in seconds since startup.
     fighting: Option<(u32, f32)>,
     /// Our own player's id, to know our kept creatures.
@@ -270,6 +268,7 @@ impl Creatures {
         }
         if damage > 0 {
             self.landed += 1;
+            self.hardest = self.hardest.max(damage);
             if let Some(shown) = self.shown.get_mut(&id) {
                 shown.flash = FLASH;
             }
@@ -786,11 +785,14 @@ pub fn aim(
     let eye = player.eye();
     let look = player.look_direction().normalize_or_zero();
     let block = target.hit.map_or(f32::MAX, |hit| hit.distance);
+    // What a blow would be struck with: its reach, and how soon the next may come.
+    let held = player.inventory.get(player.selected).map(|s| s.item);
+    let weapon = launch.content.combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
     let nearest = creatures
         .shown
         .keys()
         .filter_map(|&id| Some((id, ray_box(eye, look, &creatures.aabb(&launch, id)?)?)))
-        .filter(|&(_, d)| d <= REACH_CREATURE && d < block)
+        .filter(|&(_, d)| d <= REACH_CREATURE + weapon.reach && d < block)
         .min_by(|a, b| a.1.total_cmp(&b.1));
     target.creature = nearest.map(|(id, _)| id);
     if target.creature.is_some() {
@@ -826,8 +828,9 @@ pub fn aim(
         && let Some(attack) = actions.0.id("core:attack")
     {
         net.propose_from(&player, attack, ActionTarget::Creature(id));
-        // Blows come no faster than the server takes them.
-        *cooldown = SWING;
+        // Blows come no faster than the server takes them; how hard each lands for the wait
+        // is the server's (`voxmar_engine::combat`).
+        *cooldown = weapon.quickest();
     }
 }
 

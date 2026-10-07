@@ -1,0 +1,11 @@
+// Weapons, at a crafting table (combat.ron says how each fights). Bone, wood and stone are
+// Crafting's; metal is Engineering's, at the level that works the metal.
+(
+    recipes: [
+        (pattern: [["bone"], ["bone"], ["stick"]], output: "bone_club", skill: "core:crafting", level: 1, xp: 6.0),
+        (pattern: [["cobblestone"], ["cobblestone"], ["stick"]], output: "stone_sword", skill: "core:crafting", level: 1, xp: 6.0),
+        (pattern: [["copper_ingot"], ["copper_ingot"], ["stick"]], output: "copper_sword", skill: "core:engineering", level: 5, xp: 16.0),
+        (pattern: [["fang"], ["stick"]], output: "fang_dagger", skill: "core:crafting", level: 10, xp: 20.0),
+        (pattern: [["iron_ingot"], ["iron_ingot"], ["stick"]], output: "iron_sword", skill: "core:engineering", level: 15, xp: 32.0),
+    ],
+)

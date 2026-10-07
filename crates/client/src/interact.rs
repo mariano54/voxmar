@@ -195,6 +195,10 @@ impl ActionContext for ClientContext<'_> {
     fn tools(&self) -> Option<&voxmar_engine::tool::ToolRegistry> {
         Some(&self.content.tools)
     }
+
+    fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
+        Some(&self.content.combat)
+    }
 }
 
 /// Mining proposes `core:mine` and shows progress over the same duration the server
