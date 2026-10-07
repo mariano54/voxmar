@@ -771,6 +771,38 @@ fn spawn_needs_only_so_much_planning() {
     }
 }
 
+/// Planning checks no more spots than its numbers allow, over sixteen worlds: each spot
+/// laid out levels its lots and looks for water round every block of their banks, the
+/// costliest part of planning. A square lays out its one best spot and looks closely for
+/// creeks round at most `site.tries` times `site.look`; the square settled for a new player
+/// looks `spawn_tries` times as far, and lays each of up to `spawn_tries` spots out with
+/// `spawn_salts` draws and again as the smallest place. Counts, not times.
+#[test]
+fn planning_checks_only_so_many_spots() {
+    let (mut squares, mut spawns) = (0, 0);
+    for seed in 0..16u64 {
+        let world = base_world(seed);
+        let settlements = &world.settlements;
+        let at = world.spawn_estimate();
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                settlements.slot(&world, settlements.cell_of(at.x, at.y) + IVec2::new(dx, dz));
+            }
+        }
+        let def = &settlements.def;
+        let (site, rules) = (&def.site, &def.rules);
+        let (tries, salts) = (rules.spawn_tries, rules.spawn_salts);
+        let looks = (site.tries * site.look) as u32;
+        for &(cell, spawn, checked) in settlements.checked.lock().unwrap().iter() {
+            let (most_laid, most_looks) = if spawn { (tries * 2 * salts, looks * tries) } else { (1, looks) };
+            assert!(checked.laid_out <= most_laid && checked.creek_looks <= most_looks, "seed {seed}, square {cell}{}: {checked:?}, over {most_laid} laid out and {most_looks} looks", if spawn { " (the spawn's)" } else { "" });
+            squares += 1;
+            spawns += spawn as u32;
+        }
+    }
+    assert!(squares > 16 * 9 && spawns > 0, "{squares} squares planned, {spawns} for a new player");
+}
+
 /// Servers on one world share one generator (`Overworld::shared`): the second finds the
 /// land round spawn planned and plans nothing more; another seed gets a generator of its
 /// own, and once nothing holds a world it is let go.
@@ -1100,7 +1132,7 @@ fn numbers_planning_cannot_use_are_refused() {
     let a_frame = def.houses.iter().position(|h| h.form == Form::AFrame).unwrap();
     let courtyard = def.houses.iter().position(|h| h.form == Form::Courtyard).unwrap();
     type Change<'a> = &'a dyn Fn(&mut super::SettlementsDef);
-    let cases: [(&str, Change); 17] = [
+    let cases: [(&str, Change); 21] = [
         ("a round house of two storeys", &|d| d.houses[round].storeys = (1, 2)),
         ("an A-frame of two storeys", &|d| d.houses[a_frame].storeys = (2, 2)),
         ("a courtyard house of two storeys", &|d| d.houses[courtyard].storeys = (1, 2)),
@@ -1118,6 +1150,10 @@ fn numbers_planning_cannot_use_are_refused() {
         ("a riverside street looking 300 out", &|d| d.rules.lanes.riverside = 300),
         ("levers steep at nothing", &|d| d.rules.levers.steep = 0.0),
         ("fertility over 1", &|d| d.site.fertility = 1.5),
+        ("the spawn's square trying no spots", &|d| d.rules.spawn_tries = 0),
+        ("the spawn's square trying 33 times the spots", &|d| d.rules.spawn_tries = 33),
+        ("the spawn's square laying out with no draws", &|d| d.rules.spawn_salts = 0),
+        ("the spawn's square laying out with 33 draws", &|d| d.rules.spawn_salts = 33),
     ];
     for (what, change) in cases {
         assert!(refused(change), "{what} is let through");

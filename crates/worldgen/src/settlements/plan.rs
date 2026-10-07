@@ -55,6 +55,18 @@ pub struct Ctx<'a> {
     /// The squares one of which may be settled for a new player whatever their roll (those
     /// in reach of where they spawn), whose names their neighbours keep off too.
     pub promised: &'a [IVec2],
+    /// What this plan has checked so far, counted in tests.
+    #[cfg(test)]
+    pub checked: std::cell::Cell<Checked>,
+}
+
+/// What planning a square checked: spots laid out (each levelling its lots and looking
+/// for water round every block of their banks) and spots looked round closely for creeks.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Checked {
+    pub laid_out: u32,
+    pub creek_looks: u32,
 }
 
 /// Picks from `items` by weight; `None` when every weight is nothing.
@@ -283,7 +295,8 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
     }
     // The spawn's square looks further down its list, and keeps every spot that will do
     // so the planner may try the next where one cannot be laid out.
-    let tries = if spawn.is_some() { site.tries * SPAWN_TRIES } else { site.tries };
+    let spawn_tries = ctx.def.rules.spawn_tries as usize;
+    let tries = if spawn.is_some() { site.tries * spawn_tries } else { site.tries };
     candidates.sort_by(|a, b| b.0.total_cmp(&a.0).then((a.1.x, a.1.y).cmp(&(b.1.x, b.1.y))));
     // Where water is required, a closer look round the best spots finds the creeks the
     // samples missed; the first `tries` with water near go on.
@@ -299,6 +312,8 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
             .take(tries.saturating_mul(site.look))
             .filter_map(|(score, at, fresh)| {
                 let near = fresh || {
+                    #[cfg(test)]
+                    ctx.checked.set(Checked { creek_looks: ctx.checked.get().creek_looks + 1, ..ctx.checked.get() });
                     let first = at - site.water;
                     let samples = ctx.land.grid(first, close, n);
                     samples.iter().enumerate().any(|(k, g)| {
@@ -332,7 +347,7 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
             return vec![(at, fresh)];
         }
         found.push((at, fresh));
-        if found.len() >= SPAWN_TRIES {
+        if found.len() >= spawn_tries {
             break;
         }
     }
@@ -341,10 +356,6 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
     }
     found
 }
-
-/// How many times more spots the square a new player spawns in looks at, and how many
-/// it tries laying out, before it is left empty.
-const SPAWN_TRIES: usize = 8;
 
 /// Whether a settlement may stand at `at`: in no biome it avoids, and within its
 /// temperatures.
@@ -518,14 +529,12 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     // the well elsewhere), then as the smallest place, before it is left empty: only the
     // land may keep a new player from a settlement.
     let salted = |salt: u64| Rng::new(ctx.seed ^ mix(salt), 0x5e771e, cell.x, cell.y);
+    let salts = u64::from(def.rules.spawn_salts);
     sites
         .iter()
-        .find_map(|&(centre, fresh)| (1..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), false)))
-        .or_else(|| sites.iter().find_map(|&(centre, fresh)| (0..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), true))))
+        .find_map(|&(centre, fresh)| (1..salts).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), false)))
+        .or_else(|| sites.iter().find_map(|&(centre, fresh)| (0..salts).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), true))))
 }
-
-/// How many draws the spawn's square tries laying out each spot with.
-const SPAWN_SALTS: u64 = 8;
 
 /// The stream names are drawn from, apart from the rest of the plan so a square's
 /// neighbours can draw the names it may take without planning it.
@@ -631,6 +640,8 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
 /// Lays out the settlement of the square `cell` round `centre`, if it can.
 /// `smallest`: as the size with fewest houses, whatever the draw.
 fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool) -> Option<Plan> {
+    #[cfg(test)]
+    ctx.checked.set(Checked { laid_out: ctx.checked.get().laid_out + 1, ..ctx.checked.get() });
     let def = ctx.def;
     let levers = levers(ctx, centre, fresh, &mut rng);
     let biome = ctx.world.biome_at(centre.x, centre.y);

@@ -667,6 +667,12 @@ pub struct RulesDef {
     /// spawn: the square of the grid they spawn in always holds one, standing within
     /// that reach (none promised at 0).
     pub spawn_settlement_within: i32,
+    /// How many times `site.tries` the spawn's square looks at, and the most spots it keeps
+    /// to lay out, nearest first.
+    pub spawn_tries: u32,
+    /// How many draws the spawn's square lays each spot out with, as it is and then as
+    /// the smallest place, before it is left empty.
+    pub spawn_salts: u32,
     /// No two settlements within this many blocks of each other share a name.
     pub names_apart: i32,
     pub levers: LeversDef,
@@ -683,6 +689,8 @@ impl Default for RulesDef {
     fn default() -> Self {
         Self {
             spawn_settlement_within: 1024,
+            spawn_tries: 8,
+            spawn_salts: 8,
             names_apart: 4096,
             levers: LeversDef::default(),
             lanes: LanesDef::default(),
@@ -1013,6 +1021,8 @@ struct StyleFile {
 #[serde(deny_unknown_fields, default)]
 struct RulesFile {
     spawn_settlement_within: Option<i32>,
+    spawn_tries: Option<u32>,
+    spawn_salts: Option<u32>,
     names_apart: Option<i32>,
     levers: Option<LeversDef>,
     lanes: Option<LanesDef>,
@@ -1274,6 +1284,12 @@ impl SettlementsDef {
             if let Some(within) = rules.spawn_settlement_within {
                 mine.spawn_settlement_within = within;
             }
+            if let Some(tries) = rules.spawn_tries {
+                mine.spawn_tries = tries;
+            }
+            if let Some(salts) = rules.spawn_salts {
+                mine.spawn_salts = salts;
+            }
             if let Some(apart) = rules.names_apart {
                 mine.names_apart = apart;
             }
@@ -1524,6 +1540,9 @@ impl SettlementsDef {
         }
         if !(0..=4096).contains(&rules.spawn_settlement_within) {
             return fail(format!("rules: a settlement is promised within 0 to 4096 blocks of spawn: {}", rules.spawn_settlement_within));
+        }
+        if !(1..=32).contains(&rules.spawn_tries) || !(1..=32).contains(&rules.spawn_salts) {
+            return fail(format!("rules: the spawn's square tries 1 to 32 times the spots and 1 to 32 draws of each: spawn_tries {}, spawn_salts {}", rules.spawn_tries, rules.spawn_salts));
         }
         if !(0..=16384).contains(&rules.names_apart) {
             return fail(format!("rules: names are kept apart by 0 to 16384 blocks: {}", rules.names_apart));

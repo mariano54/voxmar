@@ -30,8 +30,10 @@ seven holds a settlement, four hamlets to every village.
 A new player finds one within `rules.spawn_settlement_within` (1024) blocks of where they
 spawn: where no square near is settled within that reach anyway, the nearest square in
 reach that can hold one always does, its climate ruling no spot out and its next best
-spot tried where one cannot be laid out. Where no spot in reach will do (a strip of coast
-under mountains), none is promised. A player never spawns inside a settlement.
+spot tried where one cannot be laid out: it looks at `rules.spawn_tries` (8) times as many
+spots, and lays each out with `rules.spawn_salts` (8) draws, then as the smallest place.
+Where no spot in reach will do (a strip of coast under mountains), none is promised. A
+player never spawns inside a settlement.
 
 No two settlements within `rules.names_apart` (4096) blocks of each other share a name
 (design, draft 81). Names draw from a stream of their own: each square offers a few

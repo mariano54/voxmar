@@ -314,6 +314,11 @@ pub struct Settlements {
     /// How many squares were planned, for tests that no square is planned twice.
     #[cfg(test)]
     pub(crate) planned: std::sync::atomic::AtomicUsize,
+    /// Each plan's square, whether settled for a new player, and the spots it laid out
+    /// and looked round closely for creeks, for tests that planning stays within its
+    /// numbers.
+    #[cfg(test)]
+    pub(crate) checked: std::sync::Mutex<Vec<(IVec2, bool, plan::Checked)>>,
 }
 
 /// What finding the spawn's square settled: the square, and the plans made on the way,
@@ -345,6 +350,8 @@ impl Settlements {
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             #[cfg(test)]
             planned: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            checked: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -514,8 +521,11 @@ impl Settlements {
         #[cfg(test)]
         self.planned.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let land = world.land();
-        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn, promised: self.promised(world) };
-        plan::plan(&ctx, cell)
+        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn, promised: self.promised(world), #[cfg(test)] checked: Default::default() };
+        let plan = plan::plan(&ctx, cell);
+        #[cfg(test)]
+        self.checked.lock().unwrap().push((cell, spawn.is_some(), ctx.checked.get()));
+        plan
     }
 
     /// Where a new player will spawn, and the square settled for them within
@@ -588,7 +598,7 @@ impl Settlements {
         let Some(fixed) = &self.fixed else { return false };
         let at = world.spawn_estimate();
         let land = world.land();
-        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn: Some(at), promised: self.promised(world) };
+        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn: Some(at), promised: self.promised(world), #[cfg(test)] checked: Default::default() };
         self.in_reach(at).into_iter().any(|c| !plan::site(&ctx, c, Some(at)).is_empty())
     }
 
