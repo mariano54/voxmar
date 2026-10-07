@@ -2136,9 +2136,9 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// The plot `refusal` sows, on the test ground's dirt and more than four blocks from its
-/// pool, so nothing waters it.
-const DRY_PLOT: IVec3 = IVec3::new(-5, -1, 5);
+/// The plot `refusal` sows, on the test ground's dirt within reach of the player and more
+/// than four blocks from its pool (x 3 to 5), so nothing waters it.
+const DRY_PLOT: IVec3 = IVec3::new(-2, -1, 2);
 
 /// Rice (which grows only with water near) sown on a dry plot: the server refuses it and
 /// says why as a refusal, which shows by the hotbar with the others.
