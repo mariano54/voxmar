@@ -614,7 +614,7 @@ impl Server {
         let rarity = Words::Own(format!("rarity.{}", snake(&rarity)), rarity);
         Words::key("command.biome")
             .with("biome", Words::Own(voxmar_engine::lang::def_key("biome", &biome.name), biome.name.clone()))
-            .with("tags", Words::text(biome.tags.join(", ")))
+            .with("tags", Words::List(biome.tags.iter().map(|tag| Words::Own(format!("biome.tag.{tag}"), tag.replace('_', " "))).collect()))
             .with("rarity", rarity)
             .with("temperature", Words::text(format!("{:.1}", site.temperature)))
             .with("rain", Words::text(format!("{:.0}", site.precipitation)))

@@ -409,7 +409,7 @@ mod tests {
         let mut unknown = BTreeSet::new();
         let namespaces = [
             "menu", "worlds", "time", "create", "mode", "join", "loading", "net", "settings", "screen", "hud", "inventory",
-            "rarity", "item", "skills", "character", "language", "effect",
+            "rarity", "item", "skills", "character", "language", "effect", "alchemy", "key",
         ];
         while let Some(path) = files.pop() {
             if path.is_dir() {
@@ -553,6 +553,87 @@ mod tests {
         let oak = blocks.id("base:oak_log").map(|id| blocks.def(id)).unwrap();
         assert_eq!((locale.block(oak).as_str(), locale.block_reading(oak).as_deref()), ("オークの原木", Some("オークのげんぼく")));
         assert_eq!(Locale::load(&content(), "en").block_reading(oak), None);
+    }
+
+    /// The keys whose English is in a definition (a skill's guide, a command's help, an
+    /// effect's title, a quest's), which a language file need not repeat.
+    fn english_in_definitions(content: &voxmar_engine::content::Content) -> BTreeSet<String> {
+        let mut keys = BTreeSet::new();
+        let mut with = |key: String, parts: &[&str]| {
+            keys.extend(parts.iter().map(|part| format!("{key}.{part}")));
+            keys.insert(key);
+        };
+        for id in content.skills.ids() {
+            let def = content.skills.get(id);
+            let key = def_key("skill", &def.name);
+            for (i, step) in def.guide.iter().enumerate() {
+                with(format!("{key}.guide.{i}"), if step.how.is_some() { &["how"] } else { &[] });
+            }
+            with(key, &["description"]);
+        }
+        for def in content.commands.iter() {
+            with(format!("{}.help", def_key("command", &def.name)), &["summary"]);
+        }
+        for id in content.effects.ids() {
+            with(def_key("effect", &content.effects.get(id).name), &["description"]);
+        }
+        for quest in content.quests.iter() {
+            with(def_key("quest", &quest.name), &["why"]);
+        }
+        for structure in content.multiblocks.iter() {
+            with(def_key("multiblock", &structure.name), &["hint"]);
+        }
+        for (_, creature) in content.creatures.iter() {
+            with(def_key("creature", &creature.def.name), &[]);
+            for breed in &creature.def.breeds {
+                with(def_key("breed", &format!("{}.{}", creature.def.name, breed.name)), &[]);
+            }
+        }
+        keys
+    }
+
+    /// Every package's Japanese keys have English, in its `lang/en.ron` or in the definition
+    /// they name, and every English key has Japanese (English alone has `.one`, a count's
+    /// form for one): neither language shows the other's words or a name made from an id.
+    #[test]
+    fn every_package_has_the_same_keys_in_english_and_japanese() {
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let defined = english_in_definitions(&loaded);
+        let mut mismatched = Vec::new();
+        for package in std::fs::read_dir(content()).unwrap().map(|entry| entry.unwrap().path()) {
+            let read = |code: &str| {
+                std::fs::read_to_string(package.join(format!("lang/{code}.ron")))
+                    .ok()
+                    .map(|source| ron::from_str::<std::collections::BTreeMap<String, String>>(&source).unwrap())
+            };
+            let name = package.file_name().unwrap().to_string_lossy().into_owned();
+            let Some(japanese) = read("ja") else { continue };
+            let english = read("en").unwrap_or_default();
+            let only_english: Vec<_> = english.keys().filter(|key| !key.ends_with(".one") && !japanese.contains_key(*key)).collect();
+            let only_japanese: Vec<_> = japanese.keys().filter(|key| !english.contains_key(*key) && !defined.contains(*key)).collect();
+            if !only_english.is_empty() || !only_japanese.is_empty() {
+                mismatched.push(format!("{name}: only in English {only_english:?}; only in Japanese {only_japanese:?}"));
+            }
+        }
+        assert!(mismatched.is_empty(), "{}", mismatched.join("\n"));
+    }
+
+    /// Every alchemy property an item carries (`alchemy:clarity`) has a name in each
+    /// language, for its tooltip.
+    #[test]
+    fn every_alchemy_property_has_a_name() {
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        for language in languages(&content()) {
+            let locale = Locale::load(&content(), &language.code);
+            let blocks = &loaded.blocks;
+            let unnamed: BTreeSet<String> = (0..blocks.len())
+                .flat_map(|i| blocks.def(BlockId(i as u16)).tags.iter())
+                .filter_map(|tag| tag.strip_prefix("alchemy:"))
+                .map(|property| format!("alchemy.{property}"))
+                .filter(|key| locale.find(key).is_none())
+                .collect();
+            assert!(unnamed.is_empty(), "{}: alchemy properties without a name: {unnamed:?}", language.code);
+        }
     }
 
     #[test]

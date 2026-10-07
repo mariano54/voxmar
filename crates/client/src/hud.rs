@@ -448,6 +448,7 @@ fn update_debug(
     target: Res<Target>,
     lod: Res<Lod>,
     weather: Res<ClientWeather>,
+    locale: Res<crate::lang::Locale>,
     mut text: Query<&mut Text, With<DebugText>>,
     mut plate: Query<&mut Visibility, With<DebugPlate>>,
 ) {
@@ -464,39 +465,49 @@ fn update_debug(
     let (worst, p99, slow) = recent.summary();
     let stats = world.stats;
     let p = player.position;
-    let looking = target
-        .hit
-        .and_then(|hit| world.block(hit.block).map(|b| format!("{} at {}", world.registry.def(b).name, hit.block)))
-        .unwrap_or_else(|| "nothing".into());
+    let looking = target.hit.and_then(|hit| world.block(hit.block).map(|b| (world.registry.def(b).name.clone(), hit.block))).map_or_else(
+        || locale.get("hud.debug.looking_at_nothing").to_owned(),
+        |(block, place)| locale.format("hud.debug.looking_at", &[("block", &block), ("place", &place)]),
+    );
     let mut sky = format!("{}: {}", weather.current.describe(), weather.current.summary());
     if !weather.effects.is_empty() {
-        sky.push_str(&format!("\neffects: {}", weather.effects.join(", ").replace('_', " ")));
+        sky.push('\n');
+        sky.push_str(&locale.format("hud.debug.effects", &[("effects", &weather.effects.join(", ").replace('_', " "))]));
     }
     let raining = weather.nearby_rain().filter(|&(_, rain)| rain > 0.1).count();
     if raining > 0 {
-        sky.push_str(&format!(" | rain in {raining} of the 25 cells around"));
+        sky.push_str(&locale.format("hud.debug.rain", &[("count", &raining)]));
     }
-    let new = format!(
-        "{fps:.0} fps ({frame_ms:.2} ms) | last {RECENT_SECONDS:.0} s: worst {worst:.1} ms, p99 {p99:.1} ms, {slow} over {SLOW_FRAME_MS:.0} ms\n\
-         xyz {:.1} {:.1} {:.1}{}\n\
-         columns {} | chunk meshes {} | quads {} | visible chunks {}\n\
-         mesh jobs {} | waiting {} | distant tiles {}/{}\n\
-         looking at {looking}\n\
-         {sky}\n\
-         F3 debug  F fly  E inventory  T chat  / command  M music  Esc menu",
-        p.x,
-        p.y,
-        p.z,
-        if player.flying { " (flying)" } else { "" },
-        world.voxels.len(),
-        stats.chunk_entities,
-        stats.quads,
-        stats.visible_chunks,
-        stats.jobs_in_flight,
-        stats.pending_columns,
-        lod.progress().0,
-        lod.progress().1,
-    );
+    let lines = [
+        locale.format(
+            "hud.debug.frames",
+            &[
+                ("fps", &format!("{fps:.0}")),
+                ("frame", &format!("{frame_ms:.2}")),
+                ("seconds", &format!("{RECENT_SECONDS:.0}")),
+                ("worst", &format!("{worst:.1}")),
+                ("p99", &format!("{p99:.1}")),
+                ("slow", &slow),
+                ("limit", &format!("{SLOW_FRAME_MS:.0}")),
+            ],
+        ),
+        locale.format(
+            if player.flying { "hud.debug.position_flying" } else { "hud.debug.position" },
+            &[("x", &format!("{:.1}", p.x)), ("y", &format!("{:.1}", p.y)), ("z", &format!("{:.1}", p.z))],
+        ),
+        locale.format(
+            "hud.debug.chunks",
+            &[("columns", &world.voxels.len()), ("meshes", &stats.chunk_entities), ("quads", &stats.quads), ("visible", &stats.visible_chunks)],
+        ),
+        locale.format(
+            "hud.debug.jobs",
+            &[("jobs", &stats.jobs_in_flight), ("waiting", &stats.pending_columns), ("done", &lod.progress().0), ("all", &lod.progress().1)],
+        ),
+        looking,
+        sky,
+        locale.get("hud.debug.keys").to_owned(),
+    ];
+    let new = lines.join("\n");
     // Only new text: an unchanged one assigned would still count as a change to lay out.
     if text.0 != new {
         text.0 = new;

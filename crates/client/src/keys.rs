@@ -23,8 +23,11 @@ impl Key {
 
     /// What the menu calls it in the player's language: a language may rename a key
     /// (`key.Space`), and the others keep the names below.
+    /// A key named differently on each system (Option on a Mac, Win on Windows) has
+    /// `key.AltLeft.macos` and the like.
     pub fn name(self, lang: &voxmar_engine::lang::Lang) -> String {
-        lang.get_or(&format!("key.{}", self.code()), self.label()).to_owned()
+        let key = format!("key.{}", self.code());
+        lang.find(&format!("{key}.{}", std::env::consts::OS)).or_else(|| lang.find(&key)).unwrap_or(self.label()).to_owned()
     }
 
     /// The standard code name, as kept in the settings file.
@@ -50,9 +53,6 @@ impl<'de> Deserialize<'de> for Key {
     }
 }
 
-/// Modifier keys carry the names macOS gives them there.
-const ALT: [&str; 2] = if cfg!(target_os = "macos") { ["Left Option", "Right Option"] } else { ["Left Alt", "Right Alt"] };
-const SUPER: [&str; 2] = if cfg!(target_os = "macos") { ["Left Cmd", "Right Cmd"] } else { ["Left Super", "Right Super"] };
 
 /// Every bindable key and its name in the menu.
 const KEYS: &[(KeyCode, &str)] = &[
@@ -113,10 +113,10 @@ const KEYS: &[(KeyCode, &str)] = &[
     (KeyCode::ShiftRight, "Right Shift"),
     (KeyCode::ControlLeft, "Left Ctrl"),
     (KeyCode::ControlRight, "Right Ctrl"),
-    (KeyCode::AltLeft, ALT[0]),
-    (KeyCode::AltRight, ALT[1]),
-    (KeyCode::SuperLeft, SUPER[0]),
-    (KeyCode::SuperRight, SUPER[1]),
+    (KeyCode::AltLeft, "Left Alt"),
+    (KeyCode::AltRight, "Right Alt"),
+    (KeyCode::SuperLeft, "Left Super"),
+    (KeyCode::SuperRight, "Right Super"),
     (KeyCode::Backquote, "`"),
     (KeyCode::Minus, "-"),
     (KeyCode::Equal, "="),
