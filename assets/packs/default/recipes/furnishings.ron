@@ -3,7 +3,7 @@
 // fishing net and hanging herbs.
 (
     palettes: {
-        "hay_straw": ["#7a5a1c", "#9a7826", "#b8952e", "#cfae42", "#e2c45c", "#efd77a"],
+        "hay_straw": ["#765920", "#91742f", "#ae9038", "#c4a84d", "#d8be66", "#ead47f"],
         "straw_tie": ["#6a5428", "#8e7438", "#b0944c"],
         "stave": ["#4e3420", "#66442a", "#7e5634", "#94673e", "#a87a4a"],
         "hoop": ["#2a2a2e", "#3e3e44", "#5a5a62", "#7c7c86"],
