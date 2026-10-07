@@ -30,11 +30,12 @@
     density: 0.87,
     // Where each wood comes from, so a region's timber is its own trees': a wood named
     // after a tree builds a tree of another family only in biomes where one of its own
-    // family grows too (a test holds the base game to it). The common woods grow almost
-    // everywhere and build any tree anywhere. Every wood a tree is built of (its log and
-    // root block) is one or the other.
+    // family grows too (a test holds the base game to it). The common woods are generic
+    // temperate woods that may build any tree. Every wood a tree is built of (its log and
+    // root block) is one or the other; each family's trees are built of its wood. A later
+    // package may class a wood the other way.
     woods: (
-        common: ["oak_log", "birch_log", "spruce_log", "pine_log", "dark_oak_log", "maple_log"],
+        common: ["oak_log", "birch_log", "spruce_log", "pine_log", "dark_oak_log"],
         families: {
             "acacia_log": ["acacia"],
             "baobab_log": ["baobab"],
@@ -48,6 +49,7 @@
             "jungle_log": ["jungle", "giant_jungle"],
             "mangrove_log": ["mangrove"],
             "mangrove_roots": ["mangrove"],
+            "maple_log": ["maple", "amber_maple", "green_maple"],
             "palm_log": ["palm", "date_palm"],
             "redwood_log": ["redwood"],
             "silverwood_log": ["silverwood"],
@@ -375,7 +377,7 @@
         ),
         (
             name: "mango", tags: ["gathering", "fruit", "hot"], rarity: Rare,
-            log: "dark_oak_log", leaves: "jungle_leaves", height: (7, 10), lean: 0.5,
+            log: "jungle_log", leaves: "jungle_leaves", height: (7, 10), lean: 0.5,
             fruit: (leaves: "mango_leaves", share: 0.06),
             crown: Round(reach: (2.4, 3.4), radius: (2.2, 2.8), squash: 0.85, start: 0.4),
             comfort: (temperature: (20.0, 40.0), moisture: (0.6, 8.0)),

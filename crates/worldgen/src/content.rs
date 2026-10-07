@@ -694,6 +694,39 @@ pub struct WoodsDef {
     pub families: std::collections::BTreeMap<String, Vec<String>>,
 }
 
+impl WoodsDef {
+    /// Adds package `package`'s woods (names qualified) from the file at `at`: family
+    /// members join a family's, and a wood the package classes the other way (common, or
+    /// with a family) is classed its way instead, with a note. A package may not class one
+    /// wood both ways.
+    fn add(&mut self, at: &str, package: &str, other: &WoodsDef) -> Result<(), ContentError> {
+        if let Some(wood) = other.common.iter().find(|w| other.families.contains_key(*w)) {
+            return Err(ContentError(format!("{at}: `{wood}` is listed both as a common wood and with a family")));
+        }
+        for wood in &other.common {
+            if let Some(family) = self.families.remove(wood) {
+                tracing::info!("{package}/trees.ron makes {wood} a common wood, replacing its family {family:?}");
+            }
+            if !self.common.contains(wood) {
+                self.common.push(wood.clone());
+            }
+        }
+        for (wood, family) in &other.families {
+            if let Some(i) = self.common.iter().position(|w| w == wood) {
+                self.common.remove(i);
+                tracing::info!("{package}/trees.ron gives {wood} a family, replacing it as a common wood");
+            }
+            let members = self.families.entry(wood.clone()).or_default();
+            for tree in family {
+                if !members.contains(tree) {
+                    members.push(tree.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A kind of tree: a handful of shape parameters, its blocks, and where it grows.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1550,10 +1583,10 @@ impl WorldContent {
                         tree_density = Some(density);
                     }
                     let q = |n: &str| qualify(&file.package, n);
-                    woods.common.extend(def.woods.common.iter().map(|n| q(n)));
-                    for (wood, family) in &def.woods.families {
-                        woods.families.entry(q(wood)).or_default().extend(family.iter().map(|n| q(n)));
-                    }
+                    woods.add(&at, &file.package, &WoodsDef {
+                        common: def.woods.common.iter().map(|n| q(n)).collect(),
+                        families: def.woods.families.iter().map(|(wood, family)| (q(wood), family.iter().map(|n| q(n)).collect())).collect(),
+                    })?;
                     trees.extend(def.trees.into_iter().map(|t| {
                         TreeDef {
                             name: q(&t.name),
@@ -2008,11 +2041,13 @@ impl WorldContent {
         for (wood, family) in &self.woods.families {
             let at = || format!("trees.ron: the family of wood `{wood}`");
             block(&at, wood)?;
-            if self.woods.common.contains(wood) {
-                return Err(ContentError(format!("{}: it is a common wood too", at())));
-            }
-            if let Some(tree) = family.iter().find(|t| !self.trees.iter().any(|d| d.name == **t)) {
-                return Err(ContentError(format!("{}: no tree is named `{tree}`", at())));
+            for name in family {
+                let Some(tree) = self.trees.iter().find(|d| d.name == *name) else {
+                    return Err(ContentError(format!("{}: no tree is named `{name}`", at())));
+                };
+                if tree.log != *wood && tree.root_block.as_ref() != Some(wood) {
+                    return Err(ContentError(format!("{}: `{name}` is not built of `{wood}`", at())));
+                }
             }
         }
         for (i, plant) in self.plants.iter().enumerate() {
@@ -2706,7 +2741,11 @@ mod tests {
             }
         }
         for biome in &content.biomes {
-            let grows: Vec<&TreeDef> = content.trees.iter().filter(|t| biome.flora.trees.iter().any(|s| picks(s, t))).collect();
+            let grows: Vec<&TreeDef> = content
+                .trees
+                .iter()
+                .filter(|t| biome.flora.trees.iter().any(|s| picks(s, t)) && !t.tags.iter().any(|tag| biome.flora.exclude.contains(tag)))
+                .collect();
             for tree in &grows {
                 for wood in [Some(&tree.log), tree.root_block.as_ref()].into_iter().flatten() {
                     let Some(family) = woods.families.get(wood) else { continue };
@@ -2789,6 +2828,21 @@ mod tests {
         }
     }
 
+    /// A later package may class a wood the other way, common or with a family, and it
+    /// is classed its way (with a note in the log); family members join the family.
+    #[test]
+    fn a_later_package_reclasses_a_wood() {
+        let registry = registry();
+        let mut files = base_files();
+        let source = "(woods: (common: [\"base:acacia_log\"], families: {\"base:oak_log\": [\"base:oak\"], \"base:cherry_log\": [\"base:wild_cherry\"]}), trees: [])";
+        files.push(ContentFile { package: "mod".into(), name: "trees.ron".into(), source: source.into() });
+        let woods = WorldContent::from_files(files.iter(), &registry).unwrap().woods;
+        assert!(woods.common.contains(&"base:acacia_log".to_string()) && !woods.families.contains_key("base:acacia_log"));
+        assert!(!woods.common.contains(&"base:oak_log".to_string()) && woods.families["base:oak_log"] == ["base:oak"]);
+        let cherry = &woods.families["base:cherry_log"];
+        assert!(cherry.contains(&"base:cherry".to_string()) && cherry.iter().filter(|t| *t == "base:wild_cherry").count() == 1, "members join the family once: {cherry:?}");
+    }
+
     #[test]
     fn broken_trees_and_plants_are_refused() {
         let registry = registry();
@@ -2806,7 +2860,8 @@ mod tests {
             ("trees.ron", tree("crown: Bare, colour: 1"), "colour"),
             ("trees.ron", "(woods: (common: [\"base:oak_lgo\"]), trees: [])".into(), "unknown block `base:oak_lgo`"),
             ("trees.ron", "(woods: (families: {\"base:acacia_log\": [\"baobob\"]}), trees: [])".into(), "no tree is named `mod:baobob`"),
-            ("trees.ron", "(woods: (families: {\"base:oak_log\": [\"base:oak\"]}), trees: [])".into(), "a common wood too"),
+            ("trees.ron", "(woods: (common: [\"base:acacia_log\"], families: {\"base:acacia_log\": [\"base:acacia\"]}), trees: [])".into(), "both as a common wood and with a family"),
+            ("trees.ron", "(woods: (families: {\"base:acacia_log\": [\"base:oak\"]}), trees: [])".into(), "`base:oak` is not built of `base:acacia_log`"),
             ("plants.ron", "(plants: [(name: \"p\", block: \"base:poppy\", top: \"base:poppy\", stack: (1, 2))])".into(), "a stack"),
         ];
         for (file, source, expected) in cases {
