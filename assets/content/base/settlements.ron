@@ -79,19 +79,23 @@
     //     creeks goes through `look` times `tries` of the best, sampling every `creek` blocks.
     //   glade: no trees within glade.0 blocks of a house, fewer out to glade.1, glade_trees.0
     //     of them left past the treeless ring and glade_trees.1 more where it is green.
+    //   eaves: crowns reaching past the ring are cut back over each building and this many
+    //     blocks round it (0 to 8).
     site: (
         temperature: (-10.0, 36.0), mild: (0.0, 26.0), taper: 0.25,
         water: 48, bank: 3,
         fertility: 0.3, poor: {"cold": 0.15, "desert": 0.15},
         height: (3, 90), relief: 14, reach: 48, firm: 24, caves: 150,
         step: 16, tries: 6, look: 6, creek: 4, score: (luck: 3.0, spread: 1.2, relief: 0.25, water: 3.0, height: 0.02),
-        glade: (5, 16), glade_trees: (0.08, 0.3),
+        glade: (5, 16), glade_trees: (0.08, 0.1), eaves: 1,
     ),
     // rules: the rest of the numbers planning reads.
     //   spawn_settlement_within: a new player finds a settlement within this many blocks of
     //     where they spawn: of the squares in reach, the nearest that can hold one always
     //     does, unless one already stands in reach (design, 7 Oct: P21's early quests send
     //     them there). 0 promises none.
+    //   names_apart: no two settlements within this many blocks of each other share a name
+    //     (design, draft 81).
     //   levers: how each lever is drawn: `luck` times the mean of `rolls` rolls, plus shares
     //     of fertility, fresh water near, flat ground (flat below `steep`), the wealth drawn
     //     first, and forest (undergrowth counting `undergrowth` of it); clamped to 0 ..= 1.
@@ -129,6 +133,7 @@
     //     props keep from lanes (by a lane, in a yard).
     rules: (
         spawn_settlement_within: 1024,
+        names_apart: 4096,
         levers: (
             wealth: (luck: 0.45, fertility: 0.25, water: 0.2, flat: 0.1),
             age: (luck: 1.0, rolls: 2),
