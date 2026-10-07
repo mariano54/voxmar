@@ -35,6 +35,7 @@ pub fn module(behaviour: Behaviour) -> Arc<dyn Module> {
         Behaviour::Hunt { radius } => Arc::new(Hunt { radius }),
         Behaviour::Defend => Arc::new(Defend),
         Behaviour::Curious { distance } => Arc::new(Curious { distance }),
+        Behaviour::Routine => Arc::new(Routine),
     }
 }
 
@@ -580,6 +581,36 @@ impl Module for Curious {
             None
         };
         Decision { goal, speed: walk(ctx) * 0.8, face: Some(p.position), pose: Pose::Alert, ..Default::default() }
+    }
+}
+
+/// Goes where its routine sends it, by the turns of the way the server found, and once
+/// there rests or stands as the errand says, looking at a player who comes close.
+#[derive(Debug)]
+struct Routine;
+
+impl Module for Routine {
+    fn name(&self) -> &'static str {
+        "routine"
+    }
+
+    fn band(&self) -> Band {
+        Band::Drive
+    }
+
+    fn want(&self, ctx: &Ctx) -> Option<Want> {
+        ctx.at.errand.and_then(|_| Want::new(1.0))
+    }
+
+    fn act(&self, ctx: &Ctx, _: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
+        let Some(errand) = ctx.at.errand else { return Decision::default() };
+        let there = errand.last && flat(errand.to, ctx.at.position) < ARRIVED * 0.6;
+        if !there {
+            return Decision { goal: Some(errand.to), speed: walk(ctx), ..Default::default() };
+        }
+        // Awake, they turn to a player close by.
+        let near = ctx.nearest().filter(|p| ctx.distance(p.position) < 4.0 && errand.pose != Pose::Resting);
+        Decision { face: near.map(|p| p.position).or(errand.face), pose: errand.pose, ..Default::default() }
     }
 }
 

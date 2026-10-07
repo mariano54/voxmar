@@ -83,6 +83,19 @@ pub struct Seen {
     pub friend: bool,
 }
 
+/// Where someone with a routine (villagers) is to be now, as the server's schedule and
+/// path finding say: the next point on their way, and how to be once there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Errand {
+    pub to: Vec3,
+    /// Whether `to` is where they are going, not a turn on the way.
+    pub last: bool,
+    /// How they are once there: resting (asleep), or idle.
+    pub pose: Pose,
+    /// What they face once there.
+    pub face: Option<Vec3>,
+}
+
 /// What a creature senses this decision.
 #[derive(Clone, Copy, Debug)]
 pub struct Situation<'a> {
@@ -102,6 +115,8 @@ pub struct Situation<'a> {
     pub mate: Option<Vec3>,
     /// Whether someone keeps it: a kept creature stays near its home.
     pub kept: bool,
+    /// Where its routine sends it now, for those that have one.
+    pub errand: Option<Errand>,
     /// Seconds since the last decision.
     pub dt: f32,
     /// The seed for this decision's random choices.
@@ -433,7 +448,7 @@ pub(super) mod tests {
     pub(super) const BODY: &str = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
 
     pub(super) fn situation<'a>(players: &'a [Seen]) -> Situation<'a> {
-        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, dt: 0.2, seed: 7 }
+        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 }
     }
 
     pub(super) fn player(at: Vec3) -> Seen {

@@ -164,7 +164,7 @@ pub struct Creatures {
     next: u32,
     seen: FxHashMap<PlayerId, FxHashSet<u32>>,
     /// Those that died or went since players were last told.
-    gone: Vec<CreatureGone>,
+    pub(crate) gone: Vec<CreatureGone>,
     /// Each player's last strike tick.
     struck: FxHashMap<PlayerId, std::time::Instant>,
     /// Where each player settled and since when (RuneScape's tolerance).
@@ -230,6 +230,7 @@ impl Server {
             }
             self.despawn_far();
         }
+        self.tick_villagers();
         self.think_and_move();
         self.tick_husbandry();
         self.replicate_creatures();
@@ -306,6 +307,7 @@ impl Server {
                     food,
                     mate,
                     kept: creature.owner.is_some(),
+                    errand: self.villagers.errand(id),
                     dt: every as f32 * dt,
                     seed: mix(creature.seed, self.tick),
                 };
@@ -595,8 +597,9 @@ impl Server {
             unit_from(mix(creature.seed, draws as u64 ^ self.tick << 8))
         });
         let cell = creature.body.position.floor().as_ivec3();
-        // The killer's journal: one more of the species, and each drop for the collection log.
-        let mut journal = vec![(Self::page_of(species.def.kind), species.def.name.clone(), 1)];
+        // The killer's journal: one more of the species (people are not counted), and each
+        // drop for the collection log.
+        let mut journal = if species.def.kind == Kind::Villager { Vec::new() } else { vec![(Self::page_of(species.def.kind), species.def.name.clone(), 1)] };
         journal.extend(found.iter().map(|&(item, count)| (voxmar_engine::journal::Page::Collection, self.content.blocks.def(item).name.clone(), count as u32)));
         for (i, (item, count)) in found.into_iter().enumerate() {
             let body = dropped::popped(cell, random3(self.tick, cell, i as u32 + id));
@@ -619,12 +622,18 @@ impl Server {
 
     /// Puts a creature of `species` at `at`, with a home there.
     pub(crate) fn spawn_creature(&mut self, species: CreatureId, at: Vec3, salt: u64) -> Option<u32> {
+        let seed = mix(mix(self.meta.seed, self.creatures.next as u64), salt);
+        self.spawn_seeded(species, at, seed)
+    }
+
+    /// Puts a creature of `species` at `at` whose looks and mind come from `seed`, so the
+    /// same seed makes the same individual (a settlement's people, each visit).
+    pub(crate) fn spawn_seeded(&mut self, species: CreatureId, at: Vec3, seed: u64) -> Option<u32> {
         if self.creatures.live.len() >= MAX_CREATURES {
             return None;
         }
         let id = self.creatures.next;
         self.creatures.next += 1;
-        let seed = mix(mix(self.meta.seed, id as u64), salt);
         let genome = self.wild_genome(species, at, seed);
         let def = &self.content.creatures.get(species).def;
         let traits = genes::express(&def.genes, &genome);
@@ -692,7 +701,8 @@ impl Server {
             self.creatures
                 .live
                 .values()
-                .filter(|c| c.body.position.distance(at) < NEAR && (self.content.creatures.get(c.species).def.kind == Kind::Monster) == (kind == Kind::Monster))
+                .filter(|c| c.body.position.distance(at) < NEAR && self.content.creatures.get(c.species).def.kind != Kind::Villager)
+                .filter(|c| (self.content.creatures.get(c.species).def.kind == Kind::Monster) == (kind == Kind::Monster))
                 .count()
         };
         let (animals, monsters) = (nearby(Kind::Animal), nearby(Kind::Monster));
@@ -714,6 +724,10 @@ impl Server {
         let mut choices: Vec<(CreatureId, f32)> = Vec::new();
         for (id, species) in self.content.creatures.iter() {
             let def = &species.def;
+            // People come with their settlements (`villagers`), never from the land.
+            if def.kind == Kind::Villager {
+                continue;
+            }
             let monster = def.kind == Kind::Monster;
             if (monster && (monsters >= MONSTER_CAP || !dark)) || (!monster && animals >= ANIMAL_CAP) {
                 continue;
@@ -786,7 +800,7 @@ impl Server {
             .creatures
             .live
             .iter()
-            .filter(|(_, c)| c.owner.is_none())
+            .filter(|(id, c)| c.owner.is_none() && !self.villagers.manages(**id))
             .filter(|(_, c)| {
                 let far = players.iter().all(|p| p.distance(c.body.position) > DESPAWN);
                 far || !self.world.contains(ColumnPos::of_block(c.body.position.floor().as_ivec3()))

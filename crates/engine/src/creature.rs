@@ -49,6 +49,9 @@ pub enum Kind {
     Fish,
     /// Only where aether is high; no body to butcher.
     Spirit,
+    /// People of settlements: placed by their settlement near players, never by the land,
+    /// never kept, and kept by the server only while a player is near their home.
+    Villager,
 }
 
 /// Where a species can be.
@@ -359,6 +362,8 @@ pub enum Behaviour {
     Curious { distance: f32 },
     /// Blinks a few blocks away when fleeing (supernatural).
     Blink,
+    /// Goes where its day's routine sends it (`Situation::errand`): villagers.
+    Routine,
 }
 
 /// Experience for killing one, in `skill`.

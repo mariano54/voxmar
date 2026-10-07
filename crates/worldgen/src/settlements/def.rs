@@ -54,7 +54,7 @@ impl Levers {
 pub struct Lean(pub Vec<(Lever, f32)>);
 
 impl Lean {
-    fn parse(at: &str, map: &BTreeMap<String, f32>) -> Result<Self, ContentError> {
+    pub(super) fn parse(at: &str, map: &BTreeMap<String, f32>) -> Result<Self, ContentError> {
         map.iter()
             .map(|(name, &lean)| {
                 Lever::parse(name)
@@ -464,6 +464,13 @@ struct HouseFile {
     /// Only beside fresh water.
     #[serde(default)]
     water: bool,
+    /// How many live in it, fewest and most (fuller where it is crowded).
+    #[serde(default = "household")]
+    people: (u32, u32),
+}
+
+fn household() -> (u32, u32) {
+    (1, 3)
 }
 
 #[derive(Deserialize)]
@@ -610,6 +617,8 @@ struct SettlementFile {
     roofs: Vec<RoofFile>,
     #[serde(default)]
     centrepieces: Vec<CentreFile>,
+    #[serde(default)]
+    people: super::people::PeopleFile,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -658,6 +667,7 @@ pub struct HouseDef {
     pub most: Option<u32>,
     pub stilts: Option<u32>,
     pub water: bool,
+    pub people: (u32, u32),
 }
 
 /// A roof shape every style may weigh, and the levers it leans on.
@@ -759,6 +769,7 @@ pub struct SettlementsDef {
     pub styles: Vec<StyleDef>,
     pub roofs: Vec<RoofDef>,
     pub centrepieces: Vec<CentreDef>,
+    pub people: super::people::PeopleDef,
 }
 
 fn names(package: &str, at: &str, selects: &[Select]) -> Result<Vec<(String, f32)>, ContentError> {
@@ -868,6 +879,7 @@ impl SettlementsDef {
                 most: h.most,
                 stilts: h.stilts,
                 water: h.water,
+                people: h.people,
             });
         }
         for r in file.roofs {
@@ -934,6 +946,7 @@ impl SettlementsDef {
                 window_chance: s.window_chance,
             });
         }
+        self.people.extend(at, package, file.people)?;
         Ok(())
     }
 
@@ -1043,7 +1056,12 @@ impl SettlementsDef {
                 }
             }
         }
-        Ok(())
+        for h in &self.houses {
+            if h.people.0 > h.people.1 {
+                return fail(format!("house `{}` needs people fewest to most", h.name));
+            }
+        }
+        self.people.check(&self.sizes.iter().map(|s| s.name.clone()).collect::<Vec<_>>())
     }
 }
 

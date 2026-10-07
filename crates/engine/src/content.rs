@@ -133,7 +133,9 @@ impl Content {
                         cooking.extend(CookingRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "creatures.ron" => {
+                    // `creatures.ron`, and `creatures_<topic>.ron` for the people a system
+                    // places (villagers).
+                    topic if topic.starts_with("creatures") => {
                         creatures.extend(CreatureRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }

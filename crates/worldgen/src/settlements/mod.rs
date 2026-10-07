@@ -27,6 +27,7 @@ mod canvas;
 mod centre;
 pub mod def;
 mod house;
+pub mod people;
 mod plan;
 #[cfg(test)]
 mod tests;
@@ -91,6 +92,8 @@ pub struct Plan {
     pub gates: Vec<IVec2>,
     /// Lanes' centre lines, for maps.
     pub lanes: Vec<Vec<Vec2>>,
+    /// Who lives there (`people`).
+    pub people: Vec<people::Resident>,
     /// The blocks the settlement touches, grading included.
     pub min: IVec2,
     pub max: IVec2,
@@ -305,6 +308,11 @@ impl Settlements {
             plans: Cache::new(32 * MB),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
+    }
+
+    /// The lists and routines of the people who live in settlements.
+    pub fn people(&self) -> &people::PeopleDef {
+        &self.def.people
     }
 
     /// The square of the grid holding (x, z).

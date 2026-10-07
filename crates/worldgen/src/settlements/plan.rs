@@ -1040,6 +1040,8 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     }
 
     let gates: Vec<IVec2> = lanes.iter().filter(|l| l.main).map(|l| l.points.last().unwrap().round().as_ivec2()).collect();
+    let size_name = &def.sizes[size_index].name;
+    let people = super::people::residents(&def.people, &def.houses, size_name, &levers, &buildings, &gates, hash3(ctx.seed, cell.x, 7, cell.y));
     Some(Plan {
         id: hash3(ctx.seed, cell.x, 0, cell.y),
         size: def.sizes[size_index].name.clone(),
@@ -1052,6 +1054,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         buildings,
         gates,
         lanes: lanes.iter().map(|l| l.points.clone()).collect(),
+        people,
         min: raster.min,
         max: raster.max,
         raster,

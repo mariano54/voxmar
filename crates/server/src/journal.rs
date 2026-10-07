@@ -31,6 +31,8 @@ impl Server {
             Kind::Animal => Page::Animals,
             Kind::Monster | Kind::Spirit => Page::Monsters,
             Kind::Fish => Page::Fish,
+            // Never logged: `creature_dies` leaves people out of the journal.
+            Kind::Villager => Page::Collection,
         }
     }
 

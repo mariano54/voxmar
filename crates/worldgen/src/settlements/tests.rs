@@ -334,6 +334,11 @@ fn settlement_at() {
     let world = base_world(env("SEED").unwrap_or(1) as u64);
     for s in world.settlements_near(IVec2::new(env("X").unwrap(), env("Z").unwrap()), env("R").unwrap_or(300)) {
         println!("{} {} {} at {} min {:?}", s.name.0, s.size, s.style, s.centre, s.buildings.iter().map(|b| (b.kind.name(), b.min)).collect::<Vec<_>>());
+        let mut who: std::collections::BTreeMap<&str, u32> = Default::default();
+        for r in &s.people {
+            *who.entry(r.species.as_str()).or_default() += 1;
+        }
+        println!("  {} people: {who:?}", s.people.len());
     }
 }
 
@@ -532,4 +537,47 @@ fn house_catalogue() {
             }
         }
     }
+}
+
+/// Every settlement has people: each lives in a home and works at a building that takes
+/// workers, a village keeps guards and an innkeeper, every routine sends them somewhere
+/// each slot of the day, and no two people of a place keep quite the same day.
+#[test]
+fn settlements_are_peopled() {
+    use super::Kind;
+    use super::people::{Place, is, place_at};
+    let mut villages = 0;
+    for seed in [1u64, 42, 7] {
+        let world = base_world(seed);
+        let spawn = world.spawn_point();
+        let people = world.settlement_people();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000) {
+            let what = format!("seed {seed} {} ({})", s.name.0, s.size);
+            assert!(!s.people.is_empty(), "{what}: nobody lives there");
+            for r in &s.people {
+                assert!(matches!(s.buildings[r.home].kind, Kind::House | Kind::Trader | Kind::Inn), "{what}: {} lives in a {}", r.species, s.buildings[r.home].kind.name());
+                if let Some(w) = r.work {
+                    let b = &s.buildings[w];
+                    assert!(people.jobs.iter().any(|j| j.species == r.species && is(b, &j.at)) || people.folk.iter().any(|f| f.species == r.species && f.work.as_deref().is_some_and(|w| is(b, w))), "{what}: {} works at a {}", r.species, b.what);
+                }
+            }
+            let homes = s.buildings.iter().filter(|b| b.kind == Kind::House && b.work.is_none()).count();
+            assert!(s.people.len() >= homes, "{what}: {} people in {homes} homes", s.people.len());
+            if s.size == "village" {
+                villages += 1;
+                assert!(s.people.iter().any(|r| r.guard), "{what}: no guards");
+                assert!(s.people.iter().any(|r| r.species == "base:innkeeper"), "{what}: nobody keeps the inn");
+            }
+            let levers = super::Levers(s.levers);
+            let mut days = std::collections::BTreeSet::new();
+            for r in &s.people {
+                let day: Vec<Place> = (0..100).map(|i| place_at(people, r.routine, r.seed, &levers, 3, i as f32 / 100.0, |_| true).0).collect();
+                // Asleep at the dead of night, unless they keep the night watch.
+                assert!(day[90] == Place::Sleep || people.routines[r.routine].name == "watch_night", "{what}: {} up at night: {:?}", r.species, day[90]);
+                days.insert(day);
+            }
+            assert!(days.len() * 3 >= s.people.len(), "{what}: {} people keep only {} days", s.people.len(), days.len());
+        }
+    }
+    assert!(villages > 0, "no village to look at");
 }

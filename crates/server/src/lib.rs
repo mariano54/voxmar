@@ -19,6 +19,7 @@ mod items;
 mod player;
 mod process;
 pub mod save;
+mod villagers;
 mod weather;
 mod wear;
 
@@ -297,6 +298,8 @@ pub(crate) struct Server {
     arrival: Instant,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
+    /// The people of settlements near players.
+    villagers: villagers::Villagers,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -399,6 +402,7 @@ impl Server {
             regrowing,
             arrival: Instant::now(),
             creatures: creatures::Creatures::default(),
+            villagers: villagers::Villagers::default(),
             processes,
             temperature,
             wear_rules,

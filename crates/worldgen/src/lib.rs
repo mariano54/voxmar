@@ -68,7 +68,7 @@ pub use geology::Form;
 pub use rocks::ProvinceId;
 pub use shapes::ShapeId;
 pub use trails::{Kind as PlaceKind, Poi, TrailMark};
-pub use settlements::{Building as SettlementBuilding, Facing as SettlementFacing, Kind as BuildingKind};
+pub use settlements::{Building as SettlementBuilding, Facing as SettlementFacing, Kind as BuildingKind, Levers as SettlementLevers, people};
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
@@ -496,8 +496,14 @@ impl Overworld {
                 gates: p.gates.clone(),
                 lanes: p.lanes.clone(),
                 levers: p.levers.0,
+                people: p.people.clone(),
             })
             .collect()
+    }
+
+    /// The routines and lists settlements' people live by.
+    pub fn settlement_people(&self) -> &people::PeopleDef {
+        self.settlements.people()
     }
 
     /// What is built beside trails within the blocks from `min` to `max`.
@@ -634,6 +640,8 @@ pub struct SettlementInfo {
     pub lanes: Vec<Vec<voxmar_engine::glam::Vec2>>,
     /// Wealth, age, order, crowding and green, each 0 ..= 1.
     pub levers: [f32; 5],
+    /// Who lives there, each with their home and work as indices into `buildings`.
+    pub people: Vec<people::Resident>,
 }
 
 /// Samples sites over an area, computing the regional climate once per lattice point.
