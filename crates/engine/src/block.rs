@@ -847,13 +847,20 @@ impl BlockRegistry {
     }
 
     /// Builds the registry from fully qualified definitions, making each variant its own
-    /// block right after the block it varies. `core:air` is always id 0.
+    /// block right after the block it varies. `core:air` is always id 0. Read so, without
+    /// the packages' shapes (blocks alone, for a test or a tool), a block drawn as a shape
+    /// has none and draws nothing; the game loads them with [`Self::with_shapes`].
     pub fn new(content: Vec<BlockDef>) -> Result<Self, RegistryError> {
-        Self::with_shapes(content, &crate::shape::Shapes::default())
+        Self::build(content, None)
     }
 
-    /// [`Self::new`], with the shapes blocks drawn as boxes take (`render: Model`).
+    /// [`Self::new`], with the shapes blocks drawn as boxes take (`render: Model`), each
+    /// checked as it is made ready (see [`crate::shape::compile`]).
     pub fn with_shapes(content: Vec<BlockDef>, shape_defs: &crate::shape::Shapes) -> Result<Self, RegistryError> {
+        Self::build(content, Some(shape_defs))
+    }
+
+    fn build(content: Vec<BlockDef>, shape_defs: Option<&crate::shape::Shapes>) -> Result<Self, RegistryError> {
         let air = BlockDef {
             name: Self::AIR.into(),
             render: RenderKind::Invisible,
@@ -954,8 +961,10 @@ impl BlockRegistry {
         let mut shape_layers = vec![Vec::new(); defs.len()];
         let mut shape_quads = 0;
         for (index, (def, &fluid)) in defs.iter().zip(&states).enumerate() {
-            let shape = match (def.render, &def.shape) {
-                (RenderKind::Model, Some(name)) => {
+            let shape = match (def.render, &def.shape, shape_defs) {
+                // Read without the shapes: it has none.
+                (RenderKind::Model, Some(_), None) => None,
+                (RenderKind::Model, Some(name), Some(shape_defs)) => {
                     let shape_def = shape_defs.defs.get(name).ok_or_else(|| RegistryError(format!("block `{}` takes unknown shape `{name}`", def.name)))?;
                     let limits = shape_defs.limits.ok_or_else(|| RegistryError("no package sets the shape limits (`limits` in shapes.ron)".into()))?;
                     let turned_over;
@@ -993,9 +1002,9 @@ impl BlockRegistry {
                     };
                     Some(found as u16)
                 }
-                (RenderKind::Model, None) => return Err(RegistryError(format!("block `{}` is drawn as a shape (`render: Model`) but names none", def.name))),
-                (_, None) if def.flips => return Err(RegistryError(format!("block `{}` comes upside down (`flips`) but is not drawn as a shape", def.name))),
-                (_, Some(_)) => return Err(RegistryError(format!("block `{}` names a shape but is not drawn as one (`render: Model`)", def.name))),
+                (RenderKind::Model, None, _) => return Err(RegistryError(format!("block `{}` is drawn as a shape (`render: Model`) but names none", def.name))),
+                (_, None, _) if def.flips => return Err(RegistryError(format!("block `{}` comes upside down (`flips`) but is not drawn as a shape", def.name))),
+                (_, Some(_), _) => return Err(RegistryError(format!("block `{}` names a shape but is not drawn as one (`render: Model`)", def.name))),
                 _ => None,
             };
             let host = match &def.host {
@@ -1347,6 +1356,9 @@ mod tests {
             ])"#,
         )
         .unwrap();
+        // Blocks read alone (a test's or a tool's) have no shapes; the game's have theirs.
+        let alone = BlockRegistry::new(defs.clone()).unwrap();
+        assert!(alone.shape(alone.expect("base:slab")).is_none() && alone.shapes().is_empty());
         let registry = BlockRegistry::with_shapes(defs, &shapes()).unwrap();
         let (slab, birch) = (registry.expect("base:slab"), registry.expect("base:birch_slab"));
         // One shape for both slabs, each in its own texture.

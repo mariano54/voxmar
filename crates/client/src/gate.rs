@@ -294,6 +294,8 @@ struct Gate {
     /// it was first lit.
     kiln: IVec3,
     kiln_since: f32,
+    /// Where the shapes step sets its row of shaped blocks: in the air before the player.
+    shapes_row: IVec3,
     /// When (server seconds) the kiln was last asked to light.
     kiln_asked: f32,
     /// The highest the player's feet reached while climbing out of the pool.
@@ -393,6 +395,7 @@ impl Gate {
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
             kiln_since: 0.0,
+            shapes_row: IVec3::ZERO,
             kiln_asked: f32::MIN,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
@@ -3022,14 +3025,23 @@ fn tree(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// Blocks drawn as their shapes, set in a row beside the test ground: they must reach the
+/// Blocks drawn as their shapes, set in a row in the air just in front of the player, clear
+/// of whatever the earlier steps built and seen against the sky: they must reach the
 /// client and change the view.
 fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    let row = gate.feet + IVec3::new(-6, 0, 6);
     let blocks = ["oak_slab", "oak_stairs", "oak_stairs_top_east", "oak_slab_top", "barrel", "crate", "sack"];
+    if gate.phase == 0 {
+        gate.shapes_row = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(-3, 3, 4);
+    }
+    let row = gate.shapes_row;
     let cells: Vec<IVec3> = (0..blocks.len() as i32).map(|i| row + IVec3::X * i).collect();
     match gate.phase {
         0 => {
+            aim(world, row + IVec3::new(3, 0, 0));
+            gate.advance(now);
+        }
+        // The view turned to the row first, so only the blocks change it.
+        1 if in_phase > 0.5 => {
             aim(world, row + IVec3::new(3, 0, 0));
             if gate.shot(world, "shapes-before").is_some() {
                 for (cell, block) in cells.iter().zip(blocks) {
@@ -3038,7 +3050,7 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             }
         }
-        1 => {
+        2 => {
             let client = world.resource::<ClientWorld>();
             let arrived = cells.iter().all(|&cell| client.block(cell).is_some_and(|b| !b.is_air()));
             if !(arrived && settled(world, row) && in_phase > SETTLE) && in_phase < STEP_LIMIT - 1.0 {
