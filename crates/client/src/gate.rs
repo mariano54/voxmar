@@ -2095,9 +2095,10 @@ fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::tips::Tips;
     let showing = |world: &World| world.resource::<Tips>().showing.map(|(name, _)| name);
     match gate.phase {
-        // As for a player who has seen none, the inventory shut.
+        // As for a player who has seen every tip but the inventory's, the inventory shut.
         0 => {
-            world.resource_mut::<crate::settings::Settings>().tips_seen.clear();
+            let others = crate::hud::tips::TIPS.iter().filter(|name| **name != "inventory").map(|name| name.to_string()).collect();
+            world.resource_mut::<crate::settings::Settings>().tips_seen = others;
             *world.resource_mut::<Tips>() = Tips::default();
             world.resource_mut::<UiState>().inventory_open = false;
             gate.advance(now);
