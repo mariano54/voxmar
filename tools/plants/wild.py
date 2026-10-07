@@ -140,6 +140,26 @@ def pods(seed=0):
     return f
 
 
+def chickpea(seed=0):
+    """A bushy upright pulse: branching stems of tiny paired leaflets, a few small flowers
+    and plump, puffed pods (the wild form of the chickpea crop)."""
+    def f():
+        c = Canvas(); r = random.Random(seed)
+        for x0, xt in [(13, 7), (15, 12), (16, 17), (18, 22), (19, 26)]:
+            pts = curve(x0, 31, xt, 9 + r.randint(0, 5), r.uniform(-2, 2), 7); stem(c, pts, 2)
+            for k in range(1, 7):
+                x, y = pts[k]
+                for side in (-1, 1):
+                    leaf(c, x, y, -90 + side * (55 + r.uniform(-10, 10)), 2.4, 1.6, 3)
+                if k in (3, 5) and r.random() < 0.8:
+                    ex = x + r.choice((-2, 2))
+                    ellipse(c, ex, y + 1, 1.6, 1.2, 'F', 2)
+            xt2, yt = pts[-1]
+            c.put(xt2, yt - 1, 'P', 3); c.put(xt2 + 1, yt - 1, 'P', 2)
+        rim(c); return c
+    return f
+
+
 def bush(fruit=10, cluster=1, size=1, leaf_len=2.6, low=False, flowers=0, seed=0, spiky=False):
     """A rounded shrub of small leaves, with berries, fruit or flowers among them."""
     def f():
@@ -225,16 +245,36 @@ def tuft_grass(blades=11, h=24, plume=None, seed=0, curl=1.0):
             for x, y in tops[:5]: ellipse(c, x, y - 1, 1.8, 1.8, 'P', 3, jag=0.5, seed=int(x))
         elif plume == 'cattail':
             for x, y in tops[:3]:
-                # A plump brown head, rounded at both ends, lit on its left, on a spike.
-                for k in range(9):
-                    w = 1 if k in (0, 8) else 2
+                # A slim brown head, rounded at both ends, lit on its left, on a spike.
+                for k in range(7):
+                    w = 0 if k in (0, 6) else 1
                     for dx in range(-w, w + 1):
                         c.put(x + dx, y - k, 'F', (2 if dx < 0 else 1 if dx == 0 else 0) + (1 if (k + dx) % 3 == 0 else 0))
-                line(c, x, y - 9, x, y - 12, 'L', 3)
+                line(c, x, y - 7, x, y - 10, 'L', 3)
         elif plume == 'papyrus':
             for x, y in tops[:4]:
                 for k in range(9):
                     a = math.radians(-180 + k * 22.5); line(c, x, y, x + math.cos(a) * 4, y + math.sin(a) * 2.5, 'L', 3 + k % 2)
+        rim(c); return c
+    return f
+
+
+def rush_tuft(seed=0, stems=12, h=27):
+    """A tight, upright tuft of thin round stems, a few carrying small brown seed tufts
+    near their tips (rush)."""
+    def f():
+        c = Canvas(); r = random.Random(seed)
+        tops = []
+        for i in range(stems):
+            x0 = 16 + (i - (stems - 1) / 2) * 0.5 + r.uniform(-0.4, 0.4)
+            lean = (x0 - 16) * 4.2 + r.uniform(-1.5, 1.5); t = h * r.uniform(0.6, 1.0)
+            pts = curve(x0, 31, x0 + lean, 31 - t, lean * 0.12, 8)
+            for k, ((ax, ay), (bx, by)) in enumerate(zip(pts, pts[1:])):
+                line(c, ax, ay, bx, by, 'L', (1, 3, 2, 4)[i % 4] + (1 if k > 5 else 0))
+            tops.append(pts[-1])
+        for x, y in tops[1:9:2]:
+            for dx, dy, sh in ((0, 4, 2), (1, 5, 1), (1, 4, 3), (0, 5, 1)):
+                c.put(x + dx, y + dy, 'F', sh)
         rim(c); return c
     return f
 
@@ -420,6 +460,43 @@ def rosette_berries(seed=0):
     return f
 
 
+def windswept(seed=0):
+    """A wiry mountain herb the wind has combed over (windroot): a gnarled pale root crown
+    half out of the ground, wiry stems fanning up from it and curling over downwind, fine
+    needle leaves streaming off them, and small pale flower tufts at the tips."""
+    def f():
+        c = Canvas(); r = random.Random(seed)
+        tips = []
+        # (start angle, length): steep ones curl over the most.
+        for a0, length in ((-112, 22), (-98, 25), (-86, 21), (-72, 17), (-58, 14), (-124, 15), (-45, 11)):
+            a = math.radians(a0 + r.uniform(-4, 4)); x, y = 11 + r.uniform(-1, 1), 28.0
+            pts = [(x, y)]
+            n = int(length)
+            for i in range(n):
+                # The wind turns every stem a little more downwind as it rises.
+                a += math.radians(3.2 + 2.8 * i / n)
+                x += math.cos(a); y += math.sin(a)
+                pts.append((x, y))
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                line(c, ax, ay, bx, by, 'L', 1)
+            for k in range(5, len(pts) - 1, 4):
+                px, py = pts[k]
+                ang = math.degrees(a) * 0.3 + r.uniform(-10, 15)
+                blade_leaf(c, px, py, ang, r.uniform(2.6, 3.8), 0.9, 3 + k % 2, droop=0.3)
+            tips.append(pts[-1])
+        # Tufts of tiny pale flowers at the tips of the tallest stems.
+        for x, y in sorted(tips, key=lambda p: p[1])[:3]:
+            for dx, dy, sh in ((0, 0, 3), (1, 0, 4), (1, 1, 2), (0, -1, 4), (2, 0, 3)):
+                c.put(x + dx, y + dy, 'P', sh)
+        # The root crown: gnarled, pale, roots twisting into the ground.
+        ellipse(c, 11, 29.5, 3.6, 1.8, 'W', 2, jag=0.6, seed=seed)
+        for ax, bx in ((9, 6), (13, 16)):
+            line(c, ax, 30, bx, 31, 'W', 1)
+        c.put(10, 28, 'W', 3); c.put(11, 28, 'W', 3)
+        rim(c); return c
+    return f
+
+
 def moss_carpet(seed=0, sparkle=False):
     def f():
         c = Canvas(); r = random.Random(seed)
@@ -459,6 +536,7 @@ add('wild_corn', corn(), leaf='#5a9a3a', fruit='#f0c030', wood='#e8d890')
 add('wild_beans', pods(1), leaf='#4a8a2a', fruit='#5a9a2a', petal='#f0f0e8')
 add('wild_peas', pods(2), leaf='#5aa23a', fruit='#80c050', petal='#f0e4f0')
 add('wild_lentils', pods(3), leaf='#5a8a5a', fruit='#b0a050', petal='#d8d0f0')
+add('wild_chickpea', chickpea(5), leaf='#6a8e5a', fruit='#c4b878', petal='#d8a8c8')
 add('blueberry_bush', bush(14, 1, 1, seed=1), leaf='#3a6a3a', fruit='#3a58a8', wood='#5a4030')
 add('raspberry_bush', bush(10, 3, 1, leaf_len=3.2, seed=2), leaf='#4a7a2a', fruit='#d03050', wood='#6a4a30')
 add('elderberry_bush', bush(6, 4, 1, leaf_len=3.4, seed=3), leaf='#3e6a2e', fruit='#4a2050', wood='#6a5a4a')
@@ -480,6 +558,7 @@ add('mint', herb(4, 4.2, 3.0, 3, 'leaf', 1), leaf='#4aa04a')
 add('basil', herb(3, 5, 3.6, 3, 'leaf', 2), leaf='#3e9a2e')
 add('parsley', fern(9, 15, 3), leaf='#3e8a2a')
 add('sage', herb(4, 5, 2.6, 3, 'flower', 4, droop=0.5), leaf='#7a9a7a', petal='#9a7ac8')
+add('windroot', windswept(3), leaf='#8aa48c', petal='#f0e6b8', wood='#d8c8a0')
 add('wormwood', herb(5, 4, 1.6, 3, 'leaf', 5), leaf='#a4b4ac')
 add('sorrel', herb(3, 6, 2.4, 2, 'flower', 6, droop=0.6), leaf='#5a9a3a', petal='#b03a3a')
 add('nettle', herb(5, 4.2, 2.6, 3, 'leaf', 7), leaf='#3a7a2a')
@@ -499,7 +578,7 @@ add('pampas_grass', tuft_grass(12, 20, 'pampas', 4), leaf='#7a9a6a', petal='#e8e
 add('cotton_grass', tuft_grass(10, 18, 'cotton', 5), leaf='#7a9a5a', petal='#f4f4f0')
 add('cattail', tuft_grass(9, 26, 'cattail', 6, 0.3), leaf='#5a8a3a', fruit='#6a4020')
 add('papyrus', tuft_grass(6, 26, 'papyrus', 7, 0.3), leaf='#5aa23a')
-add('rush', tuft_grass(14, 27, None, 8, 0.2), leaf='#8a8a8a')
+add('rush', rush_tuft(8), leaf='#b0b0b0', fruit='#7a6a50')
 add('maidenhair_fern', fern(7, 16, 1, maiden=True), leaf='#9a9a9a')
 add('bracken', fern(7, 19, 2), leaf='#8a9a3a')
 add('horsetail', horsetail(), leaf='#5a9a3a', wood='#2a3a2a')

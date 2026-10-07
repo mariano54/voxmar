@@ -1036,8 +1036,8 @@ fn emit_quad(
     out.indices.extend(order.map(|i| base + i));
 }
 
-/// Two crossed quads through the cell's diagonals, drawn from both sides, lit by the
-/// plant's own cell and without ambient occlusion.
+/// A plant's quads (two crossed through the cell's diagonals, or its model's own), drawn
+/// from both sides, lit by the plant's own cell and without ambient occlusion.
 fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, cell: &Cell, pos: IVec3, chunk_y: i32) {
     let info = registry.info(cell.block);
     // How many plant cells this one stands on (tall grass, sugar cane), so the shader can
@@ -1047,9 +1047,9 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
     let tint = info.tints[Face::PosX as usize];
     let height = ((info.plant_height * 8.0).round() as u32).clamp(1, 31) << PLANT_HEIGHT_SHIFT;
     let w1 = |face: Face| info.layers[face as usize] as u32 | (tint as u32) << 12 | height | (cell.light as u32) << 24;
-    // The model's quads: two crossing for every model, then its own (see voxel.wgsl
-    // `model_across`). Each is packed as a diagonal quad, the even ones along one diagonal and
-    // the odd along the other, which gives the shader the cell and the texture's run.
+    // The model's quads (see voxel.wgsl `model_across`). Each is packed as a diagonal quad,
+    // the even ones along one diagonal and the odd along the other, which gives the shader
+    // the cell and the texture's run.
     let pieces = match info.model {
         PlantModel::Cross => 2,
         // A stem of two quads and a cap of six: crown, four sides, gills.

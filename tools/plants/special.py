@@ -211,6 +211,7 @@ CAPS = {
     'chanterelle': (0, True, dict(petal='#f0a828', centre='#e8b84a', leaf='#4a7a2a')),
     'pale_cap': (0, True, dict(petal='#d8d4ca', centre='#efece4', leaf='#5a6a5a')),
     'ember_cap': (8, False, dict(petal='#e0581a', centre='#6a4030', second='#ffd060', leaf='#3a2a22')),
+    'rimecap': (7, True, dict(petal='#9ac4e0', centre='#e4f2fa', second='#ffffff', leaf='#5a6a7a')),
 }
 CAP_ART = {}
 for name, (spots, ring, colours) in CAPS.items():
