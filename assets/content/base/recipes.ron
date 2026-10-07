@@ -18,6 +18,19 @@
         // as the plan has it), and cobbles and clay for each block of chimney.
         (pattern: [["tag:cobbled", "tag:cobbled", "tag:cobbled"], ["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "tag:cobbled", "tag:cobbled"]], output: "hearthstone", skill: "core:mining", level: 5, xp: 20.0),
         (pattern: [["tag:cobbled", "clay", "tag:cobbled"], ["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "clay", "tag:cobbled"]], output: "chimney", level: 3, xp: 10.0),
+        // The Farm age's fire: a pit kiln (cobbles round a campfire), clay shaped for it, and
+        // kiln bricks from what it fires; a crucible at their heart. Bronze is three
+        // copper to one tin, smelted in the Crucible Kiln.
+        (pattern: [["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "campfire", "tag:cobbled"]], output: "pit_kiln", skill: "core:engineering", level: 3, xp: 15.0),
+        (pattern: [["clay", "", "clay"], ["clay", "clay", "clay"]], output: "unfired_pot", count: 2, level: 2, xp: 4.0),
+        (pattern: [["clay"], ["clay"]], output: "unfired_vial", count: 3, level: 4, xp: 3.0),
+        (ingredients: ["fired_brick", "fired_brick", "fired_brick", "fired_brick"], output: "kiln_bricks", level: 5, xp: 6.0),
+        (pattern: [["kiln_bricks", "", "kiln_bricks"], ["kiln_bricks", "clay_pot", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "crucible", skill: "core:engineering", level: 10, xp: 40.0),
+        (ingredients: ["copper_ingot", "copper_ingot", "copper_ingot", "tin_ingot"], output: "bronze_blend", count: 4, skill: "core:engineering", level: 12, xp: 8.0),
+        // A sleeping bag three ways: wool and hide, pelts, or feathers and hide.
+        (pattern: [["wool", "wool", "wool"], ["hide", "hide", ""]], output: "sleeping_bag", level: 5, xp: 30.0),
+        (pattern: [["tag:fur", "tag:fur"], ["tag:fur", "tag:fur"]], output: "sleeping_bag", level: 5, xp: 30.0),
+        (pattern: [["feather", "feather", "feather", ], ["feather", "hide", "feather"], ["feather", "hide", "feather"]], output: "sleeping_bag", level: 1, xp: 30.0),
         // A herb planter: a box of soil herbs grow back in.
         (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:engineering", level: 5, xp: 10.0),
         // Ore smelted with coal, by hand for now (a furnace comes later).

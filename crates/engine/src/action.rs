@@ -98,8 +98,11 @@ pub enum Requirement {
     Tillable,
     /// The target is a crafting table.
     CraftingTable,
-    /// The target is the core of a hearth (tagged `hearth`).
-    Hearth,
+    /// The target is somewhere to sleep (tagged `bed`): a sleeping bag.
+    Bed,
+    /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
+    /// a crucible.
+    MultiblockCore,
     /// The actor holds a fishing rod and the target is water with open air above, near
     /// enough to cast to.
     Fishable,
@@ -156,9 +159,11 @@ pub enum Effect {
     EmptyPouch,
     /// Bring up what bites in the target water, if anything (`fishing.ron`).
     Fish,
-    /// Light the target hearth: if the Homestead Hearth stands around it, it becomes the
-    /// actor's home, where they wake after dying.
-    ClaimHome,
+    /// Sleep at the target bed: the actor wakes there after dying, until they have a home.
+    Sleep,
+    /// Light the multiblock whose core is the target, if it stands around it: the
+    /// Homestead Hearth becomes the actor's home, a crucible kiln starts smelting.
+    Light,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -372,7 +377,7 @@ impl ActionDef {
                 let recipe = ctx.actor_held().zip(ctx.cooking()).and_then(|(item, cooking)| cooking.for_item(item, station));
                 match (requirement, recipe) {
                     (Requirement::Cookable, recipe) => recipe.is_some(),
-                    (_, Some(recipe)) => ctx.cooking().and_then(|c| c.skill).is_none_or(|skill| ctx.actor_level(skill) >= recipe.def.level),
+                    (_, Some(recipe)) => recipe.skill.is_none_or(|skill| ctx.actor_level(skill) >= recipe.def.level),
                     (_, None) => true,
                 }
             }
@@ -406,9 +411,13 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("crafting_table"))
             }
-            Requirement::Hearth => {
+            Requirement::Bed => {
                 let (block, _) = block_target()?;
-                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("hearth"))
+                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("bed"))
+            }
+            Requirement::MultiblockCore => {
+                let (block, _) = block_target()?;
+                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("multiblock_core"))
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };

@@ -175,6 +175,7 @@
                 (level: 40, text: "Ember-scale armour against fire"),
                 (level: 45, text: "Crystal-shell armour", icon: "crystal_cluster"),
                 (level: 50, text: "Aetherite armour", icon: "aetherite_ore"),
+                (level: 80, text: "Cape perk: protection spells last longer (when spells come)", how: "Reach 80. Protection from blows, arrows and magic comes as spells, with their own bar."),
             ],
         ),
         (
@@ -239,7 +240,7 @@
                 (category: "brews", level: 20, text: "Alembic: four-dose potions", how: "A potter's alembic distils four doses into one vial."),
                 (category: "boosts", level: 22, text: "Boost potions: +1 to +3 to a skill", how: "A boost lifts a skill's level for a while: make a recipe early."),
                 (category: "brews", level: 25, text: "Calming draught, for taming", how: "Calms a wild animal you want to tame."),
-                (category: "brews", level: 30, text: "Wards: block most of one attack style", how: "Drink before a fight: most of one attack style misses you."),
+                (category: "brews", level: 30, text: "Coatings: fire oil, poison, silver dust", how: "Coat a weapon before a fight: fire for what fears flame, poison, silver for spirits."),
                 (category: "boosts", level: 35, text: "Steady hand: +2 Engineering or Crafting", how: "Fixed +2 to Engineering or Crafting, for building."),
                 (category: "boosts", level: 45, text: "Surge draughts: +6, falling by one a minute", how: "+6 at first, losing one a minute: drink just before."),
                 (category: "elixirs", level: 55, text: "Elixir of swiftness: 5% faster for good", how: "Rare herbs make it; drink once, keep it for good."),
