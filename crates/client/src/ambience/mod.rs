@@ -61,10 +61,14 @@ const AMBIENCE_GAIN: f32 = 0.65;
 pub struct AmbiencePlugin;
 
 /// What the ambience's scan finds around the player, for the rest of the client: how many
-/// flowers are near, 0..1 (the `flowers` group of `ambience.ron`).
+/// flowers are near, 0..1 (the `flowers` group of `ambience.ron`), how far below the
+/// ground surface the player is, in blocks, and how much of the air around is open to the
+/// sky, 0..1 (for the music underground).
 #[derive(Resource, Default)]
 pub struct Surroundings {
     pub flowers: f32,
+    pub depth: f32,
+    pub sky: f32,
 }
 
 impl Plugin for AmbiencePlugin {
@@ -342,6 +346,7 @@ fn listen(
     let (env, smooth) = (&mut ambient.env, &ambient.smooth);
     env.set(Fixed::Air, smooth.air);
     env.set(Fixed::Sky, smooth.sky);
+    surroundings.sky = smooth.sky;
     env.set(Fixed::Canopy, smooth.canopy);
     let enclosed = (1.0 - smooth.sky) * ((smooth.air - 0.02) / 0.28).clamp(0.0, 1.0);
     env.set(Fixed::Reverb, enclosed);
@@ -364,6 +369,7 @@ fn listen(
         env.set(Fixed::Forest, place.forest);
         env.set(Fixed::Relief, eye - place.land);
         env.set(Fixed::Depth, place.ground - eye);
+        surroundings.depth = place.ground - eye;
         env.home_tags.clone_from(&place.home_tags);
         env.neighbour_tags.clone_from(&place.neighbour_tags);
         env.home = place.home;
