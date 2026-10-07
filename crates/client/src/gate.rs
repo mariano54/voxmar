@@ -2092,33 +2092,42 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    use crate::hud::effects::ShowEffects;
-    use crate::hud::tips::{Popup, Tips};
-    let Some(warmed) = world.resource::<Launch>().content.effects.find("ember_warmed") else {
-        gate.check("tips", Err("no ember_warmed effect in the content".into()));
-        gate.next(Step::Guides, now);
-        return;
-    };
+    use crate::hud::tips::Tips;
+    let showing = |world: &World| world.resource::<Tips>().showing.map(|(name, _)| name);
     match gate.phase {
+        // As for a player who has seen none, the inventory shut.
         0 => {
-            // As for a player who has seen none.
             world.resource_mut::<crate::settings::Settings>().tips_seen.clear();
-            world.insert_resource(ShowEffects(vec![("ember_warmed".into(), 60)]));
+            *world.resource_mut::<Tips>() = Tips::default();
+            world.resource_mut::<UiState>().inventory_open = false;
+            gate.advance(now);
+        }
+        1 if in_phase > 0.2 => {
             world.resource_mut::<UiState>().inventory_open = true;
             gate.advance(now);
         }
-        _ => {
-            let popped = world.query::<&Popup>().iter(world).any(|popup| popup.0 == warmed);
-            let tip = world.resource::<Tips>().showing.map(|(name, _)| name);
-            if !(popped && tip.is_some()) && in_phase < 3.0 {
+        2 => {
+            let tip = showing(world);
+            if tip.is_none() && in_phase < 3.0 {
                 return;
             }
-            gate.check("tips: effect", if popped { Ok("Ember-warmed popped up as it came on".into()) } else { Err("an effect came on with no pop-up".into()) });
-            gate.check("tips: first look", match tip { Some(name) => Ok(format!("the {name} tip showed")), None => Err("opening the inventory brought no tip".into()) });
-            world.remove_resource::<ShowEffects>();
+            gate.check("tips: first look", match tip { Some(name) => Ok(format!("opening the inventory brought the {name} tip")), None => Err("opening the inventory brought no tip".into()) });
+            // Gone, and the inventory shut and opened again: it does not come back.
+            *world.resource_mut::<Tips>() = Tips::default();
+            world.resource_mut::<UiState>().inventory_open = false;
+            gate.advance(now);
+        }
+        3 if in_phase > 0.2 => {
+            world.resource_mut::<UiState>().inventory_open = true;
+            gate.advance(now);
+        }
+        4 if in_phase > 1.0 => {
+            let again = showing(world);
+            gate.check("tips: once", if again.is_none() { Ok("seen once, it does not come back".into()) } else { Err(format!("the {} tip came back", again.unwrap_or_default())) });
             world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Guides, now);
         }
+        _ => {}
     }
 }
 
@@ -2691,9 +2700,9 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
-                // Those near enough to fight show their combat level over them.
-                let labels: Vec<String> = world.query::<(&crate::hud::levels::LevelLabel, &Text)>().iter(world).map(|(_, text)| text.0.clone()).collect();
-                gate.check("creature levels", if labels.is_empty() { Err("no creature shows its level over it".into()) } else { Ok(format!("{} creatures show their level over them ({})", labels.len(), labels[0])) });
+                // The one pointed at shows its level and health over it.
+                let shown = world.query_filtered::<&Visibility, With<crate::hud::levels::LevelLabel>>().iter(world).any(|v| *v != Visibility::Hidden);
+                gate.check("creature level", if shown { Ok("the creature pointed at shows its level and health over it".into()) } else { Err("the creature pointed at shows no level over it".into()) });
                 gate.next(Step::Strike, now);
             }
         }
