@@ -113,6 +113,7 @@ pub struct Fixed {
     pub fruit: Vec<(BlockId, f32, u32)>,
     pub hay: Palette,
     pub hanging: Palette,
+    pub nets: Palette,
     pub sacks: Palette,
     pub cloth: Palette,
     pub dirt: BlockId,

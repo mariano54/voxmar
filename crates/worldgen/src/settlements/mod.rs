@@ -550,6 +550,7 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
         fruit: palette(&f.fruit, &any).0.into_iter().map(|(b, w)| (b, w, def.stage_of(&registry.def(b).name).map_or(0, |(_, c, _)| c.level))).collect(),
         hay: palette(&f.hay, &any),
         hanging: palette(&f.hanging, &any),
+        nets: palette(if f.nets.is_empty() { &f.hanging } else { &f.nets }, &any),
         sacks: palette(&f.sacks, &any),
         cloth: palette(&f.cloth, &any),
         plinth: def.rules.houses.plinth,

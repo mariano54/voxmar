@@ -2030,7 +2030,7 @@ pub(super) fn draw_prop(fixed: &Fixed, mats: &Mats, canvas: &mut Canvas, frame: 
             for x in 0..=2 {
                 put(x, 3, 0, Put::Set(mats.trim));
             }
-            if let Some(net) = fixed.hanging.pick(u(0x4e)) {
+            if let Some(net) = fixed.nets.pick(u(0x4e)) {
                 put(1, 2, 0, Put::Set(net));
             }
         }

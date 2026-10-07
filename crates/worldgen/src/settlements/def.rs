@@ -711,6 +711,7 @@ struct FurnishingsFile {
     fruit: Vec<Select>,
     hay: Vec<Select>,
     hanging: Vec<Select>,
+    nets: Vec<Select>,
     sacks: Vec<Select>,
     cloth: Vec<Select>,
 }
@@ -737,6 +738,8 @@ pub struct FurnishingsDef {
     pub fruit: Vec<Select>,
     pub hay: Vec<Select>,
     pub hanging: Vec<Select>,
+    /// Nets hung to dry by water; `hanging` when left out.
+    pub nets: Vec<Select>,
     pub sacks: Vec<Select>,
     pub cloth: Vec<Select>,
 }
@@ -1317,6 +1320,7 @@ impl SettlementsDef {
             (&mut furnishings.fruit, f.fruit),
             (&mut furnishings.hay, f.hay),
             (&mut furnishings.hanging, f.hanging),
+            (&mut furnishings.nets, f.nets),
             (&mut furnishings.sacks, f.sacks),
             (&mut furnishings.cloth, f.cloth),
         ] {
