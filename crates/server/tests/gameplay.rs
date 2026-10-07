@@ -1452,8 +1452,10 @@ fn a_wild_ripe_crop_forages_at_its_level_and_a_field_stage_rolls() {
     let field: Vec<IVec3> = (1..=4).flat_map(|dz| (-3..=3).map(move |dx| feet + IVec3::new(dx, 0, dz))).collect();
     client.pump_until(|c| field.iter().all(|&p| c.world.block(p) == Some(regrowing)));
     let earned = client.earned.len();
+    // Held, in a pouch, or on the ground.
     let seeds_had = |c: &Client| {
         c.inventory.slots.iter().flatten().filter(|s| s.item == seeds).map(|s| s.count as usize).sum::<usize>()
+            + c.inventory.pouched(seeds) as usize
             + c.items.values().filter(|i| i.stack.item == seeds).map(|i| i.stack.count as usize).sum::<usize>()
     };
     let before = seeds_had(&client);
@@ -1464,8 +1466,9 @@ fn a_wild_ripe_crop_forages_at_its_level_and_a_field_stage_rolls() {
     for _ in 0..3 {
         client.settle();
     }
+    // One seed a success: about 4 of 28 at 0.15; 13 or more is a one-in-100,000 chance.
     let found = seeds_had(&client).saturating_sub(before);
-    assert!(found < field.len() / 2, "a field stage nobody sowed gave {found} seeds from {} crops", field.len());
+    assert!(found <= 12, "a field stage nobody sowed gave {found} seeds from {} crops", field.len());
     assert_eq!(client.earned.len(), earned, "breaking a field stage nobody sowed paid experience");
 }
 
