@@ -333,10 +333,10 @@ mod tests {
     const FIRST_PARTY: [&str; 2] = ["base", "core"];
 
     /// Every name a player can come across in first-party content, in `locale`, by what
-    /// it names: blocks and items (a fluid's flowing states show their source's), and
+    /// it names: blocks and items (a fluid's flowing states show their source's), biomes
+    /// and weather, commands' help, the names of alchemy properties and biome tags, and
     /// skills with their descriptions and guides.
     fn definition_names(content: &voxmar_engine::content::Content, locale: &Locale) -> Vec<(String, String)> {
-        let first_party = |name: &str| FIRST_PARTY.iter().any(|package| name.starts_with(&format!("{package}:")));
         let blocks = &content.blocks;
         let mut names = Vec::new();
         for id in (0..blocks.len()).map(|i| BlockId(i as u16)) {
@@ -357,6 +357,14 @@ mod tests {
             let words = voxmar_engine::lang::Words::Own(key.clone(), name);
             names.push((key, locale.render(&words, blocks)));
         }
+        for def in content.commands.iter().filter(|def| first_party(&def.name)) {
+            names.push((format!("/{} help", def.short_name()), locale.render(&def.help_words(), blocks)));
+            names.push((format!("/{} summary", def.short_name()), locale.render(&def.summary_words(), blocks)));
+        }
+        for key in built_keys(content) {
+            let own = key.rsplit('.').next().unwrap_or(&key).replace('_', " ");
+            names.push((key.clone(), locale.get_or(&key, &own).to_owned()));
+        }
         for id in content.skills.ids() {
             let def = content.skills.get(id);
             names.push((def.name.clone(), locale.skill(def)));
@@ -366,6 +374,83 @@ mod tests {
             }
         }
         names
+    }
+
+    /// The keys the code builds from first-party content rather than names: what each
+    /// `alchemy:<property>` tag is called (`alchemy.<property>`, in item tooltips) and
+    /// each biome tag (`biome.tag.<tag>`, in `/biome`).
+    fn built_keys(content: &voxmar_engine::content::Content) -> BTreeSet<String> {
+        let blocks = &content.blocks;
+        let mut keys = BTreeSet::new();
+        for id in (0..blocks.len()).map(|i| BlockId(i as u16)) {
+            let def = blocks.def(id);
+            if first_party(&def.name) {
+                keys.extend(def.tags.iter().filter_map(|tag| tag.strip_prefix("alchemy:")).map(|property| format!("alchemy.{property}")));
+            }
+        }
+        let world = voxmar_worldgen::WorldContent::load(content).unwrap();
+        for biome in world.biomes.iter().filter(|biome| first_party(&biome.name)) {
+            keys.extend(biome.tags.iter().map(|tag| format!("biome.tag.{tag}")));
+        }
+        keys
+    }
+
+    /// Whether a definition's name is first-party's.
+    fn first_party(name: &str) -> bool {
+        FIRST_PARTY.iter().any(|package| name.strip_prefix(package).is_some_and(|rest| rest.starts_with(':')))
+    }
+
+    /// The English first-party definitions carry themselves, by the key that names it:
+    /// titles, descriptions, guide lines and command help. The language files say the
+    /// same, so a translator works from a complete English file.
+    fn english_in_definitions(content: &voxmar_engine::content::Content) -> Vec<(String, String)> {
+        let mut own = Vec::new();
+        for id in content.effects.ids() {
+            let def = content.effects.get(id);
+            if first_party(&def.name) {
+                let key = def_key("effect", &def.name);
+                own.push((format!("{key}.description"), def.description.clone()));
+                own.push((key, def.title.clone()));
+            }
+        }
+        for (_, creature) in content.creatures.iter().filter(|(_, creature)| first_party(&creature.def.name)) {
+            let def = &creature.def;
+            own.push((def_key("creature", &def.name), def.title.clone()));
+            for breed in &def.breeds {
+                let title = if breed.title.is_empty() { title_from_id(&breed.name) } else { breed.title.clone() };
+                own.push((def_key("breed", &format!("{}.{}", def.name, breed.name)), title));
+            }
+        }
+        for id in content.skills.ids() {
+            let def = content.skills.get(id);
+            let key = def_key("skill", &def.name);
+            own.push((format!("{key}.description"), def.description.clone()));
+            for (i, step) in def.guide.iter().enumerate() {
+                own.push((format!("{key}.guide.{i}"), step.text.clone()));
+                if let Some(how) = &step.how {
+                    own.push((format!("{key}.guide.{i}.how"), how.clone()));
+                }
+            }
+            own.push((key, def.title.clone()));
+        }
+        for def in content.commands.iter().filter(|def| first_party(&def.name)) {
+            for words in [def.help_words(), def.summary_words()] {
+                if let voxmar_engine::lang::Words::Own(key, english) = words {
+                    own.push((key, english));
+                }
+            }
+        }
+        for quest in content.quests.iter().filter(|quest| first_party(&quest.name)) {
+            let key = def_key("quest", &quest.name);
+            own.push((format!("{key}.why"), quest.why.clone()));
+            own.push((key, quest.title.clone()));
+        }
+        for structure in content.multiblocks.iter().filter(|structure| first_party(&structure.name)) {
+            let key = def_key("multiblock", &structure.name);
+            own.push((format!("{key}.hint"), structure.hint.clone()));
+            own.push((key, structure.title.clone()));
+        }
+        own
     }
 
     /// Japanese has every word English has, with the same arguments, and every
@@ -398,15 +483,16 @@ mod tests {
         assert!(missing.is_empty(), "{} words have no Japanese:\n{}", missing.len(), missing.join("\n"));
     }
 
-    /// Every key the interface's code names is in English. Keys the code builds (a
-    /// setting's `.hint`, `key.<code>`, `alchemy.<property>`) are checked where they are
-    /// built.
+    /// Every key the interface's code names is in English, and so is every key it builds
+    /// from content (see [`built_keys`]). A setting's `.hint` is checked in `settings`, and
+    /// `key.<code>` in `keys`.
     #[test]
     fn every_key_in_the_code_exists() {
         let english = Lang::load(&content(), ENGLISH);
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let mut unknown: BTreeSet<String> = built_keys(&loaded).into_iter().filter(|key| english.find(key).is_none()).map(|key| format!("content: {key}")).collect();
         let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut files = vec![source];
-        let mut unknown = BTreeSet::new();
         let namespaces = [
             "menu", "worlds", "time", "create", "mode", "join", "loading", "net", "settings", "screen", "hud", "inventory",
             "rarity", "item", "skills", "character", "language", "effect",
@@ -433,6 +519,41 @@ mod tests {
             }
         }
         assert!(unknown.is_empty(), "keys missing from en.ron:\n{}", unknown.into_iter().collect::<Vec<_>>().join("\n"));
+    }
+
+    /// Each first-party package's languages have the same keys (Japanese needs no `.one`
+    /// form of a count), so a translator works from a complete English file and no
+    /// translation keeps a string for a key that is gone; and where a definition writes its
+    /// own English (see [`english_in_definitions`]), English says the same, so the two
+    /// never drift apart.
+    #[test]
+    fn every_language_has_the_same_keys() {
+        use std::collections::BTreeMap;
+        let read = |package: &str, code: &str| -> BTreeMap<String, String> {
+            let path = content().join(package).join(format!("lang/{code}.ron"));
+            let source = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            ron::from_str(&source).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        };
+        let mut wrong = Vec::new();
+        for package in FIRST_PARTY {
+            let english = read(package, ENGLISH);
+            for language in languages(&content()).into_iter().filter(|language| language.code != ENGLISH) {
+                let other = read(package, &language.code);
+                let code = &language.code;
+                wrong.extend(english.keys().filter(|key| !key.ends_with(".one") && !other.contains_key(*key)).map(|key| format!("{package}/lang/{code}.ron lacks `{key}`")));
+                wrong.extend(other.keys().filter(|key| !english.contains_key(*key)).map(|key| format!("{package}/lang/en.ron lacks `{key}` (or {code}.ron keeps a key that is gone)")));
+            }
+        }
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let english = Lang::load(&content(), ENGLISH);
+        for (key, own) in english_in_definitions(&loaded) {
+            match english.find(&key) {
+                Some(text) if text == own => {}
+                Some(text) => wrong.push(format!("`{key}` is {own:?} in its definition but {text:?} in en.ron: change both (and the other languages)")),
+                None => wrong.push(format!("en.ron lacks `{key}`: {own:?}")),
+            }
+        }
+        assert!(wrong.is_empty(), "{} language keys out of step:\n{}", wrong.len(), wrong.join("\n"));
     }
 
     /// Every character anything on screen writes: every language's strings and names, and
