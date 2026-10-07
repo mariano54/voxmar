@@ -41,6 +41,12 @@
             name: "sleeping_bag", render: Plant, model: Rock, plant_height: 1.6, solid: false, sound: Grass, textures: All("sleeping_bag"),
             hardness: 0.3, color: (150, 110, 70), tags: ["bed", "sleeping_bag"],
         ),
+        // A stone altar: blocks tagged `altar` restore prayer and take bones for Magic
+        // (combat's prayers.ron); settlements set them in chapels and shrines.
+        (
+            name: "stone_altar", sound: Stone, textures: Sides(top: "stone_altar_top", bottom: "stone_bricks", side: "stone_altar_side"),
+            hardness: 2.0, color: (130, 130, 135), tags: ["altar", "building"],
+        ),
         // A herb planter: herbs and flowers placed in it grow back when picked (regrowth.ron),
         // for a gardener whose Farming level is enough for them. Herbs cannot be sown.
         (
@@ -86,6 +92,7 @@
         // Charcoal: a log burnt at a campfire (cooking.ron), fuel and torches.
         // Pouches: one slot for many herbs, or many seeds (right click one to empty it).
         (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
+        (template: "drop", name: "coin_purse", tags: ["pouch", "holds:currency"], all: (color: (140, 100, 60), action: Some("base:empty_pouch"))),
         (template: "drop", name: "seed_pouch", tags: ["pouch", "holds:seed"], all: (color: (170, 140, 90), action: Some("base:empty_pouch"))),
         // Worn or carried when you die, it keeps a fourth item and holds the rest for an hour.
         (template: "drop", name: "grave_ward_amulet", tags: ["amulet", "grave_ward"], all: (color: (110, 80, 180), rarity: VeryRare)),
