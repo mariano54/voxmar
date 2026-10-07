@@ -631,6 +631,13 @@ fn run(world: &mut World) {
     world.insert_resource(gate);
 }
 
+/// Whether this is `tools/gate --full`, which sets `VOXMAR_GATE_FULL=1`: the steps too long
+/// for every landing (the workshop's later machine phases) play only then.
+fn full_gate() -> bool {
+    static FULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FULL.get_or_init(|| std::env::var("VOXMAR_GATE_FULL").is_ok_and(|v| v == "1"))
+}
+
 /// With `VOXMAR_GATE_STALL` set, every frame of the session stalls as a machine loaded far
 /// past its cores makes it: 80 to 320 ms every fifth frame or so. Steps that pass only on an
 /// idle machine (a fixed number of frames, a wait in seconds of game time that a stall
@@ -1757,6 +1764,21 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 if gate.machines_stage == 2 {
                     gate.check("workshop: machines", Ok(format!("coal fired the boiler, its steam crushed one copper ore, and an empty hand took out {dust} dust")));
+                    // The landing gate stays quick: the boiler and crusher are its machines
+                    // check, and the MV, bloomery and iron-age phases play only in the full
+                    // gate. Taken down here, with the kit back for the steps after.
+                    if !full_gate() {
+                        let (a, b) = (gate.kiln - IVec3::Z, gate.kiln + IVec3::new(3, 1, 1));
+                        let net = world.resource::<Net>();
+                        for line in [format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                            net.command(&line);
+                        }
+                        for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
+                            net.command(line);
+                        }
+                        end_workshop(world, gate, now);
+                        return;
+                    }
                     // In their place, MV: a boiler and turbine over a transformer, an ore
                     // washer beside it, and a dry glass basin beside that for its water.
                     let k = gate.kiln;
