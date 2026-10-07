@@ -55,14 +55,18 @@
         },
     },
     textures: {
-        // Vanilla's design language at 32×32, our own drawing: grey rock in four or five
-        // clear shades, laid as irregular blotches two to six texels tall that run
-        // sideways, with crisp edges (no smooth gradients and no per-texel grain).
+        // Vanilla's design language at 32×32, our own drawing: grey rock as crisp pixel
+        // clusters, like its neighbours cobble and granite, not soft clouds: a quiet broad
+        // base, then many clusters two to six texels across in a darker and a lighter
+        // shade, a few deep pits and pale flecks. Clusters land anywhere and no one of
+        // them is large, so neither turning nor the variants (variants.ron, alternates.ron
+        // in the default pack, which redraw this from new seeds) show a repeating mark.
         "block/stone": (size: (32, 32), palettes: {"main": "stone"}, layers: [
-            Paint(palette: "main", base: 0.5, shade: [
-                Noise(cells: (4, 8), octaves: 2, gain: 0.6, amount: 0.55),
-                Noise(cells: (16, 32), amount: 0.55),
-            ], clean: true),
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (8, 8), amount: 0.08)], clean: true),
+            Clusters(palette: "main", count: 26, size: (2, 6), spread: (1.3, 0.9), spacing: 3.6, shade: 1, seed: 1),
+            Clusters(palette: "main", count: 24, size: (2, 6), spread: (1.3, 0.9), spacing: 3.6, shade: 4, seed: 2),
+            Clusters(palette: "main", count: 8, size: (1, 3), spacing: 6.0, shade: 0, seed: 3),
+            Clusters(palette: "main", count: 8, size: (1, 2), spacing: 6.0, shade: 5, seed: 4),
         ]),
         // Ores in vanilla's design language, our own drawing: eight irregular clumps of
         // mineral four to eight texels across in four speckled shades with dark edge
@@ -75,6 +79,30 @@
             Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: [".oo..", "ohlo.", "olmmo", ".omo."], at: [(27, 11), (14, 26), (2, 13)], wrap: true),
         ]),
         "block/hd_crystal_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#0f5452", "#2fb7b0", "#6ff0e6", "#d8fffb"]}),
+        // Richer veins: more and bigger clumps (lodestone, bauxite).
+        "block/hd_dense_ore": (base: "block/hd_nugget_ore", layers: [
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: ["..oo.o..", ".ohlmmo.", "ohllmhmo", "olmhllmo", ".omllmo.", "..ommo.o", "...oo..."], at: [(23, 23), (8, 13)], mirror: true, wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: [".oo.o.", "ohlmmo", "olhlmo", ".ommo.", "..o..."], at: [(13, 2), (27, 1)], wrap: true),
+        ]),
+        // Flaky veins: many small clumps (graphite).
+        "block/hd_flake_ore": (size: (32, 32), palettes: {"ore": ["#1c1c1f", "#33343a", "#56585f", "#9aa0aa"]}, layers: [
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: [".oo..", "ohlo.", "olmmo", ".omo."], at: [(2, 3), (11, 6), (22, 2), (6, 14), (17, 12), (27, 15), (3, 24), (13, 22), (22, 25)], wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: [".oo..", "ohlo.", "olmmo", ".omo."], at: [(8, 28), (27, 7), (16, 18)], mirror: true, wrap: true),
+        ]),
+        // Gems: a few small bright clumps, rarer than metals.
+        "block/hd_gem_ore": (size: (32, 32), palettes: {"ore": ["#5e0a17", "#a8162c", "#e64a5e", "#ffc2cb"]}, layers: [
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: [".oo.o.", "ohlmmo", "olhlmo", ".ommo.", "..o..."], at: [(5, 6), (20, 19), (13, 12)], wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: [".oo..", "ohlo.", "olmmo", ".omo."], at: [(22, 5), (7, 22)], mirror: true, wrap: true),
+            Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.03, amount: 1.0, seed: 3)], above: 0.5),
+        ]),
+        "block/zinc_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#4a3418", "#8a6526", "#c49a45", "#ead08a"]}),
+        "block/lead_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#2c3038", "#4d5563", "#7d8798", "#c3cad6"]}),
+        "block/lodestone": (base: "block/hd_dense_ore", palettes: {"ore": ["#141518", "#2a2c33", "#4a4e5a", "#8c93a6"]}),
+        "block/bauxite": (base: "block/hd_dense_ore", palettes: {"ore": ["#5e2a14", "#9a4a24", "#c87a46", "#e8b083"]}),
+        "block/graphite_ore": (base: "block/hd_flake_ore"),
+        "block/ruby_ore": (base: "block/hd_gem_ore"),
+        "block/sapphire_ore": (base: "block/hd_gem_ore", palettes: {"ore": ["#0b1f5c", "#1d43a8", "#4f7fe8", "#c6d8ff"]}),
+        "block/emerald_ore": (base: "block/hd_gem_ore", palettes: {"ore": ["#0b4a2a", "#168a4d", "#3fd486", "#c8ffe0"]}),
         "block/coal_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#121214", "#26262a", "#3a3a40", "#5a5a62"]}),
         "block/iron_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#5e4030", "#a77a5c", "#d2a888", "#f0d8c2"]}),
         "block/copper_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#5a2a16", "#b05a32", "#de8a54", "#7fcaa6"]}),

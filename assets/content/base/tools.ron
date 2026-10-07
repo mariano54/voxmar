@@ -44,5 +44,7 @@
         (tags: ["ore"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 1, xp: 10.0),
         (tags: ["stone", "natural"], skill: "core:mining", xp: 3.0),
         (tags: ["clay", "natural"], skill: "core:mining", xp: 2.0),
+        // Gravel breaks to flint one time in eight (arrowheads, spear points).
+        (tags: ["gravel", "natural"], skill: "core:mining", xp: 1.0, instead: ("flint", 0.125)),
     ],
 )

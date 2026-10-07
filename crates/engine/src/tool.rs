@@ -38,6 +38,10 @@ pub struct RuleDef {
     /// Experience breaking one gives, in the skill.
     #[serde(default)]
     pub xp: f32,
+    /// Sometimes something else instead of its own drop: gravel gives flint one time in
+    /// eight (item name, chance).
+    #[serde(default)]
+    pub instead: Option<(String, f32)>,
 }
 
 fn first_level() -> u8 {
@@ -63,6 +67,7 @@ pub struct Rule {
     pub tool: Option<usize>,
     pub tier: u8,
     pub xp: f32,
+    pub instead: Option<(BlockId, f32)>,
 }
 
 /// What a held item is as a tool.
@@ -111,7 +116,14 @@ impl ToolRegistry {
                     Some(name) => Some(kind_of(name).ok_or_else(|| RegistryError(format!("tools.ron: no kind of tool `{name}`")))?),
                     None => None,
                 };
-                Ok(Rule { tags: def.tags, skill, level: def.level, tool, tier: def.tier, xp: def.xp })
+                let instead = match &def.instead {
+                    Some((name, chance)) => {
+                        let name = if name.contains(':') { name.clone() } else { format!("base:{name}") };
+                        Some((blocks.id(&name).ok_or_else(|| RegistryError(format!("tools.ron: no item `{name}`")))?, *chance))
+                    }
+                    None => None,
+                };
+                Ok(Rule { tags: def.tags, skill, level: def.level, tool, tier: def.tier, xp: def.xp, instead })
             })
             .collect::<Result<Vec<_>, RegistryError>>()?;
         let number = |tags: &[String], prefix: &str| tags.iter().find_map(|t| t.strip_prefix(prefix)?.parse::<f32>().ok());
