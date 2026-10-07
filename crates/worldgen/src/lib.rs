@@ -315,6 +315,27 @@ impl Overworld {
         }
     }
 
+    /// The generator of the world with this seed made from `content` (`world` being its
+    /// world content), shared with whatever else in the process asks for the same while
+    /// any of them holds it. Generation is a pure function of the seed and the content,
+    /// so a shared generator makes exactly what a new one would; what sharing saves is
+    /// planning the same rivers, trails and settlements again. A server started on a world
+    /// another holds open (each gameplay test starts its own on one seed) finds the land
+    /// round its spawn already planned rather than keeping its first player waiting.
+    pub fn shared(seed: u64, content: &voxmar_engine::content::Content, world: &WorldContent) -> Arc<Self> {
+        type Held = ((u64, u64), std::sync::Weak<Overworld>);
+        static SHARED: std::sync::Mutex<Vec<Held>> = std::sync::Mutex::new(Vec::new());
+        let key = (seed, content.fingerprint());
+        let mut shared = SHARED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        shared.retain(|(_, held)| held.strong_count() > 0);
+        if let Some(found) = shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade()) {
+            return found;
+        }
+        let made = Arc::new(Self::with_content(seed, content.blocks.clone(), world));
+        shared.push((key, Arc::downgrade(&made)));
+        made
+    }
+
     /// The biomes of this world.
     pub fn biomes(&self) -> &Biomes {
         &self.biomes
