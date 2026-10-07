@@ -3,6 +3,8 @@
 
 mod actions;
 mod commands;
+/// The weather in words, for the debug overlay as for `/weather`.
+pub use commands::{weather_name, weather_numbers};
 mod cooking;
 mod creatures;
 mod fishing;
@@ -344,7 +346,7 @@ impl Server {
         console: Receiver<String>,
     ) -> Self {
         let world_content = WorldContent::load(&content).expect("checked by load_content");
-        let overworld = Arc::new(Overworld::with_content(meta.seed, content.blocks.clone(), &world_content));
+        let overworld = Overworld::shared(meta.seed, &content, &world_content);
         let climate = overworld.clone();
         let temperature = Field::new("core:temperature", move |x, z| climate.site(x, z).temperature);
         let land = Arc::new(weather::OverworldLand { overworld: overworld.clone(), blocks: content.blocks.clone() });

@@ -99,6 +99,22 @@ impl CommandDef {
     pub fn usage_line(&self) -> String {
         if self.usage.is_empty() { format!("/{}", self.short_name()) } else { format!("/{} {}", self.short_name(), self.usage) }
     }
+
+    /// Its help in words: `command.core.time.help`, or the help as written.
+    pub fn help_words(&self) -> crate::lang::Words {
+        crate::lang::Words::Own(self.help_key(), self.help.clone())
+    }
+
+    /// Its help's first sentence in words, for the list `/help` gives:
+    /// `command.core.time.help.summary`, or that sentence as written.
+    pub fn summary_words(&self) -> crate::lang::Words {
+        let summary = self.help.split_inclusive(". ").next().unwrap_or(&self.help).trim();
+        crate::lang::Words::Own(format!("{}.summary", self.help_key()), summary.to_owned())
+    }
+
+    fn help_key(&self) -> String {
+        format!("{}.help", crate::lang::def_key("command", &self.name))
+    }
 }
 
 /// `commands.ron`: a package's commands, and names for times of day.
