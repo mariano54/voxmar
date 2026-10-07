@@ -1675,7 +1675,7 @@ fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformer
     machine_says(&mut client, &at(macerator), "no power", 10);
     // The hall of casing round it, hollow along its middle.
     for line in [
-        format!("/fill {} {} turbine_casing", at(hall), at(far)),
+        format!("/fill {} {} hv_casing", at(hall), at(far)),
         format!("/fill {} {} air", at(hall + IVec3::new(1, 1, 1)), at(hall + IVec3::new(3, 1, 1))),
         format!("/setblock {} turbine_hall", at(core)),
     ] {

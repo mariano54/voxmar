@@ -131,14 +131,14 @@
             name: "mv_battery_bank", sound: Stone, textures: Sides(top: "mv_battery_bank_top", bottom: "iron_casing", side: "mv_battery_bank_side"),
             hardness: 4.0, color: (100, 80, 110), tags: ["machine", "building"],
         ),
-        // The HV age: a turbine hall (a multiblock of turbine casing round its core) gives HV
+        // The HV age: a turbine hall (a multiblock of HV casing round its core) gives HV
         // from steam; HV cable and banks carry and keep it; MV transformers step it down.
         (
-            name: "turbine_casing", sound: Stone, textures: All("turbine_casing"),
+            name: "hv_casing", sound: Stone, textures: All("hv_casing"),
             hardness: 4.0, color: (90, 100, 115), tags: ["building"],
         ),
         (
-            name: "turbine_hall", sound: Stone, textures: Sides(top: "turbine_hall_top", bottom: "turbine_casing", side: "turbine_hall_side"),
+            name: "turbine_hall", sound: Stone, textures: Sides(top: "turbine_hall_top", bottom: "hv_casing", side: "turbine_hall_side"),
             hardness: 4.5, color: (90, 105, 125), tags: ["machine", "multiblock_core", "building"],
         ),
         (

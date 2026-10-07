@@ -1148,7 +1148,7 @@
             "KMMMMMMMMMMMMMMK",
             "KKKKKKKKKKKKKKKK",
         ])]),
-        "block/turbine_casing": (layers: [Grid(rows: [
+        "block/hv_casing": (layers: [Grid(rows: [
             "KKKKKKKKKKKKKKKK",
             "KLLLLLLLLLLLLLjK",
             "KLWjjjjjjjjjjWiK",

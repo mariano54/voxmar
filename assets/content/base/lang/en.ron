@@ -7,5 +7,6 @@
     "block.base.mv_battery_bank": "MV battery bank",
     "block.base.hv_cable": "HV cable",
     "block.base.mv_transformer": "MV transformer",
+    "block.base.hv_casing": "HV casing",
     "block.base.hv_battery_bank": "HV battery bank",
 }
