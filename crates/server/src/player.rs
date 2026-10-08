@@ -774,7 +774,7 @@ fn same_token(ours: &str, theirs: &str) -> bool {
 
 /// Whether two names are one player's: names differ in case only for show.
 pub(crate) fn same_name(a: &str, b: &str) -> bool {
-    a.to_lowercase() == b.to_lowercase()
+    crate::player_key(a) == crate::player_key(b)
 }
 
 /// A player's experience from a save, by skill name; skills that no longer exist are left

@@ -47,6 +47,20 @@ pub struct GoldDef {
     pub spread: f32,
 }
 
+impl crate::content::Settable for f32 {
+    type Set = f32;
+    fn with(self, set: &f32) -> (Self, Vec<&'static str>) {
+        (*set, vec!["lucky"])
+    }
+}
+
+impl crate::content::Settable for Option<GoldDef> {
+    type Set = GoldDef;
+    fn with(self, set: &GoldDef) -> (Self, Vec<&'static str>) {
+        (Some(set.clone()), vec!["item", "centre", "spread"])
+    }
+}
+
 /// A lockpick, and the age it belongs to.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -166,16 +180,16 @@ impl Treasure {
     /// Every package's treasure, a later package's gold, pick, chest or table replacing an
     /// earlier one of the same item, block or name; gold is priced by `value`, and stacks
     /// as `stacks` (each item's most per stack, by block id) say.
-    pub fn new(files: Vec<TreasureFile>, blocks: &BlockRegistry, value: &crate::value::Value, stacks: &[u8]) -> Result<Self, RegistryError> {
+    pub fn new(files: Vec<(String, TreasureFile)>, blocks: &BlockRegistry, value: &crate::value::Value, stacks: &[u8], notes: &mut Vec<String>) -> Result<Self, RegistryError> {
         let error = |message: String| RegistryError(format!("treasure.ron: {message}"));
-        let mut lucky = 0.0;
-        let mut gold = None;
+        let mut lucky = crate::content::Setting::<f32>::default();
+        let mut gold = crate::content::Setting::<Option<GoldDef>>::default();
         let mut picks = Vec::<PickDef>::new();
         let mut chests = Vec::<ChestDef>::new();
         let mut tables = Vec::<TableDef>::new();
-        for file in files {
-            lucky = file.lucky.unwrap_or(lucky);
-            gold = file.gold.or(gold);
+        for (package, file) in files {
+            lucky.set(&package, "treasure.ron", "treasure lucky chance", file.lucky, notes);
+            gold.set(&package, "treasure.ron", "treasure gold", file.gold, notes);
             for pick in file.picks {
                 picks.retain(|p| p.item != pick.item);
                 picks.push(pick);
@@ -189,6 +203,7 @@ impl Treasure {
                 tables.push(table);
             }
         }
+        let (lucky, gold) = (lucky.value, gold.value);
         if !(0.0..=1.0).contains(&lucky) {
             return Err(error(format!("lucky must be 0..=1, not {lucky}")));
         }
@@ -221,14 +236,19 @@ impl Treasure {
                 }
                 one_of.push((group.chance, group.count, group.items.iter().map(|i| id(i)).collect::<Result<Vec<_>, _>>()?));
             }
-            // Rarer marks run below plainer ones: every Very rare chance below every Rare
-            // one, and every Rare one below every unmarked chance of a tenth or less.
-            let marked = |rarity: crate::block::Rarity| loot.iter().filter(move |r| r.loot.rarity == rarity).map(|r| (r.loot.item.as_str(), r.loot.chance));
-            let common = loot.iter().filter(|r| r.loot.rarity == crate::block::Rarity::Common && r.loot.chance <= 0.1).map(|r| (r.loot.item.as_str(), r.loot.chance));
-            let (very_rare, rare) = (crate::block::Rarity::VeryRare, crate::block::Rarity::Rare);
-            for ((rarer, chance), (plainer, below)) in marked(very_rare).flat_map(|v| marked(rare).map(move |r| (v, r))).chain(marked(rare).flat_map(|r| common.clone().map(move |c| (r, c)))) {
-                if chance >= below {
-                    return Err(error(format!("table `{}`: `{rarer}` ({chance}) must come less often than `{plainer}` ({below}), which is marked plainer", table.name)));
+            // Every rarer mark runs below every plainer mark, even when a tier is absent.
+            // Frequent unmarked staples are no bar to marked finds (the design's tenth).
+            for rarer in &loot {
+                if !rarer.loot.when.is_empty() || !rarer.loot.tools.is_empty() {
+                    return Err(error(format!("table `{}`: `{}` cannot use when or tools in a chest", table.name, rarer.loot.item)));
+                }
+                for plainer in &loot {
+                    if rarer.loot.rarity > plainer.loot.rarity
+                        && (plainer.loot.rarity != crate::block::Rarity::Common || plainer.loot.chance <= 0.1)
+                        && rarer.loot.chance >= plainer.loot.chance
+                    {
+                        return Err(error(format!("table `{}`: `{}` ({}) must come less often than `{}` ({}), which is marked plainer", table.name, rarer.loot.item, rarer.loot.chance, plainer.loot.item, plainer.loot.chance)));
+                    }
                 }
             }
             // Nothing rarer than one chest in 400: each find's own chance, and each of a
@@ -282,6 +302,11 @@ impl Treasure {
         self.picks.get(&item).copied()
     }
 
+    /// The least pick that opens an age, ties by block id so names are deterministic.
+    pub fn opening_pick(&self, age: u8) -> Option<BlockId> {
+        self.picks.iter().filter(|(_, p)| Self::try_pick(**p, age) == Try::Opens).min_by_key(|(b, p)| (**p, b.0)).map(|(&b, _)| b)
+    }
+
     /// The most stacks `chest` can give at once: its most gold in full stacks, and one for
     /// each of its table's finds and groups.
     pub fn most_stacks(&self, chest: &Chest) -> usize {
@@ -292,6 +317,7 @@ impl Treasure {
 
     /// What a lockpick of `pick` age does to a chest of `chest` age.
     pub fn try_pick(pick: u8, chest: u8) -> Try {
+        let (pick, chest) = (u16::from(pick), u16::from(chest));
         if pick + 1 >= chest {
             Try::Opens
         } else if pick + 2 == chest {
@@ -381,6 +407,11 @@ mod tests {
             let name = &blocks.def(block).name;
             assert!(pick_ages.iter().any(|&p| Treasure::try_pick(p, chest.age) == Try::Opens), "{name}: no pick opens it");
             let table = &treasure.tables[chest.table];
+            for item in table.loot.iter().map(|r| r.item).chain(table.one_of.iter().flat_map(|(_, _, items)| items.iter().copied())) {
+                if let Some(age) = treasure.pick_age(item) {
+                    assert!(age <= chest.age.saturating_sub(1).max(1), "{name} holds a pick of age {age}, making an age ladder");
+                }
+            }
             let mut seen: FxHashMap<BlockId, u32> = FxHashMap::default();
             for _ in 0..OPENED {
                 let found = treasure.roll(chest, &mut random);
@@ -404,6 +435,9 @@ mod tests {
         assert_eq!(Treasure::try_pick(5, 3), Try::Opens);
         assert_eq!(Treasure::try_pick(1, 3), Try::Lucky);
         assert_eq!(Treasure::try_pick(1, 4), Try::TooCrude);
+        assert_eq!(Treasure::try_pick(255, 255), Try::Opens);
+        assert_eq!(Treasure::try_pick(253, 255), Try::Lucky);
+        assert_eq!(Treasure::try_pick(252, 255), Try::TooCrude);
     }
 
     #[test]
@@ -412,7 +446,7 @@ mod tests {
         // Coins stack to four here.
         let stacks: Vec<u8> = blocks.ids().map(|b| if blocks.def(b).name == "t:coin" { 4 } else { 64 }).collect();
         let value = crate::value::Value::default();
-        let treasure = Treasure::new(vec![Treasure::read("t", FILE).unwrap()], &blocks, &value, &stacks).unwrap();
+        let treasure = Treasure::new(vec![("t".into(), Treasure::read("t", FILE).unwrap())], &blocks, &value, &stacks, &mut Vec::new()).unwrap();
         let chest = treasure.chest(blocks.id("t:bronze_chest").unwrap()).unwrap().clone();
         assert_eq!(chest.age, 3);
         // Level 16 is worth 5, so its gold is 5 x (1.5 ± 0.5): 5 to 10 coins, in up to three
@@ -433,7 +467,7 @@ mod tests {
             assert!((5..=10).contains(&coins.iter().map(|&n| n as u32).sum::<u32>()) && coins.iter().all(|&n| (1..=4).contains(&n)), "{coins:?}");
             assert!(found.len() <= treasure.most_stacks(&chest));
         }
-        let bad = |file: &str| Treasure::new(vec![Treasure::read("t", file).unwrap()], &blocks, &value, &stacks).is_err();
+        let bad = |file: &str| Treasure::new(vec![("t".into(), Treasure::read("t", file).unwrap())], &blocks, &value, &stacks, &mut Vec::new()).is_err();
         // Rarer than one in 400, a breakable lock, a chest that is not tagged, a missing table.
         assert!(bad(r#"(tables: [(name: "x", loot: [(item: "coin", chance: 0.001)])])"#));
         assert!(bad(r#"(tables: [(name: "x", one_of: [(chance: 0.004, items: ["sword", "helm"])])])"#));
@@ -450,6 +484,12 @@ mod tests {
         assert!(!bad(&tables(r#"(item: "sword", chance: 0.01, rarity: VeryRare), (item: "helm", chance: 0.02, rarity: Rare), (item: "coin", chance: 0.05)"#)));
         assert!(bad(&tables(r#"(item: "sword", chance: 0.02, rarity: VeryRare), (item: "helm", chance: 0.02, rarity: Rare)"#)));
         assert!(bad(&tables(r#"(item: "helm", chance: 0.05, rarity: Rare), (item: "coin", chance: 0.04)"#)));
+        assert!(bad(&tables(r#"(item: "helm", chance: 0.09, rarity: VeryRare), (item: "coin", chance: 0.05)"#)), "missing Rare tier still compares with Common");
+        assert!(bad(&tables(r#"(item: "helm", chance: 0.05, rarity: Uncommon), (item: "coin", chance: 0.04)"#)));
+        assert!(bad(&tables(r#"(item: "helm", chance: 0.03, rarity: Legendary), (item: "coin", chance: 0.02, rarity: Rare)"#)));
+        assert!(!bad(&tables(r#"(item: "helm", chance: 0.01, rarity: Legendary), (item: "coin", chance: 0.02, rarity: Uncommon)"#)));
+        assert!(bad(&tables(r#"(item: "coin", when: [Night])"#)));
+        assert!(bad(&tables(r#"(item: "coin", tools: [(tag: "knife")])"#)));
         assert!(!bad(&tables(r#"(item: "helm", chance: 0.05, rarity: Rare), (item: "coin", chance: 0.5)"#)), "plain finds above a tenth are no bar");
     }
 }

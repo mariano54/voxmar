@@ -4418,3 +4418,63 @@ fn a_kept_animal_whose_species_is_gone_waits_in_the_save() {
     assert_eq!(saved.replace(' ', "").matches("genome:Some").count(), 1, "only the rabbit came back with genes: {saved}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The HV age as the gate shows it (`gate.rs`, "HV age"): a standing Turbine Hall under a
+/// boiler, its HV cable to a bank, an MV transformer, a processing array in its cube and an
+/// induction smelter; the hall says it is running, the array and the smelter that they are
+/// making, on the one HV network.
+#[test]
+fn an_hv_hall_runs_a_processing_array_and_an_induction_smelter_on_one_cable() {
+    let mut client = Client::join();
+    let p = client.position.floor().as_ivec3();
+    let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
+    let hall = p + IVec3::new(4, 0, -6);
+    let rel = |x: i32, y: i32, z: i32| hall + IVec3::new(x, y, z);
+    let (core, boiler, cable, smelter) = (rel(0, 2, 1), rel(0, 3, 1), rel(-1, 2, 1), rel(-1, 3, 1));
+    let (array, cube) = (rel(-1, 2, 4), rel(-2, 1, 4));
+    let mut lines = vec![
+        "/clear".to_owned(),
+        format!("/fill {} {} air", at(rel(-4, 0, -1)), at(rel(5, 5, 8))),
+        format!("/fill {} {} hv_casing", at(hall), at(rel(4, 2, 2))),
+        format!("/fill {} {} air", at(rel(1, 1, 1)), at(rel(3, 1, 1))),
+        format!("/setblock {} turbine_hall", at(core)),
+        format!("/setblock {} boiler", at(boiler)),
+        format!("/setblock {} hv_cable", at(cable)),
+        format!("/setblock {} mv_transformer", at(rel(-1, 1, 1))),
+        format!("/setblock {} hv_battery_bank", at(rel(-2, 2, 1))),
+        format!("/setblock {} induction_smelter", at(smelter)),
+        format!("/setblock {} hv_cable", at(rel(-1, 2, 2))),
+        format!("/setblock {} hv_cable", at(rel(-1, 2, 3))),
+        format!("/fill {} {} hv_casing", at(cube), at(cube + IVec3::new(2, 2, 2))),
+        format!("/setblock {} air", at(cube + IVec3::ONE)),
+        format!("/setblock {} processing_array", at(array)),
+    ];
+    for line in lines.drain(..) {
+        client.ok(&line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(array) == c.content.blocks.id("base:processing_array") && c.inventory.slots.iter().all(Option::is_none));
+    // Beside it all, within reach of the boiler, the array and the smelter.
+    client.tp(rel(-3, 0, 2).as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+    client.ok("/give coal_ore 4");
+    client.pump_until(|c| count(c, coal) == 4);
+    use_machine(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0);
+    for target in [array, smelter] {
+        client.ok("/give copper_ore 32");
+        client.pump_until(|c| count(c, ore) == 32);
+        use_machine(&mut client, target);
+        client.pump_until(|c| count(c, ore) == 0);
+    }
+    machine_says(&mut client, &at(core), "running", 20);
+    machine_says(&mut client, &at(array), "making", 20);
+    machine_says(&mut client, &at(smelter), "making", 20);
+    let powered = |said: &str| said.split(", ").any(|part| {
+        part.strip_prefix("at ").and_then(|p| p.strip_suffix("% power")).or_else(|| part.strip_suffix("% done"))
+            .and_then(|n| n.parse::<f32>().ok()).is_some_and(|n| n > 0.0)
+    });
+    assert!(powered(&machine_says(&mut client, &at(array), "making", 20)));
+    assert!(powered(&machine_says(&mut client, &at(smelter), "making", 20)));
+}

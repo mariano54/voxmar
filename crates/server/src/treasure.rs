@@ -27,7 +27,11 @@ impl Server {
         let pick = player.inventory.get(selected).and_then(|s| treasure.pick_age(s.item));
         let tell = |player: &crate::player::Player, words: Words| player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         let Some(pick) = pick else {
-            tell(player, Words::key("treasure.locked"));
+            let words = match treasure.opening_pick(chest.age) {
+                Some(pick) => Words::key("treasure.locked").with("pick", Words::Block(self.content.blocks.def(pick).name.clone())),
+                None => Words::key("treasure.no_pick"),
+            };
+            tell(player, words);
             return;
         };
         let opens = match Treasure::try_pick(pick, chest.age) {
@@ -55,7 +59,7 @@ impl Server {
         let treasure = self.content.treasure.clone();
         let machines = self.content.machines.clone();
         self.set_block(pos, chest.opens_to);
-        let seed = self.config.seed;
+        let seed = self.meta.seed;
         let mut draw = 0u32;
         let found = treasure.roll(chest, || {
             draw += 1;
@@ -67,6 +71,36 @@ impl Server {
                 let random = random3(self.tick, pos, 0x7e46 ^ i as u32);
                 self.items.spawn(left, dropped::popped(pos, random), dropped::PICKUP_DELAY);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chest_finds_follow_the_worlds_saved_seed_even_when_the_launch_seed_differs() {
+        let mut server = crate::test_server();
+        // Saved metadata wins over the launch config, as it does when opening a world.
+        server.meta.seed = 731;
+        let pos = server.spawn.floor().as_ivec3();
+        let block = server.content.blocks.expect("base:steam_treasure_chest");
+        let treasure = server.content.treasure.clone();
+        let chest = treasure.chest(block).unwrap().clone();
+        let roll = |seed| {
+            let mut draw = 0u32;
+            treasure.roll(&chest, || { draw += 1; random3(seed, pos, 0x7e45_0000 ^ draw)[0] })
+        };
+        let expected = roll(server.meta.seed);
+        // Positive evidence the two paths differ: this test would catch config.seed.
+        assert_ne!(expected, roll(0x5eed));
+        for launch in [0x5eed, 182] {
+            server.config.seed = launch;
+            server.set_block(pos, block);
+            server.open_chest(pos, &chest);
+            let found: Vec<_> = server.factory.get(pos).unwrap().1.bin.iter().flatten().map(|s| (s.item, s.count)).collect();
+            assert_eq!(found, expected, "launch seed {launch} changed a saved world's chest");
         }
     }
 }

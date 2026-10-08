@@ -113,15 +113,15 @@ pub(crate) use settable;
 
 /// Single-valued data as the packages so far set it, and the last package that did.
 #[derive(Default)]
-struct Setting<T> {
-    value: T,
+pub(crate) struct Setting<T> {
+    pub(crate) value: T,
     by: Option<String>,
 }
 
 impl<T: Settable> Setting<T> {
     /// Lays what `package`'s `file` sets of `what` over the value, noting when that
     /// replaces an earlier package's.
-    fn set(&mut self, package: &str, file: &str, what: &str, set: Option<T::Set>, notes: &mut Vec<String>) {
+    pub(crate) fn set(&mut self, package: &str, file: &str, what: &str, set: Option<T::Set>, notes: &mut Vec<String>) {
         let Some(set) = set else { return };
         let changed;
         (self.value, changed) = self.value.with(&set);
@@ -274,7 +274,7 @@ impl Content {
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "treasure.ron" => {
-                        treasure.push(crate::treasure::Treasure::read(package, &source)?);
+                        treasure.push((package.clone(), crate::treasure::Treasure::read(package, &source)?));
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "stacking.ron" => {
@@ -333,7 +333,7 @@ impl Content {
         }
         let value = crate::value::Value::merge(value);
         let limits = stack_limits(&blocks, &stacking)?;
-        let treasure = crate::treasure::Treasure::new(treasure, &blocks, &value, &limits)?;
+        let treasure = crate::treasure::Treasure::new(treasure, &blocks, &value, &limits, &mut notes)?;
         // An opened chest becomes a bin with room for all it can give.
         for (block, chest) in treasure.chests() {
             let room = machines.get(chest.opens_to).map_or(0, |m| m.bin_slots());

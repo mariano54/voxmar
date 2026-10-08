@@ -21,9 +21,9 @@ chest blocks and the lockpicks) and `recipes_treasure.ron` (making lockpicks).
   chances (the format of `loot.rs`); each `one_of` group gives, on its chance, one of its
   items, which is where gear goes, so a chest holds at most one piece. Nothing may come in
   fewer than one chest in 400: the registry refuses a table that would. A rarer mark
-  comes less often than a plainer one: the registry refuses a table where a `VeryRare`
-  chance is not below every `Rare` one, or a `Rare` one is not below every unmarked chance
-  of 0.1 or less.
+  comes less often than a plainer one: the registry refuses a table where any rarer mark
+  is not below every plainer mark (including unmarked chances of 0.1 or less). Chest
+  tables refuse `when` and `tools`, since a chest roll has neither a kill nor a held tool.
 - **Gold by worth.** A chest always holds gold: as much as a Common thing of its `level` is
   worth (value.rs's price curve), times a share between `centre - spread` and
   `centre + spread` (`gold` in treasure.ron: 1.5 and 0.5, so one to two times that worth),
@@ -38,13 +38,14 @@ anything else in hand, the player is told it is locked and what opens it.
 | Age | Chest (level) | Lockpick (Crafting) | Holds |
 | --- | --- | --- | --- |
 | Nomad | Nomad Treasure Chest (5) | Bone (5) | 3-6 gold; flint, twine, food, bone picks; a stone tool or weapon 3 chests in 10 |
-| Farm | Farm Treasure Chest (15) | Copper (18) | 5-10 gold; copper, seed mix, vials, copper picks; a copper tool, weapon or rod 3 in 10 |
-| Bronze | Bronze Treasure Chest (25) | Bronze (24) | 9-18 gold; bronze, charcoal, bronze picks; a bronze weapon, pickaxe or fine rod 3 in 10 |
-| Iron | Iron Treasure Chest (37) | Iron (30) | 18-36 gold; iron, coke, iron picks; an iron tool or weapon 3 in 10; a grave ward 1 in 100 |
+| Farm | Farm Treasure Chest (15) | Copper (18) | 5-10 gold; copper, seed mix, vials, bone picks; a copper tool, weapon or rod 3 in 10 |
+| Bronze | Bronze Treasure Chest (25) | Bronze (24) | 9-18 gold; bronze, charcoal, copper picks; a bronze weapon, pickaxe or fine rod 3 in 10 |
+| Iron | Iron Treasure Chest (37) | Iron (30) | 18-36 gold; iron, coke, bronze picks; an iron tool or weapon 3 in 10; a grave ward 1 in 100 |
 | Steam | Steam Treasure Chest (52) | (iron) | 45-90 gold; plates, coke, iron picks; iron gear 3 in 10; a grave ward 1 in 50; a diamond 3 in 100 |
 
-A pick is two to a craft: a pin of its material on a twine grip. Chests hold the next pick
-sometimes, so a found chest can lead to the next.
+A pick is two to a craft: a pin of its material on a twine grip. Chests hold a pick of the age before their own (Nomad holds bone). A found pick can
+reach the next chest only on the rare lucky try; the next reliable pick costs its Crafting
+level, so found picks never form a ladder through the ages.
 
 ## Placing chests
 
@@ -61,3 +62,6 @@ table, and its pick with a `picks` entry.
 - `a_treasure_chest_opens_to_a_pick_of_its_age_or_the_one_before_and_holds_its_tables_finds`
   (gameplay) tries each kind of pick on a chest in a running server, counts its gold
   against the level's worth, and mines at a locked chest that stays.
+
+Later packages replace `lucky` and `gold`, with a load note naming both packages
+(Design draft 91). The chest and pick definitions stay keyed by block/item, the tables by name.

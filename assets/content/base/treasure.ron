@@ -9,8 +9,8 @@
 //   and where it stands). Each `loot` entry comes on its own chance (loot.rs's format);
 //   each `one_of` group gives, on its chance, one of its items, so gear comes one piece a
 //   chest and never a whole set. Nothing may be rarer than one chest in 400, and a mark
-//   runs rarer than the plainer ones: every VeryRare chance below every Rare one, every
-//   Rare one below every unmarked chance of 0.1 or less.
+//   runs rarer than every plainer mark, including unmarked chances of 0.1 or less.
+//   Each chest holds the pick of the age before, so found picks never make an age ladder.
 // - Its gold is by worth: `level` is the level a chest's gold is worth, priced as a
 //   Common thing of it is (value.ron), times a share between `centre - spread` and
 //   `centre + spread` (the centre above the spread, the spread at least 0), in full
@@ -50,7 +50,7 @@
                 (item: "copper_ingot", count: (1, 3), chance: 0.5),
                 (item: "seed_mix", count: (1, 3), chance: 0.4),
                 (item: "vial", count: (1, 2), chance: 0.3),
-                (item: "copper_lockpick", count: (1, 2), chance: 0.2),
+                (item: "bone_lockpick", count: (1, 2), chance: 0.2),
             ],
             one_of: [
                 (chance: 0.3, items: ["copper_pickaxe", "copper_axe", "copper_knife", "copper_sword", "fishing_rod"]),
@@ -61,7 +61,7 @@
             loot: [
                 (item: "bronze_ingot", count: (1, 3), chance: 0.5),
                 (item: "charcoal", count: (2, 6), chance: 0.5),
-                (item: "bronze_lockpick", count: (1, 2), chance: 0.2),
+                (item: "copper_lockpick", count: (1, 2), chance: 0.2),
             ],
             one_of: [
                 (chance: 0.3, items: ["bronze_sword", "bronze_spear", "copper_pickaxe", "fine_rod"]),
@@ -72,7 +72,7 @@
             loot: [
                 (item: "iron_ingot", count: (2, 4), chance: 0.6),
                 (item: "coke", count: (2, 6), chance: 0.4),
-                (item: "iron_lockpick", count: (1, 2), chance: 0.2),
+                (item: "bronze_lockpick", count: (1, 2), chance: 0.2),
                 (item: "grave_ward_amulet", chance: 0.01, rarity: VeryRare),
             ],
             one_of: [

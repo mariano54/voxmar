@@ -265,7 +265,7 @@ fn swum_or_burns(blocks: &voxmar_engine::block::BlockRegistry, fluid: &voxmar_en
     fluid.def.swim || blocks.def(fluid.source).has_tag("lava")
 }
 
-/// What tells players apart (for who keeps an animal or owns a wheel, and the admin list):
+/// What tells players apart (for who keeps an animal or owns a wheel, and name comparisons):
 /// names that differ only in case are one player (`player::same_name`).
 pub(crate) fn player_key(name: &str) -> String {
     name.to_lowercase()
@@ -1074,6 +1074,40 @@ pub(crate) fn test_server() -> Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A drop and its rejoin are queued together before one reading loop: the old
+    /// connection must leave before the new hello is answered, without scheduler luck.
+    #[test]
+    fn a_dropped_player_rejoining_in_the_same_loop_is_let_in() {
+        use voxmar_protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage, local_pair};
+        let mut server = test_server();
+        let (connections, incoming) = unbounded();
+        server.incoming = incoming;
+        let fingerprint = server.content.fingerprint();
+        let join = |server: &mut Server| {
+            let (client, server_side) = local_pair();
+            connections.send(server_side).unwrap();
+            client.send(ClientMessage::Hello { name: "bob".into(), protocol: PROTOCOL_VERSION, content: fingerprint });
+            server.accept_connections();
+            server.handle_messages();
+            client
+        };
+        let answer = |client: &voxmar_protocol::ClientConnection| loop {
+            match client.try_recv() {
+                Ok(Some(ServerMessage::Welcome { .. })) => break Ok(()),
+                Ok(Some(ServerMessage::Rejected { reason })) => break Err(reason),
+                Ok(Some(_)) => {}
+                other => panic!("no answer to the hello: {other:?}"),
+            }
+        };
+        let mut bob = join(&mut server);
+        answer(&bob).expect("the first bob is let in");
+        for round in 0..8 {
+            drop(bob);
+            bob = join(&mut server);
+            answer(&bob).unwrap_or_else(|reason| panic!("round {round}: same-loop rejoin rejected: {reason:?}"));
+        }
+    }
 
     #[test]
     fn loot_waiting_for_a_body_to_fall_is_saved_where_it_will_drop() {
