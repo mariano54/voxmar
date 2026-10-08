@@ -157,7 +157,7 @@ are must be a villager (kind `Villager`, `creatures_villagers.ron`) and every jo
 work must name a building's work or kind, or the content fails to load.
 
 How they look (`creatures_villagers.ron`): every person is the same listed boxes (head with
-nose and ears, torso and belt, sleeves and bare hands, legs) moving as animals' parts do,
+a nose, torso and belt, sleeves and bare hands, legs) moving as animals' parts do,
 dressed by genes: skin by the climate of the land about, a shirt and trousers, hair; a
 calling adds a hat or an apron, a priest a long robe and stole, a guard a helmet and iron
 shoulders (colours 3 to 5). Their voice is the synthesized `person` (`creature_sounds.ron`),
