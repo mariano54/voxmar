@@ -80,10 +80,15 @@ impl Client {
     }
 
     fn join_with(config: ServerConfig) -> Self {
+        Self::join_named(config, "test")
+    }
+
+    /// Joins a new server on `config` as `name`.
+    fn join_named(config: ServerConfig, name: &str) -> Self {
         let server = spawn(config, content()).unwrap();
         let (connection, server_side) = local_pair();
         server.connections().send(server_side).unwrap();
-        Self::hello(connection, "test", server)
+        Self::hello(connection, name, server)
     }
 
     /// Joins a new server over TCP as `name`.
@@ -1479,6 +1484,62 @@ fn the_dead_keep_three_items_and_only_they_may_pick_up_the_rest() {
     }
     let lying: Vec<_> = owner.items.values().map(|i| (i.stack.count, i.position)).collect();
     assert_eq!(carried(&owner), 47, "the owner at {:?} could not gather {lying:?}", owner.position);
+}
+
+/// A player rejoining in another case of their name is the same player: the animals they keep
+/// and what they dropped dying are still theirs (every comparison of names saw "BOB" as
+/// someone else than "Bob" before).
+#[test]
+fn a_player_rejoining_in_another_case_keeps_their_animals_and_their_drops() {
+    let dir = world_dir("name-case");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_named(config(), "Bob");
+    let hen = client.content.creatures.find("junglefowl").expect("junglefowl in the content");
+    client.ok("/clear");
+    client.ok("/summon junglefowl 1 ~ ~ ~");
+    for line in ["/give wheat 64", "/give iron_pickaxe 1", "/give iron_ingot 5", "/give dirt 30", "/give stick 10", "/give bread 1"] {
+        client.ok(line);
+    }
+    let wheat = client.content.blocks.expect("base:wheat");
+    let carried = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item != wheat).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == hen) && c.inventory.get(0).is_some_and(|s| s.item == wheat) && carried(c) == 47);
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    let id = client.creatures.iter().find(|(_, v)| v.species == hen).map(|(&id, _)| id).unwrap();
+    let mut fed = 0;
+    while !client.creatures[&id].kept {
+        assert!(fed < 12, "{fed} feedings did not tame it");
+        let at = client.creatures[&id].position;
+        client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
+        client.propose("base:tend", ActionTarget::Creature(id));
+        fed += 1;
+        client.after_server_ticks(TICKS_PER_SECOND as u64);
+    }
+    // Dying leaves three things on them and the rest where they fell, theirs to gather.
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0 && carried(c) <= 3 + 5 && c.items.values().map(|i| i.stack.count as u32).sum::<u32>() >= 40);
+    let lying = client.items.values().map(|i| i.stack.count as u32).sum::<u32>();
+    assert!(lying >= 40, "{lying} lying about");
+    drop(client);
+
+    let mut client = Client::join_named(config(), "BOB");
+    assert!(client.health > 0, "the returning dead player wakes under their saved name");
+    // The same player: the animal they kept is kept by them still.
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == hen && v.kept && v.owner == Some(c.id)));
+    // And what they dropped is theirs to gather: walking to it, they pick it up.
+    for _ in 0..12 {
+        let from = client.server_tick;
+        client.pump_until(|c| carried(c) >= 47 || c.server_tick.saturating_sub(from) >= 5 * TICKS_PER_SECOND as u64);
+        if carried(&client) >= 47 {
+            break;
+        }
+        if let Some(at) = client.items.values().map(|i| i.position).next() {
+            client.ok(&format!("/tp {} {} {}", at.x, at.y, at.z));
+        }
+    }
+    let rest: Vec<_> = client.items.values().map(|i| (i.stack.count, i.position)).collect();
+    assert!(carried(&client) >= 47, "a player back as BOB could not gather what Bob dropped: {rest:?}");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

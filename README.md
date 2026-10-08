@@ -274,7 +274,12 @@ Singleplayer worlds live in `voxmar/worlds/<name>/` next to the settings:
   names of the blocks it uses, so a content change that renumbers blocks does not break saves.
   Untouched columns are not stored; generation recreates them exactly.
 - `players/<name>.ron`: each player's position, health and inventory, restored when they join,
-  under the name in lower case (a file saved under the name as typed is still read).
+  under the name in lower case (a file saved under the name as typed is still read). The
+  file keeps the player's canonical spelling, so Bob reconnecting as BOB keeps animal,
+  machine and death-drop ownership. Older saves recover spellings from their kept animals,
+  machines and actual player filenames and fold matching aliases. An older death drop
+  with only an owner hash and no surviving original spelling remains protected; reconnect
+  with the original spelling to collect it.
 
 The server saves edited columns, players and the time every 30 seconds, when a player leaves
 and when it stops (leaving to the title screen or quitting). Every file is written to a

@@ -83,6 +83,17 @@ pub struct Items {
 }
 
 impl Items {
+    /// Older saves may record several spellings of one keeper. Only hashes of known names
+    /// are migrated; a hash with no surviving spelling must remain protected.
+    pub(crate) fn canonical_owner(&mut self, aliases: &[u64], canonical: u64) {
+        for (&id, item) in &mut self.all {
+            if item.owner.is_some_and(|owner| owner != canonical && aliases.binary_search(&owner).is_ok()) {
+                item.owner = Some(canonical);
+                self.changed.insert(id);
+            }
+        }
+    }
+
     pub fn spawn(&mut self, stack: ItemStack, body: Loose, pickup_delay: f32) -> u32 {
         self.spawn_for(stack, body, pickup_delay, None, lifetime())
     }
