@@ -91,10 +91,9 @@ impl Features {
         }
         let site = area.sampler.site_on(&geo, x, z, 0, 0.0);
         let roll = rng.unit();
-        // Nothing grows over a cave mouth, nor beside one: a tree's roots and thick-trunk feet
-        // reach the columns next to its candidate, where a carve can be deeper than a foot
-        // sinks (`trees::SINK`), which left a flare root hanging over a pit.
-        if area.caves.surface_open(x, z, &geo) || RIM.iter().any(|&(dx, dz)| area.caves.surface_open(x + dx, z + dz, &area.geology.get(x + dx, z + dz))) {
+        // Nothing grows over a cave mouth. The neighbouring columns are checked only
+        // when a candidate actually holds a feature, before adding it to the plan.
+        if area.caves.surface_open(x, z, &geo) {
             return None;
         }
         // No tree in or by water near a fall: roots sunk through a river at a waterfall
@@ -103,6 +102,13 @@ impl Features {
             return None;
         }
         Some(Candidate { x, z, geo, site, rng, roll })
+    }
+
+    /// A feature's roots and thick-trunk feet reach beside its candidate, where a carve
+    /// can be deeper than a foot sinks (`trees::SINK`). Keep that rim clear too, but avoid
+    /// eight cave probes for the many candidates that hold no feature.
+    fn rim_clear(&self, area: &Area, c: &Candidate) -> bool {
+        !RIM.iter().any(|&(dx, dz)| area.caves.surface_open(c.x + dx, c.z + dz, &area.geology.get(c.x + dx, c.z + dz)))
     }
 
     /// The tree growing at a candidate, if any, and the share of the roll trees may take
@@ -140,7 +146,10 @@ impl Features {
         thread_local! {
             static CHANCES: std::cell::RefCell<Vec<(TreeId, f32)>> = const { std::cell::RefCell::new(Vec::new()) };
         }
-        CHANCES.with_borrow_mut(|chances| self.tree(area, &c, chances).0.map(|_| IVec2::new(c.x, c.z)))
+        CHANCES.with_borrow_mut(|chances| {
+            self.tree(area, &c, chances).0?;
+            self.rim_clear(area, &c).then_some(IVec2::new(c.x, c.z))
+        })
     }
 
     /// Places the trees and decorations reaching the column at `pos`, and colours the
@@ -173,6 +182,8 @@ impl Features {
             for cx in first.clone() {
                 let Some(c) = self.candidate(&area, cx, cz, inside) else { continue };
                 let base = IVec3::new(c.x, c.geo.height + 1, c.z);
+                let mut clear = None;
+                let mut rim_clear = || *clear.get_or_insert_with(|| self.rim_clear(&area, &c));
                 let mut slope = None;
                 let mut slope_of = || *slope.get_or_insert_with(|| geology.slope(c.x, c.z));
                 // Patches, on their own roll.
@@ -180,6 +191,7 @@ impl Features {
                     let mut rng = Rng::new(world.seed, PATCHES, cx, cz);
                     let probe = &mut Probe { rules: &world.rules, x: c.x, z: c.z, slope: &mut slope_of };
                     if let Some(id) = decor.choose_patch(&c.site, rng.unit(), probe) {
+                        if !rim_clear() { continue; }
                         planned.push(Planned { holds: Holds::Decoration(id), base, site: c.site, rng });
                     }
                 }
@@ -188,7 +200,9 @@ impl Features {
                     self.tree(&area, &c, &mut chances)
                 };
                 if let Some((tree, site)) = tree {
-                    planned.push(Planned { holds: Holds::Tree(tree), base, site, rng: c.rng });
+                    if rim_clear() {
+                        planned.push(Planned { holds: Holds::Tree(tree), base, site, rng: c.rng });
+                    }
                     continue;
                 }
                 if c.roll < upper || !decor.places_any(&c.site) {
@@ -197,7 +211,7 @@ impl Features {
                 let probe = &mut Probe { rules: &world.rules, x: c.x, z: c.z, slope: &mut slope_of };
                 let Some(id) = decor.choose_placed(&c.site, c.roll - upper, probe) else { continue };
                 let site = Site { slope: slope_of(), steepness: area.geology.steepness(c.x, c.z), ..c.site };
-                if decor.stands_on(id, self.ground(&area, &site, &c)) {
+                if decor.stands_on(id, self.ground(&area, &site, &c)) && rim_clear() {
                     planned.push(Planned { holds: Holds::Decoration(id), base, site, rng: c.rng });
                 }
             }
