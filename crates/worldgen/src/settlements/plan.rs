@@ -321,6 +321,45 @@ impl Lane {
         self.points.windows(2).map(|w| segment_distance(p, w[0], w[1])).fold(f32::MAX, f32::min).min(self.points.first().map_or(f32::MAX, |q| q.distance(p)))
     }
 
+    /// Clip paving's row-major scan to a conservative box. The projected segment
+    /// point is `a + (b - a) * t`, with t in [0, 1]: rounded multiplication and
+    /// addition are monotone, so its extrema are a and the *computed* a + (b - a),
+    /// which need not equal b. Each axis's distance to that box is a lower bound
+    /// under the same nonnegative square/sqrt operations as distance(). Binary
+    /// searches keep all integer coordinates whose lower bound can pass, including
+    /// integer-to-float rounding at large coordinates; no float-to-integer padding
+    /// assumption is needed. Unusual non-finite paths keep the full original scan.
+    fn paving_bounds(&self, raster: Rect) -> Option<Rect> {
+        let Some(&first) = self.points.first() else { return Some(raster) };
+        if !first.is_finite() || !self.half.is_finite() || self.half < 0.0 { return Some(raster); }
+        let (mut min, mut max) = (first, first);
+        for w in self.points.windows(2) {
+            let ab = w[1] - w[0];
+            let end = w[0] + ab;
+            if !w[0].is_finite() || !ab.is_finite() || !end.is_finite() { return Some(raster); }
+            min = min.min(w[0]).min(end);
+            max = max.max(w[0]).max(end);
+        }
+        // First true value of a monotone predicate, or hi + 1. i64 also permits
+        // the exclusive end when an original raster reaches i32::MAX.
+        fn first_true(lo: i32, hi: i32, test: impl Fn(i32) -> bool) -> i64 {
+            let (mut lo, mut end) = (i64::from(lo), i64::from(hi) + 1);
+            while lo < end {
+                let mid = lo + (end - lo) / 2;
+                if test(mid as i32) { end = mid; } else { lo = mid + 1; }
+            }
+            lo
+        }
+        let axis = |lo, hi, min: f32, max: f32| {
+            let left = first_true(lo, hi, |i| Vec2::new((min - i as f32).max(0.0), 0.0).length() <= self.half);
+            let right = first_true(lo, hi, |i| Vec2::new((i as f32 - max).max(0.0), 0.0).length() > self.half) - 1;
+            (left <= right).then_some((left as i32, right as i32))
+        };
+        let (lx, hx) = axis(raster.min.x, raster.max.x, min.x, max.x)?;
+        let (lz, hz) = axis(raster.min.y, raster.max.y, min.y, max.y)?;
+        Some(Rect { min: IVec2::new(lx, lz), max: IVec2::new(hx, hz) })
+    }
+
     #[cfg(test)]
     fn rect_distance(&self, rect: &Rect) -> f32 {
         let mut best = f32::MAX;
@@ -1783,8 +1822,9 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let detail_time = phase_start();
     // Paved lanes.
     for lane in lanes.iter().filter(|l| l.paved) {
-        for z in raster.min.y..=raster.max.y {
-            for x in raster.min.x..=raster.max.x {
+        let Some(bounds) = lane.paving_bounds(Rect { min: raster.min, max: raster.max }) else { continue };
+        for z in bounds.min.y..=bounds.max.y {
+            for x in bounds.min.x..=bounds.max.x {
                 let p = IVec2::new(x, z);
                 if lane.distance(p.as_vec2()) <= lane.half
                     && !rects.iter().any(|r| r.distance(p.as_vec2()) < 0.5)
@@ -2881,6 +2921,62 @@ mod level_tests {
         assert!(matters(&boat, &Want::Kind(Kind::Inn), "village", "timber_frame", 0));
         boat.water = false;
         assert!(!matters(&boat, &Want::Home, "village", "timber_frame", 0));
+    }
+
+    #[test]
+    fn lane_paving_bounds_keep_full_scan_points_and_order() {
+        let mut clipped = 0;
+        let mut admitted = 0;
+        let mut empty = 0;
+        for offset in [0, -8192, 1_048_576, -16_777_216, 16_777_216, i32::MIN + 128, i32::MAX - 128] {
+            let shift = IVec2::new(offset, offset);
+            let raster = Rect { min: shift - 40, max: shift + 40 };
+            for points in [
+                vec![], vec![Vec2::ZERO], vec![Vec2::new(5.0, 0.0); 2],
+                vec![Vec2::new(-30.25, 8.5), Vec2::new(18.75, -4.5), Vec2::new(28.0, 50.0)],
+                vec![Vec2::new(5.0, -50.0), Vec2::new(5.0, 50.0)],
+                vec![Vec2::new(50.0, 50.0), Vec2::new(70.0, 70.0)],
+                vec![Vec2::new(-50.0, -50.0), Vec2::new(50.0, 50.0)],
+            ] {
+                let points: Vec<_> = points.into_iter().map(|p| p + shift.as_vec2()).collect();
+                let mut lane = Lane::bare(points, 1.0, true, true);
+                let boundary = lane.distance((shift + IVec2::new(8, 2)).as_vec2());
+                for half in [0.0, 0.5, 1.0, 3.5, 50.0, boundary.next_down(), boundary, boundary.next_up(), f32::MAX] {
+                    lane.half = half;
+                    let bounds = lane.paving_bounds(raster);
+                    clipped += usize::from(bounds.is_some_and(|r| r.min != raster.min || r.max != raster.max));
+                    empty += usize::from(bounds.is_none());
+                    let scan = |rect: Option<Rect>| {
+                        let mut out = Vec::new();
+                        if let Some(rect) = rect {
+                            for z in rect.min.y..=rect.max.y {
+                                for x in rect.min.x..=rect.max.x {
+                                    let p = IVec2::new(x, z);
+                                    if lane.distance(p.as_vec2()) <= half { out.push(p); }
+                                }
+                            }
+                        }
+                        out
+                    };
+                    let original = scan(Some(raster));
+                    admitted += original.len();
+                    assert_eq!(scan(bounds), original, "offset {offset}, half {half}, points {:?}", lane.points);
+                }
+            }
+        }
+        assert!(clipped > 100 && admitted > 1000 && empty > 0, "need clipped, painted and rejected positive controls");
+        // The computed projection endpoint differs from b after cancellation.
+        let a = Vec2::new(1_048_576.0, 0.0);
+        let b = Vec2::new(0.03125, 10.0);
+        assert_ne!(a + (b - a), b);
+        let lane = Lane::bare(vec![a, b], 0.0, true, true);
+        let raster = Rect { min: IVec2::new(-2, 8), max: IVec2::new(2, 12) };
+        assert!(lane.paving_bounds(raster).unwrap().holds(IVec2::new(0, 10)));
+        for points in [vec![Vec2::splat(f32::INFINITY)], vec![Vec2::splat(-f32::MAX), Vec2::splat(f32::MAX)]] {
+            let lane = Lane::bare(points, 1.0, true, true);
+            let bounds = lane.paving_bounds(raster).unwrap();
+            assert_eq!((bounds.min, bounds.max), (raster.min, raster.max), "non-finite arithmetic keeps the original scan");
+        }
     }
 
     #[test]
