@@ -314,6 +314,11 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
+    /// The creature the combat-marks step tells its blows at, when (game time) it last told
+    /// them, and how many runs it has told.
+    marked: Option<u32>,
+    marked_at: f32,
+    marked_tries: u32,
     /// Where the feet stood when W went down with the quest book open.
     quest_feet: Vec3,
     /// The quests' revision when torches were crafted for the tracker.
@@ -449,6 +454,9 @@ impl Gate {
             digging: None,
             dug: Vec::new(),
             count_before: 0,
+            marked: None,
+            marked_at: 0.0,
+            marked_tries: 0,
             quest_feet: Vec3::ZERO,
             quests_rev: 0,
             quest_pinned: 0.0,
@@ -4837,12 +4845,25 @@ fn splats_missing(world: &mut World) -> Vec<String> {
     wanted.filter(|(words, look)| !drawn.iter().any(|(text, color)| text == words && same_colour(*color, look.color.color()))).map(|(words, _)| words).collect()
 }
 
+/// Game seconds the combat-marks step waits for a told run of blows to be drawn before it
+/// tells them again (a splat shows `splats.seconds`, 0.9), and how many runs it tells at most.
+const MARKS_WAIT: f32 = 0.6;
+const MARKS_TELLS: u32 = 3;
+
 fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::combat::SplatsShown;
+    // The snail `end_wear` summoned beside the player: not a bear the fights left standing
+    // out of the view.
+    let snail = world.resource::<Launch>().content.creatures.find(CREATURE);
     let creature = {
         let (creatures, player) = (world.resource::<crate::creatures::Creatures>(), world.resource::<LocalPlayer>());
         let eye = player.eye();
-        creatures.living().filter(|(.., feet)| feet.distance(eye) < 14.0).min_by(|a, b| a.2.distance(eye).total_cmp(&b.2.distance(eye))).map(|(id, _, feet)| (id, feet))
+        creatures.living().filter(|(_, species, feet)| Some(*species) == snail && feet.distance(eye) < 14.0).min_by(|a, b| a.2.distance(eye).total_cmp(&b.2.distance(eye))).map(|(id, _, feet)| (id, feet))
+    };
+    // Once the blows are told at one, that one, wherever another stands.
+    let creature = match gate.marked {
+        Some(id) => world.resource::<crate::creatures::Creatures>().living().find(|&(at, ..)| at == id).map(|(id, _, feet)| (id, feet)),
+        None => creature,
     };
     match gate.phase {
         0 => {
@@ -4882,6 +4903,9 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some((id, feet)) = creature else { return };
             aim_at(world, feet + Vec3::Y * 0.3);
             gate.count_before = world.resource::<SplatsShown>().flashes;
+            gate.marked = Some(id);
+            gate.marked_at = now;
+            gate.marked_tries = 1;
             tell_blows(world, id);
             gate.advance(now);
         }
@@ -4892,10 +4916,22 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if in_phase < 0.25 {
                 return;
             }
+            // Read each frame until every splat is drawn. A busy machine can draw them late
+            // (a frame of up to a quarter second); one told run lasts `splats.seconds`, so
+            // past `MARKS_WAIT` the run is told again, a few times at most.
             let missing = splats_missing(world);
             let language = if gate.phase == 1 { "en" } else { "ja" };
+            if !missing.is_empty() && now - gate.marked_at < MARKS_WAIT {
+                return;
+            }
+            if !missing.is_empty() && gate.marked_tries < MARKS_TELLS && let Some((id, _)) = creature {
+                gate.marked_tries += 1;
+                gate.marked_at = now;
+                tell_blows(world, id);
+                return;
+            }
             if !missing.is_empty() {
-                gate.check("combat marks", Err(format!("{language}: no splat reads {missing:?}; drawn: {:?}", splats_drawn(world))));
+                gate.check("combat marks", Err(format!("{language}: no splat reads {missing:?} in {} runs told; drawn: {:?}", gate.marked_tries, splats_drawn(world))));
                 world.resource_mut::<crate::settings::Settings>().language = "en".into();
                 set_language(world, "en");
                 gate.next(Step::Cook, now);
@@ -4938,6 +4974,8 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let up = world.query::<&crate::hud::combat::HitSplat>().iter(world).count();
             if up == 0 && let Some((id, _)) = creature {
                 gate.count_before = world.resource::<SplatsShown>().flashes;
+                gate.marked_at = now;
+                gate.marked_tries = 1;
                 tell_blows(world, id);
                 gate.advance(now);
             } else if gate.server_in_phase() > UNANSWERED {
