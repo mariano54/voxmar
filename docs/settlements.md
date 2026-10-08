@@ -145,9 +145,11 @@ all random draws retain their original order. Water is searched for a house requ
 only when an otherwise eligible water-dependent house can serve it. Scratch caps
 corners at 4,096, and channel groups at 16; eviction repeats
 the same pure computation. None of this scratch storage is retained in the plan cache.
-Sealing also reuses up to 16,384 raw columns keyed by position and the requesting
+Sealing also reuses up to 32,768 raw columns keyed by position and the requesting
 centre's exact channel-region bounds. Its four neighbours keep those same bounds;
 corner-only eviction preserves the raw values, and changing worlds clears all scratch.
+This avoids the observed raw-column eviction just before the successful ninth layout
+of a spawn village; the 16,384-point close-water memo and 4,096-corner bound stay fixed.
 Climate, biome, home level and fertility checks reuse the same full original site at
 each position, rather than sampling its five-block terrain neighbourhood repeatedly.
 Site water checks walk the same ranked qualifying prefix lazily, stopping when enough
@@ -172,6 +174,10 @@ Layout RNG draws
 for name prefixes stay in place; only the successful layout constructs its final name.
 Neighbour-name collisions compare English names, so those offers draw the same parts
 without constructing unused Japanese readings. Selected names still join both languages.
+Before attempting queued lots, a layout with an unsatisfiable mandatory catalogue
+request is rejected: its eligible houses have no positive weight even before built
+caps grow. Water is ignored in this necessary check. Successful layouts and their
+draws are unchanged; every retry starts from its own original RNG stream.
 Allocator metadata is outside this storage count. Later packages replace only culture rule fields they
 name, preserving the others and reporting which package and field they replaced. Loading
 refuses unknown catalogue names, missing palette blocks, non-finite weights and shifts,

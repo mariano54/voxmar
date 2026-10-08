@@ -64,6 +64,7 @@ const STREAM_MARGIN: i32 = 64;
 
 /// Maximum centre samples sharing one bounded planning batch.
 pub const SAMPLE_BATCH: usize = 32;
+const RAW_COLUMN_LIMIT: usize = 32_768;
 
 #[cfg(test)]
 thread_local! {
@@ -792,6 +793,11 @@ pub struct Freshwater {
     scratch: Samples,
 }
 
+#[cfg(test)]
+impl Freshwater {
+    pub(crate) fn work(&self) -> [usize; 4] { self.scratch.work() }
+}
+
 impl Samples {
     #[cfg(test)]
     pub(crate) fn work(&self) -> [usize; 4] {
@@ -812,7 +818,7 @@ impl Samples {
             { self.work[0] += 1; }
         }
         // A batch inserts at most its centres and four neighbours per centre.
-        if self.columns.len() + 5 * count > 16_384 {
+        if self.columns.len() + 5 * count > RAW_COLUMN_LIMIT {
             self.columns.clear();
             #[cfg(test)]
             { self.work[1] += 1; }
@@ -991,7 +997,7 @@ mod tests {
                     assert_eq!(actual, expected, "seed {seed} at {x},{z}, reverse {reverse}");
                     assert!(scratch.corners.len() <= 4096);
                     assert!(scratch.tiers.len() <= 16);
-                    assert!(scratch.columns.len() <= 16_384);
+        assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
                     if expected.submerged() && expected.body != Body::Sea { wet += 1; } else if !expected.submerged() { dry += 1; }
                 }
                 let ordered: Vec<_> = if reverse { points.iter().rev().copied().collect() } else { points.clone() };
@@ -1002,7 +1008,7 @@ mod tests {
                         assert_eq!(actual, expected, "batch {batch_size}, seed {seed}, reverse {reverse}");
                         assert!(scratch.corners.len() <= 4096);
                         assert!(scratch.tiers.len() <= 16);
-                        assert!(scratch.columns.len() <= 16_384);
+                        assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
                     }
                 }
                 assert!(world.rivers.samples_cached(world.stages(), &[], &mut scratch).is_empty());
@@ -1055,8 +1061,8 @@ mod tests {
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.corners.len(), 0, "retained raw values survive the corner reset without recomputation");
         // Pressure entries are never queried. Full-batch headroom clears them first.
-        scratch.columns.extend((0..16_384 - 6).map(|k| ((IVec2::new(200_000 + k, 200_000), key), wrong)));
-        assert_eq!(scratch.columns.len(), 16_384);
+        scratch.columns.extend((0..RAW_COLUMN_LIMIT - 6).map(|k| ((IVec2::new(200_000 + k as i32, 200_000), key), wrong)));
+        assert_eq!(scratch.columns.len(), RAW_COLUMN_LIMIT);
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.columns.len(), 5);
         scratch.columns.insert((p, key), wrong);

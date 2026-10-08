@@ -519,6 +519,11 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
     if found.is_empty() {
         give_up::<()>(if examined == 0 { 0 } else { 1 });
     }
+    #[cfg(test)]
+    if PROFILE.with(|p| p.get()) {
+        let scratch = water.work();
+        eprintln!("  close scratch: corner clears {}, raw-column clears {}, peak corners {}, peak raw columns {}", scratch[0], scratch[1], scratch[2], scratch[3]);
+    }
     found
 }
 
@@ -1297,6 +1302,13 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let house_weights = def.houses.iter().map(|h| h.lean.weigh(h.weight, &levers) * culture.mult(Listing::House, &h.name)).collect();
     let extra_chances = def.extras.iter().map(|e| e.lean.weigh(e.chance, &levers) * culture.mult(Listing::Extra, &format!("{:?}", e.name))).collect();
     let mut town = Town { ctx, kit: &kit, levers: &levers, house_weights, extra_chances, style, size: &size.name, built: FxHashMap::default(), bounds, square: square_rect, gap };
+    // A mandatory catalogue request with no positive-weight eligible house can
+    // never be removed from the queue. Built counts only grow and these weights
+    // stay fixed; water is deliberately ignored, making this a necessary check.
+    // Rejected layouts own their RNG, so no later layout loses any of its draws.
+    if !required_houses_possible(&def.houses, &town.house_weights, &queue, &size.name, &style.name, rules.houses.grand) {
+        return give_up(5);
+    }
     // On a green, houses first take the rim, facing in.
     if shape == Shape::Green {
         let rim = (square as f32 + lanes_def.rim.0 + gap as f32).max(lanes_def.rim.1);
@@ -1609,6 +1621,10 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         }
     }
 
+    #[cfg(test)]
+    phase_end("buildings/props/square paving", time);
+    #[cfg(test)]
+    let detail_time = phase_start();
     // The ground: pads graded flat under buildings and the square, lanes trodden.
     let mut buildings = Vec::new();
     let mut min = centre - square - 2;
@@ -1689,6 +1705,10 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let (near, far) = def.site.glade;
     let (trees, greener) = def.site.glade_trees;
     raster.glade(&rects, near, far, trees + greener * levers.get(Lever::Green), seed);
+    #[cfg(test)]
+    phase_end("raster/grading/lanes/glade", detail_time);
+    #[cfg(test)]
+    let detail_time = phase_start();
     // Paved lanes.
     for lane in lanes.iter().filter(|l| l.paved) {
         for z in raster.min.y..=raster.max.y {
@@ -1704,8 +1724,14 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         }
     }
 
+    #[cfg(test)]
+    phase_end("lane paving", detail_time);
+    #[cfg(test)]
+    let detail_time = phase_start();
     let gates: Vec<IVec2> = lanes.iter().filter(|l| l.main).map(|l| l.points.last().unwrap().round().as_ivec2()).collect();
     let voxels = canvas.into_columns();
+    #[cfg(test)]
+    phase_end("voxel columns", detail_time);
     #[cfg(test)]
     phase_end("drawing/raster/voxel columns", time);
     #[cfg(test)]
@@ -2044,6 +2070,12 @@ fn house_fits(h: &super::def::HouseDef, want: &Want, size: &str, style: &str, bu
             Want::Workshop => h.work.is_some(),
             Want::Work(work) => h.work.as_deref() == Some(work.as_str()),
         }
+}
+
+fn required_houses_possible(houses: &[super::def::HouseDef], weights: &[f32], queue: &[Want], size: &str, style: &str, grand: u32) -> bool {
+    queue.iter().filter(|want| matches!(want, Want::Work(_) | Want::Kind(Kind::Inn | Kind::Trader))).all(|want| {
+        houses.iter().zip(weights).any(|(house, &weight)| weight > 0.0 && house_fits(house, want, size, style, 0, grand))
+    })
 }
 
 /// Rolls a house of the settlement's kinds for `want`, with its extras: one the place's
@@ -2534,6 +2566,36 @@ mod level_tests {
     use crate::geology::GeoSample;
     use crate::trails::Land;
     use crate::water::Body;
+
+    #[test]
+    fn required_house_preflight_only_rejects_impossible_catalogues() {
+        let mut def = SettlementsDef::default();
+        def.extend("base", "base", include_str!("../../../../assets/content/base/settlements.ron")).unwrap();
+        let works = [Want::Work("shrine".into())];
+        let mixed = [Want::Kind(Kind::Inn), Want::Kind(Kind::Trader), Want::Kind(Kind::Smithy), Want::Work("shrine".into()), Want::Home, Want::Workshop];
+        let possible = |houses: &[super::super::def::HouseDef], weights: &[f32], queue: &[Want], size, style| {
+            required_houses_possible(houses, weights, queue, size, style, def.rules.houses.grand)
+        };
+        let mut weights = vec![1.0; def.houses.len()];
+        assert!(possible(&def.houses, &weights, &mixed, "village", "timber_frame"));
+        assert!(!possible(&def.houses, &weights, &[Want::Work("absent_work".into())], "village", "timber_frame"));
+        assert!(!possible(&def.houses, &weights, &works, "hamlet", "timber_frame"), "shrine catalogue is village-only");
+        assert!(possible(&def.houses, &weights, &[Want::Work("boathouse".into())], "village", "timber_frame"), "water-only entries remain possible without a water witness");
+        weights.fill(0.0);
+        assert!(!possible(&def.houses, &weights, &mixed, "village", "timber_frame"));
+        assert!(possible(&def.houses, &weights, &[Want::Kind(Kind::Smithy), Want::Home, Want::Workshop], "village", "timber_frame"), "specials and optional houses are outside this check");
+        let chapel = def.houses.iter().position(|h| h.work.as_deref() == Some("shrine")).unwrap();
+        weights[chapel] = 1.0;
+        assert!(possible(&def.houses, &weights, &works, "village", "timber_frame"), "zero-weight neighbours never hide a selectable entry");
+        assert!(possible(&def.houses, &weights, &[works[0].clone(), works[0].clone()], "village", "timber_frame"), "no speculative total-capacity rejection");
+        assert!(!possible(&def.houses, &weights, &mixed, "village", "timber_frame"), "an available shrine cannot satisfy a missing inn or trader");
+        def.houses[chapel].most = Some(0);
+        assert!(!possible(&def.houses, &weights, &works, "village", "timber_frame"));
+        def.houses[chapel].most = None;
+        def.houses[chapel].not_in.push("timber_frame".into());
+        assert!(!possible(&def.houses, &weights, &works, "village", "timber_frame"));
+        assert!(possible(&def.houses, &weights, &works, "village", "log_house"));
+    }
 
     #[test]
     fn lane_turn_batches_keep_scalar_paths_and_rng() {
