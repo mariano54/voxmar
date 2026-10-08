@@ -212,7 +212,7 @@ impl RecipeRegistry {
         let crafting = skills.id("core:crafting");
         for def in defs {
             // The single item names, for families (`tag:` and `a|b` cells stand apart, and an
-            // empty cell is no item).
+            // empty cell is no item: with it in, no name fits and the family has no recipes).
             let names: Vec<&String> =
                 def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.is_empty() && !n.starts_with("tag:") && !n.contains('|')).collect();
             // The tags a family fills in (`tag:dye:{name}`).
