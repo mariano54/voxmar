@@ -283,7 +283,6 @@ impl Trees {
         let feet = g.trunk(&trunk, height, size.thick, ends, s.log, s.roots != Roots::Stilts);
 
         match s.roots {
-            // Thick trunks always flare a little.
             // Thick trunks always flare a little, and so do grown snags, whose roots the
             // weather has bared.
             Roots::None => {
@@ -300,7 +299,7 @@ impl Trees {
                     let mut foot = root + out * (girth + pick(rng, (2.0, 3.2)) * k.sqrt());
                     if near {
                         foot.y = (g.ground)(foot.x.floor() as i32, foot.z.floor() as i32) as f32 + 1.0;
-                        g.line(from, foot, s.roots_block);
+                        g.root_line(from, foot, s.roots_block);
                         g.sink(foot.floor().as_ivec3() - IVec3::Y, s.roots_block);
                     }
                 }
@@ -315,8 +314,8 @@ impl Trees {
                     if near {
                         foot.y = (g.ground)(foot.x.floor() as i32, foot.z.floor() as i32) as f32 + 1.0;
                         let knee = (from + foot) * 0.5 + out * 0.8 + Vec3::Y * 0.8;
-                        g.line(from, knee, s.roots_block);
-                        g.line(knee, foot, s.roots_block);
+                        g.root_line(from, knee, s.roots_block);
+                        g.root_line(knee, foot, s.roots_block);
                         g.sink(foot.floor().as_ivec3() - IVec3::Y, s.roots_block);
                     }
                 }
@@ -641,11 +640,23 @@ impl Grower<'_, '_> {
         put
     }
 
-    /// Whether a column's own blocks hold something firm, or lie beyond the column (another
-    /// column decides there), within `SINK` blocks below `cell`: whether wood sunk from
-    /// `cell` would rest.
+    /// Whether firm earth lies within `SINK` below `cell`. Outside this column its owner
+    /// decides: support never reads a neighbouring column's generation state. Wood, fluids
+    /// and plants do not count as earth, even when wood cannot grow through them.
     fn rests(&self, cell: IVec3) -> bool {
-        !self.blocks.contains(cell) || (0..=SINK).any(|d| !self.blocks.soft(cell - IVec3::Y * d))
+        if !self.blocks.contains(cell) {
+            return true;
+        }
+        for d in 0..=SINK {
+            let at = cell - IVec3::Y * d;
+            if self.blocks.earth(at) {
+                return true;
+            }
+            if !self.blocks.soft(at) {
+                return false;
+            }
+        }
+        false
     }
 
     /// Continues wood down from `cell` through air, water, leaves and small plants to the
@@ -749,7 +760,7 @@ impl Grower<'_, '_> {
                     // sunk column, rather than hung over it: its own column decides, from its
                     // own blocks, so every column agrees.
                     if !self.rests(cell.with_y(y - 1)) {
-                        break;
+                        continue;
                     }
                     let tall = if k == 1 && u < 0.5 * strength { 2 } else { 1 };
                     for h in 0..tall {
@@ -777,6 +788,31 @@ impl Grower<'_, '_> {
     fn line(&mut self, from: Vec3, to: Vec3, log: BlockId) {
         for cell in Self::line_cells(from, to) {
             self.wood(cell, log);
+        }
+    }
+
+    /// Buttresses and stilts need support under every column of their exposed span,
+    /// not just its end. Sink from the lowest root cell of each column before writing
+    /// the span: clipping a root over a pit can leave a fragment beyond it, which must
+    /// stand on its own earth. Every column decides and writes only its own part.
+    fn root_line(&mut self, from: Vec3, to: Vec3, log: BlockId) {
+        let cells = Self::line_cells(from, to);
+        let mut feet: Vec<IVec3> = Vec::new();
+        for &cell in &cells {
+            if let Some(foot) = feet.iter_mut().find(|f| f.x == cell.x && f.z == cell.z) {
+                foot.y = foot.y.min(cell.y);
+            } else {
+                feet.push(cell);
+            }
+        }
+        for foot in feet {
+            if !self.blocks.contains(foot) || !self.rests(foot - IVec3::Y) {
+                continue;
+            }
+            self.sink(foot - IVec3::Y, log);
+            for &cell in cells.iter().filter(|c| c.x == foot.x && c.z == foot.z) {
+                self.wood(cell, log);
+            }
         }
     }
 
@@ -1050,6 +1086,45 @@ mod tests {
         let mut rng = Rng::new(seed, 0x7ee, 0, 0);
         trees.grow(tree, IVec3::new(16, 101, 16), vigour, &|_, _| 100, &mut rng, &mut blocks, &mut TreeParts::default());
         blocks
+    }
+
+    /// Root support is earth, not just an obstacle to wood. A shallow dip at the limit
+    /// is sunk to its floor; a deeper pit holding a plant, water or another log is left
+    /// untouched by sink, flare and the exposed spans of buttresses and stilts.
+    #[test]
+    fn roots_require_earth_within_sinking_reach() {
+        let registry = registry();
+        let soft: Vec<bool> = (0..registry.len()).map(|i| {
+            let b = BlockId(i as u16);
+            b.is_air() || registry.def(b).render == RenderKind::Plant || registry.fluid(b).is_some()
+        }).collect();
+        let earth: Vec<bool> = (0..registry.len()).map(|i| crate::terrain::earth(&registry, BlockId(i as u16))).collect();
+        let wood = registry.expect("base:oak_wood");
+        let grass = registry.expect("base:grass_block");
+        let ground = |_: i32, _: i32| 100;
+        for obstacle in [BlockId::AIR, registry.expect("base:short_grass"), registry.expect("base:water"), wood] {
+            for depth in [SINK, SINK + 1] {
+                let mut blocks = Blocks::empty(IVec3::ZERO, &[], &soft, &earth);
+                for x in 16..=19 {
+                    blocks.set(IVec3::new(x, 100 - depth, 16), grass);
+                    blocks.set(IVec3::new(x, 99, 16), obstacle);
+                }
+                let mut parts = TreeParts::default();
+                let mut g = Grower { blocks: &mut blocks, seed: 7, base: IVec3::new(16, 101, 16), parts: &mut parts, ground: &ground };
+                assert_eq!(g.rests(IVec3::new(17, 100, 16)), depth == SINK && obstacle != wood, "{obstacle:?} at depth {depth}");
+                g.sink(IVec3::new(17, 100, 16), wood);
+                g.flare(&[IVec3::new(16, 101, 16)], 1.0, wood);
+                g.root_line(Vec3::new(16.5, 104.0, 16.5), Vec3::new(19.5, 101.0, 16.5), wood);
+                if depth > SINK || obstacle == wood {
+                    assert!(g.parts.logs.is_empty(), "roots over {obstacle:?} in a pit: {:?}", g.parts.logs);
+                } else {
+                    assert!(!g.parts.logs.is_empty(), "shallow dip lost its roots");
+                    if obstacle != wood {
+                        assert_eq!(g.blocks.get(IVec3::new(17, 101 - SINK, 16)), wood, "sink did not reach its floor");
+                    }
+                }
+            }
+        }
     }
 
     /// A stand mixes young trees, mature ones and the odd giant: heights spread well
