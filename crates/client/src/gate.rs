@@ -288,6 +288,9 @@ struct Gate {
     /// Progress through a step's own stages, and when the current one began.
     phase: u32,
     phase_since: f32,
+    /// Frames in this stage that what a shot is about has been on screen: it shows a frame
+    /// or two after the change.
+    settled: u32,
     /// Where the player stands on the test ground.
     feet: IVec3,
     observer: Option<Observer>,
@@ -415,6 +418,7 @@ impl Gate {
             frames: 0,
             phase: 0,
             phase_since: 0.0,
+            settled: 0,
             feet: IVec3::ZERO,
             observer: None,
             requested: Vec::new(),
@@ -508,6 +512,7 @@ impl Gate {
         self.frames = 0;
         self.phase = 0;
         self.phase_since = now;
+        self.settled = 0;
         self.step_server = self.server_now;
         self.phase_server = self.server_now;
         self.food_moved = false;
@@ -517,6 +522,7 @@ impl Gate {
     fn advance(&mut self, now: f32) {
         self.phase += 1;
         self.phase_since = now;
+        self.settled = 0;
         self.phase_server = self.server_now;
     }
 
@@ -3918,9 +3924,10 @@ fn end_feel(world: &mut World, gate: &mut Gate, now: f32) {
 const WORN_SHIRT: (&str, usize) = ("base:chainmail_shirt", 1);
 const WORN_SHIELD: (&str, usize) = ("base:wooden_shield", 5);
 
-/// Each piece selected and right-clicked goes on: the server's word must put it in its
-/// worn slot (a state it sent after the click, not what this side predicted). Then the
-/// shield is what guards (a stop of 55%, not the sword's 35%); what a guard does to a blow
+/// Each piece selected and right-clicked goes on (shots `wear-shirt` and `wear-shield`
+/// with each in hand, `wear-on` after): the server's word must put it in its worn slot (a
+/// state it sent after the click, not what this side predicted). Then the shield is what
+/// guards (a stop of 55%, not the sword's 35%); what a guard does to a blow
 /// is judged by the server in the gameplay tests (`a_shield_guards_wider...`).
 fn wear(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     use voxmar_engine::inventory::WORN;
@@ -3941,7 +3948,12 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             // Selected, then one right click, once the server has given it.
             let piece = if gate.phase == 1 { WORN_SHIRT } else { WORN_SHIELD };
             if select(world, piece.0) {
+                // Looking down, it in hand, shot (the look shown before the click).
                 look(world, 0.0, 80.0);
+                gate.settled += 1;
+                if gate.settled < 3 || gate.shot(world, if gate.phase == 1 { "wear-shirt" } else { "wear-shield" }).is_none() {
+                    return;
+                }
                 mouse(world, MouseButton::Right, true);
                 gate.worn_states = world.resource::<LocalPlayer>().states;
                 gate.advance(now);
@@ -3958,6 +3970,11 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             let told = world.resource::<LocalPlayer>().states > gate.worn_states;
             if told && worn(world, piece) {
                 if gate.phase == 4 {
+                    // Both on, out of the hotbar.
+                    gate.settled += 1;
+                    if gate.settled < 3 || gate.shot(world, "wear-on").is_none() {
+                        return;
+                    }
                     let player = world.resource::<LocalPlayer>();
                     let launch = world.resource::<Launch>();
                     let held = world.resource::<ClientWorld>().registry.id(WEAPON);

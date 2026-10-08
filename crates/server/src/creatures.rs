@@ -913,10 +913,13 @@ impl Server {
         }
     }
 
-    /// Sends each player the creatures that changed within sight, and those gone from it.
+    /// Sends each player the creatures that changed within sight, and those gone from it:
+    /// every other tick, but a new pose at once (a wind-up is a telegraph, and its blow lands
+    /// a wind-up after it began, whenever the player is told).
     fn replicate_creatures(&mut self) {
         let gone = std::mem::take(&mut self.creatures.gone);
         let every_other = self.tick.is_multiple_of(2);
+        let posed = |creature: &Live| creature.changed && creature.sent.is_some_and(|last| last.pose != creature.pose());
         for player in self.players.values().filter(|p| p.joined) {
             let seen = self.creatures.seen.entry(player.id).or_default();
             let mut changed = Vec::new();
@@ -925,7 +928,7 @@ impl Server {
                 let near = creature.body.position.distance(player.position) < SEEN_WITHIN;
                 let known = seen.contains(&id);
                 let moved = creature.changed && creature.sent.is_none_or(|last| creature.moved_since(&last));
-                if near && (!known || (every_other && moved)) {
+                if near && (!known || (every_other && moved) || posed(creature)) {
                     seen.insert(id);
                     changed.push(creature.view(id));
                 } else if !near && known {
@@ -939,12 +942,15 @@ impl Server {
         }
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         self.creatures.seen.retain(|id, _| ids.contains(id));
-        if every_other {
-            for creature in self.creatures.live.values_mut().filter(|c| c.changed) {
+        for creature in self.creatures.live.values_mut().filter(|c| c.changed) {
+            if every_other {
                 if creature.sent.is_none_or(|last| creature.moved_since(&last)) {
                     creature.sent = Some(creature.view(0));
                 }
                 creature.changed = false;
+            } else if posed(creature) {
+                // Sent: not again next tick unless it changes more.
+                creature.sent = Some(creature.view(0));
             }
         }
     }
@@ -1028,6 +1034,33 @@ mod tests {
 #[cfg(test)]
 mod combat_tests {
     use super::*;
+
+    /// A wind-up shows the tick it begins, though creatures that only move are sent every
+    /// other tick: its blow lands a wind-up after it began, told or not.
+    #[test]
+    fn a_wind_up_shows_the_tick_it_begins() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2);
+        joined.joined = true;
+        server.players.insert(player, joined);
+        let species = server.content.creatures.id("base:brown_bear").expect("a bear");
+        let bear = server.spawn_creature(species, server.spawn + Vec3::X * 1.5, 1).expect("room");
+        server.tick = 10;
+        server.replicate_creatures();
+        while let Ok(Some(_)) = client.try_recv() {}
+        server.tick = 11;
+        server.wind_up(bear, player);
+        server.replicate_creatures();
+        let shown = std::iter::from_fn(|| client.try_recv().ok().flatten()).any(|message| match message {
+            ServerMessage::Creatures { changed, .. } => changed.iter().any(|v| v.id == bear && v.pose == brain::Pose::Attacking),
+            _ => false,
+        });
+        assert!(shown, "the wind-up waited a tick to be shown");
+        // Sent once: the next tick sends it again only if it changed more.
+        assert!(server.creatures.live[&bear].sent.is_some_and(|v| v.pose == brain::Pose::Attacking));
+    }
 
     #[test]
     fn defence_trains_only_from_a_creature_the_player_lately_hurt_and_a_match() {
