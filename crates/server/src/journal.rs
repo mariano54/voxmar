@@ -25,12 +25,13 @@ impl Server {
         }
     }
 
-    /// The journal page a creature kind is found on.
-    pub(crate) fn page_of(kind: Kind) -> Page {
+    /// The journal page a creature kind is found on; people are on none.
+    pub(crate) fn page_of(kind: Kind) -> Option<Page> {
         match kind {
-            Kind::Animal => Page::Animals,
-            Kind::Monster | Kind::Spirit => Page::Monsters,
-            Kind::Fish => Page::Fish,
+            Kind::Animal => Some(Page::Animals),
+            Kind::Monster | Kind::Spirit => Some(Page::Monsters),
+            Kind::Fish => Some(Page::Fish),
+            Kind::Villager => None,
         }
     }
 
@@ -65,7 +66,9 @@ impl Server {
             for creature in self.creatures.live.values() {
                 if creature.body.position.distance(player.position) <= SIGHT {
                     let species = self.content.creatures.get(creature.species);
-                    found.push((player.id, Self::page_of(species.def.kind), species.def.name.clone()));
+                    if let Some(page) = Self::page_of(species.def.kind) {
+                        found.push((player.id, page, species.def.name.clone()));
+                    }
                 }
             }
         }

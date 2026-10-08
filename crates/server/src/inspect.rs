@@ -67,7 +67,8 @@ impl Server {
                 lines.push(Words::key("inspect.wants").with("needs", wants));
             }
         }
-        let defs = &def.genes;
+        // A person's looks are their own, not a breeder's to read.
+        let defs: &[_] = if def.kind == voxmar_engine::creature::Kind::Villager { &[] } else { &def.genes };
         let genome = &creature.genome;
         if !defs.is_empty() {
             if level >= SHOWS {

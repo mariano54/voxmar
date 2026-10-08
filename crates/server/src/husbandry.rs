@@ -683,6 +683,23 @@ mod tests {
     }
 
     #[test]
+    fn a_settlements_people_leave_the_wild_budget_alone() {
+        let mut server = test_server();
+        let wild = server.wild_room();
+        let at = server.spawn.floor().as_ivec3();
+        server.load_area(at, at);
+        let villager = server.content.creatures.id("base:villager").expect("villagers");
+        for salt in 0..5 {
+            server.spawn_creature(villager, server.spawn, salt).expect("room");
+        }
+        assert_eq!(server.wild_room(), wild, "people took the wild animals' places");
+        let kept = server.kept_by("test");
+        server.console("summon villager 1");
+        server.console("creatures tame");
+        assert_eq!(server.kept_by("test"), kept, "a villager was taken in as a kept animal");
+    }
+
+    #[test]
     fn a_birth_needs_room_and_costs_only_when_young_come() {
         let mut server = test_server();
         // The keeper is here, to be paid for births.

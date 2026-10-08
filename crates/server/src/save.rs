@@ -10,6 +10,8 @@
 //! - `items.ron`: the dropped items lying about, by item name.
 //! - `crops.ron`: the crops players planted, by crop name, with their stage and the tick
 //!   their next is due.
+//! - `villagers.ron`: who of each settlement's people died: how many newcomers have taken
+//!   their place, and the day the next comes.
 //! - `machines.ron`: the machines players built, by block name, with what they hold.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
@@ -49,6 +51,7 @@ const META_FILE: &str = "world.ron";
 const CREATURES_FILE: &str = "creatures.ron";
 const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
+const VILLAGERS_FILE: &str = "villagers.ron";
 const MACHINES_FILE: &str = "machines.ron";
 /// What a file being saved ends with, after its generation.
 const STAGED: &str = "new";
@@ -593,6 +596,17 @@ fn sown_before() -> bool {
     true
 }
 
+/// One of a settlement's people who died, as saved: settlement `town`'s `person`th
+/// resident, `generation` newcomers on, the next due on day `away_until` (days since the
+/// world began).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedDead {
+    pub town: u64,
+    pub person: usize,
+    pub generation: u64,
+    pub away_until: f64,
+}
+
 impl WorldSave {
     /// The planted crops, none if the world has no crops file.
     pub fn read_crops(&self) -> io::Result<Vec<SavedCrop>> {
@@ -649,6 +663,21 @@ impl WorldSave {
         write_atomic(&self.target(self.dir.join(CREATURES_FILE)), text.as_bytes())
     }
 
+    /// Who of the settlements' people died, none if the world has no villagers file.
+    pub fn read_villagers(&self) -> io::Result<Vec<SavedDead>> {
+        let path = self.dir.join(VILLAGERS_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn write_villagers(&self, dead: &[SavedDead]) -> io::Result<()> {
+        let text = ron::ser::to_string(dead).map_err(io::Error::other)?;
+        write_atomic(&self.target(self.dir.join(VILLAGERS_FILE)), text.as_bytes())
+    }
+
     pub fn write_items(&self, items: &[SavedItem]) -> io::Result<()> {
         let text = ron::ser::to_string(items).map_err(io::Error::other)?;
         write_atomic(&self.target(self.dir.join(ITEMS_FILE)), text.as_bytes())
@@ -662,10 +691,11 @@ pub(crate) struct WorldState {
     pub crops: Vec<SavedCrop>,
     pub creatures: Vec<crate::husbandry::SavedCreature>,
     pub machines: Vec<crate::machines::SavedMachine>,
+    pub villagers: Vec<SavedDead>,
 }
 
 impl WorldSave {
-    /// The dropped items, crops, kept creatures and machines. A file that is not what it should be is
+    /// The dropped items, crops, kept creatures, machines and who of the villagers died. A file that is not what it should be is
     /// moved aside and logged, and the world opens without what it held; a file that could
     /// not be read at all, or moved aside (and so would be overwritten at the next save), is
     /// an error.
@@ -675,6 +705,7 @@ impl WorldSave {
             crops: self.read_or_set_aside(CROPS_FILE, Self::read_crops)?,
             creatures: self.read_or_set_aside(CREATURES_FILE, Self::read_creatures)?,
             machines: self.read_or_set_aside(MACHINES_FILE, Self::read_machines)?,
+            villagers: self.read_or_set_aside(VILLAGERS_FILE, Self::read_villagers)?,
         })
     }
 
