@@ -92,7 +92,7 @@ changes don't move it, and checks:
 | weather | `/weather storm`, `/weather snow`, `/weather clear` | each arrives and changes the view (rain, snow, their particles), and out in it the player gets a weather effect (soaked, snowblown…); from joining to here, no weather fraction shown changed in a frame by more than easing allows (`weather::Easing::fastest`: a full swing over six seconds at the quickest, after a command) |
 | sky | looks at the morning sun, flies above the world's top, looks towards and away from the setting sun, then at the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, a lit sky from above the world, a sunset sky warmer towards the sun than away, stars |
 | tree | at noon, a small tree with an apple among its leaves is filled in | it reaches the client and draws, leaves, leaf cards and fruit, changing the view |
-| cook | a campfire on the pad, raw rabbit used on it, then counts the fire's particles for 1.5 s | cooked (or burnt) food comes back; at least 4 particles (smoke, embers, sparks) rise from the fire, a count that holds at any frame rate |
+| cook | a campfire on the pad, raw rabbit used on it, then counts the fire's particles for 1.5 s | cooked (or burnt) food comes back two seconds later, within 15 server seconds; at least 4 particles (smoke, embers, sparks) rise from the fire, a count that holds at any frame rate |
 | ore | `/locate ore`, then goes there and looks down | the server's world has a sample of ore there on solid ground, with ore of the same kind below it within seven blocks across (its vein), the client has the sample, and no more than one in thirty of the ore blocks around lies alone (no other ore within two blocks) |
 | gorge | `/locate gorge`, then goes there | the server's world has water there between walls standing six blocks over it on both sides, within eight blocks |
 | pipelines | everything from the world loading to leaving it | no pipeline compiles meanwhile: on Metal each is a hitch in the frame it is first needed, a few hundred ms on a fresh build. What shows only now and then is warmed at load (`render::warm`: other players, creatures, breaking, the menu blur); something new drawn on first use fails this until it is warmed too |
@@ -123,7 +123,16 @@ The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loa
 - Wait on the server by its own clock, `gate.server_now` and `gate.server_in_phase()`
   (its ticks, `ServerHandle::ticks`), never by the game's seconds: anything the server
   does once a second (effects, quests, vitals, cooking) takes longer on a busy machine.
-  Fail on no progress for a while by that clock, not on a total.
+  Fail on no progress for a while by that clock, not on a total. Give up by it too: a
+  wait on anything the server does (an item, a block, a reply, an effect) gives up by
+  `gate.server_in_phase()`, and each step's own limit (`guard`) is in the server's
+  seconds. Given up by the game's seconds, the cook step failed on a stalled server
+  before the server had run the ticks it waited for. Only waits on the client's own work
+  (drawing, shots, screens, movement it predicts) count the game's seconds. A server
+  that stops is caught all the same: the session fails "the server stopped" once its
+  ticks stand still for `SERVER_SILENT` (60 s) of the wall clock, and on `WALL_LIMIT`
+  (15 min) of it in all, with frames longer than 10 s (memcap stopping the run while
+  Mariano plays) counted as 10 s.
 - Propose actions (clicks that ask the server for something) at most every few server
   seconds while waiting, or once and then wait: `SERVER_LAG` stalls 600 ms on every other
   proposal, so a step proposing every 30 frames starves the server of ticks and the

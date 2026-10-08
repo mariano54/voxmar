@@ -14,6 +14,7 @@ use crate::action::ActionRegistry;
 use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
 use crate::cooking::CookingRegistry;
+use crate::creature::condition::ConditionRules;
 use crate::creature::{CreatureRegistry, DefenceTraining, Limits, Rules};
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
@@ -61,7 +62,7 @@ pub struct Content {
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
     pub english: Arc<Lang>,
     /// What loading noticed and allowed, for the log: a later package replacing data an
-    /// earlier one set (creature limits, Defence training).
+    /// earlier one set (creature limits, Defence training, the level curve).
     pub notes: Arc<Vec<String>>,
 }
 
@@ -158,6 +159,8 @@ impl Content {
         let mut creatures = Vec::new();
         let mut creature_limits = Setting::<Limits>::default();
         let mut defence = Setting::<DefenceTraining>::default();
+        let mut condition = Setting::<ConditionRules>::default();
+        let mut fishing_rules = Setting::<crate::fishing::FishingRules>::default();
         let mut notes = Vec::new();
         let mut cooking = Vec::new();
         let mut recipes = Vec::new();
@@ -190,7 +193,13 @@ impl Content {
                     "actions.ron" => actions.extend(package, &source)?,
                     "commands.ron" => commands.extend(package, &source)?,
                     "weather.ron" => weather.extend(package, &source)?,
-                    "skills.ron" => skills.extend(package, &source)?,
+                    // A later package's curve replaces an earlier one's (Design draft 91).
+                    "skills.ron" => {
+                        if let Some(note) = skills.extend(package, &source)? {
+                            tracing::info!("{note}");
+                            notes.push(note);
+                        }
+                    }
                     "crops.ron" => {
                         crops.extend(CropRegistry::read(package, &source)?);
                         // Kept with the other files too, so the fingerprint covers it.
@@ -205,6 +214,7 @@ impl Content {
                         creatures.extend(read.defs);
                         creature_limits.set(package, &name, "creature limits", read.limits, &mut notes);
                         defence.set(package, &name, "Defence training", read.defence, &mut notes);
+                        condition.set(package, &name, "condition rules", read.condition, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons).
@@ -214,7 +224,9 @@ impl Content {
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "fishing.ron" => {
-                        fishing.push(FishingRegistry::read(package, &source)?);
+                        let file = FishingRegistry::read(package, &source)?;
+                        fishing_rules.set(package, &name, "fishing rules", file.rules(), &mut notes);
+                        fishing.push(file);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "quests.ron" => {
@@ -269,14 +281,14 @@ impl Content {
         skills.validate()?;
         let blocks = BlockRegistry::new(blocks)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
-        let rules = Rules { limits: creature_limits.value, defence: defence.value };
+        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
         let effects = EffectRegistry::new(effects)?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
-        let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
+        let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
