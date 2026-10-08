@@ -352,16 +352,19 @@ impl Server {
                 }
                 (Effect::Respawn, _) => {
                     // Home, if the player has one, else the bed they last slept in, else
-                    // world spawn.
+                    // world spawn. What they carried is left where they fell first.
+                    self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
                     let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
-                    player.position = spawn;
+                    // Where they wake is where a grave goes until they stand elsewhere,
+                    // not where they last stood in the life before.
+                    player.last_ground = Some(spawn);
                     player.fall_start = None;
                     player.changed(traits::HEALTH);
                     player.changed(traits::VITALS);
-                    player.connection.send(ServerMessage::Teleport { position: spawn });
+                    player.teleport(spawn);
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
@@ -433,10 +436,7 @@ impl Server {
         // and tallies are this recipe's, once for each one made.
         let first = recipes.find(&player.inventory.grid()).filter(|r| allowed(r));
         let found = first.map(|r| (r.skill, r.xp, r.output, r.count));
-        let recipe = |grid: &[Option<BlockId>; voxmar_engine::craft::GRID]| {
-            recipes.find(grid).filter(|r| first.is_some_and(|f| std::ptr::eq(*r, f))).map(|r| (r.output, r.count))
-        };
-        let made = player.inventory.craft(recipe, all);
+        let made = player.inventory.craft(recipes.while_making(first), all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);
         if let Some((skill, xp, output, count)) = found.filter(|_| made > 0) {

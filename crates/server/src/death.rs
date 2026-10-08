@@ -27,7 +27,18 @@ impl Server {
         }
     }
 
+    /// Buries `id` if they are dead and not yet buried. Whatever revives, saves or drops a
+    /// player calls this first, so no order of messages and ticks skips the grave: a
+    /// respawn sent the moment `Died` arrives, before the tick that would bury, still
+    /// leaves everything but the kept items behind.
+    pub(crate) fn bury_if_dead(&mut self, id: PlayerId) {
+        if self.players.get(&id).is_some_and(|p| p.joined && !p.health.alive() && !p.buried) {
+            self.bury(id);
+        }
+    }
+
     fn bury(&mut self, id: PlayerId) {
+        let at = self.grave_site(id);
         let content = self.content.clone();
         let death = content.value.death;
         let tick = self.tick;
@@ -45,7 +56,6 @@ impl Server {
         let (kept, left) = split(&player.inventory, usize::from(if warded { death.warded } else { death.kept }), warded, value);
         player.inventory = kept;
         player.changed(traits::INVENTORY);
-        let at = player.position;
         let owner = owner_of(&player.name);
         let seconds = if warded { death.warded_grave } else { death.grave };
         let lifetime = (seconds * TICKS_PER_SECOND as f32) as u32;
