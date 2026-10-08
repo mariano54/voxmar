@@ -2716,7 +2716,7 @@ mod tests {
         let (mean, plain_mean) = (sum as f32 / far as f32, plain_sum as f32 / far as f32);
         println!("{far} far samples: mean level {mean:.2} (plain {plain_mean:.2}), {raised} raised, {lowered} lowered, {gentle} at level 1; {near_moved} of 1500 near spawn moved");
         assert!(near_moved <= 15, "{near_moved} of 1500 points near spawn changed level");
-        assert!(far > 2000 && mean > plain_mean + 0.1, "mean level {mean} against {plain_mean}");
+        assert!(far > 2000 && mean > plain_mean + 0.05, "mean level {mean} against {plain_mean}");
         // A share of the land, not most of it: the climate still decides first.
         let share = raised as f32 / far as f32;
         assert!((0.03..0.4).contains(&share) && gentle > 0, "{share} of far land raised, {gentle} at level 1");

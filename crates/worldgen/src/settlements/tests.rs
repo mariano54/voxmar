@@ -1826,3 +1826,12 @@ fn the_spawn_plans_each_square_once() {
         assert!(spawn.early.lock().unwrap().is_empty());
     }
 }
+
+/// A site is as likely in a biome of level 5 or below as anywhere, and keeps `levels.1` of
+/// its chance above level 5 (design asked "above 3"; at 3 a regional crop's villages thin
+/// out too far, see `regional_crop_reach`).
+#[test]
+fn sites_thin_out_above_their_level() {
+    let site = super::def::SiteDef::default();
+    assert_eq!((site.level(1), site.level(5), site.level(6), site.level(10)), (1.0, 1.0, 0.7, 0.7));
+}

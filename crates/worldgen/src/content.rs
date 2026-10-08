@@ -1831,6 +1831,11 @@ impl WorldContent {
             }
         }
         self.climate.levels.check().map_err(|e| ContentError(format!("climate.ron: {e}")))?;
+        for tag in &self.climate.levels.trees {
+            if !self.trees.iter().any(|t| t.tags.contains(tag)) {
+                return Err(ContentError(format!("climate.ron: levels.trees names the tag `{tag}`, which no tree carries")));
+            }
+        }
         let frost = &self.climate.frost;
         for name in [&frost.snow, &frost.powder, &frost.snowy_ground, &frost.ice, &frost.thick_ice, &frost.rare_ice] {
             block(&climate_at, name)?;

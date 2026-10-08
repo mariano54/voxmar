@@ -177,6 +177,8 @@ pub struct Biomes {
     /// Each biome's variants, smallest first.
     variants: Vec<Vec<VariantDef>>,
     levels: LevelsDef,
+    /// `levels.lean`'s natural logarithm, which weighing a point's claims needs each time.
+    ln_lean: f32,
     ecotones: FxHashMap<(BiomeId, BiomeId), Ecotone>,
     /// Ecotone half-widths along temperature and moisture, for finding the slices' edges.
     ecotone_widths: [Vec<f32>; 2],
@@ -312,7 +314,7 @@ impl Biomes {
         }
 
         let remaps = AXES.map(|axis| content.climate.remaps.iter().find(|r| r.axis == axis).map(|r| r.points.clone()));
-        Self { list, edges, remaps, counts, land, rivers, underground, variants, levels: content.climate.levels.clone(), ecotones, ecotone_widths }
+        Self { list, edges, remaps, counts, land, rivers, underground, variants, ln_lean: content.climate.levels.lean.ln(), levels: content.climate.levels.clone(), ecotones, ecotone_widths }
     }
 
     pub fn get(&self, id: BiomeId) -> &Biome {
@@ -406,7 +408,7 @@ impl Biomes {
 
     /// The weight each level gives a claim at a point, by the lean there.
     fn leans(&self, p: &Point) -> Leans {
-        self.levels.leans(p.0[L])
+        self.levels.leans_with(self.ln_lean, p.0[L])
     }
 
     /// The land biome a point belongs to before variants and ecotones.

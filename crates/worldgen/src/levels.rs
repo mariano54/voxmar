@@ -76,6 +76,9 @@ impl Homes {
 }
 
 impl LevelsDef {
+    /// The rarities, commonest first.
+    pub const CLASSES: [Rarity; 5] = [Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::VeryRare, Rarity::Legendary];
+
     /// The multiplier a biome of `level` gives a find of `rarity`: 1 at level 1, `step`
     /// more per level up to the find's home level, and `earlier` of that above it.
     pub fn finds(&self, level: u8, rarity: Rarity) -> f32 {
@@ -94,9 +97,15 @@ impl LevelsDef {
     /// The weight each level, 0 ..= `MAX_LEVEL`, gives a biome's claim where the lean is
     /// `lean`: 1 at level 1 (and 0), `lean`'s power of the level above 1 beyond it.
     pub fn leans(&self, lean: f32) -> Leans {
+        self.leans_with(self.lean.ln(), lean)
+    }
+
+    /// As [`leans`](Self::leans), given `ln_lean`, the natural logarithm of `self.lean`, which
+    /// the picker works out once for every point it weighs.
+    pub fn leans_with(&self, ln_lean: f32, lean: f32) -> Leans {
         let mut out = [1.0; MAX_LEVEL as usize + 1];
         if lean > 0.0 {
-            let per = (lean * self.lean.ln()).exp();
+            let per = (lean * ln_lean).exp();
             for level in 2..out.len() {
                 out[level] = out[level - 1] * per;
             }
@@ -109,6 +118,14 @@ impl LevelsDef {
         let homes = homes.windows(2).all(|w| w[0] <= w[1]) && homes.iter().all(|h| (1..=MAX_LEVEL).contains(h));
         if !(self.step >= 1.0 && self.earlier > 0.0 && self.earlier <= 1.0 && homes && self.lean >= 1.0 && self.reach > 0.0 && self.wildness > 0.0) {
             return Err(format!("levels: {self:?} needs step and lean at least 1, earlier in 0 ..= 1, homes rising within 1 ..= {MAX_LEVEL}, reach and wildness above 0"));
+        }
+        // Levels shift the mix of rarities without turning it over: at every level a rarer
+        // find stays rarer than a commoner one, boosts and the cap on them included.
+        for level in 1..=MAX_LEVEL {
+            let rates = Self::CLASSES.map(|r| capped(r, r.multiplier() * self.finds(level, r)));
+            if !rates.windows(2).all(|w| w[0] > w[1]) {
+                return Err(format!("levels: at level {level} the rarities' rates {rates:?} are not strictly decreasing from common to legendary"));
+            }
         }
         Ok(())
     }
@@ -138,7 +155,13 @@ pub fn capped(rarity: Rarity, multiplier: f32) -> f32 {
 mod tests {
     use super::*;
 
-    const CLASSES: [Rarity; 5] = [Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::VeryRare, Rarity::Legendary];
+    const CLASSES: [Rarity; 5] = LevelsDef::CLASSES;
+
+    /// The levels the base package sets (`climate.ron`), which is what the world uses.
+    fn base() -> LevelsDef {
+        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        crate::content::WorldContent::base(&registry).unwrap().climate.levels
+    }
 
     /// The wiki's rules (draft 39, Mariano 7 Oct): rarer finds about 1.4× commoner per
     /// level up to their home, earlier tiers at about two thirds above it, never nothing,
@@ -147,7 +170,7 @@ mod tests {
     /// least as common in any higher biome as at level 1.
     #[test]
     fn levels_make_rarer_finds_commoner() {
-        let levels = LevelsDef::default();
+        let levels = base();
         for rarity in CLASSES {
             assert_eq!(levels.finds(1, rarity), 1.0, "{rarity:?} at level 1");
             let home = levels.homes.of(rarity);
@@ -173,7 +196,7 @@ mod tests {
     /// mix without turning it over.
     #[test]
     fn levels_keep_the_rarity_order() {
-        let levels = LevelsDef::default();
+        let levels = base();
         for level in 1..=MAX_LEVEL {
             let rates: Vec<f32> = CLASSES.iter().map(|&r| capped(r, r.multiplier() * levels.finds(level, r))).collect();
             assert!(rates.windows(2).all(|w| w[0] > w[1]), "level {level}: {rates:?}");
@@ -185,7 +208,7 @@ mod tests {
 
     #[test]
     fn distance_leans_towards_higher_levels() {
-        let levels = LevelsDef::default();
+        let levels = base();
         assert_eq!(levels.lean_at(0.0, 0.9), 0.0);
         assert_eq!(levels.leans(0.0), Leans::NONE);
         // At full reach and middling wildness a level-10 biome is about four times likelier
@@ -196,5 +219,18 @@ mod tests {
         assert!(levels.check().is_ok());
         let backwards = Homes { common: 3, uncommon: 1, ..LevelsDef::default().homes };
         assert!(LevelsDef { homes: backwards, ..LevelsDef::default() }.check().is_err());
+        assert!(base().check().is_ok());
+    }
+
+    /// Data that turns the rarity order over at some level is refused: a step so large that
+    /// uncommon finds outrun commons, or a cap that flattens the classes.
+    #[test]
+    fn data_that_inverts_the_rarities_is_refused() {
+        let steep = LevelsDef { step: 20.0, ..base() };
+        let message = steep.check().unwrap_err();
+        assert!(message.contains("strictly decreasing"), "{message}");
+        // Everything at home at level 1 and nothing earlier lost: the order holds, so it loads.
+        let flat = LevelsDef { homes: Homes { common: 1, uncommon: 1, rare: 1, very_rare: 1, legendary: 1 }, ..base() };
+        assert!(flat.check().is_ok());
     }
 }
