@@ -4719,8 +4719,15 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let result = if cosine > 0.8 { Ok(format!("the first attacking pose faces its target (cosine {cosine:.3})")) } else { Err(format!("the attacking pose faced away from its target (cosine {cosine:.3}, yaw {})", view.yaw)) };
                     gate.check("wind-up facing", result);
                     gate.feel.facing_checked = true;
-                    gate.shot(world, "windup-facing");
                 }
+            }
+            // The first update checks the server heading; give the drawn body's smooth
+            // turn time to show it, while it is still winding up. Keep the camera held
+            // until this later image has arrived.
+            if gate.feel.facing_checked && fixed_camera.is_some() && view.pose == Pose::Attacking
+                && gate.feel.seen.is_some_and(|seen| seen.elapsed().as_secs_f32() >= windup * 0.35)
+            {
+                gate.shot(world, "windup-facing");
             }
             if let Some(seen) = gate.feel.seen
                 && !gate.feel.answered
