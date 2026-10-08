@@ -4321,6 +4321,9 @@ struct FeelRun {
     /// search has gone (`after` is the moment tried next).
     centre: f32,
     probe: u32,
+    /// The moment after the wind-up showed that the perfect block was found at: the dodge's
+    /// search starts just before it, as the same delays (the server's, the frames') hold.
+    found: Option<f32>,
     /// The bear the step is about (`the_bear`), whether it was seen dying, and whether it
     /// has been seen out of its attack pose since the last blow (a wind-up counts from the
     /// pose coming on, not from a pose still shown from the blow before).
@@ -4472,6 +4475,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check(if blocking { "perfect block" } else { "dodge" }, result);
                 gate.feel.struck = world.resource::<crate::fight::Fighting>().struck_count;
                 if blocking {
+                    gate.feel.found = Some(gate.feel.after);
                     gate.advance(now);
                 } else {
                     clear_feel(gate, now);
@@ -4482,8 +4486,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Guarded but not perfect: raised too soon. Landed (hit or turned by the roll)
             // before any answer, or after a guard: too late, so the moment (the centre of
             // the search) moves earlier. After a dodge it was too soon or too late: the next
-            // tries either side of the centre in turn, a step further each pair (+1, -1, +2,
-            // -2 steps). Out of reach says nothing of the moment: the same again, closer.
+            // tries either side of the centre in turn, a step further each pair, the earlier
+            // side first (-1, +1, -2, +2 steps), as a busy machine only makes answers late.
+            // Out of reach says nothing of the moment: the same again, closer.
             let landed = matches!(defended, Defended::Hit | Defended::Missed);
             match defended {
                 Defended::Blocked => gate.feel.centre += FEEL_STEP,
@@ -4495,7 +4500,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 _ => {}
             }
             let k = gate.feel.probe;
-            let side = if k % 2 == 1 { 1.0 } else { -1.0 };
+            let side = if k % 2 == 1 { -1.0 } else { 1.0 };
             gate.feel.centre = gate.feel.centre.clamp(0.0, windup);
             gate.feel.after = (gate.feel.centre + side * FEEL_STEP * k.div_ceil(2) as f32).clamp(0.0, windup);
             if gate.feel.tries >= FEEL_TRIES {
@@ -4557,7 +4562,9 @@ fn to_dodge(gate: &mut Gate, windup: f32, now: f32) {
     gate.feel.outcomes.clear();
     gate.feel.seen = None;
     gate.feel.answered = false;
-    gate.feel.after = (windup - 0.15).max(0.0);
+    // A dodge is safe from 0.04 to about 0.2 s in, a perfect guard up to 0.15 s before the
+    // blow: the dodge goes about 0.05 s before the perfect block's moment, if it was found.
+    gate.feel.after = gate.feel.found.map_or(windup - 0.15, |at| at - 0.05).clamp(0.0, windup);
     gate.feel.centre = gate.feel.after;
     gate.feel.probe = 0;
     to_phase(gate, FEEL_DODGE, now);
@@ -4602,10 +4609,10 @@ fn end_feel(world: &mut World, gate: &mut Gate, now: f32) {
 const WORN_SHIRT: (&str, usize) = ("base:chainmail_shirt", 1);
 const WORN_SHIELD: (&str, usize) = ("base:wooden_shield", 5);
 
-/// Each piece selected and right-clicked goes on (shots `wear-shirt` and `wear-shield`
-/// with each in hand, `wear-on` after): the server's word must put it in its worn slot (a
-/// state it sent after the click, not what this side predicted). Then the shield is what
-/// guards (a stop of 55%, not the sword's 35%); what a guard does to a blow
+/// Each piece selected and right-clicked at the sky goes on (shots `wear-shirt` and
+/// `wear-shield` with each in hand, `wear-on` after): the server's word must put it in its
+/// worn slot (a state it sent after the click, not what this side predicted). Then the
+/// shield is what guards (a stop of 55%, not the sword's 35%); what a guard does to a blow
 /// is judged by the server in the gameplay tests (`a_shield_guards_wider...`).
 fn wear(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     use voxmar_engine::inventory::WORN;
@@ -4626,7 +4633,7 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             // Selected, then one right click, once the server has given it.
             let piece = if gate.phase == 1 { WORN_SHIRT } else { WORN_SHIELD };
             if select(world, piece.0) {
-                // Looking down, it in hand, shot (the look shown before the click).
+                // Looking up (nothing in reach to take the click), it in hand: shot, once shown.
                 look(world, 0.0, 80.0);
                 gate.settled += 1;
                 if gate.settled < 3 || gate.shot(world, if gate.phase == 1 { "wear-shirt" } else { "wear-shield" }).is_none() {
