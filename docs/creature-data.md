@@ -43,7 +43,7 @@ one's, and the load log names both packages and the numbers replaced, so a mod t
 without forking base (the project-wide rule for single-valued data, Design draft 91):
 
 ```ron
-limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8,
+limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, first_night_monsters: 3,
          spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5),
 ```
 
@@ -62,7 +62,11 @@ animals and monsters spawning for anyone:
   Wild ones (spawned or summoned) and births also stop short of it by the kept animals
   still waiting in the save, so those always have room to come back; past `keepers`
   players at their cap, wild ones get fewer.
-- `animals_near` and `monsters_near` cap each kind within 64 blocks of a player.
+- `animals_near` and `monsters_near` cap each kind within 64 blocks of a player;
+  `first_night_monsters` is the lower cap on monsters while the world is in its first day
+  (before its first dawn), when the first night is a new player's first meeting with them.
+- A spot with a block giving light within 5 blocks is never dark: torches and lit bases keep
+  monsters from spawning there, on the surface as underground.
 - `spawn_every` is the seconds between spawn attempts around each player (one spot an
   attempt), `spawn_near` and `spawn_far` how far from the player the spot lies (20 to 40
   blocks: nearer puts more of what the caps allow within sight), and `empty_for_animals` /

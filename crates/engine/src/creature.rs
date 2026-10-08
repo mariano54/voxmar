@@ -553,6 +553,9 @@ pub struct Limits {
     /// At most this many animals, and this many monsters, near each player.
     pub animals_near: usize,
     pub monsters_near: usize,
+    /// The most monsters near a player during a new world's first night (before its first
+    /// dawn), so a first night in the open is a scare, not a siege.
+    pub first_night_monsters: usize,
     /// Seconds between spawn attempts around each player, one spot an attempt.
     pub spawn_every: f32,
     /// How far from the player a spot may lie, in blocks: no nearer than `spawn_near` (so
@@ -570,14 +573,14 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
+        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, first_night_monsters: 3, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
     }
 }
 
 crate::content::settable! {
     /// The limits one package sets: any of them.
     SetLimits for Limits {
-        most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize,
+        most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize, first_night_monsters: usize,
         spawn_every: f32, spawn_near: f32, spawn_far: f32, empty_for_monsters: f32, empty_for_animals: f32,
     }
 }

@@ -38,7 +38,7 @@ use voxmar_engine::loot::{self, Moment};
 use voxmar_engine::physics::Aabb;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
-use voxmar_protocol::{CreatureGone, CreatureView, PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_protocol::{CreatureGone, CreatureView, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::items::random3;
@@ -800,7 +800,9 @@ impl Server {
                 .count()
         };
         let (animals, monsters) = (nearby(Kind::Animal), nearby(Kind::Monster));
-        if animals >= limits.animals_near && monsters >= limits.monsters_near {
+        // A new world's first night brings only a few (until the first dawn).
+        let monsters_cap = if self.day < TICKS_PER_DAY as f64 { limits.monsters_near.min(limits.first_night_monsters) } else { limits.monsters_near };
+        if animals >= limits.animals_near && monsters >= monsters_cap {
             return;
         }
         let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x5ba7);
@@ -815,14 +817,14 @@ impl Server {
         let site = self.overworld.site(x, z);
         let biome = self.overworld.biomes().get(site.biome);
         let underground = spot.y < site.height - 4;
-        let dark = if underground { !self.lit_near(spot) } else { self.daylight() < 0.25 };
+        let dark = !self.lit_near(spot) && (underground || self.daylight() < 0.25);
         let in_water = Ground(self).water_at(spot);
         let daylight = self.daylight();
         let mut choices: Vec<(CreatureId, f32)> = Vec::new();
         for (id, species) in self.content.creatures.iter() {
             let def = &species.def;
             let monster = def.kind == Kind::Monster;
-            if (monster && (monsters >= limits.monsters_near || !dark)) || (!monster && animals >= limits.animals_near) {
+            if (monster && (monsters >= monsters_cap || !dark)) || (!monster && animals >= limits.animals_near) {
                 continue;
             }
             if def.habitat.caves != underground && !monster {
@@ -861,7 +863,7 @@ impl Server {
             group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
         };
         // Never past the cap: a herd arriving near it comes smaller.
-        let room = if self.content.creatures.get(species).def.kind == Kind::Monster { limits.monsters_near.saturating_sub(monsters) } else { limits.animals_near.saturating_sub(animals) };
+        let room = if self.content.creatures.get(species).def.kind == Kind::Monster { monsters_cap.saturating_sub(monsters) } else { limits.animals_near.saturating_sub(animals) };
         let count = count.min(room.max(1).min(wild_room).min(u8::MAX as usize) as u8);
         for i in 0..count.max(1) {
             let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
@@ -1186,10 +1188,14 @@ mod density_tests {
         })
     }
 
+    /// Past the world's first day, whose night brings fewer monsters.
+    pub(super) const LATER: u64 = 3 * TICKS_PER_DAY;
+
     /// Counts after `minutes` of server time with a player standing at `spot` at `time` of
-    /// day (ticks into the day): wild animals within 32, 64 and 128 blocks, then monsters
+    /// day (ticks since the world began; `LATER` is days past its first, whose night is
+    /// quieter), lit by torches or not: wild animals within 32, 64 and 128 blocks, then monsters
     /// within 64 and 128.
-    pub(super) fn density(server: &mut Server, spot: (i32, i32), time: u64, minutes: u64) -> [usize; 5] {
+    pub(super) fn density(server: &mut Server, spot: (i32, i32), time: u64, minutes: u64, torches: bool) -> [usize; 5] {
         let (client, connection) = voxmar_protocol::local_pair();
         let _keep = client;
         let height = server.overworld.site(spot.0, spot.1).height;
@@ -1201,6 +1207,20 @@ mod density_tests {
         server.creatures.live.clear();
         let cell = at.floor().as_ivec3();
         server.load_area(cell - IVec3::new(150, 0, 150), cell + IVec3::new(150, 0, 150));
+        if torches {
+            // A torch every 4 blocks over 150 blocks square, on the ground at three heights
+            // (hills, ledges): no spot is without light.
+            let torch = server.content.blocks.id("base:torch").expect("torches");
+            let mut cells: Vec<IVec3> = (-18..=18)
+                .flat_map(|i| (-18..=18).map(move |j| (i, j)))
+                .flat_map(|(i, j)| [-20, 0, 20].map(|dy| server.standing_spot(cell.x + i * 4, cell.z + j * 4, cell.y + dy)))
+                .flatten()
+                .collect();
+            cells.sort_by_key(|c| (c.x, c.z, c.y));
+            cells.dedup();
+            let changes: Vec<(IVec3, BlockId)> = cells.into_iter().map(|c| (c, torch)).collect();
+            server.set_blocks(&changes);
+        }
         server.day = time as f64;
         for _ in 0..minutes * 60 * TICKS_PER_SECOND as u64 {
             server.tick += 1;
@@ -1226,10 +1246,25 @@ mod density_tests {
         let spot = find_biome(&server, "plains").expect("plains");
         let noon = (0..24_000u64).step_by(100).max_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
         let midnight = (0..24_000u64).step_by(100).min_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
-        let [near, animals, ..] = density(&mut server, spot, noon, 3);
+        let [near, animals, ..] = density(&mut server, spot, noon + LATER, 3, false);
         assert!(animals >= 10 && near >= 3, "{animals} animals within 64 blocks, {near} within 32, after three minutes by day");
-        let [_, _, _, monsters, _] = density(&mut server, spot, midnight, 3);
+        let [_, _, _, monsters, _] = density(&mut server, spot, midnight + LATER, 3, false);
         assert!(monsters >= 7, "{monsters} monsters within 64 blocks after three minutes of night");
+    }
+
+    /// The first night of a new world brings 3 at most (docs/creatures.md); torches keep
+    /// monsters from spawning where they light, on the surface too.
+    #[test]
+    fn the_first_night_is_light_and_torches_keep_monsters_away() {
+        let spot_of = |server: &Server| find_biome(server, "plains").expect("plains");
+        let midnight = (0..24_000u64).step_by(100).min_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
+        let mut server = crate::test_server();
+        let spot = spot_of(&server);
+        let [_, _, _, first, _] = density(&mut server, spot, midnight, 3, false);
+        assert!((1..=3).contains(&first), "{first} monsters on the first night");
+        let mut server = crate::test_server();
+        let [_, _, _, lit, _] = density(&mut server, spot, midnight + LATER, 3, true);
+        assert_eq!(lit, 0, "{lit} monsters among torches");
     }
 
     #[test]
@@ -1246,7 +1281,7 @@ mod density_tests {
                 continue;
             };
             for (label, time) in [("day", noon), ("night", midnight)] {
-                let [a32, a64, a128, m64, m128] = density(&mut server, spot, time, 5);
+                let [a32, a64, a128, m64, m128] = density(&mut server, spot, time + LATER, 5, false);
                 println!("{biome:>14} {label:>6} | {a32:>10} {a64:>3} {a128:>4} | {m64:>10} {m128:>4}");
             }
         }
