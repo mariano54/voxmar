@@ -2550,6 +2550,9 @@ fn blows_on_the_beat_build_to_a_flourish() {
     client.pump_until(|c| c.creatures[&id].position.with_y(0.0).distance(c.position.with_y(0.0)) < 2.0);
     // A sword's beat is 0.6 s after each swing starts: the first click starts the meter, and
     // each next one comes a little before the beat, in the buffer, so it is held for it.
+    // Each is stamped exactly when it is due (`propose_at`, the clock the server times
+    // swings by), however late a busy machine lets this thread send it; it is sent no
+    // sooner, as the swing before must land first.
     let start = Instant::now();
     for k in 0..5u32 {
         let due = start + Duration::from_secs_f32(if k == 0 { 0.0 } else { 0.6 * k as f32 - 0.06 });
@@ -2557,7 +2560,7 @@ fn blows_on_the_beat_build_to_a_flourish() {
             client.pump_until(|_| true);
             std::thread::sleep(Duration::from_millis(1));
         }
-        client.propose("core:attack", ActionTarget::Creature(id));
+        client.propose_at("core:attack", ActionTarget::Creature(id), due);
     }
     client.pump_until(|c| c.kinds.len() >= 5 || !c.creatures.contains_key(&id));
     assert_eq!(client.kinds, [Blow::Plain, Blow::Beat, Blow::Beat, Blow::Beat, Blow::Flourish], "damage {:?}", client.damage);
@@ -2884,22 +2887,26 @@ fn a_dodge_waits_longer_in_heavier_armour() {
     client.ok("/give chainmail_shirt 1");
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == shirt));
     client.wait_server(1);
-    // Two dodges 1.0 s apart (the fight's clock is the wall's): unarmoured (light, 1.0 s
-    // less the 0.1 a client's clock may run ahead) the second is taken; in chainmail
-    // (medium, 1.2 s less 0.1) it is refused and puts us back.
+    // Two pairs of dodges, the pairs 1.0 s apart by the clock the server judges dodges by
+    // (`propose_at`: exactly, however busy the machine). Of each pair the second is refused
+    // by the first's cooldown, and puts us back. Unarmoured (light, 1.0 s less the 0.1 a
+    // client's clock may run ahead) the second pair's first is taken; in chainmail (medium,
+    // 1.2 s less 0.1) it is refused too. Returns whether it was.
     let twice = |client: &mut Client| {
         let before = client.teleports;
-        client.propose("core:dodge", ActionTarget::None);
         let first = Instant::now();
-        // One at once is refused by the first's cooldown: the first was taken.
-        client.propose("core:dodge", ActionTarget::None);
-        client.pump_until(|c| c.teleports > before);
-        client.pump_until(|_| first.elapsed() > Duration::from_millis(1000));
-        let refused = !dodge_taken(client);
-        assert_eq!(client.teleports - before, if refused { 3 } else { 2 }, "the first dodge was refused");
-        // Past any cooldown before the next pair.
-        client.wait_server(2);
-        refused
+        let second = first + Duration::from_millis(1000);
+        for at in [first, second] {
+            client.propose_at("core:dodge", ActionTarget::None, at);
+            client.propose_at("core:dodge", ActionTarget::None, at);
+        }
+        // All four handled, and the refusals' teleports with them.
+        client.settle();
+        let refused = client.teleports - before;
+        assert!(matches!(refused, 2 | 3), "of four dodges, {refused} were refused (the first was refused, or a second at once was not)");
+        // Past any cooldown before the next pairs: the next are stamped after now.
+        client.pump_until(|_| Instant::now() > second + Duration::from_secs(2));
+        refused == 3
     };
     assert!(!twice(&mut client), "unarmoured, a dodge 1.0 s after the last was refused");
     let from = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == shirt)).unwrap();
