@@ -1986,8 +1986,9 @@ fn a_taken_name_only_when_the_list_has_no_other() {
     // All thirty names belong to the middle square's colour, so the entire
     // catalogue remains available to this adversarial whole-list fallback check.
     let span = 5;
-    list.last = (0..).map(|i| (format!("b{i}"), format!("ブ{i}")))
+    list.last = (0..100_000).map(|i| (format!("b{i}"), format!("ブ{i}")))
         .filter(|p| super::plan::name_owner(&format!("アッシュ{}", p.1), span) == 0).take(30).collect();
+    assert_eq!(list.last.len(), 30, "bounded fixture needs thirty owned names");
     list.small = Vec::new();
     def.cultures.families.truncate(1);
     def.cultures.families[0].names = list;
@@ -2026,9 +2027,50 @@ fn name_ownership_refuses_empty_colours_and_conflicting_aliases() {
     let names = &mut def.cultures.families[0].names;
     names.last[1].0 = names.last[0].0.clone();
     let owner = super::plan::name_owner(&format!("{}{}", names.first[0].1, names.last[0].1), span);
-    names.last[1].1 = (0..).map(|i| format!("別{i}"))
+    names.last[1].1 = (0..100_000).map(|i| format!("別{i}"))
         .find(|last| super::plan::name_owner(&format!("{}{}", names.first[0].1, last), span) != owner).unwrap();
     assert!(super::plan::check_name_ownership(&def).is_err_and(|e| e.0.contains("different owners")));
+}
+
+/// The final namespace includes rare echoed offers and names composed with
+/// prefixes. Aliases in either language must retain the same underlying owner.
+#[test]
+fn name_ownership_checks_echoes_and_prefixes_in_both_languages() {
+    let world = base_world(1);
+    let mut def = world.settlements.def.clone();
+    let span = super::plan::name_span(&def);
+    let names = &mut def.cultures.families[0].names;
+    let owner = super::plan::name_owner("ラネ", span);
+    let different = (0..100_000).map(|i| format!("別{i}"))
+        .find(|s| super::plan::name_owner(&format!("{s}ヨ"), span) != owner).expect("bounded conflicting echo reading");
+    // Qw+erwer is non-echoing; Qwer+wer produces the same English name and is
+    // echoing. All parts are nonempty and otherwise valid catalogue additions.
+    names.first.extend([("Qw".into(), "ラ".into()), ("Qwer".into(), different)]);
+    names.last.extend([("erwer".into(), "ネ".into()), ("wer".into(), "ヨ".into())]);
+    assert!(super::plan::check_name_ownership(&def).is_err_and(|e| e.0.contains("different owners")));
+    for japanese in [false, true] {
+        let mut def = world.settlements.def.clone();
+        let span = super::plan::name_span(&def);
+        let names = &mut def.cultures.families[0].names;
+        let prefix = names.prefixes.iter().find(|p| p.2 > 0.0).unwrap().clone();
+        let (first, last) = names.first.iter().flat_map(|first| names.last.iter().map(move |last| (first, last)))
+            .find(|(first, last)| super::plan::name_owner(&format!("{}{}", first.1, last.1), span)
+                != super::plan::name_owner(&format!("{}・{}{}", prefix.1, first.1, last.1), span))
+            .map(|(first, last)| (first.clone(), last.clone())).expect("a prefix changes a reading's owner");
+        let original = super::plan::name_owner(&format!("{}{}", first.1, last.1), span);
+        let different = (0..100_000).map(|i| format!("別{i}"))
+            .find(|s| super::plan::name_owner(&format!("{s}{}", last.1), span) != original).expect("bounded conflicting prefix reading");
+        let extra = if japanese {
+            ("Unique alias".into(), format!("{}・{}", prefix.1, first.1))
+        } else {
+            (format!("{} {}", prefix.0, first.0), different)
+        };
+        if japanese {
+            assert_ne!(super::plan::name_owner(&format!("{}{}", extra.1, last.1), span), original);
+        }
+        names.first.push(extra);
+        assert!(super::plan::check_name_ownership(&def).is_err_and(|e| e.0.contains("different owners")), "prefix alias language {japanese}");
+    }
 }
 
 /// Settling the spawn plans each square in its reach once: the plans made finding the

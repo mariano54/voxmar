@@ -823,18 +823,32 @@ pub(super) fn check_name_ownership(def: &SettlementsDef) -> Result<(), crate::co
     if def.rules.names_apart == 0 { return Ok(()); }
     let span = name_span(def);
     let mut english = std::collections::BTreeMap::new();
+    let mut japanese = std::collections::BTreeMap::new();
+    let mut alias = |name: (String, String), owner| -> Result<(), crate::content::ContentError> {
+        if english.insert(name.0.clone(), owner).is_some_and(|old| old != owner)
+            || japanese.insert(name.1.clone(), owner).is_some_and(|old| old != owner)
+        {
+            return Err(crate::content::ContentError(format!("cultures.ron: name {:?} has aliases with different owners", name)));
+        }
+        Ok(())
+    };
     for family in &def.cultures.families {
         let names = &family.names;
         let mut colours = vec![false; (span * span) as usize];
         for first in &names.first {
-            let full = names.last.iter().filter(|last| !echoes(first, last))
-                .map(|last| (format!("{}{}", first.0, last.0), join_parts(&def.kana, names.script, first, last)));
-            let small = names.small.iter().map(|last| small_name(names.script, first, last));
-            for ((name, reading), normal) in full.map(|n| (n, true)).chain(small.map(|n| (n, false))) {
+            // The offered stream can retain an echo after four retries. Include
+            // every pair in alias validation; fallback coverage uses non-echoes.
+            let full = names.last.iter().map(|last| ((format!("{}{}", first.0, last.0), join_parts(&def.kana, names.script, first, last)), !echoes(first, last)));
+            let small = names.small.iter().map(|last| (small_name(names.script, first, last), false));
+            for ((name, reading), normal) in full.chain(small) {
                 let owner = name_owner(&reading, span);
                 if normal { colours[owner] = true; }
-                if english.insert(name.clone(), owner).is_some_and(|old| old != owner) {
-                    return Err(crate::content::ContentError(format!("cultures.ron: English name `{name}` has readings with different owners")));
+                alias((name.clone(), reading.clone()), owner)?;
+                if names.prefix_chance > 0.0 {
+                    let joiner = if names.script == Script::Kanji { "" } else { "・" };
+                    for prefix in names.prefixes.iter().filter(|p| p.2 > 0.0) {
+                        alias((format!("{} {name}", prefix.0), format!("{}{joiner}{reading}", prefix.1)), owner)?;
+                    }
                 }
             }
         }
