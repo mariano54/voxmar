@@ -179,6 +179,9 @@ struct PlayerFile {
     flying: bool,
     health: Health,
     inventory: Vec<Option<(String, u8)>>,
+    /// What is worn, slot by slot (`inventory::WORN`).
+    #[serde(default)]
+    worn: Vec<Option<String>>,
     #[serde(default)]
     skills: Vec<(String, u32)>,
     #[serde(default)]
@@ -415,6 +418,9 @@ impl WorldSave {
                 None => inventory.pouched.push((item, count)),
             }
         }
+        for (slot, item) in inventory.worn.iter_mut().zip(file.worn) {
+            *slot = item.and_then(|item| Some(ItemStack { item: registry.item_named(&item)?, count: 1 }));
+        }
         let position = Vec3::from(file.position);
         if !position.is_finite() {
             return Err(invalid(&path, "position is not finite"));
@@ -440,6 +446,7 @@ impl WorldSave {
             flying: player.flying,
             health: player.health,
             inventory,
+            worn: held.worn.iter().map(|slot| slot.map(|stack| registry.def(stack.item).name.clone())).collect(),
             skills: player.skills.clone(),
             effects: player.effects.clone(),
             home: player.home,
@@ -810,6 +817,9 @@ mod tests {
         let mut inventory = Inventory::default();
         inventory.add(registry.expect("base:cobblestone"), 70);
         inventory.pouched.push((registry.expect("base:cobblestone"), 300));
+        // What is worn keeps its slot (the save keeps names; content judges what fits).
+        inventory.worn[1] = Some(ItemStack { item: registry.expect("base:dirt"), count: 1 });
+        inventory.worn[5] = Some(ItemStack { item: registry.expect("base:cobblestone"), count: 1 });
         let player = SavedPlayer {
             position: Vec3::new(1.5, 80.0, -20.25),
             yaw: 1.25,
