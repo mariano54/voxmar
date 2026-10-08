@@ -25,7 +25,7 @@ use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
 use voxmar_engine::action::ActionTarget;
 use voxmar_engine::lang::Words;
-use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::items::random3;
@@ -253,10 +253,7 @@ impl Server {
         let crop = self.content.crops.get(id);
         if let Some(why) = crop::unsuited(&crop.def, self.crop_conditions(pos)) {
             let ripe = self.content.blocks.def(crop.stages[crop.ripe_stage() as usize]).name.clone();
-            let words = Words::key(why.key()).with("crop", Words::Block(ripe));
-            if let Some(player) = self.players.get(&agent) {
-                player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
-            }
+            self.refuse(agent, Words::key(why.key()).with("crop", Words::Block(ripe)));
             self.reject(agent, ActionTarget::Block { block: ground, face: Face::PosY });
             return;
         }
