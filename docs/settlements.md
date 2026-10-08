@@ -187,7 +187,7 @@ the chase. Recovery waits a further `give_up` seconds without a blow; each new b
 it. The cooldown follows the player's name and outlives forgetting a town, so
 leaving and rejoining cannot reset it. A disappearance without a death releases the resident without starting a newcomer
 clock. Wells and centrepieces use ground spots outside their footprint, and indoor
-spots stay at floor level to keep people off furnishings.
+spots put feet one block above the solid floor, keeping people off furnishings.
 
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter

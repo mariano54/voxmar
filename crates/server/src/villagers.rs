@@ -758,7 +758,8 @@ impl Server {
         let b = &town.info.buildings[b];
         let cells: Vec<IVec3> = (b.min.x + 1..b.max.x)
             .flat_map(|x| (b.min.y + 1..b.max.y).map(move |z| (x, z)))
-            .map(|(x, z)| IVec3::new(x, b.floor, z))
+            // Building::floor is the solid floor block; feet stand one above it.
+            .map(|(x, z)| IVec3::new(x, b.floor + 1, z))
             .filter(|&c| self.stands(c))
             .collect();
         if cells.is_empty() {
@@ -959,7 +960,7 @@ mod tests {
         let info = SettlementInfo {
             id: 1, name: ("Test".into(), "テスト".into()), size: "village".into(), style: "timber".into(), layout: "test".into(),
             centre: IVec3::new(8, 200, 8), levers: [0.5; 5], gates: vec![IVec2::new(8, 12)], lanes: Vec::new(),
-            buildings: vec![SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(4, 4), max: IVec2::new(12, 12), floor: 200, door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None }],
+            buildings: vec![SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(4, 4), max: IVec2::new(12, 12), floor: 199, door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None }],
             people: (0..count).map(|i| Resident { species: species.into(), home: 0, work: None, routine, guard: species == "base:guard", seed: 100 + i as u64 }).collect(),
         };
         server.villagers.remember_town(info, 12);
@@ -1036,8 +1037,10 @@ mod tests {
         let live = server.live();
         // Above a short guard's striking height but inside the unscaled brain range,
         // it tries, makes no progress, and then breaks off.
-        let body = &mut server.creatures.live.get_mut(&id).unwrap().body;
-        body.size.1 *= 0.5;
+        let creature = server.creatures.live.get_mut(&id).unwrap();
+        creature.scale *= 0.5;
+        creature.adult_scale *= 0.5;
+        creature.body.size = (creature.body.size.0 * 0.5, creature.body.size.1 * 0.5);
         let at = server.creatures.live[&id].body.position;
         server.players.get_mut(&1).unwrap().position = at + Vec3::Y * 2.8;
         server.pursue(id, 1, 0, at, 1, &live);
@@ -1113,7 +1116,7 @@ mod tests {
             let town = &server.villagers.towns[&1];
             let cell = server.about(0, town, seed).unwrap();
             assert!(cell.x < 4 || cell.x > 12 || cell.z < 4 || cell.z > 12);
-            assert!((200..=201).contains(&cell.y));
+            assert!((199..=200).contains(&cell.y));
         }
         // A furnished room still has a usable floor. The old search could select the
         // block above the table; an empty-room check would not catch that.

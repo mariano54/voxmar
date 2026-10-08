@@ -95,6 +95,7 @@ SLOW_TESTS=(
   voxmar_worldgen fluids_are_contained          # 177 s
   voxmar_worldgen decorations_rest_on_the_ground # 23 s
   voxmar_worldgen wood_never_floats             # 17 s
+  voxmar_server a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes # 62 s at load 74, 2026-10-08; direct lifecycle unit runs at every landing
 )
 
 started=$(date +%s)

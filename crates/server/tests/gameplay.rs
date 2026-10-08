@@ -1909,6 +1909,10 @@ fn villagers_sleep_at_night_and_go_about_their_day() {
     // In bed: most are resting at midnight (a night watchman is up).
     let asleep = |c: &Client| villagers(c).iter().filter(|v| v.pose == Pose::Resting).count();
     client.pump_until(|c| asleep(c) * 3 >= villagers(c).len() * 2);
+    let mut resting: Vec<_> = villagers(&client).into_iter().filter(|v| v.pose == Pose::Resting)
+        .map(|v| (v.seed, species_name(&client, &v), v.position)).collect();
+    resting.sort_by_key(|v| v.0);
+    eprintln!("VILLAGER resting residents: {resting:?}");
     let night: std::collections::HashMap<u32, Vec3> = villagers(&client).iter().map(|v| (v.id, v.position)).collect();
     // Morning: up and out, a minute of the server's clock on.
     client.ok("/time set day");

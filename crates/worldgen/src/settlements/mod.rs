@@ -62,7 +62,7 @@ pub struct Building {
     /// The blocks it stands on, everything it puts down included.
     pub min: IVec2,
     pub max: IVec2,
-    /// The height of its floor.
+    /// The height of its solid floor block; feet stand one block above it indoors.
     pub floor: i32,
     /// Where its path leaves the door, two blocks out, at the height of a foot standing there.
     pub door: Option<IVec3>,
