@@ -15,4 +15,44 @@
     water_speed: 0.5,
     fly_speed: 12.0,
     fly_sprint_speed: 32.0,
+    // Water shallower than this over the feet is waded through (walked and jumped in),
+    // deeper water swum in.
+    wade_depth: 0.4,
+    // A swimmer pushing against a bank whose top is this close above their feet is lifted
+    // out, this fast (blocks a second): Minecraft's 0.6 and 0.3 a tick.
+    step_out: 0.6,
+    climb_out_speed: 6.0,
+    // Seconds before a held jump jumps again (Minecraft's ten ticks), so a jump from
+    // water doesn't repeat while the feet are still in it; at most 1.
+    jump_delay: 0.5,
+    // How much of a step blocked by a wall must have been heading into it to stop a
+    // sprint (a share, at most 1); glancing along a wall keeps it.
+    head_on: 0.35,
+    // How high a walker steps up without jumping, for blocks shorter than a whole one (at
+    // most 1): half a block and a pixel.
+    step_up: 0.5625,
+    // How far the server lets the moves a client reports stray from the numbers above,
+    // for rounding, network jitter and hitches, before it puts the player back.
+    checks: (
+        // Moves may be this much faster than the top speeds...
+        speed_margin: 1.25,
+        // ...and run this many seconds of top speed ahead in one go (a client that hitched
+        // sends one long step), with this many blocks besides.
+        burst: 2.0,
+        slack: 0.5,
+        // Blocks a player on foot may rise above where they last stood, besides their jump.
+        rise_slack: 0.25,
+        // Seconds off the ground before the height they may keep sinks, and how fast it
+        // sinks (blocks a second): nobody hovers over a ravine.
+        hover_grace: 2.0,
+        hover_sink: 1.0,
+        // Seconds someone let down keeps that height before it sinks again.
+        let_down_pause: 0.25,
+        // Ground this close under the feet counts as touched, for a hop.
+        near_ground: 0.5,
+        // Moves are checked for walls in steps this long (0.05 to 1 blocks).
+        sweep_step: 0.25,
+        // The share of the player's width and height that must stay out of walls.
+        wall_box: (0.9, 0.95),
+    ),
 )
