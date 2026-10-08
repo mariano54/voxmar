@@ -52,10 +52,11 @@ births wait until you are under it.
 
 To make room, let one go: Shift and right click your own animal, and again within five
 seconds (the first click only asks). It wanders off wild, keeping its genes and breed but
-not its trust, readiness or condition, and from then on lives by wild rules: it is not
+not its trust or readiness, and from then on lives by wild rules: it is not
 saved, goes when nobody is near, and gives no products or young. Letting go pays nothing,
 and taming one that was let go, by anyone, pays no Hunter experience and counts for no
-quest (design draft 99).
+quest (design draft 99). Nor does it mend an animal: one let go with a poor condition
+is taken in again with it, while a better one comes back as an ordinary newly tamed animal.
 
 An animal's **condition** (0..1) is the product of what its species needs:
 
