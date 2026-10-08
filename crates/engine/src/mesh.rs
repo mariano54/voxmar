@@ -98,6 +98,35 @@ const PLANT_MODEL_SHIFT: u32 = 28;
 const PLANT_HANGS_SHIFT: u32 = 27;
 const PLANT_MODEL_HIGH_SHIFT: u32 = 24;
 const PLANT_PIECE_SHIFT: u32 = 30;
+/// The plant model a shape's quads go as (after `PlantModel`'s own): voxel.wgsl places
+/// each from the renderer's shape table, and the renderer draws them one-sided with the
+/// cut-out faces, not with the plants (see [`is_shape_quad`]).
+pub const PLANT_SHAPE: u32 = 6;
+
+// Every plant model numbers below the shape model, within the three bits a vertex keeps
+// for it. The match is exhaustive, so a new model does not compile until it is listed
+// here, where the assert then checks it.
+const PLANT_MODELS: [PlantModel; 6] = [PlantModel::Cross, PlantModel::Hash, PlantModel::Cap, PlantModel::Bush, PlantModel::Rock, PlantModel::Wall];
+const fn listed(model: PlantModel) -> bool {
+    match model {
+        PlantModel::Cross | PlantModel::Hash | PlantModel::Cap | PlantModel::Bush | PlantModel::Rock | PlantModel::Wall => true,
+    }
+}
+const _: () = {
+    let mut i = 0;
+    while i < PLANT_MODELS.len() {
+        assert!(listed(PLANT_MODELS[i]) && (PLANT_MODELS[i] as u32) < PLANT_SHAPE);
+        i += 1;
+    }
+    assert!(PLANT_SHAPE < 8);
+};
+
+/// Whether a quad, by its first vertex's word 0, is a quad of a block's shape: a plant face
+/// of the shape model.
+pub fn is_shape_quad(w0: u32) -> bool {
+    let model = ((w0 >> PLANT_MODEL_SHIFT) & 3) | ((w0 >> PLANT_MODEL_HIGH_SHIFT) & 1) << 2;
+    (w0 >> 18) & 7 >= PLANT_DIAGONAL && model == PLANT_SHAPE
+}
 const PLANT_HEIGHT_SHIFT: u32 = 14;
 /// Ambient occlusion level (0..=3) of the faces between two leaves.
 const INNER_LEAF_AO: u64 = 1;
@@ -266,6 +295,7 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
     let Scratch { cells, occ, walled, opaque, cutout, translucent, joins, leaves, looks, .. } = scratch;
     let origin = IVec3::new(-1, cy * CHUNK_SIZE - 1, -1);
     let mut plants = Vec::new();
+    let mut models = Vec::new();
     let mut grids: Vec<LodGrid> =
         LEVELS.into_iter().filter(|&level| level > 1).map(|level| LodGrid::new(looks, region, origin, level)).collect();
     let (mut occluding, mut grass) = (0, false);
@@ -289,8 +319,9 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
                 let (mut occludes, mut render) = if world_y < 0 { (true, RenderKind::Invisible) } else { (look.occludes, look.render) };
                 // Far away a crown is a solid mass: its leaves are drawn as opaque blocks,
                 // so the faces between them, a third of a distant forest's, go, and the
-                // rest skip the alpha test and hide what is behind them.
-                if detail > 1 && render == RenderKind::Leaves {
+                // rest skip the alpha test and hide what is behind them. A shape (a slab,
+                // a barrel) is too small there to make out, and is drawn as its block.
+                if detail > 1 && matches!(render, RenderKind::Leaves | RenderKind::Model) {
                     (occludes, render) = (true, RenderKind::Opaque);
                 }
                 let mut shades = occludes || render == RenderKind::Leaves;
@@ -327,7 +358,8 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
                     }
                     RenderKind::Translucent => translucent.set(x, y, z),
                     RenderKind::Plant if [x, y, z].iter().all(|c| (1..=S).contains(c)) => plants.push(pidx(x, y, z)),
-                    RenderKind::Plant | RenderKind::Invisible => {}
+                    RenderKind::Model if [x, y, z].iter().all(|c| (1..=S).contains(c)) => models.push(pidx(x, y, z)),
+                    RenderKind::Plant | RenderKind::Model | RenderKind::Invisible => {}
                 }
                 if matches!(render, RenderKind::Cutout | RenderKind::Translucent) {
                     // Cells with a lower coordinate are already filled in.
@@ -363,6 +395,11 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
         mesher.mesh_faces(face, walled, translucent, joins, &mut mesh.translucent);
     }
     mesh.inner = split_inner(&mut mesh.cutout);
+    // Shapes' quads after the cut-out cube faces they are drawn with, before the plants.
+    for i in models {
+        let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
+        emit_model(&mut mesh.cutout, registry, &cells, i, local);
+    }
     for i in plants {
         let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
         emit_plant(&mut mesh.cutout, registry, column, &cells[i], local, cy * CHUNK_SIZE);
@@ -1101,6 +1138,46 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
     }
 }
 
+/// The quads of a block drawn as its shape (`RenderKind::Model`), each a quad of the
+/// renderer's shape table (`BlockRegistry::shapes`, in order). A quad inside the cell is lit
+/// by the cell's own light; one on its boundary by the brighter of the cell's and the
+/// neighbour's (the one beyond, for a shape that fills its cell and so holds no light), and
+/// it hides, if it may, behind a neighbour that hides faces. They go as plant faces of the
+/// shape model (`PLANT_SHAPE`), with the table's quad in word 1 bits 12..23 where a plant
+/// has its tint and height.
+fn emit_model(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], padded: usize, pos: IVec3) {
+    let cell = &cells[padded];
+    let Some(first) = registry.shape_first_quad(cell.block) else { return };
+    let Some(shape) = registry.shape(cell.block) else { return };
+    let layers = registry.shape_layers(cell.block);
+    let at = IVec3::new((padded % P) as i32, (padded / (P * P)) as i32, (padded / P % P) as i32);
+    for (q, quad) in shape.quads.iter().enumerate() {
+        let mut light = cell.light;
+        if let Some(face) = quad.boundary {
+            let n = at + face.normal();
+            let beyond = &cells[pidx(n.x as usize, n.y as usize, n.z as usize)];
+            if quad.cull && beyond.occludes {
+                continue;
+            }
+            light = (light & 0xF0).max(beyond.light & 0xF0) | (light & 0x0F).max(beyond.light & 0x0F);
+        }
+        let index = (first + q) as u32;
+        let w1 = layers[q] as u32 | (index & 0xFFF) << 12 | (light as u32) << 24;
+        let base = out.vertices.len() as u32;
+        for corner in 0..4u32 {
+            let w0 = pos.x as u32
+                | (pos.y as u32) << 6
+                | (pos.z as u32) << 12
+                | PLANT_DIAGONAL << 18
+                | corner << 21
+                | (PLANT_SHAPE & 3) << PLANT_MODEL_SHIFT
+                | (PLANT_SHAPE >> 2) << PLANT_MODEL_HIGH_SHIFT;
+            out.vertices.push([w0, w1]);
+        }
+        out.indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
+    }
+}
+
 /// A blade seed for every grass block whose top is open to the air (or a plant).
 fn grass_tops(looks: &[Look], cells: &[Cell]) -> Vec<u32> {
     let mut seeds = Vec::new();
@@ -1230,6 +1307,74 @@ mod tests {
             }
         }
         column
+    }
+
+    /// A slab's quads hide and take light as they lie: its bottom, on stone, hides; a side
+    /// takes the brighter of its own cell's light and the light beyond, sky and block
+    /// apart; its top, inside the cell, its cell's own; and beside another slab both sides
+    /// stay, as a slab hides nothing.
+    #[test]
+    fn a_shapes_quads_hide_and_take_light_as_they_lie() {
+        let file = crate::shape::ShapeFile::read("test", r#"(shapes: {"slab": (boxes: [(to: (16, 8, 16), cull: true)])})"#).unwrap();
+        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file)], crate::shape::ShapeLimits { boxes: 1, quads: 64 }).unwrap();
+        let block = |name: &str, render| BlockDef { name: format!("test:{name}"), render, textures: Textures::All(name.into()), ..Default::default() };
+        let reg = BlockRegistry::with_shapes(
+            vec![
+                block("stone", RenderKind::Opaque),
+                BlockDef { shape: Some("test:slab".into()), ..block("slab", RenderKind::Model) },
+                // A lamp that lets light by: a slab's side against it is not hidden.
+                BlockDef { light: 14, solid: false, ..block("lamp", RenderKind::Cutout) },
+            ],
+            &shapes,
+        )
+        .unwrap();
+        let (stone, slab, lamp) = (reg.expect("test:stone"), reg.expect("test:slab"), reg.expect("test:lamp"));
+        let mut column = Column::default();
+        for z in 0..32 {
+            for x in 0..32 {
+                column.set_block(IVec3::new(x, 0, z), stone);
+            }
+        }
+        // A roof over them all, so the sky's light is not full everywhere.
+        for z in 2..9 {
+            for x in 2..10 {
+                column.set_block(IVec3::new(x, 4, z), stone);
+            }
+        }
+        let (a, b) = (IVec3::new(5, 1, 5), IVec3::new(6, 1, 5));
+        column.set_block(a, slab);
+        column.set_block(b, slab);
+        column.set_block(IVec3::new(4, 1, 5), lamp);
+        let column = Arc::new(column);
+        let region = LitRegion::compute(&reg, &std::array::from_fn(|_| column.clone()));
+        let mesh = mesh_chunk(&reg, &region, &column, 0, 1);
+        let shape = reg.shape(slab).unwrap();
+        // Each shape quad drawn: the cell it is in, the quad of the shape, and its light.
+        let first = reg.shape_first_quad(slab).unwrap();
+        let drawn: Vec<(IVec3, &crate::shape::ShapeQuad, u8)> = mesh
+            .cutout
+            .vertices
+            .chunks(4)
+            .filter(|quad| is_shape_quad(quad[0][0]))
+            .map(|quad| {
+                let [w0, w1] = quad[0];
+                let at = IVec3::new((w0 & 63) as i32, ((w0 >> 6) & 63) as i32, ((w0 >> 12) & 63) as i32);
+                (at, &shape.quads[((w1 >> 12) & 0xFFF) as usize - first], (w1 >> 24) as u8)
+            })
+            .collect();
+        let quad = |at: IVec3, face: Face| drawn.iter().find(|(p, q, _)| *p == at && q.face == face).map(|&(_, _, light)| light);
+        let max = |x: u8, y: u8| (x & 0xF0).max(y & 0xF0) | (x & 0x0F).max(y & 0x0F);
+        // On stone: no bottom.
+        assert_eq!(quad(a, Face::NegY), None);
+        // Towards the lamp, its side takes the lamp cell's block light, brighter than its own.
+        let (own, lamp_light) = (region.light(a), region.light(a - IVec3::X));
+        assert!(lamp_light & 15 > own & 15, "the lamp's cell is the brighter: {lamp_light:#x} against {own:#x}");
+        assert_eq!(quad(a, Face::NegX), Some(max(own, lamp_light)));
+        // Its top lies inside the cell: its own light.
+        assert_eq!(quad(a, Face::PosY), Some(own));
+        // Beside the other slab, both sides are drawn.
+        assert!(quad(a, Face::PosX).is_some() && quad(b, Face::NegX).is_some());
+        assert_eq!(drawn.iter().filter(|(p, ..)| *p == a).count(), 5);
     }
 
     #[test]
