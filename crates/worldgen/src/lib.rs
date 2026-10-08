@@ -1937,7 +1937,12 @@ mod tests {
         // Per biome, in country and out: land columns (sampled every 8 blocks, so 64 each),
         // bank columns, lakes, lake cells.
         let mut tally = [[[0u64; 4]; 2]; 3];
+        // Each tarn's generated water in blocks (columns), inside tarn country and out.
+        let mut sizes: [Vec<usize>; 2] = Default::default();
         const STEP: i32 = 8;
+        // Stream-tier cells in a lake under which a pit is small, not big (drainage `min_area`).
+        const TARN_CELLS: usize = 48;
+        let floor = crate::content::WorldContent::base(&registry).unwrap().tarns.as_ref().map_or(0.0, |t| t.floor);
         for &seed in &seeds {
             let world = Overworld::new(seed, registry.clone());
             let ids: Vec<BiomeId> = names.iter().map(|n| world.biomes.id(&format!("base:{n}")).unwrap()).collect();
@@ -1957,6 +1962,7 @@ mod tests {
             let country = |x: i32, z: i32| usize::from(world.rivers.tarn_country(x, z) >= 0.5);
             let mut dry: Option<((i32, i32), i32)> = None;
             let mut banks = std::collections::HashSet::new();
+            let mut waters = std::collections::HashSet::new();
             for region in around {
                 let first = region * size;
                 // The land, every `STEP` blocks, a sampler a 256-block tile.
@@ -1981,6 +1987,10 @@ mod tests {
                     let site = world.site(pit.x, pit.y);
                     let Some(b) = ids.iter().position(|&id| id == site.home) else { continue };
                     let c = country(pit.x, pit.y);
+                    // A small lake this high is a tarn: other small pits are breached, not filled.
+                    if cells >= TARN_CELLS || (water as f32) < SEA_LEVEL as f32 + floor {
+                        continue;
+                    }
                     tally[b][c][2] += 1;
                     tally[b][c][3] += cells as u64;
                     if std::env::var("AT").is_ok() && b < 2 {
@@ -1988,6 +1998,21 @@ mod tests {
                     }
                     let reach = 8 + 4 * (cells as f32).sqrt() as i32 * 2;
                     let sampler = world.dense_sampler(pit - reach, pit + reach);
+                    // The tarn's generated water: its still-lake columns at its own level, which
+                    // no other tarn has claimed.
+                    let mut wet = 0usize;
+                    for z in pit.y - reach..=pit.y + reach {
+                        for x in pit.x - reach..=pit.x + reach {
+                            let site = sampler.site(x, z);
+                            if site.body == Body::Lake && site.height < site.water && site.water == water && waters.insert((x, z)) {
+                                wet += 1;
+                            }
+                        }
+                    }
+                    sizes[c].push(wet);
+                    if std::env::var("AT").is_ok() && b < 2 {
+                        println!("  seed {seed}: a tarn of {wet} water blocks across, at {}, {} ({}{})", pit.x, pit.y, names[b], if c == 1 { ", tarn country" } else { "" });
+                    }
                     for z in pit.y - reach..=pit.y + reach {
                         for x in pit.x - reach..=pit.x + reach {
                             let site = sampler.site(x, z);
@@ -2021,6 +2046,26 @@ mod tests {
                     banks as f64 * 100.0 / columns.max(1) as f64
                 );
             }
+        }
+        // The tarns themselves, by the water generated for each (the pit counts above are
+        // pits; a tarn is only seen if its water is): how many hold at least 20 blocks, and
+        // the spread of sizes, with the visible ones a square kilometre.
+        for (country, label) in [(1, "in tarn country"), (0, "outside it")] {
+            let mut sizes = std::mem::take(&mut sizes[country]);
+            sizes.sort_unstable();
+            let km2: f64 = (0..3).map(|b| tally[b][country][0]).sum::<u64>() as f64 / 1e6;
+            let visible = sizes.iter().filter(|&&n| n >= 20).count();
+            let at = |q: f64| sizes.get(((sizes.len() as f64 - 1.0) * q).round() as usize).copied().unwrap_or(0);
+            println!(
+                "tarns {label:<16}: {} of them, {:.0}% hold 20+ water blocks, {:.1} visible a km2 ({:.1} pits); water blocks p10 {} median {} p90 {}",
+                sizes.len(),
+                visible as f64 * 100.0 / sizes.len().max(1) as f64,
+                visible as f64 / km2.max(1e-9),
+                sizes.len() as f64 / km2.max(1e-9),
+                at(0.1),
+                at(0.5),
+                at(0.9)
+            );
         }
     }
 

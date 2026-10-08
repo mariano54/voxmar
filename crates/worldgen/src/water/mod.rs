@@ -97,16 +97,16 @@ struct Tarns {
 }
 
 impl Tarns {
-    /// How fully tarns may lie at a position, 0 ..= 1: inside tarn country, as far inside
-    /// their climate as the position lies.
+    /// How fully tarns may lie at a position, 0 ..= 1: none outside tarn country (a sharp
+    /// edge, where `region_share` is half way up its ramp: design says none outside, not
+    /// fewer), and inside it as far inside their climate as the position lies.
     fn weight(&self, land: Stages, at: IVec2) -> f32 {
-        let country = region_share(self.share, self.country.get_noise_2d(at.x as f32, at.y as f32));
-        if country <= 0.0 {
+        if region_share(self.share, self.country.get_noise_2d(at.x as f32, at.y as f32)) < 0.5 {
             return 0.0;
         }
         let r = land.climate.regional_at(land.geology, at);
         let fields = [r.temperature(), r.moisture(), r.continentalness, r.erosion];
-        country * self.gates.iter().map(|g| g.weight(&fields)).fold(0.0, f32::max)
+        self.gates.iter().map(|g| g.weight(&fields)).fold(0.0, f32::max)
     }
 }
 
