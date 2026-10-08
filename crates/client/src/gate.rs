@@ -4451,7 +4451,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
-            let fixed_camera = gate.feel.facing_camera.filter(|_| gate.earlier_shot("windup-facing").is_none());
+            let fixed_camera = gate.feel.facing_camera.filter(|_| !gate.shots.lock().expect("gate shots").contains_key("windup-facing"));
             key(world, KeyCode::KeyW, fixed_camera.is_none() && distance > 2.0 && gate.feel.seen.is_none());
             if let Some((yaw, pitch)) = fixed_camera {
                 let mut player = world.resource_mut::<LocalPlayer>();
