@@ -135,9 +135,6 @@ their exact region bounds, including the neighbour halo used to seal water. Layo
 retries reuse those original land samples. Rectangle checks prefetch only missing
 centres in row chunks of at most 32, then retain every original row-major water,
 river, solid-ground and height check; unused lookahead still belongs to the full timer.
-The current row also keeps those exact samples in a fixed array, avoiding a second
-hash lookup as the rectangle consumes them. Every terrain-cache clear invalidates
-that row. Water batches likewise keep their bounded keys and miss masks on the stack.
 Water-direction rings batch all 24 original samples, slopes batch their four original
 cardinal samples, and bank searches batch ring centres in groups of at most 32. Those
 decisions already consume every centre before stopping; cardinal bank checks retain
