@@ -517,23 +517,8 @@ impl Rivers {
 
     /// A column with both tiers carved in, before sealing, on its `ground`.
     fn unsealed(&self, (trunks, streams): &(Near, Near), x: i32, z: i32, ground: Landform) -> Column {
-        let carved = if ground.height.is_finite() && Self::channels_absent(trunks, streams, x, z) {
-            // Neither tier has any edge or home lake influence. Starting from
-            // finite bare land, both original carves leave every field unchanged.
-            Carved::land(ground.height)
-        } else {
-            let trunks = carve(&self.trunk_style, trunks.list(), x, z, Carved::land(ground.height));
-            carve(&self.stream_style, streams.list(), x, z, trunks)
-        };
-        Self::column(ground, carved)
-    }
-
-    fn channels_absent(trunks: &Near, streams: &Near, x: i32, z: i32) -> bool {
-        !trunks.list().iter().chain(streams.list()).any(|c| c.as_ref().expect("filled").may_have_water(x, z))
-    }
-
-    /// Convert the original carved land to its full column facts.
-    fn column(ground: Landform, carved: Carved) -> Column {
+        let trunks = carve(&self.trunk_style, trunks.list(), x, z, Carved::land(ground.height));
+        let carved = carve(&self.stream_style, streams.list(), x, z, trunks);
         let height = (carved.ground.floor() as i32).max(4);
         let water = match carved.water {
             Some(surface) => top_block(surface).max(if height < SEA_LEVEL { SEA_LEVEL } else { i32::MIN }),
@@ -753,7 +738,7 @@ impl Rivers {
         if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
         let key = Samples::key(p - 1, p + 1);
         let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, p - 1, p + 1));
-        Self::channels_absent(&tiers.0, &tiers.1, p.x, p.y)
+        !tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().expect("filled").may_have_water(p.x, p.y))
     }
 
     fn freshwater_batch(&self, land: Stages, points: &[(i32, i32)], cache: &mut Freshwater) -> (Option<usize>, bool, usize) {
@@ -1052,40 +1037,6 @@ fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
 mod tests {
     use super::*;
     use crate::dials::WorldDials;
-
-    #[test]
-    fn absent_channel_columns_keep_both_original_carves() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
-        let (mut absent, mut possible, mut wet) = (0, 0, 0);
-        for (seed, centre) in [(7, IVec2::new(-1776, 752)), (7, IVec2::new(-336, 816)), (42, IVec2::new(720, -784))] {
-            let world = crate::Overworld::new(seed, registry.clone());
-            for i in 0..225 {
-                let p = centre + IVec2::new(i % 15 - 7, i / 15 - 7) * 16;
-                let tiers = world.rivers.tiers(world.stages(), p - 1, p + 1);
-                let ground = world.geology.lands(&[(p.x, p.y)])[0];
-                let no_channels = Rivers::channels_absent(&tiers.0, &tiers.1, p.x, p.y);
-                absent += usize::from(no_channels);
-                possible += usize::from(!no_channels);
-                for height in [ground.height, -0.0, 0.0, 127.9, 140.5, f32::MIN, f32::MAX, f32::NEG_INFINITY, f32::INFINITY, f32::NAN] {
-                    let ground = Landform { height, ..ground };
-                    // Independent original two-tier carving, including its final
-                    // water-cover normalisation. Conversion retains all full facts.
-                    let trunks = carve(&world.rivers.trunk_style, tiers.0.list(), p.x, p.y, Carved::land(height));
-                    let carved = carve(&world.rivers.stream_style, tiers.1.list(), p.x, p.y, trunks);
-                    let mut expected = Rivers::column(ground, carved);
-                    let mut actual = world.rivers.unsealed(&tiers, p.x, p.y, ground);
-                    assert_eq!(actual.near, expected.near);
-                    assert_eq!(actual.sample.crag.surface.to_bits(), expected.sample.crag.surface.to_bits(), "seed{seed} at{p} height{height}");
-                    // NaN cannot equal itself; its exact bits were compared above.
-                    actual.sample.crag.surface = 0.0;
-                    expected.sample.crag.surface = 0.0;
-                    assert_eq!(actual.sample, expected.sample, "seed{seed} at{p} height{height}");
-                    wet += usize::from(freshwater(&expected.sample));
-                }
-            }
-        }
-        assert!(absent > 0 && possible > 0 && wet > 0, "empty indexes, real channels and actual freshwater must all occur");
-    }
 
     #[test]
     fn planning_samples_match_standalone_across_water_boundaries_and_worlds() {
