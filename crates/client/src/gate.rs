@@ -204,6 +204,9 @@ enum Step {
     Sky,
     /// A small tree with an apple among its leaves, drawn with its leaf cards and fruit.
     Tree,
+    /// Blocks drawn as shapes (a slab, stairs both ways up, a barrel, a crate and a sack)
+    /// reach the client and draw.
+    Shapes,
     /// Creatures summoned on a pad beside the test ground reach the client and draw.
     Creatures,
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
@@ -307,6 +310,8 @@ struct Gate {
     /// it was first lit.
     kiln: IVec3,
     kiln_since: f32,
+    /// Where the shapes step sets its row of shaped blocks: in the air before the player.
+    shapes_row: IVec3,
     /// When (server seconds) the kiln was last asked to light.
     kiln_asked: f32,
     /// The highest the player's feet reached while climbing out of the pool.
@@ -417,6 +422,7 @@ impl Gate {
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
             kiln_since: 0.0,
+            shapes_row: IVec3::ZERO,
             kiln_asked: f32::MIN,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
@@ -971,6 +977,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Overlay => overlay(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
+        Step::Shapes => shapes(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
@@ -3200,11 +3207,60 @@ fn tree(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the tree barely shows: the view changed by {change:.1} levels")),
             };
             gate.check("tree", result);
+            gate.next(Step::Shapes, now);
+        }
+        _ => {}
+    }
+}
+
+/// Blocks drawn as their shapes, set in a row in the air just in front of the player, clear
+/// of whatever the earlier steps built and seen against the sky: they must reach the
+/// client and change the view.
+fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let blocks = ["oak_slab", "oak_stairs", "oak_stairs_top_east", "oak_slab_top", "barrel", "crate", "sack"];
+    if gate.phase == 0 {
+        gate.shapes_row = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(-3, 3, 4);
+    }
+    let row = gate.shapes_row;
+    let cells: Vec<IVec3> = (0..blocks.len() as i32).map(|i| row + IVec3::X * i).collect();
+    match gate.phase {
+        0 => {
+            aim(world, row + IVec3::new(3, 0, 0));
+            gate.advance(now);
+        }
+        // The view turned to the row first, so only the blocks change it.
+        1 if in_phase > 0.5 => {
+            aim(world, row + IVec3::new(3, 0, 0));
+            if gate.shot(world, "shapes-before").is_some() {
+                for (cell, block) in cells.iter().zip(blocks) {
+                    world.resource::<Net>().command(&format!("setblock {} {} {} {block}", cell.x, cell.y, cell.z));
+                }
+                gate.advance(now);
+            }
+        }
+        2 => {
+            let client = world.resource::<ClientWorld>();
+            let arrived = cells.iter().all(|&cell| client.block(cell).is_some_and(|b| !b.is_air()));
+            if !(arrived && settled(world, row) && in_phase > SETTLE) && gate.server_in_step() < STEP_LIMIT - 1.0 {
+                return;
+            }
+            let Some(shot) = gate.shot(world, "shapes") else { return };
+            let change = gate.earlier_shot("shapes-before").map_or(0.0, |before| change(&before, &shot, 0.25));
+            let result = match (arrived, change >= SCREEN_CHANGE) {
+                (true, true) => Ok(format!("{} shaped blocks drawn, changing the view by {change:.1} levels", blocks.len())),
+                (false, _) => Err("the shaped blocks never reached the client".into()),
+                (true, false) => Err(format!("the shaped blocks barely show: the view changed by {change:.1} levels")),
+            };
+            gate.check("shapes", result);
             gate.next(Step::Creatures, now);
         }
         _ => {}
     }
 }
+
+/// Frames slower than this (milliseconds) draw a body's 0.45 s tip over in fewer than the
+/// three frames the falls check asks for.
+const FALL_FRAME_MS: f32 = 150.0;
 
 /// The species the gate summons and strikes: slow and fearless, so it stays to be struck.
 const CREATURE: &str = "base:lumen_snail";
@@ -3366,9 +3422,15 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if let Some(fall) = fall {
                     gate.fall_judged = true;
                     // Judged by what was drawn: every joint of the body, every frame of its fall.
-                    // Watched over several frames, not one: three samples of every joint.
-                    let result = if fall.samples < 3 * fall.joints.max(1) {
-                        Err(format!("its fall was hardly seen: {} joint samples for {} joints", fall.samples, fall.joints))
+                    // Watched over several frames, not one: three samples of every joint. The
+                    // tip over lasts half its death's 0.9 s, so three frames need frames under
+                    // 150 ms: a machine drawing slower saw fewer, which is known, not a fault,
+                    // as long as it saw the body fall at all.
+                    let joints = fall.joints.max(1);
+                    let slowest = gate.frame_ms.iter().rev().take(30).copied().fold(0.0, f32::max);
+                    let few = fall.samples < 3 * joints;
+                    let result = if fall.samples < joints || (few && slowest < FALL_FRAME_MS) {
+                        Err(format!("its fall was hardly seen: {} joint samples for {} joints (frames up to {slowest:.0} ms)", fall.samples, fall.joints))
                     } else if fall.spread > 1.5 {
                         Err(format!("a joint of its body was drawn {:.2} of its heights from where it died", fall.spread))
                     } else if fall.scale > 0.05 {
@@ -3377,6 +3439,10 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         let eye = if fall.around_eye { "the eye was inside it, and it was hidden" } else { "away from the eye" };
                         Ok(format!("drawn within {:.2} of its heights, joints at most {:.1}% off size; {eye}", fall.spread, fall.scale * 100.0))
                     };
+                    if few && result.is_ok() {
+                        let detail = format!("its fall was seen in {} frames, with frames up to {slowest:.0} ms", fall.samples / joints);
+                        gate.known("creature falls: frames", Err(detail), "a loaded machine draws the 0.45 s tip in fewer than three frames");
+                    }
                     gate.check("creature falls", result);
                 } else if in_phase > 4.0 {
                     gate.fall_judged = true;
@@ -3791,7 +3857,8 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(shot) = gate.shot(world, "sun") else { return };
             let at = light_on_screen(world);
             gate.check("sky: sun", disc(&shot, at, "sun"));
-            gate.check("sky: day", gradient(&shot));
+            let horizon = horizon_on_screen(world);
+            gate.check("sky: day", gradient(&shot, horizon));
             // Up above the top of the world, as a flying player can go: by teleport, for the
             // server refuses a move that jumps hundreds of blocks in one step.
             let feet = gate.feet;
@@ -4308,28 +4375,75 @@ fn disc(shot: &Image, at: Option<Vec2>, what: &str) -> Result<String, String> {
     }
 }
 
-/// A day sky darkens from the horizon upwards: the top of a shot aimed at the morning
-/// sun differs from its bottom.
-fn gradient(shot: &Image) -> Result<String, String> {
+/// A day sky darkens from the horizon upwards: in a shot aimed at the morning sun, the clear
+/// sky at the top differs from the clear sky a little above the horizon (`horizon`, how far
+/// down the shot it is drawn). Only clear sky is compared, by its median colour: given the
+/// whole of each band, a cloud over the top of the frame, or the sea and land below the
+/// horizon, decided it (on 2026-10-08 a cloud over the top read within 6 levels of the sea
+/// and the sky was called flat).
+fn gradient(shot: &Image, horizon: Option<f32>) -> Result<String, String> {
     let (w, h, data) = pixels(shot)?;
-    let band = |y0: usize, y1: usize| {
-        let mut sum = [0u64; 3];
+    sky_gradient(w, h, data, horizon)
+}
+
+/// How much bluer than red a pixel must be to count as clear sky: the morning sky is 60 to
+/// 90 levels bluer, while clouds, the sun's glow and hills in the haze are at most about 30.
+const CLEAR_SKY: i32 = 40;
+/// Least levels the clear sky's top and its colour just above the horizon differ by (the
+/// gate's morning sky: about 31).
+const SKY_GRADIENT: f32 = 15.0;
+
+fn sky_gradient(w: usize, h: usize, data: &[u8], horizon: Option<f32>) -> Result<String, String> {
+    let top = (0, h * 12 / 100);
+    // From a tenth of the shot above the horizon to just above its haze; half way down the
+    // shot when where the horizon is drawn is not known.
+    let horizon = horizon.map_or(h / 2, |y| (y.max(0.0) as usize).min(h));
+    let low = (horizon.saturating_sub(h / 10).max(top.1), horizon.saturating_sub(h * 3 / 100).max(top.1));
+    let clear = |(y0, y1): (usize, usize)| {
+        let mut channels: [Vec<u8>; 3] = default();
         for y in y0..y1 {
             for x in 0..w {
-                for (c, s) in sum.iter_mut().enumerate() {
-                    *s += data[(y * w + x) * 4 + c] as u64;
+                let pixel = &data[(y * w + x) * 4..][..3];
+                let (r, g, b) = (pixel[0] as i32, pixel[1] as i32, pixel[2] as i32);
+                if b >= r + CLEAR_SKY && b >= g && b >= 120 {
+                    for (channel, &value) in channels.iter_mut().zip(pixel) {
+                        channel.push(value);
+                    }
                 }
             }
         }
-        sum.map(|s| s as f32 / ((y1 - y0) * w) as f32)
+        let share = channels[0].len() as f32 / ((y1 - y0) * w).max(1) as f32;
+        let median = channels.map(|mut values| {
+            values.sort_unstable();
+            values.get(values.len() / 2).copied().unwrap_or(0) as f32
+        });
+        (median, share)
     };
-    let (top, low) = (band(0, h / 10), band(h * 6 / 10, h * 7 / 10));
-    let difference = (0..3).map(|c| (top[c] - low[c]).abs()).fold(0.0, f32::max);
-    if difference >= 8.0 {
-        Ok(format!("the sky's top differs from lower down by {difference:.0} levels"))
-    } else {
-        Err(format!("the sky is flat: top and lower down differ by {difference:.0} levels"))
+    let ((high, high_share), (low_colour, low_share)) = (clear(top), clear(low));
+    let percent = |share: f32| share * 100.0;
+    if high_share < 0.02 || low_share < 0.02 {
+        return Err(format!(
+            "too little clear sky to judge: {:.0}% of the top, {:.0}% above the horizon (at {horizon} of {h})",
+            percent(high_share),
+            percent(low_share)
+        ));
     }
+    let difference = (0..3).map(|c| (high[c] - low_colour[c]).abs()).fold(0.0, f32::max);
+    let seen = format!("clear sky in {:.0}% of the top and {:.0}% above the horizon (at {horizon} of {h})", percent(high_share), percent(low_share));
+    if difference >= SKY_GRADIENT {
+        Ok(format!("the clear sky's top differs from lower down by {difference:.0} levels; {seen}"))
+    } else {
+        Err(format!("the sky is flat: its clear top and lower down differ by {difference:.0} levels; {seen}"))
+    }
+}
+
+/// How far down the shot the horizon is drawn, in pixels: where a level look straight ahead
+/// meets the screen.
+fn horizon_on_screen(world: &mut World) -> Option<f32> {
+    let mut cameras = world.query_filtered::<(&Camera, &GlobalTransform), With<Camera3d>>();
+    let (camera, transform) = cameras.single(world).ok()?;
+    let ahead = (transform.forward().as_vec3() * Vec3::new(1.0, 0.0, 1.0)).normalize_or_zero();
+    camera.world_to_viewport(transform, transform.translation() + ahead * 1000.0).ok().map(|at| at.y)
 }
 
 /// Where the gate flies to look at the sky from above the world's top (384).
@@ -4746,5 +4860,83 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
     } else {
         error!("{}", report.trim_end());
         world.write_message(AppExit::error());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 960×540 shot with the horizon at row `horizon`: `sky(x, y)` above it, the sea below
+    /// (as pale as the sky over it, as in the gate's morning shot).
+    fn shot(horizon: usize, sky: impl Fn(usize, usize) -> [u8; 3]) -> (usize, usize, Vec<u8>) {
+        let (w, h) = (960, 540);
+        let mut data = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                let [r, g, b] = if y < horizon { sky(x, y) } else { [183, 212, 245] };
+                data.extend([r, g, b, 255]);
+            }
+        }
+        (w, h, data)
+    }
+
+    /// The gate's morning sky as drawn: (153, 193, 241) at the top, (188, 216, 246) at the
+    /// horizon.
+    fn morning(y: usize, horizon: usize) -> [u8; 3] {
+        let t = y as f32 / horizon as f32;
+        let mix = |a: f32, b: f32| (a + (b - a) * t).round() as u8;
+        [mix(153.0, 188.0), mix(193.0, 216.0), mix(241.0, 246.0)]
+    }
+
+    const HORIZON: usize = 325;
+
+    #[test]
+    fn a_sky_of_one_colour_is_flat() {
+        let (w, h, flat) = shot(HORIZON, |_, _| [168, 204, 244]);
+        let result = sky_gradient(w, h, &flat, Some(HORIZON as f32));
+        assert!(result.as_ref().is_err_and(|e| e.starts_with("the sky is flat")), "{result:?}");
+        // Nor is a sky drawn in no sky colour at all (grey fog, black) taken for one.
+        let (w, h, grey) = shot(HORIZON, |_, _| [200, 200, 200]);
+        let result = sky_gradient(w, h, &grey, Some(HORIZON as f32));
+        assert!(result.as_ref().is_err_and(|e| e.starts_with("too little clear sky")), "{result:?}");
+    }
+
+    #[test]
+    fn clouds_in_frame_leave_the_gradient_seen() {
+        // A cloud over half the top, as in the shot that flaked, its grey underside, and a row
+        // of small ones over the horizon.
+        let clouded = |x: usize, y: usize| {
+            let big = (120..640).contains(&x) && y < 150;
+            let small = (x / 60) % 2 == 0 && (280..310).contains(&y);
+            match (big, small) {
+                (true, _) if y > 120 => [186, 183, 187],
+                (true, _) | (_, true) => [240, 238, 236],
+                _ => morning(y, HORIZON),
+            }
+        };
+        let (w, h, sky) = shot(HORIZON, clouded);
+        let result = sky_gradient(w, h, &sky, Some(HORIZON as f32));
+        assert!(result.is_ok(), "{result:?}");
+        // A flat sky with the same clouds is still flat.
+        let flat = |x: usize, y: usize| if (120..640).contains(&x) && y < 150 { [240, 238, 236] } else { [168, 204, 244] };
+        let (w, h, sky) = shot(HORIZON, flat);
+        assert!(sky_gradient(w, h, &sky, Some(HORIZON as f32)).is_err());
+    }
+
+    /// The day check over shots the gate saved (`VOXMAR_SKY_SHOTS`, paths split by `:`),
+    /// with the horizon where the gate's morning pose draws it.
+    #[test]
+    #[ignore = "reads shots from VOXMAR_SKY_SHOTS"]
+    fn saved_morning_shots_show_the_gradient() {
+        let paths = std::env::var("VOXMAR_SKY_SHOTS").expect("VOXMAR_SKY_SHOTS");
+        let horizon = std::env::var("VOXMAR_SKY_HORIZON").map_or(HORIZON as f32, |h| h.parse().expect("a number"));
+        for path in paths.split(':').filter(|p| !p.is_empty()) {
+            let rgba = image::open(path).expect("a shot").to_rgba8();
+            let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+            let result = sky_gradient(w, h, rgba.as_raw(), Some(horizon));
+            println!("{path}: {result:?}");
+            assert!(result.is_ok(), "{path}: {result:?}");
+        }
     }
 }
