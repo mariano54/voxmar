@@ -98,11 +98,6 @@ pub struct Ctx<'a> {
 /// Picks from `items` by weight; `None` when every weight is nothing.
 pub(super) fn pick<T: Copy>(rng: &mut Rng, items: &[(T, f32)]) -> Option<T> {
     let total: f32 = items.iter().map(|(_, w)| w.max(0.0)).sum();
-    pick_total(rng, items, total)
-}
-
-/// Uses the ordered sum of this exact list when it is unchanged between draws.
-fn pick_total<T: Copy>(rng: &mut Rng, items: &[(T, f32)], total: f32) -> Option<T> {
     if total <= 0.0 {
         return None;
     }
@@ -2254,26 +2249,18 @@ struct HouseChoices {
     want: Want,
     dry: Vec<(usize, f32)>,
     wet: Vec<(usize, f32)>,
-    dry_total: f32,
-    wet_total: f32,
     needs_water: bool,
 }
 
 impl HouseChoices {
     fn new(houses: &[super::def::HouseDef], weights: &[f32], want: &Want, size: &str, style: &str, built: &FxHashMap<usize, u32>, grand: u32) -> Self {
-        let mut choices = Self { want: want.clone(), dry: Vec::new(), wet: Vec::new(), dry_total: 0.0, wet_total: 0.0, needs_water: false };
+        let mut choices = Self { want: want.clone(), dry: Vec::new(), wet: Vec::new(), needs_water: false };
         for (i, h) in houses.iter().enumerate() {
             if !house_fits(h, want, size, style, built.get(&i).copied().unwrap_or(0), grand) { continue; }
             choices.wet.push((i, weights[i]));
             if h.water { choices.needs_water = true; } else { choices.dry.push((i, weights[i])); }
         }
-        choices.dry_total = choices.dry.iter().map(|(_, w)| w.max(0.0)).sum();
-        choices.wet_total = choices.wet.iter().map(|(_, w)| w.max(0.0)).sum();
         choices
-    }
-
-    fn pick(&self, rng: &mut Rng, near_water: bool) -> Option<usize> {
-        if near_water { pick_total(rng, &self.wet, self.wet_total) } else { pick_total(rng, &self.dry, self.dry_total) }
     }
 }
 
@@ -2331,7 +2318,7 @@ fn required_houses_possible(houses: &[super::def::HouseDef], weights: &[f32], qu
 /// traders keep a modest home or a shop.
 fn house_spec(town: &mut Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: bool) -> Option<(Spec, usize)> {
     let choices = town.choices(want);
-    let index = choices.pick(rng, near_water)?;
+    let index = pick(rng, if near_water { &choices.wet } else { &choices.dry })?;
     let (def, kit, levers, style) = (town.ctx.def, town.kit, town.levers, town.style);
     let rules = &def.rules.houses;
     let h = &def.houses[index];
@@ -2902,22 +2889,7 @@ mod level_tests {
                                 assert_eq!(cached, &original, "{size}/{style}/{count}/{want:?}/{near_water}");
                                 empty += usize::from(original.is_empty());
                                 let (mut a, mut b) = (Rng::new(42, 71, -19, 23), Rng::new(42, 71, -19, 23));
-                                // The reference repeats the original sum and scan,
-                                // independently of the production cached selector.
-                                let reference = |rng: &mut Rng| {
-                                    let total: f32 = original.iter().map(|(_, w)| w.max(0.0)).sum();
-                                    if total <= 0.0 { return None; }
-                                    let mut t = rng.unit() * total;
-                                    for &(i, w) in &original {
-                                        let w = w.max(0.0);
-                                        if t < w { return Some(i); }
-                                        t -= w;
-                                    }
-                                    original.last().map(|(i, _)| *i)
-                                };
-                                let total: f32 = original.iter().map(|(_, w)| w.max(0.0)).sum();
-                                assert_eq!((if near_water { choices.wet_total } else { choices.dry_total }).to_bits(), total.to_bits());
-                                for _ in 0..32 { assert_eq!(reference(&mut a), choices.pick(&mut b, near_water)); }
+                                for _ in 0..32 { assert_eq!(pick(&mut a, &original), pick(&mut b, cached)); }
                                 assert_eq!(a.next_u64(), b.next_u64(), "selection consumes identical draws even when no weight is positive");
                             }
                         }
