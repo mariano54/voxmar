@@ -5021,6 +5021,9 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
+            // The creature the combat check summoned goes, or its level tag would still be
+            // up behind the menus' text check.
+            net.command("creatures kill");
             net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
             net.command("give raw_rabbit 3");
             // In reach of it, wherever the steps before left the player.
