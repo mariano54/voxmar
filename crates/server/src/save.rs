@@ -474,7 +474,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests: file.quests, tallies: file.tallies }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -520,6 +520,29 @@ impl WorldSave {
         std::fs::create_dir_all(path.parent().expect("player files are in a directory"))?;
         write_atomic(&self.target(path), text.as_bytes())
     }
+}
+
+/// A journal as an older save kept it, with entries for plants that have since merged into
+/// one item folded into that item's: the earliest finding, the furthest stage, and the picks
+/// of all added up.
+fn merge_journal(entries: Vec<voxmar_engine::journal::Entry>, registry: &BlockRegistry) -> Vec<voxmar_engine::journal::Entry> {
+    let mut merged: Vec<voxmar_engine::journal::Entry> = Vec::with_capacity(entries.len());
+    for mut entry in entries {
+        if entry.page == voxmar_engine::journal::Page::Plants
+            && let Some(item) = registry.item_named(&entry.name)
+        {
+            entry.name = registry.def(item).name.clone();
+        }
+        match merged.iter_mut().find(|have| have.page == entry.page && have.name == entry.name) {
+            Some(have) => {
+                have.stage = have.stage.max(entry.stage);
+                have.count = have.count.saturating_add(entry.count);
+                have.found = have.found.min(entry.found);
+            }
+            None => merged.push(entry),
+        }
+    }
+    merged
 }
 
 /// A dropped item as a save keeps it: by item name, so it survives content changes.
@@ -1036,6 +1059,30 @@ mod tests {
         assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == registry.expect("base:cobblestone")).map(|s| s.count), Some(5));
         assert_eq!(loaded.inventory.pouched, vec![(herbs, 10)]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Plants found as separate entries before they merged are one entry now: found first
+    /// when the earliest was, studied as far as the furthest, picked as many times as all.
+    #[test]
+    fn journal_entries_of_plants_that_merged_fold_into_the_item() {
+        use voxmar_engine::journal::{Entry, Page, Stage};
+        let registry = registry(false);
+        let entry = |name: &str, stage, count, found| Entry { page: Page::Plants, name: name.into(), stage, count, found };
+        let merged = merge_journal(
+            vec![
+                entry("base:oregano", Stage::Seen, 3, 900),
+                entry("base:poppy", Stage::Studied, 2, 50),
+                entry("base:parsley", Stage::Mastered, 4, 300),
+                entry("base:dill", Stage::Seen, 1, 100),
+                Entry { page: Page::Fish, name: "base:oregano".into(), stage: Stage::Seen, count: 1, found: 5 },
+            ],
+            &registry,
+        );
+        let herbs = merged.iter().find(|e| e.page == Page::Plants && e.name == "base:kitchen_herbs").expect("one entry for the item");
+        assert_eq!((herbs.stage, herbs.count, herbs.found), (Stage::Mastered, 8, 100));
+        assert_eq!(merged.iter().filter(|e| e.page == Page::Plants && e.name.contains("oregano")).count(), 0);
+        assert!(merged.iter().any(|e| e.name == "base:poppy" && e.stage == Stage::Studied), "an unmerged plant is kept");
+        assert_eq!(merged.len(), 3, "{merged:?}");
     }
 
     #[test]
