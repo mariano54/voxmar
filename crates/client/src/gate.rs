@@ -2834,12 +2834,12 @@ const DRY_PLOT: IVec3 = IVec3::new(-2, -1, 2);
 const REFUSAL_WAIT: f32 = 8.0;
 
 /// Rice (which grows only with water near) sown on a dry plot: the server refuses it and
-/// says why as a refusal, which shows by the hotbar with the others.
+/// says why as a refusal, which shows by the hotbar with the others, naming the crop as
+/// the player holds it ("Rice"), not its growing stage.
 fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let plot = gate.feet + DRY_PLOT;
     let rice = world.resource::<ClientWorld>().registry.id("base:rice");
-    let crop = world.resource::<Launch>().content.blocks.id("base:rice_crop");
-    let (Some(rice), Some(crop)) = (rice, crop) else {
+    let Some(rice) = rice else {
         gate.check("refusal", Err("no rice in the content".into()));
         gate.next(Step::Effects, now);
         return;
@@ -2887,7 +2887,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             aim_at(world, plot.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
             let name = {
                 let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
-                locale.block(launch.content.blocks.def(crop))
+                locale.block(launch.content.blocks.def(rice))
             };
             let said = world.resource::<crate::hud::skills::SkillToasts>().refusals().find(|why| why.contains(&name)).map(str::to_owned);
             if let Some(said) = said {
