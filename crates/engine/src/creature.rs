@@ -16,6 +16,7 @@
 
 pub mod anatomy;
 pub mod brain;
+pub mod condition;
 pub mod husbandry;
 pub mod model;
 pub mod motion;
@@ -428,6 +429,9 @@ pub struct CreatureDef {
     /// What kept ones give on timers.
     #[serde(default)]
     pub products: Vec<husbandry::Product>,
+    /// What kept ones need beyond food, water and their climate (docs/breeding.md).
+    #[serde(default)]
+    pub needs: condition::NeedsDef,
     /// What individuals inherit: coat colours, size, yield, temper (docs/breeding.md). At
     /// most [`crate::genes::MOST`].
     #[serde(default)]
@@ -484,6 +488,8 @@ struct CreatureFile {
     limits: Option<SetLimits>,
     #[serde(default)]
     defence: Option<SetDefenceTraining>,
+    #[serde(default)]
+    condition: Option<condition::SetConditionRules>,
 }
 
 /// One package's `creatures.ron`: its species, and what it sets of the world's rules.
@@ -492,15 +498,17 @@ pub struct CreaturePackage {
     pub defs: Vec<CreatureDef>,
     pub limits: Option<SetLimits>,
     pub defence: Option<SetDefenceTraining>,
+    pub condition: Option<condition::SetConditionRules>,
 }
 
-/// What packages set for every creature in the world: how many there are, and how their
-/// blows train Defence. Each is single-valued data a later package replaces field by field
+/// What packages set for every creature in the world: how many there are, how their
+/// blows train Defence, and how kept animals' condition is reckoned. Each is single-valued data a later package replaces field by field
 /// ([`crate::content::Settable`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rules {
     pub limits: Limits,
     pub defence: DefenceTraining,
+    pub condition: condition::ConditionRules,
 }
 
 /// How many creatures the world holds. A package's `creatures.ron` may set any of them
@@ -658,7 +666,7 @@ impl CreatureRegistry {
                 *name = format!("{namespace}:{name}");
             }
         };
-        let (limits, defence) = (file.limits, file.defence);
+        let (limits, defence, condition) = (file.limits, file.defence, file.condition);
         let defs = file
             .creatures
             .into_iter()
@@ -685,13 +693,14 @@ impl CreatureRegistry {
                 def
             })
             .collect();
-        Ok(CreaturePackage { defs, limits, defence })
+        Ok(CreaturePackage { defs, limits, defence, condition })
     }
 
     /// Resolves species against the blocks (items) and skills.
     pub fn new(defs: Vec<CreatureDef>, rules: Rules, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
         rules.limits.check()?;
         rules.defence.check()?;
+        rules.condition.check()?;
         let mut registry = Self { rules, ..Self::default() };
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
@@ -780,6 +789,11 @@ impl CreatureRegistry {
     /// When creatures' blows train Defence.
     pub fn defence(&self) -> DefenceTraining {
         self.rules.defence
+    }
+
+    /// How kept animals' condition is reckoned.
+    pub fn condition(&self) -> &condition::ConditionRules {
+        &self.rules.condition
     }
 
     pub fn id(&self, name: &str) -> Option<CreatureId> {
@@ -990,6 +1004,22 @@ mod tests {
             let defence = DefenceTraining { fought_within: bad.0, least_level: bad.1 };
             assert!(CreatureRegistry::new(Vec::new(), Rules { defence, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
         }
+    }
+
+    #[test]
+    fn condition_rules_load_from_the_file_and_are_checked() {
+        let source = RABBIT.replacen("(creatures:", "(condition: (up: 0.2, fed: (0.5, 1.5)), creatures:", 1);
+        let set = CreatureRegistry::read("base", &source).unwrap().condition.expect("set");
+        // What it leaves out keeps what was there.
+        let (rules, changed) = condition::ConditionRules::default().with(&set);
+        assert_eq!((rules.up, rules.fed, rules.down), (0.2, (0.5, 1.5), 0.25));
+        assert_eq!(changed, ["up", "fed"]);
+        let source = RABBIT.replace("health: 6,", "health: 6, needs: (space: 2, shelter: false),");
+        let rabbit = &CreatureRegistry::read("base", &source).unwrap().defs[0];
+        assert_eq!((rabbit.needs.space(0.5), rabbit.needs.shelter()), (2.0, false));
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        let bad = condition::ConditionRules { tamed: 2.0, ..Default::default() };
+        assert!(CreatureRegistry::new(Vec::new(), Rules { condition: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err());
     }
 
     #[test]

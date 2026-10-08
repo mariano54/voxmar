@@ -77,6 +77,12 @@ impl Console {
         }
     }
 
+    /// The lines received at or after `since` (seconds since startup), oldest first: what
+    /// the gate reads the server's replies from.
+    pub fn since(&self, since: f32) -> impl Iterator<Item = &str> {
+        self.lines.iter().filter(move |line| line.at >= since).map(|line| line.text.as_str())
+    }
+
     /// Runs these lines (commands with a `/`) as soon as the game has started.
     pub fn run_when_joined(&mut self, lines: Vec<String>) {
         self.pending.extend(lines);
