@@ -4,7 +4,7 @@
 //! hitsplats, the number each blow did rising and fading over the body of the creature it
 //! struck (following it as it falls, so the killing blow shows too), or above the hotbar
 //! for those that came at the player, coloured by what kind of blow it was or what came of
-//! it (a miss, a block, a perfect block, a dodge), ringed by a dark pixel so they read over
+//! it (a miss, a block, a perfect block, a dodge), ringed by two dark pixels so they read over
 //! fur and grass, stacked newest lowest so quick blows never cover each other. A blow that hurts the player also flashes what the health bar
 //! lost. All of it follows the design wiki's combat feel (the meter, pips and hitsplats;
 //! damage numbers can be switched off, and the guard put on a toggle, in the settings).
@@ -90,17 +90,18 @@ pub struct PipStyle {
 }
 
 /// One kind of hitsplat: its colour, and its size in screen pixels a font pixel (2 as body
-/// text, 3 as headings; whole numbers keep the pixel font crisp).
+/// text, 3 as headings, 4 by default for a number read at a glance over fur; whole numbers
+/// keep the pixel font crisp).
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Splat {
     pub color: Rgb,
-    #[serde(default = "heading")]
+    #[serde(default = "plain")]
     pub scale: u32,
 }
 
-fn heading() -> u32 {
-    3
+fn plain() -> u32 {
+    4
 }
 
 /// What a blow that hurts the player does to the health bar: what it lost shows in `color`
@@ -314,9 +315,17 @@ pub struct SplatWords(pub Color);
 #[derive(Component)]
 struct SplatRing;
 
-/// Where the ring's copies stand from the words, in font pixels: one each way, and the
-/// corner below right.
-const RING: [(f32, f32); 5] = [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (1.0, 1.0)];
+/// How many font pixels the ring stands out from the words.
+const RING_WIDTH: i32 = 2;
+
+/// Where the ring's copies stand from the words, in font pixels: every spot within the ring's
+/// width but the words' own and the square's corners, which rounds it.
+fn ring() -> impl Iterator<Item = (f32, f32)> {
+    (-RING_WIDTH..=RING_WIDTH)
+        .flat_map(|x| (-RING_WIDTH..=RING_WIDTH).map(move |y| (x, y)))
+        .filter(|&(x, y)| (x, y) != (0, 0) && x.abs() + y.abs() < 2 * RING_WIDTH)
+        .map(|(x, y)| (x as f32, y as f32))
+}
 
 /// What the splats have drawn so far: for the gate to check against what the server told.
 #[derive(Resource, Default)]
@@ -503,7 +512,7 @@ fn splats(
         let mark = HitSplat { creature, at, size, anchor: None, over_fallen: 0 };
         commands.entity(layer).with_children(|layer| {
             layer.spawn((node, centred, mark, Visibility::Hidden)).with_children(|splat| {
-                for (x, y) in RING {
+                for (x, y) in ring() {
                     let at = Node { position_type: PositionType::Absolute, left: Val::Px(x * pixel), top: Val::Px(y * pixel), ..default() };
                     splat.spawn((at, text(&font.0, words.clone(), size, super::OUTLINE), TightLine, SplatRing, crate::ui::fit::Decoration));
                 }

@@ -20,25 +20,24 @@
     // the beat. Each shows `seconds`, rising `rise` meanwhile, whole for the first `fade`
     // of its time and then fading; those on one creature stack upward, newest lowest, `gap`
     // apart, at most `most` (the oldest goes early); the player's own stand `hurt_above`
-    // over the bottom of the hotbar (which Raise HUD lifts). `scale` is screen pixels a font pixel, 2 to 6: 3 (as headings) unless
-    // given.
+    // over the bottom of the hotbar (which Raise HUD lifts). `scale` is screen pixels a font pixel, 2 to 6: 4 unless given.
     splats: (
         seconds: 0.9, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 63,
         // The player's blows, by kind.
         blows: {
-            "plain": (color: (236, 76, 64)),
-            "beat": (color: (236, 76, 64), scale: 4),
-            "flourish": (color: (242, 193, 78), scale: 4),
-            "counter": (color: (242, 193, 78), scale: 4),
+            "plain": (color: (255, 90, 74)),
+            "beat": (color: (255, 90, 74), scale: 5),
+            "flourish": (color: (242, 193, 78), scale: 5),
+            "counter": (color: (242, 193, 78), scale: 5),
             "bleed": (color: (110, 206, 98)),
         },
         // Blows at the player, by what came of them (and a blow of the player's that did
         // nothing, or a hit on the player that did no harm, shows as `missed`).
         defended: {
-            "hit": (color: (236, 76, 64)),
+            "hit": (color: (255, 90, 74)),
             "missed": (color: (104, 168, 255)),
             "blocked": (color: (104, 168, 255)),
-            "perfect": (color: (104, 168, 255), scale: 4),
+            "perfect": (color: (104, 168, 255), scale: 5),
             "dodged": (color: (104, 168, 255)),
             "evaded": (color: (104, 168, 255)),
         },
