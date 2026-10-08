@@ -147,13 +147,14 @@ bounded to 16,384. Relief evaluation allocates noise state only for missing corn
 house weights and extra chances are computed once per layout, while availability and
 all random draws retain their original order. Water is searched for a house request
 only when an otherwise eligible water-dependent house can serve it. Scratch caps
-corners at 4,096, and channel groups at 16; eviction repeats
+corners at 8,192, and channel groups at 16; eviction repeats
 the same pure computation. None of this scratch storage is retained in the plan cache.
 Sealing also reuses up to 32,768 raw columns keyed by position and the requesting
 centre's exact channel-region bounds. Its four neighbours keep those same bounds;
 corner-only eviction preserves the raw values, and changing worlds clears all scratch.
-This avoids the observed raw-column eviction just before the successful ninth layout
-of a spawn village; the 16,384-point close-water memo and 4,096-corner bound stay fixed.
+The larger corner bound avoids observed close-site relief eviction; the raw-column
+bound avoids eviction just before the successful ninth layout of a spawn village.
+The close-water memo remains bounded to 16,384 points.
 Climate, biome, home level and fertility checks reuse the same full original site at
 each position, rather than sampling its five-block terrain neighbourhood repeatedly.
 Site water checks walk the same ranked qualifying prefix lazily, stopping when enough
@@ -173,11 +174,17 @@ rejects the lot, retaining the same strict and inclusive boundaries. Temporary l
 share their exact interpolation samples, capped at 16,384 points per lane with the
 original on-demand calculation above that cap. Bounds of each 16-point chunk use the
 actual rounded samples; their componentwise lower distance can exclude only chunks
-whose every point fails the same comparison. Plans retain only the original polylines.
+whose every point fails the same comparison. A bound over all chunks can reject a
+whole distant lane first. Paving clips its row-major scan to the computed projection
+extrema with conservative axis lower-distance checks over the original integer
+coordinates; it keeps the exact distance, building and palette predicates. Plans
+retain only the original polylines.
 Layout RNG draws
 for name prefixes stay in place; only the successful layout constructs its final name.
 Neighbour-name collisions compare English names, so those offers draw the same parts
-without constructing unused Japanese readings. Selected names still join both languages.
+without constructing unused Japanese readings. Only families that can spell the literal
+English candidate construct their original neighbour offers, cached on first use.
+Selected names still join both languages.
 Before attempting queued lots, a layout with an unsatisfiable mandatory catalogue
 request is rejected: its eligible houses have no positive weight even before built
 caps grow. Water is ignored in this necessary check. Successful layouts and their

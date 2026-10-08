@@ -65,6 +65,8 @@ const STREAM_MARGIN: i32 = 64;
 /// Maximum centre samples sharing one bounded planning batch.
 pub const SAMPLE_BATCH: usize = 32;
 const RAW_COLUMN_LIMIT: usize = 32_768;
+// Close site searches reached the old corner headroom and repeated relief work.
+const CORNER_LIMIT: usize = 8_192;
 
 #[cfg(test)]
 thread_local! {
@@ -812,7 +814,7 @@ impl Samples {
         }
         #[cfg(test)]
         { self.work[2] = self.work[2].max(self.corners.len()); self.work[3] = self.work[3].max(self.columns.len()); }
-        if self.corners.len() + 20 * count > 4096 {
+        if self.corners.len() + 20 * count > CORNER_LIMIT {
             self.corners = Corners::default();
             #[cfg(test)]
             { self.work[0] += 1; }
@@ -995,7 +997,7 @@ mod tests {
                     let expected = world.rivers.sample(world.stages(), x, z, false);
                     let actual = world.rivers.sample_cached(world.stages(), x, z, &mut scratch);
                     assert_eq!(actual, expected, "seed {seed} at {x},{z}, reverse {reverse}");
-                    assert!(scratch.corners.len() <= 4096);
+                    assert!(scratch.corners.len() <= CORNER_LIMIT);
                     assert!(scratch.tiers.len() <= 16);
         assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
                     if expected.submerged() && expected.body != Body::Sea { wet += 1; } else if !expected.submerged() { dry += 1; }
@@ -1006,7 +1008,7 @@ mod tests {
                         let actual = world.rivers.samples_cached(world.stages(), batch, &mut scratch);
                         let expected: Vec<_> = batch.iter().map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect();
                         assert_eq!(actual, expected, "batch {batch_size}, seed {seed}, reverse {reverse}");
-                        assert!(scratch.corners.len() <= 4096);
+                        assert!(scratch.corners.len() <= CORNER_LIMIT);
                         assert!(scratch.tiers.len() <= 16);
                         assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
                     }
@@ -1018,10 +1020,10 @@ mod tests {
                 // Populate valid relief corners near the capacity limit without
                 // creating distant river regions, then require a real batch to reset.
                 scratch.corners = Corners::default();
-                let distant: Vec<_> = (0..900).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
+                let distant: Vec<_> = (0..(CORNER_LIMIT - 20 * SAMPLE_BATCH) / 4 + 1).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
                 world.geology.reliefs_with(&distant, &mut scratch.corners);
-                assert!(scratch.corners.len() > 4096 - 20 * SAMPLE_BATCH);
-                assert!(scratch.corners.len() <= 4096, "reset fixture starts within the old single-point limit");
+                assert!(scratch.corners.len() > CORNER_LIMIT - 20 * SAMPLE_BATCH);
+                assert!(scratch.corners.len() <= CORNER_LIMIT, "reset fixture starts within the current corner limit");
                 let batch = &ordered[..SAMPLE_BATCH];
                 let actual = world.rivers.samples_cached(world.stages(), batch, &mut scratch);
                 let expected: Vec<_> = batch.iter().map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect();
@@ -1055,9 +1057,9 @@ mod tests {
         assert_eq!(scratch.corners.len(), corners, "all warm centres and neighbours need no new terrain");
         // Corner-only eviction must not discard pure raw columns or their keys.
         scratch.corners = Corners::default();
-        let distant: Vec<_> = (0..900).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
+        let distant: Vec<_> = (0..(CORNER_LIMIT - 20 * SAMPLE_BATCH) / 4 + 1).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
         world.geology.reliefs_with(&distant, &mut scratch.corners);
-        assert!(scratch.corners.len() > 4096 - 20 * SAMPLE_BATCH);
+        assert!(scratch.corners.len() > CORNER_LIMIT - 20 * SAMPLE_BATCH);
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.corners.len(), 0, "retained raw values survive the corner reset without recomputation");
         // Pressure entries are never queried. Full-batch headroom clears them first.
