@@ -585,7 +585,8 @@ and routes that failed. `river_sights` prints
 tarns, waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
 `Overworld::water_sights` finds; `tarn_census` (with `SEEDS` and `REGIONS`) counts the tarns
 around mountains and alpine meadows in and out of tarn country, their visible water area,
-and the share of the land that is lake bank. Existing high lakes and snowy peaks are counted
+and the share of the land that is lake bank. `LOTUS=n` also generates the connected shore
+of up to n visible pools per seed to count actual lotus plants and visible clusters. Existing high lakes and snowy peaks are counted
 separately; `Overworld::locate_tarn` finds a visible pool filled by the tarn rule.
 `rare_herb_census` (with `SEEDS`, `CHUNKS`, `PLACES` (up to three far places of each biome a
 world), or `WILD=a,b` or `WILDTAG=tag` with `WILDBIOMES=a,b` for other plants instead, `AT=1`

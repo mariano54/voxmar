@@ -86,8 +86,13 @@ impl Overworld {
                     }
                 }
             }
-            if wet.len() >= 20 {
-                return wet.into_iter().min_by_key(|p| ((p.xz() - pit.xz()).length_squared(), p.x, p.z));
+            let water: std::collections::HashSet<IVec2> = wet.iter().map(|p| p.xz()).collect();
+            let pool = super::lake_component(pit.xz(), 8, |p| water.contains(&p));
+            if pool.len() >= 20
+                && let Some(at) = pool.into_iter().filter(|p| (*p - centre).abs().max_element() <= radius)
+                    .min_by_key(|p| ((*p - pit.xz()).length_squared(), p.x, p.y))
+            {
+                return Some(IVec3::new(at.x, pit.y, at.y));
             }
         }
         None

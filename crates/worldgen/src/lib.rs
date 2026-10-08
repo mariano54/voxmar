@@ -1846,17 +1846,33 @@ mod tests {
         Some((columns, placed))
     }
 
-    /// Plants gathered into patches: each joins the first patch with a plant within four
-    /// blocks of it.
+    /// Visible plant clusters: connected components with neighbouring plants within
+    /// four blocks. Merge groups a new plant bridges, so visit order cannot split one.
     fn patches(placed: &[(i32, i32)]) -> Vec<Vec<(i32, i32)>> {
         let mut patches: Vec<Vec<(i32, i32)>> = Vec::new();
         for &p in placed {
-            match patches.iter().position(|g| g.iter().any(|q| (q.0 - p.0).abs() <= 4 && (q.1 - p.1).abs() <= 4)) {
-                Some(g) => patches[g].push(p),
-                None => patches.push(vec![p]),
+            let mut group = vec![p];
+            let mut i = 0;
+            while i < patches.len() {
+                if patches[i].iter().any(|q| (q.0 - p.0).abs() <= 4 && (q.1 - p.1).abs() <= 4) {
+                    group.extend(patches.remove(i));
+                } else {
+                    i += 1;
+                }
             }
+            patches.push(group);
         }
         patches
+    }
+
+    #[test]
+    fn plant_clusters_merge_bridges_in_any_order() {
+        let plants = [(0, 0), (0, 8), (4, 4)];
+        for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
+            let placed: Vec<_> = order.into_iter().map(|i| plants[i]).collect();
+            assert_eq!(patches(&placed).len(), 1, "split bridge in {placed:?}");
+        }
+        assert_eq!(patches(&[(0, 0), (0, 9), (4, 4)]).len(), 2);
     }
 
     /// Where in a world plant counts look for a biome: around the nearest place of it to each
@@ -1942,53 +1958,53 @@ mod tests {
         plant_counts(seeds, chunks, &herbs, &biomes).into_iter().filter(|r| pairs.contains(&(r.0.clone(), r.1.clone()))).collect()
     }
 
-    /// The actual lotus plants on one visible pool's connected shore. Follow lake water
-    /// and banks at its level, rather than count another pool in the same bounding box.
-    /// None means that the boundary cut the pool, so its occupancy would be incomplete.
+    /// Actual lotus on the selected wet component's shore, assigned to the nearest wet
+    /// column at its level (ties by x, z). Other same-level pools compete for banks but
+    /// cannot be crossed through dry shore. Skip a pool if its water or bank attribution
+    /// reaches the sampling edge, where another nearer wet column might be unseen.
     fn tarn_lotus(world: &Overworld, pit: IVec2, water: i32, reach: i32) -> Option<(usize, usize, usize, IVec2)> {
         let sampler = world.dense_sampler(pit - reach, pit + reach);
-        let wet = |p: IVec2| {
-            let s = sampler.site(p.x, p.y);
-            s.body == Body::Lake && s.water == water && s.height < water
-        };
-        let start = (pit.y - 8..=pit.y + 8).flat_map(|z| (pit.x - 8..=pit.x + 8).map(move |x| IVec2::new(x, z)))
-            .filter(|&p| wet(p)).min_by_key(|p| ((*p - pit).length_squared(), p.x, p.y))?;
-        let mut seen = std::collections::HashSet::new();
-        let mut todo = vec![start];
+        let mut wet = Vec::new();
         let mut banks = Vec::new();
-        let mut water_columns = 0;
-        let mut anchor = start;
-        while let Some(p) = todo.pop() {
-            if !seen.insert(p) {
-                continue;
-            }
-            let s = sampler.site(p.x, p.y);
-            if s.body != Body::Lake || s.water != water || s.height > water + 2 {
-                continue;
-            }
-            if (p - pit).abs().max_element() >= reach {
-                return None;
-            }
-            if s.height < water {
-                water_columns += 1;
-                if (p.x, p.y) < (anchor.x, anchor.y) {
-                    anchor = p;
+        for z in pit.y - reach..=pit.y + reach {
+            for x in pit.x - reach..=pit.x + reach {
+                let site = sampler.site(x, z);
+                if site.body != Body::Lake || site.water != water {
+                    continue;
                 }
-            } else {
-                banks.push((p, s.height));
+                let p = IVec2::new(x, z);
+                if site.height < water {
+                    wet.push(p);
+                } else if site.height <= water + 2 && site.height + 1 < WORLD_HEIGHT_FOR_TESTS {
+                    banks.push((p, site.height));
+                }
             }
-            todo.extend([p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y]);
         }
-        if water_columns < 20 {
+        let wet_set: std::collections::HashSet<_> = wet.iter().copied().collect();
+        let pool = water::lake_component(pit, reach, |p| wet_set.contains(&p));
+        if pool.len() < 20 || pool.iter().any(|p| (*p - pit).abs().max_element() >= reach) {
             return None;
         }
-        let mut positions: Vec<ColumnPos> = banks.iter().map(|&(p, _)| ColumnPos::of_block(IVec3::new(p.x, 0, p.y))).collect();
+        let anchor = pool[0];
+        let component: std::collections::HashSet<_> = pool.iter().copied().collect();
+        let mut shore = Vec::new();
+        for (p, height) in banks {
+            let nearest = wet.iter().min_by_key(|q| ((**q - p).length_squared(), q.x, q.y)).unwrap();
+            if component.contains(nearest) {
+                let margin = reach + 1 - (p - pit).abs().max_element();
+                if (*nearest - p).length_squared() >= margin * margin {
+                    return None;
+                }
+                shore.push((p, height));
+            }
+        }
+        let mut positions: Vec<ColumnPos> = shore.iter().map(|&(p, _)| ColumnPos::of_block(IVec3::new(p.x, 0, p.y))).collect();
         positions.sort_unstable_by_key(|p| (p.0.x, p.0.y));
         positions.dedup();
         let area = generate_columns(world, &positions);
         let looks = plant_looks(&["sky_lotus"]);
         let mut placed = Vec::new();
-        for (p, height) in banks {
+        for (p, height) in shore {
             let at = IVec3::new(p.x, height + 1, p.y);
             let pos = ColumnPos::of_block(at);
             let i = positions.binary_search_by_key(&(pos.0.x, pos.0.y), |p| (p.0.x, p.0.y)).unwrap();
@@ -1997,7 +2013,7 @@ mod tests {
             }
         }
         placed.sort_unstable();
-        Some((water_columns, placed.len(), patches(&placed).len(), anchor))
+        Some((pool.len(), placed.len(), patches(&placed).len(), anchor))
     }
 
     /// Tarns and lake banks in mountains and their alpine meadows (and snowy peaks, whose
@@ -2023,6 +2039,7 @@ mod tests {
         // LOTUS=n also measures n visible pools a seed, after actual chunk generation.
         let lotus: usize = std::env::var("LOTUS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
         let mut lotus_counts = Vec::new();
+        let mut clipped = 0;
         const STEP: i32 = 8;
         // Stream-tier cells in a lake under which a pit is small, not big (drainage `min_area`).
         const TARN_CELLS: usize = 48;
@@ -2087,25 +2104,30 @@ mod tests {
                     let sampler = world.dense_sampler(pit - reach, pit + reach);
                     // The tarn's generated water: its still-lake columns at its own level, which
                     // no other tarn has claimed.
-                    let mut wet = 0usize;
+                    let mut water_columns = std::collections::HashSet::new();
                     for z in pit.y - reach..=pit.y + reach {
                         for x in pit.x - reach..=pit.x + reach {
                             let site = sampler.site(x, z);
-                            if site.body == Body::Lake && site.height < site.water && site.water == water && waters.insert((x, z)) {
-                                wet += 1;
+                            if site.body == Body::Lake && site.height < site.water && site.water == water {
+                                water_columns.insert(IVec2::new(x, z));
                             }
                         }
+                    }
+                    let pool = water::lake_component(pit, reach, |p| water_columns.contains(&p));
+                    let wet = if is_tarn { pool.iter().filter(|p| waters.insert((p.x, p.y))).count() } else { pool.len() };
+                    if is_tarn && pool.iter().any(|p| (*p - pit).abs().max_element() >= reach) {
+                        clipped += 1;
                     }
                     if is_tarn {
                         assert_eq!(c, 1, "seed {seed}: a tarn outside its country at {pit}");
                         sizes[b][c].push(wet);
                         if b < 2 && wet >= 20 && lotus_sampled < lotus
-                            && let Some((water_columns, plants, groups, anchor)) = tarn_lotus(&world, pit, water, reach)
+                            && let Some((water_columns, plants, groups, anchor)) = tarn_lotus(&world, pit, water, reach + 32)
                             && lotus_water.insert((water, anchor))
                         {
                             lotus_sampled += 1;
                             lotus_counts.push((plants, groups));
-                            println!("  lotus seed {seed} pool {}, {}: {water_columns} connected water columns, {plants} actual plants in {groups} shore patches", pit.x, pit.y);
+                            println!("  lotus seed {seed} pool {}, {}: {water_columns} connected water columns, {plants} actual plants in {groups} visible shore clusters", pit.x, pit.y);
                         }
                     }
                     if std::env::var("AT").is_ok() && b < 2 {
@@ -2136,8 +2158,8 @@ mod tests {
             let groups: usize = lotus_counts.iter().map(|p| p.1).sum();
             let empty = lotus_counts.iter().filter(|p| p.0 == 0).count();
             let distribution: Vec<usize> = (0..=4).map(|n| lotus_counts.iter().filter(|p| p.1.min(4) == n).count()).collect();
-            println!("lotus patches per pool (0, 1, 2, 3, 4+): {distribution:?}");
-            println!("lotus occupancy: {} visible pools, {:.2} patches and {:.2} plants per pool, {empty} empty; {:.2} plants per patch", lotus_counts.len(), groups as f64 / lotus_counts.len() as f64, plants as f64 / lotus_counts.len() as f64, plants as f64 / groups.max(1) as f64);
+            println!("lotus visible clusters per pool (0, 1, 2, 3, 4+): {distribution:?}");
+            println!("lotus occupancy: {} visible pools, {:.2} clusters and {:.2} plants per pool, {empty} empty; {:.2} plants per cluster", lotus_counts.len(), groups as f64 / lotus_counts.len() as f64, plants as f64 / lotus_counts.len() as f64, plants as f64 / groups.max(1) as f64);
         }
         for (b, name) in names.iter().enumerate() {
             let land: u64 = tally[b].iter().map(|t| t[0]).sum();
@@ -2153,6 +2175,7 @@ mod tests {
                 );
             }
         }
+        println!("tarn wet footprints clipped at sampling edge: {clipped} (those sizes are lower bounds)");
         // The tarns themselves, by the water generated for each (the pit counts above are
         // pits; a tarn is only seen if its water is): how many hold at least 20 blocks, and
         // the spread of sizes, with the visible ones a square kilometre.

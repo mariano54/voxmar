@@ -811,10 +811,39 @@ fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
     sample
 }
 
+/// The four-neighbour component of lake water nearest a pit. Dry banks cannot bridge
+/// pools. The bounded result is a lower bound when water reaches the sampling edge.
+pub(crate) fn lake_component(pit: IVec2, reach: i32, wet: impl Fn(IVec2) -> bool) -> Vec<IVec2> {
+    let near = reach.min(8);
+    let start = (pit.y - near..=pit.y + near).flat_map(|z| (pit.x - near..=pit.x + near).map(move |x| IVec2::new(x, z)))
+        .filter(|&p| wet(p)).min_by_key(|p| ((*p - pit).length_squared(), p.x, p.y));
+    let Some(start) = start else { return Vec::new() };
+    let mut seen = std::collections::HashSet::new();
+    let mut todo = vec![start];
+    let mut out = Vec::new();
+    while let Some(p) = todo.pop() {
+        if (p - pit).abs().max_element() > reach || !seen.insert(p) || !wet(p) {
+            continue;
+        }
+        out.push(p);
+        todo.extend([p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y]);
+    }
+    out.sort_unstable_by_key(|p| (p.x, p.y));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dials::WorldDials;
+
+    /// A dry saddle between same-level lakes does not join them into one visible pool.
+    #[test]
+    fn lake_components_do_not_cross_dry_banks() {
+        let wet = |p: IVec2| p.y == 0 && ((0..=2).contains(&p.x) || (4..=24).contains(&p.x));
+        assert_eq!(lake_component(IVec2::ZERO, 32, wet), vec![IVec2::new(0, 0), IVec2::new(1, 0), IVec2::new(2, 0)]);
+        assert_eq!(lake_component(IVec2::new(4, 0), 32, wet).len(), 21);
+    }
 
     /// The game gate's seed has a real, visible pool near its nearest mountains. The
     /// query must return the tarn rule's water, and disappear when that rule is absent.
