@@ -2120,6 +2120,9 @@ mod tests {
         let wet_set: std::collections::HashSet<_> = wet.iter().copied().collect();
         let pool = water::lake_component(pit, reach, |p| wet_set.contains(&p));
         if pool.len() < 20 || pool.iter().any(|p| (*p - pit).abs().max_element() >= reach) {
+            if std::env::var("AT").is_ok() {
+                println!("  lotus pool at {pit} not measured: {} water columns or sampling-edge water (reach {reach})", pool.len());
+            }
             return None;
         }
         let anchor = pool[0];
@@ -2130,6 +2133,9 @@ mod tests {
             if component.contains(nearest) {
                 let margin = reach + 1 - (p - pit).abs().max_element();
                 if (*nearest - p).length_squared() >= margin * margin {
+                    if std::env::var("AT").is_ok() {
+                        println!("  lotus pool at {pit} not measured: bank {p} attribution reaches sampling edge (reach {reach})");
+                    }
                     return None;
                 }
                 shore.push((p, height));
@@ -2316,7 +2322,7 @@ mod tests {
                         {
                             lotus_sampled += 1;
                             lotus_counts.push((plants, groups));
-                            println!("  lotus seed {seed} pool {}, {}: {water_columns} connected water columns, {plants} actual plants in {groups} visible shore clusters", pit.x, pit.y);
+                            println!("  lotus seed {seed} pool {}, {}: {water_columns} connected water columns, {plants} actual plants in {groups} visible shore clusters; canonical {anchor}, water {water}", pit.x, pit.y);
                         }
                     }
                     if std::env::var("AT").is_ok() && b < 2 {
