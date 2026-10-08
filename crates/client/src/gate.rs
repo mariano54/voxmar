@@ -422,7 +422,7 @@ struct Gate {
     ticks_changed: f32,
     server_stopped: bool,
     /// The step last frame, and the failures by then: a step that fails lets go of every key
-    /// and button (a step that passes may hand one on, as digging hands walking on).
+    /// and button (a step that passes may hand one on).
     last_step: Step,
     failures_then: usize,
     /// The player's health last frame, and whether a death was reported: the session must
@@ -1037,13 +1037,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             smooth(gate, "dig", Step::Dig, None);
             gate.count_before = dropped_count(world, gate);
             look(world, 0.0, 0.0);
-            key(world, KeyCode::KeyW, true);
             gate.next(Step::Collect, now);
         }
         Step::Collect => {
-            if since > 1.0 {
-                key(world, KeyCode::KeyW, false);
-            }
+            key(world, KeyCode::KeyW, since <= 1.0);
             let wanted = gate.count_before + gate.dug.len() as u32;
             let count = dropped_count(world, gate);
             // Breaking pops items out with a random kick, and one from the top block can
