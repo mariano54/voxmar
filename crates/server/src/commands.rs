@@ -100,6 +100,14 @@ impl Server {
         }
     }
 
+    /// Tells `player` that what they tried was refused, and why: the interface shows it
+    /// with its other refusals rather than as a console line.
+    pub(crate) fn refuse(&self, player: PlayerId, why: Words) {
+        if let Some(player) = self.players.get(&player) {
+            player.connection.send(ServerMessage::Refused { why });
+        }
+    }
+
     /// Words in English, for the server's own log and console.
     pub(crate) fn english(&self, words: &Words) -> String {
         self.content.english.render(words, &self.content.blocks)

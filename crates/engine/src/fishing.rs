@@ -347,6 +347,21 @@ mod tests {
         assert_eq!(content.fishing.rules.outlevelled, 15.0);
     }
 
+    /// A fish's item carries its catch's rarity as its label (cooking then carries it to
+    /// the cooked fish, server tests/loot_rarity.rs): the glimmer koi is as very rare in
+    /// the hand as on the line.
+    #[test]
+    fn a_fish_is_labelled_as_rare_as_its_catch() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap();
+        let wrong: Vec<String> = content
+            .fishing
+            .iter()
+            .filter(|catch| content.blocks.def(catch.item).rarity != catch.def.rarity)
+            .map(|catch| format!("{} bites {:?} but is labelled {:?}", catch.def.item, catch.def.rarity, content.blocks.def(catch.item).rarity))
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
     /// Water takes its climate from its temperature, by bands that must rise.
     #[test]
     fn water_takes_its_climate_from_its_temperature() {
