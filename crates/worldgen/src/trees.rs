@@ -1104,23 +1104,29 @@ mod tests {
         let ground = |_: i32, _: i32| 100;
         for obstacle in [BlockId::AIR, registry.expect("base:short_grass"), registry.expect("base:water"), wood] {
             for depth in [SINK, SINK + 1] {
-                let mut blocks = Blocks::empty(IVec3::ZERO, &[], &soft, &earth);
-                for x in 16..=19 {
-                    blocks.set(IVec3::new(x, 100 - depth, 16), grass);
-                    blocks.set(IVec3::new(x, 99, 16), obstacle);
-                }
-                let mut parts = TreeParts::default();
-                let mut g = Grower { blocks: &mut blocks, seed: 7, base: IVec3::new(16, 101, 16), parts: &mut parts, ground: &ground };
-                assert_eq!(g.rests(IVec3::new(17, 100, 16)), depth == SINK && obstacle != wood, "{obstacle:?} at depth {depth}");
-                g.sink(IVec3::new(17, 100, 16), wood);
-                g.flare(&[IVec3::new(16, 101, 16)], 1.0, wood);
-                g.root_line(Vec3::new(16.5, 104.0, 16.5), Vec3::new(19.5, 101.0, 16.5), wood);
-                if depth > SINK || obstacle == wood {
-                    assert!(g.parts.logs.is_empty(), "roots over {obstacle:?} in a pit: {:?}", g.parts.logs);
-                } else {
-                    assert!(!g.parts.logs.is_empty(), "shallow dip lost its roots");
-                    if obstacle != wood {
-                        assert_eq!(g.blocks.get(IVec3::new(17, 101 - SINK, 16)), wood, "sink did not reach its floor");
+                for operation in ["sink", "flare", "span"] {
+                    let mut blocks = Blocks::empty(IVec3::ZERO, &[], &soft, &earth);
+                    for z in 0..32 {
+                        for x in 0..32 {
+                            blocks.set(IVec3::new(x, 100 - depth, z), grass);
+                            blocks.set(IVec3::new(x, 99, z), obstacle);
+                        }
+                    }
+                    let mut parts = TreeParts::default();
+                    let mut g = Grower { blocks: &mut blocks, seed: 7, base: IVec3::new(16, 101, 16), parts: &mut parts, ground: &ground };
+                    assert_eq!(g.rests(IVec3::new(17, 100, 16)), depth == SINK && obstacle != wood, "{operation}: {obstacle:?} at depth {depth}");
+                    match operation {
+                        "sink" => g.sink(IVec3::new(17, 100, 16), wood),
+                        "flare" => g.flare(&[IVec3::new(16, 101, 16)], 1.0, wood),
+                        _ => g.root_line(Vec3::new(16.5, 101.0, 16.5), Vec3::new(19.5, 101.0, 16.5), wood),
+                    }
+                    if depth > SINK || obstacle == wood {
+                        assert!(g.parts.logs.is_empty(), "{operation}: roots over {obstacle:?} in a pit: {:?}", g.parts.logs);
+                    } else {
+                        assert!(!g.parts.logs.is_empty(), "{operation}: shallow dip lost its roots");
+                        for cell in &g.parts.logs {
+                            assert_eq!(g.blocks.get(IVec3::new(cell.x, 101 - SINK, cell.z)), wood, "{operation}: root column did not reach its floor");
+                        }
                     }
                 }
             }
