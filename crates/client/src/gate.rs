@@ -4765,9 +4765,12 @@ const STRUCK_SHOWN: [(u16, voxmar_engine::combat::Blow); 5] = {
     use voxmar_engine::combat::Blow;
     [(4, Blow::Plain), (6, Blow::Beat), (0, Blow::Plain), (7, Blow::Counter), (11, Blow::Flourish)]
 };
-const HURT_SHOWN: [(u16, voxmar_engine::combat::Defended); 7] = {
+/// At most `splats.most` (6) at once, as the splats on one target are capped: more would push
+/// the oldest off the player's stack before the check reads it. Dodged shares Evaded's look
+/// and words' code path, so it is left out.
+const HURT_SHOWN: [(u16, voxmar_engine::combat::Defended); 6] = {
     use voxmar_engine::combat::Defended;
-    [(5, Defended::Hit), (0, Defended::Missed), (2, Defended::Blocked), (0, Defended::Blocked), (0, Defended::Perfect), (0, Defended::Dodged), (0, Defended::Evaded)]
+    [(5, Defended::Hit), (0, Defended::Hit), (2, Defended::Blocked), (0, Defended::Blocked), (0, Defended::Perfect), (0, Defended::Evaded)]
 };
 
 /// The splats drawn now, by their words and colour (without its fade).
