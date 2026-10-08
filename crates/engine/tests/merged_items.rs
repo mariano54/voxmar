@@ -64,8 +64,13 @@ fn merged_away_plants_drop_the_merged_item_and_are_named_nowhere_as_items() {
     let listed: Vec<String> = MERGES.iter().flat_map(|(_, plants)| plants.iter().map(|p| format!("base:{p}"))).collect();
     for id in blocks.ids() {
         let def = blocks.def(id);
-        if def.has_tag("merged") && !listed.contains(&def.name) && blocks.info(id).drops != id && !blocks.placement_form(id) {
+        if def.has_tag("merged") && !listed.contains(&def.name) && !blocks.placement_form(id) {
             wrong.push(format!("{} is tagged merged but not in the plan's list", def.name));
+        }
+        // Nothing drops a merged-away plant (the registry refuses to load such content too).
+        let dropped = blocks.info(id).drops;
+        if blocks.merged_away(dropped) {
+            wrong.push(format!("{} drops merged-away {}", def.name, blocks.def(dropped).name));
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));

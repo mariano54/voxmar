@@ -818,6 +818,28 @@ fn what_chests_and_the_ground_held_of_merged_plants_comes_back_merged() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// The creative catalogue is not trusted: a merged-away plant asked for is the item it merged
+/// into, and what no player could hold (a crop's stage, a fluid's other state) is not given.
+/// `/clear oregano` clears that item too.
+#[test]
+fn creative_takes_are_checked_and_merged_plants_are_their_item() {
+    let mut client = Client::join();
+    client.ok("/gamemode creative");
+    client.ok("/clear");
+    let id = |client: &Client, name: &str| client.content.blocks.expect(name);
+    let (oregano, herbs, stage) = (id(&client, "base:oregano"), id(&client, "base:kitchen_herbs"), id(&client, "base:wheat_crop_1"));
+    let flowing = client.content.blocks.ids().find(|&b| client.content.blocks.fluid(b).is_some() && !client.content.blocks.holdable(b)).expect("a fluid state");
+    for item in [stage, flowing, oregano] {
+        client.connection.send(ClientMessage::Take { item, count: 2, held: false });
+    }
+    client.settle();
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == herbs && s.count == 2));
+    let held: Vec<_> = client.inventory.slots.iter().flatten().map(|s| s.item).collect();
+    assert_eq!(held, [herbs], "a crop stage, a fluid state or a merged plant was given as itself: {held:?}");
+    client.ok("/clear oregano");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().count() == 0);
+}
+
 #[test]
 fn game_mode_decides_flight_and_the_host_is_admin() {
     use voxmar_server::save::{GameMode, WorldMeta, WorldSave};
@@ -1496,6 +1518,14 @@ fn picking_any_wild_herb_gives_kitchen_herbs_and_the_herb_regrows() {
     // One item for every wild herb: the oregano itself is not what is handed out.
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == herbs && s.count == 1));
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == oregano), "picked oregano is still an item of its own");
+    // The journal found the item, not the plant; `/give oregano` gives the item.
+    use voxmar_engine::journal::Page;
+    client.pump_until(|c| c.journal.get(Page::Plants, "base:kitchen_herbs").is_some());
+    assert!(client.journal.get(Page::Plants, "base:oregano").is_none(), "the journal found a plant that is never listed");
+    client.ok("/clear");
+    client.ok("/give oregano 3");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == herbs && s.count == 3));
+    assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == oregano), "/give oregano handed out the plant");
     // The wild spot grows the same plant back.
     client.ok("/grow");
     client.pump_until(|c| c.world.block(at) == Some(oregano));
@@ -2862,14 +2892,15 @@ fn blows_on_the_beat_build_to_a_flourish() {
     client.pump_until(|c| c.creatures[&id].position.with_y(0.0).distance(c.position.with_y(0.0)) < 2.0);
     // A sword's beat is 0.6 s after each swing starts: the first click starts the meter, and
     // each next one comes a little before the beat, in the buffer, so it is held for it.
+    // Each is stamped exactly when it is due (`propose_at`, the clock the server times
+    // swings by), however late a busy machine lets this thread send it. Wait for each
+    // answered blow before the next click: the server holds only one pending swing.
     let start = Instant::now();
     for k in 0..5u32 {
         let due = start + Duration::from_secs_f32(if k == 0 { 0.0 } else { 0.6 * k as f32 - 0.06 });
-        while Instant::now() < due {
-            client.pump_until(|_| true);
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        client.propose("core:attack", ActionTarget::Creature(id));
+        client.propose_at("core:attack", ActionTarget::Creature(id), due);
+        client.pump_until(|c| c.kinds.len() > k as usize || !c.creatures.contains_key(&id));
+        assert!(client.creatures.contains_key(&id), "the bear died before the flourish");
     }
     client.pump_until(|c| c.kinds.len() >= 5 || !c.creatures.contains_key(&id));
     assert_eq!(client.kinds, [Blow::Plain, Blow::Beat, Blow::Beat, Blow::Beat, Blow::Flourish], "damage {:?}", client.damage);
@@ -3235,28 +3266,31 @@ fn a_dodge_waits_longer_in_heavier_armour() {
     client.ok("/give chainmail_shirt 1");
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == shirt));
     client.wait_server(1);
-    // Two dodges 1.0 s apart (the fight's clock is the wall's): unarmoured (light, 1.0 s
-    // less the 0.1 a client's clock may run ahead) the second is taken; in chainmail
-    // (medium, 1.2 s less 0.1) it is refused and puts us back.
-    let twice = |client: &mut Client| {
+    // Two pairs of dodges, the pairs 1.0 s apart by the clock the server judges dodges by
+    // (`propose_at`: exactly, however busy the machine). Of each pair the second is refused
+    // by the first's cooldown, and puts us back. Unarmoured (light, 1.0 s less the 0.1 a
+    // client's clock may run ahead) the second pair's first is taken; in chainmail (medium,
+    // 1.2 s less 0.1) it is refused too. Returns whether it was.
+    let twice = |client: &mut Client, first: Instant| {
         let before = client.teleports;
-        client.propose("core:dodge", ActionTarget::None);
-        let first = Instant::now();
-        // One at once is refused by the first's cooldown: the first was taken.
-        client.propose("core:dodge", ActionTarget::None);
-        client.pump_until(|c| c.teleports > before);
-        client.pump_until(|_| first.elapsed() > Duration::from_millis(1000));
-        let refused = !dodge_taken(client);
-        assert_eq!(client.teleports - before, if refused { 3 } else { 2 }, "the first dodge was refused");
-        // Past any cooldown before the next pair.
-        client.wait_server(2);
-        refused
+        let second = first + Duration::from_millis(1000);
+        for at in [first, second] {
+            client.propose_at("core:dodge", ActionTarget::None, at);
+            client.propose_at("core:dodge", ActionTarget::None, at);
+        }
+        // All four handled, and the refusals' teleports with them.
+        client.settle();
+        let refused = client.teleports - before;
+        assert!(matches!(refused, 2 | 3), "of four dodges, {refused} were refused (the first was refused, or a second at once was not)");
+        refused == 3
     };
-    assert!(!twice(&mut client), "unarmoured, a dodge 1.0 s after the last was refused");
+    let first = Instant::now();
+    assert!(!twice(&mut client, first), "unarmoured, a dodge 1.0 s after the last was refused");
     let from = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == shirt)).unwrap();
     client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + 1) as u8, count: 1 });
     client.pump_until(|c| c.inventory.worn[1].is_some_and(|s| s.item == shirt));
-    assert!(twice(&mut client), "in chainmail, a dodge 1.0 s after the last was taken");
+    // Three seconds after the first pair, by the same clock, clears either cooldown.
+    assert!(twice(&mut client, first + Duration::from_secs(3)), "in chainmail, a dodge 1.0 s after the last was taken");
 }
 
 #[test]
