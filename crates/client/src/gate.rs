@@ -673,6 +673,17 @@ fn run(world: &mut World) {
     world.insert_resource(gate);
 }
 
+/// The workshop's machine phases that play only in the full gate, and the seconds each
+/// adds to the session there (measured on a loaded Mac, with room): the session's limits,
+/// `TIME_LIMIT` and `WALL_LIMIT`, grow by their sum in the full gate, so a phase dropped
+/// from this list takes its time with it.
+const FULL_ONLY_PHASES: [(&str, f32); 3] = [("MV washer", 120.0), ("bloomery and logistics", 160.0), ("iron age", 140.0)];
+
+/// What the full gate's session limits allow on top of the landing gate's.
+fn full_allowance() -> f32 {
+    if full_gate() { FULL_ONLY_PHASES.iter().map(|(_, seconds)| seconds).sum() } else { 0.0 }
+}
+
 /// Whether this is `tools/gate --full`, which sets `VOXMAR_GATE_FULL=1`: the steps too long
 /// for every landing (the workshop's later machine phases) play only then.
 fn full_gate() -> bool {
@@ -735,8 +746,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         let notice = world.resource::<Notice>().0.clone().unwrap_or_default();
         return Err(format!("left the game for {screen:?}: {notice}"));
     }
-    if now > TIME_LIMIT {
-        return Err(format!("still at {:?} after {TIME_LIMIT}s", gate.step));
+    let time_limit = TIME_LIMIT + full_allowance();
+    if now > time_limit {
+        return Err(format!("still at {:?} after {time_limit}s", gate.step));
     }
     // Every wait in the world counts the server's seconds, so these end a session whose
     // server stopped (its ticks standing still while the game goes on) or that takes too
@@ -749,8 +761,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
             gate.ticks_seen, gate.server_now, gate.step
         ));
     }
-    if gate.wall > WALL_LIMIT {
-        return Err(format!("still at {:?} after {WALL_LIMIT} s of the wall clock", gate.step));
+    let wall_limit = WALL_LIMIT + full_allowance();
+    if gate.wall > wall_limit {
+        return Err(format!("still at {:?} after {wall_limit} s of the wall clock", gate.step));
     }
     let limit = match gate.step {
         Step::Load => LOAD_LIMIT,

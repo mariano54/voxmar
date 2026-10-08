@@ -132,7 +132,9 @@ The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loa
   that stops is caught all the same: the session fails "the server stopped" once its
   ticks stand still for `SERVER_SILENT` (60 s) of the wall clock, and on `WALL_LIMIT`
   (15 min) of it in all, with frames longer than 10 s (memcap stopping the run while
-  Mariano plays) counted as 10 s.
+  Mariano plays) counted as 10 s. In the full gate the session's limits (`TIME_LIMIT`,
+  `WALL_LIMIT`) grow by the seconds its full-only workshop phases take
+  (`FULL_ONLY_PHASES` in gate.rs, 420 s for the three machine phases now).
 - Propose actions (clicks that ask the server for something) at most every few server
   seconds while waiting, or once and then wait: `SERVER_LAG` stalls 600 ms on every other
   proposal, so a step proposing every 30 frames starves the server of ticks and the
