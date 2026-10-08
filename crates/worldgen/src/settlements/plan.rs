@@ -131,9 +131,9 @@ fn solid(g: &GeoSample) -> bool {
     g.form.shape.is_none() && g.cavity.is_none()
 }
 
-/// The ground, sampled once per position.
 const GROUND_SAMPLE_LIMIT: usize = 32_768;
 
+/// The ground, sampled once per position.
 struct Ground<'a> {
     land: &'a dyn Land,
     seen: FxHashMap<IVec2, GeoSample>,
@@ -474,7 +474,8 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
     let mut examined = 0;
     for (at, fresh) in candidates {
         examined += 1;
-        if !habitable(ctx, at) {
+        let ground_site = ctx.world.site(at.x, at.y);
+        if !habitable(ctx, &ground_site) {
             continue;
         }
         // Not beside a sinkhole or a ravine, which would open under its buildings.
@@ -486,7 +487,7 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         // roll is the square's, made once on its best site: a miss leaves the square empty
         // rather than trying a milder spot, which would lift the rate in cold and hot land
         // above `taper`.
-        let climate = site.climate(ctx.world.site(at.x, at.y).temperature) * site.level(ctx.world.level_at(at.x, at.y));
+        let climate = site.climate(ground_site.temperature) * site.level(ctx.world.biomes().get(ground_site.home).level);
         if spawn.is_none() {
             if unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
                 give_up::<()>(2);
@@ -509,21 +510,20 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
 /// it tries laying out, before it is left empty.
 const SPAWN_TRIES: usize = 8;
 
-/// Whether a settlement may stand at `at`: in no biome it avoids, and within its
-/// temperatures.
-fn habitable(ctx: &Ctx, at: IVec2) -> bool {
-    let biome = ctx.world.biome_at(at.x, at.y);
+/// Whether a settlement may stand on this original site: in no biome it avoids, and
+/// within its temperatures. The same full site also supplies fertility and home level.
+fn habitable(ctx: &Ctx, site: &crate::Site) -> bool {
+    let biome = ctx.world.biomes().get(site.biome);
     let (cold, hot) = ctx.def.site.temperature;
-    !ctx.def.avoid.iter().any(|t| biome.has_tag(t)) && (cold..=hot).contains(&ctx.world.site(at.x, at.y).temperature)
+    !ctx.def.avoid.iter().any(|t| biome.has_tag(t)) && (cold..=hot).contains(&site.temperature)
 }
 
 /// The character of a settlement at `at`, each lever mixed of luck and its site as
 /// `levers` in settlements.ron says: by default wealth from fertile soil, fresh water and
 /// gentle ground, age from luck alone, order and crowding following wealth a little, and
 /// green from the plants around.
-fn levers(ctx: &Ctx, at: IVec2, fresh: bool, rng: &mut Rng) -> Levers {
+fn levers(ctx: &Ctx, site: &crate::Site, fresh: bool, rng: &mut Rng) -> Levers {
     let def = &ctx.def.rules.levers;
-    let site = ctx.world.site(at.x, at.y);
     let flat = 1.0 - (site.steepness / def.steep).min(1.0);
     let forest = site.forest.max(site.vegetation * def.undergrowth);
     let mut l = [0.0; 5];
@@ -861,8 +861,8 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     #[cfg(test)]
     let time = phase_start();
     let def = ctx.def;
-    let mut levers = levers(ctx, centre, fresh, &mut rng);
     let ground_site = ctx.world.site(centre.x, centre.y);
+    let mut levers = levers(ctx, &ground_site, fresh, &mut rng);
     let biome = ctx.world.biomes().get(ground_site.biome);
     // Whose it is: a family of the land round, its axes and its mutations, from streams
     // of their own so the rolls below are the ones they were.
@@ -1405,10 +1405,11 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let mut fertility = 0.0;
     for lot in &lots {
         let middle = (lot.rect.min + lot.rect.max) / 2;
-        if !habitable(ctx, middle) {
+        let ground_site = ctx.world.site(middle.x, middle.y);
+        if !habitable(ctx, &ground_site) {
             return give_up(8);
         }
-        fertility += ctx.world.site(middle.x, middle.y).fertility;
+        fertility += ground_site.fertility;
     }
     let least = def.site.poor.iter().filter(|(tag, _)| biome.has_tag(tag)).map(|(_, &f)| f).fold(def.site.fertility, f32::min);
     if fertility / (lots.len() as f32) < least {
