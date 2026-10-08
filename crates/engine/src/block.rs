@@ -1229,6 +1229,13 @@ impl BlockRegistry {
         self.by_name.get(name).copied()
     }
 
+    /// The item an older save's `name` is today: what a block tagged `merged` drops (a
+    /// wild oregano picked in an old world is kitchen herbs now), else the block itself.
+    pub fn item_named(&self, name: &str) -> Option<BlockId> {
+        let id = self.id(name)?;
+        Some(if self.def(id).has_tag("merged") { self.info[id.0 as usize].drops } else { id })
+    }
+
     /// Whether the block is only ever a form another takes when placed, never held: another
     /// look of a block (`variant_of`), a block turned to face east, south or west or upside
     /// down, or what a block becomes against a wall (a wall torch). Catalogues list the

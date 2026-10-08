@@ -282,18 +282,22 @@ enum Move {
 
 /// Predicts a move and proposes it to the server, which checks it by the same rules.
 fn send(net: &Net, actions: &Actions, inventory: &mut Inventory, action: Move) {
-    let (moved, name, target) = match action {
-        Move::Items { from, to, count } => {
-            (inventory.move_items(from, to, count), "core:transfer", ActionTarget::Slots { from: from as u8, to: to as u8, count })
-        }
-        Move::Quick(slot) => (inventory.quick_move(slot), "core:quick_move", ActionTarget::Slot(slot as u8)),
-        Move::Stow => (inventory.stow_cursor(), "core:stow", ActionTarget::None),
-        Move::Throw { slot, count } => {
-            (inventory.take(slot, count).is_some(), "core:drop", ActionTarget::Stack { slot: slot as u8, count })
-        }
+    let name = match action {
+        Move::Items { .. } => "core:transfer",
+        Move::Quick(_) => "core:quick_move",
+        Move::Stow => "core:stow",
+        Move::Throw { .. } => "core:drop",
+    };
+    // Nothing is predicted for an action the content does not have.
+    let Some(id) = actions.named(name) else { return };
+    let (moved, target) = match action {
+        Move::Items { from, to, count } => (inventory.move_items(from, to, count), ActionTarget::Slots { from: from as u8, to: to as u8, count }),
+        Move::Quick(slot) => (inventory.quick_move(slot), ActionTarget::Slot(slot as u8)),
+        Move::Stow => (inventory.stow_cursor(), ActionTarget::None),
+        Move::Throw { slot, count } => (inventory.take(slot, count).is_some(), ActionTarget::Stack { slot: slot as u8, count }),
     };
     if moved {
-        net.propose(actions.0.expect(name), target);
+        net.propose(id, target);
     }
 }
 
@@ -376,13 +380,21 @@ fn craft(
         return;
     }
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let recipe = |grid: &[Option<voxmar_engine::block::BlockId>; GRID]| recipes.find(grid).filter(|r| allowed(r)).map(|r| (r.output, r.count));
+    let Some(craft) = actions.named("core:craft") else { return };
     let mut inventory = player.inventory.clone();
-    if inventory.craft(recipe, all) > 0 {
+    if craft_grid(&mut inventory, &recipes, allowed, all) > 0 {
         player.inventory = inventory;
-        net.propose(actions.0.expect("core:craft"), ActionTarget::Slot(if all { 0 } else { 1 }));
+        net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
         sounds.write(UiSound::Click);
     }
+}
+
+/// Crafts what `inventory`'s grid makes (all it can if `all`), as the server will: only a
+/// recipe `allowed`, and crafting all only while the grid still makes the recipe it made
+/// first. Returns how many were made.
+fn craft_grid(inventory: &mut Inventory, recipes: &voxmar_engine::craft::RecipeRegistry, allowed: impl Fn(&voxmar_engine::craft::Recipe) -> bool, all: bool) -> u32 {
+    let first = recipes.find(&inventory.grid()).filter(|r| allowed(r));
+    inventory.craft(recipes.while_making(first), all)
 }
 
 /// The crafting grid's square, and each of its cells by number (`craft::GRID`).
@@ -1102,6 +1114,50 @@ mod tests {
         let mut inventory = Inventory::default();
         inventory.cursor = Some(ItemStack { item: BlockId(1), count });
         inventory
+    }
+
+    /// Crafting all on a grid that, once the first recipe is made, would make another: the
+    /// client makes as many as the server does, and nothing else.
+    #[test]
+    fn crafting_all_here_makes_what_the_server_makes_when_the_grid_turns_into_another_recipe() {
+        use std::time::{Duration, Instant};
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let server = voxmar_server::spawn(voxmar_server::ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
+        let (connection, server_side) = voxmar_protocol::local_pair();
+        server.connections().send(server_side).unwrap();
+        let net = Net::new(connection, Some(server), "crafter".into(), content.fingerprint(), None);
+        let mut seen = Inventory::default();
+        let mut wait_for = |done: &dyn Fn(&Inventory) -> bool| -> Inventory {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !done(&seen) {
+                assert!(Instant::now() < deadline, "the server never sent that inventory: {seen:?}");
+                match net.try_recv() {
+                    Ok(Some(voxmar_protocol::ServerMessage::PlayerState { inventory, .. })) => seen = inventory,
+                    Ok(_) => std::thread::sleep(Duration::from_millis(1)),
+                    Err(_) => panic!("the server went away"),
+                }
+            }
+            seen.clone()
+        };
+        let planks = content.blocks.expect("base:oak_planks");
+        net.command("/clear");
+        net.command("/give oak_planks 6");
+        wait_for(&|i| i.get(0) == Some(ItemStack { item: planks, count: 6 }) && i.slots.iter().flatten().count() == 1);
+        // Down the left two planks a cell, one a cell beside them: a crafting table; what is
+        // left, a plank over a plank, would make sticks.
+        let transfer = content.actions.expect("core:transfer");
+        for (cell, count) in [(0, 2), (3, 2), (1, 1), (4, 1)] {
+            net.propose(transfer, ActionTarget::Slots { from: 0, to: (CRAFT + cell) as u8, count });
+        }
+        let before = wait_for(&|i| i.grid().iter().flatten().count() == 4 && i.get(0).is_none());
+        let mut predicted = before.clone();
+        let made = craft_grid(&mut predicted, &content.recipes, |r: &voxmar_engine::craft::Recipe| !r.needs_table(), true);
+        net.propose(content.actions.expect("core:craft"), ActionTarget::Slot(0));
+        let crafted = wait_for(&|i| *i != before);
+        assert_eq!(made, 1, "one table");
+        assert_eq!(predicted, crafted, "the client's craft differs from the server's");
+        let stick = content.blocks.expect("base:stick");
+        assert!(!crafted.slots.iter().flatten().any(|s| s.item == stick));
     }
 
     #[test]

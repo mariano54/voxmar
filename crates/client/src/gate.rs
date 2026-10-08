@@ -223,6 +223,13 @@ enum Step {
     /// own worn slot, and with the shield on the guard is the shield's; the inventory
     /// shows both in its worn wells, and their tooltips the armour lines.
     Wear,
+    /// Every blow traded so far got its hitsplat, and the meter showed; then a run of
+    /// blows of every kind and outcome, told to this side as the server would, draws its
+    /// splats in their colours over a creature and over the hotbar, with the pips all lit
+    /// and the health bar flashing for the hit (shot in English and Japanese); with damage
+    /// numbers off the same run draws none; and with the guard on a toggle, one right click
+    /// raises it and the next lowers it.
+    CombatHud,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -594,6 +601,8 @@ struct Observer {
     moved: bool,
     /// Where the server says the other players are.
     others: FxHashMap<PlayerId, Vec3>,
+    /// The last teleport applied, which its inputs echo.
+    teleports: u32,
     /// What the server answered the observer's commands.
     replies: Vec<voxmar_engine::lang::Words>,
 }
@@ -602,9 +611,9 @@ impl Observer {
     fn join(net: &Net, content: u64) -> Option<Self> {
         let (connection, server_side) = local_pair();
         net.server()?.connections().send(server_side).ok()?;
-        connection.send(ClientMessage::Hello { name: "gate-observer".into(), protocol: PROTOCOL_VERSION, content });
+        connection.send(ClientMessage::Hello { name: "gate-observer".into(), protocol: PROTOCOL_VERSION, content, admin_token: None });
         connection.send(ClientMessage::Settings { view_distance: 2, fly_speed: 1.0 });
-        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), replies: Vec::new() })
+        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), teleports: 0, replies: Vec::new() })
     }
 
     /// Applies what the server sent, and keeps the observer floating where it was put.
@@ -616,7 +625,10 @@ impl Observer {
                         self.id = Some(player);
                         self.position = Some(position);
                     }
-                    ServerMessage::Teleport { position } => self.position = Some(position),
+                    ServerMessage::Teleport { position, seq } => {
+                        self.position = Some(position);
+                        self.teleports = seq;
+                    }
                     ServerMessage::Column { pos, column } => self.world.insert(pos, column),
                     ServerMessage::Unload { pos } => {
                         self.world.remove(pos);
@@ -640,7 +652,7 @@ impl Observer {
             }
         }
         if let Some(position) = self.position {
-            let input = PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: true };
+            let input = PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: true, teleport: self.teleports };
             self.connection.send(ClientMessage::Input(input));
         }
         Ok(())
@@ -871,9 +883,17 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             // The ground, with a pool three deep east of where the player stands, a step
             // up on its far bank.
             let (x, y, z) = (feet.x, feet.y, feet.z);
+            // The steps from here lean on the blocks the starting kit once held in the hotbar
+            // (planks, cobblestone, glass, glowstone); the kit now is tools, food and torches,
+            // so the player is given those, as the steps after the grave do.
             for line in [
                 "time set noon".to_owned(),
                 "time freeze".into(),
+                "clear".into(),
+                "give oak_planks 64".into(),
+                "give cobblestone 64".into(),
+                "give glass 32".into(),
+                "give glowstone 16".into(),
                 "weather clear 600".into(),
                 format!("fill {} {} {} {} {} {} air", x - 7, y, z - 7, x + 7, y + 8, z + 7),
                 format!("fill {} {} {} {} {} {} dirt", x - 7, y - 4, z - 7, x + 7, y - 1, z + 7),
@@ -1048,6 +1068,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Weapon => weapon(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
         Step::Wear => wear(world, gate, now, in_phase),
+        Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
@@ -4752,7 +4773,261 @@ fn end_wear(world: &mut World, gate: &mut Gate, now: f32) {
         net.command(&format!("clear {}", name.trim_start_matches("base:")));
     }
     net.command("skill defence 1");
-    gate.next(Step::Cook, now);
+    // The fights before may have killed every creature about: one is summoned beside the
+    // player, for `combat_hud` to tell its blows at.
+    net.command(&format!("summon {} 1 ~ ~ ~2", CREATURE.trim_start_matches("base:")));
+    gate.next(Step::CombatHud, now);
+}
+
+/// The blows `combat_hud` tells this side of, as the server would: the player's at a
+/// creature (damage, kind) and the creature's at the player (damage, outcome).
+/// One of every kind of splat (a plain blow, a beat, a miss, a counter, a flourish and the
+/// green bleed), as many as `splats.most` at the most (`tell_blows` asserts it).
+const STRUCK_SHOWN: [(u16, voxmar_engine::combat::Blow); 6] = {
+    use voxmar_engine::combat::Blow;
+    [(4, Blow::Plain), (6, Blow::Beat), (0, Blow::Plain), (7, Blow::Counter), (11, Blow::Flourish), (3, Blow::Bleed)]
+};
+/// At most `splats.most` (6) at once, as the splats on one target are capped: more would push
+/// the oldest off the player's stack before the check reads it. Dodged shares Evaded's colour
+/// and words' code path, so it is left out; the words unit test (`hurt_words`, `struck_words`)
+/// covers every `Defended` kind, Dodged and the defence roll's Missed among them.
+const HURT_SHOWN: [(u16, voxmar_engine::combat::Defended); 6] = {
+    use voxmar_engine::combat::Defended;
+    [(5, Defended::Hit), (0, Defended::Hit), (2, Defended::Blocked), (0, Defended::Blocked), (0, Defended::Perfect), (0, Defended::Evaded)]
+};
+
+/// The splats drawn now, by their words and colour (without its fade).
+fn splats_drawn(world: &mut World) -> Vec<(String, Color)> {
+    world
+        .query::<(&crate::hud::combat::SplatWords, &Text, &TextColor, &InheritedVisibility)>()
+        .iter(world)
+        .filter(|(.., shown)| shown.get())
+        .map(|(_, text, color, _)| (text.0.clone(), color.0.with_alpha(1.0)))
+        .collect()
+}
+
+fn same_colour(a: Color, b: Color) -> bool {
+    let (a, b) = (a.to_srgba(), b.to_srgba());
+    (a.red - b.red).abs() < 0.01 && (a.green - b.green).abs() < 0.01 && (a.blue - b.blue).abs() < 0.01
+}
+
+/// Tells this side of a run of blows at the nearest creature and at the player.
+fn tell_blows(world: &mut World, creature: u32) {
+    let now = world.resource::<Time>().elapsed_secs_f64();
+    let pips = world.resource::<Launch>().content.combat.feel.pips;
+    let most = world.resource::<crate::hud::combat::CombatStyle>().splats.most;
+    assert!(STRUCK_SHOWN.len() <= most && HURT_SHOWN.len() <= most, "the combat check tells more blows than `splats.most` ({most}) keeps on one target");
+    let mut fighting = world.resource_mut::<crate::fight::Fighting>();
+    for (i, (damage, blow)) in STRUCK_SHOWN.into_iter().enumerate() {
+        fighting.struck(creature, damage, blow, (i as u8 + 1).min(pips), now);
+    }
+    for (damage, defended) in HURT_SHOWN {
+        fighting.hurt(creature, damage, defended, now);
+    }
+    // All pips lit: the next blow on the beat would be a flourish.
+    fighting.rhythm.set_pips(pips, now);
+}
+
+/// Whether every splat `tell_blows` told of is drawn, in its words and colour: what is
+/// missing, if anything.
+fn splats_missing(world: &mut World) -> Vec<String> {
+    use crate::hud::combat::{CombatStyle, hurt_words, struck_words};
+    let drawn = splats_drawn(world);
+    let (locale, style) = (world.resource::<Locale>(), world.resource::<CombatStyle>());
+    let wanted = STRUCK_SHOWN
+        .iter()
+        .map(|&(damage, blow)| (struck_words(locale, damage, blow), style.struck_look(damage, blow)))
+        .chain(HURT_SHOWN.iter().map(|&(damage, defended)| (hurt_words(locale, damage, defended), style.hurt_look(damage, defended))));
+    wanted.filter(|(words, look)| !drawn.iter().any(|(text, color)| text == words && same_colour(*color, look.color.color()))).map(|(words, _)| words).collect()
+}
+
+fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::combat::SplatsShown;
+    let creature = {
+        let (creatures, player) = (world.resource::<crate::creatures::Creatures>(), world.resource::<LocalPlayer>());
+        let eye = player.eye();
+        creatures.living().filter(|(.., feet)| feet.distance(eye) < 14.0).min_by(|a, b| a.2.distance(eye).total_cmp(&b.2.distance(eye))).map(|(id, _, feet)| (id, feet))
+    };
+    match gate.phase {
+        0 => {
+            // A creature to tell blows at (`end_wear` summoned one): waited for.
+            if creature.is_none() {
+                if gate.server_in_phase() > UNANSWERED {
+                    gate.check("combat marks", Err("no creature near to mark".into()));
+                    gate.next(Step::Cook, now);
+                }
+                return;
+            }
+            // What the fights before drew: a splat for every blow, and the meter.
+            let (struck, hurt) = {
+                let fighting = world.resource::<crate::fight::Fighting>();
+                (fighting.struck_count, fighting.hurt_count)
+            };
+            let shown = world.resource::<SplatsShown>();
+            // A killing blow's splat stays over the falling body (the fights killed a snail
+            // and bears), drawn for several frames, not dropped with the creature.
+            const FALLEN_FRAMES: u32 = 3;
+            let result = if !shown.meter {
+                Err("the meter never showed through the fights".to_owned())
+            } else if shown.struck != struck || shown.hurt != hurt {
+                Err(format!("{} splats drawn for the player's {struck} blows, {} for the {hurt} at the player", shown.struck, shown.hurt))
+            } else if shown.over_fallen < FALLEN_FRAMES {
+                Err(format!("no splat stayed over a creature killed in the fights for {FALLEN_FRAMES} frames (the most: {})", shown.over_fallen))
+            } else {
+                let sample: Vec<&str> = shown.recent.iter().map(String::as_str).take(8).collect();
+                Ok(format!(
+                    "a splat drawn for each of the player's {struck} blows and the {hurt} at them ({}), the killing blows' over the falling bodies (up to {} frames), and the meter, up to {} pips",
+                    sample.join(", "),
+                    shown.over_fallen,
+                    shown.pips
+                ))
+            };
+            gate.check("combat marks: fights", result);
+            let Some((id, feet)) = creature else { return };
+            aim_at(world, feet + Vec3::Y * 0.3);
+            gate.count_before = world.resource::<SplatsShown>().flashes;
+            tell_blows(world, id);
+            gate.advance(now);
+        }
+        1 | 3 => {
+            if let Some((_, feet)) = creature {
+                aim_at(world, feet + Vec3::Y * 0.3);
+            }
+            if in_phase < 0.25 {
+                return;
+            }
+            let missing = splats_missing(world);
+            let language = if gate.phase == 1 { "en" } else { "ja" };
+            if !missing.is_empty() {
+                gate.check("combat marks", Err(format!("{language}: no splat reads {missing:?}; drawn: {:?}", splats_drawn(world))));
+                world.resource_mut::<crate::settings::Settings>().language = "en".into();
+                set_language(world, "en");
+                gate.next(Step::Cook, now);
+                return;
+            }
+            let meter = world.query_filtered::<&InheritedVisibility, With<crate::hud::combat::MeterRoot>>().iter(world).any(|v| v.get());
+            // The blow that hurt (5, a hit) flashed the health bar.
+            let flashed = world.resource::<SplatsShown>().flashes > gate.count_before;
+            let name = if gate.phase == 1 { "combat-en" } else { "combat-ja" };
+            let Some(_) = gate.shot(world, name) else { return };
+            let result = match (meter, flashed) {
+                (true, true) => Ok(format!("{} splats in their colours, the meter and all pips lit, the health bar flashed", STRUCK_SHOWN.len() + HURT_SHOWN.len())),
+                (false, _) => Err("the splats showed without the meter".into()),
+                (_, false) => Err("a hit on the player did not flash the health bar".into()),
+            };
+            gate.check(&format!("combat marks: {language}"), result);
+            if gate.phase == 1 {
+                // The setting too, as a splat's words are fixed when it is drawn: a change
+                // to any setting meanwhile would load the setting's language again.
+                world.resource_mut::<crate::settings::Settings>().language = "ja".into();
+                set_language(world, "ja");
+            } else {
+                // With damage numbers off, the same blows draw nothing.
+                world.resource_mut::<crate::settings::Settings>().language = "en".into();
+                set_language(world, "en");
+                world.resource_mut::<crate::settings::Settings>().damage_numbers = false;
+                let shown = world.resource::<SplatsShown>();
+                gate.count_before = shown.struck + shown.hurt;
+                if let Some((id, _)) = creature {
+                    tell_blows(world, id);
+                }
+            }
+            gate.advance(now);
+        }
+        // The English splats gone, the same run told again, to be drawn in Japanese.
+        2 => {
+            if let Some((_, feet)) = creature {
+                aim_at(world, feet + Vec3::Y * 0.3);
+            }
+            let up = world.query::<&crate::hud::combat::HitSplat>().iter(world).count();
+            if up == 0 && let Some((id, _)) = creature {
+                gate.count_before = world.resource::<SplatsShown>().flashes;
+                tell_blows(world, id);
+                gate.advance(now);
+            } else if gate.server_in_phase() > UNANSWERED {
+                gate.check("combat marks", Err(format!("ja: {up} English splats still up, or no creature to mark ({})", creature.is_some())));
+                world.resource_mut::<crate::settings::Settings>().language = "en".into();
+                set_language(world, "en");
+                gate.next(Step::Cook, now);
+            }
+        }
+        4 => {
+            let told = {
+                let fighting = world.resource::<crate::fight::Fighting>();
+                (fighting.struck_count, fighting.hurt_count)
+            };
+            let shown = world.resource::<SplatsShown>();
+            if in_phase < 0.25 || shown.seen() != told {
+                return;
+            }
+            let drawn = shown.struck + shown.hurt - gate.count_before;
+            gate.check("damage numbers off", if drawn == 0 { Ok(format!("with damage numbers off, {} blows drew no splat", STRUCK_SHOWN.len() + HURT_SHOWN.len())) } else { Err(format!("with damage numbers off, {drawn} splats were drawn")) });
+            world.resource_mut::<crate::settings::Settings>().damage_numbers = true;
+            // The sword guards only at the Attack level that wields it (the feel step left
+            // Attack at 1, where it is held as fists, which do not guard).
+            world.resource::<Net>().command(&format!("skill attack {WEAPON_LEVEL}"));
+            gate.advance(now);
+        }
+        // The guard on a toggle: one click up, the next down, the sword in hand at the level
+        // that guards with it and nothing under the crosshair, so the click is the guard's
+        // and nothing else's (the view turns until nothing is: the workshop's kiln hangs
+        // overhead).
+        5 => {
+            world.resource_mut::<crate::settings::Settings>().toggle_guard = true;
+            let in_hand = select(world, WEAPON);
+            let guards = {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                let held = player.inventory.get(player.selected).map(|s| s.item);
+                launch.content.combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some()
+            };
+            let clear = {
+                let target = world.resource::<crate::interact::Target>();
+                target.hit.is_none() && target.creature.is_none()
+            };
+            if in_hand && guards && clear && in_phase > 0.2 {
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if gate.server_in_phase() > UNANSWERED {
+                gate.check("toggle guard", Err(format!("the sword in hand: {in_hand}; guarding with it: {guards}; nothing under the crosshair: {clear}")));
+                world.resource_mut::<crate::settings::Settings>().toggle_guard = false;
+                world.resource::<Net>().command("skill attack 1");
+                gate.next(Step::Cook, now);
+            } else {
+                look(world, (in_phase * 90.0) % 360.0, 30.0);
+            }
+        }
+        6 => {
+            mouse(world, MouseButton::Right, false);
+            if in_phase < 0.3 {
+                return;
+            }
+            gate.count_before = world.resource::<crate::fight::Fighting>().guard.is_some() as u32;
+            mouse(world, MouseButton::Right, true);
+            gate.advance(now);
+        }
+        _ => {
+            mouse(world, MouseButton::Right, false);
+            if in_phase < 0.3 {
+                return;
+            }
+            let (up_after_one, up_after_two) = (gate.count_before == 1, world.resource::<crate::fight::Fighting>().guard.is_some());
+            let why = {
+                let (ui, player, target) = (world.resource::<UiState>(), world.resource::<LocalPlayer>(), world.resource::<crate::interact::Target>());
+                format!("cursor locked {}, dead {}, the click used for something else {}", ui.cursor_locked, player.dead, target.used_right)
+            };
+            gate.check(
+                "toggle guard",
+                if up_after_one && !up_after_two {
+                    Ok("with the guard on a toggle, a click raised it and stayed up let go, and the next lowered it".into())
+                } else {
+                    Err(format!("on a toggle, up after one click: {up_after_one}, after two: {up_after_two} ({why})"))
+                },
+            );
+            world.resource_mut::<crate::settings::Settings>().toggle_guard = false;
+            world.resource::<Net>().command("skill attack 1");
+            gate.next(Step::Cook, now);
+        }
+    }
 }
 
 /// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
@@ -4763,6 +5038,9 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
+            // The creature the combat check summoned goes, or its level tag would still be
+            // up behind the menus' text check.
+            net.command("creatures kill");
             net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
             net.command("give raw_rabbit 3");
             // In reach of it, wherever the steps before left the player.
