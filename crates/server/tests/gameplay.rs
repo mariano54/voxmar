@@ -2894,3 +2894,32 @@ fn a_kept_animal_whose_species_is_gone_waits_in_the_save() {
     assert_eq!(saved.replace(' ', "").matches("genome:Some").count(), 1, "only the rabbit came back with genes: {saved}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// What a settlement's people cost the server each tick: the server's tick times with a
+/// player standing among them against the same player far from any settlement.
+/// `cargo test --profile iter -p voxmar_server --test gameplay villagers_cost -- --ignored --nocapture`
+/// (an optimised build; a busy machine inflates both, so read the difference).
+#[test]
+#[ignore]
+fn villagers_cost_per_tick() {
+    let mut client = Client::join();
+    client.admin = true;
+    let sample = |client: &mut Client| {
+        client.after_ticks(5 * TICKS_PER_SECOND as u64);
+        client.after_ticks(30 * TICKS_PER_SECOND as u64);
+        let times = client._server.as_ref().unwrap().tick_times();
+        let mut last: Vec<f64> = times[times.len().saturating_sub(30 * TICKS_PER_SECOND as usize)..].iter().map(|t| t.as_secs_f64() * 1000.0).collect();
+        last.sort_by(f64::total_cmp);
+        let mean = last.iter().sum::<f64>() / last.len() as f64;
+        (mean, last[last.len() / 2], last[last.len() * 99 / 100], last.len())
+    };
+    client.ok("/time set 8000");
+    let alone = sample(&mut client);
+    to_settlement(&mut client, "village", "8000");
+    client.pump_until(|c| villagers(c).len() >= 5);
+    let among = sample(&mut client);
+    let people = villagers(&client).len();
+    eprintln!("COST alone: mean {:.3} ms, median {:.3} ms, p99 {:.3} ms over {} ticks", alone.0, alone.1, alone.2, alone.3);
+    eprintln!("COST among {people} people in sight: mean {:.3} ms, median {:.3} ms, p99 {:.3} ms over {} ticks", among.0, among.1, among.2, among.3);
+    eprintln!("COST villagers: {:.3} ms a tick on average", among.0 - alone.0);
+}
