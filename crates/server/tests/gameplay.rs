@@ -2429,6 +2429,9 @@ fn beside(client: &mut Client, name: &str) -> (u32, usize) {
     // A flat floor with room around, so the bear and we stand on the ground.
     client.ok("/fill ~-8 ~-1 ~-8 ~8 ~-1 ~8 stone");
     client.ok("/fill ~-8 ~ ~-8 ~8 ~4 ~8 air");
+    // Empty-handed: the starting kit fills most of the hotbar, and what is given next has
+    // to land on it.
+    client.ok("/clear");
     client.ok("/skill attack 20");
     client.ok("/give iron_sword 1");
     client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == sword)));
