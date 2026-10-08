@@ -646,10 +646,6 @@ impl trails::Land for RiverLand<'_> {
         self.rivers.sample_cached(self.stages, x, z, scratch)
     }
 
-    fn samples_cached(&self, points: &[(i32, i32)], scratch: &mut water::Samples) -> Vec<GeoSample> {
-        self.rivers.samples_cached(self.stages, points, scratch)
-    }
-
     fn freshwater_near(&self, centre: IVec2, radius: i32, step: i32) -> bool {
         self.rivers.freshwater_near(self.stages, centre, radius, step)
     }

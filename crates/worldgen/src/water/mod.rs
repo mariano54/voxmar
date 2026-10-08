@@ -602,6 +602,7 @@ impl Rivers {
     /// The same sampled freshwater test as a full close-look grid. Consume its circle
     /// row by row and stop after a matching batch; no outside-circle centre is needed,
     /// but sealing still reads all four neighbours, including those outside the circle.
+    /// Callers supply radius >= 0 and step >= 1, as settlement loading validates.
     pub fn freshwater_near(&self, land: Stages, centre: IVec2, radius: i32, step: i32) -> bool {
         let first = centre - radius;
         let size = radius * 2 / step + 1;
