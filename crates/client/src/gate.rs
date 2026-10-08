@@ -3968,7 +3968,9 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
                 return;
             }
             gate.natural_before = world.resource::<crate::creatures::Creatures>().views().map(|v| v.id).collect();
-            world.resource::<Net>().command("creatures populate");
+            let net = world.resource::<Net>();
+            net.command("creatures disperse");
+            net.command("creatures populate");
             gate.advance(now);
         }
         2 if gate.server_in_phase() > 3.0 => {
@@ -3988,15 +3990,20 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
                 }))
             });
             let cap = content.creatures.limits().monsters_near;
-            gate.check("natural births", if monsters > 0 && monsters <= cap && !visible {
+            let uncleared = world.resource::<crate::creatures::Creatures>().views().any(|v| gate.natural_before.contains(&v.id) && v.position.distance(pad.as_vec3()) < 64.0);
+            gate.check("natural births", if monsters > 0 && monsters <= cap && !visible && !uncleared {
                 Ok(format!("{} births reached the client, including {monsters} dark monsters; no model part appeared in the forward {angle} degree cone", births.len()))
             } else {
-                Err(format!("{} births, {monsters} monsters (cap {cap}), visible model {visible}", births.len()))
+                Err(format!("{} births, {monsters} monsters (cap {cap}), visible model {visible}, prior population still present {uncleared}", births.len()))
             });
             gate.natural_before = births.iter().map(|v| v.id).collect();
             let net = world.resource::<Net>();
             net.command("creatures disperse");
-            net.command(&format!("fill {} {y} {} {} {y} {} torch", x - 44, z - 44, x + 44, z + 44));
+            for dx in (-40..=40).step_by(10) {
+                for dz in (-40..=40).step_by(10) {
+                    net.command(&format!("setblock {} {y} {} torch", x + dx, z + dz));
+                }
+            }
             gate.advance(now);
         }
         3 => {
