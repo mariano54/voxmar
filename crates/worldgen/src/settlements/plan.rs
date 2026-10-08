@@ -682,6 +682,12 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     };
     let mut culture = def.cultures.roll(&site);
     levers.axes = culture.axes;
+    let sizes: Vec<(usize, f32)> = def.sizes.iter().enumerate().map(|(i, s)| (i, s.lean.weigh(s.weight, &levers))).collect();
+    let size_index = pick(&mut rng, &sizes)?;
+    let size_index = if smallest { (0..def.sizes.len()).min_by_key(|&i| def.sizes[i].houses).unwrap_or(size_index) } else { size_index };
+    let size = &def.sizes[size_index];
+    def.cultures.finish(&mut culture, &site, &size.name);
+    levers.axes = culture.axes;
     // Styles weigh by how many of their tags the biome has, so where two fit (a cool
     // forest with conifers) either may be built; the catch-all style stands in temperate
     // and cool land, and wherever nothing else fits.
@@ -704,12 +710,6 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
         .collect();
     let style_index = pick(&mut rng, &styles)?;
     let style = &def.styles[style_index];
-    let sizes: Vec<(usize, f32)> = def.sizes.iter().enumerate().map(|(i, s)| (i, s.lean.weigh(s.weight, &levers))).collect();
-    let size_index = pick(&mut rng, &sizes)?;
-    let size_index = if smallest { (0..def.sizes.len()).min_by_key(|&i| def.sizes[i].houses).unwrap_or(size_index) } else { size_index };
-    let size = &def.sizes[size_index];
-    def.cultures.finish(&mut culture, &site, &size.name);
-    levers.axes = culture.axes;
     let layouts: Vec<(usize, f32)> = def.layouts.iter().enumerate().filter(|(_, l)| fresh || !l.water).map(|(i, l)| (i, l.lean.weigh(l.weight, &levers) * culture.mult(Listing::Layout, &l.name))).collect();
     let layout_index = pick(&mut rng, &layouts)?;
     let shape = def.layouts[layout_index].shape;

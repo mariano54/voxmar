@@ -2321,3 +2321,28 @@ fn culture_borders_site_requirements_and_levels() {
     def.finish(&mut wet, &wet_site, "village");
     assert_eq!(wet.quirks.len(), 1);
 }
+
+/// Styles see quirks as every other catalogue does. A style-only quirk can remove all
+/// eligible styles, so planning must refuse the site rather than choose a style early.
+#[test]
+fn culture_quirks_are_applied_before_style_selection() {
+    use super::culture::{Entry, Listing, Need};
+    let registry = base_registry();
+    let mut content = crate::content::WorldContent::base(&registry).unwrap();
+    let ordinary = Overworld::with_content(7, registry.clone(), &content);
+    assert!(!ordinary.settlements_near(IVec2::ZERO, 2048).is_empty());
+    let def = &mut content.settlements;
+    def.cultures.quirks.truncate(1);
+    let q = &mut def.cultures.quirks[0];
+    q.weight = 1.0;
+    q.need = Need::Nothing;
+    q.lean = Default::default();
+    q.axes = [0.0; 8];
+    q.entries = def.styles.iter().map(|s| Entry { listing: Listing::Style, name: s.name.clone(), mult: 0.0 }).collect();
+    for f in &mut def.cultures.families {
+        f.quirks.clear();
+    }
+    def.cultures.check(def, &registry).unwrap();
+    let quirky = Overworld::with_content(7, registry, &content);
+    assert!(quirky.settlements_near(IVec2::ZERO, 2048).is_empty(), "styles were picked before their zero quirk weights applied");
+}

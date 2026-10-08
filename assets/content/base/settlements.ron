@@ -333,7 +333,7 @@
         (name: "Windmill", spot: Edge, weight: 1.2, lean: {"wealth": 0.5, "green": 0.4, "craft": 0.6}),
         (name: "BellFrame", weight: 1.0, lean: {"order": 0.6, "wealth": 0.3, "piety": 1.0}),
         (name: "FallenStatue", weight: 0.6, lean: {"age": 1.0, "wealth": 0.3, "lore": 0.8}, parts: {"stone": "polished_calcite", "worn": "calcite"}),
-        (name: "Maypole", weight: 1.0, lean: {"green": 0.6, "age": -0.3, "festivity": 1.2}, parts: {"leaves": "{wood}_leaves"}),
+        (name: "Maypole", weight: 1.0, lean: {"green": 0.6, "age": -0.3, "festivity": 1.0}, parts: {"leaves": "{wood}_leaves"}),
         (name: "MarketCross", weight: 1.0, lean: {"wealth": 0.8, "order": 0.5, "trade": 1.0}),
         (name: "Fountain", weight: 0.8, lean: {"wealth": 1.0, "order": 0.6, "festivity": 0.5, "trade": 0.3}),
         (name: "Beacon", spot: Edge, weight: 0.6, lean: {"age": 0.4, "order": -0.2, "martial": 0.8}),
