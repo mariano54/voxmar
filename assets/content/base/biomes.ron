@@ -944,7 +944,7 @@
             climate: [(temperature: ("hot", "hot"), moisture: ("humid", "wet"), continentalness: ("coast", "coast"), erosion: ("flat", "flat"))],
             flora: (
                 forest: 0.5,
-                trees: [Name("mangrove", 4.0), Name("palm", 0.5), Name("jungle_bush", 0.5), Name("banana", 0.15), Name("mango", 0.15)],
+                trees: [Name("mangrove", 4.0), Name("palm", 0.5), Name("jungle_bush", 0.5), Name("banana", 0.15)],
                 cover: 0.7, flowers: 0.01,
                 plants: [Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("wetland", 1.0), Name("papyrus", 3.0), Tag("forage", 0.02)],
             ),
