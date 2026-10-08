@@ -5,7 +5,7 @@
 
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
-use voxmar_engine::action::{ActionContext, ActionId, ActionTarget, Effect, Rejection, Requirement, placement_cell, supported_by};
+use voxmar_engine::action::{ActionContext, ActionId, ActionTarget, Effect, Rejection, Requirement, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::content::Content;
 use voxmar_engine::crop::CropRegistry;
@@ -63,6 +63,8 @@ pub struct Target {
     place_cooldown: f32,
     /// When (seconds of game time) the line cast last comes up, and another may be cast.
     fishing_until: f32,
+    /// When (seconds of game time) what is cooking comes off the fire, and more may go on.
+    cooking_until: f32,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
@@ -206,9 +208,23 @@ impl ActionContext for ClientContext<'_> {
         Some(&self.content.tools)
     }
 
+    fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
+        Some(&self.content.machines)
+    }
+
     fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
         Some(&self.content.combat)
     }
+}
+
+/// Whether a right click with food in hand eats it: not with a creature under the
+/// crosshair (it is tended), not over a block the food would be placed on, and not over
+/// ground the food is a seed for (`sowing`, the plant action's check there): rice on
+/// farmland is sown, or refused for the sowing's reason (a Farming level), never eaten or
+/// answered with "you are at full health".
+fn eats(food: bool, placeable: bool, on_creature: bool, on_block: bool, sowing: Option<&Result<(), Rejection>>) -> bool {
+    let sows = matches!(sowing, Some(Ok(()) | Err(Rejection::Unmet(Requirement::SkillLevel))));
+    food && !on_creature && (!on_block || !placeable) && !sows
 }
 
 /// Mining proposes `core:mine` and shows progress over the same duration the server
@@ -275,7 +291,7 @@ fn break_and_place(
             _ if mouse.just_pressed(MouseButton::Left)
                 && let Err(Rejection::Unmet(need @ (Requirement::BlockLevel | Requirement::CropLevel | Requirement::ToolGood))) = def.validate(&context, action_target) =>
             {
-                if let Some(words) = refusal(&world, &launch.content, &locale, hit.block, need) {
+                if let Some(words) = refusal(&context, &locale, hit.block, need) {
                     toasts.refused(words, time.elapsed_secs());
                 }
             }
@@ -313,6 +329,17 @@ fn break_and_place(
                 return;
             }
         }
+        // A machine takes what it burns or works from the hand, or gives what it made; the
+        // server says how it is doing. Anything else in hand is placed against it.
+        if let (Some(hit), Some(use_machine)) = (hit, actions.0.id("base:use_machine")) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            if actions.0.get(use_machine).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                net.propose_from(&player, use_machine, action_target);
+                target.place_cooldown = 0.4;
+                return;
+            }
+        }
         // A multiblock's core is lit (the server says whether the structure around it
         // stands); a sleeping bag is slept in.
         for name in ["base:light", "base:sleep"] {
@@ -333,10 +360,14 @@ fn break_and_place(
             let context = ClientContext { world: &world, player: &player, content };
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             match actions.0.get(cook).map(|def| def.validate(&context, action_target)) {
+                // One thing at a time: a click while it cooks neither restarts it nor eats.
+                Some(Ok(())) if time.elapsed_secs() < target.cooking_until => return,
                 Some(Ok(())) => {
+                    let seconds = actions.0.get(cook).map_or(0.0, |def| def.seconds(&context, action_target));
                     net.propose_from(&player, cook, action_target);
                     target.used_right = true;
                     target.place_cooldown = 0.4;
+                    target.cooking_until = time.elapsed_secs() + seconds + 0.2;
                     return;
                 }
                 Some(Err(Rejection::Unmet(Requirement::CookingLevel))) => {
@@ -355,8 +386,13 @@ fn break_and_place(
         let held = player.inventory.get(player.selected).map(|s| s.item);
         let food = held.is_some_and(|item| world.registry.info(item).food > 0);
         let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
+        // A seed that is also food (rice) on ground it can be sown in is sown, below.
+        let sowing = hit.zip(actions.0.id("base:plant")).and_then(|(hit, plant)| {
+            let context = ClientContext { world: &world, player: &player, content };
+            actions.0.get(plant).map(|def| def.validate(&context, ActionTarget::Block { block: hit.block, face: hit.face }))
+        });
         // With a creature under the crosshair, a right click tends it instead (`creatures::aim`).
-        if food && target.creature.is_none() && (hit.is_none() || !placeable) {
+        if eats(food, placeable, target.creature.is_some(), hit.is_some(), sowing.as_ref()) {
             let eat = actions.0.expect("core:eat");
             let context = ClientContext { world: &world, player: &player, content };
             match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {
@@ -452,9 +488,10 @@ fn break_and_place(
         let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
         if let Some(item) = held.filter(|_| allowed) {
             let cell = placement_cell(&context, hit.block, hit.face);
+            let placed = placed_block(&context, item, hit.block, hit.face);
             net.propose_from(&player, place, action_target);
             cues.write(SoundCue::for_block(&world, item, Cue::Place));
-            world.set_block(cell, item);
+            world.set_block(cell, placed);
             let selected = player.selected;
             player.inventory.take_one(selected);
         }
@@ -505,10 +542,12 @@ fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
 
 /// What to tell a player whose click a block refused: the skill level it asks for, or the
 /// least tool that would do.
-fn refusal(world: &ClientWorld, content: &Content, locale: &Locale, block: IVec3, need: Requirement) -> Option<String> {
-    // A ripe crop above the player's Farming level.
+fn refusal(context: &ClientContext, locale: &Locale, block: IVec3, need: Requirement) -> Option<String> {
+    let (world, content) = (context.world, context.content);
+    // A ripe crop above the player's Farming level: the target, or one standing on it.
     if need == Requirement::CropLevel {
-        let (crop, _) = content.crops.stage_of(world.block(block)?)?;
+        let cell = std::iter::once(block).chain(supported_by(context, block)).find(|&c| !voxmar_engine::action::crop_level_met(context, c))?;
+        let (crop, _) = content.crops.stage_of(world.block(cell)?)?;
         let crop = content.crops.get(crop);
         let skill = locale.skill(content.skills.get(crop.skill));
         return Some(locale.format("skills.needs", &[("skill", &skill), ("level", &crop.def.level)]));
@@ -551,5 +590,27 @@ fn draw_target(target: Res<Target>, mut gizmos: Gizmos) {
         // pipelines the cube needs, and a world whose first block looked at came only after
         // loading compiled the other mid-play.
         None => gizmos.cube(Transform::from_scale(Vec3::ZERO), Color::NONE),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Food is eaten on a right click unless the click tends a creature, places the food,
+    /// or sows it: rice over farmland is sown (or refused for its Farming level), over
+    /// grass it is eaten.
+    #[test]
+    fn a_seed_that_is_food_is_sown_where_it_can_be_and_eaten_elsewhere() {
+        let sown = Ok(());
+        let too_low = Err(Rejection::Unmet(Requirement::SkillLevel));
+        let not_ground = Err(Rejection::Unmet(Requirement::Plantable));
+        assert!(!eats(true, false, false, true, Some(&sown)), "rice on farmland is sown");
+        assert!(!eats(true, false, false, true, Some(&too_low)), "rice on farmland below its level is refused as a sowing");
+        assert!(eats(true, false, false, true, Some(&not_ground)), "rice on grass is eaten");
+        assert!(eats(true, false, false, false, None), "rice in the air is eaten");
+        assert!(!eats(true, false, true, true, Some(&not_ground)), "a creature is tended");
+        assert!(!eats(true, true, false, true, Some(&not_ground)), "a placeable food is placed");
+        assert!(!eats(false, false, false, true, Some(&not_ground)), "what is no food is not eaten");
     }
 }

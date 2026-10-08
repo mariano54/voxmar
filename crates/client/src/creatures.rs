@@ -881,6 +881,7 @@ fn show(
 pub fn aim(
     time: Res<Time>,
     mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
     ui: Res<UiState>,
     launch: Res<Launch>,
     net: Res<Net>,
@@ -900,13 +901,16 @@ pub fn aim(
     let held = player.inventory.get(player.selected).map(|s| s.item);
     let combat = &launch.content.combat;
     let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    // Aimed at as far as it can be touched (tended, looked at) or struck, whichever is
+    // further; struck only within the weapon's reach.
     let nearest = creatures
         .shown
         .keys()
         .filter_map(|&id| Some((id, ray_box(eye, look, &creatures.aabb(&launch, id)?)?)))
-        .filter(|&(_, d)| d <= weapon.reach && d < block)
+        .filter(|&(_, d)| d <= weapon.reach.max(combat.feel.touch) && d < block)
         .min_by(|a, b| a.1.total_cmp(&b.1));
     target.creature = nearest.map(|(id, _)| id);
+    let in_reach = nearest.is_some_and(|(_, d)| d <= weapon.reach);
     if target.creature.is_some() {
         target.hit = None;
     }
@@ -914,7 +918,8 @@ pub fn aim(
     // to breed, or a tool for its product (the server judges; this only asks when it may).
     // At a creature fighting the player (it struck or was struck lately, or is winding up)
     // with a weapon or shield that guards, the button guards (`fight`); otherwise it looks
-    // closely at it.
+    // closely at it. With Shift held, on one of your own, it asks to let it go wild (twice
+    // to do it).
     if let Some(id) = target.creature
         && ui.cursor_locked
         && !player.dead
@@ -926,11 +931,22 @@ pub fn aim(
         let accepts = held.is_some_and(|item| {
             let tags = &launch.content.blocks.def(item).tags;
             let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
-            (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool))
+            // One of yours takes its food as a meal or to breed (the server judges which).
+            let food = species.tame_food.contains(&item) || species.breed_food.contains(&item) || tags.iter().any(|t| t == "breeding_feed");
+            (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
         });
         let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
         let engaged = !view.kept && (view.pose == Pose::Attacking || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
-        let action = if accepts { Some("base:tend") } else if !(guards && engaged) { Some("base:inspect") } else { None };
+        let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        let action = if shift && mine {
+            Some("base:release")
+        } else if accepts {
+            Some("base:tend")
+        } else if !(guards && engaged) {
+            Some("base:inspect")
+        } else {
+            None
+        };
         if let Some(action) = action.and_then(|a| actions.0.id(a)) {
             net.propose_from(&player, action, ActionTarget::Creature(id));
             target.used_right = true;
@@ -939,6 +955,7 @@ pub fn aim(
     // A left click swings: at once, or held for the beat (the server keeps the same
     // rhythm and says what lands).
     if let Some(id) = target.creature
+        && in_reach
         && ui.cursor_locked
         && !player.dead
         && mouse.just_pressed(MouseButton::Left)

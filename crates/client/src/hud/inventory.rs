@@ -1135,4 +1135,17 @@ mod tests {
         assert_eq!(inventory.cursor.map(|s| s.count), Some(64));
         assert_eq!(inventory.get(3).map(|s| s.count), Some(25));
     }
+
+    /// English spells the button one way, as the key chip does ("Right-click"), in every
+    /// package's words.
+    #[test]
+    fn english_spells_right_click_one_way() {
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        for package in std::fs::read_dir(&content).unwrap().flatten() {
+            let Ok(words) = std::fs::read_to_string(package.path().join("lang/en.ron")) else { continue };
+            for line in words.lines().filter(|line| !line.trim_start().starts_with("//")) {
+                assert!(!line.to_lowercase().contains("right click"), "{}: {line}", package.path().display());
+            }
+        }
+    }
 }

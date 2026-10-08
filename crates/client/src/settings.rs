@@ -713,12 +713,14 @@ impl Choice {
         let words = |key: &str| locale.get(key).to_owned();
         match self {
             Choice::FarDetail => words(settings.far_detail.key()),
-            // Fonts and packs go by their names.
-            Choice::Font => settings.font.label().into(),
+            // Fonts are named in lang, and shader packs too where a language names them.
+            Choice::Font => words(settings.font.key()),
             Choice::UiScale => format!("{}%", settings.ui_scale),
             Choice::UiSounds => words(settings.ui_sounds.key()),
             Choice::AntiAliasing => words(settings.anti_aliasing.key()),
-            Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
+            Choice::ShaderPack => {
+                packs.get(&settings.shader_pack).named(locale).to_owned()
+            }
             Choice::Shadows => words(settings.shadows.key()),
             Choice::Water => words(settings.water_quality.key()),
             Choice::Textures => words(settings.textures.key()),

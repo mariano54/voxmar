@@ -3,6 +3,7 @@
 
 mod actions;
 mod commands;
+mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
 pub use commands::{weather_name, weather_numbers};
 mod cooking;
@@ -12,6 +13,7 @@ mod fishing;
 mod death;
 mod hearth;
 mod journal;
+mod machines;
 mod quests;
 mod regrow;
 mod farm;
@@ -69,6 +71,9 @@ pub struct ServerConfig {
     /// Makes the server run behind, to see how clients cope, as on a busy machine. None
     /// but in tests.
     pub lag: Lag,
+    /// Cuts every save short once its machines are written, as a crash would. Only in
+    /// tests.
+    pub cut_saves: bool,
 }
 
 /// How a server made to run behind does so (see `ServerConfig::lag`).
@@ -103,6 +108,7 @@ impl Default for ServerConfig {
             admins: Vec::new(),
             world: None,
             lag: Lag::default(),
+            cut_saves: false,
         }
     }
 }
@@ -226,7 +232,9 @@ fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, 
     let Some(dir) = &config.world else { return Ok((None, WorldMeta::new("world", config.seed, new_mode))) };
     let save = WorldSave::new(dir);
     let mut meta = if save.exists() {
-        save.read_meta()?
+        let meta = save.read_meta()?;
+        save.recover(&meta);
+        meta
     } else {
         let name = dir.file_name().map_or_else(|| "world".into(), |name| name.to_string_lossy().into_owned());
         let meta = WorldMeta::new(name, config.seed, new_mode);
@@ -282,6 +290,9 @@ pub(crate) fn load_column(
 pub(crate) struct Server {
     config: ServerConfig,
     meta: WorldMeta,
+    /// The last save generation begun, whether or not it counted: none is begun twice, so
+    /// files a failed save left can never pass for a later one's.
+    generation: u64,
     save: Option<WorldSave>,
     content: Content,
     generator: Arc<dyn Generator>,
@@ -292,12 +303,22 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
-    /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
+    /// Machines players built, and the power between them.
+    factory: voxmar_engine::factory::Factory,
+    /// Cells whose block a player placed: ores, which then teach nothing; plants, which
+    /// don't regrow by themselves; and furnishings, which give themselves back only from
+    /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
-    /// Picked wild plants waiting to grow back (see `regrow`).
+    /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
+    /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
+    planter_grown: FxHashSet<IVec3>,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
+    /// The moment before which every player message has been handled: the last time all
+    /// were taken in. A creature's blow is judged once it has landed by then (`fight`).
+    /// None until messages are first taken in (unit tests tick without them).
+    heard: Option<Instant>,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     /// Swings, guards, dodges and creatures' wind-ups (`fight`).
@@ -387,11 +408,13 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let mut server = Self {
             config,
             tick,
             day: meta.day.unwrap_or(tick) as f64,
             day_speed: meta.day_speed,
+            generation: meta.generation,
             meta,
             save,
             content,
@@ -400,9 +423,12 @@ impl Server {
             executor: Executor::default(),
             items,
             farm,
+            factory: voxmar_engine::factory::Factory::default(),
             placed,
             regrowing,
+            planter_grown,
             arrival: Instant::now(),
+            heard: None,
             creatures: creatures::Creatures::default(),
             fights: fight::Fights::default(),
             processes,
@@ -429,6 +455,11 @@ impl Server {
             Vec::new()
         });
         server.restore_creatures(saved_creatures);
+        let saved_machines = server.save.as_ref().map_or(Ok(Vec::new()), |save| save.read_machines()).unwrap_or_else(|e| {
+            tracing::error!("could not load machines: {e}");
+            Vec::new()
+        });
+        server.restore_machines(saved_machines);
         server
     }
 
@@ -493,9 +524,13 @@ impl Server {
         self.world.insert(pos, Arc::new(loaded.column));
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
+        self.reconcile_machines(pos, loaded.saved);
     }
 
     fn handle_messages(&mut self) {
+        // A message is stamped as it goes into its channel, so every one stamped before now
+        // is handled below.
+        let heard = Instant::now();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for id in ids {
             while let Some(player) = self.players.get(&id) {
@@ -503,13 +538,20 @@ impl Server {
                     Ok(Some((at, message))) => self.handle_message(id, message, at),
                     Ok(None) => break,
                     Err(_) => {
-                        tracing::info!("{} left", player.name);
-                        self.save_player(player);
+                        // The whole world with whoever had joined: what they hold is saved
+                        // as one with what machines and the ground hold, or a crash could
+                        // double it. A connection that never said hello holds nothing, and
+                        // opening and closing sockets must not make the server save.
+                        if player.joined {
+                            tracing::info!("{} left", player.name);
+                            self.save();
+                        }
                         self.players.remove(&id);
                     }
                 }
             }
         }
+        self.heard = Some(heard);
     }
 
     fn tick(&mut self) {
@@ -543,55 +585,86 @@ impl Server {
         self.tick_seconds = started.elapsed().as_secs_f64();
     }
 
-    /// Writes edited columns, joined players and the world's metadata. Failures are
-    /// logged; columns that failed stay dirty and are tried again at the next save.
+    /// Writes edited columns, joined players and the world's metadata, as one generation:
+    /// if any of it fails, none of it counts, and edited columns are tried again next time.
     fn save(&mut self) {
         let Some(save) = &self.save else { return };
         let _span = tracing::info_span!("save_world").entered();
         let started = Instant::now();
+        // One generation: nothing counts until `world.ron` does, so a save cut short leaves
+        // the last whole one, and what a player holds never also stays in a machine.
+        let generation = self.generation.max(self.meta.generation) + 1;
+        self.generation = generation;
+        save.begin(generation);
+        let mut ok = true;
+        let mut failed = |what: &str, e: std::io::Error| {
+            tracing::error!("could not save {what}: {e}");
+            ok = false;
+        };
         let (world, registry) = (&self.world, &self.content.blocks);
-        let columns = self.dirty.len();
-        self.dirty.retain(|&pos| {
-            let Some(column) = world.column(pos) else { return false };
-            let result = save.write_column(pos, column, registry);
-            if let Err(e) = &result {
-                tracing::error!("could not save column {pos:?}: {e}");
+        // A column no longer in the world has nothing left to save.
+        self.dirty.retain(|&pos| world.column(pos).is_some());
+        let mut written = FxHashSet::default();
+        for &pos in &self.dirty {
+            let Some(column) = world.column(pos) else { continue };
+            match save.write_column(pos, column, registry) {
+                Ok(()) => {
+                    written.insert(pos);
+                }
+                Err(e) => failed(&format!("column {pos:?}"), e),
             }
-            result.is_err()
-        });
-        for player in self.players.values().filter(|p| p.joined) {
-            self.save_player(player);
         }
-        let blocks = &self.content.blocks;
-        if let Err(e) = save.write_items(&self.items.saved(|item| blocks.def(item).name.clone())) {
-            tracing::error!("could not save dropped items: {e}");
+        if let Err(e) = save.write_machines(&self.saved_machines()) {
+            failed("machines", e);
+        }
+        if self.config.cut_saves {
+            tracing::warn!("save {generation} cut short after its machines, as asked");
+            return;
+        }
+        for player in self.players.values().filter(|p| p.joined) {
+            if let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills, &self.content.effects), registry) {
+                failed(&format!("player {}", player.name), e);
+            }
+        }
+        if let Err(e) = save.write_items(&self.items.saved(|item| registry.def(item).name.clone())) {
+            failed("dropped items", e);
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
-            tracing::error!("could not save creatures: {e}");
+            failed("creatures", e);
         }
         let crops = &self.content.crops;
         if let Err(e) = save.write_crops(&self.farm.saved(|id| crops.get(id).def.name.clone())) {
-            tracing::error!("could not save crops: {e}");
+            failed("crops", e);
         }
-        self.meta.time = self.tick;
-        self.meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
-        self.meta.regrowing = self.saved_regrowing();
-        self.meta.day = Some(self.day as u64);
-        self.meta.day_speed = self.day_speed;
-        self.meta.last_played = save::unix_time();
-        if let Err(e) = save.write_meta(&self.meta) {
-            tracing::error!("could not save {}: {e}", save.dir().display());
+        if !ok {
+            // A part missing would let what moved since the last save be in two places, or
+            // none: the world stays as last saved.
+            save.abandon();
+            tracing::error!("save {generation} of {} abandoned", save.dir().display());
+            return;
         }
-        tracing::debug!("saved {columns} columns and {} players in {:?}", self.players.len(), started.elapsed());
-    }
-
-    fn save_player(&self, player: &Player) {
-        if let Some(save) = &self.save
-            && player.joined
-            && let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills, &self.content.effects), &self.content.blocks)
-        {
-            tracing::error!("could not save player {}: {e}", player.name);
+        let mut meta = self.meta.clone();
+        meta.time = self.tick;
+        meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
+        meta.regrowing = self.saved_regrowing();
+        let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
+        grown.sort();
+        meta.planter_grown = grown;
+        meta.day = Some(self.day as u64);
+        meta.day_speed = self.day_speed;
+        meta.last_played = save::unix_time();
+        meta.generation = generation;
+        match save.commit(&meta) {
+            Ok(moved) => {
+                self.meta = meta;
+                // Columns saved are clean; any not moved into place are written again next time.
+                if moved {
+                    self.dirty.retain(|pos| !written.contains(pos));
+                }
+            }
+            Err(e) => tracing::error!("could not save {}: {e}", save.dir().display()),
         }
+        tracing::debug!("saved {} columns and {} players in {:?}", written.len(), self.players.len(), started.elapsed());
     }
 
     /// The clocks, as players are told them.
@@ -689,9 +762,11 @@ impl Server {
     pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
         let mut done = Vec::with_capacity(changes.len());
         for &(pos, block) in changes {
-            if self.world.set_block(pos, block).is_some() {
+            if let Some(old) = self.world.set_block(pos, block) {
                 self.dirty.insert(ColumnPos::of_block(pos));
+                self.forget_placed(pos);
                 done.push((pos, block));
+                self.machine_changed(pos, old, block);
             }
         }
         for &(pos, _) in &done {
@@ -712,10 +787,19 @@ impl Server {
 
     /// Changes a block, telling only the players who have its column (the others get the
     /// change with the column), and wakes any fluid it lets flow.
+    /// A block changed: whatever a player placed there, or a planter grew, is gone (those
+    /// who place and grow mark it again after setting it).
+    fn forget_placed(&mut self, pos: IVec3) {
+        self.placed.remove(&pos);
+        self.planter_grown.remove(&pos);
+    }
+
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {
         let column = ColumnPos::of_block(pos);
-        if self.world.set_block(pos, block).is_some() {
+        if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
+            self.forget_placed(pos);
+            self.machine_changed(pos, old, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
@@ -760,6 +844,17 @@ fn ring_positions(center: ColumnPos, ring: i32) -> impl Iterator<Item = ColumnPo
             _ => center.offset(-ring, -t),
         }
     })
+}
+
+/// A server on the game's own content with a new world kept in memory, for unit tests.
+#[cfg(test)]
+pub(crate) fn test_server() -> Server {
+    let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+    let mut config = ServerConfig::default();
+    let (save, meta) = open_world(&mut config).expect("no save to open");
+    let (_, incoming) = crossbeam_channel::unbounded();
+    let (_, console) = crossbeam_channel::unbounded();
+    Server::new(config, meta, save, content, incoming, console)
 }
 
 #[cfg(test)]

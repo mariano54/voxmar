@@ -288,6 +288,11 @@ pub(crate) fn receive(
                 debug!("chat: {text}");
                 console.push(kind, &text, time.elapsed_secs())
             }
+            ServerMessage::Refused { why } => {
+                let why = locale.render(&why, &world.registry);
+                debug!("refused: {why}");
+                toasts.refused(why, time.elapsed_secs())
+            }
             ServerMessage::Weather { weather: report, effects, nearby, quick } => {
                 weather.receive(report, effects, nearby, quick, time.elapsed_secs())
             }

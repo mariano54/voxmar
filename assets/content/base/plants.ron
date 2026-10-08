@@ -9,6 +9,14 @@
 // default to what the block's tags say. The ten rare herbs (tagged `rare_herb`) grow only in
 // the biomes that name them, one or two each.
 (
+    // How densely small plants grow (flowers, ground plants, grasses and ferns): a factor
+    // on every biome's own, 1 being the biomes' own. Halved so the land reads less crowded:
+    // more bare ground between tufts, flowers and herbs, with drifts and rarities as before.
+    density: 0.5,
+    // What the density leaves at the biomes' own rate: the plants gathered for food,
+    // crafting and alchemy (wild crops, rare herbs, forage, berries, fungi, sugar cane), so
+    // thinning the look never thins the harvest.
+    density_keeps: [Tag("wild_crop", 1.0), Tag("rare_herb", 1.0), Tag("forage", 1.0), Tag("berry", 1.0), Tag("fungus", 1.0), Name("sugar_cane", 1.0)],
     plants: [
         // Grasses and ferns.
         (name: "short_grass", block: "short_grass", habitat: Open),
@@ -187,6 +195,9 @@
         (name: "wild_beans", block: "wild_beans", spread: Drifts, habitat: Anywhere, comfort: (temperature: (12.0, 30.0), moisture: (0.60, 1.80)), tags: ["wild_crop"], properties: (nutrition: 2.5)),
         (name: "wild_peas", block: "wild_peas", spread: Drifts, habitat: Open, comfort: (temperature: (2.0, 22.0), moisture: (0.50, 1.60)), tags: ["wild_crop"], properties: (nutrition: 2.0)),
         (name: "wild_lentils", block: "wild_lentils", spread: Drifts, habitat: Open, comfort: (temperature: (8.0, 30.0), moisture: (0.25, 1.00)), tags: ["wild_crop"], properties: (nutrition: 2.5)),
+        // Chickpeas gone wild, in patches on warm, dry ground: where the chickpea crop's
+        // seed comes from before a warm village's field (design draft 75).
+        (name: "wild_chickpea", block: "wild_chickpea", spread: Drifts, habitat: Open, comfort: (temperature: (16.0, 32.0), moisture: (0.10, 0.70)), tags: ["wild_crop"], properties: (nutrition: 2.5)),
         (name: "cranberry_bush", block: "cranberry_bush", spread: Alone, habitat: Water, comfort: (temperature: (-8.0, 14.0)), properties: (nutrition: 2.0)),
         (name: "lingonberry_bush", block: "lingonberry_bush", spread: Alone, habitat: Understory, comfort: (temperature: (-12.0, 10.0), moisture: (0.50, 2.50)), properties: (nutrition: 2.0)),
         (name: "cloudberry", block: "cloudberry", spread: Alone, habitat: Open, comfort: (temperature: (-14.0, 6.0), moisture: (0.80, 8.0)), properties: (nutrition: 3.0)),
