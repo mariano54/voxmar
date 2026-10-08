@@ -20,7 +20,9 @@
     // the beat. Each shows `seconds`, rising `rise` meanwhile, whole for the first `fade`
     // of its time and then fading; those on one creature stack upward, newest lowest, `gap`
     // apart, at most `most` (the oldest goes early); the player's own stand `hurt_above`
-    // over the bottom of the hotbar (which Raise HUD lifts). `scale` is screen pixels a font pixel, 2 to 6: 4 unless given.
+    // over the bottom of the hotbar (which Raise HUD lifts).
+    // `scale` is screen pixels a font pixel, 2 to 6: 4 unless given. Every splat's words are
+    // ringed by two dark font pixels (set in the code, not here) so they read over fur and grass.
     splats: (
         seconds: 0.9, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 63,
         // The player's blows, by kind.

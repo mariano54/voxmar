@@ -4764,13 +4764,16 @@ fn end_wear(world: &mut World, gate: &mut Gate, now: f32) {
 
 /// The blows `combat_hud` tells this side of, as the server would: the player's at a
 /// creature (damage, kind) and the creature's at the player (damage, outcome).
-const STRUCK_SHOWN: [(u16, voxmar_engine::combat::Blow); 5] = {
+/// One of every kind of splat (a plain blow, a beat, a miss, a counter, a flourish and the
+/// green bleed), as many as `splats.most` at the most (`tell_blows` asserts it).
+const STRUCK_SHOWN: [(u16, voxmar_engine::combat::Blow); 6] = {
     use voxmar_engine::combat::Blow;
-    [(4, Blow::Plain), (6, Blow::Beat), (0, Blow::Plain), (7, Blow::Counter), (11, Blow::Flourish)]
+    [(4, Blow::Plain), (6, Blow::Beat), (0, Blow::Plain), (7, Blow::Counter), (11, Blow::Flourish), (3, Blow::Bleed)]
 };
 /// At most `splats.most` (6) at once, as the splats on one target are capped: more would push
-/// the oldest off the player's stack before the check reads it. Dodged shares Evaded's look
-/// and words' code path, so it is left out.
+/// the oldest off the player's stack before the check reads it. Dodged shares Evaded's colour
+/// and words' code path, so it is left out; the words unit test (`hurt_words`, `struck_words`)
+/// covers every `Defended` kind, Dodged and the defence roll's Missed among them.
 const HURT_SHOWN: [(u16, voxmar_engine::combat::Defended); 6] = {
     use voxmar_engine::combat::Defended;
     [(5, Defended::Hit), (0, Defended::Hit), (2, Defended::Blocked), (0, Defended::Blocked), (0, Defended::Perfect), (0, Defended::Evaded)]
@@ -4795,6 +4798,8 @@ fn same_colour(a: Color, b: Color) -> bool {
 fn tell_blows(world: &mut World, creature: u32) {
     let now = world.resource::<Time>().elapsed_secs_f64();
     let pips = world.resource::<Launch>().content.combat.feel.pips;
+    let most = world.resource::<crate::hud::combat::CombatStyle>().splats.most;
+    assert!(STRUCK_SHOWN.len() <= most && HURT_SHOWN.len() <= most, "the combat check tells more blows than `splats.most` ({most}) keeps on one target");
     let mut fighting = world.resource_mut::<crate::fight::Fighting>();
     for (i, (damage, blow)) in STRUCK_SHOWN.into_iter().enumerate() {
         fighting.struck(creature, damage, blow, (i as u8 + 1).min(pips), now);

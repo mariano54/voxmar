@@ -96,11 +96,11 @@ pub struct PipStyle {
 #[serde(deny_unknown_fields)]
 pub struct Splat {
     pub color: Rgb,
-    #[serde(default = "plain")]
+    #[serde(default = "default_scale")]
     pub scale: u32,
 }
 
-fn plain() -> u32 {
+fn default_scale() -> u32 {
     4
 }
 
@@ -192,14 +192,14 @@ impl CombatStyle {
         let (meter, pips, splats) = (&self.meter, &self.pips, &self.splats);
         let positive = [("meter.width", meter.width), ("meter.height", meter.height), ("pips.size", pips.size), ("splats.seconds", splats.seconds), ("splats.flash.seconds", splats.flash.seconds)];
         for (name, value) in positive {
-            if !(value > 0.0) {
-                return Err(format!("{FILE}: {name} must be more than 0, not {value}"));
+            if !(value > 0.0 && value.is_finite()) {
+                return Err(format!("{FILE}: {name} must be more than 0 and finite, not {value}"));
             }
         }
         let some = [("meter.below", meter.below), ("meter.linger", meter.linger), ("pips.gap", pips.gap), ("splats.rise", splats.rise), ("splats.gap", splats.gap), ("splats.hurt_above", splats.hurt_above)];
         for (name, value) in some {
-            if !(value >= 0.0) {
-                return Err(format!("{FILE}: {name} may not be less than 0 ({value})"));
+            if !(value >= 0.0 && value.is_finite()) {
+                return Err(format!("{FILE}: {name} may not be less than 0 or infinite ({value})"));
             }
         }
         if !(0.0..1.0).contains(&splats.fade) {
@@ -729,6 +729,10 @@ mod tests {
             ("seconds: 0.9, rise: 14, fade: 1.0, gap: 1, most: 6, hurt_above: 70", "splats.fade"),
             ("seconds: 0.9, rise: 14, fade: 0.5, gap: -2, most: 6, hurt_above: 70", "splats.gap"),
             ("seconds: 0.9, rise: 14, fade: 0.5, gap: 1, most: 0, hurt_above: 70", "splats.most"),
+            ("seconds: inf, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 70", "splats.seconds"),
+            ("seconds: 0.9, rise: inf, fade: 0.5, gap: 1, most: 6, hurt_above: 70", "splats.rise"),
+            ("seconds: 0.9, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: -1", "splats.hurt_above"),
+            ("seconds: 0.9, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: inf", "splats.hurt_above"),
         ] {
             let refused = CombatStyle::load(&[file("core", &with(bad, 0.6))]).unwrap_err();
             assert!(refused.contains(says), "{bad}: {refused}");
@@ -736,6 +740,14 @@ mod tests {
         assert!(CombatStyle::load(&[file("core", &with(good, 0.0))]).unwrap_err().contains("flash.seconds"));
         let tiny = style_with(&format!("{good}, {}, flash: (color: (0,0,0), seconds: 0.6)", KINDS.replacen("\"plain\": (color: (0,0,0))", "\"plain\": (color: (0,0,0), scale: 1)", 1)));
         assert!(CombatStyle::load(&[file("core", &tiny)]).unwrap_err().contains("plain splat's scale"));
+        // The meter's and pips' sizes: nothing, or never ending, is refused too.
+        for (from, to, says) in [("width: 24", "width: 0", "meter.width"), ("width: 24", "width: inf", "meter.width"), ("height: 3,", "height: 0,", "meter.height"), ("height: 3,", "height: inf,", "meter.height"), ("size: 3", "size: 0", "pips.size"), ("size: 3", "size: inf", "pips.size")] {
+            let refused = CombatStyle::load(&[file("core", &with(good, 0.6).replacen(from, to, 1))]).unwrap_err();
+            assert!(refused.contains(says), "{to}: {refused}");
+        }
+        let big = KINDS.replacen("\"plain\": (color: (0,0,0))", "\"plain\": (color: (0,0,0), scale: 7)", 1);
+        let huge = style_with(&format!("{good}, {big}, flash: (color: (0,0,0), seconds: 0.6)"));
+        assert!(CombatStyle::load(&[file("core", &huge)]).unwrap_err().contains("plain splat's scale"));
         let negative_linger = with(good, 0.6).replace("linger: 3.0", "linger: -1.0");
         assert!(CombatStyle::load(&[file("core", &negative_linger)]).unwrap_err().contains("meter.linger"));
     }
