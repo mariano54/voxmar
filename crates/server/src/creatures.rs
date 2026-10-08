@@ -56,7 +56,8 @@ const SEEN_WITHIN: f32 = 96.0;
 const KIN_RANGE: f32 = 14.0;
 /// The width of a `Neighbours` cell, in blocks: the widest search (kin) and a block more for
 /// how far a creature moves in a pass, so the three by three cells around one hold every
-/// creature in range.
+/// creature in range. This holds while no creature moves more than a block in a pass: a
+/// species that blinks (5 to 8 blocks at once) would need a wider margin. None does today.
 const CELL: f32 = 16.0;
 const _: () = assert!(KIN_RANGE + 1.0 <= CELL && voxmar_engine::creature::husbandry::MATE_RANGE + 1.0 <= CELL);
 /// How far creatures look for food.
@@ -1106,7 +1107,7 @@ mod neighbour_tests {
         for i in 0..300u64 {
             let (x, z) = (unit_from(mix(i, 1)) * 120.0 - 60.0, unit_from(mix(i, 2)) * 120.0 - 60.0);
             let (x, z) = if i % 25 == 0 { ((x / CELL).round() * CELL, z) } else { (x, z) };
-            let id = server.spawn_creature(kinds[i as usize % 3], server.spawn + Vec3::new(x, 0.0, z), i).expect("room");
+            let id = server.spawn_creature(kinds[i as usize % 3], Vec3::new(x, server.spawn.y, z), i).expect("room");
             if i % 3 == 0 {
                 // Two in three kept (only kept animals are mates), the rest let go and wild.
                 let creature = server.creatures.live.get_mut(&id).unwrap();
@@ -1116,6 +1117,9 @@ mod neighbour_tests {
         }
         let neighbours = Neighbours::of(&server.creatures.live);
         let ids: Vec<u32> = server.creatures.live.keys().copied().collect();
+        let at = |id: &u32| server.creatures.live[id].body.position;
+        assert!(ids.iter().any(|id| at(id).x < 0.0) && ids.iter().any(|id| at(id).x > 0.0), "all on one side of zero");
+        assert!(ids.iter().filter(|id| at(id).x % CELL == 0.0).count() >= 10, "too few on cell edges");
         let (mut with_kin, mut with_mates) = (0, 0);
         for &id in &ids {
             let me = &server.creatures.live[&id];
