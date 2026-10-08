@@ -1473,8 +1473,15 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
 
 /// A name's two parts joined in Japanese: where the English runs a consonant into a vowel
 /// (Sab + ir: Sabir) the kana merge the same way (サブ + イル: サビル, not サブイル), by
-/// the `kana` table in settlements.ron.
+/// the `kana` table in settlements.ron. A consonant kana shared by the two parts is
+/// written once (Oak + combe: オークーム), preserving vowel and long-mark sequences.
 pub(super) fn join_kana(kana: &[KanaJoin], first: &(String, String), last: &(String, String)) -> String {
+    if let Some(shared) = first.1.chars().last()
+        && shared != 'ー' && !"アイウエオ".contains(shared)
+        && last.1.starts_with(shared)
+    {
+        return format!("{}{}", first.1, &last.1[shared.len_utf8()..]);
+    }
     let vowel = |c: Option<char>| c.is_some_and(|c| "aeiou".contains(c.to_ascii_lowercase()));
     let runs_on = !vowel(first.0.chars().last()) && first.0.chars().last().is_some_and(|c| c.is_ascii_alphabetic() && c != 'y') && vowel(last.0.chars().next());
     let opening = last.1.chars().next().and_then(|c| "アイウエオ".chars().position(|v| v == c));

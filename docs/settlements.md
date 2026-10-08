@@ -198,6 +198,8 @@ and unbounded mutation counts before a world can be created.
   `prefix_chance`).
 - `kana`: how the Japanese parts join where the English runs a consonant into a vowel:
   Sab + ir is Sabir, so サブ + イル is サビル, not サブイル (Glenach グレナック, Oasis オアシス).
+  A consonant kana repeated at the join is written once: Oak + combe is オークーム;
+  vowel and long-mark sequences stay as written.
 - `rules`: every other number planning reads, documented in the file: the settlement
   promised near spawn, how levers are drawn, how lanes are walked (width, bends, steps,
   greens, rings, terraces, side lanes grown, the square round a centrepiece and the well

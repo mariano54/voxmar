@@ -2031,6 +2031,10 @@ fn every_family_names_join_under_the_kana_rules() {
     let join = |a: (&str, &str), b: (&str, &str)| super::plan::join_kana(&def.kana, &(a.0.into(), a.1.into()), &(b.0.into(), b.1.into()));
     assert_eq!(join(("Itz", "イツ"), ("ak", "アク")), "イツァク");
     assert_eq!(join(("Ost", "オスト"), ("ak", "アク")), "オスタク");
+    assert_eq!(join(("Oak", "オーク"), ("combe", "クーム")), "オークーム");
+    assert_eq!(join(("Stor", "ストル"), ("lund", "ルンド")), "ストルンド");
+    assert_eq!(join(("Oa", "オア"), ("ara", "アラ")), "オアアラ");
+    assert_eq!(join(("Tor", "トー"), ("or", "ーア")), "トーーア");
 }
 
 /// A lean names a lever or an axis and nothing else (a file with another fails to load);
