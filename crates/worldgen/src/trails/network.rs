@@ -6,7 +6,8 @@
 //! of it, so two trails do not set off side by side (at the upper end, snapping merges
 //! them instead). Every test reads only the places around the two ends, so whichever
 //! region asks, the answer is the same. A trail belongs to the region of its lower end,
-//! which routes it.
+//! or near settlements to its gate's (between two gates, the lower one's), which routes
+//! it.
 //!
 //! **Snapping** (RoadWeaver's merge, MIT): where a trail comes within 18 blocks of a
 //! longer one, it joins it and follows it until they part by more than 30, so trails to

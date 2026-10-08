@@ -101,8 +101,12 @@ pub enum Requirement {
     /// The target is somewhere to sleep (tagged `bed`): a sleeping bag.
     Bed,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
-    /// a crucible.
+    /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
+    /// The target is a machine (`machines.ron`), and the actor holds nothing, something it
+    /// takes, or something that is not a block to place (a placeable block it does not
+    /// take is placed against it instead).
+    Machine,
     /// The actor holds a fishing rod and the target is water with open air above, near
     /// enough to cast to.
     Fishable,
@@ -166,6 +170,9 @@ pub enum Effect {
     /// Light the multiblock whose core is the target, if it stands around it: the
     /// Homestead Hearth becomes the actor's home, a crucible kiln starts smelting.
     Light,
+    /// Use the target machine: what the actor holds goes in if it takes it, otherwise
+    /// what it made comes out; the actor is told how it is doing.
+    UseMachine,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -287,6 +294,10 @@ pub trait ActionContext {
     fn cooking(&self) -> Option<&crate::cooking::CookingRegistry> {
         None
     }
+    /// The machines, where the context knows them.
+    fn machines(&self) -> Option<&crate::machine::MachineRegistry> {
+        None
+    }
     /// Whether the creature with that id takes `item` from the actor's hand.
     fn creature_accepts(&self, _id: u32, _item: BlockId) -> bool {
         false
@@ -308,13 +319,35 @@ pub fn placement_cell(ctx: &impl ActionContext, block: IVec3, face: Face) -> IVe
     if ctx.block(block).is_some_and(|b| ctx.info(b).replaceable) { block } else { block + face.normal() }
 }
 
-/// The block placing `held` against `face` of `block` puts there: what it goes on walls as
-/// (a wall torch, facing out) against a side it does not go into, otherwise itself.
+/// The block placing `held` against `face` of `block` puts there: against a side it does
+/// not go into, what it goes on walls as (a wall torch, facing out); otherwise itself,
+/// upside down against the underside of a block if it comes that way (a top slab), and
+/// facing the actor if it comes in facings (stairs climb away from whoever placed them).
 pub fn placed_block(ctx: &impl ActionContext, held: BlockId, block: IVec3, face: Face) -> BlockId {
-    match (ctx.info(held).wall, Facing::of_face(face)) {
-        (Some(wall), Some(facing)) if placement_cell(ctx, block, face) != block => ctx.blocks().facing(wall, facing),
-        _ => held,
+    let blocks = ctx.blocks();
+    let cell = placement_cell(ctx, block, face);
+    let against = cell != block;
+    if let (Some(wall), Some(facing)) = (ctx.info(held).wall, Facing::of_face(face))
+        && against
+    {
+        return blocks.facing(wall, facing);
     }
+    let mut placed = held;
+    if against && face == Face::NegY {
+        placed = blocks.flipped(held).unwrap_or(held);
+    }
+    if ctx.info(placed).facing.is_some() && ctx.info(placed).support != Support::Wall {
+        let toward = ctx.actor_eye() - (cell.as_vec3() + Vec3::splat(0.5));
+        let facing = if toward.x.abs() > toward.z.abs() {
+            if toward.x > 0.0 { Facing::East } else { Facing::West }
+        } else if toward.z > 0.0 {
+            Facing::South
+        } else {
+            Facing::North
+        };
+        placed = blocks.facing(placed, facing);
+    }
+    placed
 }
 
 /// Whether the actor may harvest what is at `cell`: a ripe crop (or fruit) asks for its
@@ -455,7 +488,26 @@ impl ActionDef {
             }
             Requirement::MultiblockCore => {
                 let (block, _) = block_target()?;
-                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("multiblock_core"))
+                let Some(core) = ctx.block(block).filter(|&b| ctx.blocks().def(b).has_tag("multiblock_core")) else { return Ok(false) };
+                // A machine's core with a block in hand that it does not take (use_machine
+                // takes what it does) has that block built against it, as any machine does.
+                let machine = ctx.machines().is_some_and(|machines| machines.get(core).is_some());
+                !(machine && ctx.actor_held().is_some_and(|item| ctx.info(item).placeable))
+            }
+            Requirement::Machine => {
+                let (block, _) = block_target()?;
+                let Some(machines) = ctx.machines() else { return Ok(false) };
+                let Some(machine) = ctx.block(block).and_then(|b| machines.get(b)) else { return Ok(false) };
+                match ctx.actor_held() {
+                    None => true,
+                    Some(item) => {
+                        let fuel = machine.burns() && machines.burn_seconds(item).is_some();
+                        let input = machine.is_processor() && machines.takes(machine, item);
+                        // A bin takes anything but machines: a chute in hand is laid against it.
+                        let bin = machine.bin_slots() > 0 && !ctx.blocks().def(item).has_tag(&machines.rules.machine_tag);
+                        fuel || input || bin || !ctx.info(item).placeable
+                    }
+                }
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
@@ -596,6 +648,26 @@ mod tests {
     const TORCH: BlockId = BlockId(4);
 
     #[test]
+    fn stairs_face_whoever_places_them_and_go_upside_down_under_a_ceiling() {
+        let file = crate::shape::ShapeFile::read("test", r#"(shapes: {"stairs": (boxes: [(to: (16, 8, 16)), (from: (0, 8, 8))])})"#);
+        let limits = crate::shape::ShapeLimits { boxes: 2, quads: 64 };
+        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file.unwrap())], limits).unwrap();
+        let stairs = BlockDef { name: "test:stairs".into(), render: RenderKind::Model, shape: Some("test:stairs".into()), facing: true, flips: true, ..Default::default() };
+        let registry = BlockRegistry::with_shapes(vec![BlockDef { name: "test:stone".into(), ..Default::default() }, stairs], &shapes).unwrap();
+        let held = registry.expect("test:stairs");
+        let blocks = [(IVec3::ZERO, STONE)].into_iter().collect();
+        let world = World { registry, blocks, held, crops: CropRegistry::default() };
+        let name = |block: BlockId| world.registry.def(block).name.clone();
+        // On top of the stone, with the actor's eye south of it (+z): they climb northwards,
+        // away from the actor.
+        assert_eq!(name(placed_block(&world, held, IVec3::ZERO, Face::PosY)), "test:stairs_south");
+        // Against the stone's west side, the actor still to the south.
+        assert_eq!(name(placed_block(&world, held, IVec3::ZERO, Face::NegX)), "test:stairs_south");
+        // Against its underside they hang upside down.
+        assert_eq!(name(placed_block(&world, held, IVec3::ZERO, Face::NegY)), "test:stairs_top_south");
+    }
+
+    #[test]
     fn a_torch_against_a_wall_is_a_wall_torch_facing_out_and_goes_with_the_wall() {
         let mut world = world(TORCH);
         let (registry, east) = (&world.registry, Face::PosX);
@@ -635,6 +707,58 @@ mod tests {
             requires: vec![Alive, InReach, HoldingBlock, Replaceable, Unobstructed, Supported],
             effects: vec![Effect::PlaceHeld],
         }
+    }
+
+    /// A click on a machine's core (a bloomery) with a block in hand it does not take lays
+    /// the block against it, as on any machine, rather than lighting it; an empty hand or
+    /// a tool lights it, and a hearth's core (no machine) lights whatever is in hand.
+    #[test]
+    fn a_block_in_hand_is_laid_against_a_machine_core_not_lit() {
+        struct Core<'a> {
+            content: &'a crate::content::Content,
+            core: BlockId,
+            held: Option<BlockId>,
+        }
+        impl ActionContext for Core<'_> {
+            fn block(&self, pos: IVec3) -> Option<BlockId> {
+                Some(if pos == IVec3::ZERO { self.core } else { BlockId::AIR })
+            }
+            fn info(&self, block: BlockId) -> &BlockInfo {
+                self.content.blocks.info(block)
+            }
+            fn blocks(&self) -> &BlockRegistry {
+                &self.content.blocks
+            }
+            fn crops(&self) -> &CropRegistry {
+                &self.content.crops
+            }
+            fn actor_level(&self, _: SkillId) -> u8 {
+                1
+            }
+            fn actor_eye(&self) -> Vec3 {
+                Vec3::new(0.5, 2.6, 2.5)
+            }
+            fn actor_alive(&self) -> bool {
+                true
+            }
+            fn actor_held(&self) -> Option<BlockId> {
+                self.held
+            }
+            fn occupied(&self, _: IVec3) -> bool {
+                false
+            }
+            fn machines(&self) -> Option<&crate::machine::MachineRegistry> {
+                Some(&self.content.machines)
+            }
+        }
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let id = |name: &str| content.blocks.expect(name);
+        let light = content.actions.get(content.actions.id("base:light").unwrap()).unwrap();
+        let lights = |core: &str, held: Option<&str>| light.validate(&Core { content: &content, core: id(core), held: held.map(id) }, ActionTarget::Block { block: IVec3::ZERO, face: Face::PosZ });
+        assert_eq!(lights("base:bloomery", Some("base:kiln_bricks")), Err(Rejection::Unmet(Requirement::MultiblockCore)));
+        assert_eq!(lights("base:bloomery", None), Ok(()));
+        assert_eq!(lights("base:bloomery", Some("base:iron_pickaxe")), Ok(()));
+        assert_eq!(lights("base:crucible", Some("base:kiln_bricks")), Ok(()));
     }
 
     #[test]

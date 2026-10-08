@@ -148,7 +148,6 @@ impl Server {
     /// What a kept animal puts into work, a treadwheel's or gin's share (0.5 to 1.2 of a
     /// full share by default): none from a wild one, a young one, or one unfed past
     /// `fed.1` days, which stops walking.
-    #[allow(dead_code, reason = "the treadwheel (Machines) reads it")]
     pub(crate) fn working_share(&self, id: u32) -> f32 {
         let rules = self.content.creatures.condition();
         let Some(creature) = self.creatures.live.get(&id) else { return 0.0 };

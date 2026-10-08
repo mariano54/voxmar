@@ -51,6 +51,8 @@ pub struct Content {
     pub fishing: Arc<FishingRegistry>,
     /// Structures recognised from patterns of blocks (the Homestead Hearth).
     pub multiblocks: Arc<crate::multiblock::MultiblockRegistry>,
+    /// Machines, what they burn and what they make (`machines.ron`, `processing.ron`).
+    pub machines: Arc<crate::machine::MachineRegistry>,
     /// The quest book.
     pub quests: Arc<crate::quest::QuestRegistry>,
     /// What it takes to study and master the journal's entries.
@@ -175,7 +177,11 @@ impl Content {
         let mut regrowth = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
+        let mut machines = Vec::new();
+        let mut processes = Vec::new();
         let mut quests = Vec::new();
+        let mut shapes = Vec::new();
+        let mut shape_limits = Setting::<crate::shape::ShapeLimits>::default();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -194,6 +200,12 @@ impl Content {
                     // owns (what creatures drop), each read the same way.
                     name if name.starts_with("blocks") => blocks.push((package.clone(), BlockRegistry::read(package, &source)?)),
                     "actions.ron" => actions.extend(package, &source)?,
+                    "shapes.ron" => {
+                        let file = crate::shape::ShapeFile::read(package, &source)?;
+                        shape_limits.set(package, &name, "shape limits", file.limits, &mut notes);
+                        shapes.push((package.clone(), file));
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "commands.ron" => commands.extend(package, &source)?,
                     "weather.ron" => weather.extend(package, &source)?,
                     // A later package's curve replaces an earlier one's (Design draft 91).
@@ -208,7 +220,8 @@ impl Content {
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "cooking.ron" => {
+                    // `cooking.ron`, and `cooking_<topic>.ron` for what a system smelts (machines).
+                    topic if topic.starts_with("cooking") => {
                         cooking.extend(CookingRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
@@ -220,7 +233,7 @@ impl Content {
                         condition.set(package, &name, "condition rules", read.condition, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons).
+                    // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons, machines).
                     topic if topic.starts_with("recipes") => {
                         recipes.extend(RecipeRegistry::read(package, &source)?);
                         // Kept with the other files too, so the fingerprint covers it.
@@ -236,8 +249,17 @@ impl Content {
                         quests.push(crate::quest::QuestRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "multiblocks.ron" => {
+                    // `multiblocks.ron`, and `multiblocks_<topic>.ron` for a system's own (machines).
+                    topic if topic.starts_with("multiblocks") => {
                         multiblocks.push(crate::multiblock::MultiblockRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "machines.ron" => {
+                        machines.push(crate::machine::MachineRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "processing.ron" => {
+                        processes.push(crate::machine::MachineRegistry::read_processes(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "journal.ron" => {
@@ -286,7 +308,7 @@ impl Content {
         }
         let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?;
         skills.validate()?;
-        let blocks = BlockRegistry::new(blocks)?;
+        let blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
         let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
@@ -298,6 +320,10 @@ impl Content {
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
+        let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
+        if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
+            return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
+        }
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks)?);
         crate::inventory::set_worn_slots(combat.worn_slots());
@@ -327,6 +353,7 @@ impl Content {
             regrowth: Arc::new(regrowth),
             value: Arc::new(crate::value::Value::merge(value)),
             multiblocks: Arc::new(multiblocks),
+            machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),

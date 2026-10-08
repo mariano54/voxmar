@@ -16,7 +16,8 @@ struct Copy {
 @group(0) @binding(3) var<storage, read_write> gathered: array<u32>;
 
 // Whether a cube face's corners, as the mesher emits them, wind counter-clockwise seen
-// from outside, by face (mesh.rs's `face_axes`).
+// from outside, by face (mesh.rs's `face_axes`). The one-sided plant faces, the quads of
+// blocks' shapes (mesh.rs `emit_model`), all do.
 const CCW = array<bool, 6>(false, true, false, true, true, false);
 // Each quad's two triangles, by winding and by which diagonal they split along.
 const ORDERS = array<array<u32, 6>, 4>(
@@ -47,7 +48,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
         // Split along the darker diagonal, so ambient occlusion interpolates evenly.
         let face = (vertices[base * 2u] >> 18u) & 7u;
         let flip = ao(base) + ao(base + 2u) > ao(base + 1u) + ao(base + 3u);
-        let order = ORDERS[u32(CCW[min(face, 5u)]) * 2u + u32(flip)];
+        let order = ORDERS[u32(face >= 6u || CCW[face]) * 2u + u32(flip)];
         for (var i = 0u; i < 6u; i++) {
             gathered[out + i] = base + order[i];
         }
