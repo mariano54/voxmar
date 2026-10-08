@@ -3,7 +3,7 @@
 //! to look at them without knowing where a seed put them, and gameplay can use it to point
 //! players at them.
 
-use voxmar_engine::glam::{IVec2, IVec3};
+use voxmar_engine::glam::{IVec2, IVec3, IVec3Swizzles};
 
 use crate::geology::GeoSample;
 use crate::{Body, Overworld, SEA_LEVEL};
@@ -67,6 +67,30 @@ impl Overworld {
             [(1, 0), (0, 1), (1, 1), (1, -1)].map(|(dx, dz)| side(dx, dz).min(side(-dx, -dz))).into_iter().max().unwrap_or(0)
         };
         self.rivers.gorges_near(self.stages(), centre, radius, 24).into_iter().find(|&at| walls(at) >= GORGE_WALLS)
+    }
+
+    /// The nearest visible pool made by the tarn rule, within `radius` blocks of
+    /// `centre`. Ordinary high lakes do not stand in for a tarn. Twenty surface columns
+    /// distinguish a pool that can be seen from a puddle; generation itself is unchanged.
+    pub fn locate_tarn(&self, centre: IVec2, radius: i32) -> Option<IVec3> {
+        if radius < 0 || self.rivers.tarns.is_none() {
+            return None;
+        }
+        for pit in self.rivers.tarns_near(self.stages(), centre, radius) {
+            let mut wet = Vec::new();
+            for z in pit.z - 8..=pit.z + 8 {
+                for x in pit.x - 8..=pit.x + 8 {
+                    let g = self.geo(x, z);
+                    if g.body == Body::Lake && g.submerged() && g.water == pit.y {
+                        wet.push(IVec3::new(x, g.water, z));
+                    }
+                }
+            }
+            if wet.len() >= 20 {
+                return wet.into_iter().min_by_key(|p| ((p.xz() - pit.xz()).length_squared(), p.x, p.z));
+            }
+        }
+        None
     }
 
     /// The best place of each kind within `range` blocks of `centre` (searched every two

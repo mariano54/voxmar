@@ -1831,6 +1831,7 @@ impl WorldContent {
         let mut ores = crate::ores::OresDef::default();
         let mut settlements = crate::settlements::SettlementsDef::default();
         let mut tarns = None;
+        let mut tarns_package = None;
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
@@ -1919,6 +1920,9 @@ impl WorldContent {
                         ..s
                     }));
                     if file_shapes.tarns.is_some() {
+                        if let Some(earlier) = tarns_package.replace(file.package.clone()) {
+                            notes.push(format!("{at} replaces the terrain.ron tarns {earlier} set"));
+                        }
                         tarns = file_shapes.tarns;
                     }
                 }
@@ -3444,7 +3448,10 @@ mod tests {
         let load = |tarns: &str| {
             let mut files = base_files();
             files.push(ContentFile { package: "mod".into(), name: "terrain.ron".into(), source: format!("#![enable(implicit_some)]\n(shapes: [], tarns: ({tarns}))") });
-            WorldContent::from_files(files.iter(), &registry).map(|c| c.tarns.unwrap().chance).map_err(|e| e.0)
+            WorldContent::from_files(files.iter(), &registry).map(|c| {
+                assert!(c.notes.iter().any(|n| n == "mod/terrain.ron replaces the terrain.ron tarns base set"));
+                c.tarns.unwrap().chance
+            }).map_err(|e| e.0)
         };
         let good = "climate: [(temperature: (\"frozen\", \"cool\"))], floor: 56.0, depth: 2.0, chance: 0.3, country: (scale: 1000.0, share: 0.5)";
         assert_eq!(load(good), Ok(0.3), "a later package's tarns replace the base's");

@@ -409,6 +409,8 @@ pub struct Lake {
     pub clamp: Vec<IVec2>,
     /// A hot spring: a small, warm pool that never freezes, rimmed with travertine.
     pub spring: bool,
+    /// Filled by the highland tarn rule, rather than an ordinary or closed lake.
+    pub tarn: bool,
 }
 
 impl Lake {
@@ -851,7 +853,7 @@ impl Drainage {
         }
         let spill = level;
         cells.sort_unstable_by_key(|c| (c.x, c.y));
-        let mut lake = Lake { pit, kind: Kind::Closed, spill, level: 0, bottom, cells, path: Vec::new(), clamp: Vec::new(), spring: false };
+        let mut lake = Lake { pit, kind: Kind::Closed, spill, level: 0, bottom, cells, path: Vec::new(), clamp: Vec::new(), spring: false, tarn: false };
         let way_out = |outlet: IVec2| {
             // Parents form a tree rooted at the pit, so this ends there; the bound is a
             // second guard that keeps any mistake from growing without limit.
@@ -911,6 +913,7 @@ impl Drainage {
             }
         {
             lake.kind = Kind::Lake;
+            lake.tarn = true;
             lake.path = way_out(outlet);
             lake.level = ((spill - 1.0) * 8.0).floor() as i32;
             return lake;

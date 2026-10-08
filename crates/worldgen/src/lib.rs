@@ -1948,7 +1948,7 @@ mod tests {
         // bank columns, lakes, lake cells.
         let mut tally = [[[0u64; 4]; 2]; 3];
         // Each tarn's generated water in blocks (columns), inside tarn country and out.
-        let mut sizes: [Vec<usize>; 2] = Default::default();
+        let mut sizes: [[Vec<usize>; 2]; 3] = Default::default();
         const STEP: i32 = 8;
         // Stream-tier cells in a lake under which a pit is small, not big (drainage `min_area`).
         const TARN_CELLS: usize = 48;
@@ -1993,7 +1993,7 @@ mod tests {
                     }
                 }
                 // The lakes by their pits, and the banks around each, column by column.
-                for (pit, water, cells) in world.rivers.stream_lakes(world.stages(), region) {
+                for (pit, water, cells, is_tarn) in world.rivers.stream_lakes(world.stages(), region) {
                     let site = world.site(pit.x, pit.y);
                     let Some(b) = ids.iter().position(|&id| id == site.home) else { continue };
                     let c = country(pit.x, pit.y);
@@ -2019,7 +2019,10 @@ mod tests {
                             }
                         }
                     }
-                    sizes[c].push(wet);
+                    if is_tarn {
+                        assert_eq!(c, 1, "seed {seed}: a tarn outside its country at {pit}");
+                        sizes[b][c].push(wet);
+                    }
                     if std::env::var("AT").is_ok() && b < 2 {
                         println!("  seed {seed}: a tarn of {wet} water blocks across, at {}, {} ({}{})", pit.x, pit.y, names[b], if c == 1 { ", tarn country" } else { "" });
                     }
@@ -2061,9 +2064,11 @@ mod tests {
         // pits; a tarn is only seen if its water is): how many hold at least 20 blocks, and
         // the spread of sizes, with the visible ones a square kilometre.
         for (country, label) in [(1, "in tarn country"), (0, "outside it")] {
-            let mut sizes = std::mem::take(&mut sizes[country]);
+            // The draft 96 target is the mountains and alpine meadows. Snowy peaks' own
+            // lakes are counted separately above, and cannot dilute the target's denominator.
+            let mut sizes: Vec<usize> = (0..2).flat_map(|b| std::mem::take(&mut sizes[b][country])).collect();
             sizes.sort_unstable();
-            let km2: f64 = (0..3).map(|b| tally[b][country][0]).sum::<u64>() as f64 / 1e6;
+            let km2: f64 = (0..2).map(|b| tally[b][country][0]).sum::<u64>() as f64 / 1e6;
             let visible = sizes.iter().filter(|&&n| n >= 20).count();
             let at = |q: f64| sizes.get(((sizes.len() as f64 - 1.0) * q).round() as usize).copied().unwrap_or(0);
             println!(

@@ -75,8 +75,8 @@ fn tarns_do_not_move() {
         let region = meadow.div_euclid(IVec2::splat(crate::water::REGION));
         let found: Vec<IVec2> = (0..9)
             .flat_map(|r| generator.rivers.stream_lakes(generator.stages(), region + IVec2::new(r % 3 - 1, r / 3 - 1)))
-            .filter(|&(_, water, cells)| water as f32 >= floor && cells <= 8)
-            .map(|(pit, _, _)| pit)
+            .filter(|&(_, water, _, tarn)| water as f32 >= floor && tarn)
+            .map(|(pit, _, _, _)| pit)
             .take(2)
             .collect();
         for pit in found {

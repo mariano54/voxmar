@@ -27,7 +27,7 @@ mod sights;
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use voxmar_engine::glam::{IVec2, IVec3};
+use voxmar_engine::glam::{IVec2, IVec3, IVec3Swizzles};
 
 use self::cache::Cache;
 use self::channel::{Carved, Channels, Span, Style, carve, top_block};
@@ -291,7 +291,7 @@ impl Rivers {
     /// one's pit (the centre of its cell, in blocks), top water block and cells. For the
     /// tarn census.
     #[cfg(test)]
-    pub(crate) fn stream_lakes(&self, land: Stages, region: IVec2) -> Vec<(IVec2, i32, usize)> {
+    pub(crate) fn stream_lakes(&self, land: Stages, region: IVec2) -> Vec<(IVec2, i32, usize, bool)> {
         let ground = StreamGround { rivers: self, land };
         let basin = self.streams.basin(&ground, region);
         let side = self.streams.tier.side;
@@ -299,8 +299,29 @@ impl Rivers {
             .lakes
             .iter()
             .filter(|l| l.wet() && !l.spring && l.pit.div_euclid(IVec2::splat(side)) == region)
-            .map(|l| (self.streams.tier.centre(l.pit), top_block(l.level), l.cells.len()))
+            .map(|l| (self.streams.tier.centre(l.pit), top_block(l.level), l.cells.len(), l.tarn))
             .collect()
+    }
+
+    /// Pits filled by the tarn rule, in the regions within `radius` of `centre`.
+    fn tarns_near(&self, land: Stages, centre: IVec2, radius: i32) -> Vec<IVec3> {
+        let ground = StreamGround { rivers: self, land };
+        let low = (centre - radius).div_euclid(IVec2::splat(REGION));
+        let high = (centre + radius).div_euclid(IVec2::splat(REGION));
+        let mut found = Vec::new();
+        for z in low.y..=high.y {
+            for x in low.x..=high.x {
+                let region = IVec2::new(x, z);
+                for lake in &self.streams.basin(&ground, region).lakes {
+                    let pit = self.streams.tier.centre(lake.pit);
+                    if lake.tarn && lake.wet() && lake.pit.div_euclid(IVec2::splat(self.streams.tier.side)) == region && (pit - centre).abs().max_element() <= radius {
+                        found.push(IVec3::new(pit.x, top_block(lake.level), pit.y));
+                    }
+                }
+            }
+        }
+        found.sort_unstable_by_key(|p| ((p.xz() - centre).as_i64vec2().length_squared(), p.x, p.z));
+        found
     }
 
     /// The lowest a tarn lies, in blocks, if there are tarns.
@@ -794,6 +815,34 @@ fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
 mod tests {
     use super::*;
     use crate::dials::WorldDials;
+
+    /// The country's faded noise is a classification, not a chance multiplier. In the
+    /// fading band outside its halfway edge even a fully suitable climate stays dry.
+    #[test]
+    fn tarn_country_has_a_sharp_edge() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let content = crate::WorldContent::base(&registry).unwrap();
+        let mut world = crate::Overworld::new(1, registry);
+        let tarns = world.rivers.tarns.as_mut().unwrap();
+        tarns.gates = vec![Gate::new(&content, &crate::content::ClimateBox::default())];
+        let (mut edge, mut inside) = (0, 0);
+        for z in (-2048..=2048).step_by(64) {
+            for x in (-2048..=2048).step_by(64) {
+                let at = IVec2::new(x, z);
+                let tarns = world.rivers.tarns.as_ref().unwrap();
+                let country = world.rivers.tarn_country(x, z);
+                let weight = tarns.weight(world.stages(), at);
+                if (0.0..0.5).contains(&country) && country > 0.0 {
+                    edge += 1;
+                    assert_eq!(weight, 0.0, "tarn chance fades beyond its country at {at}");
+                } else if country >= 0.5 {
+                    inside += 1;
+                    assert_eq!(weight, 1.0, "country weakens a fully suitable climate at {at}");
+                }
+            }
+        }
+        assert!(edge > 10 && inside > 10, "sample missed the edge or country: {edge}, {inside}");
+    }
 
     /// `cargo test --release -p voxmar_worldgen river_stats -- --ignored --nocapture`
     #[test]
