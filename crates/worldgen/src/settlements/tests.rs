@@ -1927,13 +1927,13 @@ fn a_culture_is_a_function_of_the_seed_and_the_place() {
 fn neighbouring_places_share_a_family() {
     let (mut same, mut pairs) = (0, 0);
     let mut seen = std::collections::BTreeSet::new();
-    for seed in [1u64, 7, 42] {
+    for seed in [1u64, 7, 42, 99, 0x5eed] {
         let world = base_world(seed);
         let families = cell_families(&world);
         let region = |at: IVec2| world.settlements.def.cultures.region_at(world.settlements.seed, at, &families).0;
         for k in 0..400u64 {
             let h = crate::rng::hash3(seed, k as i32, 3, 99);
-            let at = IVec2::new((h % 80_000) as i32 - 40_000, ((h >> 20) % 80_000) as i32 - 40_000);
+            let at = IVec2::new((h % 160_000) as i32 - 80_000, ((h >> 20) % 160_000) as i32 - 80_000);
             let angle = (h >> 40) as f32 / 1e6;
             let other = at + IVec2::new((angle.cos() * 3000.0) as i32, (angle.sin() * 3000.0) as i32);
             let (a, b) = (region(at), region(other));
@@ -1944,6 +1944,7 @@ fn neighbouring_places_share_a_family() {
     }
     let share = same as f32 / pairs as f32;
     assert!(share >= 0.7, "{same} of {pairs} places 3 km apart share a family: {share:.2}");
+    println!("culture regions: {same}/{pairs} neighbours share a family ({share:.3}), {} families seen", seen.len());
     let families = base_world(1).settlements.def.cultures.families.len();
     assert!(seen.len() >= 9, "only {} of {families} families turn up as a region's: {seen:?}", seen.len());
     // Settlements near one another, as planned (some claimed by river folk, which is why
@@ -1965,6 +1966,48 @@ fn neighbouring_places_share_a_family() {
     assert!(near_pairs > 20, "only {near_pairs} settlements within 3 km of another");
     let share = near_same as f32 / near_pairs as f32;
     assert!(share >= 0.7, "{near_same} of {near_pairs} planned neighbours within 3 km share a family: {share:.2}");
+    println!("culture settlements: {near_same}/{near_pairs} neighbours share a family ({share:.3})");
+}
+
+/// Every regional family can win somewhere it fits, including the rare ones: homogeneous
+/// regions from the real climate picker, with the ordinary luck and neighbour smoothing.
+/// This checks the catalogue independently of which rare biomes a geographical sample finds.
+#[test]
+fn every_regional_family_can_win_its_climate() {
+    use crate::biome::Point;
+    let world = base_world(1);
+    let def = &world.settlements.def;
+    let wanted: std::collections::BTreeSet<usize> = def.cultures.families.iter().enumerate()
+        .filter(|(_, f)| f.claim == super::culture::Claim::Region && f.weight > 0.0)
+        .map(|(i, _)| i).collect();
+    let temperatures = [-9.0, -2.0, 2.0, 7.0, 13.0, 19.0, 27.0];
+    let mut rng = crate::rng::Rng::new(1, 57, 0, 0);
+    let mut climates = std::collections::BTreeSet::new();
+    for k in 0..20_000 {
+        let t = k % temperatures.len();
+        let p = Point([temperatures[t], rng.unit() * 2.0, 0.05 + rng.unit() * 0.95,
+            rng.unit(), rng.unit(), rng.unit(), rng.unit(), 1.0]);
+        let id = world.biomes().resolve(&p);
+        if !def.avoid.iter().any(|tag| world.biomes().get(id).has_tag(tag)) {
+            climates.insert((t, id));
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    'seeds: for seed in 0..128u64 {
+        for &(t, id) in &climates {
+            let probe = |_: IVec2| (world.biomes().get(id), temperatures[t]);
+            let cell = IVec2::new(seed as i32 - 64, 0);
+            let fits = |g| def.cultures.cell_fits(seed, g, &probe);
+            let family = def.cultures.cell_family(seed, cell, &fits);
+            if fits(cell).1[family] > 0.0 {
+                seen.insert(family);
+            }
+            if seen == wanted { break 'seeds }
+        }
+    }
+    let missing: Vec<_> = wanted.difference(&seen).map(|&i| def.cultures.families[i].name.as_str()).collect();
+    assert!(missing.is_empty(), "regional families cannot win in {} sampled climates: {missing:?}", climates.len());
+    println!("all {} regional families can win in {} real biome/temperature fixtures", wanted.len(), climates.len());
 }
 
 /// Every biome a settlement may stand in suits two families or more, fully or at half
