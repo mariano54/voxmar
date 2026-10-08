@@ -6,6 +6,7 @@
 //! its square.
 
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::glam::{IVec2, IVec3, Vec2};
 
@@ -30,6 +31,7 @@ pub(super) static PLACE_FAILS: [std::sync::atomic::AtomicU32; 8] = [const { std:
 #[cfg(test)]
 thread_local! {
     static PROFILE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static LANE_COUNTS: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
 }
 
 /// Optional coarse CPU measurements, only while the release budget replans a known cell.
@@ -48,14 +50,6 @@ fn phase_end(name: &str, start: Option<std::time::Duration>) {
     if let Some(start) = start {
         eprintln!("  plan phase {name}: {:.3} ms CPU", (crate::perf::thread_time() - start).as_secs_f64() * 1000.0);
     }
-}
-
-#[cfg(test)]
-struct LayoutTime(Option<std::time::Duration>);
-
-#[cfg(test)]
-impl Drop for LayoutTime {
-    fn drop(&mut self) { phase_end("layout total (including rejected attempts)", self.0); }
 }
 
 fn miss<T>(reason: usize) -> Option<T> {
@@ -142,11 +136,17 @@ struct Ground<'a> {
     scratch: crate::water::Samples,
     #[cfg(test)]
     queries: usize,
+    #[cfg(test)]
+    misses: usize,
+    #[cfg(test)]
+    clears: usize,
+    #[cfg(test)]
+    levels: usize,
 }
 
 impl Ground<'_> {
     fn new(land: &dyn Land) -> Ground<'_> {
-        Ground { land, seen: FxHashMap::default(), scratch: Default::default(), #[cfg(test)] queries: 0 }
+        Ground { land, seen: FxHashMap::default(), scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0 }
     }
 
     fn at(&mut self, p: IVec2) -> GeoSample {
@@ -159,7 +159,11 @@ impl Ground<'_> {
         // Clearing changes only how often the original land is recomputed.
         if self.seen.len() >= 16_384 {
             self.seen.clear();
+            #[cfg(test)]
+            { self.clears += 1; }
         }
+        #[cfg(test)]
+        { self.misses += 1; }
         let g = self.land.sample_cached(p.x, p.y, &mut self.scratch);
         self.seen.insert(p, g);
         g
@@ -227,9 +231,40 @@ pub struct Lane {
     pub paved: bool,
     /// Whether it leads out of the settlement, a trail joining its end.
     pub main: bool,
+    /// Exact interpolation samples, shared by temporary lane clones. Plans retain only
+    /// `points`; oversized lanes use the original calculation instead.
+    samples: Option<Arc<LaneSamples>>,
 }
 
+#[derive(Debug)]
+struct LaneSamples {
+    points: Vec<Vec2>,
+    bounds: Vec<(Vec2, Vec2)>,
+}
+
+const LANE_CHUNK: usize = 16;
+const LANE_SAMPLE_LIMIT: usize = 16_384;
+
 impl Lane {
+    fn new(points: Vec<Vec2>, half: f32, paved: bool, main: bool) -> Self {
+        let count = points.windows(2).try_fold(0usize, |total, w| {
+            let n = (w[0].distance(w[1]).ceil() as i32).max(1) as usize;
+            total.checked_add(n + 1).filter(|&count| count <= LANE_SAMPLE_LIMIT)
+        });
+        let samples = count.map(|count| {
+            let mut sampled = Vec::with_capacity(count);
+            for w in points.windows(2) {
+                let n = (w[0].distance(w[1]).ceil() as i32).max(1);
+                sampled.extend((0..=n).map(|i| w[0].lerp(w[1], i as f32 / n as f32)));
+            }
+            let bounds = sampled.chunks(LANE_CHUNK).map(|chunk| {
+                chunk.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(min, max), &p| (min.min(p), max.max(p)))
+            }).collect();
+            Arc::new(LaneSamples { points: sampled, bounds })
+        });
+        Self { points, half, paved, main, samples }
+    }
+
     fn distance(&self, p: Vec2) -> f32 {
         self.points.windows(2).map(|w| segment_distance(p, w[0], w[1])).fold(f32::MAX, f32::min).min(self.points.first().map_or(f32::MAX, |q| q.distance(p)))
     }
@@ -246,13 +281,47 @@ impl Lane {
         best
     }
 
-    /// Whether any of the same sampled lane points passes a distance check. Placement
-    /// needs only this predicate, so stop as soon as a point rules a lot out.
+    /// Whether any sampled lane point passes a monotone distance predicate (`< reach`
+    /// or `<= reach`). Chunk bounds use extrema of the actual interpolated floats. Each
+    /// component of their distance is no greater than a contained point's component;
+    /// the same nonnegative squares, sum and sqrt preserve that lower bound, including
+    /// equality. A rejected bound therefore cannot hide a matching point.
     fn rect_any(&self, rect: &Rect, test: impl Fn(f32) -> bool) -> bool {
-        self.points.windows(2).any(|w| {
-            let n = (w[0].distance(w[1]).ceil() as i32).max(1);
-            (0..=n).any(|i| test(rect.distance(w[0].lerp(w[1], i as f32 / n as f32))))
-        })
+        #[cfg(test)]
+        let profiling = PROFILE.with(|p| p.get());
+        #[cfg(test)]
+        let mut evaluations = 0;
+        #[cfg(test)]
+        let mut skips = 0;
+        let mut point = |p| {
+            #[cfg(test)]
+            if profiling { evaluations += 1; }
+            test(rect.distance(p))
+        };
+        let found = if let Some(samples) = &self.samples {
+            let lo = rect.min.as_vec2() - 0.5;
+            let hi = rect.max.as_vec2() + 0.5;
+            samples.points.chunks(LANE_CHUNK).zip(&samples.bounds).any(|(chunk, &(min, max))| {
+                let lower = (lo - max).max(min - hi).max(Vec2::ZERO).length();
+                if !test(lower) {
+                    #[cfg(test)]
+                    if profiling { skips += 1; }
+                    return false;
+                }
+                chunk.iter().copied().any(&mut point)
+            })
+        } else {
+            self.points.windows(2).any(|w| {
+                let n = (w[0].distance(w[1]).ceil() as i32).max(1);
+                (0..=n).any(|i| point(w[0].lerp(w[1], i as f32 / n as f32)))
+            })
+        };
+        #[cfg(test)]
+        if profiling {
+            let counts = [1, evaluations, skips];
+            LANE_COUNTS.with(|c| c.set(std::array::from_fn(|i| c.get()[i] + counts[i])));
+        }
+        found
     }
 
     fn length(&self) -> f32 {
@@ -730,9 +799,27 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
 /// Lays out the settlement of the square `cell` round `centre`, if it can.
 /// `smallest`: as the size with fewest houses, whatever the draw.
 #[allow(clippy::too_many_arguments)]
-fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, mut ground: &mut Ground) -> Option<Plan> {
+fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smallest: bool, ground: &mut Ground) -> Option<Plan> {
     #[cfg(test)]
-    let _layout = LayoutTime(phase_start());
+    let time = phase_start();
+    #[cfg(test)]
+    let before = (ground.queries, ground.misses, ground.clears, ground.levels, LANE_COUNTS.with(|c| c.get()));
+    let result = layout(ctx, cell, centre, fresh, rng, smallest, ground);
+    #[cfg(test)]
+    if time.is_some() {
+        let lane = LANE_COUNTS.with(|c| c.get());
+        eprintln!("  layout {}: ground queries {}, hits {}, misses {}, clears {}, level calls {}; lane checks {}, point distances {}, chunks skipped {}",
+            if result.is_some() { "accepted" } else { "rejected" }, ground.queries - before.0,
+            (ground.queries - before.0) - (ground.misses - before.1), ground.misses - before.1,
+            ground.clears - before.2, ground.levels - before.3,
+            lane[0] - before.4[0], lane[1] - before.4[1], lane[2] - before.4[2]);
+        phase_end("layout total (including rejected attempts)", time);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, mut ground: &mut Ground) -> Option<Plan> {
     #[cfg(test)]
     let time = phase_start();
     let def = ctx.def;
@@ -852,7 +939,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     let walk_from = |ground: &mut Ground, lanes: &mut Vec<Lane>, rng: &mut Rng, from: Vec2, angle: f32, length: f32, half: f32, main: bool| {
         let points = walk(ground, lanes, rng, from, angle, length, wiggle, &bounds, lanes_def, &[(square_rect, CLEAR)]);
         if points.len() >= 3 {
-            lanes.push(Lane { points, half, paved: paved && main, main });
+            lanes.push(Lane::new(points, half, paved && main, main));
         }
     };
     let ring = square as f32 + 0.5;
@@ -860,7 +947,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     // A straight lane, where the ground between its ends is firm.
     let straight = |ground: &mut Ground, from: Vec2, to: Vec2, half: f32| -> Option<Lane> {
         let n = (from.distance(to) / 2.0).ceil().max(1.0) as i32;
-        (0..=n).all(|i| walkable(&ground.at(from.lerp(to, i as f32 / n as f32).round().as_ivec2()))).then(|| Lane { points: vec![from, to], half, paved: false, main: false })
+        (0..=n).all(|i| walkable(&ground.at(from.lerp(to, i as f32 / n as f32).round().as_ivec2()))).then(|| Lane::new(vec![from, to], half, false, false))
     };
     // Side lanes off the lanes there are, `count` of them, on the side `away` points to if
     // any.
@@ -961,7 +1048,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
                 points.push(p);
             }
             let reach = if whole {
-                lanes.push(Lane { points, half: side_half + 0.2, paved: false, main: false });
+                lanes.push(Lane::new(points, side_half + 0.2, false, false));
                 for k in 0..2 {
                     let a = start_angle + 0.4 + k as f32 * std::f32::consts::PI;
                     if let Some(lane) = straight(&mut ground, from_square(a), centre.as_vec2() + Vec2::from_angle(a) * radius, side_half) {
@@ -1180,7 +1267,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
                 if points.len() >= 4 {
                     let mut points = points;
                     points.insert(0, p);
-                    lanes.push(Lane { points, half: side_half, paved: false, main: false });
+                    lanes.push(Lane::new(points, side_half, false, false));
                 }
             }
             if lanes.len() == walked {
@@ -1503,7 +1590,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     for lot in &lots {
         if let Some((door, to)) = lot.door {
             let from = door.as_vec2();
-            let path = Lane { points: vec![from, to], half: 0.5, paved: false, main: false };
+            let path = Lane::new(vec![from, to], 0.5, false, false);
             raster.lane(&path);
         }
     }
@@ -2058,6 +2145,8 @@ fn place(
 /// water lies within `bank` blocks of it. Water is looked for at every block, under it and
 /// on its banks alike, as a creek one block wide could lie between samples.
 fn level(ground: &mut Ground, rect: &Rect, bank: i32, step: i32) -> Option<(i32, i32)> {
+    #[cfg(test)]
+    { ground.levels += 1; }
     let outer = rect.grow(bank);
     let (mut lowest, mut highest) = (i32::MAX, i32::MIN);
     let step = step.max(1);
@@ -2317,7 +2406,7 @@ mod level_tests {
     #[test]
     fn lane_rect_predicates_keep_boundaries_and_stop_at_a_match() {
         let rect = Rect::new(IVec2::ZERO, IVec2::splat(3));
-        let make = |points| Lane { points, half: 1.0, paved: false, main: false };
+        let make = |points| Lane::new(points, 1.0, false, false);
         let boundary = make(vec![Vec2::new(5.0, -5.0), Vec2::new(5.0, 5.0)]);
         assert_eq!(boundary.rect_distance(&rect), 2.5);
         assert!(!boundary.rect_any(&rect, |d| d < 2.5));
@@ -2335,10 +2424,36 @@ mod level_tests {
                 assert_eq!(lane.rect_any(&rect, |d| d <= reach), distance <= reach);
             }
         }
+        // Bounds are built from actual rounded interpolation samples. Exercise equal
+        // and adjacent-float reaches after translating to large world coordinates.
+        for offset in [0.0, -8192.0, 1_048_576.0, -16_777_216.0] {
+            let shift = Vec2::new(offset, -offset);
+            for points in [
+                vec![Vec2::new(5.0, -5.0), Vec2::new(5.0, 5.0)],
+                vec![Vec2::new(-30.25, 8.5), Vec2::new(18.75, -4.5), Vec2::new(28.0, 50.0)],
+                vec![Vec2::new(50.0, 50.0); 2],
+            ] {
+                let lane = make(points.into_iter().map(|p| p + shift).collect());
+                let rect = Rect::new(shift.as_ivec2(), IVec2::splat(3));
+                let distance = lane.rect_distance(&rect);
+                for reach in [distance.next_down(), distance, distance.next_up()] {
+                    assert_eq!(lane.rect_any(&rect, |d| d < reach), distance < reach, "strict {offset}/{reach}");
+                    assert_eq!(lane.rect_any(&rect, |d| d <= reach), distance <= reach, "inclusive {offset}/{reach}");
+                }
+                let clone = lane.clone();
+                assert!(Arc::ptr_eq(lane.samples.as_ref().unwrap(), clone.samples.as_ref().unwrap()));
+            }
+        }
+        let oversized = make(vec![Vec2::splat(10.0), Vec2::new(20_000.0, 10.0)]);
+        assert!(oversized.samples.is_none(), "oversized sequences must use exact on-demand sampling");
+        assert_eq!(oversized.rect_any(&rect, |d| d < 10.0), oversized.rect_distance(&rect) < 10.0);
         let near = make(vec![Vec2::ONE, Vec2::splat(1000.0)]);
-        let tested = std::cell::Cell::new(0);
-        assert!(near.rect_any(&rect, |d| { tested.set(tested.get() + 1); d < 1.0 }));
-        assert_eq!(tested.get(), 1, "a known intersecting point must stop the check");
+        profile(true);
+        let before = LANE_COUNTS.with(|c| c.get());
+        assert!(near.rect_any(&rect, |d| d < 1.0));
+        let after = LANE_COUNTS.with(|c| c.get());
+        profile(false);
+        assert_eq!(after[1] - before[1], 1, "a known intersecting point must stop the check");
     }
 
     /// Flat ground with a creek one block wide along `x == creek.0` (a column) or

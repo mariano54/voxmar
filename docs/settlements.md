@@ -133,7 +133,12 @@ corners at 4,096 plus one sample's corners, and channel groups at 16; eviction r
 the same pure computation. None of this scratch storage is retained in the plan cache.
 Site water checks walk the same ranked qualifying prefix lazily, stopping when enough
 usable sites have been found. Lot-clearance checks stop at the first lane point that
-rejects the lot, retaining the same strict and inclusive boundaries. Layout RNG draws
+rejects the lot, retaining the same strict and inclusive boundaries. Temporary lanes
+share their exact interpolation samples, capped at 16,384 points per lane with the
+original on-demand calculation above that cap. Bounds of each 16-point chunk use the
+actual rounded samples; their componentwise lower distance can exclude only chunks
+whose every point fails the same comparison. Plans retain only the original polylines.
+Layout RNG draws
 for name prefixes stay in place; only the successful layout constructs its final name.
 Allocator metadata is outside this storage count. Later packages replace only culture rule fields they
 name, preserving the others and reporting which package and field they replaced. Loading
