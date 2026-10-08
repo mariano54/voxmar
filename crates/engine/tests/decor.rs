@@ -32,7 +32,7 @@ fn the_templates_make_every_family_in_full() {
     let cloth = ["cloth", "rug", "banner", "curtain", "paper_lantern", "cushion", "bunting", "awning"];
     let crockery = ["plate", "bowl", "jar", "jug", "basket"];
     let woods = ["birch", "oak", "dark_oak"];
-    let dyes = ["white", "cream", "ochre", "saffron", "red", "rust", "rose", "plum", "indigo", "sky", "teal", "green"];
+    let dyes = ["white", "cream", "ochre", "amber", "red", "rust", "rose", "mulberry", "indigo", "sky", "teal", "green"];
     let glazes = ["earthen", "ivory", "cobalt"];
     let mut expected = BTreeSet::new();
     for (families, members) in [(&woods[..], &furniture[..]), (&dyes[..], &cloth[..]), (&glazes[..], &crockery[..])] {
