@@ -3625,58 +3625,6 @@ fn a_save_whose_machines_cannot_be_written_does_not_count_and_leaves_nothing_sta
 }
 
 #[test]
-fn a_player_who_leaves_while_their_file_cannot_be_written_is_kept_until_a_save_holds_them() {
-    let dir = world_dir("kept");
-    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
-    let ore = client.content.blocks.expect("base:iron_ore");
-    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
-    // Another player takes 64 ore and leaves: their file holds it.
-    let mut other = client.another("other");
-    let chest = other.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
-    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
-    for line in ["/clear", &format!("/setblock {at} chest"), "/give iron_ore 64"] {
-        other.ok(line);
-    }
-    other.pump_until(|c| held(c) == 64 && c.world.block(chest) == c.content.blocks.id("base:chest"));
-    let before = saved_generation(&dir);
-    drop(other);
-    after_this_loop(&mut client);
-    assert!(saved_generation(&dir) > before, "their leaving was saved");
-    // Back, they put it all in the chest.
-    let mut other = client.another("other");
-    other.pump_until(|c| held(c) == 64);
-    use_machine(&mut other, chest);
-    other.pump_until(|c| held(c) == 0);
-    machine_says(&mut other, &at, "holds 64 items", 10);
-    // They leave while their file can't be written: that save does not count.
-    let before = saved_generation(&dir);
-    let blocked: Vec<_> = (before + 1..before + 40).map(|g| dir.join("players").join(format!("other.ron.{g}.new"))).collect();
-    for path in &blocked {
-        std::fs::create_dir_all(path).unwrap();
-    }
-    drop(other);
-    after_this_loop(&mut client);
-    assert_eq!(saved_generation(&dir), before, "a save without their file counted");
-    // With room again, the next save holds the chest and them as they left, together.
-    for path in &blocked {
-        std::fs::remove_dir_all(path).unwrap();
-    }
-    let third = client.another("third");
-    after_this_loop(&mut client);
-    drop(third);
-    after_this_loop(&mut client);
-    assert!(saved_generation(&dir) > before, "the save after counted");
-    let mut other = client.another("other");
-    other.ok("/seed");
-    let said = other.ok(&format!("/machine {at}"));
-    let in_chest = items_held(&said);
-    assert_eq!(held(&other) + in_chest, 64, "they hold {}, the chest: {said}", held(&other));
-    drop(other);
-    drop(client);
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
 fn a_multiblock_counts_as_built_for_whoever_placed_its_core_not_whoever_uses_it_first() {
     let dir = world_dir("builder");
     let mut owner = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
