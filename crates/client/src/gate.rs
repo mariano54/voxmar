@@ -49,6 +49,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_dis
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::lang::Words;
 use voxmar_engine::world::VoxelWorld;
 use voxmar_server::Lag;
 use voxmar_protocol::{ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, local_pair};
@@ -236,6 +237,8 @@ enum Step {
     /// cast into the pool catches a fish. Then the player dies: three items stay in hand,
     /// the rest lie where they fell, and after waking they are picked up again.
     Workshop,
+    /// The full-only HV factory, locked chests, picks and their bilingual evidence.
+    HvAge,
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
     /// Esc opens and closes the menu, E the inventory.
@@ -783,7 +786,7 @@ fn run(world: &mut World) {
 /// adds to the session there (measured on a loaded Mac, with room): the session's limits,
 /// `TIME_LIMIT` and `WALL_LIMIT`, grow by their sum in the full gate, so a phase dropped
 /// from this list takes its time with it.
-const FULL_ONLY_PHASES: [(&str, f32); 3] = [("MV washer", 120.0), ("bloomery and logistics", 160.0), ("iron age", 140.0)];
+const FULL_ONLY_PHASES: [(&str, f32); 4] = [("MV washer", 120.0), ("bloomery and logistics", 160.0), ("iron age", 140.0), ("HV age and treasure", 180.0)];
 
 /// What the full gate's session limits allow on top of the landing gate's.
 fn full_allowance() -> f32 {
@@ -887,6 +890,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Crafting, mining, tilling and fishing until something bites.
         // In the full gate, with time for its full-only machine phases.
         Step::Workshop => 250.0 + full_allowance(),
+        Step::HvAge => 180.0,
         // Torches crafted for a pinned quest, waited on in the server's seconds, and a quest
         // done left to drop off.
         Step::Quests => 60.0,
@@ -1117,6 +1121,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         }
         Step::Breaks => breaks(world, gate, now, in_phase),
         Step::Workshop => workshop(world, gate, now, in_phase),
+        Step::HvAge => hv_age(world, gate, now),
         Step::Swim => swim(world, gate, now, in_phase),
         Step::Screens => screens(world, gate, now, in_phase),
         Step::Overlay => overlay(world, gate, now, in_phase),
@@ -2287,6 +2292,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                             format!("summon aurochs 1 {}", at(IVec3::new(5, 0, 2))),
                             "creatures tame aurochs".to_owned(),
                             "creatures hold aurochs".to_owned(),
+                            // A known floor and pose, rather than wherever gathering the
+                            // death drops left the player below these raised machines.
+                            format!("setblock {} cobblestone", at(IVec3::new(-2, -1, 3))),
+                            format!("fill {} {} air", at(IVec3::new(-2, 0, 3)), at(IVec3::new(-2, 2, 3))),
+                            format!("tp {} {} {}", k.x as f32 - 1.5, k.y, k.z as f32 + 3.5),
                             "clear".to_owned(),
                             "give coal_ore 1".to_owned(),
                         ] {
@@ -2361,6 +2371,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         19 => {
             let k = gate.kiln;
             let (furnace, wheel, oven) = (k, k + IVec3::new(3, 0, 0), k + IVec3::new(-3, 1, 1));
+            let operating = k.as_vec3() + Vec3::new(-1.5, 0.0, 3.5);
             let vantage = k.as_vec3() + Vec3::new(0.0, 4.0, 11.0);
             // "at N% power" or "N% done" above nought in a /machine answer.
             let blown = |said: &str| {
@@ -2383,6 +2394,14 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
             let said: Vec<String> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
             let stage = gate.machines_stage;
+            if stage < 5 && world.resource::<LocalPlayer>().position.distance(operating) >= 1.0 {
+                if gate.server_now - gate.machines_since > 10.0 {
+                    let position = world.resource::<LocalPlayer>().position;
+                    teardown(world);
+                    fail(world, gate, "iron age", format!("the player never reached the operating floor: at {position:?}, wanted {operating:?}"));
+                }
+                return;
+            }
             // Flying until the teleport to the vantage lands (as the sky step does), then turned
             // to both works every frame, so the camera has turned by the time of the shot.
             let arrived = world.resource::<LocalPlayer>().position.distance(vantage) < 1.0;
@@ -2448,7 +2467,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         );
                         world.resource_mut::<LocalPlayer>().flying = false;
                         teardown(world);
-                        end_workshop(world, gate, now);
+                        gate.next(Step::HvAge, now);
                         return;
                     }
                 }
@@ -2504,6 +2523,193 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         _ => {}
+    }
+}
+
+/// The HV source, processors and treasure played with the real server. Inputs must first
+/// arrive in hand and then leave it; machine replies must show power/progress, not merely
+/// a queued recipe. Every wait on the server uses its clock.
+fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
+    let content = world.resource::<Launch>().content.clone();
+    let english = |words: &Words| content.english.render(words, &content.blocks);
+    let h = gate.kiln + IVec3::new(1, 0, -5);
+    let rel = |x, y, z| h + IVec3::new(x, y, z);
+    let at = |p: IVec3| format!("{} {} {}", p.x, p.y, p.z);
+    let (core, boiler, array, smelter) = (rel(0, 2, 1), rel(0, 3, 1), rel(-1, 2, 4), rel(-1, 3, 1));
+    let chest = rel(-1, 0, 7);
+    let use_at = |world: &World, target, action: &str| {
+        let actions = world.resource::<crate::Actions>().0.clone();
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect(action), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegX });
+    };
+    let ask = |gate: &mut Gate, target| {
+        if let Some(o) = gate.observer.as_mut() {
+            o.replies.clear();
+            o.connection.send(ClientMessage::Command { line: format!("machine {}", at(target)) });
+        }
+        gate.machines_asked = gate.server_now;
+    };
+    let powered = |text: &str| text.trim_end_matches('.').split(", ").any(|part| {
+        part.strip_prefix("at ").and_then(|p| p.strip_suffix("% power")).or_else(|| part.strip_suffix("% done"))
+            .and_then(|n| n.parse::<f32>().ok()).is_some_and(|n| n > 0.0)
+    });
+    if gate.server_in_phase() > 35.0 {
+        let said: Vec<_> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
+        gate.check("HV age", Err(format!("stage {} made no progress for 35 server seconds: {said:?}", gate.phase)));
+        set_language(world, "en");
+        world.resource_mut::<LocalPlayer>().flying = false;
+        end_workshop(world, gate, now);
+        return;
+    }
+    match gate.phase {
+        0 => {
+            let mut lines = vec![
+                "clear".into(),
+                format!("fill {} {} air", at(rel(-5, 0, -1)), at(rel(5, 5, 9))),
+                format!("fill {} {} polished_stone", at(rel(-5, -1, -1)), at(rel(5, -1, 9))),
+                format!("fill {} {} hv_casing", at(h), at(rel(4, 2, 2))),
+                format!("fill {} {} air", at(rel(1, 1, 1)), at(rel(3, 1, 1))),
+                format!("setblock {} turbine_hall", at(core)),
+                format!("setblock {} boiler", at(boiler)),
+                format!("setblock {} hv_cable", at(rel(-1, 2, 1))),
+                format!("setblock {} mv_transformer", at(rel(-1, 1, 1))),
+                format!("setblock {} hv_battery_bank", at(rel(-2, 2, 1))),
+                format!("setblock {} induction_smelter", at(smelter)),
+                format!("setblock {} hv_cable", at(rel(-1, 2, 2))),
+                format!("setblock {} hv_cable", at(rel(-1, 2, 3))),
+                format!("fill {} {} hv_casing", at(rel(-2, 1, 4)), at(rel(0, 3, 6))),
+                format!("setblock {} air", at(rel(-1, 2, 5))),
+                format!("setblock {} processing_array", at(array)),
+                "give coal_ore 4".into(),
+                format!("tp {}", at(rel(-3, 0, 2))),
+            ];
+            for (i, name) in ["nomad", "farm", "bronze", "iron", "steam"].iter().enumerate() {
+                lines.push(format!("setblock {} {name}_treasure_chest", at(rel(i as i32 - 3, 0, 7))));
+            }
+            for line in lines { world.resource::<Net>().command(&line); }
+            world.resource_mut::<LocalPlayer>().flying = true;
+            gate.machines_seen = false;
+            gate.machines_asked = f32::MIN;
+            gate.advance(now);
+        }
+        // Fuel, then two substantial batches so the replies cannot miss a short job.
+        1 | 2 | 3 => {
+            let (name, target) = match gate.phase { 1 => ("base:coal_ore", boiler), 2 => ("base:copper_ore", array), _ => ("base:copper_ore", smelter) };
+            gate.machines_seen |= holding(world, name).0 > 0;
+            if gate.machines_seen && holding(world, name).0 == 0 && gate.machines_asked > f32::MIN {
+                if gate.phase < 3 { world.resource::<Net>().command("give copper_ore 32"); }
+                gate.machines_seen = false;
+                gate.machines_asked = f32::MIN;
+                gate.advance(now);
+            } else if select(world, name) && gate.server_now - gate.machines_asked >= 3.0 {
+                use_at(world, target, "base:use_machine");
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        4 | 5 | 6 => {
+            let (target, want) = match gate.phase { 4 => (core, "running"), 5 => (array, "making"), _ => (smelter, "making") };
+            let machine = match gate.phase { 4 => "base:turbine_hall", 5 => "base:processing_array", _ => "base:induction_smelter" };
+            let prefix = format!("{}:", english(&Words::Block(machine.into())));
+            let said = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.starts_with(&prefix) && r.to_lowercase().contains(want) && (gate.phase == 4 || powered(r))));
+            if let Some(said) = said {
+                gate.check(&format!("HV age: {want}"), Ok(said));
+                if let Some(o) = gate.observer.as_mut() { o.replies.clear(); }
+                gate.machines_asked = f32::MIN;
+                gate.advance(now);
+                if gate.phase == 7 {
+                    world.resource::<Net>().command("clear");
+                    for material in ["bone", "copper", "bronze", "iron"] { world.resource::<Net>().command(&format!("give {material}_lockpick 2")); }
+                }
+            } else if gate.server_now - gate.machines_asked >= 2.0 { ask(gate, target); }
+        }
+        7 => {
+            if ["bone", "copper", "bronze", "iron"].iter().all(|m| holding(world, &format!("base:{m}_lockpick")).0 == 2) {
+                gate.advance(now);
+            }
+        }
+        // Identical poses in both languages. The hotbar contains all four picks; selecting
+        // each shows its actual translated name above it. Pack art is judged in these shots.
+        8..=27 => {
+            let i = (gate.phase - 8) / 2;
+            let language = if i % 2 == 0 { "en" } else { "ja" };
+            let (name, position, target, pick) = match i / 2 {
+                0 => (if language == "en" { "hv-hall-en" } else { "hv-hall-ja" }, rel(-5, 5, -3), core, "base:bone_lockpick"),
+                1 => (if language == "en" { "hv-array-en" } else { "hv-array-ja" }, rel(-3, 1, 2), array, "base:copper_lockpick"),
+                2 => (if language == "en" { "hv-smelter-en" } else { "hv-smelter-ja" }, rel(-5, 5, -1), smelter, "base:bronze_lockpick"),
+                3 => (if language == "en" { "hv-power-en" } else { "hv-power-ja" }, rel(-5, 2, -2), rel(-1, 2, 1), "base:iron_lockpick"),
+                _ => (if language == "en" { "treasure-row-en" } else { "treasure-row-ja" }, rel(-1, 2, 12), chest, "base:copper_lockpick"),
+            };
+            if gate.phase % 2 == 0 {
+                // The full-cube cable covers the controller's only outward face. After
+                // proving the powered job, uncover it for the paired close-ups, then
+                // restore the connection before the remaining factory shots.
+                if gate.phase == 12 { world.resource::<Net>().command(&format!("setblock {} air", at(rel(-1, 2, 3)))); }
+                if gate.phase == 16 { world.resource::<Net>().command(&format!("setblock {} hv_cable", at(rel(-1, 2, 3)))); }
+                set_language(world, language);
+                world.resource_mut::<Settings>().language = language.into();
+                world.resource::<Net>().command(&format!("tp {}", at(position)));
+                empty_hand(world);
+                gate.advance(now);
+            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0
+                && world.resource::<ClientWorld>().block(rel(-1, 2, 3)) == content.blocks.id(if i / 2 == 1 { "core:air" } else { "base:hv_cable" }) {
+                aim(world, target);
+                select(world, pick);
+                gate.settled += 1;
+                if gate.settled >= 3 && gate.shot(world, name).is_some() {
+                    if i >= 9 {
+                        set_language(world, "en");
+                        world.resource_mut::<Settings>().language = "en".into();
+                        world.resource::<Net>().command(&format!("tp {}", at(rel(-1, 0, 9))));
+                        gate.phase = 40;
+                        gate.phase_server = gate.server_now;
+                        gate.machines_asked = f32::MIN;
+                    } else { gate.advance(now); }
+                }
+            }
+        }
+        40 => {
+            let client = world.resource::<ClientWorld>();
+            if client.block(chest) == client.registry.id("base:chest") && holding(world, "base:copper_lockpick").0 == 1 {
+                gate.check("treasure: picked", Ok("a copper pick opened the Bronze chest and exactly one pick was used".into()));
+                gate.advance(now);
+                gate.machines_asked = f32::MIN;
+            } else if select(world, "base:copper_lockpick") && gate.server_now - gate.machines_asked >= 3.0 {
+                use_at(world, chest, "base:pick_lock");
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        41 => {
+            let said = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("holds") && !r.contains("holds 0 items")));
+            if let Some(said) = said {
+                gate.check("treasure: contents", Ok(said));
+                gate.advance(now);
+                gate.machines_asked = f32::MIN;
+            } else if gate.server_now - gate.machines_asked >= 2.0 { ask(gate, chest); }
+        }
+        42 => {
+            if holding(world, "base:gold_coin").0 > 0 {
+                world.resource_mut::<UiState>().inventory_open = true;
+                gate.advance(now);
+            } else if empty_hand(world) && gate.server_now - gate.machines_asked >= 3.0 {
+                use_at(world, chest, "base:use_machine");
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        43 | 44 => {
+            let language = if gate.phase == 43 { "en" } else { "ja" };
+            set_language(world, language);
+            world.resource_mut::<Settings>().language = language.into();
+            if gate.server_in_phase() > 1.0 && gate.shot(world, if language == "en" { "treasure-open-en" } else { "treasure-open-ja" }).is_some() { gate.advance(now); }
+        }
+        _ => {
+            set_language(world, "en");
+            world.resource_mut::<Settings>().language = "en".into();
+            world.resource_mut::<UiState>().inventory_open = false;
+            world.resource_mut::<LocalPlayer>().flying = false;
+            world.resource::<Net>().command(&format!("fill {} {} air", at(rel(-5, -1, -1)), at(rel(5, 5, 9))));
+            world.resource::<Net>().command("clear");
+            for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] { world.resource::<Net>().command(line); }
+            end_workshop(world, gate, now);
+        }
     }
 }
 
@@ -4608,6 +4814,11 @@ struct FeelRun {
     bear: Option<u32>,
     died: bool,
     calm: bool,
+    /// The first telegraph faces the target on the server; shots keep the same camera
+    /// before provoking it and during its wind-up, once the drawn body has turned.
+    facing_checked: bool,
+    facing_camera: Option<(f32, f32)>,
+    facing_frames: u8,
 }
 
 /// The bear in survival: provoked with a click every few server seconds until it winds up,
@@ -4695,8 +4906,18 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
-            key(world, KeyCode::KeyW, distance > 2.0 && gate.feel.seen.is_none());
-            aim_at(world, view.position + Vec3::Y * 0.6);
+            let fixed_camera = gate.feel.facing_camera.filter(|_| !gate.shots.lock().expect("gate shots").contains_key("windup-facing"));
+            key(world, KeyCode::KeyW, fixed_camera.is_none() && distance > 2.0 && gate.feel.seen.is_none());
+            if let Some((yaw, pitch)) = fixed_camera {
+                let mut player = world.resource_mut::<LocalPlayer>();
+                player.yaw = yaw;
+                player.pitch = pitch;
+                if gate.feel.facing_frames < 3 {
+                    gate.feel.facing_frames += 1;
+                }
+            } else {
+                aim_at(world, view.position + Vec3::Y * 0.6);
+            }
             // A wind-up is timed from its pose coming on: one still shown from the blow just
             // judged (its end not yet heard) is not a new one.
             if view.pose != Pose::Attacking {
@@ -4704,6 +4925,23 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if gate.feel.calm && gate.feel.seen.is_none() && !gate.feel.answered {
                 gate.feel.seen = Some(Instant::now());
                 gate.feel.calm = false;
+                if !gate.feel.facing_checked {
+                    let target = gate.observer.as_ref().and_then(|o| o.others.values().next().copied()).unwrap_or(world.resource::<LocalPlayer>().position);
+                    let to = (target - view.position).with_y(0.0).normalize_or_zero();
+                    let forward = Vec3::new(-view.yaw.sin(), 0.0, -view.yaw.cos());
+                    let cosine = forward.dot(to);
+                    let result = if cosine > 0.8 { Ok(format!("the first attacking pose faces its target (cosine {cosine:.3})")) } else { Err(format!("the attacking pose faced away from its target (cosine {cosine:.3}, yaw {})", view.yaw)) };
+                    gate.check("wind-up facing", result);
+                    gate.feel.facing_checked = true;
+                }
+            }
+            // The first update checks the server heading; give the drawn body's smooth
+            // turn time to show it, while it is still winding up. Keep the camera held
+            // until this later image has arrived.
+            if gate.feel.facing_checked && fixed_camera.is_some() && view.pose == Pose::Attacking
+                && gate.feel.seen.is_some_and(|seen| seen.elapsed().as_secs_f32() >= windup * 0.35)
+            {
+                gate.shot(world, "windup-facing");
             }
             if let Some(seen) = gate.feel.seen
                 && !gate.feel.answered
@@ -4723,6 +4961,21 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             // Provoked at most every few server seconds while it does not fight back.
             if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 {
+                if !gate.feel.facing_checked {
+                    if gate.feel.facing_camera.is_none() {
+                        let player = world.resource::<LocalPlayer>();
+                        gate.feel.facing_camera = Some((player.yaw, player.pitch));
+                        key(world, KeyCode::KeyW, false);
+                    }
+                    // The gate runs in Last: the renderer needs later frames to see
+                    // this camera direction before the first image is requested.
+                    if gate.feel.facing_frames < 3 {
+                        return;
+                    }
+                    if gate.shot(world, "windup-before").is_none() {
+                        return;
+                    }
+                }
                 gate.feel.poked = gate.server_now;
                 mouse(world, MouseButton::Left, true);
                 gate.feel.clicked = true;

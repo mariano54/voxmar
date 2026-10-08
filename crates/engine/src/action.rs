@@ -116,6 +116,8 @@ pub enum Requirement {
     /// The actor holds a fishing rod and the target is water with open air above, near
     /// enough to cast to.
     Fishable,
+    /// The target is a locked chest (tagged `locked`, `treasure.ron`).
+    Locked,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -181,6 +183,9 @@ pub enum Effect {
     /// Use the target machine: what the actor holds goes in if it takes it, otherwise
     /// what it made comes out; the actor is told how it is doing.
     UseMachine,
+    /// Pick the lock of the target chest with what the actor holds (`treasure.ron`): open,
+    /// it becomes a plain chest holding what it rolled.
+    PickLock,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -509,6 +514,10 @@ impl ActionDef {
             Requirement::Bed => {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("bed"))
+            }
+            Requirement::Locked => {
+                let (block, _) = block_target()?;
+                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag(crate::treasure::LOCKED_TAG))
             }
             Requirement::MultiblockCore => {
                 let (block, _) = block_target()?;

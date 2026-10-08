@@ -351,6 +351,57 @@ pub struct Machine {
     pub processes: Vec<ProcessId>,
 }
 
+impl Role {
+    /// What is wrong with its numbers, if anything: every speed, power, rate and capacity
+    /// above 0 and finite, a yield 0 or more, and electricity at a tier of 1 or more (a
+    /// transformer's 2 or more, as it gives a tier lower).
+    fn bad_number(&self) -> Option<&'static str> {
+        let positive = |x: f32| x > 0.0 && x.is_finite();
+        let electric_tier = |carrier: Carrier, tier: u8| carrier != Carrier::Electric || tier >= 1;
+        match *self {
+            Role::Conduit { carrier, tier } if !electric_tier(carrier, tier) => Some("a cable needs a tier of 1 or more"),
+            Role::Generator { carrier, tier, power, source } => {
+                if !positive(power) {
+                    Some("a generator's power must be above 0 and finite")
+                } else if !electric_tier(carrier, tier) {
+                    Some("an electric generator needs a tier of 1 or more")
+                } else if let Source::Converts { ratio, .. } = source
+                    && !positive(ratio)
+                {
+                    Some("a converter's ratio must be above 0 and finite")
+                } else {
+                    None
+                }
+            }
+            Role::Store { carrier, tier, capacity, rate } => {
+                if !positive(capacity) || !positive(rate) {
+                    Some("a store's capacity and rate must be above 0 and finite")
+                } else if !electric_tier(carrier, tier) {
+                    Some("an electric store needs a tier of 1 or more")
+                } else {
+                    None
+                }
+            }
+            Role::Transformer { tier, rate } if tier < 2 || !positive(rate) => Some("a transformer needs a tier of 2 or more and a rate above 0 and finite"),
+            Role::Processor { speed, extra, power, tier, .. } => {
+                if !positive(speed) {
+                    Some("a processor's speed must be above 0 and finite")
+                } else if !(extra >= 0.0 && extra.is_finite()) {
+                    Some("a processor's yield must be 0 or more and finite")
+                } else if let Some((carrier, power)) = power
+                    && (!positive(power) || !electric_tier(carrier, tier))
+                {
+                    Some("a processor's power must be above 0 and finite, and electric power at a tier of 1 or more")
+                } else {
+                    None
+                }
+            }
+            Role::Chute { rate } if !positive(rate) => Some("a chute needs a rate above 0 and finite"),
+            _ => None,
+        }
+    }
+}
+
 impl Machine {
     /// Its connections to power networks. A machine that gives power gives on its first;
     /// one that converts takes on its second.
@@ -384,6 +435,12 @@ impl Machine {
 
     pub fn is_processor(&self) -> bool {
         matches!(self.role, Role::Processor { .. })
+    }
+
+    /// Whether it turns power of one network into another's (a converting generator or a
+    /// transformer): it needs nothing of the world, unless it is a multiblock's core.
+    pub fn converts(&self) -> bool {
+        matches!(self.role, Role::Generator { source: Source::Converts { .. }, .. } | Role::Transformer { .. })
     }
 
     /// The stacks it holds of what goes in and of what it made, if it is a processor.
@@ -468,7 +525,7 @@ impl MachineRegistry {
         });
         for def in defs {
             let bad = |what: String| RegistryError(format!("processing recipe {} for {:?}: {what}", def.kind, def.outputs.first().map(|o| &o.0)));
-            if def.seconds <= 0.0 || def.inputs.is_empty() || def.outputs.is_empty() {
+            if !(def.seconds > 0.0 && def.seconds.is_finite()) || def.inputs.is_empty() || def.outputs.is_empty() {
                 return Err(bad("needs inputs, outputs and seconds".into()));
             }
             let item = |name: &str| blocks.id(name).ok_or_else(|| bad(format!("no block `{name}`")));
@@ -492,10 +549,10 @@ impl MachineRegistry {
                 {
                     return Err(RegistryError(format!("machine {}: no recipes of {kinds:?}", def.block)));
                 }
-                if let Role::Chute { rate } = def.role
-                    && rate <= 0.0
-                {
-                    return Err(RegistryError(format!("machine {}: a chute needs a rate above 0", def.block)));
+                // A mod's numbers are checked: a speed of 0 or NaN would freeze a machine
+                // without a word, and an infinite one empty a stack a step.
+                if let Some(what) = def.role.bad_number() {
+                    return Err(RegistryError(format!("machine {}: {what}", def.block)));
                 }
                 if registry.by_block.insert(block, registry.machines.len()).is_some() {
                     return Err(RegistryError(format!("machine {} is defined twice", def.block)));
@@ -663,6 +720,38 @@ mod tests {
         let blocks = blocks();
         let machines = MachineRegistry::read("t", r#"(machines: [(block: "crusher", role: Processor(kinds: ["mill"]))])"#).unwrap();
         assert!(MachineRegistry::new(vec![machines], Vec::new(), &blocks).is_err());
+    }
+
+    /// A mod's numbers that would freeze a machine or empty a stack a step are refused at
+    /// load, and sound ones load.
+    #[test]
+    fn machines_with_numbers_that_cannot_work_are_refused() {
+        let blocks = blocks();
+        let recipe = |seconds: &str| format!(r#"(recipes: [(kind: "crush", inputs: [("ore", 1)], outputs: [("dust", 1)], seconds: {seconds})])"#);
+        let loads = |role: &str, seconds: &str| {
+            let processes = MachineRegistry::read_processes("t", &recipe(seconds)).unwrap();
+            let machines = MachineRegistry::read("t", &format!(r#"(machines: [(block: "crusher", role: {role})])"#)).unwrap();
+            MachineRegistry::new(vec![machines], vec![processes], &blocks).is_ok()
+        };
+        let crusher = |numbers: &str| format!(r#"Processor(kinds: ["crush"], {numbers})"#);
+        assert!(loads(&crusher("speed: 2.0, yield: 1.0, power: Some((Electric, 8.0)), tier: 1"), "10.0"));
+        assert!(loads(&crusher("power: Some((Rotation, 4.0))"), "10.0"), "rotation needs no tier");
+        for bad in ["speed: 0.0", "speed: NaN", "speed: inf", "yield: -1.0", "yield: NaN", "power: Some((Electric, 8.0))", "power: Some((Electric, 0.0)), tier: 1", "power: Some((Rotation, NaN))"] {
+            assert!(!loads(&crusher(bad), "10.0"), "{bad} loaded");
+        }
+        for seconds in ["0.0", "NaN", "inf"] {
+            assert!(!loads(&crusher("speed: 1.0"), seconds), "a recipe of {seconds} seconds loaded");
+        }
+        for bad in [
+            "Chute(rate: NaN)",
+            "Conduit(carrier: Electric)",
+            "Generator(carrier: Rotation, power: NaN, source: Fuel)",
+            "Generator(carrier: Electric, tier: 1, power: 8.0, source: Converts(from: Rotation, ratio: 0.0))",
+            "Store(carrier: Electric, tier: 1, capacity: inf, rate: 8.0)",
+            "Transformer(tier: 1, rate: 128.0)",
+        ] {
+            assert!(!loads(bad, "10.0"), "{bad} loaded");
+        }
     }
 
     /// The last fuel that takes an item wins, so the game's broad tags must not shorten coal.
