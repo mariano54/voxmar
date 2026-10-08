@@ -68,6 +68,9 @@ pub struct Modifiers {
     pub warmth: f32,
     /// Extra health points the player may have.
     pub max_health: i8,
+    /// How much more (or less) health the player may have, as a share of what they would:
+    /// 1.1 is a tenth more. The extra comes empty, to fill by healing.
+    pub max_health_share: f32,
     /// How fast the player walks and runs.
     pub speed: f32,
     /// How fast the player mines.
@@ -80,7 +83,7 @@ pub struct Modifiers {
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0 }
     }
 }
 
@@ -95,6 +98,7 @@ impl Modifiers {
             },
             warmth: sum.warmth + m.warmth,
             max_health: sum.max_health.saturating_add(m.max_health),
+            max_health_share: sum.max_health_share * m.max_health_share,
             speed: sum.speed * m.speed,
             mining: sum.mining * m.mining,
             xp: sum.xp * m.xp,
