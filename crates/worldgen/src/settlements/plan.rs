@@ -143,11 +143,31 @@ struct Ground<'a> {
     clears: usize,
     #[cfg(test)]
     levels: usize,
+    #[cfg(test)]
+    prefetched: usize,
 }
 
 impl Ground<'_> {
     fn new(land: &dyn Land) -> Ground<'_> {
-        Ground { land, seen: FxHashMap::default(), scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0 }
+        Ground { land, seen: FxHashMap::default(), scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0, #[cfg(test)] prefetched: 0 }
+    }
+
+    /// Group only missing original samples for the next bounded portion of a row.
+    /// Lookahead may outlive an earlier rejected point; every read stays in the timer.
+    fn prefetch(&mut self, first: IVec2, count: usize) {
+        assert!(count <= crate::water::SAMPLE_BATCH);
+        if self.seen.len() + count > 16_384 {
+            self.seen.clear();
+            #[cfg(test)]
+            { self.clears += 1; }
+        }
+        let points: Vec<_> = (0..count).map(|i| first + IVec2::new(i as i32, 0))
+            .filter(|p| !self.seen.contains_key(p)).map(|p| (p.x, p.y)).collect();
+        if points.is_empty() { return; }
+        #[cfg(test)]
+        { self.prefetched += points.len(); }
+        let samples = self.land.samples_cached(&points, &mut self.scratch);
+        self.seen.extend(points.into_iter().zip(samples).map(|((x, z), g)| (IVec2::new(x, z), g)));
     }
 
     fn at(&mut self, p: IVec2) -> GeoSample {
@@ -432,12 +452,13 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         give_up::<()>(10);
         return Vec::new();
     }
+    let mut water = crate::water::Freshwater::default();
     let candidates = candidates
         .into_iter()
         .take(if site.water > 0 { tries.saturating_mul(site.look) } else { tries })
         .filter_map(|(_, at, fresh)| {
             if site.water > 0 {
-                let near = fresh || ctx.land.freshwater_near(at, site.water, site.creek);
+                let near = fresh || ctx.land.freshwater_near(at, site.water, site.creek, &mut water);
                 near.then_some((at, true))
             } else {
                 Some((at, fresh))
@@ -668,7 +689,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     {
         phase_end("site search total", time);
         if let Some(work) = crate::water::query_work() {
-            eprintln!("  close water: {} queries, {} square-grid centres, {} coordinates visited, {} centres sampled, {} batches, {} unused lookahead samples", work[0], work[1], work[2], work[3], work[4], work[5]);
+            eprintln!("  close water: {} queries, {} square-grid centres, {} coordinates visited, {} centres sampled, {} batches, {} unused lookahead samples, {} cached hits, {} cache resets", work[0], work[1], work[2], work[3], work[4], work[5], work[6], work[7]);
         }
     }
     // Layout retries inspect overlapping land. Keep only this call's pure samples and
@@ -809,14 +830,15 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
     #[cfg(test)]
     let time = phase_start();
     #[cfg(test)]
-    let before = (ground.queries, ground.misses, ground.clears, ground.levels, LANE_COUNTS.with(|c| c.get()));
+    let before = (ground.queries, ground.misses, ground.clears, ground.levels, LANE_COUNTS.with(|c| c.get()), ground.prefetched);
     let result = layout(ctx, cell, centre, fresh, rng, smallest, ground);
     #[cfg(test)]
     if time.is_some() {
         let lane = LANE_COUNTS.with(|c| c.get());
-        eprintln!("  layout {}: ground queries {}, hits {}, misses {}, clears {}, level calls {}; lane checks {}, point distances {}, bound distances {}, chunks skipped {}",
+        eprintln!("  layout {}: ground queries {}, hits {}, scalar misses {}, prefetched reads {}, total terrain reads {}, clears {}, level calls {}; lane checks {}, point distances {}, bound distances {}, chunks skipped {}",
             if result.is_some() { "accepted" } else { "rejected" }, ground.queries - before.0,
             (ground.queries - before.0) - (ground.misses - before.1), ground.misses - before.1,
+            ground.prefetched - before.5, ground.misses - before.1 + ground.prefetched - before.5,
             ground.clears - before.2, ground.levels - before.3,
             lane[0] - before.4[0], lane[1] - before.4[1], lane[3] - before.4[3], lane[2] - before.4[2]);
         phase_end("layout total (including rejected attempts)", time);
@@ -2159,6 +2181,9 @@ fn level(ground: &mut Ground, rect: &Rect, bank: i32, step: i32) -> Option<(i32,
     let sampled = |v: i32, lo: i32, hi: i32| (v - lo) % step == 0 || v == hi;
     for z in outer.min.y..=outer.max.y {
         for x in outer.min.x..=outer.max.x {
+            if (x - outer.min.x) % crate::water::SAMPLE_BATCH as i32 == 0 {
+                ground.prefetch(IVec2::new(x, z), (outer.max.x - x + 1).min(crate::water::SAMPLE_BATCH as i32) as usize);
+            }
             let p = IVec2::new(x, z);
             let g = ground.at(p);
             if g.submerged() {
@@ -2476,6 +2501,45 @@ mod level_tests {
             let (height, water) = if wet { (139, 140) } else { (140, 140) };
             GeoSample { height, mountain: 0.0, river: 0.0, water, top: 8, body: Body::Creek, current: None, cavity: None, crag: Default::default(), trail: None, form: Default::default() }
         }
+    }
+
+    #[test]
+    fn planning_prefetch_counts_lookahead_before_a_water_rejection() {
+        struct Counted {
+            creek: Creek,
+            reads: std::sync::atomic::AtomicUsize,
+        }
+        impl Land for Counted {
+            fn sample(&self, x: i32, z: i32) -> GeoSample {
+                self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.creek.sample(x, z)
+            }
+        }
+        let land = Counted { creek: Creek(Some(-3), None), reads: 0.into() };
+        let mut ground = Ground::new(&land);
+        let rect = Rect::new(IVec2::ZERO, IVec2::new(64, 3));
+        assert_eq!(level(&mut ground, &rect, 3, 2), None, "first bank block contains water");
+        let reads = land.reads.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(ground.queries, 1, "the original row-major predicate still rejects immediately");
+        assert_eq!(ground.misses + ground.prefetched, reads, "counters include every actual terrain read");
+        assert_eq!(reads, crate::water::SAMPLE_BATCH, "lookahead is bounded by one batch");
+        assert!(ground.at(IVec2::new(-3, -3)).submerged());
+        assert_eq!(land.reads.load(std::sync::atomic::Ordering::Relaxed), reads, "prefetched terrain is reused exactly");
+        let dry = Counted { creek: Creek(None, None), reads: 0.into() };
+        let mut ground = Ground::new(&dry);
+        let first = IVec2::new(100, 100);
+        let sample = dry.creek.sample(100, 100);
+        ground.seen.extend((0..16_382).map(|k| (IVec2::new(100_000 + k, 100_000), sample)));
+        ground.seen.insert(first, sample);
+        // A short final chunk straddles the cap. Clear before collecting misses so its
+        // formerly cached first position is included in the same physical batch.
+        ground.prefetch(first, 7);
+        assert_eq!(ground.clears, 1);
+        assert_eq!(ground.seen.len(), 7);
+        assert_eq!(ground.prefetched, 7);
+        for x in 0..7 { assert_eq!(ground.at(first + IVec2::new(x, 0)), sample); }
+        assert_eq!(ground.misses, 0, "clearing must not omit previously cached positions from the batch");
+        assert_eq!(dry.reads.load(std::sync::atomic::Ordering::Relaxed), 7);
     }
 
     /// A lot sampled every other block still sees a creek one block wide on any row or

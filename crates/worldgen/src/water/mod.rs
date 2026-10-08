@@ -67,19 +67,19 @@ pub const SAMPLE_BATCH: usize = 32;
 
 #[cfg(test)]
 thread_local! {
-    static QUERY_WORK: std::cell::Cell<Option<[usize; 6]>> = const { std::cell::Cell::new(None) };
+    static QUERY_WORK: std::cell::Cell<Option<[usize; 8]>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]
 pub(crate) fn profile_queries(enabled: bool) {
-    QUERY_WORK.with(|c| c.set(enabled.then_some([0; 6])));
+    QUERY_WORK.with(|c| c.set(enabled.then_some([0; 8])));
 }
 
 #[cfg(test)]
-pub(crate) fn query_work() -> Option<[usize; 6]> { QUERY_WORK.with(|c| c.get()) }
+pub(crate) fn query_work() -> Option<[usize; 8]> { QUERY_WORK.with(|c| c.get()) }
 
 #[cfg(test)]
-fn record_query(work: [usize; 6]) {
+fn record_query(work: [usize; 8]) {
     QUERY_WORK.with(|c| {
         if let Some(previous) = c.get() { c.set(Some(std::array::from_fn(|i| previous[i] + work[i]))); }
     });
@@ -603,29 +603,44 @@ impl Rivers {
     /// row by row and stop after a matching batch; no outside-circle centre is needed,
     /// but sealing still reads all four neighbours, including those outside the circle.
     /// Callers supply radius >= 0 and step >= 1, as settlement loading validates.
-    pub fn freshwater_near(&self, land: Stages, centre: IVec2, radius: i32, step: i32) -> bool {
+    pub fn freshwater_near(&self, land: Stages, centre: IVec2, radius: i32, step: i32, cache: &mut Freshwater) -> bool {
         let first = centre - radius;
         let size = radius * 2 / step + 1;
-        let mut scratch = Samples::default();
+        let changed_world = cache.id != self.id;
+        if changed_world { *cache = Freshwater { id: self.id, ..Freshwater::default() }; }
         let mut points = Vec::with_capacity(SAMPLE_BATCH);
         #[cfg(test)]
         let profiling = query_work().is_some();
         #[cfg(test)]
-        let mut work = [1, (size * size) as usize, 0, 0, 0, 0];
+        let mut work = [1, (size * size) as usize, 0, 0, 0, 0, 0, usize::from(changed_world)];
         for i in 0..size * size {
             let p = first + IVec2::new(i % size, i / size) * step;
             if p.as_vec2().distance(centre.as_vec2()) <= radius as f32 {
-                points.push((p.x, p.y));
+                if let Some(g) = cache.seen.get(&p) {
+                    #[cfg(test)]
+                    if profiling { work[6] += 1; }
+                    // A known exact witness is enough for this existential query,
+                    // even if earlier missing centres are still waiting for a batch.
+                    if freshwater(g) {
+                        #[cfg(test)]
+                        if profiling { work[2] = i as usize + 1; record_query(work); }
+                        return true;
+                    }
+                } else {
+                    points.push((p.x, p.y));
+                }
             }
             if points.len() == SAMPLE_BATCH {
-                let found = self.samples_cached(land, &points, &mut scratch).iter().position(freshwater);
+                let (found, cleared) = self.freshwater_batch(land, &points, cache);
                 #[cfg(test)]
                 if profiling {
                     work[2] = i as usize + 1;
                     work[3] += points.len();
                     work[4] += 1;
+                    work[7] += usize::from(cleared);
                     if let Some(k) = found { work[5] += points.len() - k - 1; }
                 }
+                let _ = cleared;
                 if found.is_some() {
                     #[cfg(test)]
                     if profiling { record_query(work); }
@@ -634,16 +649,27 @@ impl Rivers {
                 points.clear();
             }
         }
-        let found = if points.is_empty() { None } else { self.samples_cached(land, &points, &mut scratch).iter().position(freshwater) };
+        let (found, cleared) = if points.is_empty() { (None, false) } else { self.freshwater_batch(land, &points, cache) };
         #[cfg(test)]
         if profiling {
             work[2] = (size * size) as usize;
             work[3] += points.len();
             work[4] += usize::from(!points.is_empty());
+            work[7] += usize::from(cleared);
             if let Some(k) = found { work[5] += points.len() - k - 1; }
             record_query(work);
         }
+        let _ = cleared;
         found.is_some()
+    }
+
+    fn freshwater_batch(&self, land: Stages, points: &[(i32, i32)], cache: &mut Freshwater) -> (Option<usize>, bool) {
+        let cleared = cache.seen.len() + points.len() > 16_384;
+        if cleared { cache.seen.clear(); }
+        let samples = self.samples_cached(land, points, &mut cache.scratch);
+        let found = samples.iter().position(freshwater);
+        cache.seen.extend(points.iter().zip(samples).map(|(&(x, z), g)| (IVec2::new(x, z), g)));
+        (found, cleared)
     }
 
     /// One column with both tiers carved in and sealed: the same whatever the columns
@@ -714,6 +740,15 @@ pub struct Samples {
     id: u64,
     corners: Corners,
     tiers: FxHashMap<[IVec2; 4], (Near, Near)>,
+}
+
+/// Exact water-bearing terrain shared by a site's overlapping close looks. Only
+/// original land is stored, bounded to 16,384 centres; a different world resets it.
+#[derive(Default)]
+pub struct Freshwater {
+    id: u64,
+    seen: FxHashMap<IVec2, GeoSample>,
+    scratch: Samples,
 }
 
 impl Samples {
@@ -931,6 +966,7 @@ mod tests {
         let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
         let mut wet = 0;
         let mut dry = 0;
+        let mut cache = Freshwater::default();
         for (seed, centres) in [
             (7, vec![IVec2::new(-1776, 752), IVec2::new(-1976, 552), IVec2::new(-336, 816)]),
             (11, vec![IVec2::new(-688, 464), IVec2::new(1648, -784)]),
@@ -946,14 +982,16 @@ mod tests {
                         let p = first + IVec2::new(i as i32 % size, i as i32 / size) * step;
                         p.as_vec2().distance(centre.as_vec2()) <= radius as f32 && freshwater(g)
                     });
-                    let actual = world.rivers.freshwater_near(world.stages(), centre, radius, step);
+                    let actual = world.rivers.freshwater_near(world.stages(), centre, radius, step, &mut cache);
                     assert_eq!(actual, expected, "seed {seed} at {centre}, radius {radius}, step {step}");
+                    assert_eq!(cache.id, world.rivers.id);
+                    assert!(cache.seen.len() <= 16_384);
                     if expected { wet += 1; } else { dry += 1; }
                 }
             }
         }
         assert!(wet > 0 && dry > 0, "query oracle requires positive and negative controls: {wet}/{dry}");
-        let world = crate::Overworld::new(7, registry);
+        let world = crate::Overworld::new(7, registry.clone());
         let mut sample = world.rivers.sample(world.stages(), -1776, 752, false);
         sample.height = 140;
         sample.water = 139;
@@ -970,12 +1008,56 @@ mod tests {
         let i = grid.iter().position(|g| g.submerged() && g.body != Body::Sea).expect("fixture has actual freshwater");
         let centre = first + IVec2::new(i as i32 % 25, i as i32 / 25) * 16;
         profile_queries(true);
-        assert!(world.rivers.freshwater_near(world.stages(), centre, 16, 4));
+        assert!(world.rivers.freshwater_near(world.stages(), centre, 16, 4, &mut cache));
         let work = query_work().unwrap();
         profile_queries(false);
         assert!(work[3] > 0 && work[3] < work[1], "real freshwater query must save terrain reads: {work:?}");
         assert!(work[2] < work[1], "a positive centre must stop before scanning the full square: {work:?}");
         assert!(work[5] < SAMPLE_BATCH, "last-batch lookahead must be bounded: {work:?}");
+        profile_queries(true);
+        assert!(world.rivers.freshwater_near(world.stages(), centre, 0, 4, &mut cache));
+        let work = query_work().unwrap();
+        profile_queries(false);
+        assert_eq!(work[3], 0, "a cached exact witness requires no physical terrain reads");
+        assert_eq!(work[6], 1);
+        // The witness sits after fewer than 32 unknown eligible points. It proves
+        // true without flushing the earlier pending positions or counting them as reads.
+        cache.seen.clear();
+        cache.seen.insert(centre, grid[i]);
+        profile_queries(true);
+        assert!(world.rivers.freshwater_near(world.stages(), centre, 16, 4, &mut cache));
+        let work = query_work().unwrap();
+        profile_queries(false);
+        assert!(work[2] > 1);
+        assert_eq!(work[3], 0, "pending unknown positions are not physical terrain reads");
+        assert_eq!(work[4], 0);
+        assert_eq!(work[6], 1);
+        let another = crate::Overworld::new(42, registry);
+        let expected = freshwater(&another.rivers.sample(another.stages(), centre.x, centre.y, false));
+        profile_queries(true);
+        assert_eq!(another.rivers.freshwater_near(another.stages(), centre, 0, 4, &mut cache), expected);
+        let work = query_work().unwrap();
+        profile_queries(false);
+        assert_eq!(work[3], 1, "another world must recompute even if the Boolean happens to match");
+        assert_eq!(cache.id, another.rivers.id);
+        assert!(world.rivers.freshwater_near(world.stages(), centre, 0, 4, &mut cache));
+        assert_eq!(cache.id, world.rivers.id);
+        let dry_i = grid.iter().position(|g| !freshwater(g)).expect("fixture has dry or sea centres");
+        let dry = first + IVec2::new(dry_i as i32 % 25, dry_i as i32 / 25) * 16;
+        assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 4, &mut cache));
+        profile_queries(true);
+        assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 4, &mut cache));
+        let work = query_work().unwrap();
+        profile_queries(false);
+        assert_eq!(work[3], 0, "a repeated dry query also reuses exact terrain");
+        assert_eq!(work[6], 1);
+        // Unqueried distant fixture entries create pressure; the actual dry candidate
+        // is absent and must be freshly sampled after the whole-map eviction.
+        cache.seen.clear();
+        cache.seen.extend((0..16_384).map(|k| (IVec2::new(200_000 + k, 200_000), grid[dry_i])));
+        assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 4, &mut cache));
+        assert_eq!(cache.seen.len(), 1);
+        assert_eq!(cache.seen[&dry], grid[dry_i]);
     }
 
     /// `cargo test --release -p voxmar_worldgen river_stats -- --ignored --nocapture`
