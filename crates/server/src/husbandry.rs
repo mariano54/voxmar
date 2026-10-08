@@ -751,6 +751,36 @@ mod tests {
     }
 
     #[test]
+    fn a_treadwheel_animal_eats_at_the_keepers_cap_but_is_not_readied() {
+        let mut server = test_server();
+        let (player, client) = keeper(&mut server);
+        server.command(player, "skill farming 15");
+        let species = server.content.creatures.id("base:aurochs").expect("aurochs");
+        assert!(server.content.machines.walks("base:aurochs"));
+        let food = server.content.creatures.get(species).breed_food[0];
+        server.players.get_mut(&player).unwrap().inventory.add(food, 10);
+        assert_eq!(server.players[&player].held(), Some(food));
+        let in_hand = |server: &Server| server.players[&player].inventory.get(0).map_or(0, |stack| stack.count);
+        // A kept aurochs, well kept but long unfed (hungry), and its keeper at their cap: one
+        // kept here, the rest waiting. A hungry one eats whatever the room, so a treadwheel's
+        // walker can always be kept fed.
+        let aurochs = server.spawn_creature(species, server.spawn, 2).expect("room");
+        let day = server.day;
+        let kept = server.creatures.live.get_mut(&aurochs).unwrap();
+        (kept.owner, kept.owner_id, kept.fed, kept.condition) = (Some("test".into()), Some(player), day - 1.0e6, 1.0);
+        let kept_each = server.content.creatures.limits().kept_each;
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        server.creatures.unplaced = (0..kept_each - 1).map(|_| rabbit(far)).collect();
+        told(&client);
+        // It eats one, and its fed clock starts again, but no young could come of it.
+        server.tend(player, aurochs);
+        assert_eq!(in_hand(&server), 9, "a treadwheel animal at the keeper's cap was not fed");
+        assert_eq!(server.creatures.live[&aurochs].fed, server.day);
+        assert_eq!(server.creatures.live[&aurochs].ready_until, 0, "readied to breed with no room for young");
+        assert_eq!(told(&client), ["refused: husbandry.no_room_to_breed"]);
+    }
+
+    #[test]
     fn natural_spawning_brings_a_herd_no_bigger_than_the_room_left() {
         let mut server = test_server();
         let (player, _client) = keeper(&mut server);
