@@ -77,7 +77,7 @@ struct Dead {
 #[derive(Clone)]
 struct Recovery {
     calm_until: u64,
-    calm_player: Option<String>,
+    calm_players: BTreeMap<String, u64>,
     heal_after: Option<u64>,
     health: Option<u16>,
 }
@@ -88,7 +88,7 @@ impl Villagers {
         for (i, person) in town.people.iter_mut().enumerate() {
             if let Some(r) = self.recovering.get(&(town.info.id, i)) {
                 person.calm_until = r.calm_until;
-                person.calm_player = r.calm_player.clone();
+                person.calm_players = r.calm_players.clone();
                 person.heal_after = r.heal_after;
                 person.health = r.health;
             }
@@ -148,7 +148,9 @@ struct Person {
     quarry: Option<(u32, f32, u64)>,
     /// A guard that broke off a chase stays home, heeding no call, until this tick.
     calm_until: u64,
-    calm_player: Option<String>,
+    /// Each quarry keeps its own expiry by `player_key`; alternating players cannot
+    /// replace another's cooldown.
+    calm_players: BTreeMap<String, u64>,
     /// Recovery is postponed by every blow while the guard walks home.
     heal_after: Option<u64>,
     /// Injuries survive releasing the body until its quiet recovery time.
@@ -276,6 +278,14 @@ impl Server {
 
     fn scan_towns(&mut self, live: &LiveDef) {
         let players: Vec<Vec3> = self.players.values().filter(|p| p.joined).map(|p| p.position).collect();
+        for town in self.villagers.towns.values_mut() {
+            for person in &mut town.people {
+                person.calm_players.retain(|_, until| *until > self.tick);
+            }
+        }
+        for recovery in self.villagers.recovering.values_mut() {
+            recovery.calm_players.retain(|_, until| *until > self.tick);
+        }
         self.villagers.recovering.retain(|_, r| r.calm_until > self.tick || r.heal_after.is_some_and(|due| due > self.tick));
         // Settlements coming into reach.
         for at in &players {
@@ -355,7 +365,7 @@ impl Server {
         person.health = None;
         person.heal_after = None;
         person.calm_until = 0;
-        person.calm_player = None;
+        person.calm_players.clear();
         let last = self.villagers.dead.range((town, 0)..=(town, usize::MAX)).map(|(_, d)| d.away_until).fold(f64::MIN, f64::max);
         let dead = self.villagers.dead.entry((town, i)).or_insert(Dead { generation: 0, away_until: 0.0 });
         dead.generation += 1;
@@ -371,7 +381,7 @@ impl Server {
             person.health = self.creatures.live.get(&c).map(|c| c.health);
             if person.calm_until > self.tick || person.heal_after.is_some_and(|due| due > self.tick) {
                 self.villagers.recovering.insert((town, i), Recovery {
-                    calm_until: person.calm_until, calm_player: person.calm_player.clone(),
+                    calm_until: person.calm_until, calm_players: person.calm_players.clone(),
                     heal_after: person.heal_after, health: person.health,
                 });
             } else {
@@ -603,7 +613,10 @@ impl Server {
         person.quarry = None;
         person.trip = None;
         person.calm_until = self.tick + ticks(live.calm);
-        person.calm_player = self.players.get(&player).map(|p| p.name.clone());
+        person.calm_players.retain(|_, until| *until > self.tick);
+        if let Some(player) = self.players.get(&player) {
+            person.calm_players.insert(crate::player_key(&player.name), person.calm_until);
+        }
         person.heal_after = Some(self.tick + ticks(live.give_up));
         tracing::debug!(person = i, "a guard gave up the chase");
     }
@@ -612,7 +625,9 @@ impl Server {
     pub(crate) fn villager_calm_for(&self, id: u32, player: u32) -> bool {
         self.villagers.by_creature.get(&id).is_some_and(|&(town, i)| {
             let p = &self.villagers.towns[&town].people[i];
-            p.calm_until > self.tick && p.calm_player.as_ref().zip(self.players.get(&player)).is_some_and(|(name, player)| crate::player::same_name(name, &player.name))
+            self.players.get(&player).is_some_and(|player| {
+                p.calm_players.get(&crate::player_key(&player.name)).is_some_and(|until| *until > self.tick)
+            })
         })
     }
 
@@ -1081,6 +1096,60 @@ mod tests {
         server.hurt_creature(1, id, 1, Some(skill), Blow::Plain);
         assert!(server.players[&1].skills.xp(skill) > before, "cooldown ends");
         assert_eq!(server.creatures.live[&id].mind.attacker(), Some(1));
+    }
+
+    #[test]
+    fn alternating_quarries_keep_their_own_guard_cooldowns() {
+        use voxmar_engine::combat::Blow;
+        let mut server = fixture("base:guard", 1);
+        player(&mut server);
+        let (_, connection) = voxmar_protocol::local_pair();
+        let mut second = crate::player::Player::new(2, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        second.name = "Second".into();
+        server.players.insert(2, second);
+        server.bring_out(1, 0);
+        let mut id = server.villagers.towns[&1].people[0].creature.unwrap();
+        let species = server.creatures.live[&id].species;
+        let attack = server.content.skills.id("core:attack").unwrap();
+        let defence = server.content.skills.id("core:defence").unwrap();
+        let live = server.live();
+        for quarry in [1, 2] {
+            server.players.get_mut(&quarry).unwrap().skills.grant(defence, server.content.skills.xp_for(20));
+            server.hurt_creature(quarry, id, 1, Some(attack), Blow::Plain);
+            let before = server.players[&quarry].skills.xp(defence);
+            server.defence_xp(quarry, id, species);
+            assert!(server.players[&quarry].skills.xp(attack) > 0);
+            assert!(server.players[&quarry].skills.xp(defence) > before);
+            server.tick += ticks(live.give_up) + 1;
+            server.give_up(id, 1, 0, quarry, &live);
+        }
+        let expiries = server.villagers.towns[&1].people[0].calm_players.clone();
+        assert_eq!(expiries.len(), 2);
+        let first_due = expiries[&crate::player_key(&server.players[&1].name)];
+        let second_due = expiries[&crate::player_key(&server.players[&2].name)];
+        assert!(first_due < second_due);
+        let info = server.villagers.towns[&1].info.clone();
+        server.release_town(1);
+        server.villagers.towns.remove(&1);
+        server.villagers.remember_town(info, 12);
+        server.bring_out(1, 0);
+        id = server.villagers.towns[&1].people[0].creature.unwrap();
+        assert_eq!(server.villagers.towns[&1].people[0].calm_players, expiries);
+        for quarry in [1, 2] {
+            assert!(server.villager_calm_for(id, quarry));
+            let before = (server.players[&quarry].skills.xp(attack), server.players[&quarry].skills.xp(defence));
+            server.hurt_creature(quarry, id, 1, Some(attack), Blow::Plain);
+            server.defence_xp(quarry, id, species);
+            assert_eq!((server.players[&quarry].skills.xp(attack), server.players[&quarry].skills.xp(defence)), before);
+            assert!(server.creatures.live[&id].mind.attacker().is_none());
+        }
+        server.tick = first_due;
+        assert!(!server.villager_calm_for(id, 1));
+        assert!(server.villager_calm_for(id, 2));
+        server.tick = second_due;
+        assert!(!server.villager_calm_for(id, 2));
+        server.scan_towns(&live);
+        assert!(server.villagers.towns[&1].people[0].calm_players.is_empty());
     }
 
     #[test]

@@ -184,7 +184,8 @@ one who did it, and only them; a guard that comes no nearer them for `give_up` s
 (they stand where it cannot go) breaks off and goes home for `calm`. During this cooldown
 that player earns no combat or Defence XP from the guard, and their blows cannot restart
 the chase. Recovery waits a further `give_up` seconds without a blow; each new blow delays
-it. The cooldown follows the player's name and outlives forgetting a town, so
+it. Each quarry keeps an independent cooldown by the player's canonical name; a second
+player cannot replace the first cooldown. These outlive forgetting a town, so
 leaving and rejoining cannot reset it. A disappearance without a death releases the resident without starting a newcomer
 clock. Wells and centrepieces use ground spots outside their footprint, and indoor
 spots put feet one block above the solid floor, keeping people off furnishings.
