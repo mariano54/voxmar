@@ -128,7 +128,7 @@
     tarns: (
         climate: [(temperature: ("frozen", "cool"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "slopes"))],
         floor: 56.0,
-        depth: 3.0,
+        depth: 2.0,
         size: (8, 25),
         chance: 1.0,
         country: (scale: 1000.0, share: 0.5),
