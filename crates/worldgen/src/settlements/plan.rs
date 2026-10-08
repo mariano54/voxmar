@@ -1339,6 +1339,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
             min: lot.rect.min,
             max: lot.rect.max,
             floor: lot.floor + lot.spec.stilts,
+            room: lot.spec.room(&lot.frame),
             // Two blocks out from the door: on its porch, or on the step below the top
             // one when it stands on stilts.
             door: lot.door.map(|(d, _)| {

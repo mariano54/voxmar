@@ -162,6 +162,26 @@ impl Spec {
         self.extras.contains(&extra)
     }
 
+    /// Indoor ground-floor columns, using the same footprint as the painted floor.
+    /// Furniture and headroom are checked against the live blocks by gameplay.
+    pub fn room(&self, frame: &Frame) -> Vec<IVec2> {
+        if !self.kind.indoors() {
+            return Vec::new();
+        }
+        let foot = Foot { x0: 0, z0: 0, w: self.w, d: self.d, form: self.form };
+        let mut local: Vec<_> = (0..self.d).flat_map(|z| (0..self.w).map(move |x| (x, z)))
+            .filter(|&(x, z)| foot.room(x, z)).collect();
+        if let Some((ww, wd)) = self.wing {
+            // The back wall is opened into this wing, including its joining row.
+            local.extend((self.d - 1..self.d + wd - 1)
+                .flat_map(|z| (self.w - ww + 1..self.w - 1).map(move |x| (x, z))));
+        }
+        local.into_iter().map(|(x, z)| {
+            let p = frame.at(x, 0, z);
+            IVec2::new(p.x, p.z)
+        }).collect()
+    }
+
     /// The building's own box, everything it puts down included: overhangs, porch,
     /// shed, wing, chimney, the lamp and step at its door.
     pub fn envelope(&self) -> (IVec2, IVec2) {

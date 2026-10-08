@@ -771,14 +771,13 @@ impl Server {
     /// A cell a body can stand in inside building `b`, by `seed`.
     fn spot_inside(&self, b: usize, town: &Town, seed: u64) -> Option<IVec3> {
         let b = &town.info.buildings[b];
-        let cells: Vec<IVec3> = (b.min.x + 1..b.max.x)
-            .flat_map(|x| (b.min.y + 1..b.max.y).map(move |z| (x, z)))
+        let cells: Vec<IVec3> = b.room.iter()
             // Building::floor is the solid floor block; feet stand one above it.
-            .map(|(x, z)| IVec3::new(x, b.floor + 1, z))
+            .map(|p| IVec3::new(p.x, b.floor + 1, p.y))
             .filter(|&c| self.stands(c))
             .collect();
         if cells.is_empty() {
-            return b.door.filter(|&d| self.stands(d));
+            return None;
         }
         Some(cells[(mix(seed, 0x1a5) % cells.len() as u64) as usize])
     }
@@ -975,7 +974,9 @@ mod tests {
         let info = SettlementInfo {
             id: 1, name: ("Test".into(), "テスト".into()), size: "village".into(), style: "timber".into(), layout: "test".into(),
             centre: IVec3::new(8, 200, 8), levers: [0.5; 5], gates: vec![IVec2::new(8, 12)], lanes: Vec::new(),
-            buildings: vec![SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(4, 4), max: IVec2::new(12, 12), floor: 199, door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None }],
+            buildings: vec![SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(4, 4), max: IVec2::new(12, 12), floor: 199,
+                room: (6..=10).flat_map(|x| (6..=10).map(move |z| IVec2::new(x, z))).collect(),
+                door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None }],
             people: (0..count).map(|i| Resident { species: species.into(), home: 0, work: None, routine, guard: species == "base:guard", seed: 100 + i as u64 }).collect(),
         };
         server.villagers.remember_town(info, 12);
@@ -1198,7 +1199,19 @@ mod tests {
             let cell = server.spot_inside(0, &server.villagers.towns[&1], seed).expect("room floor");
             assert_eq!(cell.y, 200, "stood on furniture");
             assert_ne!((cell.x, cell.z), (8, 8));
+            assert!(server.villagers.towns[&1].info.buildings[0].room.contains(&IVec2::new(cell.x, cell.z)), "stood on graded exterior ground");
         }
+        // The whole graded envelope and exterior door are standable, but neither is
+        // a bedroom when all the actual room cells are blocked by furnishings.
+        let room = server.villagers.towns[&1].info.buildings[0].room.clone();
+        for p in room {
+            server.set_block(IVec3::new(p.x, 200, p.y), server.content.blocks.expect("base:stone"));
+        }
+        let town = &server.villagers.towns[&1];
+        assert!(server.stands(town.info.buildings[0].door.unwrap()));
+        assert!(server.spot_inside(0, town, 1).is_none(), "fell back to an exterior doorstep");
+        server.villagers.towns.get_mut(&1).unwrap().info.buildings[0].room.clear();
+        assert!(server.spot_inside(0, &server.villagers.towns[&1], 1).is_none());
     }
 }
 

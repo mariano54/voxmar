@@ -1396,6 +1396,55 @@ fn no_snow_falls_indoors() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Room metadata follows the painted footprint after rotation, rather than the graded
+/// construction envelope. Connected wings include the opening through the back wall.
+#[test]
+fn room_columns_exclude_exterior_walls_and_courtyards() {
+    use super::canvas::{Facing, Frame};
+    use super::def::{Extra, Form, Roof};
+    use super::house::{Kind, Spec};
+    let mut spec = Spec {
+        kind: Kind::House, w: 13, d: 13, wall: 3, storeys: 1, roof: Roof::Gable,
+        pitch: 1, ridge_x: false, extras: vec![Extra::Porch], door: 6, shed: 3,
+        wing: None, stilts: 2, regular: true, window_chance: 0.0, form: Form::Box,
+        inside: Vec::new(), centre: None, seed: 3,
+    };
+    for facing in [Facing::North, Facing::South, Facing::West, Facing::East] {
+        let frame = Frame { origin: IVec3::new(100, 132, 200), facing };
+        for form in [Form::Box, Form::Round, Form::Courtyard] {
+            spec.form = form;
+            let room = spec.room(&frame);
+            let contains = |x, z| { let p = frame.at(x, 0, z); room.contains(&IVec2::new(p.x, p.z)) };
+            assert!(contains(2, 6), "no interior for {form:?} facing {facing:?}");
+            for (x, z) in [(6, -2), (14, 6), (6, 13), (0, 6), (12, 6)] {
+                assert!(!contains(x, z), "porch, shed or wall included for {form:?} facing {facing:?}");
+            }
+            if form == Form::Courtyard {
+                assert!(!contains(6, 6), "open courtyard included");
+                assert!(!contains(3, 6), "courtyard wall included");
+            } else {
+                assert!(contains(6, 6));
+            }
+            if form == Form::Round { assert!(!contains(1, 1), "round corner yard included"); }
+        }
+        spec.form = Form::Box;
+        spec.wing = Some((5, 3));
+        let room = spec.room(&frame);
+        assert_eq!(room.len(), 121 + 9);
+        for (x, z) in [(10, 12), (10, 13), (10, 14)] {
+            let p = frame.at(x, 0, z);
+            assert!(room.contains(&IVec2::new(p.x, p.z)), "connected wing floor omitted");
+        }
+        for (x, z) in [(8, 13), (12, 13), (10, 15)] {
+            let p = frame.at(x, 0, z);
+            assert!(!room.contains(&IVec2::new(p.x, p.z)), "wing wall included");
+        }
+        spec.wing = None;
+    }
+    spec.kind = Kind::Well;
+    assert!(spec.room(&Frame { origin: IVec3::ZERO, facing: Facing::North }).is_empty());
+}
+
 /// From the lane, through the door and up the stairs, every storey of every house of more
 /// than one can be walked to, at its least and greatest size, with a chimney and without,
 /// and as an inn: a step up at a time, with room overhead.

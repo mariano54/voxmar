@@ -188,7 +188,9 @@ it. Each quarry keeps an independent cooldown by the player's canonical name; a 
 player cannot replace the first cooldown. These outlive forgetting a town, so
 leaving and rejoining cannot reset it. A disappearance without a death releases the resident without starting a newcomer
 clock. Wells and centrepieces use ground spots outside their footprint, and indoor
-spots put feet one block above the solid floor, keeping people off furnishings.
+spots use the planned room shape, including connected wings, with feet one block
+above the solid floor. Live block checks exclude furnishings and low headroom;
+porches, courtyard ground and exterior door steps are not indoor destinations.
 
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter

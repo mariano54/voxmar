@@ -64,6 +64,9 @@ pub struct Building {
     pub max: IVec2,
     /// The height of its solid floor block; feet stand one block above it indoors.
     pub floor: i32,
+    /// Ground-floor room columns in world (x, z), clear of walls and exterior extras.
+    /// Empty for buildings whose activity is outdoors.
+    pub room: Vec<IVec2>,
     /// Where its path leaves the door, two blocks out, at the height of a foot standing there.
     pub door: Option<IVec3>,
     pub facing: Facing,
