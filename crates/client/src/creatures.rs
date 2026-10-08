@@ -881,6 +881,7 @@ fn show(
 pub fn aim(
     time: Res<Time>,
     mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
     ui: Res<UiState>,
     launch: Res<Launch>,
     net: Res<Net>,
@@ -914,7 +915,8 @@ pub fn aim(
     // to breed, or a tool for its product (the server judges; this only asks when it may).
     // At a creature fighting the player (it struck or was struck lately, or is winding up)
     // with a weapon or shield that guards, the button guards (`fight`); otherwise it looks
-    // closely at it.
+    // closely at it. With Shift held, on one of your own, it asks to let it go wild (twice
+    // to do it).
     if let Some(id) = target.creature
         && ui.cursor_locked
         && !player.dead
@@ -932,7 +934,16 @@ pub fn aim(
         });
         let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
         let engaged = !view.kept && (view.pose == Pose::Attacking || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
-        let action = if accepts { Some("base:tend") } else if !(guards && engaged) { Some("base:inspect") } else { None };
+        let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        let action = if shift && mine {
+            Some("base:release")
+        } else if accepts {
+            Some("base:tend")
+        } else if !(guards && engaged) {
+            Some("base:inspect")
+        } else {
+            None
+        };
         if let Some(action) = action.and_then(|a| actions.0.id(a)) {
             net.propose_from(&player, action, ActionTarget::Creature(id));
             target.used_right = true;
