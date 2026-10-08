@@ -2205,6 +2205,10 @@ mod tests {
         // Per biome, in country and out: land columns (sampled every 8 blocks, so 64 each),
         // bank columns, lakes, lake cells.
         let mut tally = [[[0u64; 4]; 2]; 3];
+        // At the same sample positions: high geographic area, then its dry columns.
+        // The draft describes high ground but not an exact area equation; use the fixed
+        // tarn floor, without narrowing it by any of the other admission conditions.
+        let mut highland = [[[0u64; 2]; 2]; 3];
         // Each tarn's generated water in blocks (columns), inside tarn country and out.
         let mut sizes: [[Vec<usize>; 2]; 3] = Default::default();
         // LOTUS=n also measures n visible pools a seed, after actual chunk generation.
@@ -2215,6 +2219,7 @@ mod tests {
         // Stream-tier cells in a lake under which a pit is small, not big (drainage `min_area`).
         const TARN_CELLS: usize = 48;
         let floor = crate::content::WorldContent::base(&registry).unwrap().tarns.as_ref().map_or(0.0, |t| t.floor);
+        let high_floor = SEA_LEVEL as f32 + floor;
         for &seed in &seeds {
             let world = Overworld::new(seed, registry.clone());
             let ids: Vec<BiomeId> = names.iter().map(|n| world.biomes.id(&format!("base:{n}")).unwrap()).collect();
@@ -2247,8 +2252,14 @@ mod tests {
                         let (x, z) = (tile.x + k % (256 / STEP) * STEP, tile.y + k / (256 / STEP) * STEP);
                         let site = sampler.site(x, z);
                         let Some(b) = ids.iter().position(|&id| id == site.home) else { continue };
+                        let c = country(x, z);
+                        if site.height as f32 >= high_floor {
+                            highland[b][c][0] += (STEP * STEP) as u64;
+                            if site.height >= site.water {
+                                highland[b][c][1] += (STEP * STEP) as u64;
+                            }
+                        }
                         if site.height >= site.water {
-                            let c = country(x, z);
                             tally[b][c][0] += (STEP * STEP) as u64;
                             if b < 2 && world.rivers.tarn_country(x, z) == 0.0 && dry.is_none_or(|(_, h)| site.height > h) {
                                 dry = Some(((x, z), site.height));
@@ -2354,6 +2365,37 @@ mod tests {
             }
         }
         println!("tarn wet footprints clipped at sampling edge: {clipped} (those sizes are lower bounds)");
+        println!("tarn density mask: named home biome, ground height >= {high_floor}; the same {STEP}-block sample positions, 64 columns each; area includes submerged high ground, dry uses height >= water");
+        // Keep the historical all-elevation named dry-land rate below. These parallel
+        // denominators all use the same unique visible physical pools (20+ columns).
+        // Zero sizes are repeated marked pits of an already counted physical pool.
+        for (name, biomes) in [("mountains", 0..1), ("alpine_meadow", 1..2), ("snowy_peaks", 2..3), ("mountains+alpine_meadow", 0..2)] {
+            let total_area: u64 = biomes.clone().flat_map(|b| highland[b].iter()).map(|h| h[0]).sum();
+            let total_dry: u64 = biomes.clone().flat_map(|b| highland[b].iter()).map(|h| h[1]).sum();
+            for (country, label) in [(1, "inside"), (0, "outside"), (2, "overall")] {
+                let countries = if country == 2 { 0..2 } else { country..country + 1 };
+                let mut tagged = 0;
+                let mut visible = 0;
+                let mut duplicate = 0;
+                let mut named_dry = 0;
+                let mut high_area = 0;
+                let mut high_dry = 0;
+                for b in biomes.clone() {
+                    for c in countries.clone() {
+                        tagged += sizes[b][c].len();
+                        visible += sizes[b][c].iter().filter(|&&n| n >= 20).count();
+                        duplicate += sizes[b][c].iter().filter(|&&n| n == 0).count();
+                        named_dry += tally[b][c][0];
+                        high_area += highland[b][c][0];
+                        high_dry += highland[b][c][1];
+                    }
+                }
+                let density = |columns: u64| visible as f64 * 1e6 / columns.max(1) as f64;
+                println!("tarn density {name} {label}: {tagged} tagged pits, {visible} unique visible pools, {} sub-20 pits ({duplicate} repeated); {named_dry} all-named dry columns, {high_area} high-area columns, {high_dry} high-dry columns, {} submerged high columns; {:.3} all-named dry/km2, {:.3} high-area/km2, {:.3} high-dry/km2; {:.3}% of high area, {:.3}% of high dry",
+                    tagged - visible, high_area - high_dry, density(named_dry), density(high_area), density(high_dry),
+                    high_area as f64 * 100.0 / total_area.max(1) as f64, high_dry as f64 * 100.0 / total_dry.max(1) as f64);
+            }
+        }
         // The tarns themselves, by the water generated for each (the pit counts above are
         // pits; a tarn is only seen if its water is): how many hold at least 20 blocks, and
         // the spread of sizes, with the visible ones a square kilometre.
