@@ -1758,7 +1758,7 @@ fn leaving_dead_leaves_their_things_behind_too() {
     let saved = voxmar_server::save::WorldSave::new(&dir).read_player("guest", &content.blocks).unwrap().expect("the guest was saved");
     let kept: u32 = saved.inventory.slots.iter().flatten().map(|s| s.count as u32).sum();
     assert_eq!(kept, 3, "the guest left dead with {:?}", saved.inventory);
-    // What they left was written before they were.
+    // What they left lies in the same save as they do: both are written in one generation.
     let items = std::fs::read_to_string(dir.join("items.ron")).unwrap();
     assert!(items.contains("dirt"), "what the guest carried lies where they fell: {items}");
     drop(host);
@@ -1821,14 +1821,14 @@ fn unreadable_world_files_are_set_aside_and_the_world_still_opens() {
     let column_file = dir.join(format!("columns/{}.{}.bin", column.0.x, column.0.y));
     assert!(column_file.is_file());
     std::fs::write(&column_file, b"vxc4 not zlib").unwrap();
-    for file in ["items.ron", "crops.ron", "creatures.ron"] {
+    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron"] {
         std::fs::write(dir.join(file), "[(oops").unwrap();
     }
     let client = Client::join_with(config());
     drop(client);
     assert_eq!(set_aside(&dir.join("columns")).len(), 1, "the bad column is set aside");
     let aside = set_aside(&dir);
-    for file in ["items.ron", "crops.ron", "creatures.ron"] {
+    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron"] {
         assert!(aside.iter().any(|n| n.starts_with(&format!("{file}.corrupt-"))), "{file} was not set aside: {aside:?}");
         assert_ne!(std::fs::read_to_string(dir.join(file)).unwrap(), "[(oops", "{file} is written afresh");
     }
@@ -2026,21 +2026,27 @@ fn going_silent_does_not_buy_more_time_hovering() {
     let at = start.floor().as_ivec3();
     client.fill(at, IVec3::new(3, -1, -3), IVec3::new(42, -1, 3), "air");
     let over = start + Vec3::X * 3.0;
+    // The server judges the time aloft by when each input arrives, so every input is sent
+    // with its own time, 50 ms apart (a tick), as `walking_wears_a_path` does; the clock
+    // of the test's own ticks does not decide when they count.
+    let t0 = Instant::now();
+    let stamp = |i: u32| t0 + Duration::from_millis(50) * i;
     // Hovering a second and a half, a tick at a time...
-    for _ in 0..30 {
-        client.send_position(over, false);
+    for i in 0..30 {
+        client.send_position_at(over, false, stamp(i));
         client.after_server_ticks(1);
     }
     assert!(client.teleported.is_none(), "let down before the grace ran out");
     // ...silent for two and a half (still alive to the server)...
     client.after_server_ticks(50);
     // ...and hovering on: the time aloft before the silence still counts, so they are let
-    // down well before a fresh grace and sink would allow.
-    let until = client.ticks() + 3 * TICKS_PER_SECOND as u64;
+    // down well before a fresh grace and sink would allow (three seconds on, at most).
+    let mut i = 30 + 50;
     while !client.teleported.is_some_and(|to| to.y < over.y) {
-        assert!(client.ticks() < until, "hovered on after going silent");
-        client.send_position(over, false);
+        assert!(i < 30 + 50 + 3 * TICKS_PER_SECOND, "hovered on after going silent");
+        client.send_position_at(over, false, stamp(i));
         client.after_server_ticks(1);
+        i += 1;
     }
 }
 
@@ -2749,7 +2755,7 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
     client.ok(&format!("/machine {at}"));
     drop(client);
-    let aside: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().contains("machines.unreadable.")).collect();
+    let aside: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().contains("machines.ron.corrupt-")).collect();
     assert_eq!(aside.len(), 1, "{aside:?}");
     assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "not a machine");
     std::fs::remove_dir_all(&dir).unwrap();

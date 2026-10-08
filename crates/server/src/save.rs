@@ -50,8 +50,6 @@ const CREATURES_FILE: &str = "creatures.ron";
 const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
 const MACHINES_FILE: &str = "machines.ron";
-/// Where an unreadable machines file is kept aside, before the seconds since the epoch.
-const MACHINES_UNREADABLE_FILE: &str = "machines.unreadable";
 /// What a file being saved ends with, after its generation.
 const STAGED: &str = "new";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
@@ -543,19 +541,11 @@ impl WorldSave {
         write_atomic(&self.target(self.dir.join(CROPS_FILE)), text.as_bytes())
     }
 
-    /// The machines, none if the world has no machines file. A file that cannot be read is
-    /// first kept aside (`machines.unreadable.<seconds since the epoch>.ron`), since the
-    /// next save writes over it: every machine and everything chests hold would be lost.
+    /// The machines, none if the world has no machines file.
     pub fn read_machines(&self) -> io::Result<Vec<crate::machines::SavedMachine>> {
         let path = self.dir.join(MACHINES_FILE);
         match std::fs::read_to_string(&path) {
-            Ok(source) => ron::from_str(&source).map_err(|e| {
-                let aside = self.dir.join(format!("{MACHINES_UNREADABLE_FILE}.{}.ron", unix_time()));
-                if let Err(copy) = std::fs::copy(&path, &aside) {
-                    tracing::error!("could not keep the unreadable machines file aside: {copy}");
-                }
-                invalid(&path, e)
-            }),
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(e) => Err(e),
         }
@@ -603,10 +593,11 @@ pub(crate) struct WorldState {
     pub items: Vec<SavedItem>,
     pub crops: Vec<SavedCrop>,
     pub creatures: Vec<crate::husbandry::SavedCreature>,
+    pub machines: Vec<crate::machines::SavedMachine>,
 }
 
 impl WorldSave {
-    /// The dropped items, crops and kept creatures. A file that is not what it should be is
+    /// The dropped items, crops, kept creatures and machines. A file that is not what it should be is
     /// moved aside and logged, and the world opens without what it held; a file that could
     /// not be read at all, or moved aside (and so would be overwritten at the next save), is
     /// an error.
@@ -615,6 +606,7 @@ impl WorldSave {
             items: self.read_or_set_aside(ITEMS_FILE, Self::read_items)?,
             crops: self.read_or_set_aside(CROPS_FILE, Self::read_crops)?,
             creatures: self.read_or_set_aside(CREATURES_FILE, Self::read_creatures)?,
+            machines: self.read_or_set_aside(MACHINES_FILE, Self::read_machines)?,
         })
     }
 

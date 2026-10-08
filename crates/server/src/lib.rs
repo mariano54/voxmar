@@ -584,11 +584,7 @@ impl Server {
         };
         server.show_grown_crops(spawn_column);
         server.restore_creatures(state.creatures);
-        let saved_machines = server.save.as_ref().map_or(Ok(Vec::new()), |save| save.read_machines()).unwrap_or_else(|e| {
-            tracing::error!("could not load machines: {e}");
-            Vec::new()
-        });
-        server.restore_machines(saved_machines);
+        server.restore_machines(state.machines);
         server
     }
 
