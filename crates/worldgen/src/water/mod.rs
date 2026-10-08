@@ -702,7 +702,7 @@ impl Rivers {
                     work[3] += sampled;
                     work[4] += 1;
                     work[7] += usize::from(cleared);
-                    if let Some(k) = found { work[5] += points.len() - k - 1; }
+                    if let Some(k) = found { work[5] += sampled - k - 1; }
                 }
                 let _ = (cleared, sampled);
                 if found.is_some() {
@@ -720,7 +720,7 @@ impl Rivers {
             work[3] += sampled;
             work[4] += usize::from(!points.is_empty());
             work[7] += usize::from(cleared);
-            if let Some(k) = found { work[5] += points.len() - k - 1; }
+            if let Some(k) = found { work[5] += sampled - k - 1; }
             record_query(work);
         }
         let _ = (cleared, sampled);
@@ -732,15 +732,13 @@ impl Rivers {
         if cleared { cache.seen.clear(); cache.dry.clear(); }
         cache.scratch.prepare(self.id, points.len());
         let mut possible = Vec::new();
-        let mut indices = Vec::new();
-        for (i, &(x, z)) in points.iter().enumerate() {
+        for &(x, z) in points {
             if cache.scratch.tiers.len() >= 16 { cache.scratch.tiers.clear(); }
             let p = IVec2::new(x, z);
             let key = Samples::key(p - 1, p + 1);
             let tiers = cache.scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, p - 1, p + 1));
             if tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().expect("filled").may_have_water(x, z)) {
                 possible.push((x, z));
-                indices.push(i);
             } else {
                 // Carving sets neither a body nor wetness; unsealed() assigns Sea
                 // and skips sealing. Freshwater is false at any geology height.
@@ -748,7 +746,7 @@ impl Rivers {
             }
         }
         let samples = self.samples_cached(land, &possible, &mut cache.scratch);
-        let found = samples.iter().position(freshwater).map(|i| indices[i]);
+        let found = samples.iter().position(freshwater);
         cache.seen.extend(possible.iter().zip(samples).map(|(&(x, z), g)| (IVec2::new(x, z), g)));
         (found, cleared, possible.len())
     }
@@ -1354,7 +1352,11 @@ mod tests {
         assert_eq!(cache.id, another.rivers.id);
         assert!(world.rivers.freshwater_near(world.stages(), centre, 0, 4, &mut cache));
         assert_eq!(cache.id, world.rivers.id);
-        let dry_i = grid.iter().position(|g| !freshwater(g)).expect("fixture has dry or sea centres");
+        let dry_i = grid.iter().enumerate().find(|(i, g)| {
+            let p = first + IVec2::new(*i as i32 % 25, *i as i32 / 25) * 16;
+            let tiers = world.rivers.tiers(world.stages(), p - 1, p + 1);
+            !freshwater(g) && tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().unwrap().may_have_water(p.x, p.y))
+        }).map(|(i, _)| i).expect("fixture has dry water-influenced centres requiring real terrain");
         let dry = first + IVec2::new(dry_i as i32 % 25, dry_i as i32 / 25) * 16;
         assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 4, &mut cache));
         profile_queries(true);
@@ -1366,6 +1368,7 @@ mod tests {
         // Unqueried distant fixture entries create pressure; the actual dry candidate
         // is absent and must be freshly sampled after the whole-map eviction.
         cache.seen.clear();
+        cache.dry.clear();
         cache.seen.extend((0..16_384).map(|k| (IVec2::new(200_000 + k, 200_000), grid[dry_i])));
         assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 4, &mut cache));
         assert_eq!(cache.seen.len(), 1);
