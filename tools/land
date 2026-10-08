@@ -2,6 +2,8 @@
 # Lands this worktree's branch on main, here and on GitHub. See docs/quality.md.
 #
 #   tools/land
+#   VOXMAR_LAND_EXPECTED_TIP=<full SHA> tools/land
+#       Abort if a fetch/merge or push retry changes the independently reviewed tip.
 #
 # Run it from the root of your worktree, on your track branch, with everything committed.
 #
@@ -22,6 +24,8 @@ cd "$(git rev-parse --show-toplevel)" || exit 2
 
 say() { echo "land: $*"; }
 not_landed() { say "NOT landed: $*" >&2; exit 1; }
+
+expected_tip=${VOXMAR_LAND_EXPECTED_TIP:-}
 
 branch=$(git branch --show-current)
 [[ -n $branch ]] || not_landed "not on a branch"
@@ -64,6 +68,9 @@ for attempt in 1 2 3; do
   done
   commit=$(git rev-parse HEAD)
   short=$(git rev-parse --short HEAD)
+  if [[ -n $expected_tip && $commit != "$expected_tip" ]]; then
+    not_landed "reviewed tip $expected_tip changed to $commit after merging main; validate and review the new tip before landing"
+  fi
 
   # 2. The gate, on exactly this commit.
   tools/gate || not_landed "$short did not pass the gate (target/gate/ has the log)"
