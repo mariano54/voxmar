@@ -4015,7 +4015,7 @@ fn every_merged_item_regrows_in_a_planter_at_its_level() {
         client.ok(&format!("/give {name} 1"));
         client.pump_until(|c| slot_of(c).is_some());
         let slot = slot_of(client).unwrap() as u8;
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
         client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
         client.pump_until(|c| c.world.block(at) == Some(plant));
         client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
