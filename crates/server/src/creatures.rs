@@ -257,12 +257,13 @@ impl Server {
         self.replicate_creatures();
     }
 
-    /// Notes where each player has stayed, for tolerance.
+    /// Notes where each player has stayed, for tolerance, and forgets the asks of those who left.
     fn settle_players(&mut self) {
         let tick = self.tick;
         let players: Vec<(PlayerId, Vec3)> = self.players.values().filter(|p| p.joined).map(|p| (p.id, p.position)).collect();
         let settled = &mut self.creatures.settled;
         settled.retain(|id, _| players.iter().any(|(p, _)| p == id));
+        self.creatures.release_asked.retain(|id, _| players.iter().any(|(p, _)| p == id));
         for (id, position) in players {
             let entry = settled.entry(id).or_insert((position, tick));
             if entry.0.distance(position) > SETTLE_RADIUS {

@@ -3800,6 +3800,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Letting it go: Shift and right click on it, twice (the first only asks).
             let Some(view) = hen(world) else {
                 key(world, KeyCode::ShiftLeft, false);
+                key(world, KeyCode::KeyW, false);
                 gate.check("release", Err("the junglefowl went before it was let go".into()));
                 gate.next(Step::Ore, now);
                 return;
@@ -3807,14 +3808,19 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !view.kept {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::ShiftLeft, false);
+                key(world, KeyCode::KeyW, false);
                 gate.check("release", Ok(format!("the junglefowl went wild again after {in_phase:.1}s")));
                 gate.next(Step::Ore, now);
-            } else if in_phase > 8.0 {
+            } else if gate.server_in_phase() > 8.0 {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::ShiftLeft, false);
-                gate.check("release", Err("8 seconds of Shift and right clicks on our junglefowl did not let it go".into()));
+                key(world, KeyCode::KeyW, false);
+                gate.check("release", Err("8 server seconds of Shift and right clicks on our junglefowl did not let it go".into()));
                 gate.next(Step::Ore, now);
             } else {
+                // It wanders (up to 7 blocks from home) and reach is 5: walk toward it while far.
+                let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
+                key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.3);
                 key(world, KeyCode::ShiftLeft, true);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
