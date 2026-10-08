@@ -1436,11 +1436,11 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         }
     }
 
-    // These weights stay fixed throughout a layout. Availability still checks the
-    // current built counts for every attempt; extras still draw in catalogue order.
+    // These weights stay fixed throughout a layout. Availability is rebuilt after
+    // each counted house; extras still draw in catalogue order for every attempt.
     let house_weights = def.houses.iter().map(|h| h.lean.weigh(h.weight, &levers) * culture.mult(Listing::House, &h.name)).collect();
     let extra_chances = def.extras.iter().map(|e| e.lean.weigh(e.chance, &levers) * culture.mult(Listing::Extra, &format!("{:?}", e.name))).collect();
-    let mut town = Town { ctx, kit: &kit, levers: &levers, house_weights, extra_chances, style, size: &size.name, built: FxHashMap::default(), bounds, square: square_rect, gap };
+    let mut town = Town { ctx, kit: &kit, levers: &levers, house_weights, extra_chances, style, size: &size.name, built: FxHashMap::default(), choices: Vec::new(), bounds, square: square_rect, gap };
     // A mandatory catalogue request with no positive-weight eligible house can
     // never be removed from the queue. Built counts only grow and these weights
     // stay fixed; water is deliberately ignored, making this a necessary check.
@@ -2165,6 +2165,9 @@ struct Town<'a> {
     style: &'a StyleDef,
     size: &'a str,
     built: FxHashMap<usize, u32>,
+    /// Availability changes only after a lot is counted; rejected attempts reuse
+    /// the original ordered choices, including zero-weight entries.
+    choices: Vec<HouseChoices>,
     /// What it may build on: inside `bounds`, clear of the square, `gap` between.
     bounds: Rect,
     square: Rect,
@@ -2184,20 +2187,44 @@ enum Want {
     Work(String),
 }
 
+struct HouseChoices {
+    want: Want,
+    dry: Vec<(usize, f32)>,
+    wet: Vec<(usize, f32)>,
+    needs_water: bool,
+}
+
+impl HouseChoices {
+    fn new(houses: &[super::def::HouseDef], weights: &[f32], want: &Want, size: &str, style: &str, built: &FxHashMap<usize, u32>, grand: u32) -> Self {
+        let mut choices = Self { want: want.clone(), dry: Vec::new(), wet: Vec::new(), needs_water: false };
+        for (i, h) in houses.iter().enumerate() {
+            if !house_fits(h, want, size, style, built.get(&i).copied().unwrap_or(0), grand) { continue; }
+            choices.wet.push((i, weights[i]));
+            if h.water { choices.needs_water = true; } else { choices.dry.push((i, weights[i])); }
+        }
+        choices
+    }
+}
+
 impl Town<'_> {
     fn count(&mut self, lot: &Lot) {
         if let Some(i) = lot.house {
             *self.built.entry(i).or_default() += 1;
+            self.choices.clear();
         }
     }
 
-    fn fits_house(&self, i: usize, h: &super::def::HouseDef, want: &Want) -> bool {
-        house_fits(h, want, self.size, &self.style.name, self.built.get(&i).copied().unwrap_or(0), self.ctx.def.rules.houses.grand)
+    fn choices(&mut self, want: &Want) -> &HouseChoices {
+        let i = self.choices.iter().position(|c| &c.want == want).unwrap_or_else(|| {
+            self.choices.push(HouseChoices::new(&self.ctx.def.houses, &self.house_weights, want, self.size, &self.style.name, &self.built, self.ctx.def.rules.houses.grand));
+            self.choices.len() - 1
+        });
+        &self.choices[i]
     }
 
     /// Water cannot affect a request whose otherwise eligible houses are all dry.
-    fn needs_water(&self, want: &Want) -> bool {
-        self.ctx.def.houses.iter().enumerate().any(|(i, h)| h.water && self.fits_house(i, h, want))
+    fn needs_water(&mut self, want: &Want) -> bool {
+        self.choices(want).needs_water
     }
 }
 
@@ -2226,12 +2253,11 @@ fn required_houses_possible(houses: &[super::def::HouseDef], weights: &[f32], qu
 /// size builds, of which it has not built its most, beside water if it must be; none when
 /// nothing fits. Inns are grand homes of four walls, by weight among those wide enough;
 /// traders keep a modest home or a shop.
-fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: bool) -> Option<(Spec, usize)> {
+fn house_spec(town: &mut Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: bool) -> Option<(Spec, usize)> {
+    let choices = town.choices(want);
+    let index = pick(rng, if near_water { &choices.wet } else { &choices.dry })?;
     let (def, kit, levers, style) = (town.ctx.def, town.kit, town.levers, town.style);
     let rules = &def.rules.houses;
-    let fits = |i: usize, h: &super::def::HouseDef| town.fits_house(i, h, want) && (!h.water || near_water);
-    let houses: Vec<(usize, f32)> = def.houses.iter().enumerate().filter(|(i, h)| fits(*i, h)).map(|(i, _)| (i, town.house_weights[i])).collect();
-    let index = pick(rng, &houses)?;
     let h = &def.houses[index];
     let mut w = between(rng, h.width);
     let mut d = between(rng, h.depth);
@@ -2340,7 +2366,8 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
         regular: levers.get(Lever::Order) > rules.regular,
         window_chance: (style.window_chance * (rules.windows.0 + rules.windows.1 * levers.get(Lever::Wealth))).min(rules.windows.2),
         form: h.form,
-        inside: h.inside.clone(),
+        // Interiors affect chimney/stair adaptation and drawing, after placement.
+        inside: Vec::new(),
         centre: None,
         seed: rng.next_u64(),
     };
@@ -2428,7 +2455,10 @@ fn place(
     }
     // Adapt only a placed house. Chimney removal and wall/storey reductions do not
     // change its envelope, stilts, door or any of the placement checks above.
-    if house.is_some() { house::make_room_for_stairs(&mut spec); }
+    if let Some(index) = house {
+        spec.inside = ctx.def.houses[index].inside.clone();
+        house::make_room_for_stairs(&mut spec);
+    }
     let frame = Frame::fit(low, high, facing, rect.min, floor);
     let door = kind.indoors().then(|| {
         let outside = frame.at(spec.door, 0, -2);
@@ -2711,6 +2741,60 @@ mod level_tests {
     use crate::geology::GeoSample;
     use crate::trails::Land;
     use crate::water::Body;
+
+    #[test]
+    fn house_choices_keep_original_order_weights_and_draws() {
+        let mut def = SettlementsDef::default();
+        def.extend("base", "base", include_str!("../../../../assets/content/base/settlements.ron")).unwrap();
+        // Include modded water-only homes and a zero-weight final entry. The
+        // original selector can fall through to a final zero after rounding.
+        let mut boat = def.houses.iter().find(|h| h.name == "boathouse").unwrap().clone();
+        boat.work = None;
+        boat.width.1 = def.rules.houses.grand;
+        def.houses.push(boat);
+        let wants = [Want::Home, Want::Workshop, Want::Kind(Kind::Inn), Want::Kind(Kind::Trader), Want::Work("shrine".into()), Want::Work("boathouse".into()), Want::Work("absent".into())];
+        let mut wet_only = 0;
+        let mut empty = 0;
+        let mut capped = 0;
+        for all_zero in [false, true] {
+            let weights: Vec<_> = (0..def.houses.len()).map(|i| if all_zero || i % 3 == 0 || i + 1 == def.houses.len() { 0.0 } else { 0.25 + i as f32 * 0.125 }).collect();
+            for size in ["hamlet", "village"] {
+                for style in ["timber_frame", "log_house", "sod"] {
+                    for count in 0..=3 {
+                        let built: FxHashMap<_, _> = (0..def.houses.len()).map(|i| (i, count)).collect();
+                        for want in &wants {
+                            let choices = HouseChoices::new(&def.houses, &weights, want, size, style, &built, def.rules.houses.grand);
+                            let eligible = |h: &super::super::def::HouseDef| {
+                                (h.sizes.is_empty() || h.sizes.iter().any(|s| s == size))
+                                    && !h.not_in.iter().any(|s| s == style)
+                                    && h.most.is_none_or(|most| count < most)
+                                    && match want {
+                                        Want::Kind(Kind::Inn) => h.work.is_none() && h.form == Form::Box && h.width.1 >= def.rules.houses.grand,
+                                        Want::Kind(Kind::Trader) => h.work.is_none() && matches!(h.form, Form::Box | Form::ShopFront),
+                                        Want::Home | Want::Kind(_) => h.work.is_none(),
+                                        Want::Workshop => h.work.is_some(),
+                                        Want::Work(work) => h.work.as_deref() == Some(work.as_str()),
+                                    }
+                            };
+                            assert_eq!(choices.needs_water, def.houses.iter().any(|h| h.water && eligible(h)));
+                            wet_only += usize::from(choices.needs_water);
+                            capped += def.houses.iter().filter(|h| h.most.is_some_and(|most| count >= most)).count();
+                            for near_water in [false, true] {
+                                let original: Vec<_> = def.houses.iter().enumerate().filter(|(_, h)| eligible(h) && (!h.water || near_water)).map(|(i, _)| (i, weights[i])).collect();
+                                let cached = if near_water { &choices.wet } else { &choices.dry };
+                                assert_eq!(cached, &original, "{size}/{style}/{count}/{want:?}/{near_water}");
+                                empty += usize::from(original.is_empty());
+                                let (mut a, mut b) = (Rng::new(42, 71, -19, 23), Rng::new(42, 71, -19, 23));
+                                for _ in 0..32 { assert_eq!(pick(&mut a, &original), pick(&mut b, cached)); }
+                                assert_eq!(a.next_u64(), b.next_u64(), "selection consumes identical draws even when no weight is positive");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(wet_only > 0 && empty > 0 && capped > 0, "water, missing requests and exhausted caps are exercised");
+    }
 
     #[test]
     fn required_house_preflight_only_rejects_impossible_catalogues() {
