@@ -1224,6 +1224,25 @@ fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
 }
 
 #[test]
+fn picking_any_wild_herb_gives_kitchen_herbs_and_the_herb_regrows() {
+    let mut client = Client::join();
+    let at = client.position.floor().as_ivec3() + IVec3::new(1, 0, 0);
+    for line in ["/clear", "/fill ~1 ~-1 ~ ~2 ~-1 ~ grass_block", "/fill ~1 ~ ~ ~2 ~ ~ air", "/setblock ~1 ~ ~ oregano"] {
+        client.ok(line);
+    }
+    let (oregano, herbs) = (client.content.blocks.expect("base:oregano"), client.content.blocks.expect("base:kitchen_herbs"));
+    client.pump_until(|c| c.world.block(at) == Some(oregano));
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    // One item for every wild herb: the oregano itself is not what is handed out.
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == herbs && s.count == 1));
+    assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == oregano), "picked oregano is still an item of its own");
+    // The wild spot grows the same plant back.
+    client.ok("/grow");
+    client.pump_until(|c| c.world.block(at) == Some(oregano));
+}
+
+#[test]
 fn a_lit_homestead_hearth_is_home_and_the_dead_wake_there() {
     let mut client = Client::join_remote("owner", &["owner"]);
     let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);

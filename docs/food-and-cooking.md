@@ -10,6 +10,21 @@ food and breeding design (see [creatures.md](creatures.md)).
 > Health comes back slowly by itself (a point every ten seconds). Read "hunger" below as
 > healing where it still appears.
 >
+> **2026-10-08: merged wild items** (design plan P27, second round): the wild plants of one
+> kind stay in the world as blocks but drop one item, tagged `merged` on the plant:
+> `sweet_berry` (sweet berry, blueberry, raspberry, blackberry, cloudberry bushes), `tart_berry`
+> (cranberry, lingonberry, gooseberry), `kitchen_herbs` (oregano, parsley, dill, fennel,
+> coriander, basil, rosemary, cumin), `wild_roots` (turnip, beet, radish, parsnip), `wild_onion`
+> (also leek and garlic, carrying garlic's antidote), `wild_grain` (barley, oats, millet,
+> quinoa; tagged grain), `mushroom` (porcini, shiitake, blewit, oyster, chanterelle, brown) and
+> `pumpkin` (pumpkin, squash). Each is a placeable plant block that looks like one of its
+> plants, so the herb planter takes it and the planted item regrows; picking a wild plant
+> grows that same wild plant back. Kept apart for their own use: mint, sage and thyme (alchemy),
+> frost turnip (feeds the frost stag), red mushroom, elderberry, rowan, strawberry, dreamberry,
+> glow berries, whisper oats. Old saves' stacks of a merged plant load as the merged item
+> (`BlockRegistry::item_named`). `crates/engine/tests/merged_items.rs` checks every plant
+> drops its merged item and no recipe, quest or loot names a merged-away plant.
+>
 > **2026-10-08: how much food heals** (design drafts 55, 63 and 107): cooked food 0.4 × the
 > lowest level that cooks it, at least 4 (`vitals::cooked_heal`; about a fifth of the
 > health of a player who can make it), so cooking always makes food better; raw produce

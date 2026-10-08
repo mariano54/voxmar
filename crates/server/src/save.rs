@@ -406,9 +406,15 @@ impl WorldSave {
         for (slot, stack) in inventory.slots.iter_mut().zip(file.inventory) {
             *slot = stack
                 .filter(|&(_, count)| count > 0)
-                .and_then(|(item, count)| Some(ItemStack { item: registry.id(&item)?, count: count.min(MAX_STACK) }));
+                .and_then(|(item, count)| Some(ItemStack { item: registry.item_named(&item)?, count: count.min(MAX_STACK) }));
         }
-        inventory.pouched = file.pouched.iter().filter_map(|(item, count)| Some((registry.id(item)?, *count))).filter(|&(_, n)| n > 0).collect();
+        // Older saves' items that merged into one add up.
+        for (item, count) in file.pouched.iter().filter_map(|(item, count)| Some((registry.item_named(item)?, *count))).filter(|&(_, n)| n > 0) {
+            match inventory.pouched.iter_mut().find(|(have, _)| *have == item) {
+                Some((_, n)) => *n = n.saturating_add(count),
+                None => inventory.pouched.push((item, count)),
+            }
+        }
         let position = Vec3::from(file.position);
         if !position.is_finite() {
             return Err(invalid(&path, "position is not finite"));
@@ -828,6 +834,42 @@ mod tests {
         // Names that are not plain file names stay inside the players directory.
         let files = std::fs::read_dir(dir.join("players")).unwrap().count();
         assert!(files >= 4, "{files} player files");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Items an older save holds that have since merged into one come back as that item
+    /// (every kind of wild herb is kitchen herbs now), pouched ones added up.
+    #[test]
+    fn items_merged_since_a_save_come_back_as_the_merged_item() {
+        let dir = temp_dir("merged");
+        let save = WorldSave::new(&dir);
+        let registry = registry(false);
+        let mut inventory = Inventory::default();
+        inventory.add(registry.expect("base:oregano"), 7);
+        inventory.add(registry.expect("base:cobblestone"), 5);
+        inventory.pouched.push((registry.expect("base:parsley"), 4));
+        inventory.pouched.push((registry.expect("base:dill"), 6));
+        let player = SavedPlayer {
+            position: Vec3::new(0.5, 80.0, 0.5),
+            yaw: 0.0,
+            mode: None,
+            flying: false,
+            health: Health { current: 20, max: 20 },
+            inventory,
+            skills: Vec::new(),
+            effects: Vec::new(),
+            home: None,
+            bed: None,
+            journal: Vec::new(),
+            quests: Vec::new(),
+            tallies: Vec::new(),
+        };
+        save.write_player("herbalist", &player, &registry).unwrap();
+        let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();
+        let herbs = registry.expect("base:kitchen_herbs");
+        assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == herbs).map(|s| s.count), Some(7));
+        assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == registry.expect("base:cobblestone")).map(|s| s.count), Some(5));
+        assert_eq!(loaded.inventory.pouched, vec![(herbs, 10)]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
