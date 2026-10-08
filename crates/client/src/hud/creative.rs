@@ -316,7 +316,10 @@ fn show(
         catalogue.recipes = recipes;
     }
     if let Ok(mut node) = tabs.single_mut() {
-        node.display = if recipes { Display::None } else { Display::Flex };
+        let wanted = if recipes { Display::None } else { Display::Flex };
+        if node.display != wanted {
+            node.display = wanted;
+        }
     }
     if let Ok(mut hint) = hint.single_mut() {
         let key = if recipes { "creative.hint.recipes" } else { "creative.hint" };

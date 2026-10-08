@@ -286,9 +286,6 @@ impl Server {
         }
     }
 
-    /// Creative mode's catalogue: `count` of any item onto the pointer (topping up a stack
-    /// of it there) or into the inventory, where what does not fit is not given. A survival
-    /// player gets nothing.
     /// A player looked an item up in the recipe viewer: counted once for quests, if the item
     /// exists.
     fn looked_up(&mut self, id: PlayerId, item: BlockId) {
@@ -299,6 +296,9 @@ impl Server {
         }
     }
 
+    /// Creative mode's catalogue: `count` of any item onto the pointer (topping up a stack
+    /// of it there) or into the inventory, where what does not fit is not given. A survival
+    /// player gets nothing.
     fn take_from_catalogue(&mut self, id: PlayerId, item: BlockId, count: u8, held: bool) {
         let known = (item.0 as usize) < self.content.blocks.len() && !item.is_air();
         let Some(player) = self.players.get_mut(&id) else { return };
