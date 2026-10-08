@@ -856,10 +856,10 @@ mod tests {
         println!("gate seed spawn {spawn}, mountain {mountain}");
         let at = world.locate_tarn(mountain, 4096).expect("a visible tarn near those mountains");
         println!("gate seed tarn {at}");
-        let wet = (at.z - 16..=at.z + 16).flat_map(|z| (at.x - 16..=at.x + 16).map(move |x| (x, z))).filter(|&(x, z)| {
-            let g = world.geo(x, z);
+        let wet = lake_component(at.xz(), 16, |p| {
+            let g = world.geo(p.x, p.y);
             g.body == Body::Lake && g.submerged() && g.water == at.y
-        }).count();
+        }).len();
         assert!(wet >= 20, "only {wet} visible water columns at {at}");
         assert!(world.rivers.tarns_near(world.stages(), mountain, 4096).iter().any(|pit| pit.y == at.y && (pit.xz() - at.xz()).abs().max_element() <= 8));
         assert!(world.locate_tarn(mountain, -1).is_none());

@@ -5837,18 +5837,22 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get() else { return };
             let mut water = 0;
             let mut disagree = 0;
-            for z in at.z - 16..=at.z + 16 {
-                for x in at.x - 16..=at.x + 16 {
-                    let p = IVec3::new(x, at.y, z);
-                    let site = generator.site(x, z);
-                    if site.body == voxmar_worldgen::Body::Lake && site.height < site.water && site.water == at.y && (source(p) || frozen(p)) {
-                        water += 1;
-                        disagree += usize::from(client.block(p) != observer.world.block(p));
-                    }
+            let mut seen = std::collections::HashSet::new();
+            let mut todo = vec![at];
+            while let Some(p) = todo.pop() {
+                if (p.xz() - at.xz()).abs().max_element() > 16 || !seen.insert(p) {
+                    continue;
                 }
+                let site = generator.site(p.x, p.z);
+                if site.body != voxmar_worldgen::Body::Lake || site.height >= site.water || site.water != at.y || !(source(p) || frozen(p)) {
+                    continue;
+                }
+                water += 1;
+                disagree += usize::from(client.block(p) != observer.world.block(p));
+                todo.extend([p + IVec3::X, p - IVec3::X, p + IVec3::Z, p - IVec3::Z]);
             }
             let result = if water >= 20 && disagree == 0 {
-                Ok(format!("{water} still water or ice surface columns at {at}, matching on both peers"))
+                Ok(format!("{water} connected still water or ice surface columns at {at}, matching on both peers"))
             } else {
                 Err(format!("{water} source-water columns at {at}, {disagree} differ on the client"))
             };
