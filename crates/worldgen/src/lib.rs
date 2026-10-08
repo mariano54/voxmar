@@ -524,7 +524,8 @@ impl Overworld {
                 buildings: p.buildings.clone(),
                 gates: p.gates.clone(),
                 lanes: p.lanes.clone(),
-                levers: p.levers.0,
+                levers: p.levers.levers,
+                culture: self.settlements.culture_info(p),
             })
             .collect()
     }
@@ -676,7 +677,10 @@ pub struct SettlementInfo {
     pub lanes: Vec<Vec<voxmar_engine::glam::Vec2>>,
     /// Wealth, age, order, crowding and green, each 0 ..= 1.
     pub levers: [f32; 5],
+    pub culture: CultureInfo,
 }
+
+pub use settlements::CultureInfo;
 
 /// Samples sites over an area, computing the regional climate once per lattice point.
 pub struct Sampler<'a> {

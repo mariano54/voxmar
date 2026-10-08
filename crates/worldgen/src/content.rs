@@ -1509,12 +1509,13 @@ pub struct TreadDef {
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 16] = [
+pub(crate) const BASE_FILES: [(&str, &str); 17] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("crops.ron", include_str!("../../../assets/content/base/crops.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
     ("cave_biomes.ron", include_str!("../../../assets/content/base/cave_biomes.ron")),
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
+    ("cultures.ron", include_str!("../../../assets/content/base/cultures.ron")),
     ("decorations.ron", include_str!("../../../assets/content/base/decorations.ron")),
     ("land.ron", include_str!("../../../assets/content/base/land.ron")),
     ("ores.ron", include_str!("../../../assets/content/base/ores.ron")),
@@ -1647,6 +1648,7 @@ impl WorldContent {
                 "land.ron" => land = Some(parse::<LandDef>(&at, &file.source)?),
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
                 "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
+                "cultures.ron" => settlements.cultures.extend(&at, &file.package, &file.source)?,
                 // Each crop's level, rarity and stages, so settlements keep to everyday crops
                 // and never grow them ripe.
                 "crops.ron" => {

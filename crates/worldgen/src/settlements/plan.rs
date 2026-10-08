@@ -10,6 +10,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::glam::{IVec2, IVec3, Vec2};
 
 use super::canvas::{Canvas, Facing, Frame, Palette, Put, unit};
+use super::culture::{Culture, Listing, Script, Site};
 use super::def::{CentreKind, Extra, Form, KanaJoin, LanesDef, Lever, Levers, Prop, PropKind, Roof, RulesDef, SettlementsDef, Shape, Special, Spot, StyleDef, fill};
 use super::house::{self, Fixed, Kind, Mats, Spec};
 use super::centre;
@@ -55,6 +56,8 @@ pub struct Ctx<'a> {
     /// The squares one of which may be settled for a new player whatever their roll (those
     /// in reach of where they spawn), whose names their neighbours keep off too.
     pub promised: &'a [IVec2],
+    /// How well the families suit region cells, remembered (see `Settlements::cells`).
+    pub cells: &'a std::sync::Mutex<FxHashMap<IVec2, (IVec2, Vec<f32>)>>,
 }
 
 /// Picks from `items` by weight; `None` when every weight is nothing.
@@ -371,7 +374,7 @@ fn levers(ctx: &Ctx, at: IVec2, fresh: bool, rng: &mut Rng) -> Levers {
         let wealth = l[Lever::Wealth as usize];
         l[lever as usize] = (mix.luck * luck + mix.fertility * site.fertility + mix.water * water + mix.flat * flat + mix.wealth * wealth + mix.forest * forest).clamp(0.0, 1.0);
     }
-    Levers(l)
+    Levers { levers: l, axes: [0.0; super::culture::AXES] }
 }
 
 /// The materials a settlement keeps of its style: a few of each list, by weight.
@@ -394,12 +397,25 @@ struct Kit {
     window: Option<BlockId>,
 }
 
-fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, crop_level: u32, rng: &mut Rng) -> Kit {
+fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, culture: &Culture, crop_level: u32, rng: &mut Rng) -> Kit {
     let woods: Vec<(usize, f32)> = style.woods.iter().enumerate().map(|(i, (_, w))| (i, *w)).collect();
     let wood = style.woods[pick(rng, &woods).unwrap_or(0)].0.clone();
     let trim = if rng.chance(0.55) { wood.clone() } else { style.woods[pick(rng, &woods).unwrap_or(0)].0.clone() };
     let resolve = |list: &[(String, f32)]| -> Vec<(BlockId, f32)> {
         list.iter().filter_map(|(name, w)| ctx.resolved.get(&fill(name, &wood, &trim)).map(|id| (id, *w))).filter(|(_, w)| *w > 0.0).collect()
+    };
+    // The family's palette joins the style's, as `palette` times the style's weight.
+    let palette = &culture.palette;
+    let share = ctx.def.cultures.rules.palette;
+    let join = |mut base: Vec<(BlockId, f32)>, extra: &super::def::Material| -> Vec<(BlockId, f32)> {
+        let total: f32 = base.iter().map(|b| b.1).sum();
+        let add = resolve(&extra.0);
+        let added: f32 = add.iter().map(|b| b.1).sum();
+        if added > 0.0 {
+            let scale = total.max(1.0) * share / added;
+            base.extend(add.into_iter().map(|(b, w)| (b, w * scale)));
+        }
+        base
     };
     // Orderly places keep fewer materials, and so look of a piece.
     let keep = |rng: &mut Rng, all: Vec<(BlockId, f32)>| -> Vec<(BlockId, f32)> {
@@ -424,10 +440,10 @@ fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, crop_level: u32, rng: &mut 
     Kit {
         foundation: Palette(resolve(&style.foundation.0)),
         floor: keep(rng, resolve(&style.floor.0)),
-        walls: keep(rng, resolve(&style.walls.0)),
+        walls: keep(rng, join(resolve(&style.walls.0), &palette.walls)),
         frame: keep(rng, resolve(&style.frame.0)),
-        roof: keep(rng, resolve(&style.roof.0)),
-        trims: keep(rng, resolve(&style.trim.0)),
+        roof: keep(rng, join(resolve(&style.roof.0), &palette.roof)),
+        trims: keep(rng, join(resolve(&style.trim.0), &palette.trim)),
         paving: Palette(resolve(&style.paving.0)),
         hedge: Palette(resolve(&style.hedge.0)),
         weathered: Palette(resolve(&style.weathered.0)),
@@ -438,7 +454,7 @@ fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, crop_level: u32, rng: &mut 
         roofs: style
             .roofs
             .iter()
-            .map(|&(shape, w)| (shape, w * ctx.def.roofs.iter().find(|r| r.shape == shape).map_or(1.0, |r| r.lean.weigh(r.weight, levers))))
+            .map(|&(shape, w)| (shape, w * culture.mult(Listing::Roof, &format!("{shape:?}")) * ctx.def.roofs.iter().find(|r| r.shape == shape).map_or(1.0, |r| r.lean.weigh(r.weight, levers))))
             .collect(),
         window: style.window.as_deref().and_then(|w| ctx.resolved.get(w)),
         log: style.log.clone(),
@@ -524,6 +540,16 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         .or_else(|| sites.iter().find_map(|&(centre, fresh)| (0..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), true))))
 }
 
+/// How many region cells' fits are remembered before the memory is cleared (each takes
+/// under a hundred bytes).
+const CELLS_KEPT: usize = 4096;
+
+/// The level of the land at `at` (P15, biome levels): 1 until that lands, which shifts a
+/// culture's axes ([`super::culture::Rules::level_martial`]).
+fn land_level(_ctx: &Ctx, _at: IVec2) -> u32 {
+    1
+}
+
 /// How many draws the spawn's square tries laying out each spot with.
 const SPAWN_SALTS: u64 = 8;
 
@@ -537,12 +563,12 @@ pub(super) const NAME_OFFERS: u32 = 3;
 /// The `k`th name square `cell` may take from names list `list`: a first part and a last
 /// (never "Brookbrook"), or a hamlet's first part and a small word.
 pub(super) fn offered_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, k: u32, small: bool) -> (String, String) {
-    let names = &def.names[list];
+    let names = &def.cultures.families[list].names;
     let mut rng = Rng::new(seed, NAMING + 1 + (list as u64) * 1024 + k as u64, cell.x, cell.y);
     let first = &names.first[rng.below(names.first.len() as u32) as usize];
     if small {
         let word = &names.small[rng.below(names.small.len() as u32) as usize];
-        return small_name(first, word);
+        return small_name(names.script, first, word);
     }
     let mut last = &names.last[rng.below(names.last.len() as u32) as usize];
     for _ in 0..4 {
@@ -551,12 +577,22 @@ pub(super) fn offered_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: u
         }
         last = &names.last[rng.below(names.last.len() as u32) as usize];
     }
-    (format!("{}{}", first.0, last.0), join_kana(&def.kana, first, last))
+    (format!("{}{}", first.0, last.0), join_parts(&def.kana, names.script, first, last))
 }
 
 /// A hamlet's name of a first part and a word: "Ash Well", アッシュ・ウェル.
-fn small_name(first: &(String, String), word: &(String, String)) -> (String, String) {
-    (format!("{} {}", first.0, word.0), format!("{}・{}", first.1, word.1))
+/// (Matsu Juku, 松宿 in kanji.)
+fn small_name(script: Script, first: &(String, String), word: &(String, String)) -> (String, String) {
+    let joiner = if script == Script::Kanji { "" } else { "・" };
+    (format!("{} {}", first.0, word.0), format!("{}{joiner}{}", first.1, word.1))
+}
+
+/// A name's two parts joined in Japanese by the family's script.
+fn join_parts(kana: &[KanaJoin], script: Script, first: &(String, String), last: &(String, String)) -> String {
+    match script {
+        Script::Kana => join_kana(kana, first, last),
+        Script::Kanji => format!("{}{}", first.1, last.1),
+    }
 }
 
 /// Whether one part holds the other ("Brook" and "brook"), which reads badly joined.
@@ -593,10 +629,10 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
             if other == cell || gap > apart as f32 || !(Rng::new(seed, 0x5e771e, other.x, other.y).chance(grid.chance) || promised.contains(&other)) {
                 continue;
             }
-            for l in 0..def.names.len() {
+            for l in 0..def.cultures.families.len() {
                 for k in 0..NAME_OFFERS {
                     for small in [false, true] {
-                        if small && def.names[l].small.is_empty() {
+                        if small && def.cultures.families[l].names.small.is_empty() {
                             continue;
                         }
                         taken.insert(offered_name(def, seed, other, l, k, small).0);
@@ -614,13 +650,13 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
     let further = forms.iter().flat_map(|&f| offers(f, NAME_OFFERS..NAME_OFFERS + 32));
     // Past those, every name the list makes, in order: a taken name only where the list
     // has none left (it makes hundreds; the neighbours offer a few each).
-    let names = &def.names[list];
+    let names = &def.cultures.families[list].names;
     let every = forms.iter().flat_map(move |&f| {
         names.first.iter().flat_map(move |a| {
             let words: Box<dyn Iterator<Item = (String, String)>> = if f {
-                Box::new(names.small.iter().map(move |w| small_name(a, w)))
+                Box::new(names.small.iter().map(move |w| small_name(names.script, a, w)))
             } else {
-                Box::new(names.last.iter().filter(move |b| !echoes(a, b)).map(move |b| (format!("{}{}", a.0, b.0), join_kana(&def.kana, a, b))))
+                Box::new(names.last.iter().filter(move |b| !echoes(a, b)).map(move |b| (format!("{}{}", a.0, b.0), join_parts(&def.kana, names.script, a, b))))
             };
             words
         })
@@ -632,12 +668,44 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
 /// `smallest`: as the size with fewest houses, whatever the draw.
 fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool) -> Option<Plan> {
     let def = ctx.def;
-    let levers = levers(ctx, centre, fresh, &mut rng);
+    let mut levers = levers(ctx, centre, fresh, &mut rng);
     let biome = ctx.world.biome_at(centre.x, centre.y);
+    // Whose it is: a family of the land round, its axes and its mutations, from streams
+    // of their own so the rolls below are the ones they were.
+    let ground_site = ctx.world.site(centre.x, centre.y);
+    let fits_of = |g: IVec2| -> (IVec2, Vec<f32>) {
+        if let Some(f) = ctx.cells.lock().unwrap().get(&g) {
+            return f.clone();
+        }
+        let probe = |p: IVec2| {
+            let s = ctx.world.site(p.x, p.y);
+            (ctx.world.biomes().get(s.biome), s.temperature)
+        };
+        let fits = def.cultures.cell_fits(ctx.seed, g, &probe);
+        let mut cells = ctx.cells.lock().unwrap();
+        if cells.len() >= CELLS_KEPT {
+            cells.clear();
+        }
+        cells.insert(g, fits.clone());
+        fits
+    };
+    let cell_family = |g: IVec2| def.cultures.cell_family(ctx.seed, g, &fits_of);
+    let site = Site {
+        seed: ctx.seed,
+        cell,
+        at: centre,
+        level: land_level(ctx, centre),
+        fresh,
+        relief: (ground_site.steepness / def.rules.levers.steep).min(1.0),
+        forest: ground_site.forest,
+        levers,
+        cell_family: &cell_family,
+    };
+    let mut culture = def.cultures.roll(&site);
+    levers.axes = culture.axes;
     // Styles weigh by how many of their tags the biome has, so where two fit (a cool
     // forest with conifers) either may be built; the catch-all style stands in temperate
     // and cool land, and wherever nothing else fits.
-    let tagged = |tags: &[String]| tags.is_empty() || tags.iter().any(|t| biome.has_tag(t));
     let matches = |s: &StyleDef| s.biome.iter().filter(|t| biome.has_tag(t)).count() as f32;
     let fitted = def.styles.iter().any(|s| matches(s) > 0.0);
     let styles: Vec<(usize, f32)> = def
@@ -652,7 +720,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
             } else {
                 0.0
             };
-            (i, w * w)
+            (i, w * w * culture.mult(Listing::Style, &s.name))
         })
         .collect();
     let style_index = pick(&mut rng, &styles)?;
@@ -661,21 +729,24 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     let size_index = pick(&mut rng, &sizes)?;
     let size_index = if smallest { (0..def.sizes.len()).min_by_key(|&i| def.sizes[i].houses).unwrap_or(size_index) } else { size_index };
     let size = &def.sizes[size_index];
-    let layouts: Vec<(usize, f32)> = def.layouts.iter().enumerate().filter(|(_, l)| fresh || !l.water).map(|(i, l)| (i, l.lean.weigh(l.weight, &levers))).collect();
+    def.cultures.finish(&mut culture, &site, &size.name);
+    levers.axes = culture.axes;
+    let layouts: Vec<(usize, f32)> = def.layouts.iter().enumerate().filter(|(_, l)| fresh || !l.water).map(|(i, l)| (i, l.lean.weigh(l.weight, &levers) * culture.mult(Listing::Layout, &l.name))).collect();
     let layout_index = pick(&mut rng, &layouts)?;
     let shape = def.layouts[layout_index].shape;
-    let kit = kit(ctx, style, &levers, size.crop_level, &mut rng);
-    let names = def.names.iter().find(|n| tagged(&n.biome)).unwrap_or(&def.names[0]);
+    let kit = kit(ctx, style, &levers, &culture, size.crop_level, &mut rng);
+    let list = culture.family;
+    let names = &def.cultures.families[list].names;
     let name = {
         let small = size_index == 0 && !names.small.is_empty() && Rng::new(ctx.seed, NAMING, cell.x, cell.y).chance(names.small_chance);
-        let list = def.names.iter().position(|n| std::ptr::eq(n, names)).unwrap_or(0);
         let name = unique_name(def, ctx.seed, ctx.promised, cell, list, small);
         // Now and then a word before it, leaning on the levers ("Old" where it is old).
         let prefixes: Vec<(usize, f32)> = names.prefixes.iter().enumerate().map(|(i, p)| (i, p.3.weigh(p.2, &levers))).collect();
         match (rng.chance(names.prefix_chance), pick(&mut rng, &prefixes)) {
             (true, Some(i)) => {
                 let p = &names.prefixes[i];
-                (format!("{} {}", p.0, name.0), format!("{}・{}", p.1, name.1))
+                let joiner = if names.script == Script::Kanji { "" } else { "・" };
+                (format!("{} {}", p.0, name.0), format!("{}{joiner}{}", p.1, name.1))
             }
             _ => name,
         }
@@ -694,7 +765,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     };
     // The one great thing it is known by, if it has one: on the square, which grows to
     // hold it and the well beside it, or out at the end of a lane.
-    let centres: Vec<(usize, f32)> = def.centrepieces.iter().enumerate().map(|(i, c)| (i, c.lean.weigh(c.weight, &levers))).collect();
+    let centres: Vec<(usize, f32)> = def.centrepieces.iter().enumerate().map(|(i, c)| (i, c.lean.weigh(c.weight, &levers) * culture.mult(Listing::Centrepiece, &c.kind.label()))).collect();
     let centrepiece = if rng.chance(size.centrepiece) { pick(&mut rng, &centres) } else { None };
     let mut centre_spec = centrepiece.map(|i| centre_spec(def, i, &kit, &levers, &mut rng, style));
     let mut on_square = centrepiece.is_some_and(|i| def.centrepieces[i].spot == Spot::Square);
@@ -1010,7 +1081,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
         }
     }
 
-    let mut town = Town { ctx, kit: &kit, levers: &levers, style, size: &size.name, built: FxHashMap::default(), bounds, square: square_rect, gap };
+    let mut town = Town { ctx, kit: &kit, levers: &levers, culture: &culture, style, size: &size.name, built: FxHashMap::default(), bounds, square: square_rect, gap };
     // On a green, houses first take the rim, facing in.
     if shape == Shape::Green {
         let rim = (square as f32 + lanes_def.rim.0 + gap as f32).max(lanes_def.rim.1);
@@ -1159,8 +1230,8 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     // Props by the lanes and in the yards, and by the water.
     let mut canvas = Canvas::default();
     let mut props: Vec<(Rect, usize, Facing)> = Vec::new();
-    let prop_weights: Vec<(usize, f32)> = def.props.iter().enumerate().filter(|(_, p)| !p.water).map(|(i, p)| (i, p.lean.weigh(p.weight, &levers))).collect();
-    let water_weights: Vec<(usize, f32)> = def.props.iter().enumerate().filter(|(_, p)| p.water).map(|(i, p)| (i, p.lean.weigh(p.weight, &levers))).collect();
+    let prop_weights: Vec<(usize, f32)> = def.props.iter().enumerate().filter(|(_, p)| !p.water).map(|(i, p)| (i, p.lean.weigh(p.weight, &levers) * culture.mult(Listing::Prop, &p.kind.label()))).collect();
+    let water_weights: Vec<(usize, f32)> = def.props.iter().enumerate().filter(|(_, p)| p.water).map(|(i, p)| (i, p.lean.weigh(p.weight, &levers) * culture.mult(Listing::Prop, &p.kind.label()))).collect();
     let lamp = def.props.iter().position(|p| p.kind == PropKind::Drawn(Prop::Lamp));
     // Where a prop would stand with its first block at `at`, if the ground there is free.
     let fit = |ground: &mut Ground, occupied: &[Rect], prop: usize, at: IVec2, facing: Facing, clearance: f32| -> Option<Rect> {
@@ -1409,6 +1480,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
         centre,
         height: square_height,
         levers,
+        culture,
         buildings,
         gates,
         lanes: lanes.iter().map(|l| l.points.clone()).collect(),
@@ -1634,6 +1706,7 @@ struct Town<'a> {
     ctx: &'a Ctx<'a>,
     kit: &'a Kit,
     levers: &'a Levers,
+    culture: &'a Culture,
     style: &'a StyleDef,
     size: &'a str,
     built: FxHashMap<usize, u32>,
@@ -1684,7 +1757,7 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
                 Want::Work(work) => h.work.as_deref() == Some(work.as_str()),
             }
     };
-    let houses: Vec<(usize, f32)> = def.houses.iter().enumerate().filter(|(i, h)| fits(*i, h)).map(|(i, h)| (i, h.lean.weigh(h.weight, levers))).collect();
+    let houses: Vec<(usize, f32)> = def.houses.iter().enumerate().filter(|(i, h)| fits(*i, h)).map(|(i, h)| (i, h.lean.weigh(h.weight, levers) * town.culture.mult(Listing::House, &h.name))).collect();
     let index = pick(rng, &houses)?;
     let h = &def.houses[index];
     let mut w = between(rng, h.width);
@@ -1704,7 +1777,7 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
     }
     let mut extras: Vec<Extra> = Vec::new();
     for e in &def.extras {
-        if rng.chance(e.lean.weigh(e.chance, levers)) {
+        if rng.chance(e.lean.weigh(e.chance, levers) * town.culture.mult(Listing::Extra, &format!("{:?}", e.name))) {
             extras.push(e.name);
         }
     }

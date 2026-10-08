@@ -907,7 +907,7 @@
     "command.locate.here": "いちばん近い{biome}は {place}、{distance}ブロック先。{tp} で行けます。",
     "command.locate.gorge": "いちばん近い峡谷は {place}、水面は{water}、{way}に{distance}ブロック。{tp} で行けます。",
     "command.locate.ore": "いちばん近い{block}（下に鉱脈あり）は {place}、{way}に{distance}ブロック。{tp} で行けます。",
-    "command.locate.settlement": "いちばん近い集落は{size}の{name}、{place}、{way}に{distance}ブロック。{tp} で行けます。",
+    "command.locate.settlement": "いちばん近い集落は{culture}の{size}の{name}、{place}、{way}に{distance}ブロック。{tp} で行けます。",
     "settlement.size.hamlet": "小村",
     "settlement.size.village": "村",
     "command.setblock": "{block}を {place} に置きました。",

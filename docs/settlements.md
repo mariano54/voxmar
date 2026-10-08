@@ -42,6 +42,8 @@ neighbour planned to know its own.
 
 Every settlement draws five levers, each 0 to 1, and every list entry may lean on them:
 an entry's weight is multiplied by `1 + lean × (2 × lever − 1)` for each lever it names.
+A `lean` may also name one of the eight culture axes below (piety, martial, trade, craft,
+festivity, outlook, hierarchy, lore), which are drawn the same way, 0 to 1.
 The levers are correlated, so a place reads as a whole:
 
 | Lever | Drawn from | Leads to |
@@ -51,6 +53,64 @@ The levers are correlated, so a place reads as a whole:
 | order | luck, a little wealth | straight streets and greens over scatters, straighter lanes, fewer materials (houses of a piece), "Long …" |
 | crowding | luck, a little wealth | more houses, closer together, "Little …" where low |
 | green | forest and plants around | greens, gardens, hedges, orchards, more yard props, more trees left in the glade |
+
+## Cultures
+
+Who built a place is drawn from `assets/content/<package>/cultures.ron`
+(`crates/worldgen/src/settlements/culture.rs`; design wiki draft 108, P57a). The base package
+has 17 families: hearth folk (the old default), fen folk, glen clans, skald folk, Sabari,
+canyon folk (ochre), kraal folk, Lani islanders, Hanami folk, Sunvale, steppe riders,
+birchwood folk, Hold folk, cloud monks, river folk, verdant temple folk and the Old Empire.
+The six name lists that used to live in settlements.ron are the names of hearth, fen, glen,
+skald, Sabari and Lani.
+
+- **Region and family.** The world is cut into Voronoi cells on a jittered 6144-block grid
+  (`rules.field`). Each cell names one family: the one most of its 3 by 3 sample points suit
+  by biome tag (fully, or at half weight for a family's `half` tags) and mean temperature,
+  times the family's weight and a roll of luck per cell and family. So neighbours share a
+  family (a test holds 70% of pairs 3 km apart to it), one biome holds different peoples in
+  different parts of the world, and a cell no family suits falls back on the first that can
+  be given out. Within 512 blocks of a cell's edge a place also takes a **second family**,
+  the next cell's, with a share of 0.1 to 0.45 (more nearer the edge): every list weight
+  becomes main × (1 − share) + second × share, so border towns borrow roofs and props.
+- **Site families.** River folk claim a place by its site, not its region: fresh water near,
+  trade drawn at 0.55 or more, and a 35% roll. The region's family becomes the second
+  family, share 0.3. The Old Empire (`claim: City`) is for cities and capitals only (P57c).
+- **Axes.** Eight, each 0 to 1: *piety* (temples, bells), *martial* (walls, towers, guards),
+  *trade* (markets, stalls), *craft* (workshops, signs), *festivity* (bunting, lanterns),
+  *outlook* (open or closed to strangers), *hierarchy* (rich and poor, a keep) and *lore*
+  (libraries, ruins). A place's value is its family's mean, plus a regional drift (a 2048-block
+  noise, ±0.12, so a valley leans together), local noise (±0.1) and shifts from its site:
+  piety + age × 0.15 (+0.1 at level 7 and up); martial + 0.06 per level above 3; trade + 0.15
+  by fresh water; craft + forest × 0.05; festivity + green × 0.1 − martial × 0.1; outlook +
+  trade × 0.3 − martial × 0.2 + 0.1 by water; hierarchy + wealth × 0.15; lore + age × 0.1 +
+  order × 0.1; and towns and cities shift martial, trade and hierarchy (`rules.size_shift`,
+  P57b and c). The wiki also draws trade from trail count and craft from ore veins near;
+  neither is read yet. Until biome levels (P15) land every place counts as level 1.
+- **Tilt.** A family multiplies the weights of styles, houses, roofs, props, centrepieces,
+  layouts and extras by name (`houses: {"tower_house": 3.5}`; 0 removes an entry; an entry
+  it does not name keeps its weight). The lists in settlements.ron still hold everything: a glen hamlet
+  in a forest still builds with what grows there, only more towers and cairns.
+- **Palette.** Eight colours as blocks (walls, trim and roofs; red and white terracotta for
+  the steppe, cherry trim for Hanami). A place keeps three to five and adds them to its style's,
+  as `rules.palette` (0.5) times the style's own weight.
+- **Names.** Each family has its own first and last parts, small words and prefixes, in
+  English and Japanese. Kana families join the Japanese by the `kana` table in settlements.ron
+  (a test checks every first and last part, and that no kana is doubled); Hanami's are kanji
+  and run together (Sakura + gawa is 桜川, a hamlet 松宿, a prefix 古桜川).
+- **Mutation.** No two places of a family are alike. Each drops one to three of the family's
+  favourite entries (fewer where order is high), borrows nought to two favourites from the
+  second family or a random one (about outlook × trade × 3 of them), keeps its colours and has
+  one of 40 **quirks** (one place in four a second): a lean on levers and axes for how likely
+  it is, what it needs of the ground (relief, water), a shift of the axes and a small tilt of
+  its own. A family also favours some quirks. Several quirks (blue doors, cats, kites, twin
+  wells) show fully only with P57b and P58; until then their tilt only leans the lists.
+
+`/locate settlement` names the culture ("a village in Highland country", ja「…の村…」), the
+settlement preview prints the family, second family, quirks, axes and the entries dropped and
+borrowed (`ONLY=glen` draws just that family), and `Overworld::settlements_near` carries it
+(`SettlementInfo::culture`). The culture is rolled on streams of its own, so adding a family
+moves no other roll.
 
 ## The lists
 
@@ -116,9 +176,10 @@ The levers are correlated, so a place reads as a whole:
   grow only fruit up to the same level. A settlement keeps one to three entries of each
   list, fewer where it is orderly. Where two styles fit a biome, either may be
   built.
-- `names`: name parts by biome tag, each with its Japanese reading, small words for
-  hamlets ("End", "Cross"), and prefixes that lean on the levers ("Old", "Great"), with
-  how often each is used (`small_chance`, `prefix_chance`).
+- names (now each culture family's, in cultures.ron): first and last parts, each with its
+  Japanese reading, small words for hamlets ("End", "Cross"), and prefixes that lean on the
+  levers or axes ("Old", "Great"), with how often each is used (`small_chance`,
+  `prefix_chance`).
 - `kana`: how the Japanese parts join where the English runs a consonant into a vowel:
   Sab + ir is Sabir, so サブ + イル is サビル, not サブイル (Glenach グレナック, Oasis オアシス).
 - `rules`: every other number planning reads, documented in the file: the settlement

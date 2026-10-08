@@ -743,6 +743,7 @@ impl Server {
         match nearest {
             Some((offset, s)) => Ok(Words::key("command.locate.settlement")
                 .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
+                .with("culture", Words::Name(vec![("en".into(), s.culture.title.0.clone()), ("ja".into(), s.culture.title.1.clone())]))
                 .with("size", Words::key(&format!("settlement.size.{}", s.size)))
                 .with("place", format!("{} {} {}", s.centre.x, s.centre.y, s.centre.z))
                 .with("distance", Words::text(format!("{:.0}", offset.as_vec2().length())))

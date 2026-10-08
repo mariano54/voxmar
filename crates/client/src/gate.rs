@@ -345,6 +345,8 @@ struct Gate {
     ore: IVec3,
     /// Where `/locate settlement` sent the player: the middle of its square.
     settlement: IVec3,
+    /// What `/locate settlement` answered, English, for the culture it names.
+    settlement_reply: String,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
@@ -460,6 +462,7 @@ impl Gate {
             gorge: IVec3::ZERO,
             gorge_reached: false,
             settlement: IVec3::ZERO,
+            settlement_reply: String::new(),
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             blows_seen: 0,
@@ -5216,6 +5219,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 return;
             };
             gate.settlement = at;
+            gate.settlement_reply = reply.clone();
             world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
             if let Some(observer) = gate.observer.as_mut() {
                 observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
@@ -5305,8 +5309,16 @@ fn judge_settlement(world: &World, gate: &Gate, at: IVec3) -> Result<String, Str
         problems.push("no door within reach of the square to judge".into());
     }
     let name = &plan.name.0;
+    // The server names its culture: the family's title, as worldgen plans it.
+    let culture = &plan.culture;
+    if !gate.settlement_reply.contains(&culture.title.0) {
+        problems.push(format!("/locate settlement does not name its culture ({}): {}", culture.title.0, gate.settlement_reply));
+    }
+    if culture.axes.iter().any(|a| !(0.0..=1.0).contains(a)) {
+        problems.push(format!("its culture's axes are out of range: {:?}", culture.axes));
+    }
     if problems.is_empty() {
-        Ok(format!("{name}, a {} at {at}: a well on the square, {doors} doors open onto floors, {houses} buildings dry", plan.size))
+        Ok(format!("{name}, a {} in {} country at {at}: a well on the square, {doors} doors open onto floors, {houses} buildings dry", plan.size, culture.title.0))
     } else {
         Err(format!("{name}, a {} at {at}: {}", plan.size, problems.join("; ")))
     }

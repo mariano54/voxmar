@@ -1,0 +1,563 @@
+// Cultures: who built a settlement (draft 108 of the design wiki, P57a; see
+// crates/worldgen/src/settlements/culture.rs and docs/settlements.md).
+//
+// FAMILIES. The world is cut into regions about `rules.field.cell` blocks across (Voronoi
+// cells on a jittered grid). Each cell names one family: the one most of its sample points
+// suit by `biome` tag (fully) or `half` tag (at half weight) and `temperature` (°C, a hard
+// range), times the family's `weight` and a bit of luck. So neighbours share a family, and
+// one biome holds different peoples in different parts of the world. Within
+// `rules.field.border` blocks of a cell's edge a settlement mixes in a share of the next
+// cell's family. `claim: Water` families (river folk) take a place by its site instead,
+// where fresh water is near and trade runs high, and the region's family becomes the
+// second; `claim: City` ones (the Old Empire) are given out by P57c for cities only.
+//
+// A family is a bundle of leanings:
+//   axes      its mean on eight axes, each 0 ..= 1: piety, martial, trade, craft, festivity,
+//             outlook, hierarchy, lore. A settlement draws its own from this, a regional
+//             drift, local noise and shifts from its site (see the wiki's Towns tab). Any
+//             `lean` in settlements.ron may name an axis as well as a lever.
+//   tilt      what it favours (above 1) or shuns (below 1; 0 removes) in settlements.ron's
+//             lists: styles, houses, roofs (Gable, Hip ...), props, centrepieces, layouts,
+//             extras (Chimney, Porch ...), each by name. A tilt multiplies the entry's own
+//             weight.
+//   palette   its eight colours as blocks, for walls, trim and roofs; a settlement keeps
+//             three to five and adds them to its style's, as `rules.palette` times the
+//             style's own weight. `{wood}` and `{trim}` as in styles.
+//   quirks    how much it favours some quirks (below), by name.
+//   names     the parts of its places' names, each with its Japanese reading. `script: Kana`
+//             joins them by the `kana` table of settlements.ron; `Kanji` runs them together.
+//             First and last parts, small words for hamlets, prefixes (which may lean on
+//             levers or axes).
+//
+// MUTATION. Each settlement drops 1 to 3 of its family's favourite entries (fewer where
+// order is high), borrows 0 to 2 favourites from its second family or a random one (about
+// outlook x trade x 3 of them), keeps three to five of its eight colours, and has a quirk
+// (one in four places a second): so no two places of a family are alike.
+//
+// QUIRKS. A small oddity: its `lean` on levers and axes (how likely it is), what it needs
+// of the ground (`need`: Relief, Water), a shift of the axes and its own tilt. Several of
+// the wiki's quirks show most once P57b and P58 land (doors, cats, kites); until then their
+// tilt only leans the lists.
+//
+// Every name in a tilt must be in settlements.ron's lists; loading fails otherwise.
+(
+    rules: (
+        field: (cell: 6144, jitter: 0.8, probes: 3, border: 512.0, share: (0.45, 0.1)),
+        luck: 0.6, luck_cell: 18432, smooth: 0.08, claim: (0.35, 0.55),
+        drift: (2048, 0.12), local: 0.1,
+        drop: (1, 3), borrow: 2, borrow_scale: 3.0, keep: (3, 5), second_quirk: 0.25,
+        palette: 0.5,
+        size_shift: {
+            "town": (martial: 0.05, trade: 0.05, hierarchy: 0.1),
+            "city": (martial: 0.1, trade: 0.1, hierarchy: 0.2),
+        },
+        level_martial: (3, 0.06), level_piety: (7, 0.1),
+    ),
+    families: [
+        (
+            name: "hearth", title: ("Hearthfolk", "炉辺の民"), weight: 1.5,
+            biome: ["grassland", "temperate", "lush", "flowers"], half: ["forest", "broadleaf", "cool", "warm"], temperature: (2.0, 24.0),
+            axes: (piety: 0.5, martial: 0.3, trade: 0.5, craft: 0.5, festivity: 0.6, outlook: 0.6, hierarchy: 0.4, lore: 0.4),
+            tilt: (
+                styles: {"timber_frame": 2.0, "birch_cottage": 1.2},
+                houses: {"cottage": 1.4, "farm_house": 1.6, "long_house": 1.2, "barn": 1.5, "mill": 1.5, "wing_house": 1.2, "chapel": 1.2, "bakery": 1.3},
+                roofs: {"Gable": 1.3, "HalfHip": 1.4},
+                props: {"HayBale": 1.5, "ChickenCoop": 1.6, "FenceRun": 1.4, "Scarecrow": 1.6, "Cart": 1.3, "FlowerBed": 1.3},
+                centrepieces: {"Maypole": 1.8, "GreatTree": 1.4, "Windmill": 1.6, "DuckPond": 1.5, "MarketCross": 1.4},
+                layouts: {"green": 1.8, "street": 1.2, "ring": 1.2},
+                extras: {"Garden": 1.3, "Chimney": 1.2, "Dovecote": 1.8},
+            ),
+            palette: (walls: [Name("white_terracotta", 3), Name("yellow_terracotta", 2)], trim: [Name("{trim}_planks", 2), Name("green_terracotta", 1), Name("dark_oak_planks", 1)], roof: [Name("red_terracotta", 2), Name("brown_terracotta", 2), Name("gray_terracotta", 1)]),
+            quirks: {"dovecote_town": 2.0, "giant_tree": 2.0, "bee_town": 2.0, "windmills": 2.0, "street_ovens": 1.5, "garden_walls": 1.5},
+            names: (
+                first: [("Ash", "アッシュ"), ("Oak", "オーク"), ("Bram", "ブラム"), ("Hollin", "ホリン"), ("Thorn", "ソーン"), ("Mill", "ミル"), ("Wen", "ウェン"), ("Elm", "エルム"), ("Ald", "オルド"), ("Haw", "ホー"), ("Brook", "ブルック"), ("Wyn", "ウィン"), ("Lark", "ラーク"), ("Fern", "ファーン"), ("Barrow", "バロウ"), ("Copp", "コップ"), ("Har", "ハー"), ("Stan", "スタン"), ("Wych", "ウィッチ"), ("Lin", "リン"), ("Mar", "マー"), ("Cran", "クラン"), ("Bly", "ブライ"), ("Cherry", "チェリー"), ("Wood", "ウッド"), ("Red", "レッド"), ("Kings", "キングス"), ("Bourne", "ボーン"), ("Ox", "オックス"), ("Pidd", "ピッド"), ("Sel", "セル"), ("Tun", "タン"), ("Wil", "ウィル"), ("Pen", "ペン"), ("Brad", "ブラッド"), ("Chal", "チャル"), ("Ather", "アザー"), ("Hen", "ヘン"), ("Rook", "ルック"), ("Swan", "スワン"), ("Apple", "アップル"), ("Hazel", "ヘーゼル"), ("Bell", "ベル"), ("Clay", "クレイ"), ("Dun", "ダン"), ("Lang", "ラング"), ("Tad", "タッド")],
+                last: [("ford", "フォード"), ("ley", "リー"), ("ton", "トン"), ("ham", "ハム"), ("wick", "ウィック"), ("field", "フィールド"), ("bury", "ベリー"), ("worth", "ワース"), ("stead", "ステッド"), ("brook", "ブルック"), ("well", "ウェル"), ("hurst", "ハースト"), ("combe", "クーム"), ("dale", "デール"), ("thorpe", "ソープ"), ("cote", "コート"), ("den", "デン"), ("ridge", "リッジ"), ("bridge", "ブリッジ"), ("wold", "ウォルド"), ("shaw", "ショー"), ("hope", "ホープ"), ("minster", "ミンスター"), ("ing", "イング"), ("lock", "ロック"), ("sted", "ステッド"), ("over", "オーヴァー"), ("church", "チャーチ")],
+                small: [("End", "エンド"), ("Green", "グリーン"), ("Cross", "クロス"), ("Hollow", "ホロウ"), ("Row", "ロウ"), ("Corner", "コーナー"), ("Bottom", "ボトム"), ("Hill", "ヒル")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "New", ja: "ニュー", weight: 0.6, lean: {"age": -1.0}),
+                    (en: "Great", ja: "グレート", weight: 0.5, lean: {"wealth": 1.0, "crowding": 0.5}),
+                    (en: "Little", ja: "リトル", weight: 0.6, lean: {"crowding": -1.0}),
+                    (en: "Upper", ja: "アッパー", weight: 0.4),
+                    (en: "Lower", ja: "ロウアー", weight: 0.3),
+                    (en: "Long", ja: "ロング", weight: 0.3, lean: {"order": 1.0}),
+                    (en: "Green", ja: "グリーン", weight: 0.3, lean: {"green": 1.0}),
+                ],
+            ),
+        ),
+        (
+            name: "fen", title: ("Fenfolk", "沼地の民"), weight: 1.0,
+            biome: ["wetland"], half: [], temperature: (-5.0, 40.0),
+            axes: (piety: 0.4, martial: 0.2, trade: 0.4, craft: 0.6, festivity: 0.5, outlook: 0.3, hierarchy: 0.3, lore: 0.4),
+            tilt: (
+                styles: {"stilts": 3.0},
+                houses: {"hut": 1.8, "boathouse": 2.5, "granary": 1.6, "smokehouse": 1.8, "long_house": 1.2, "a_frame": 1.5, "roundhouse": 1.3},
+                roofs: {"Shed": 1.3, "Conical": 1.4},
+                props: {"Nets": 3.0, "Boat": 3.0, "trough": 1.6, "Washtub": 1.5, "HerbPlanter": 1.5, "Bush": 1.5, "drying_rack": 2.0, "Compost": 1.4},
+                centrepieces: {"DuckPond": 3.0, "GreatTree": 1.5, "StandingStone": 1.5, "Beacon": 1.3},
+                layouts: {"riverside": 3.0, "scatter": 1.8},
+                extras: {"Moss": 1.5, "HangingHerbs": 1.8, "RainBarrel": 1.5},
+            ),
+            palette: (walls: [Name("brown_terracotta", 2), Name("white_terracotta", 1), Name("gray_terracotta", 1)], trim: [Name("green_terracotta", 1), Name("cyan_terracotta", 1), Name("black_terracotta", 1)], roof: [Name("yellow_terracotta", 2), Name("orange_terracotta", 1)]),
+            quirks: {"fishing_town": 3.0, "stilt_town": 3.0, "moss_roofs": 2.0, "bridge_town": 2.0, "quiet_ghosts": 1.5},
+            names: (
+                first: [("Fen", "フェン"), ("Mire", "マイア"), ("Reed", "リード"), ("Sedge", "セッジ"), ("Wil", "ウィル"), ("Bog", "ボグ"), ("Carr", "カー"), ("Rush", "ラッシュ"), ("Eel", "イール"), ("Mud", "マッド"), ("Heron", "ヘロン"), ("Teal", "ティール"), ("Moss", "モス"), ("Alder", "オルダー"), ("Wad", "ワッド"), ("Marsh", "マーシュ"), ("Pool", "プール"), ("Flag", "フラッグ"), ("Withy", "ウィジー"), ("Snipe", "スナイプ"), ("Otter", "オッター"), ("Brack", "ブラック")],
+                last: [("wick", "ウィック"), ("moor", "ムーア"), ("ey", "イー"), ("well", "ウェル"), ("holm", "ホルム"), ("water", "ウォーター"), ("ford", "フォード"), ("mere", "ミア"), ("fleet", "フリート"), ("lode", "ロード"), ("stow", "ストウ"), ("staithe", "ステイズ"), ("hythe", "ハイズ"), ("ings", "イングス")],
+                small: [("Stilts", "スティルツ"), ("Landing", "ランディング"), ("Staithe", "ステイズ"), ("Causeway", "コーズウェイ")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "Low", ja: "ロウ", weight: 0.7),
+                    (en: "Black", ja: "ブラック", weight: 0.4),
+                ],
+            ),
+        ),
+        (
+            name: "glen", title: ("Glen clans", "谷の氏族"), weight: 1.0,
+            biome: ["heath", "highland", "rocky", "erratics"], half: ["mountain", "cool"], temperature: (-5.0, 20.0),
+            axes: (piety: 0.5, martial: 0.7, trade: 0.3, craft: 0.5, festivity: 0.5, outlook: 0.3, hierarchy: 0.6, lore: 0.4),
+            tilt: (
+                styles: {"stone_cottage": 3.0, "turf_house": 2.5},
+                houses: {"long_house": 1.8, "tower_house": 3.5, "hut": 1.4, "hall": 2.0, "roundhouse": 2.0, "smokehouse": 1.6, "chapel": 0.8},
+                roofs: {"Gable": 1.2, "Conical": 1.4, "Shed": 0.7},
+                props: {"stone_cairn": 3.0, "StonePile": 2.0, "Boulder": 1.5, "Campfire": 1.4, "FenceRun": 1.6, "Grindstone": 1.6, "Anvil": 1.6},
+                centrepieces: {"WatchtowerRuin": 3.0, "StoneCircle": 2.5, "StandingStone": 2.5, "Beacon": 2.5, "BellFrame": 1.0},
+                layouts: {"scatter": 1.6, "terraces": 2.0, "fork": 1.4},
+                extras: {"Moss": 1.3, "Chimney": 1.3, "Shutters": 0.8},
+            ),
+            palette: (walls: [Name("gray_terracotta", 2), Name("white_terracotta", 1)], trim: [Name("purple_terracotta", 1), Name("green_terracotta", 1), Name("red_terracotta", 1), Name("blue_terracotta", 1)], roof: [Name("slate_bricks", 3), Name("brown_terracotta", 1)]),
+            quirks: {"tower_houses": 3.0, "old_feud": 3.0, "ruin_in_its_heart": 2.0, "quiet_ghosts": 1.5, "horse_town": 1.5, "grand_gate": 1.5},
+            names: (
+                first: [("Ben", "ベン"), ("Dun", "ダン"), ("Glen", "グレン"), ("Kil", "キル"), ("Inver", "インヴァー"), ("Strath", "ストラス"), ("Bal", "バル"), ("Auch", "オーク"), ("Craig", "クレイグ"), ("Ard", "アード"), ("Tor", "トル"), ("Pen", "ペン"), ("Lan", "ラン"), ("Cul", "カル"), ("Dal", "ダル"), ("Kin", "キン"), ("Aber", "アバー"), ("Drum", "ドラム"), ("Carn", "カーン"), ("Moy", "モイ"), ("Ross", "ロス"), ("Brae", "ブレイ"), ("Lochan", "ロッホン"), ("Fin", "フィン"), ("Mor", "モー")],
+                last: [("more", "モア"), ("ach", "アック"), ("lie", "リー"), ("nie", "ニー"), ("gorm", "ゴーム"), ("ross", "ロス"), ("ock", "オック"), ("try", "トリー"), ("van", "ヴァン"), ("allan", "アラン"), ("ness", "ネス"), ("fell", "フェル"), ("ton", "トン"), ("garry", "ギャリー"), ("rig", "リグ"), ("eagh", "イー")],
+                small: [("Cairn", "ケアン"), ("Brae", "ブレイ"), ("Crag", "クラグ"), ("Bothy", "ボシー"), ("Shiel", "シール")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "High", ja: "ハイ", weight: 0.8),
+                    (en: "Little", ja: "リトル", weight: 0.5, lean: {"crowding": -1.0}),
+                    (en: "Grey", ja: "グレイ", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "skald", title: ("Skaldfolk", "北の歌い手"), weight: 1.0,
+            biome: ["tundra", "conifer", "cold", "snow", "taiga", "frozen"], half: ["cool", "rocky"], temperature: (-12.0, 10.0),
+            axes: (piety: 0.5, martial: 0.8, trade: 0.4, craft: 0.6, festivity: 0.6, outlook: 0.3, hierarchy: 0.5, lore: 0.5),
+            tilt: (
+                styles: {"log_cabin": 3.0, "turf_house": 1.4},
+                houses: {"long_house": 2.5, "hall": 2.4, "hut": 1.2, "boathouse": 1.8, "smokehouse": 2.2, "tannery": 1.6, "a_frame": 1.4},
+                roofs: {"Gable": 1.4, "Shed": 0.9, "Saltbox": 1.2},
+                props: {"Woodpile": 2.0, "drying_rack": 3.0, "Nets": 1.8, "Boat": 1.8, "Campfire": 2.0, "Barrel": 1.3, "StonePile": 1.3},
+                centrepieces: {"StandingStone": 2.8, "Beacon": 2.2, "StoneCircle": 1.6, "GreatTree": 1.3},
+                layouts: {"street": 1.5, "riverside": 1.8, "fork": 1.3},
+                extras: {"Woodpile": 1.5, "Chimney": 1.3},
+            ),
+            palette: (walls: [Name("spruce_planks", 2), Name("dark_oak_planks", 2), Name("white_terracotta", 1)], trim: [Name("red_terracotta", 2), Name("blue_terracotta", 1), Name("yellow_terracotta", 1)], roof: [Name("spruce_planks", 1), Name("gray_terracotta", 1)]),
+            quirks: {"carved_posts": 3.0, "fishing_town": 2.0, "old_feud": 1.5, "silent_town": 1.5},
+            names: (
+                first: [("Frost", "フロスト"), ("Kald", "カルド"), ("Rav", "ラヴ"), ("Stor", "ストル"), ("Hjal", "ヤル"), ("Grim", "グリム"), ("Ulf", "ウルフ"), ("Bjorn", "ビョルン"), ("Ask", "アスク"), ("Tor", "トル"), ("Skal", "スカル"), ("Hed", "ヘド"), ("Ring", "リング"), ("Ny", "ニュー"), ("Elg", "エルグ"), ("Vind", "ヴィンド"), ("Sva", "スヴァ"), ("Hval", "ヴァル"), ("Lind", "リンド"), ("Bir", "ビル"), ("Gran", "グラン"), ("Haf", "ハフ"), ("Sol", "ソル"), ("Rune", "ルーネ"), ("Varg", "ヴァルグ"), ("Ise", "イーセ"), ("Kvit", "クヴィト"), ("Ormr", "オルム"), ("Fjal", "フィヤル"), ("Thor", "トール"), ("Ey", "エイ"), ("Alf", "アルフ")],
+                last: [("vik", "ヴィク"), ("heim", "ヘイム"), ("by", "ビー"), ("stad", "スタッド"), ("dal", "ダル"), ("ness", "ネス"), ("garth", "ガース"), ("thwaite", "スウェイト"), ("fell", "フェル"), ("sund", "スンド"), ("vang", "ヴァング"), ("holm", "ホルム"), ("bo", "ボー"), ("set", "セット"), ("fjord", "フィヨルド"), ("rud", "ルド"), ("lund", "ルンド"), ("berg", "ベルグ"), ("toft", "トフト"), ("hus", "フース")],
+                small: [("Holt", "ホルト"), ("Stead", "ステッド"), ("Cairn", "ケアン"), ("Hearth", "ハース"), ("Lodge", "ロッジ")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "North", ja: "ノース", weight: 0.6),
+                    (en: "White", ja: "ホワイト", weight: 0.4),
+                    (en: "Little", ja: "リトル", weight: 0.5, lean: {"crowding": -1.0}),
+                ],
+            ),
+        ),
+        (
+            name: "sabari", title: ("Sabari", "サバリの民"), weight: 1.0,
+            biome: ["desert", "dunes"], half: ["dry", "hot", "savanna", "scrubland"], temperature: (16.0, 46.0),
+            axes: (piety: 0.6, martial: 0.4, trade: 0.9, craft: 0.6, festivity: 0.5, outlook: 0.7, hierarchy: 0.6, lore: 0.6),
+            tilt: (
+                styles: {"sandstone": 3.0, "red_sandstone": 1.0, "mudbrick": 1.5},
+                houses: {"courtyard_house": 3.0, "shop_house": 2.2, "town_house": 1.4, "hall": 1.5, "granary": 2.0, "tower_house": 1.4, "hut": 0.8},
+                roofs: {"Flat": 2.0, "Hip": 0.8},
+                props: {"Sacks": 2.5, "Crates": 2.0, "Cart": 1.6, "Barrel": 1.3, "trough": 1.6, "Lamp": 1.6},
+                centrepieces: {"Fountain": 3.2, "MarketCross": 2.2, "FallenStatue": 1.5, "Beacon": 1.4},
+                layouts: {"crossroads": 2.2, "ring": 1.6, "spokes": 1.4},
+                extras: {"Awning": 2.5, "Balcony": 1.6, "SignBoard": 1.5, "Chimney": 0.5, "Lamp": 1.4},
+            ),
+            palette: (walls: [Name("white_terracotta", 3), Name("yellow_terracotta", 1)], trim: [Name("blue_terracotta", 2), Name("orange_terracotta", 1), Name("cyan_terracotta", 1)], roof: [Name("orange_terracotta", 1), Name("brown_terracotta", 1), Name("terracotta", 1)]),
+            quirks: {"market_every_day": 3.0, "fountains": 2.5, "horse_town": 2.0, "lantern_strings": 2.0, "blue_doors": 2.0, "kite_days": 1.5},
+            names: (
+                first: [("Sab", "サブ"), ("Kar", "カル"), ("Ama", "アマ"), ("Zir", "ジル"), ("Tal", "タル"), ("Oas", "オアス"), ("Ham", "ハム"), ("Dal", "ダル"), ("Mer", "メル"), ("Sur", "スル"), ("Ras", "ラス"), ("Nub", "ヌブ"), ("Kes", "ケス"), ("Yar", "ヤル"), ("Qad", "カド"), ("Bah", "バハ"), ("Jem", "ジェム"), ("Saf", "サフ"), ("Tam", "タム"), ("Azz", "アッズ"), ("Mal", "マル"), ("Har", "ハル"), ("Zab", "ザブ"), ("Imr", "イムル"), ("Wad", "ワド"), ("Sel", "セル"), ("Kufr", "クフル"), ("Num", "ヌム"), ("Ebb", "エッブ"), ("Ush", "ウシュ"), ("Nar", "ナル"), ("Tir", "ティル"), ("Baz", "バズ"), ("Fas", "ファス")],
+                last: [("ah", "ア"), ("ir", "イル"), ("um", "ウム"), ("esh", "エシュ"), ("ara", "アラ"), ("oun", "ウン"), ("ad", "アド"), ("is", "イス"), ("an", "アン"), ("eth", "エス"), ("abad", "アバド"), ("iya", "イヤ"), ("oum", "ウーム"), ("assa", "アッサ"), ("ek", "エク"), ("ul", "ウル"), ("ina", "イナ"), ("ar", "アル"), ("aya", "アヤ"), ("ez", "エズ")],
+                small: [("Well", "ウェル"), ("Rest", "レスト"), ("Palms", "パームズ"), ("Spring", "スプリング"), ("Gate", "ゲート"), ("Shade", "シェード")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "New", ja: "ニュー", weight: 0.5, lean: {"age": -1.0}),
+                    (en: "Upper", ja: "アッパー", weight: 0.5),
+                    (en: "Lower", ja: "ロウアー", weight: 0.5),
+                    (en: "Red", ja: "レッド", weight: 0.4),
+                    (en: "Dry", ja: "ドライ", weight: 0.4, lean: {"green": -1.0}),
+                ],
+            ),
+        ),
+        (
+            name: "ochre", title: ("Canyon folk", "赤土の民"), weight: 1.0,
+            biome: ["mesa"], half: ["desert", "dry"], temperature: (14.0, 45.0),
+            axes: (piety: 0.7, martial: 0.4, trade: 0.5, craft: 0.8, festivity: 0.6, outlook: 0.3, hierarchy: 0.4, lore: 0.5),
+            tilt: (
+                styles: {"red_sandstone": 3.5, "mudbrick": 2.0, "sandstone": 1.0},
+                houses: {"courtyard_house": 1.6, "granary": 2.4, "chapel": 2.2, "tower_house": 1.8, "town_house": 1.8, "hut": 1.0, "roundhouse": 2.0, "hall": 0.8},
+                roofs: {"Flat": 3.0, "Shed": 0.8, "Conical": 0.4},
+                props: {"Sacks": 1.8, "trough": 2.0, "drying_rack": 2.6, "stone_cairn": 2.0, "Campfire": 1.6, "HerbPlanter": 1.6, "Boulder": 1.5, "StonePile": 1.5},
+                centrepieces: {"StoneCircle": 2.6, "StandingStone": 2.8, "BellFrame": 1.6, "FallenStatue": 1.5, "Beacon": 1.4, "Fountain": 0.6},
+                layouts: {"terraces": 2.8, "ring": 1.8, "scatter": 1.3},
+                extras: {"OutsideStair": 2.6, "Balcony": 0.5, "Chimney": 0.6, "HangingHerbs": 1.6, "Moss": 0.2},
+            ),
+            palette: (walls: [Name("orange_terracotta", 2), Name("white_terracotta", 1), Name("red_terracotta", 1)], trim: [Name("cyan_terracotta", 2), Name("black_terracotta", 1), Name("light_blue_terracotta", 1)], roof: [Name("brown_terracotta", 1), Name("yellow_terracotta", 1)]),
+            quirks: {"stair_town": 3.0, "painted_bands": 2.0, "carved_posts": 2.0, "rope_bridges": 1.5},
+            names: (
+                script: Kana,
+                first: [("Ako", "アコ"), ("To", "ト"), ("Sena", "セナ"), ("Wak", "ワク"), ("Kesi", "ケシ"), ("Tali", "タリ"), ("Nawa", "ナワ"), ("Pilo", "ピロ"), ("Seyo", "セヨ"), ("Ruta", "ルタ"), ("Moki", "モキ"), ("Hopa", "ホパ"), ("Paho", "パホ"), ("Nuvi", "ヌヴィ"), ("Yoki", "ヨキ"), ("Taho", "タホ"), ("Sova", "ソヴァ"), ("Kuwa", "クワ"), ("Hesa", "ヘサ"), ("Mika", "ミカ")],
+                last: [("pah", "パー"), ("ani", "アニ"), ("teo", "テオ"), ("shi", "シ"), ("wa", "ワ"), ("ota", "オタ"), ("eki", "エキ"), ("yah", "ヤー"), ("ka", "カ"), ("oya", "オヤ"), ("ima", "イマ"), ("ewa", "エワ")],
+                small: [("Ladder", "ラダー"), ("Spring", "スプリング"), ("Bluff", "ブラフ"), ("Wash", "ウォッシュ")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "Red", ja: "レッド", weight: 0.5),
+                    (en: "High", ja: "ハイ", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "kraal", title: ("Kraalfolk", "囲いの民"), weight: 1.0,
+            biome: ["savanna", "scrubland"], half: ["grassland", "dry", "hot"], temperature: (16.0, 40.0),
+            axes: (piety: 0.6, martial: 0.5, trade: 0.5, craft: 0.6, festivity: 0.8, outlook: 0.6, hierarchy: 0.4, lore: 0.3),
+            tilt: (
+                styles: {"mudbrick": 3.5, "sandstone": 0.6},
+                houses: {"roundhouse": 3.0, "hut": 2.0, "granary": 3.0, "long_house": 1.4, "shop_house": 1.4, "smokehouse": 1.3, "hall": 1.2, "town_house": 0.5},
+                roofs: {"Conical": 3.0, "Flat": 1.2, "Hip": 0.6},
+                props: {"Sacks": 2.4, "trough": 1.6, "drying_rack": 2.0, "Campfire": 2.6, "Barrel": 1.3, "Washtub": 1.6, "Crates": 1.4, "log_bench": 2.6},
+                centrepieces: {"GreatTree": 3.2, "MarketCross": 1.6, "Maypole": 2.0, "StandingStone": 1.4, "Fountain": 0.6},
+                layouts: {"ring": 2.4, "scatter": 2.0, "crossroads": 1.4},
+                extras: {"Awning": 1.8, "Garden": 1.0, "Chimney": 0.3, "Shed": 1.4, "Hedge": 2.0},
+            ),
+            palette: (walls: [Name("orange_terracotta", 2), Name("brown_terracotta", 2), Name("white_terracotta", 1)], trim: [Name("light_blue_terracotta", 1), Name("yellow_terracotta", 1), Name("black_terracotta", 1)], roof: [Name("yellow_terracotta", 2), Name("red_terracotta", 1)]),
+            quirks: {"painted_bands": 3.0, "carved_posts": 2.0, "giant_tree": 2.5, "horse_town": 1.5, "lantern_strings": 1.5},
+            names: (
+                script: Kana,
+                first: [("Ondo", "オンド"), ("Kesa", "ケサ"), ("Buru", "ブル"), ("Zola", "ゾラ"), ("Tembe", "テンベ"), ("Oku", "オク"), ("Nala", "ナラ"), ("Sifa", "シファ"), ("Wazi", "ワジ"), ("Kuru", "クル"), ("Ndala", "ンダラ"), ("Fumo", "フモ"), ("Jabu", "ジャブ"), ("Tuli", "トゥリ"), ("Mosi", "モシ"), ("Nkosi", "ンコシ"), ("Bomu", "ボム"), ("Amani", "アマニ"), ("Kito", "キト"), ("Sana", "サナ")],
+                last: [("ba", "バ"), ("ni", "ニ"), ("we", "ウェ"), ("ondo", "オンド"), ("ase", "アセ"), ("ula", "ウラ"), ("imba", "インバ"), ("ndu", "ンドゥ"), ("la", "ラ"), ("mbo", "ンボ"), ("ze", "ゼ"), ("ola", "オラ")],
+                small: [("Kraal", "クラール"), ("Well", "ウェル"), ("Baobab", "バオバブ"), ("Drum", "ドラム")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "Great", ja: "グレート", weight: 0.5, lean: {"wealth": 1.0}),
+                    (en: "Red", ja: "レッド", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "lani", title: ("Lani islanders", "ラニの民"), weight: 1.0,
+            biome: ["jungle", "tropical"], half: ["hot", "wetland", "warm"], temperature: (18.0, 40.0),
+            axes: (piety: 0.5, martial: 0.3, trade: 0.5, craft: 0.5, festivity: 0.9, outlook: 0.6, hierarchy: 0.3, lore: 0.4),
+            tilt: (
+                styles: {"jungle_stilts": 3.0, "stilts": 1.5},
+                houses: {"hut": 1.6, "roundhouse": 2.4, "boathouse": 2.2, "a_frame": 1.5, "long_house": 1.3, "granary": 1.5},
+                roofs: {"Conical": 2.0, "Shed": 1.4, "Hip": 1.3},
+                props: {"Boat": 2.5, "Nets": 2.0, "FlowerBed": 2.0, "Bush": 1.8, "trough": 1.5, "drying_rack": 1.4, "Skep": 1.4, "Campfire": 2.0},
+                centrepieces: {"GreatTree": 2.5, "Maypole": 2.6, "StandingStone": 1.8, "Beacon": 1.5, "DuckPond": 1.5},
+                layouts: {"scatter": 2.0, "riverside": 2.0, "ring": 1.6},
+                extras: {"Garden": 1.6, "FlowerBoxes": 1.5, "HangingHerbs": 1.6, "Porch": 1.5},
+            ),
+            palette: (walls: [Name("yellow_terracotta", 2), Name("{wood}_planks", 2), Name("white_terracotta", 1)], trim: [Name("red_terracotta", 1), Name("pink_terracotta", 1), Name("cyan_terracotta", 1), Name("orange_terracotta", 1)], roof: [Name("green_terracotta", 1)]),
+            quirks: {"flower_town": 3.0, "stilt_town": 3.0, "fishing_town": 2.5, "lantern_strings": 2.0, "giant_tree": 2.0},
+            names: (
+                first: [("Ma", "マ"), ("Ta", "タ"), ("Ka", "カ"), ("Lu", "ル"), ("Nai", "ナイ"), ("Ro", "ロ"), ("Hi", "ヒ"), ("Pa", "パ"), ("Wai", "ワイ"), ("Ko", "コ"), ("Mo", "モ"), ("Te", "テ"), ("Ala", "アラ"), ("Uku", "ウク"), ("Ewa", "エワ"), ("Oli", "オリ"), ("Ri", "リ"), ("Sa", "サ"), ("Nu", "ヌ"), ("Ho", "ホ")],
+                last: [("lani", "ラニ"), ("koa", "コア"), ("mau", "マウ"), ("nui", "ヌイ"), ("rua", "ルア"), ("tai", "タイ"), ("vale", "ヴァレ"), ("moa", "モア"), ("kai", "カイ"), ("pono", "ポノ"), ("ana", "アナ"), ("hiva", "ヒヴァ"), ("roa", "ロア"), ("lua", "ルア")],
+                small: [("Landing", "ランディング"), ("Grove", "グローヴ"), ("Falls", "フォールズ")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "Deep", ja: "ディープ", weight: 0.6, lean: {"green": 1.0}),
+                ],
+            ),
+        ),
+        (
+            name: "hanami", title: ("Hanami folk", "花見の民"), weight: 1.0,
+            biome: ["blossom"], half: ["autumn", "wet", "mossy"], temperature: (4.0, 26.0),
+            axes: (piety: 0.7, martial: 0.4, trade: 0.5, craft: 0.8, festivity: 0.7, outlook: 0.3, hierarchy: 0.7, lore: 0.7),
+            tilt: (
+                styles: {"blossom_house": 3.5, "birch_cottage": 0.8, "maple_lodge": 1.2},
+                houses: {"cottage": 1.2, "wing_house": 1.5, "chapel": 2.4, "bakery": 1.2, "boathouse": 1.4, "courtyard_house": 1.6, "granary": 1.5, "tower_house": 0.7, "smokehouse": 0.8},
+                roofs: {"Hip": 2.0, "HalfHip": 2.0, "Gable": 0.8, "Conical": 0.4},
+                props: {"FlowerBed": 2.5, "HerbPlanter": 2.0, "Lamp": 2.2, "Bush": 1.6, "trough": 1.8, "stone_cairn": 1.3, "LaundryLine": 1.4},
+                centrepieces: {"GreatTree": 3.0, "BellFrame": 2.8, "Fountain": 1.8, "StandingStone": 1.6, "DuckPond": 2.8, "Maypole": 0.5},
+                layouts: {"terraces": 1.6, "green": 1.6, "riverside": 1.6, "crossroads": 0.7},
+                extras: {"Shutters": 1.6, "FlowerBoxes": 1.8, "Garden": 1.6, "Dormer": 0.5, "Hedge": 1.6},
+            ),
+            palette: (walls: [Name("white_terracotta", 3), Name("pink_terracotta", 1)], trim: [Name("cherry_planks", 2), Name("red_terracotta", 1), Name("blue_terracotta", 1)], roof: [Name("gray_terracotta", 2), Name("slate_bricks", 1), Name("dark_oak_planks", 1)]),
+            quirks: {"flower_town": 3.0, "lantern_strings": 3.0, "garden_walls": 2.5, "kite_days": 2.0, "bell_mad": 1.5, "pilgrim_town": 1.5},
+            names: (
+                script: Kanji,
+                first: [("Sakura", "桜"), ("Matsu", "松"), ("Ume", "梅"), ("Taka", "高"), ("Shira", "白"), ("Kiri", "霧"), ("Tsuki", "月"), ("Mizu", "水"), ("Kaze", "風"), ("Ishi", "石"), ("Take", "竹"), ("Hoshi", "星"), ("Kumo", "雲"), ("Shio", "潮"), ("Nami", "波"), ("Kogane", "金"), ("Fuji", "藤"), ("Asa", "朝"), ("Kita", "北"), ("Aka", "赤"), ("Midori", "緑")],
+                last: [("gawa", "川"), ("yama", "山"), ("mura", "村"), ("zaka", "坂"), ("hara", "原"), ("saki", "崎"), ("mori", "森"), ("shima", "島"), ("ta", "田"), ("ura", "浦"), ("oka", "岡"), ("numa", "沼"), ("bashi", "橋"), ("dani", "谷"), ("mine", "峰"), ("ike", "池")],
+                small: [("Juku", "宿"), ("Tera", "寺"), ("Hashi", "橋"), ("Ike", "池")],
+                prefixes: [
+                    (en: "Old", ja: "古", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "New", ja: "新", weight: 0.5, lean: {"age": -1.0}),
+                    (en: "Upper", ja: "上", weight: 0.5),
+                    (en: "Lower", ja: "下", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "sunvale", title: ("Sunvale", "陽谷の民"), weight: 1.0,
+            biome: ["warm"], half: ["flowers", "lush", "temperate"], temperature: (14.0, 32.0),
+            axes: (piety: 0.6, martial: 0.4, trade: 0.7, craft: 0.6, festivity: 0.9, outlook: 0.7, hierarchy: 0.5, lore: 0.5),
+            tilt: (
+                styles: {"villa": 3.5, "timber_frame": 0.8, "stone_cottage": 0.6},
+                houses: {"courtyard_house": 2.4, "town_house": 1.8, "shop_house": 1.6, "hall": 1.6, "farm_house": 1.4, "bakery": 1.5, "chapel": 1.4, "mill": 1.3, "hut": 0.4},
+                roofs: {"Hip": 2.2, "Gable": 0.9, "Flat": 0.7, "Shed": 0.5},
+                props: {"Barrel": 2.6, "Crates": 1.8, "Cart": 1.6, "FlowerBed": 1.6, "Lamp": 1.7, "trough": 1.4, "Sacks": 1.4, "HerbPlanter": 1.5},
+                centrepieces: {"Fountain": 3.2, "MarketCross": 2.0, "BellFrame": 2.4, "FallenStatue": 1.8, "GreatTree": 1.4, "Maypole": 0.5},
+                layouts: {"crossroads": 2.0, "ring": 1.8, "terraces": 1.6, "street": 1.2},
+                extras: {"Balcony": 1.8, "Shutters": 1.8, "Awning": 1.6, "Garden": 1.4, "Dormer": 0.5},
+            ),
+            palette: (walls: [Name("white_terracotta", 3), Name("yellow_terracotta", 1)], trim: [Name("blue_terracotta", 2), Name("green_terracotta", 1), Name("pink_terracotta", 1)], roof: [Name("terracotta", 2), Name("red_terracotta", 1), Name("black_terracotta", 1)]),
+            quirks: {"fountains": 3.0, "night_town": 2.0, "street_ovens": 2.0, "pilgrim_town": 1.5, "flower_town": 1.5, "blue_doors": 3.0},
+            names: (
+                script: Kana,
+                first: [("Vel", "ヴェル"), ("Mont", "モント"), ("Sol", "ソル"), ("Cas", "カス"), ("Ber", "ベル"), ("Lum", "ルム"), ("Riva", "リヴァ"), ("Fior", "フィオル"), ("Porto", "ポルト"), ("Sant", "サント"), ("Cord", "コルド"), ("Oliv", "オリヴ"), ("Lago", "ラゴ"), ("Rosa", "ロサ"), ("Bosc", "ボスク"), ("Pian", "ピアン"), ("Alba", "アルバ"), ("Mar", "マル"), ("Vigna", "ヴィニャ")],
+                last: [("aro", "アロ"), ("ina", "イナ"), ("etto", "エット"), ("anza", "アンザ"), ("ola", "オラ"), ("ena", "エナ"), ("ello", "エロ"), ("ara", "アラ"), ("ona", "オナ"), ("ino", "イノ"), ("ato", "アト"), ("ale", "アレ"), ("ia", "イア"), ("ora", "オラ")],
+                small: [("Fonte", "フォンテ"), ("Torre", "トッレ"), ("Olive", "オリーブ"), ("Piazza", "ピアッツァ")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "San", ja: "サン", weight: 0.5),
+                    (en: "Monte", ja: "モンテ", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "steppe", title: ("Steppe riders", "草原の騎手"), weight: 1.0,
+            biome: ["grassland", "dry", "open"], half: ["scrubland", "heath"], temperature: (-5.0, 22.0),
+            axes: (piety: 0.4, martial: 0.7, trade: 0.6, craft: 0.5, festivity: 0.7, outlook: 0.7, hierarchy: 0.4, lore: 0.3),
+            tilt: (
+                styles: {"mudbrick": 1.5, "turf_house": 1.8, "timber_frame": 1.0},
+                houses: {"roundhouse": 4.0, "hut": 1.6, "long_house": 1.3, "barn": 1.8, "tannery": 2.2, "smokehouse": 1.5, "shop_house": 1.2, "hall": 1.3, "tower_house": 0.3},
+                roofs: {"Conical": 3.0, "Flat": 1.0, "Shed": 1.1},
+                props: {"Cart": 3.0, "HayBale": 2.0, "Campfire": 2.5, "Barrel": 1.4, "Sacks": 1.6, "drying_rack": 1.8, "Scarecrow": 0.3, "FlowerBed": 0.6},
+                centrepieces: {"Beacon": 2.4, "StandingStone": 2.0, "StoneCircle": 1.5, "WatchtowerRuin": 1.8, "Maypole": 1.2, "MarketCross": 1.5},
+                layouts: {"scatter": 3.0, "ring": 2.4, "spokes": 1.5, "street": 0.5},
+                extras: {"Awning": 1.8, "Shed": 1.6, "Garden": 0.4, "Chimney": 0.4},
+            ),
+            palette: (walls: [Name("white_terracotta", 3)], trim: [Name("red_terracotta", 2), Name("blue_terracotta", 1), Name("yellow_terracotta", 1), Name("green_terracotta", 1)], roof: [Name("white_terracotta", 1), Name("brown_terracotta", 1), Name("red_terracotta", 1)]),
+            quirks: {"horse_town": 3.5, "painted_roofs": 2.0, "kite_days": 2.0, "old_feud": 1.5},
+            names: (
+                script: Kana,
+                first: [("Bat", "バト"), ("Tem", "テム"), ("Ord", "オルド"), ("Sar", "サル"), ("Khul", "フル"), ("Altan", "アルタン"), ("Bor", "ボル"), ("Ere", "エレ"), ("Mon", "モン"), ("Tu", "トゥ"), ("Kara", "カラ"), ("Khar", "ハル"), ("Ulaan", "ウラン"), ("Tolgo", "トルゴ"), ("Jeb", "ジェブ"), ("Nogan", "ノガン"), ("Arga", "アルガ"), ("Kher", "ヘル"), ("Zul", "ズル")],
+                last: [("ai", "アイ"), ("ur", "ウル"), ("gan", "ガン"), ("tai", "タイ"), ("bulag", "ブラグ"), ("khan", "ハン"), ("tsog", "ツォグ"), ("ol", "オル"), ("gol", "ゴル"), ("orda", "オルダ"), ("uul", "ウール"), ("sum", "スム"), ("nur", "ヌール")],
+                small: [("Camp", "キャンプ"), ("Ford", "フォード"), ("Pole", "ポール"), ("Tents", "テンツ")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "Blue", ja: "ブルー", weight: 0.5),
+                    (en: "White", ja: "ホワイト", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "birch", title: ("Birchwood folk", "白樺の民"), weight: 1.0,
+            biome: ["birch", "autumn"], half: ["conifer", "cool", "forest"], temperature: (-4.0, 18.0),
+            axes: (piety: 0.5, martial: 0.3, trade: 0.4, craft: 0.9, festivity: 0.7, outlook: 0.5, hierarchy: 0.3, lore: 0.6),
+            tilt: (
+                styles: {"birch_cottage": 3.0, "maple_lodge": 2.0, "log_cabin": 1.5, "timber_frame": 0.8},
+                houses: {"cottage": 1.4, "a_frame": 1.8, "chapel": 2.0, "long_house": 1.3, "smokehouse": 2.0, "granary": 1.5, "bakery": 1.5, "hut": 1.2},
+                roofs: {"Gable": 1.6, "Saltbox": 1.3, "Shed": 0.8},
+                props: {"Woodpile": 1.8, "FlowerBed": 1.8, "Skep": 2.0, "drying_rack": 1.6, "Barrel": 1.3, "Washtub": 1.4, "LaundryLine": 1.5, "HerbPlanter": 1.4},
+                centrepieces: {"BellFrame": 3.0, "GreatTree": 2.0, "Maypole": 2.2, "StandingStone": 1.4, "Windmill": 1.2},
+                layouts: {"street": 1.7, "green": 1.4, "fork": 1.4, "crossroads": 0.8},
+                extras: {"Shutters": 2.2, "FlowerBoxes": 1.5, "Porch": 1.4, "Dormer": 0.7, "HangingHerbs": 1.4},
+            ),
+            palette: (walls: [Name("birch_planks", 3), Name("white_terracotta", 1)], trim: [Name("red_terracotta", 2), Name("blue_terracotta", 1), Name("{trim}_planks", 1)], roof: [Name("green_terracotta", 1), Name("brown_terracotta", 1), Name("spruce_planks", 1)]),
+            quirks: {"carved_posts": 3.0, "bee_town": 3.0, "street_ovens": 2.0, "painted_bands": 2.0, "flower_town": 1.5},
+            names: (
+                script: Kana,
+                first: [("Bel", "ベル"), ("Ros", "ロス"), ("Miro", "ミロ"), ("Ves", "ヴェス"), ("Lada", "ラダ"), ("Zor", "ゾル"), ("Dub", "ドゥブ"), ("Kras", "クラス"), ("Sosna", "ソスナ"), ("Yar", "ヤル"), ("Mal", "マル"), ("Zhel", "ジェル"), ("Stan", "スタン"), ("Rad", "ラド"), ("Gor", "ゴル"), ("Lub", "ルブ"), ("Pol", "ポル"), ("Tikh", "ティフ")],
+                last: [("ovo", "オヴォ"), ("inka", "インカ"), ("ava", "アヴァ"), ("itsa", "イツァ"), ("ets", "エツ"), ("ograd", "オグラド"), ("ishe", "イシェ"), ("ovka", "オフカ"), ("ino", "イノ"), ("ka", "カ"), ("polye", "ポリエ"), ("ski", "スキ")],
+                small: [("Glade", "グレイド"), ("Banya", "バーニャ"), ("Swing", "スウィング"), ("Hollow", "ホロウ")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "White", ja: "ホワイト", weight: 0.5),
+                    (en: "Red", ja: "レッド", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "hold", title: ("Hold folk", "岩砦の民"), weight: 1.0,
+            biome: ["mountain", "rocky", "alpine"], half: ["highland", "erratics"], temperature: (-8.0, 18.0),
+            axes: (piety: 0.4, martial: 0.8, trade: 0.5, craft: 0.9, festivity: 0.4, outlook: 0.2, hierarchy: 0.7, lore: 0.5),
+            tilt: (
+                styles: {"stone_cottage": 3.0, "log_cabin": 0.8},
+                houses: {"hall": 3.0, "tower_house": 1.8, "long_house": 1.4, "hut": 0.8, "cottage": 1.0, "smokehouse": 1.5, "granary": 1.4, "tannery": 1.3, "mill": 1.3},
+                roofs: {"Gable": 1.2, "Flat": 1.2, "Shed": 0.8},
+                props: {"Anvil": 3.0, "Grindstone": 3.0, "stacked_stone": 3.0, "StonePile": 2.4, "Barrel": 1.4, "Crates": 1.4, "Cart": 1.6, "Boulder": 1.5},
+                centrepieces: {"WatchtowerRuin": 1.8, "FallenStatue": 2.2, "StandingStone": 1.5, "Beacon": 1.8, "Fountain": 0.5, "GreatTree": 0.4},
+                layouts: {"terraces": 3.0, "fork": 1.6, "ring": 1.4},
+                extras: {"OutsideStair": 2.4, "Chimney": 2.0, "Balcony": 0.5, "Garden": 0.4},
+            ),
+            palette: (walls: [Name("gray_terracotta", 2), Name("black_terracotta", 1)], trim: [Name("orange_terracotta", 2), Name("red_terracotta", 1), Name("brown_terracotta", 1)], roof: [Name("slate_bricks", 2), Name("black_terracotta", 1), Name("gray_terracotta", 1)]),
+            quirks: {"smoke_town": 3.5, "stair_town": 3.0, "grand_gate": 2.5, "statue_town": 2.0, "tower_houses": 2.0},
+            names: (
+                script: Kana,
+                first: [("Dur", "ドゥル"), ("Grom", "グロム"), ("Kaz", "カズ"), ("Thar", "サル"), ("Bal", "バル"), ("Mor", "モル"), ("Dvar", "ドヴァル"), ("Ost", "オスト"), ("Brun", "ブルン"), ("Kel", "ケル"), ("Brom", "ブロム"), ("Garn", "ガルン"), ("Harn", "ハルン"), ("Skar", "スカル"), ("Voln", "ヴォルン"), ("Durn", "ドゥルン"), ("Krag", "クラグ"), ("Rund", "ルンド")],
+                last: [("ak", "アク"), ("dun", "ダン"), ("hald", "ハルド"), ("grim", "グリム"), ("rok", "ロク"), ("heim", "ハイム"), ("dor", "ドール"), ("mar", "マール"), ("gard", "ガルド"), ("hold", "ホルド"), ("forge", "フォージ"), ("delve", "デルヴ")],
+                small: [("Delve", "デルヴ"), ("Forge", "フォージ"), ("Shaft", "シャフト"), ("Gate", "ゲート")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "Deep", ja: "ディープ", weight: 0.5),
+                    (en: "Iron", ja: "アイアン", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "cloud", title: ("Cloud monks", "雲の僧"), weight: 0.35,
+            biome: ["alpine", "highland"], half: ["mountain", "snow"], temperature: (-10.0, 12.0),
+            axes: (piety: 0.9, martial: 0.3, trade: 0.3, craft: 0.6, festivity: 0.5, outlook: 0.5, hierarchy: 0.5, lore: 0.9),
+            tilt: (
+                styles: {"stone_cottage": 3.0},
+                houses: {"chapel": 3.5, "granary": 1.8, "cottage": 1.0, "tower_house": 1.2, "hall": 1.4, "hut": 1.2, "smokehouse": 0.8, "tannery": 0.3, "shop_house": 0.4},
+                roofs: {"Flat": 3.0, "Gable": 0.5, "Conical": 0.8},
+                props: {"HerbPlanter": 2.4, "trough": 1.8, "stone_cairn": 2.6, "Lamp": 2.0, "drying_rack": 1.4, "Skep": 1.2, "Anvil": 0.2},
+                centrepieces: {"BellFrame": 3.5, "StandingStone": 2.6, "Beacon": 1.4, "StoneCircle": 1.4, "Windmill": 0.2, "MarketCross": 0.4},
+                layouts: {"terraces": 3.0, "fork": 1.4, "ring": 1.3, "crossroads": 0.5},
+                extras: {"Lamp": 1.8, "Moss": 1.2, "Dormer": 0.2, "Balcony": 0.4},
+            ),
+            palette: (walls: [Name("white_terracotta", 4), Name("gray_terracotta", 1)], trim: [Name("red_terracotta", 2), Name("orange_terracotta", 1), Name("light_blue_terracotta", 1), Name("yellow_terracotta", 1)], roof: [Name("gray_terracotta", 1), Name("black_terracotta", 1)]),
+            quirks: {"silent_town": 4.0, "pilgrim_town": 3.0, "bell_mad": 3.0, "quiet_ghosts": 2.0, "book_town": 3.0, "kite_days": 1.5},
+            names: (
+                script: Kana,
+                first: [("Lha", "ラ"), ("Dor", "ドル"), ("Nor", "ノル"), ("Tse", "ツェ"), ("Pema", "ペマ"), ("Kun", "クン"), ("Dra", "ドラ"), ("Shen", "シェン"), ("Yul", "ユル"), ("Ga", "ガ"), ("Rin", "リン"), ("Tashi", "タシ"), ("Sang", "サン"), ("Gyal", "ギャル"), ("Jam", "ジャム"), ("Drak", "ドラク"), ("Lung", "ルン"), ("Tsum", "ツム")],
+                last: [("ling", "リン"), ("gon", "ゴン"), ("tse", "ツェ"), ("pa", "パ"), ("dzong", "ゾン"), ("kar", "カル"), ("ri", "リ"), ("tang", "タン"), ("gang", "ガン"), ("la", "ラ"), ("phug", "プク"), ("sar", "サル")],
+                small: [("Flags", "フラッグズ"), ("Cell", "セル"), ("Steps", "ステップス"), ("Shrine", "シュライン")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "High", ja: "ハイ", weight: 0.5),
+                    (en: "White", ja: "ホワイト", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "river", title: ("River folk", "渡し守の民"), weight: 1.0, claim: Water,
+            biome: [], half: [], temperature: (-30.0, 50.0),
+            axes: (piety: 0.4, martial: 0.3, trade: 0.8, craft: 0.6, festivity: 0.6, outlook: 0.8, hierarchy: 0.4, lore: 0.4),
+            tilt: (
+                styles: {"stilts": 1.5, "timber_frame": 1.2},
+                houses: {"boathouse": 3.5, "mill": 3.0, "granary": 1.8, "shop_house": 1.8, "town_house": 1.4, "tannery": 1.5, "long_house": 0.9, "hut": 0.8},
+                roofs: {"Gable": 1.2, "Shed": 1.2},
+                props: {"Nets": 3.0, "Boat": 3.5, "Crates": 2.4, "Barrel": 2.0, "Sacks": 2.0, "Cart": 1.6, "Lamp": 1.4, "trough": 1.2},
+                centrepieces: {"DuckPond": 1.4, "MarketCross": 2.0, "BellFrame": 1.2, "Windmill": 1.8, "GreatTree": 0.8},
+                layouts: {"riverside": 4.0, "street": 1.4, "crossroads": 1.2, "scatter": 0.5},
+                extras: {"Awning": 1.6, "SignBoard": 1.6, "Lamp": 1.3, "RainBarrel": 1.4},
+            ),
+            palette: (walls: [Name("white_terracotta", 2), Name("gray_terracotta", 1), Name("{wood}_planks", 1)], trim: [Name("blue_terracotta", 1), Name("green_terracotta", 1), Name("black_terracotta", 1)], roof: [Name("red_terracotta", 1), Name("brown_terracotta", 1)]),
+            quirks: {"bridge_town": 4.0, "fishing_town": 4.0, "windmills": 2.0, "market_every_day": 2.0, "twin_towns": 3.0, "fountains": 1.5},
+            names: (
+                script: Kana,
+                first: [("Wey", "ウェイ"), ("Tam", "タム"), ("Lea", "リー"), ("Sev", "セヴ"), ("Aven", "エイヴン"), ("Ouse", "ウーズ"), ("Dee", "ディー"), ("Tyne", "タイン"), ("Calder", "カルダー"), ("Ferry", "フェリー"), ("Brent", "ブレント"), ("Trent", "トレント"), ("Wye", "ワイ"), ("Cam", "カム"), ("Nene", "ネネ"), ("Thame", "テイム"), ("Kennet", "ケネット"), ("Lune", "ルーン")],
+                last: [("mouth", "マウス"), ("quay", "キー"), ("lock", "ロック"), ("bridge", "ブリッジ"), ("weir", "ウィア"), ("haven", "ヘイヴン"), ("wharf", "ウォーフ"), ("ford", "フォード"), ("ferry", "フェリー"), ("side", "サイド"), ("mill", "ミル"), ("cross", "クロス")],
+                small: [("Landing", "ランディング"), ("Wharf", "ウォーフ"), ("Ford", "フォード"), ("Mill", "ミル")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "Port", ja: "ポート", weight: 0.5),
+                    (en: "Long", ja: "ロング", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "verdant", title: ("Verdant temple folk", "翠の神殿の民"), weight: 0.5,
+            biome: ["jungle", "dense"], half: ["tropical", "wet"], temperature: (20.0, 40.0),
+            axes: (piety: 0.9, martial: 0.6, trade: 0.5, craft: 0.7, festivity: 0.7, outlook: 0.3, hierarchy: 0.8, lore: 0.7),
+            tilt: (
+                styles: {"jungle_stilts": 2.0, "sandstone": 1.4, "stone_cottage": 1.0},
+                houses: {"hall": 2.4, "chapel": 3.0, "tower_house": 2.2, "courtyard_house": 1.4, "granary": 1.6, "hut": 1.2, "roundhouse": 1.2, "cottage": 0.6},
+                roofs: {"Flat": 2.4, "Hip": 1.4, "Conical": 1.2, "Gable": 0.4},
+                props: {"stone_cairn": 2.4, "StonePile": 2.0, "Bush": 1.8, "trough": 1.8, "Campfire": 1.6, "Lamp": 1.4, "FlowerBed": 1.4},
+                centrepieces: {"StoneCircle": 2.8, "StandingStone": 3.0, "FallenStatue": 3.0, "BellFrame": 1.8, "Beacon": 1.8, "GreatTree": 1.8},
+                layouts: {"ring": 2.0, "terraces": 2.2, "crossroads": 1.6, "scatter": 0.8},
+                extras: {"Moss": 2.0, "Balcony": 0.4, "OutsideStair": 2.0, "Garden": 1.4},
+            ),
+            palette: (walls: [Name("green_terracotta", 1), Name("polished_calcite", 2), Name("white_terracotta", 1)], trim: [Name("cyan_terracotta", 1), Name("red_terracotta", 1), Name("yellow_terracotta", 1)], roof: [Name("brown_terracotta", 1), Name("green_terracotta", 1)]),
+            quirks: {"ruin_in_its_heart": 3.0, "pilgrim_town": 3.0, "statue_town": 3.0, "moss_roofs": 3.0, "giant_tree": 2.0, "silent_town": 1.5},
+            names: (
+                script: Kana,
+                first: [("Ix", "イシュ"), ("Tza", "ツァ"), ("Kal", "カル"), ("Uxa", "ウシャ"), ("Cho", "チョ"), ("Itz", "イツ"), ("Yax", "ヤシュ"), ("Balam", "バラム"), ("Kin", "キン"), ("Xo", "ショ"), ("Chac", "チャク"), ("Ek", "エク"), ("Nik", "ニク"), ("Pop", "ポプ"), ("Tul", "トゥル"), ("Chan", "チャン")],
+                last: [("pek", "ペク"), ("ha", "ハ"), ("mal", "マル"), ("chen", "チェン"), ("tun", "トゥン"), ("ak", "アク"), ("nal", "ナル"), ("zul", "ズル"), ("kab", "カブ"), ("lum", "ルム"), ("ich", "イチ"), ("ob", "オブ")],
+                small: [("Steps", "ステップス"), ("Court", "コート"), ("Pool", "プール"), ("Altar", "アルター")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "Jade", ja: "ジェイド", weight: 0.5),
+                    (en: "Sun", ja: "サン", weight: 0.5),
+                ],
+            ),
+        ),
+        (
+            name: "empire", title: ("Old Empire", "古帝国"), weight: 0.0, claim: City,
+            biome: [], half: [], temperature: (-30.0, 50.0),
+            axes: (piety: 0.6, martial: 0.8, trade: 0.7, craft: 0.6, festivity: 0.5, outlook: 0.5, hierarchy: 0.9, lore: 0.8),
+            tilt: (
+                styles: {"villa": 2.0, "stone_cottage": 1.2, "sandstone": 1.0},
+                houses: {"courtyard_house": 3.0, "town_house": 2.4, "hall": 3.0, "shop_house": 1.8, "chapel": 2.0, "tower_house": 1.4, "hut": 0.2, "bakery": 1.4},
+                roofs: {"Hip": 2.4, "Flat": 1.0, "Gable": 0.8, "Shed": 0.2},
+                props: {"Lamp": 2.6, "Crates": 1.6, "Sacks": 1.2, "stacked_stone": 2.4, "Barrel": 1.2, "Cart": 1.0, "Campfire": 0.3, "Woodpile": 0.4},
+                centrepieces: {"Fountain": 3.4, "FallenStatue": 3.0, "MarketCross": 2.4, "BellFrame": 1.0, "Maypole": 0.2, "GreatTree": 0.4},
+                layouts: {"crossroads": 3.0, "street": 2.4, "ring": 1.8, "scatter": 0.1},
+                extras: {"Lamp": 2.0, "Balcony": 1.6, "Dormer": 0.8, "Shutters": 1.4, "Moss": 0.4},
+            ),
+            palette: (walls: [Name("polished_calcite", 3), Name("white_terracotta", 1)], trim: [Name("purple_terracotta", 1), Name("yellow_terracotta", 1), Name("black_terracotta", 1), Name("red_terracotta", 1)], roof: [Name("red_terracotta", 2), Name("terracotta", 1)]),
+            quirks: {"statue_town": 3.0, "fountains": 3.0, "grand_gate": 3.0, "walled_garden_town": 2.5, "market_every_day": 2.0, "book_town": 2.0},
+            names: (
+                script: Kana,
+                first: [("Aur", "アウル"), ("Val", "ヴァル"), ("Cast", "カスト"), ("Nov", "ノヴ"), ("Port", "ポルト"), ("Aquil", "アクイル"), ("Luc", "ルク"), ("Max", "マクス"), ("Sev", "セヴ"), ("Clar", "クラル"), ("Cael", "カエル"), ("Dom", "ドム"), ("Fab", "ファブ"), ("Flav", "フラヴ"), ("Jul", "ユル"), ("Mar", "マル"), ("Pet", "ペト"), ("Ter", "テル"), ("Vit", "ヴィト")],
+                last: [("ium", "イウム"), ("ia", "イア"), ("ensis", "エンシス"), ("ona", "オナ"), ("anum", "アヌム"), ("ara", "アラ"), ("inum", "イヌム"), ("olis", "オリス"), ("aria", "アリア"), ("us", "ウス"), ("ae", "アエ")],
+                small: [("Forum", "フォルム"), ("Castra", "カストラ"), ("Villa", "ヴィラ"), ("Gate", "ゲート")],
+                prefixes: [
+                    (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
+                    (en: "Nova", ja: "ノヴァ", weight: 0.5, lean: {"age": -1.0}),
+                    (en: "Magna", ja: "マグナ", weight: 0.5, lean: {"wealth": 1.0}),
+                ],
+            ),
+        ),
+    ],
+    quirks: [
+        (name: "blue_doors", title: ("Blue doors", "青い扉"), lean: {"outlook": 0.3}, tilt: ()),
+        (name: "bell_mad", title: ("Bell-mad", "鐘狂い"), lean: {"piety": 0.8}, tilt: (centrepieces: {"BellFrame": 4.0}, houses: {"chapel": 1.8})),
+        (name: "lantern_strings", title: ("Lantern strings", "提灯の町"), lean: {"festivity": 0.8}, tilt: (props: {"Lamp": 2.5}, extras: {"Lamp": 1.8})),
+        (name: "moss_roofs", title: ("Moss roofs", "苔の屋根"), lean: {"age": 0.8, "green": 0.5}, tilt: (extras: {"Moss": 3.0})),
+        (name: "cat_town", title: ("Cat town", "猫の町"), lean: {"crowding": 0.5}, tilt: ()),
+        (name: "dovecote_town", title: ("Dovecote town", "鳩小屋の町"), lean: {"green": 0.5}, tilt: (extras: {"Dovecote": 6.0})),
+        (name: "painted_bands", title: ("Painted bands", "縞模様の家"), lean: {"festivity": 0.5, "craft": 0.5}, tilt: ()),
+        (name: "stair_town", title: ("Stair town", "階段の町"), need: Relief, tilt: (layouts: {"terraces": 3.0}, extras: {"OutsideStair": 3.0})),
+        (name: "tower_houses", title: ("Tower houses", "塔の家"), lean: {"martial": 0.6, "hierarchy": 0.4}, tilt: (houses: {"tower_house": 4.0})),
+        (name: "twin_wells", title: ("Twin wells", "二つの井戸"), tilt: ()),
+        (name: "giant_tree", title: ("Giant tree", "大樹の町"), lean: {"green": 1.0, "age": 0.5}, tilt: (centrepieces: {"GreatTree": 5.0})),
+        (name: "silent_town", title: ("Silent town", "静かな町"), lean: {"festivity": -1.0, "piety": 0.5}, tilt: (centrepieces: {"Maypole": 0.2}, props: {"Lamp": 0.7})),
+        (name: "flower_town", title: ("Flower town", "花の町"), lean: {"green": 1.0, "festivity": 0.5}, tilt: (extras: {"FlowerBoxes": 3.0}, props: {"FlowerBed": 3.0})),
+        (name: "bridge_town", title: ("Bridge town", "橋の町"), need: Water, tilt: (layouts: {"riverside": 3.0})),
+        (name: "statue_town", title: ("Statue town", "像の町"), lean: {"hierarchy": 0.8, "wealth": 0.5}, tilt: (centrepieces: {"FallenStatue": 4.0})),
+        (name: "smoke_town", title: ("Smoke town", "煙の町"), lean: {"craft": 1.0}, tilt: (extras: {"Chimney": 3.0}, houses: {"smokehouse": 2.5})),
+        (name: "book_town", title: ("Book town", "本の町"), lean: {"lore": 1.0}, tilt: ()),
+        (name: "horse_town", title: ("Horse town", "馬の町"), lean: {"trade": 0.5}, tilt: (props: {"Cart": 3.0}, houses: {"barn": 1.5})),
+        (name: "laundry_town", title: ("Laundry town", "洗濯物の町"), lean: {"crowding": 0.8}, tilt: (props: {"LaundryLine": 5.0, "Washtub": 3.0})),
+        (name: "garden_walls", title: ("Garden walls", "庭の塀"), lean: {"order": 0.6, "green": 0.6}, tilt: (extras: {"Hedge": 3.0, "Garden": 2.0})),
+        (name: "red_roofs", title: ("Red roofs", "赤い屋根"), tilt: ()),
+        (name: "ruin_in_its_heart", title: ("Ruin in its heart", "廃墟のある町"), lean: {"age": 1.0}, tilt: (centrepieces: {"WatchtowerRuin": 3.0, "StoneCircle": 1.5})),
+        (name: "fishing_town", title: ("Fishing town", "漁の町"), need: Water, tilt: (props: {"Nets": 4.0, "Boat": 3.0}, houses: {"boathouse": 2.5})),
+        (name: "pilgrim_town", title: ("Pilgrim town", "巡礼の町"), lean: {"piety": 1.0, "trade": 0.4}, tilt: (houses: {"chapel": 2.5}, props: {"Signpost": 2.0})),
+        (name: "twin_towns", title: ("Twin towns", "双子の町"), tilt: (layouts: {"crossroads": 1.5})),
+        (name: "walled_garden_town", title: ("Walled garden town", "囲い庭の町"), lean: {"hierarchy": 0.6}, tilt: (extras: {"Hedge": 2.0}, houses: {"hall": 1.8})),
+        (name: "carved_posts", title: ("Carved posts", "彫り柱"), lean: {"craft": 0.8}, tilt: (extras: {"SignBoard": 2.0})),
+        (name: "market_every_day", title: ("Market every day", "毎日が市"), lean: {"trade": 1.0}, tilt: (props: {"Crates": 2.5, "Sacks": 2.0}, extras: {"Awning": 3.0}, houses: {"shop_house": 2.0})),
+        (name: "night_town", title: ("Night town", "夜の町"), lean: {"festivity": 0.6}, tilt: (props: {"Lamp": 3.0, "Campfire": 2.0})),
+        (name: "quiet_ghosts", title: ("Quiet ghosts", "静かな墓地"), lean: {"age": 1.0, "piety": 0.3}, tilt: (props: {"stone_cairn": 3.0}, centrepieces: {"StandingStone": 2.5})),
+        (name: "bee_town", title: ("Bee town", "蜂の町"), lean: {"green": 0.8}, tilt: (props: {"Skep": 6.0})),
+        (name: "fountains", title: ("Fountains", "噴水の町"), lean: {"wealth": 0.8, "order": 0.5}, tilt: (centrepieces: {"Fountain": 4.0})),
+        (name: "windmills", title: ("Windmills", "風車の町"), lean: {"green": 0.5}, tilt: (centrepieces: {"Windmill": 4.0})),
+        (name: "kite_days", title: ("Kite days", "凧の日"), lean: {"festivity": 0.5}, tilt: ()),
+        (name: "grand_gate", title: ("Grand gate", "大門"), lean: {"martial": 0.5, "hierarchy": 0.5}, tilt: (layouts: {"ring": 2.0})),
+        (name: "painted_roofs", title: ("Painted roofs", "彩色の屋根"), lean: {"festivity": 0.6}, tilt: ()),
+        (name: "old_feud", title: ("Old feud", "古い確執"), lean: {"martial": 0.4}, tilt: (layouts: {"fork": 1.5}, houses: {"tower_house": 1.6})),
+        (name: "stilt_town", title: ("Stilt town", "高床の町"), need: Water, tilt: (styles: {"stilts": 3.0}, houses: {"hut": 1.5})),
+        (name: "rope_bridges", title: ("Rope bridges", "吊り橋"), need: Relief, tilt: (layouts: {"terraces": 2.0})),
+        (name: "street_ovens", title: ("Street ovens", "路地のかまど"), lean: {"festivity": 0.3}, tilt: (houses: {"bakery": 2.5})),
+    ],
+)
