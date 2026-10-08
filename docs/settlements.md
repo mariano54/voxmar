@@ -135,6 +135,8 @@ Water-direction rings batch all 24 original samples, slopes batch their four ori
 cardinal samples, and bank searches batch ring centres in groups of at most 32. Those
 decisions already consume every centre before stopping; cardinal bank checks retain
 their original short-circuit order. No extra terrain or altered RNG is needed.
+Lane walking likewise groups the at most five turns whose pure bounds/avoidance
+checks permit a terrain read, then keeps the original best-cost and tie decisions.
 The temporary terrain memo caps samples at 32,768 so spawn layout retries can reuse
 the same land without the observed 16,384-point eviction. Water-query samples remain
 bounded to 16,384. Relief evaluation allocates noise state only for missing corners;

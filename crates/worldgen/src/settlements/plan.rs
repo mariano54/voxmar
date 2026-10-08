@@ -159,7 +159,8 @@ impl Ground<'_> {
     /// Lookahead may outlive an earlier rejected point; every read stays in the timer.
     fn prefetch(&mut self, first: IVec2, count: usize) {
         assert!(count <= crate::water::SAMPLE_BATCH);
-        let points: [IVec2; crate::water::SAMPLE_BATCH] = std::array::from_fn(|i| first + IVec2::new(i as i32, 0));
+        let mut points = [IVec2::ZERO; crate::water::SAMPLE_BATCH];
+        for (i, p) in points[..count].iter_mut().enumerate() { *p = first + IVec2::new(i as i32, 0); }
         self.prefetch_points(&points[..count]);
     }
 
@@ -874,6 +875,8 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
             ground.prefetched - before.5, ground.misses - before.1 + ground.prefetched - before.5,
             ground.clears - before.2, ground.levels - before.3,
             lane[0] - before.4[0], lane[1] - before.4[1], lane[3] - before.4[3], lane[2] - before.4[2]);
+        let scratch = ground.scratch.work();
+        eprintln!("  scratch cumulative: corner clears {}, raw-column clears {}, peak corners {}, peak raw columns {}", scratch[0], scratch[1], scratch[2], scratch[3]);
         if let Some((places, abandoned)) = failures {
             let places = std::array::from_fn::<_, 8, _>(|i| PLACE_FAILS[i].load(std::sync::atomic::Ordering::Relaxed) - places[i]);
             let abandoned = std::array::from_fn::<_, 12, _>(|i| GIVEN_UP[i].load(std::sync::atomic::Ordering::Relaxed) - abandoned[i]);
@@ -1789,8 +1792,10 @@ fn walk(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f
     while walked < length {
         bend = (bend + (rng.unit() - 0.5) * wiggle * 0.5).clamp(-wiggle, wiggle);
         heading += bend;
-        let mut best: Option<(f32, f32, Vec2, i32)> = None;
-        for turn in [-0.45f32, -0.2, 0.0, 0.2, 0.45] {
+        let mut choices = [None; 5];
+        let mut samples = [IVec2::ZERO; 5];
+        let mut count = 0;
+        for (i, turn) in [-0.45f32, -0.2, 0.0, 0.2, 0.45].into_iter().enumerate() {
             let a = heading + turn;
             let next = here + Vec2::from_angle(a) * step;
             let at = next.round().as_ivec2();
@@ -1800,6 +1805,15 @@ fn walk(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f
             if !bounds.holds(at) || avoid.iter().any(|(r, clear)| nears(r, *clear)) {
                 continue;
             }
+            choices[i] = Some((turn, a, next, at));
+            samples[count] = at;
+            count += 1;
+        }
+        // Every geometrically eligible turn is sampled before choosing the best;
+        // no RNG or terrain-dependent decision changes the later turns' inclusion.
+        ground.prefetch_points(&samples[..count]);
+        let mut best: Option<(f32, f32, Vec2, i32)> = None;
+        for (turn, a, next, at) in choices.into_iter().flatten() {
             let g = ground.at(at);
             if !walkable(&g) {
                 continue;
@@ -1920,8 +1934,14 @@ fn banks_near(ground: &mut Ground, centre: IVec2, reach: i32) -> Vec<(IVec2, Vec
     let mut found = Vec::new();
     for r in (10..=reach.max(12)).step_by(3) {
         let n = (r as f32 * std::f32::consts::TAU / 4.0) as i32;
-        let ring: Vec<_> = (0..n).map(|k| centre + (Vec2::from_angle(k as f32 * std::f32::consts::TAU / n as f32) * r as f32).round().as_ivec2()).collect();
-        for points in ring.chunks(crate::water::SAMPLE_BATCH) {
+        for first in (0..n).step_by(crate::water::SAMPLE_BATCH) {
+            let count = (n - first).min(crate::water::SAMPLE_BATCH as i32) as usize;
+            let mut ring = [IVec2::ZERO; crate::water::SAMPLE_BATCH];
+            for (i, at) in ring[..count].iter_mut().enumerate() {
+                let k = first + i as i32;
+                *at = centre + (Vec2::from_angle(k as f32 * std::f32::consts::TAU / n as f32) * r as f32).round().as_ivec2();
+            }
+            let points = &ring[..count];
             // This ring is always fully inspected before the >=8 stop below.
             ground.prefetch_points(points);
             for &at in points {
@@ -2514,6 +2534,95 @@ mod level_tests {
     use crate::geology::GeoSample;
     use crate::trails::Land;
     use crate::water::Body;
+
+    #[test]
+    fn lane_turn_batches_keep_scalar_paths_and_rng() {
+        // The original scalar walker is the oracle for float ties and RNG draws.
+        #[allow(clippy::too_many_arguments)]
+        fn scalar(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f32, length: f32, wiggle: f32, bounds: &Rect, rules: &LanesDef, avoid: &[(Rect, f32)]) -> Vec<Vec2> {
+            let step = rules.step;
+            let mut points = vec![from];
+            let mut heading = angle;
+            let mut bend = 0.0f32;
+            let mut here = from;
+            let mut height = ground.at(from.round().as_ivec2()).height;
+            let mut walked = 0.0;
+            while walked < length {
+                bend = (bend + (rng.unit() - 0.5) * wiggle * 0.5).clamp(-wiggle, wiggle);
+                heading += bend;
+                let mut best: Option<(f32, f32, Vec2, i32)> = None;
+                for turn in [-0.45f32, -0.2, 0.0, 0.2, 0.45] {
+                    let a = heading + turn;
+                    let next = here + Vec2::from_angle(a) * step;
+                    let at = next.round().as_ivec2();
+                    let nears = |r: &Rect, clear: f32| (0..=6).map(|k| r.signed(here.lerp(next, k as f32 / 6.0))).fold(f32::MAX, f32::min) < clear.min(r.signed(here) - 0.01);
+                    if !bounds.holds(at) || avoid.iter().any(|(r, clear)| nears(r, *clear)) { continue; }
+                    let g = ground.at(at);
+                    if !walkable(&g) { continue; }
+                    let rise = (g.height - height).abs();
+                    if rise > rules.rise { continue; }
+                    if walked > rules.leave && lanes.iter().any(|l| l.distance(next) < l.half + rules.apart) { continue; }
+                    let cost = rise as f32 * 1.5 + turn.abs() * 1.2;
+                    if best.is_none_or(|b| cost < b.0) { best = Some((cost, a, next, g.height)); }
+                }
+                let Some((_, a, next, h)) = best else { break };
+                heading = a;
+                here = next;
+                height = h;
+                points.push(here);
+                walked += step;
+            }
+            points
+        }
+        struct WalkingLand(Creek, bool);
+        impl Land for WalkingLand {
+            fn sample(&self, x: i32, z: i32) -> GeoSample {
+                let mut g = self.0.sample(x, z);
+                if self.1 && !g.submerged() {
+                    g.height += x.rem_euclid(17) / 2;
+                    if z.rem_euclid(19) == 0 { g.crag.amplitude = 1.0; }
+                }
+                g
+            }
+        }
+        let rules = SettlementsDef::default().rules.lanes;
+        let (mut long, mut short) = (0, 0);
+        for centre in [IVec2::ZERO, IVec2::new(-1031, 1019), IVec2::new(1_048_575, -1_048_575)] {
+            for steep in [false, true] {
+                for creek in [Creek(None, None), Creek(Some(centre.x + 9), None), Creek(None, Some(centre.y + 5))] {
+                    let land = WalkingLand(creek, steep);
+                    for seed in [1, 7, 42] {
+                        for wiggle in [0.0, 0.3, 1.5] {
+                            for reach in [8, 48] {
+                                let (mut a, mut b) = (Ground::new(&land), Ground::new(&land));
+                                let (mut ra, mut rb) = (Rng::new(seed, 123, 0, 0), Rng::new(seed, 123, 0, 0));
+                                let bounds = Rect { min: centre - reach, max: centre + reach };
+                                let from = centre.as_vec2() - Vec2::new(3.0, 2.0);
+                                let angle = seed as f32 * 0.1;
+                                let lanes = if seed == 7 { vec![Lane::new(vec![centre.as_vec2() - Vec2::new(10.0, 10.0), centre.as_vec2() + Vec2::splat(10.0)], 1.0, false, false)] } else { Vec::new() };
+                                let avoid = [(Rect::new(centre + IVec2::new(8, -6), IVec2::new(4, 6)), CLEAR)];
+                                let expected = scalar(&mut a, &lanes, &mut ra, from, angle, 40.0, wiggle, &bounds, &rules, &avoid);
+                                let actual = walk(&mut b, &lanes, &mut rb, from, angle, 40.0, wiggle, &bounds, &rules, &avoid);
+                                assert_eq!(actual, expected, "{centre:?}, seed {seed}, wiggle {wiggle}, reach {reach}, hills {steep}");
+                                assert_eq!(rb.next_u64(), ra.next_u64(), "a terrain batch must not change any RNG draw");
+                                assert_eq!(b.seen, a.seen, "exactly the originally used terrain is retained");
+                                assert_eq!(b.misses + b.prefetched, a.misses, "duplicate turn coordinates still require only one read");
+                                long += usize::from(actual.len() > 10);
+                                short += usize::from(actual.len() < 5);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(long > 0 && short > 0, "both complete and rejected lane paths must occur ({long}/{short})");
+        // A short row at the integer boundary never computes an unused suffix.
+        let land = Creek(None, None);
+        let mut ground = Ground::new(&land);
+        ground.prefetch(IVec2::new(i32::MAX, 0), 1);
+        assert_eq!(ground.seen.len(), 1);
+        assert_eq!(ground.at(IVec2::new(i32::MAX, 0)).height, 140);
+    }
 
     #[test]
     fn water_rings_keep_scalar_decisions_and_read_sets() {

@@ -779,6 +779,8 @@ pub struct Samples {
     corners: Corners,
     tiers: FxHashMap<[IVec2; 4], (Near, Near)>,
     columns: FxHashMap<(IVec2, [IVec2; 4]), Column>,
+    #[cfg(test)]
+    work: [usize; 4],
 }
 
 /// Exact water-bearing terrain shared by a site's overlapping close looks. Only
@@ -791,15 +793,30 @@ pub struct Freshwater {
 }
 
 impl Samples {
+    #[cfg(test)]
+    pub(crate) fn work(&self) -> [usize; 4] {
+        [self.work[0], self.work[1], self.work[2].max(self.corners.len()), self.work[3].max(self.columns.len())]
+    }
+
     fn prepare(&mut self, id: u64, count: usize) {
         // Each centre and its four cardinal neighbours add at most twenty corners.
         // Reserve the whole batch before any centre or neighbour work is performed.
         if self.id != id {
             *self = Self { id, ..Self::default() };
         }
-        if self.corners.len() + 20 * count > 4096 { self.corners = Corners::default(); }
+        #[cfg(test)]
+        { self.work[2] = self.work[2].max(self.corners.len()); self.work[3] = self.work[3].max(self.columns.len()); }
+        if self.corners.len() + 20 * count > 4096 {
+            self.corners = Corners::default();
+            #[cfg(test)]
+            { self.work[0] += 1; }
+        }
         // A batch inserts at most its centres and four neighbours per centre.
-        if self.columns.len() + 5 * count > 16_384 { self.columns.clear(); }
+        if self.columns.len() + 5 * count > 16_384 {
+            self.columns.clear();
+            #[cfg(test)]
+            { self.work[1] += 1; }
+        }
         if self.tiers.len() >= 16 { self.tiers.clear(); }
     }
 
