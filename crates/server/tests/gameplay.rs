@@ -1312,6 +1312,14 @@ fn picking_any_wild_herb_gives_kitchen_herbs_and_the_herb_regrows() {
     // One item for every wild herb: the oregano itself is not what is handed out.
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == herbs && s.count == 1));
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == oregano), "picked oregano is still an item of its own");
+    // The journal found the item, not the plant; `/give oregano` gives the item.
+    use voxmar_engine::journal::Page;
+    client.pump_until(|c| c.journal.get(Page::Plants, "base:kitchen_herbs").is_some());
+    assert!(client.journal.get(Page::Plants, "base:oregano").is_none(), "the journal found a plant that is never listed");
+    client.ok("/clear");
+    client.ok("/give oregano 3");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == herbs && s.count == 3));
+    assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == oregano), "/give oregano handed out the plant");
     // The wild spot grows the same plant back.
     client.ok("/grow");
     client.pump_until(|c| c.world.block(at) == Some(oregano));

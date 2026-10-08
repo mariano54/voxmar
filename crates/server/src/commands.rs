@@ -829,7 +829,8 @@ impl Server {
             ),
             _ => return Err(Words::key("command.error.give_what")),
         };
-        let block = self.find_block(name)?;
+        // A wild plant whose item merged is given as that item.
+        let block = self.content.blocks.item_of(self.find_block(name)?);
         if block.is_air() {
             return Err(Words::key("command.error.air_held"));
         }
@@ -920,7 +921,7 @@ impl Server {
             .ok()
             .filter(|c| (1..=MAX_STACK).contains(c))
             .ok_or_else(|| Words::key("command.error.not_a_count").with("word", count).with("max", Words::text(MAX_STACK)))?;
-        let block = self.find_block(name)?;
+        let block = self.content.blocks.item_of(self.find_block(name)?);
         if block.is_air() {
             return Err(Words::key("command.error.air_dropped"));
         }

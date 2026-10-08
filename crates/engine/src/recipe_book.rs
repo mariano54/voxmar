@@ -48,9 +48,10 @@ pub struct RecipeBook {
 impl RecipeBook {
     pub fn new(content: &Content) -> Self {
         let mut book = Self::default();
+        let blocks = &content.blocks;
         for recipe in content.recipes.iter() {
             let cells = recipe.cells();
-            let items: Vec<BlockId> = cells.iter().flatten().copied().collect();
+            let items: Vec<BlockId> = cells.iter().flatten().copied().filter(|&b| !blocks.merged_away(b)).collect();
             // The same thing from the same shape: another variant of the entry before.
             if let Some(last) = book.entries.last_mut()
                 && last.output == recipe.output
@@ -70,29 +71,35 @@ impl RecipeBook {
                 continue;
             }
             let method = Method::Craft { variants: vec![cells], shapeless: recipe.shapeless() };
-            book.add(Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items);
+            book.add(blocks, Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items);
         }
         for (input, recipe) in content.cooking.iter() {
             let station = recipe.def.station.clone();
             let stations: Vec<BlockId> = content.blocks.tagged(&station).collect();
             let method = Method::Cook { input, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
-            book.add(Entry { method, output: recipe.output, count: (1, 1) }, [input].into_iter().chain(stations).collect());
+            book.add(blocks, Entry { method, output: recipe.output, count: (1, 1) }, [input].into_iter().chain(stations).collect());
         }
         for (id, creature) in content.creatures.iter() {
             for (product, &item) in creature.def.products.iter().zip(&creature.products) {
                 let tools: Vec<BlockId> = product.tool.as_deref().map(|tag| content.blocks.tagged(tag).collect()).unwrap_or_default();
                 let method = Method::Product { creature: id, tool: product.tool.clone() };
-                book.add(Entry { method, output: item, count: product.count }, tools);
+                book.add(blocks, Entry { method, output: item, count: product.count }, tools);
             }
             for drop in &creature.loot {
                 let method = Method::Drop { creature: id, chance: drop.loot.chance };
-                book.add(Entry { method, output: drop.item, count: drop.loot.count }, Vec::new());
+                book.add(blocks, Entry { method, output: drop.item, count: drop.loot.count }, Vec::new());
             }
         }
         book
     }
 
-    fn add(&mut self, entry: Entry, mut uses: Vec<BlockId>) {
+    /// Adds an entry, unless it makes a plant whose item merged into another (`merged`
+    /// blocks are never held, so the book never lists them as a thing or a use).
+    fn add(&mut self, blocks: &crate::block::BlockRegistry, entry: Entry, mut uses: Vec<BlockId>) {
+        if blocks.merged_away(entry.output) {
+            return;
+        }
+        uses.retain(|&b| !blocks.merged_away(b));
         let index = self.entries.len();
         self.makes.entry(entry.output).or_default().push(index);
         uses.sort();
@@ -142,6 +149,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn plants_whose_item_merged_are_not_in_the_book() {
+        let content = content();
+        let blocks = &content.blocks;
+        let (oregano, herbs, stone) = (blocks.id("base:oregano").unwrap(), blocks.id("base:kitchen_herbs").unwrap(), blocks.id("base:stone").unwrap());
+        assert!(blocks.merged_away(oregano) && !blocks.merged_away(herbs) && !blocks.listed(oregano) && blocks.listed(herbs));
+        assert_eq!(blocks.item_of(oregano), herbs);
+        let mut book = RecipeBook::default();
+        // An entry making one is dropped, and one using it does not list it as a use.
+        book.add(blocks, Entry { method: Method::Drop { creature: CreatureId(0), chance: 1.0 }, output: oregano, count: (1, 1) }, Vec::new());
+        book.add(blocks, Entry { method: Method::Drop { creature: CreatureId(0), chance: 1.0 }, output: stone, count: (1, 1) }, vec![oregano, herbs]);
+        assert!(book.making(oregano).is_empty() && book.using(oregano).is_empty(), "a merged-away plant is in the book");
+        assert_eq!((book.making(stone).len(), book.using(herbs).len()), (1, 1));
+        // And the game's own book never mentions one.
+        let book = RecipeBook::new(&content);
+        assert!(blocks.ids().filter(|&id| blocks.merged_away(id)).all(|id| book.making(id).is_empty() && book.using(id).is_empty()));
     }
 
     #[test]

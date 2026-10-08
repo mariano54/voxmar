@@ -1153,8 +1153,25 @@ impl BlockRegistry {
     /// The item an older save's `name` is today: what a block tagged `merged` drops (a
     /// wild oregano picked in an old world is kitchen herbs now), else the block itself.
     pub fn item_named(&self, name: &str) -> Option<BlockId> {
-        let id = self.id(name)?;
-        Some(if self.def(id).has_tag("merged") { self.info[id.0 as usize].drops } else { id })
+        Some(self.item_of(self.id(name)?))
+    }
+
+    /// The item `id` is held as: what a block tagged `merged` drops, else itself.
+    pub fn item_of(&self, id: BlockId) -> BlockId {
+        if self.merged_away(id) { self.info[id.0 as usize].drops } else { id }
+    }
+
+    /// Whether `id` is a wild plant whose item merged into another (see `item_of`): it
+    /// stays in the world, but is never held, so catalogues, the creative inventory, the
+    /// journal and the recipe book leave it out.
+    pub fn merged_away(&self, id: BlockId) -> bool {
+        self.def(id).has_tag("merged")
+    }
+
+    /// Whether a catalogue lists `id`: what a player could hold, not air, nor another look
+    /// or facing of a block (`placement_form`), nor a plant whose item merged.
+    pub fn listed(&self, id: BlockId) -> bool {
+        !id.is_air() && !self.placement_form(id) && !self.merged_away(id)
     }
 
     /// Whether the block is only ever a form another takes when placed, never held: another
