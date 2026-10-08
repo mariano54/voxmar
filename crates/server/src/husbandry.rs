@@ -18,10 +18,9 @@ use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
-use voxmar_protocol::{ChatKind, PlayerId, TICKS_PER_DAY, TICKS_PER_SECOND};
+use voxmar_protocol::{PlayerId, TICKS_PER_DAY, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::commands::Source;
 use crate::condition::RECKON_EVERY;
 use crate::creatures::product_ticks;
 use crate::items::random3;
@@ -151,7 +150,7 @@ impl Server {
         // and the food stays in hand.
         let kept_each = self.content.creatures.limits().kept_each;
         if creature.owner.is_none() && self.player_name(player).is_some_and(|name| self.kept_by(&name) >= kept_each) {
-            self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
+            self.refuse(player, Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
             return;
         }
         // A kept one eats a meal when hungry, and its breeding food readies it if it is kept
@@ -187,7 +186,7 @@ impl Server {
                 _ => None,
             };
             if let Some(why) = why {
-                self.tell(Source::Player(player), ChatKind::Info, why);
+                self.refuse(player, why);
             }
             return;
         }
@@ -360,7 +359,7 @@ impl Server {
         if room == 0 {
             // No birth: the parents may try again as soon as there is room, at no cost.
             if let (Some(player), Some(keeper)) = (player, owner.as_deref()) {
-                self.tell(Source::Player(player), ChatKind::Info, self.no_room_for_young(keeper));
+                self.refuse(player, self.no_room_for_young(keeper));
             }
             return;
         }
@@ -686,9 +685,14 @@ mod tests {
 
     /// The keys of what a player has been told since last asked; for a command refused,
     /// the key of why.
+    /// The keys of what the player was told, in the console or as a refusal (with "refused:"
+    /// before it).
     fn told(client: &voxmar_protocol::ClientConnection) -> Vec<String> {
         let mut keys = Vec::new();
         while let Ok(Some(message)) = client.try_recv() {
+            if let voxmar_protocol::ServerMessage::Refused { why: Words::Key(key, _) } = &message {
+                keys.push(format!("refused: {key}"));
+            }
             if let voxmar_protocol::ServerMessage::Chat { text: Words::Key(key, args), .. } = message {
                 let why = args.into_iter().find_map(|(name, why)| match why {
                     Words::Key(why, _) if key == "command.error.usage" && name == "why" => Some(why),
@@ -721,7 +725,8 @@ mod tests {
         server.tend(player, mine);
         assert_eq!(in_hand(&server), 10, "a keeper at their cap had food taken");
         assert_eq!((server.creatures.live[&wild].trust, server.creatures.live[&mine].ready_until), (0.0, 0));
-        assert_eq!(told(&client), ["husbandry.kept_full", "husbandry.no_room_to_breed"]);
+        // Refusals, for the interface to show as such, not console lines.
+        assert_eq!(told(&client), ["refused: husbandry.kept_full", "refused: husbandry.no_room_to_breed"]);
         // An admin's taming keeps to the cap too.
         server.command(player, "creatures tame");
         assert!(server.creatures.live[&wild].owner.is_none());
@@ -735,7 +740,7 @@ mod tests {
         assert!(server.creatures.live[&mine].ready_until > server.tick);
         let wild_now = &server.creatures.live[&wild];
         assert!(wild_now.trust > 0.0 || wild_now.owner.is_some());
-        assert!(told(&client).iter().all(|key| !key.starts_with("husbandry.")), "refused with room");
+        assert!(told(&client).iter().all(|key| !key.contains("husbandry.")), "refused with room");
         // Another wild one: an admin tames as many as there is room for, and no more.
         server.creatures.live.get_mut(&wild).unwrap().owner = None;
         let other = server.spawn_creature(species, server.spawn, 3).expect("room");
@@ -856,7 +861,7 @@ mod tests {
         assert!(!server.creature_accepts(player, fox, meat));
         server.tend(player, fox);
         assert_eq!(in_hand(&server), 1);
-        assert!(told(&client).iter().all(|key| !key.starts_with("husbandry.")));
+        assert!(told(&client).iter().all(|key| !key.contains("husbandry.")));
     }
 
     #[test]
@@ -875,11 +880,11 @@ mod tests {
         told(&client);
         server.tend(player, rabbit);
         assert_eq!((in_hand(&server), server.creatures.live[&rabbit].ready_until), (2, 0));
-        assert_eq!(told(&client), ["husbandry.too_poorly_kept_wants"]);
+        assert_eq!(told(&client), ["refused: husbandry.too_poorly_kept_wants"]);
         // Fed now, it keeps the food in hand and says why again.
         server.tend(player, rabbit);
         assert_eq!((in_hand(&server), server.creatures.live[&rabbit].ready_until), (2, 0));
-        assert_eq!(told(&client), ["husbandry.too_poorly_kept_wants"]);
+        assert_eq!(told(&client), ["refused: husbandry.too_poorly_kept_wants"]);
         // Kept well, the same food readies it.
         server.creatures.live.get_mut(&rabbit).unwrap().condition = 0.7;
         server.tend(player, rabbit);
