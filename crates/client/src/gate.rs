@@ -2582,18 +2582,24 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             let language = if i % 2 == 0 { "en" } else { "ja" };
             let (name, position, target, pick) = match i / 2 {
                 0 => (if language == "en" { "hv-hall-en" } else { "hv-hall-ja" }, rel(-5, 5, -3), core, "base:bone_lockpick"),
-                1 => (if language == "en" { "hv-array-en" } else { "hv-array-ja" }, rel(-5, 4, 1), array, "base:copper_lockpick"),
+                1 => (if language == "en" { "hv-array-en" } else { "hv-array-ja" }, rel(-3, 1, 2), array, "base:copper_lockpick"),
                 2 => (if language == "en" { "hv-smelter-en" } else { "hv-smelter-ja" }, rel(-5, 5, -1), smelter, "base:bronze_lockpick"),
                 3 => (if language == "en" { "hv-power-en" } else { "hv-power-ja" }, rel(-5, 2, -2), rel(-1, 2, 1), "base:iron_lockpick"),
                 _ => (if language == "en" { "treasure-row-en" } else { "treasure-row-ja" }, rel(-1, 2, 12), chest, "base:copper_lockpick"),
             };
             if gate.phase % 2 == 0 {
+                // The full-cube cable covers the controller's only outward face. After
+                // proving the powered job, uncover it for the paired close-ups, then
+                // restore the connection before the remaining factory shots.
+                if gate.phase == 12 { world.resource::<Net>().command(&format!("setblock {} air", at(rel(-1, 2, 3)))); }
+                if gate.phase == 16 { world.resource::<Net>().command(&format!("setblock {} hv_cable", at(rel(-1, 2, 3)))); }
                 set_language(world, language);
                 world.resource_mut::<Settings>().language = language.into();
                 world.resource::<Net>().command(&format!("tp {}", at(position)));
                 empty_hand(world);
                 gate.advance(now);
-            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0 {
+            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0
+                && world.resource::<ClientWorld>().block(rel(-1, 2, 3)) == content.blocks.id(if i / 2 == 1 { "core:air" } else { "base:hv_cable" }) {
                 aim(world, target);
                 select(world, pick);
                 gate.settled += 1;
@@ -4611,6 +4617,11 @@ struct FeelRun {
     bear: Option<u32>,
     died: bool,
     calm: bool,
+    /// The first telegraph faces the target on the server; shots keep the same camera
+    /// before provoking it and during its wind-up, once the drawn body has turned.
+    facing_checked: bool,
+    facing_camera: Option<(f32, f32)>,
+    facing_frames: u8,
 }
 
 /// The bear in survival: provoked with a click every few server seconds until it winds up,
@@ -4698,8 +4709,18 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
-            key(world, KeyCode::KeyW, distance > 2.0 && gate.feel.seen.is_none());
-            aim_at(world, view.position + Vec3::Y * 0.6);
+            let fixed_camera = gate.feel.facing_camera.filter(|_| !gate.shots.lock().expect("gate shots").contains_key("windup-facing"));
+            key(world, KeyCode::KeyW, fixed_camera.is_none() && distance > 2.0 && gate.feel.seen.is_none());
+            if let Some((yaw, pitch)) = fixed_camera {
+                let mut player = world.resource_mut::<LocalPlayer>();
+                player.yaw = yaw;
+                player.pitch = pitch;
+                if gate.feel.facing_frames < 3 {
+                    gate.feel.facing_frames += 1;
+                }
+            } else {
+                aim_at(world, view.position + Vec3::Y * 0.6);
+            }
             // A wind-up is timed from its pose coming on: one still shown from the blow just
             // judged (its end not yet heard) is not a new one.
             if view.pose != Pose::Attacking {
@@ -4707,6 +4728,23 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if gate.feel.calm && gate.feel.seen.is_none() && !gate.feel.answered {
                 gate.feel.seen = Some(Instant::now());
                 gate.feel.calm = false;
+                if !gate.feel.facing_checked {
+                    let target = gate.observer.as_ref().and_then(|o| o.others.values().next().copied()).unwrap_or(world.resource::<LocalPlayer>().position);
+                    let to = (target - view.position).with_y(0.0).normalize_or_zero();
+                    let forward = Vec3::new(-view.yaw.sin(), 0.0, -view.yaw.cos());
+                    let cosine = forward.dot(to);
+                    let result = if cosine > 0.8 { Ok(format!("the first attacking pose faces its target (cosine {cosine:.3})")) } else { Err(format!("the attacking pose faced away from its target (cosine {cosine:.3}, yaw {})", view.yaw)) };
+                    gate.check("wind-up facing", result);
+                    gate.feel.facing_checked = true;
+                }
+            }
+            // The first update checks the server heading; give the drawn body's smooth
+            // turn time to show it, while it is still winding up. Keep the camera held
+            // until this later image has arrived.
+            if gate.feel.facing_checked && fixed_camera.is_some() && view.pose == Pose::Attacking
+                && gate.feel.seen.is_some_and(|seen| seen.elapsed().as_secs_f32() >= windup * 0.35)
+            {
+                gate.shot(world, "windup-facing");
             }
             if let Some(seen) = gate.feel.seen
                 && !gate.feel.answered
@@ -4726,6 +4764,21 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             // Provoked at most every few server seconds while it does not fight back.
             if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 {
+                if !gate.feel.facing_checked {
+                    if gate.feel.facing_camera.is_none() {
+                        let player = world.resource::<LocalPlayer>();
+                        gate.feel.facing_camera = Some((player.yaw, player.pitch));
+                        key(world, KeyCode::KeyW, false);
+                    }
+                    // The gate runs in Last: the renderer needs later frames to see
+                    // this camera direction before the first image is requested.
+                    if gate.feel.facing_frames < 3 {
+                        return;
+                    }
+                    if gate.shot(world, "windup-before").is_none() {
+                        return;
+                    }
+                }
                 gate.feel.poked = gate.server_now;
                 mouse(world, MouseButton::Left, true);
                 gate.feel.clicked = true;
