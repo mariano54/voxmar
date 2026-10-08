@@ -2097,14 +2097,17 @@ mod tests {
 
     /// Actual lotus on the selected wet component's shore, assigned to the nearest wet
     /// column at its level (ties by x, z). Other same-level pools compete for banks but
-    /// cannot be crossed through dry shore. Skip a pool if its water or bank attribution
-    /// reaches the sampling edge, where another nearer wet column might be unseen.
+    /// cannot be crossed through dry shore. The bank window contains the complete small
+    /// tarn's painted cells; use a wider water context so an unrelated bank near that
+    /// window's edge is attributed to its own water rather than rejecting this pool.
+    /// Skip if the pool's water or the nearest-water proof reaches its sampling edge.
     fn tarn_lotus(world: &Overworld, pit: IVec2, water: i32, reach: i32) -> Option<(usize, usize, usize, IVec2)> {
-        let sampler = world.dense_sampler(pit - reach, pit + reach);
+        let water_reach = reach * 2 + 32;
+        let sampler = world.dense_sampler(pit - water_reach, pit + water_reach);
         let mut wet = Vec::new();
         let mut banks = Vec::new();
-        for z in pit.y - reach..=pit.y + reach {
-            for x in pit.x - reach..=pit.x + reach {
+        for z in pit.y - water_reach..=pit.y + water_reach {
+            for x in pit.x - water_reach..=pit.x + water_reach {
                 let site = sampler.site(x, z);
                 if site.water != water {
                     continue;
@@ -2112,7 +2115,7 @@ mod tests {
                 let p = IVec2::new(x, z);
                 if site.height < water {
                     wet.push(p);
-                } else if site.body == Body::Lake && site.height <= water + 2 && site.height + 1 < WORLD_HEIGHT_FOR_TESTS {
+                } else if (p - pit).abs().max_element() <= reach && site.body == Body::Lake && site.height <= water + 2 && site.height + 1 < WORLD_HEIGHT_FOR_TESTS {
                     banks.push((p, site.height));
                 }
             }
@@ -2131,10 +2134,10 @@ mod tests {
         for (p, height) in banks {
             let nearest = wet.iter().min_by_key(|q| ((**q - p).length_squared(), q.x, q.y)).unwrap();
             if component.contains(nearest) {
-                let margin = reach + 1 - (p - pit).abs().max_element();
+                let margin = water_reach + 1 - (p - pit).abs().max_element();
                 if (*nearest - p).length_squared() >= margin * margin {
                     if std::env::var("AT").is_ok() {
-                        println!("  lotus pool at {pit} not measured: bank {p} attribution reaches sampling edge (reach {reach})");
+                        println!("  lotus pool at {pit} not measured: bank {p} attribution reaches water sampling edge (bank reach {reach}, water reach {water_reach})");
                     }
                     return None;
                 }
