@@ -159,13 +159,27 @@ impl Ground<'_> {
     /// Lookahead may outlive an earlier rejected point; every read stays in the timer.
     fn prefetch(&mut self, first: IVec2, count: usize) {
         assert!(count <= crate::water::SAMPLE_BATCH);
-        if self.seen.len() + count > GROUND_SAMPLE_LIMIT {
+        let points: [IVec2; crate::water::SAMPLE_BATCH] = std::array::from_fn(|i| first + IVec2::new(i as i32, 0));
+        self.prefetch_points(&points[..count]);
+    }
+
+    /// A bounded set of original points, also used by wholly consumed water rings.
+    fn prefetch_points(&mut self, points: &[IVec2]) {
+        assert!(points.len() <= crate::water::SAMPLE_BATCH);
+        if self.seen.len() + points.len() > GROUND_SAMPLE_LIMIT {
             self.seen.clear();
             #[cfg(test)]
             { self.clears += 1; }
         }
-        let points: Vec<_> = (0..count).map(|i| first + IVec2::new(i as i32, 0))
-            .filter(|p| !self.seen.contains_key(p)).map(|p| (p.x, p.y)).collect();
+        let mut missing = Vec::new();
+        for p in points {
+            let point = (p.x, p.y);
+            if !self.seen.contains_key(p) && !missing.contains(&point) {
+                if missing.is_empty() { missing.reserve_exact(points.len()); }
+                missing.push(point);
+            }
+        }
+        let points = missing;
         if points.is_empty() { return; }
         #[cfg(test)]
         { self.prefetched += points.len(); }
@@ -1872,10 +1886,15 @@ fn centre_spec(def: &SettlementsDef, index: usize, kit: &Kit, levers: &Levers, r
 /// The direction of the nearest fresh water within `reach` blocks, if any.
 fn water_near(ground: &mut Ground, centre: IVec2, reach: i32) -> Option<Vec2> {
     for r in (8..=reach).step_by(8) {
-        let mut sum = Vec2::ZERO;
-        for k in 0..24 {
+        let ring: [(Vec2, IVec2); 24] = std::array::from_fn(|k| {
             let dir = Vec2::from_angle(k as f32 * std::f32::consts::TAU / 24.0);
-            let g = ground.at(centre + (dir * r as f32).round().as_ivec2());
+            (dir, centre + (dir * r as f32).round().as_ivec2())
+        });
+        // The original decision sums all 24 points before testing this ring.
+        ground.prefetch_points(&ring.map(|(_, p)| p));
+        let mut sum = Vec2::ZERO;
+        for (dir, p) in ring {
+            let g = ground.at(p);
             if (g.submerged() || g.river > 0.5) && g.body != crate::Body::Sea {
                 sum += dir;
             }
@@ -1889,6 +1908,7 @@ fn water_near(ground: &mut Ground, centre: IVec2, reach: i32) -> Option<Vec2> {
 
 /// Uphill at `centre`, where the ground slopes at all.
 fn slope(ground: &mut Ground, centre: IVec2) -> Option<Vec2> {
+    ground.prefetch_points(&[centre + IVec2::new(16, 0), centre + IVec2::new(-16, 0), centre + IVec2::new(0, 16), centre + IVec2::new(0, -16)]);
     let h = |ground: &mut Ground, dx: i32, dz: i32| ground.at(centre + IVec2::new(dx, dz)).height as f32;
     let grad = Vec2::new(h(ground, 16, 0) - h(ground, -16, 0), h(ground, 0, 16) - h(ground, 0, -16));
     (grad.length() >= 2.0).then(|| grad.normalize())
@@ -1900,16 +1920,20 @@ fn banks_near(ground: &mut Ground, centre: IVec2, reach: i32) -> Vec<(IVec2, Vec
     let mut found = Vec::new();
     for r in (10..=reach.max(12)).step_by(3) {
         let n = (r as f32 * std::f32::consts::TAU / 4.0) as i32;
-        for k in 0..n {
-            let at = centre + (Vec2::from_angle(k as f32 * std::f32::consts::TAU / n as f32) * r as f32).round().as_ivec2();
-            if !standing(&ground.at(at)) {
-                continue;
-            }
-            for (dx, dz) in [(2, 0), (-2, 0), (0, 2), (0, -2)] {
-                let g = ground.at(at + IVec2::new(dx, dz));
-                if g.submerged() && g.body != crate::Body::Sea {
-                    found.push((at, Vec2::new(dx as f32, dz as f32)));
-                    break;
+        let ring: Vec<_> = (0..n).map(|k| centre + (Vec2::from_angle(k as f32 * std::f32::consts::TAU / n as f32) * r as f32).round().as_ivec2()).collect();
+        for points in ring.chunks(crate::water::SAMPLE_BATCH) {
+            // This ring is always fully inspected before the >=8 stop below.
+            ground.prefetch_points(points);
+            for &at in points {
+                if !standing(&ground.at(at)) {
+                    continue;
+                }
+                for (dx, dz) in [(2, 0), (-2, 0), (0, 2), (0, -2)] {
+                    let g = ground.at(at + IVec2::new(dx, dz));
+                    if g.submerged() && g.body != crate::Body::Sea {
+                        found.push((at, Vec2::new(dx as f32, dz as f32)));
+                        break;
+                    }
                 }
             }
         }
@@ -2490,6 +2514,95 @@ mod level_tests {
     use crate::geology::GeoSample;
     use crate::trails::Land;
     use crate::water::Body;
+
+    #[test]
+    fn water_rings_keep_scalar_decisions_and_read_sets() {
+        use std::sync::{Mutex, atomic::{AtomicUsize, Ordering}};
+        struct LandRings {
+            pattern: u8,
+            reads: Mutex<Vec<(i32, i32)>>,
+            batches: AtomicUsize,
+        }
+        impl Land for LandRings {
+            fn sample(&self, x: i32, z: i32) -> GeoSample {
+                self.reads.lock().unwrap().push((x, z));
+                let wet = match self.pattern {
+                    0 => false,
+                    1 => x.rem_euclid(17) < 3,
+                    2 => z.rem_euclid(23) < 3,
+                    3 => true,
+                    _ => x.rem_euclid(17) < 3 && z.rem_euclid(23) < 3,
+                };
+                GeoSample { height: if wet { 139 } else { 140 + (x.rem_euclid(9) + z.rem_euclid(11)) / 5 }, water: 140,
+                    mountain: 0.0, river: 0.0, top: 8, body: if self.pattern == 4 { Body::Sea } else { Body::Creek },
+                    current: None, cavity: None, crag: Default::default(), trail: None, form: Default::default() }
+            }
+            fn samples_cached(&self, points: &[(i32, i32)], _scratch: &mut crate::water::Samples) -> Vec<GeoSample> {
+                assert!(points.len() <= crate::water::SAMPLE_BATCH);
+                self.batches.fetch_add(1, Ordering::Relaxed);
+                points.iter().map(|&(x, z)| self.sample(x, z)).collect()
+            }
+        }
+        // The scalar algorithms before grouping. Exact float sums, bank order and
+        // cardinal short circuits matter as much as the sampled set.
+        fn scalar_direction(ground: &mut Ground, centre: IVec2, reach: i32) -> Option<Vec2> {
+            for r in (8..=reach).step_by(8) {
+                let mut sum = Vec2::ZERO;
+                for k in 0..24 {
+                    let dir = Vec2::from_angle(k as f32 * std::f32::consts::TAU / 24.0);
+                    let g = ground.at(centre + (dir * r as f32).round().as_ivec2());
+                    if (g.submerged() || g.river > 0.5) && g.body != Body::Sea { sum += dir; }
+                }
+                if sum != Vec2::ZERO { return Some(sum.normalize_or(Vec2::X)); }
+            }
+            None
+        }
+        fn scalar_banks(ground: &mut Ground, centre: IVec2, reach: i32) -> Vec<(IVec2, Vec2)> {
+            let mut found = Vec::new();
+            for r in (10..=reach.max(12)).step_by(3) {
+                let n = (r as f32 * std::f32::consts::TAU / 4.0) as i32;
+                for k in 0..n {
+                    let at = centre + (Vec2::from_angle(k as f32 * std::f32::consts::TAU / n as f32) * r as f32).round().as_ivec2();
+                    if !standing(&ground.at(at)) { continue; }
+                    for (dx, dz) in [(2, 0), (-2, 0), (0, 2), (0, -2)] {
+                        let g = ground.at(at + IVec2::new(dx, dz));
+                        if g.submerged() && g.body != Body::Sea {
+                            found.push((at, Vec2::new(dx as f32, dz as f32)));
+                            break;
+                        }
+                    }
+                }
+                if found.len() >= 8 { break; }
+            }
+            found
+        }
+        let mut directions = 0;
+        let mut banks = 0;
+        for pattern in 0..=4 {
+            for centre in [IVec2::ZERO, IVec2::new(-31, 19), IVec2::new(1007, -1023)] {
+                for reach in [0, 8, 24, 64] {
+                    let make = || LandRings { pattern, reads: Mutex::new(Vec::new()), batches: AtomicUsize::new(0) };
+                    let (scalar, batched) = (make(), make());
+                    let (mut a, mut b) = (Ground::new(&scalar), Ground::new(&batched));
+                    let expected = scalar_direction(&mut a, centre, reach);
+                    assert_eq!(water_near(&mut b, centre, reach), expected);
+                    directions += usize::from(expected.is_some());
+                    let expected = scalar_banks(&mut a, centre, reach);
+                    assert_eq!(banks_near(&mut b, centre, reach), expected);
+                    banks += expected.len();
+                    let h = |g: &mut Ground, dx, dz| g.at(centre + IVec2::new(dx, dz)).height as f32;
+                    let grad = Vec2::new(h(&mut a, 16, 0) - h(&mut a, -16, 0), h(&mut a, 0, 16) - h(&mut a, 0, -16));
+                    assert_eq!(slope(&mut b, centre), (grad.length() >= 2.0).then(|| grad.normalize()));
+                    let (mut original, mut grouped) = (scalar.reads.into_inner().unwrap(), batched.reads.into_inner().unwrap());
+                    original.sort_unstable();
+                    grouped.sort_unstable();
+                    assert_eq!(grouped, original, "pattern {pattern}, {centre:?}, reach {reach}: no extra terrain reads");
+                    assert!(batched.batches.load(Ordering::Relaxed) > 0);
+                }
+            }
+        }
+        assert!(directions > 0 && banks > 0, "positive direction and ordered-bank fixtures must occur");
+    }
 
     #[test]
     fn water_search_only_matters_for_eligible_houses() {

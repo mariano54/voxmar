@@ -1057,6 +1057,8 @@ mod tests {
         let mut cache = Freshwater::default();
         for seed in [7, 42, 7] {
             let world = crate::Overworld::new(seed, registry.clone());
+            let mut wet = 0;
+            let mut dry = 0;
             for (first, step, size) in [
                 (IVec2::new(-1904, 528), 16, 25),
                 (IVec2::new(-1032, -1032), 4, 9),
@@ -1080,6 +1082,7 @@ mod tests {
                 assert_eq!(cache.id, world.rivers.id);
                 profile_queries(true);
                 for (i, &sample) in samples.iter().enumerate() {
+                    if freshwater(&sample) { wet += 1; } else { dry += 1; }
                     let p = first + IVec2::new(i as i32 % size, i as i32 / size) * step;
                     assert_eq!(sample, world.rivers.sample(world.stages(), p.x, p.y, false), "seed {seed} point {p:?}");
                     assert_eq!(cache.seen[&p], sample, "complete sealed sample is preserved");
@@ -1090,6 +1093,7 @@ mod tests {
                 assert_eq!(work[3], 0, "every seeded wet and dry centre reuses original terrain");
                 assert_eq!(work[6], samples.len());
             }
+            assert!(wet > 0 && dry > 0, "seed {seed}: seeded wet and dry controls must both occur ({wet}/{dry})");
             // An oversized grid retains only bounded storage and resets before
             // inserting. The retained row prefix must keep the original coordinates.
             let first = IVec2::splat(300_000);

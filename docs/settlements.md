@@ -131,6 +131,10 @@ their exact region bounds, including the neighbour halo used to seal water. Layo
 retries reuse those original land samples. Rectangle checks prefetch only missing
 centres in row chunks of at most 32, then retain every original row-major water,
 river, solid-ground and height check; unused lookahead still belongs to the full timer.
+Water-direction rings batch all 24 original samples, slopes batch their four original
+cardinal samples, and bank searches batch ring centres in groups of at most 32. Those
+decisions already consume every centre before stopping; cardinal bank checks retain
+their original short-circuit order. No extra terrain or altered RNG is needed.
 The temporary terrain memo caps samples at 32,768 so spawn layout retries can reuse
 the same land without the observed 16,384-point eviction. Water-query samples remain
 bounded to 16,384. Relief evaluation allocates noise state only for missing corners;
