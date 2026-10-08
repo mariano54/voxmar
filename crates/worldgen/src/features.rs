@@ -91,9 +91,9 @@ impl Features {
         }
         let site = area.sampler.site_on(&geo, x, z, 0, 0.0);
         let roll = rng.unit();
-        // Nothing grows over a cave mouth, nor on the rim of one: `surface_open` reads noise
-        // rather than the carved blocks and can miss a mouth's edge by a column, which left a
-        // trunk standing over a pit deeper than its foot reaches down.
+        // Nothing grows over a cave mouth, nor beside one: a tree's roots and thick-trunk feet
+        // reach the columns next to its candidate, where a carve can be deeper than a foot
+        // sinks (`trees::SINK`), which left a flare root hanging over a pit.
         if area.caves.surface_open(x, z, &geo) || RIM.iter().any(|&(dx, dz)| area.caves.surface_open(x + dx, z + dz, &area.geology.get(x + dx, z + dz))) {
             return None;
         }

@@ -641,11 +641,24 @@ impl Grower<'_, '_> {
         put
     }
 
+    /// Whether a column's own blocks hold something firm, or lie beyond the column (another
+    /// column decides there), within `SINK` blocks below `cell`: whether wood sunk from
+    /// `cell` would rest.
+    fn rests(&self, cell: IVec3) -> bool {
+        !self.blocks.contains(cell) || (0..=SINK).any(|d| !self.blocks.soft(cell - IVec3::Y * d))
+    }
+
     /// Continues wood down from `cell` through air, water, leaves and small plants to the
-    /// first firm block, at most `SINK` blocks. Only the column holding `cell` writes it,
-    /// from its own blocks, so every column agrees.
+    /// first firm block, at most `SINK` blocks (nothing if none lies within reach). Only the column
+    /// holding `cell` writes it, from its own blocks, so every column agrees.
     fn sink(&mut self, cell: IVec3, log: BlockId) {
         if !self.reachable(cell) || !self.blocks.contains(cell) {
+            return;
+        }
+        // A column with no firm block within reach, over a pit a carve opened beside the
+        // trunk, is left out rather than hung over it (as `fallen` leaves out a block over a
+        // hole).
+        if !self.rests(cell) {
             return;
         }
         for d in 0..SINK {
@@ -730,6 +743,12 @@ impl Grower<'_, '_> {
                     let cell = foot + d * k;
                     let y = (self.ground)(cell.x, cell.z) + 1;
                     if (y - foot.y).abs() > 1 {
+                        break;
+                    }
+                    // A root over a pit a carve opened beside the trunk is left out, with its
+                    // sunk column, rather than hung over it: its own column decides, from its
+                    // own blocks, so every column agrees.
+                    if !self.rests(cell.with_y(y - 1)) {
                         break;
                     }
                     let tall = if k == 1 && u < 0.5 * strength { 2 } else { 1 };
