@@ -4756,6 +4756,9 @@ fn end_wear(world: &mut World, gate: &mut Gate, now: f32) {
         net.command(&format!("clear {}", name.trim_start_matches("base:")));
     }
     net.command("skill defence 1");
+    // The fights before may have killed every creature about: one is summoned beside the
+    // player, for `combat_hud` to tell its blows at.
+    net.command(&format!("summon {} 1 ~ ~ ~2", CREATURE.trim_start_matches("base:")));
     gate.next(Step::CombatHud, now);
 }
 
@@ -4825,6 +4828,14 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     };
     match gate.phase {
         0 => {
+            // A creature to tell blows at (`end_wear` summoned one): waited for.
+            if creature.is_none() {
+                if gate.server_in_phase() > UNANSWERED {
+                    gate.check("combat marks", Err("no creature near to mark".into()));
+                    gate.next(Step::Cook, now);
+                }
+                return;
+            }
             // What the fights before drew: a splat for every blow, and the meter.
             let (struck, hurt) = {
                 let fighting = world.resource::<crate::fight::Fighting>();
@@ -4850,11 +4861,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 ))
             };
             gate.check("combat marks: fights", result);
-            let Some((id, feet)) = creature else {
-                gate.check("combat marks", Err("no creature near to mark".into()));
-                gate.next(Step::Cook, now);
-                return;
-            };
+            let Some((id, feet)) = creature else { return };
             aim_at(world, feet + Vec3::Y * 0.3);
             gate.count_before = world.resource::<SplatsShown>().flashes;
             tell_blows(world, id);
