@@ -519,12 +519,6 @@ impl Server {
         true
     }
 
-    /// Accepts the client's predicted movement if it is physically plausible, otherwise
-    /// snaps the client back. Plausible is within what their budgets allow (no faster
-    /// across, up or down than their top speeds by the clock, however many inputs they
-    /// send), on foot no higher above where they last stood or swam than a jump takes them
-    /// (and coming down once they have been off the ground a while), and through no wall
-    /// on the way.
     /// Recover a legacy player's spelling from the ownership that still knows it, and
     /// fold aliases left by older case-changing logins. New saves' explicit name wins.
     fn canonical_name(&mut self, requested: String, saved: bool) -> String {
@@ -564,6 +558,12 @@ impl Server {
         canonical
     }
 
+    /// Accepts the client's predicted movement if it is physically plausible, otherwise
+    /// snaps the client back. Plausible is within what their budgets allow (no faster
+    /// across, up or down than their top speeds by the clock, however many inputs they
+    /// send), on foot no higher above where they last stood or swam than a jump takes them
+    /// (and coming down once they have been off the ground a while), and through no wall
+    /// on the way.
     fn input(&mut self, id: PlayerId, input: PlayerInput) {
         let at = self.arrival;
         let player = &self.players[&id];
