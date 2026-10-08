@@ -3394,6 +3394,12 @@ mod level_tests {
             }
             assert!(fast.misses <= original.misses);
             skipped += original.misses - fast.misses;
+            if let Some((&p, &sample)) = original.seen.iter().find(|(_, g)| crate::water::freshwater(g)) {
+                fast.seen.insert(p, sample);
+                fast.dry_water.insert(p);
+                assert!(fast.freshwater(p), "a genuinely wet full sample takes precedence over a poisoned false witness");
+                fast.dry_water.remove(&p);
+            }
             assert!(!fast.dry_water.is_empty(), "real absence proof must be used");
             for &p in fast.dry_water.iter().take(16) {
                 assert!(!crate::water::freshwater(&land.sample(p.x, p.y)), "every negative witness agrees with complete terrain");
@@ -3421,6 +3427,15 @@ mod level_tests {
                 assert_eq!(fast.clears, before + 1);
                 assert!(fast.dry_water.is_empty());
             }
+            let fill = GROUND_SAMPLE_LIMIT - fast.seen.len();
+            fast.dry_water.extend((0..fill).map(|i| IVec2::new(200_000 + i as i32, 200_000)));
+            assert_eq!(fast.seen.len() + fast.dry_water.len(), GROUND_SAMPLE_LIMIT);
+            assert!(!fast.seen.contains_key(&p) && !fast.dry_water.contains(&p));
+            let before = (fast.clears, fast.misses);
+            assert!(!fast.freshwater(p));
+            assert_eq!((fast.clears, fast.misses), (before.0 + 1, before.1));
+            assert!(fast.seen.is_empty());
+            assert_eq!(fast.dry_water.len(), 1, "absence insertion must reset both stores at their joint cap without reading geology");
         }
         assert!(wet_count > 0 && dry_count > 0 && skipped > 0, "actual wet/dry decisions and saved terrain reads are required");
     }
