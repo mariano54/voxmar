@@ -1039,14 +1039,20 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 /// too small for a stair even so (a mod's narrow house) has fewer storeys, down to one.
 pub fn make_room_for_stairs(spec: &mut Spec) {
     let fits = |spec: &Spec| !stairs(spec, spec.door.clamp(1, spec.w - 2), spec.chimney().map(|c| c.0)).iter().any(Option::is_none);
-    if spec.chimney().is_some() && !fits(spec) {
+    // The same specification has the same flights. Only its mutations invalidate
+    // the fit, so successful chimney/wall checks need not build those paths again.
+    let mut fit = None;
+    if spec.chimney().is_some() && !*fit.get_or_insert_with(|| fits(spec)) {
         spec.extras.retain(|e| *e != Extra::Chimney);
+        fit = None;
     }
-    while spec.wall > 3 && !fits(spec) {
+    while spec.wall > 3 && !*fit.get_or_insert_with(|| fits(spec)) {
         spec.wall -= 1;
+        fit = None;
     }
-    while spec.storeys > 1 && !fits(spec) {
+    while spec.storeys > 1 && !*fit.get_or_insert_with(|| fits(spec)) {
         spec.storeys -= 1;
+        fit = None;
     }
 }
 
@@ -1061,9 +1067,8 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
         return Vec::new();
     }
     // Too narrow for a run round the inside: a storey above with no way up.
-    let none = vec![None; (spec.storeys - 1) as usize];
     if w < 4 || d < 4 {
-        return none;
+        return vec![None; (spec.storeys - 1) as usize];
     }
     // The cells inside the walls, round in order: along the back, down the left, along the
     // front and up the right.
@@ -1075,7 +1080,7 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
     ring.extend((z0 + 1..z1).map(|z| (x1, z)));
     ring.dedup();
     if ring.len() < run + 1 {
-        return none;
+        return vec![None; (spec.storeys - 1) as usize];
     }
     let mut flights = Vec::new();
     let mut below: Vec<(i32, i32)> = Vec::new();
@@ -1090,8 +1095,8 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
         };
         let n = ring.len();
         let found = (0..n).flat_map(|start| [1isize, -1].map(|dir| (start, dir))).find_map(|(start, dir)| {
-            let flight: Vec<(i32, i32)> = (0..run).map(|k| ring[(start as isize + dir * k as isize).rem_euclid(n as isize) as usize]).collect();
-            (!flight.iter().any(banned)).then_some(flight)
+            let at = |k| ring[(start as isize + dir * k as isize).rem_euclid(n as isize) as usize];
+            (0..run).all(|k| !banned(&at(k))).then(|| (0..run).map(at).collect::<Vec<_>>())
         });
         below = found.as_ref().map_or_else(Vec::new, |f| f[..(STAIRWELL + 1).min(f.len())].to_vec());
         flights.push(found);

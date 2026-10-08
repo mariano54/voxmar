@@ -1029,6 +1029,8 @@ mod tests {
         assert_eq!(scratch.columns.len(), 16_384);
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.columns.len(), 5);
+        scratch.columns.insert((p, key), wrong);
+        scratch.columns.insert((p, wrong_key), wrong);
         let another = crate::Overworld::new(42, registry);
         assert_eq!(another.rivers.sample_cached(another.stages(), p.x, p.y, &mut scratch), another.rivers.sample(another.stages(), p.x, p.y, false));
         assert_eq!(scratch.id, another.rivers.id);

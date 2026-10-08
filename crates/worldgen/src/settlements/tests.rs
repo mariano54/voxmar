@@ -1239,6 +1239,27 @@ fn slopes_never_bury_walls() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Rejected candidate paths need no allocation, but the first valid flight and the
+/// holes it leaves for the next storey must keep their original order.
+#[test]
+fn stair_candidates_keep_original_first_valid_paths() {
+    use super::def::{Form, Roof};
+    use super::house::{self, Kind, Spec};
+    let mut spec = Spec {
+        kind: Kind::House, w: 5, d: 5, wall: 3, storeys: 3, roof: Roof::Gable, pitch: 1, ridge_x: false,
+        extras: Vec::new(), door: 2, shed: 0, wing: None, stilts: 0, regular: true, window_chance: 0.5,
+        form: Form::Box, inside: Vec::new(), centre: None, seed: 1,
+    };
+    let back = vec![(3, 3), (2, 3), (1, 3), (1, 2)];
+    let front = vec![(1, 1), (2, 1), (3, 1), (3, 2)];
+    assert_eq!(house::stairs(&spec, 2, None), vec![Some(back.clone()), Some(front.clone())]);
+    assert_eq!(house::stairs(&spec, 2, Some((3, 3))), vec![Some(vec![(2, 3), (1, 3), (1, 2), (1, 1)]), None]);
+    spec.kind = Kind::Inn;
+    assert_eq!(house::stairs(&spec, 2, None), vec![Some(back.clone()), Some(front)]);
+    spec.form = Form::ShopFront;
+    assert_eq!(house::stairs(&spec, 2, None), vec![None, Some(back)]);
+}
+
 /// Every storey but the top of every house of more than one has a stair up, round the
 /// walls clear of the door, a shop's counter and the chimney, whatever its size; an inn's
 /// stairs keep clear of both columns of its wide door.
