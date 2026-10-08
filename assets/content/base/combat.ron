@@ -79,6 +79,9 @@
         reach: 2.8,
         reach_slack: 0.6,
         reach_lag: 0.15,
+        // Touching a creature (tending, looking closely, letting it go) reaches 3.6 blocks
+        // whatever is in hand, and `reach_slack` more.
+        touch: 3.6,
         cleave_cone: 0.5,
         // The wiki's "No walking away" (drafts 58 and 65): an attack lunges as it lands (1.2
         // blocks unless the creature says: quick animals 1.5, big ones 1.0), and a wind-up
@@ -94,10 +97,8 @@
         // Seconds after trading blows with a creature that a right click at it guards
         // (with something that guards) rather than looks closely at it.
         engaged: 6.0,
-        // The wiki's draft 63: Defence experience only while fighting back (a blow at the
-        // creature within 10 s) and from creatures of at least half the Defence level.
-        defence_xp_window: 10.0,
-        defence_xp_level: 0.5,
+        // Defence experience (the wiki's draft 63) follows creatures.ron's `defence`: only
+        // while fighting back, from creatures of at least half the Defence level.
     ),
     dodges: [
         (weight: "light", distance: 3.0, time: 0.25, safe: (0.04, 0.22), cooldown: 1.0),

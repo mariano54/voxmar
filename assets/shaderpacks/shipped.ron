@@ -1,0 +1,6 @@
+// The shader packs the game ships, by file, in the order the settings offer them after
+// the built-in Classic. They load before any other pack here, so a pack dropped in beside
+// them can't take one's name, and the language tests hold each one named in every language.
+[
+    "verdant.ron",
+]

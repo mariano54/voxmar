@@ -240,7 +240,7 @@ fn index(launch: Res<Launch>, mut catalogue: ResMut<Catalogue>) {
     catalogue.entries = blocks
         .ids()
         // Not a variant's other looks, nor a fluid's other states: what a player would hold.
-        .filter(|&id| !id.is_air() && blocks.def(id).render != RenderKind::Invisible && blocks.def(id).variant_of.is_none())
+        .filter(|&id| !id.is_air() && blocks.def(id).render != RenderKind::Invisible && !blocks.placement_form(id))
         .filter(|&id| blocks.fluid(id).is_none_or(|state| blocks.fluids()[state.fluid.0 as usize].source == id))
         .map(|item| {
             let def = blocks.def(item);

@@ -487,6 +487,11 @@ copied.
   slide and float, their pickup delays, reach, merging and five-minute life, the copies a
   big stack shows, the spin and bob, flat items drawn extruded a texel thick, Q and Ctrl+Q
   to throw, and the pickup pop (`entity.item.pickup`, read from the player's install).
+  Its block models: blocks drawn as boxes given in 16ths of a block (`from`, `to`), each
+  face's texture laid by where it lies on the cell unless told otherwise, faces that hide
+  behind a solid neighbour (`cullface`), boxes turned about the vertical, and stairs and
+  slabs that face the player who places them and go upside down against a ceiling
+  (`crates/engine/src/shape.rs`, `render/voxel.wgsl`).
 - Where: `crates/engine/src/fluid.rs`, `crates/client/src/breaking.rs`,
   `render/cracks.rs`, `render/lighting.wgsl`, `music.rs`, `sfx/minecraft.rs`,
   `textures.rs`, `crates/worldgen/src/caves.rs`, `crates/engine/src/inventory.rs`,

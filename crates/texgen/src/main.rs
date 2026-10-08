@@ -8,7 +8,8 @@
 //!
 //! The pack defaults to `assets/packs/default`. `sheet` draws every texture (recipes and
 //! PNGs) whose name contains one of `--only`'s words, large, tiled 3×3 and at a distance;
-//! `--compare` adds the same name from another pack (a folder, zip or jar) alongside.
+//! `--compare` adds the same name from another pack (a folder, zip or jar, or a Voxmar
+//! pack's recipes) alongside.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -151,14 +152,21 @@ fn write(path: &Path, image: &Image) -> Result<(), String> {
     std::fs::write(path, image.encode_png()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Another pack to compare against: a folder, or a zip or jar.
+/// Another pack to compare against: a folder, or a zip or jar. A folder of recipe books (a
+/// Voxmar pack) is drawn as it would be in the game, at its own resolution.
 enum Reference {
     Folder(PathBuf),
     Zip(zip::ZipArchive<std::fs::File>),
+    Recipes { library: Box<Library>, resolution: u32, dir: PathBuf },
 }
 
 impl Reference {
     fn open(path: &Path) -> Result<Self, String> {
+        if path.join("recipes").is_dir() {
+            let library = Box::new(Library::load(path).map_err(|e| e.to_string())?);
+            let resolution = Manifest::read(path).map_err(|e| e.to_string())?.map_or(0, |m| m.resolution);
+            return Ok(Reference::Recipes { library, resolution, dir: path.to_owned() });
+        }
         if path.is_dir() {
             return Ok(Reference::Folder(path.to_owned()));
         }
@@ -167,10 +175,17 @@ impl Reference {
     }
 
     fn read(&mut self, name: &str) -> Option<Image> {
+        if let Reference::Recipes { library, resolution, dir } = self {
+            return match library.render_at_least(name, if drawn_at_resolution(name) { *resolution } else { 0 }) {
+                Some(Ok(image)) => Some(image),
+                _ => Reference::Folder(dir.clone()).read(name),
+            };
+        }
         ["textures", "assets/minecraft/textures"].iter().find_map(|root| {
             let path = format!("{root}/{name}.png");
             let bytes = match self {
                 Reference::Folder(dir) => std::fs::read(dir.join(&path)).ok()?,
+                Reference::Recipes { .. } => return None,
                 Reference::Zip(archive) => {
                     let mut file = archive.by_name(&path).ok()?;
                     let mut bytes = Vec::new();

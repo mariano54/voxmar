@@ -28,19 +28,26 @@ static LIMITS: std::sync::RwLock<Vec<u8>> = std::sync::RwLock::new(Vec::new());
 
 /// Each item's pouch, by block id: the pouch item that carries it when the player has one
 /// (content's pouches: a pouch tagged `holds:seed` carries what is tagged `seed`).
-static POUCHES: std::sync::RwLock<Vec<Option<BlockId>>> = std::sync::RwLock::new(Vec::new());
+static POUCHES: std::sync::RwLock<Vec<Option<(BlockId, u16)>>> = std::sync::RwLock::new(Vec::new());
 
-/// Sets each item's pouch, by block id.
-pub fn set_pouches(pouches: Vec<Option<BlockId>>) {
+/// Sets each item's pouch, by block id, and how many of the item it holds (content's
+/// `holds_each:N` tag on the pouch).
+pub fn set_pouches(pouches: Vec<Option<(BlockId, u16)>>) {
     *POUCHES.write().unwrap_or_else(|e| e.into_inner()) = pouches;
+}
+
+/// The pouch item that carries `item`, if any, and how many of it that holds.
+pub fn pouch_holding(item: BlockId) -> Option<(BlockId, u16)> {
+    POUCHES.read().unwrap_or_else(|e| e.into_inner()).get(item.0 as usize).copied().flatten()
 }
 
 /// The pouch item that carries `item`, if any.
 pub fn pouch_for(item: BlockId) -> Option<BlockId> {
-    POUCHES.read().unwrap_or_else(|e| e.into_inner()).get(item.0 as usize).copied().flatten()
+    pouch_holding(item).map(|(pouch, _)| pouch)
 }
 
-/// How many of one kind a pouch holds, and how many kinds all pouches together.
+/// How many of one kind a pouch holds unless its `holds_each:N` says, and how many kinds
+/// all pouches together.
 pub const POUCH_EACH: u16 = 1000;
 pub const POUCH_KINDS: usize = 40;
 
@@ -158,7 +165,8 @@ impl Inventory {
             None => return 0,
         };
         let held = &mut self.pouched[index].1;
-        let moved = (count as u16).min(POUCH_EACH - *held);
+        let each = pouch_holding(item).map_or(POUCH_EACH, |(_, each)| each);
+        let moved = (count as u16).min(each.saturating_sub(*held));
         *held += moved;
         moved as u8
     }
@@ -558,8 +566,8 @@ mod tests {
         // Items 900 and 901 go in pouch item 902 (ids no other test uses).
         let (seed, other, pouch) = (BlockId(900), BlockId(901), BlockId(902));
         let mut pouches = vec![None; 903];
-        pouches[900] = Some(pouch);
-        pouches[901] = Some(pouch);
+        pouches[900] = Some((pouch, 1000));
+        pouches[901] = Some((pouch, 1000));
         set_pouches(pouches);
         let mut inv = Inventory::default();
         // Without the pouch, seeds take slots as usual.

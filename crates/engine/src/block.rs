@@ -23,6 +23,7 @@
 
 use std::collections::BTreeMap;
 
+use glam::IVec3;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +60,10 @@ pub enum RenderKind {
     /// nothing and lets light through. A plant gives way to a block placed into it and
     /// goes when the block beneath it does.
     Plant,
+    /// Drawn as its shape's boxes (`shape`, see [`crate::shape`]): a barrel, a crate, a slab,
+    /// stairs, a door. Alpha-tested. It hides its neighbours' faces and blocks light only
+    /// where its boxes cover a whole side of the cell.
+    Model,
 }
 
 /// The material a block sounds like when stepped on, placed or broken.
@@ -108,7 +113,7 @@ pub enum Tint {
     Water,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Textures {
     None,
     All(String),
@@ -127,7 +132,8 @@ impl Textures {
         }
     }
 
-    fn face(&self, face: Face) -> Option<&str> {
+    /// The texture of `face`, if it has one.
+    pub fn face(&self, face: Face) -> Option<&str> {
         Some(match (self, face) {
             (Textures::None, _) => return None,
             (Textures::All(t), _) => t,
@@ -207,6 +213,84 @@ pub struct BlockDef {
     /// Particles it gives off while near the player: a campfire's smoke, embers and sparks,
     /// a torch's flame. Only the client draws them.
     pub particles: Vec<Emission>,
+    /// Whether it comes in four facings: the block itself faces north (-z), and blocks
+    /// `<name>_east`, `<name>_south` and `<name>_west` are made from it, turned (their
+    /// particles too), each dropping the block itself. A wall torch faces out from its
+    /// wall; a stair, door or bed the way it was placed.
+    pub facing: bool,
+    /// For a block made in one of its facings (see `facing`): which way it faces.
+    pub faces: Option<Facing>,
+    /// Whether it also comes upside down (a block drawn as a shape): `<name>_top` is made
+    /// from it, its shape turned over (a top slab, stairs under a ceiling), and made in its
+    /// facings too if it has them, each dropping the block itself. Placed against the
+    /// underside of a block, it goes upside down.
+    pub flips: bool,
+    /// For a block made upside down from another (see `flips`).
+    pub flipped: bool,
+    /// Its shape, by name (`base:barrel`), for a block drawn as one (`render: Model`).
+    pub shape: Option<String>,
+    /// The block placed instead when this one is placed against a block's side, by name,
+    /// facing out from it: a torch on a wall is a wall torch (`facing` and `support: Wall`).
+    pub wall: Option<String>,
+}
+
+/// The name suffix of a block made upside down (see [`BlockDef::flips`]), before any facing's.
+const FLIPPED: &str = "_top";
+
+/// One of the four ways a block can face (see [`BlockDef::facing`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Facing {
+    /// Towards -z.
+    #[default]
+    North,
+    /// Towards +x.
+    East,
+    /// Towards +z.
+    South,
+    /// Towards -x.
+    West,
+}
+
+impl Facing {
+    pub const ALL: [Facing; 4] = [Facing::North, Facing::East, Facing::South, Facing::West];
+
+    pub const fn normal(self) -> IVec3 {
+        match self {
+            Facing::North => IVec3::NEG_Z,
+            Facing::East => IVec3::X,
+            Facing::South => IVec3::Z,
+            Facing::West => IVec3::NEG_X,
+        }
+    }
+
+    /// The facing pointing out of a block's side; none for its top and bottom.
+    pub fn of_face(face: Face) -> Option<Facing> {
+        Facing::ALL.into_iter().find(|f| f.normal() == face.normal())
+    }
+
+    /// The name suffix of the block made in this facing (the block itself faces north).
+    fn suffix(self) -> &'static str {
+        match self {
+            Facing::North => "",
+            Facing::East => "_east",
+            Facing::South => "_south",
+            Facing::West => "_west",
+        }
+    }
+
+    /// A point in a cell (from its lower corner, in blocks) given for the block facing
+    /// north, where it lies once the block is turned to face this way.
+    pub fn turn(self, at: [f32; 3]) -> [f32; 3] {
+        let (x, z) = (at[0] - 0.5, at[2] - 0.5);
+        // Clockwise seen from above: north (-z) to east (+x) to south (+z) to west.
+        let (x, z) = match self {
+            Facing::North => (x, z),
+            Facing::East => (-z, x),
+            Facing::South => (-x, -z),
+            Facing::West => (z, -x),
+        };
+        [x + 0.5, at[1], z + 0.5]
+    }
 }
 
 /// A stream of particles a block gives off, as the client draws it near the player. The
@@ -236,6 +320,9 @@ pub struct Emission {
     /// embers and sparks add their light (`Add`), smoke is a soft veil (`Veil`), and a
     /// `Cutout` particle is solid where it shows, as a piece of a broken block is.
     pub blend: Option<ParticleBlend>,
+    /// How much of what lies behind a particle that adds light it hides, 0..1, instead of
+    /// the style's own: a spark is solid and hides it all; a flame's tongue hides some.
+    pub hides: Option<f32>,
 }
 
 /// How a particle is drawn over what lies behind it.
@@ -253,6 +340,17 @@ pub enum ParticleBlend {
 }
 
 impl ParticleStyle {
+    /// How much of what lies behind it a particle of the style hides when it adds light,
+    /// unless an emission says otherwise (`Emission::hides`): embers and sparks are solid
+    /// specks, so over a bright day sky they stay their colour instead of a salmon tint.
+    pub fn hides(self) -> f32 {
+        match self {
+            ParticleStyle::Flame => 0.6,
+            ParticleStyle::Ember | ParticleStyle::Spark => 1.0,
+            ParticleStyle::Smoke => 0.0,
+        }
+    }
+
     /// How the style is drawn unless an emission says otherwise.
     pub fn blend(self) -> ParticleBlend {
         match self {
@@ -274,6 +372,7 @@ impl Default for Emission {
             size: 1.0,
             height: None,
             blend: None,
+            hides: None,
         }
     }
 }
@@ -311,6 +410,9 @@ pub enum PlantModel {
     /// four sloping sides, and a chip beside it, all of the block's texture, its size
     /// `plant_height` times the usual. Samples of ore over a vein.
     Rock,
+    /// Two crossed quads leaning out from the wall behind it, still, as a torch fixed to
+    /// a wall: for a block in four facings (see [`BlockDef::facing`]) with `support: Wall`.
+    Wall,
 }
 
 /// How an opaque block's textures vary from block to block, as Minecraft's stone, sand and
@@ -337,6 +439,8 @@ pub enum Support {
     Below,
     /// Hangs from the block above (vines, hanging roots, stalactites).
     Above,
+    /// Fixed to the side of the block behind it, the way it does not face: a wall torch.
+    Wall,
 }
 
 impl Default for BlockDef {
@@ -370,11 +474,32 @@ impl Default for BlockDef {
             plant_height: 1.0,
             host: None,
             particles: Vec::new(),
+            facing: false,
+            faces: None,
+            flips: false,
+            flipped: false,
+            wall: None,
+            shape: None,
         }
     }
 }
 
 impl BlockDef {
+    /// For a block made in one of its facings other than north: the block it was made
+    /// from, by name (`base:wall_torch` for `base:wall_torch_east`).
+    pub fn facing_of(&self) -> Option<&str> {
+        self.faces.and_then(|facing| self.name.strip_suffix(facing.suffix())).filter(|base| *base != self.name)
+    }
+
+    /// For a block made from another as one of the forms it is placed in (another facing,
+    /// upside down; see `facing` and `flips`): the block it was made from, which it drops
+    /// and is named by.
+    pub fn form_of(&self) -> Option<&str> {
+        let turned = self.facing_of().unwrap_or(&self.name);
+        let base = if self.flipped { turned.strip_suffix(FLIPPED).unwrap_or(turned) } else { turned };
+        (base != self.name).then_some(base)
+    }
+
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.iter().any(|t| t == tag)
     }
@@ -385,6 +510,7 @@ impl BlockDef {
         fill(&mut self.name);
         self.textures.names_mut().into_iter().for_each(fill);
         self.drops.iter_mut().for_each(fill);
+        self.wall.iter_mut().for_each(fill);
         self.icon.iter_mut().for_each(fill);
         self.tags.iter_mut().for_each(fill);
         for variant in &mut self.variants {
@@ -405,6 +531,8 @@ impl BlockDef {
         self.host.iter_mut().for_each(qualify);
         self.family.iter_mut().for_each(qualify);
         self.variant_of.iter_mut().for_each(qualify);
+        self.wall.iter_mut().for_each(qualify);
+        self.shape.iter_mut().for_each(qualify);
         if let Some(fluid) = &mut self.fluid {
             for meeting in &mut fluid.meets {
                 for name in [&mut meeting.fluid, &mut meeting.source, &mut meeting.flowing, &mut meeting.below] {
@@ -601,6 +729,14 @@ pub struct BlockInfo {
     /// A plant's shape and height (see [`BlockDef::model`]).
     pub model: PlantModel,
     pub plant_height: f32,
+    /// Which way it faces, for a block made in four facings (see [`BlockDef::facing`]).
+    pub facing: Option<Facing>,
+    /// The block placed instead against a block's side, facing north (see
+    /// [`BlockDef::wall`] and [`BlockRegistry::facing`]).
+    pub wall: Option<BlockId>,
+    /// Its shape, made ready for its facing (see [`BlockRegistry::shape`]), for a block
+    /// drawn as one.
+    pub shape: Option<u16>,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -620,6 +756,15 @@ pub struct BlockRegistry {
     info: Vec<BlockInfo>,
     by_name: FxHashMap<String, BlockId>,
     textures: Vec<TextureRef>,
+    /// The shapes blocks drawn as boxes take, each in one facing, once however many blocks
+    /// take it (by [`BlockInfo::shape`]).
+    shapes: Vec<crate::shape::Shape>,
+    /// Where each shape's quads start in all shapes' quads, in order.
+    shape_starts: Vec<u32>,
+    /// The texture layer of each quad of a block's shape, by block.
+    shape_layers: Vec<Vec<u16>>,
+    /// By block, whether it is only a form another takes when placed (`placement_form`).
+    placement_forms: Vec<bool>,
     /// Every block's looks: itself and its variants (shared by the variants).
     looks: Vec<Vec<Look>>,
     fluids: Vec<Fluid>,
@@ -702,8 +847,20 @@ impl BlockRegistry {
     }
 
     /// Builds the registry from fully qualified definitions, making each variant its own
-    /// block right after the block it varies. `core:air` is always id 0.
+    /// block right after the block it varies. `core:air` is always id 0. Read so, without
+    /// the packages' shapes (blocks alone, for a test or a tool), a block drawn as a shape
+    /// has none and draws nothing; the game loads them with [`Self::with_shapes`].
     pub fn new(content: Vec<BlockDef>) -> Result<Self, RegistryError> {
+        Self::build(content, None)
+    }
+
+    /// [`Self::new`], with the shapes blocks drawn as boxes take (`render: Model`), each
+    /// checked as it is made ready (see [`crate::shape::compile`]).
+    pub fn with_shapes(content: Vec<BlockDef>, shape_defs: &crate::shape::Shapes) -> Result<Self, RegistryError> {
+        Self::build(content, Some(shape_defs))
+    }
+
+    fn build(content: Vec<BlockDef>, shape_defs: Option<&crate::shape::Shapes>) -> Result<Self, RegistryError> {
         let air = BlockDef {
             name: Self::AIR.into(),
             render: RenderKind::Invisible,
@@ -714,6 +871,20 @@ impl BlockRegistry {
         let mut defs = vec![air];
         // The fluids, each with the index of its source block.
         let mut fluid_sources = Vec::new();
+        // A block that comes upside down is made both ways up, each then in its facings.
+        let content: Vec<BlockDef> = content
+            .into_iter()
+            .flat_map(|def| {
+                let flipped = def.flips.then(|| BlockDef {
+                    name: format!("{}{FLIPPED}", def.name),
+                    drops: Some(def.drops.clone().unwrap_or_else(|| def.name.clone())),
+                    flips: false,
+                    flipped: true,
+                    ..def.clone()
+                });
+                std::iter::once(def).chain(flipped)
+            })
+            .collect();
         for def in content {
             let base = def.clone();
             if def.fluid.is_some() {
@@ -722,6 +893,23 @@ impl BlockRegistry {
                 }
                 fluid_sources.push(defs.len());
                 defs.extend(fluid::state_defs(&def));
+                continue;
+            }
+            if def.facing {
+                defs.push(BlockDef { faces: Some(Facing::North), ..def });
+                for facing in [Facing::East, Facing::South, Facing::West] {
+                    let mut turned = BlockDef {
+                        name: format!("{}{}", base.name, facing.suffix()),
+                        drops: Some(base.drops.clone().unwrap_or_else(|| base.name.clone())),
+                        faces: Some(facing),
+                        ..base.clone()
+                    };
+                    turned.particles.iter_mut().for_each(|emission| emission.at = facing.turn(emission.at));
+                    defs.push(turned);
+                }
+                if !base.variants.is_empty() {
+                    return Err(RegistryError(format!("`{}` comes in facings, so it cannot have variants too", base.name)));
+                }
                 continue;
             }
             defs.push(def);
@@ -768,7 +956,60 @@ impl BlockRegistry {
         let mut textures: Vec<TextureRef> = Vec::new();
         let mut texture_index = FxHashMap::<(String, Option<String>), u16>::default();
         let mut info = Vec::with_capacity(defs.len());
-        for (def, &fluid) in defs.iter().zip(&states) {
+        let mut shapes: Vec<crate::shape::Shape> = Vec::new();
+        let mut shape_starts = Vec::new();
+        let mut shape_layers = vec![Vec::new(); defs.len()];
+        let mut shape_quads = 0;
+        for (index, (def, &fluid)) in defs.iter().zip(&states).enumerate() {
+            let shape = match (def.render, &def.shape, shape_defs) {
+                // Read without the shapes: it has none.
+                (RenderKind::Model, Some(_), None) => None,
+                (RenderKind::Model, Some(name), Some(shape_defs)) => {
+                    let shape_def = shape_defs.defs.get(name).ok_or_else(|| RegistryError(format!("block `{}` takes unknown shape `{name}`", def.name)))?;
+                    let limits = shape_defs.limits;
+                    if limits.boxes == 0 || limits.quads == 0 {
+                        return Err(RegistryError(format!("block `{}` takes shape `{name}`, but no package sets the shape limits (`limits` in shapes.ron)", def.name)));
+                    }
+                    let turned_over;
+                    let shape_def = if def.flipped {
+                        turned_over = shape_def.upside_down();
+                        &turned_over
+                    } else {
+                        shape_def
+                    };
+                    let (shape, names) = crate::shape::compile(name, &def.name, shape_def, &def.textures, def.faces.unwrap_or_default(), limits)?;
+                    shape_layers[index] = names
+                        .into_iter()
+                        .map(|name| {
+                            *texture_index.entry((name.clone(), None)).or_insert_with(|| {
+                                textures.push(TextureRef { name, under: None, color: def.color, render: def.render });
+                                (textures.len() - 1) as u16
+                            })
+                        })
+                        .collect();
+                    // Blocks of one shape (the stairs of every wood) share its quads.
+                    let found = match shapes.iter().position(|s| *s == shape) {
+                        Some(found) => found,
+                        None => {
+                            shape_starts.push(shape_quads as u32);
+                            shape_quads += shape.quads.len();
+                            if shape_quads > limits.quads {
+                                return Err(RegistryError(format!(
+                                    "block `{}`, shape `{name}`: shapes have more than the {} quads they may have in all",
+                                    def.name, limits.quads
+                                )));
+                            }
+                            shapes.push(shape);
+                            shapes.len() - 1
+                        }
+                    };
+                    Some(found as u16)
+                }
+                (RenderKind::Model, None, _) => return Err(RegistryError(format!("block `{}` is drawn as a shape (`render: Model`) but names none", def.name))),
+                (_, None, _) if def.flips => return Err(RegistryError(format!("block `{}` comes upside down (`flips`) but is not drawn as a shape", def.name))),
+                (_, Some(_), _) => return Err(RegistryError(format!("block `{}` names a shape but is not drawn as one (`render: Model`)", def.name))),
+                _ => None,
+            };
             let host = match &def.host {
                 Some(name) => match by_name.get(name) {
                     Some(&id) => Some(&defs[id.0 as usize]),
@@ -796,7 +1037,7 @@ impl BlockRegistry {
                     .ok_or_else(|| RegistryError(format!("`{}` drops unknown block `{name}`", def.name)))?,
                 None => by_name[&def.name],
             };
-            let occludes = def.render == RenderKind::Opaque;
+            let occludes = def.render == RenderKind::Opaque || shape.is_some_and(|s| shapes[s as usize].is_full_cube());
             info.push(BlockInfo {
                 render: def.render,
                 solid: def.solid,
@@ -817,6 +1058,22 @@ impl BlockRegistry {
                 food: crate::vitals::food_value(&def.tags),
                 model: def.model,
                 plant_height: def.plant_height,
+                facing: def.faces,
+                wall: match &def.wall {
+                    Some(name) => {
+                        let wall = *by_name.get(name).ok_or_else(|| RegistryError(format!("`{}` goes on walls as unknown block `{name}`", def.name)))?;
+                        if defs[wall.0 as usize].faces.is_none() {
+                            return Err(RegistryError(format!("`{}` goes on walls as `{name}`, which has no facings", def.name)));
+                        }
+                        // Placed against a side, it must rest on that side, and go with it.
+                        if defs[wall.0 as usize].support != Some(Support::Wall) {
+                            return Err(RegistryError(format!("`{}` goes on walls as `{name}`, which does not rest on a wall (`support: Wall`)", def.name)));
+                        }
+                        Some(wall)
+                    }
+                    None => None,
+                },
+                shape,
             });
         }
         if textures.len() > 4096 {
@@ -839,7 +1096,11 @@ impl BlockRegistry {
             }
         }
 
-        Ok(Self { defs, info, by_name, textures, looks, fluids })
+        let mut placement_forms: Vec<bool> = defs.iter().map(|def| def.variant_of.is_some() || def.form_of().is_some()).collect();
+        for wall in info.iter().filter_map(|info| info.wall) {
+            placement_forms[wall.0 as usize] = true;
+        }
+        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, placement_forms, looks, fluids })
     }
 
     /// A block's looks for a generator to choose from: the block itself first, then its
@@ -889,6 +1150,35 @@ impl BlockRegistry {
         self.by_name.get(name).copied()
     }
 
+    /// Whether the block is only ever a form another takes when placed, never held: another
+    /// look of a block (`variant_of`), a block turned to face east, south or west or upside
+    /// down, or what a block becomes against a wall (a wall torch). Catalogues list the
+    /// block itself.
+    pub fn placement_form(&self, id: BlockId) -> bool {
+        self.placement_forms[id.0 as usize]
+    }
+
+    /// `block` upside down (see [`BlockDef::flips`]), in the same facing; none if it does
+    /// not come that way or already is.
+    pub fn flipped(&self, block: BlockId) -> Option<BlockId> {
+        let def = self.def(block);
+        if def.flipped || !def.flips {
+            return None;
+        }
+        let base = def.form_of().unwrap_or(&def.name);
+        let up = self.id(&format!("{base}{FLIPPED}"))?;
+        Some(self.info(block).facing.map_or(up, |facing| self.facing(up, facing)))
+    }
+
+    /// `block`, made in four facings (see [`BlockDef::facing`]), turned to face `facing`;
+    /// `block` itself if it has no facings.
+    pub fn facing(&self, block: BlockId, facing: Facing) -> BlockId {
+        let Some(now) = self.info(block).facing else { return block };
+        let name = &self.def(block).name;
+        let base = name.strip_suffix(now.suffix()).unwrap_or(name);
+        self.id(&format!("{base}{}", facing.suffix())).unwrap_or(block)
+    }
+
     /// Like [`Self::id`] but for names the engine or generator cannot work without.
     pub fn expect(&self, name: &str) -> BlockId {
         self.id(name).unwrap_or_else(|| panic!("content is missing required block `{name}`"))
@@ -905,6 +1195,27 @@ impl BlockRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.defs.is_empty()
+    }
+
+    /// The shape a block drawn as boxes takes, made ready for its facing.
+    pub fn shape(&self, id: BlockId) -> Option<&crate::shape::Shape> {
+        self.info(id).shape.map(|s| &self.shapes[s as usize])
+    }
+
+    /// Where a block's shape's quads start in all shapes' quads, in order, as the renderer's
+    /// table holds them.
+    pub fn shape_first_quad(&self, id: BlockId) -> Option<usize> {
+        self.info(id).shape.map(|s| self.shape_starts[s as usize] as usize)
+    }
+
+    /// The texture layer of each quad of a block's shape.
+    pub fn shape_layers(&self, id: BlockId) -> &[u16] {
+        &self.shape_layers[id.0 as usize]
+    }
+
+    /// Every shape blocks take, by [`BlockInfo::shape`]: what the renderer's table holds.
+    pub fn shapes(&self) -> &[crate::shape::Shape] {
+        &self.shapes
     }
 
     pub fn textures(&self) -> &[TextureRef] {
@@ -1018,6 +1329,77 @@ mod tests {
         assert_eq!(defs[0].name, "addon:maple_log");
         assert_eq!(defs[2].drops.as_deref(), Some("addon:maple_sapling"));
         assert!(BlockRegistry::new(defs).is_ok());
+    }
+
+    /// Shapes as a package's shapes.ron gives them.
+    fn shapes() -> crate::shape::Shapes {
+        let file = crate::shape::ShapeFile::read(
+            "base",
+            r#"(
+                shapes: {
+                    "slab": (boxes: [(to: (16, 8, 16), cull: true)]),
+                    "stairs": (boxes: [(to: (16, 8, 16), cull: true), (from: (0, 8, 8), cull: true)]),
+                },
+            )"#,
+        )
+        .unwrap();
+        crate::shape::Shapes::gather(vec![("base".into(), file)], crate::shape::ShapeLimits { boxes: 4, quads: 128 }).unwrap()
+    }
+
+    #[test]
+    fn shaped_blocks_take_their_shapes_and_share_them() {
+        let defs = BlockRegistry::parse(
+            "base",
+            r#"(blocks: [
+                (name: "planks", textures: All("planks")),
+                (name: "slab", render: Model, shape: "slab", flips: true, textures: All("planks")),
+                (name: "birch_slab", render: Model, shape: "slab", textures: All("birch_planks")),
+                (name: "stairs", render: Model, shape: "stairs", facing: true, flips: true, textures: All("planks")),
+            ])"#,
+        )
+        .unwrap();
+        // Blocks read alone (a test's or a tool's) have no shapes; the game's have theirs.
+        let alone = BlockRegistry::new(defs.clone()).unwrap();
+        assert!(alone.shape(alone.expect("base:slab")).is_none() && alone.shapes().is_empty());
+        let registry = BlockRegistry::with_shapes(defs, &shapes()).unwrap();
+        let (slab, birch) = (registry.expect("base:slab"), registry.expect("base:birch_slab"));
+        // One shape for both slabs, each in its own texture.
+        assert_eq!(registry.info(slab).shape, registry.info(birch).shape);
+        assert_ne!(registry.shape_layers(slab), registry.shape_layers(birch));
+        // Only its bottom is whole, so it hides no neighbour and lets light through.
+        let full = |block| registry.shape(block).unwrap().full;
+        assert_eq!(full(slab).map(u8::from), [0, 0, 0, 1, 0, 0]);
+        assert!(!registry.info(slab).occludes);
+        // Upside down it is a top slab, whole on top, dropping and named as the slab.
+        let top = registry.expect("base:slab_top");
+        assert_eq!(registry.flipped(slab), Some(top));
+        assert_eq!(full(top).map(u8::from), [0, 0, 1, 0, 0, 0]);
+        assert_eq!((registry.info(top).drops, registry.def(top).form_of()), (slab, Some("base:slab")));
+        // Stairs come in four facings both ways up, each a placement form of the stairs.
+        let (stairs, east) = (registry.expect("base:stairs"), registry.expect("base:stairs_east"));
+        let east_top = registry.expect("base:stairs_top_east");
+        assert_eq!(registry.flipped(east), Some(east_top));
+        assert_eq!(registry.flipped(east_top), None);
+        assert_eq!((registry.info(east_top).drops, registry.def(east_top).form_of()), (stairs, Some("base:stairs")));
+        assert!(registry.placement_form(east_top) && registry.placement_form(top) && !registry.placement_form(stairs));
+        // Facing east, the stairs climb westwards: their back is their west side.
+        assert_eq!(full(east).map(u8::from), [0, 1, 0, 1, 0, 0]);
+        // A shape is kept once for each facing and way up: two slabs, eight stairs.
+        assert_eq!(registry.shapes().len(), 10);
+    }
+
+    #[test]
+    fn shaped_blocks_are_checked_at_load() {
+        let refused = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).unwrap_err().0
+        };
+        assert!(refused(r#"(name: "a", render: Model, shape: "nope")"#).contains("unknown shape `base:nope`"));
+        assert!(refused(r#"(name: "a", render: Model)"#).contains("names none"));
+        assert!(refused(r#"(name: "a", shape: "slab")"#).contains("not drawn as one"));
+        assert!(refused(r#"(name: "a", flips: true)"#).contains("upside down"));
+        // A torch goes on walls only as a block that rests on a wall, and goes with it.
+        assert!(refused(r#"(name: "torch", wall: "lamp"), (name: "lamp", facing: true)"#).contains("does not rest on a wall"));
     }
 
     #[test]

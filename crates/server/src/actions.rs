@@ -25,7 +25,7 @@
 
 use std::time::{Duration, Instant};
 
-use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placement_cell, supported_by};
+use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
@@ -152,8 +152,16 @@ impl ActionContext for Context<'_> {
         Some(&self.server.content.tools)
     }
 
+    fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
+        Some(&self.server.content.machines)
+    }
+
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
+    }
+
+    fn creature_is_mine(&self, id: u32) -> bool {
+        self.server.keeps(self.agent, id)
     }
 
     fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
@@ -300,6 +308,7 @@ impl Server {
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
+                (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     for pos in std::iter::once(block).chain(plants) {
@@ -312,11 +321,16 @@ impl Server {
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
-                    self.set_block(cell, item);
-                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) {
+                    let placed = placed_block(&Context { server: self, agent }, item, block, face);
+                    self.set_block(cell, placed);
+                    // Marked as the player's: an ore teaches nothing broken again, and a
+                    // furnishing gives itself back (where the world placed one, it does not).
+                    // (By the block placed: a held item may place as another, as a torch does.)
+                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) || self.content.blocks.def(placed).has_tag("furnishing") {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);
+                    self.placed_machine(agent, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     let player = self.players.get_mut(&agent).unwrap();
@@ -364,6 +378,7 @@ impl Server {
                     }
                 }
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
+                (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => {
                     let player = self.players.get_mut(&agent).unwrap();
                     player.bed = Some(block.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
@@ -451,7 +466,8 @@ impl Server {
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block);
         let info = self.content.blocks.info(block);
         let [roll, kick, ..] = crate::items::random3(self.tick, pos, agent ^ 0xd1ce);
-        if roll < bonus && !info.drops.is_air() && info.drop_count > 0 {
+        // Never a furnishing's: it gives itself back only where a player placed it.
+        if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
             let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };
             let body = voxmar_engine::dropped::popped(pos, [kick, roll, kick * roll]);
             self.items.spawn(stack, body, voxmar_engine::dropped::PICKUP_DELAY);
@@ -487,7 +503,7 @@ impl Server {
     }
 
     /// Tells the client the truth about anything it may have predicted.
-    fn reject(&mut self, agent: PlayerId, target: ActionTarget) {
+    pub(crate) fn reject(&mut self, agent: PlayerId, target: ActionTarget) {
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.changed(traits::INVENTORY);
         if let ActionTarget::Block { block, face } = target {
