@@ -69,15 +69,14 @@
     // a third of it to all; how near another windmill's sails becalm one (blocks, any way);
     // how near another water wheel stills one (blocks, any way; each fall or current turns
     // one wheel at most); the wind reckoned while a windmill's land is not loaded; how near
-    // (across and up or down) a kept animal walks a treadwheel; the share of its power a
-    // treadwheel gives with a walker in the worst and the best condition; the in-game days
-    // an animal walks after a player last fed it; seconds between looks at the world; the
+    // (across and up or down) a kept animal walks a treadwheel (what it gives, and how long
+    // it walks after it ate, are its condition's: `condition` in creatures.ron); seconds between looks at the world; the
     // tag of fluids (lava) that neither turn wheels nor wash ore; and where, beside them,
     // water wheels and washers take water and windmills need open air. A later package's
     // `sources` replaces these.
     sources: Some((
         wind_stall: 1.0, wind_full: 10.0, wind_curve: 1.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 0.333, wind_spacing: 4,
-        water_spacing: 4, wind_mean: 5.0, walk_reach: 3.0, walk_height: 2.0, walk_share: (0.5, 1.2), walk_fed_days: 2.0,
+        water_spacing: 4, wind_mean: 5.0, walk_reach: 3.0, walk_height: 2.0,
         survey_seconds: 1.0, hot_tag: "hot",
         water_faces: [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)],
         wind_faces: [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, 1, 0)],

@@ -228,11 +228,6 @@ pub struct SourceRules {
     /// up or down.
     pub walk_reach: f32,
     pub walk_height: f32,
-    /// What a treadwheel gives, as a share of its power, with a walker in the worst and in
-    /// the best condition (between, in proportion).
-    pub walk_share: (f32, f32),
-    /// In-game days a kept animal walks a treadwheel after a player last fed it.
-    pub walk_fed_days: f32,
     /// How a windmill's share grows from stall to full wind: 1 in a straight line, more
     /// slower at first.
     pub wind_curve: f32,
@@ -257,8 +252,6 @@ impl Default for SourceRules {
             hot_tag: "hot".into(),
             walk_reach: 3.0,
             walk_height: 2.0,
-            walk_share: (0.5, 1.2),
-            walk_fed_days: 2.0,
             wind_curve: 1.0,
             water_faces: vec![[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, -1, 0]],
             wind_faces: vec![[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]],
@@ -273,13 +266,6 @@ impl SourceRules {
         let strength = ((wind - self.wind_stall) / (self.wind_full - self.wind_stall).max(0.01)).clamp(0.0, 1.0).powf(self.wind_curve.max(0.01));
         let height = ((y - self.wind_low) / (self.wind_high - self.wind_low).max(1.0)).clamp(self.wind_low_share, 1.0);
         strength * height
-    }
-
-    /// The share of its power a treadwheel gives with a walker in `condition` (0 to 1); an
-    /// animal whose condition is not known walks it at its full power.
-    pub fn walk_share(&self, condition: Option<f32>) -> f32 {
-        let (worst, best) = self.walk_share;
-        condition.map_or(1.0, |c| worst + (best - worst) * c.clamp(0.0, 1.0))
     }
 }
 
@@ -764,15 +750,6 @@ mod tests {
             top = top.max(worth[i]);
         }
         assert!((top - 3.0).abs() < 1e-4, "the ladder's top, washing, gives {top}");
-    }
-
-    #[test]
-    fn a_treadwheel_gives_half_to_six_fifths_by_its_walkers_condition_and_all_when_unknown() {
-        let rules = SourceRules::default();
-        assert_eq!(rules.walk_share(None), 1.0);
-        assert_eq!(rules.walk_share(Some(0.0)), 0.5);
-        assert!((rules.walk_share(Some(1.0)) - 1.2).abs() < 1e-6);
-        assert!((rules.walk_share(Some(5.0 / 7.0)) - 1.0).abs() < 1e-6, "an ordinary animal gives its power");
     }
 
     #[test]
