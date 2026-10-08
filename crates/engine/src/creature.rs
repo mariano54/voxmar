@@ -555,6 +555,11 @@ pub struct Limits {
     pub monsters_near: usize,
     /// Seconds between spawn attempts around each player, one spot an attempt.
     pub spawn_every: f32,
+    /// How far from the player a spot may lie, in blocks: no nearer than `spawn_near` (so
+    /// nothing appears at their feet) and no further than `spawn_far`. Nearer spots put
+    /// more of what the caps allow within sight.
+    pub spawn_near: f32,
+    pub spawn_far: f32,
     /// How heavy "nothing here" weighs against the species that suit a spot (each weighs
     /// its biome, climate, rarity and the hour, about 1 for a common one at home): an
     /// attempt where only monsters suit it (a dark place) or where animals do. Higher
@@ -565,7 +570,7 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 14, monsters_near: 8, spawn_every: 1.5, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
+        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
     }
 }
 
@@ -573,7 +578,7 @@ crate::content::settable! {
     /// The limits one package sets: any of them.
     SetLimits for Limits {
         most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize,
-        spawn_every: f32, empty_for_monsters: f32, empty_for_animals: f32,
+        spawn_every: f32, spawn_near: f32, spawn_far: f32, empty_for_monsters: f32, empty_for_animals: f32,
     }
 }
 
@@ -587,6 +592,9 @@ impl Limits {
         }
         if !(self.spawn_every.is_finite() && self.spawn_every >= 0.05) {
             return error(format!("`spawn_every` ({}) must be at least 0.05 seconds", self.spawn_every));
+        }
+        if !(self.spawn_near.is_finite() && self.spawn_near >= 0.0 && self.spawn_far.is_finite() && self.spawn_far > self.spawn_near) {
+            return error(format!("`spawn_far` ({}) must be more than `spawn_near` ({}), which is 0 or more", self.spawn_far, self.spawn_near));
         }
         if !(self.empty_for_monsters.is_finite() && self.empty_for_monsters >= 0.0 && self.empty_for_animals.is_finite() && self.empty_for_animals >= 0.0) {
             return error("`empty_for_monsters` and `empty_for_animals` must be 0 or more".into());
@@ -1014,6 +1022,10 @@ mod tests {
             Limits { most: ok.wild_most + ok.keepers * ok.kept_each - 1, ..ok },
             Limits { keepers: usize::MAX, ..ok },
             Limits { spawn_every: 0.0, ..ok },
+            Limits { spawn_far: ok.spawn_near, ..ok },
+            Limits { spawn_near: -1.0, ..ok },
+            Limits { spawn_every: f32::NAN, ..ok },
+            Limits { empty_for_monsters: f32::INFINITY, ..ok },
             Limits { empty_for_animals: -1.0, ..ok },
         ] {
             let blocks = BlockRegistry::new(vec![]).unwrap();

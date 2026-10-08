@@ -43,8 +43,8 @@ one's, and the load log names both packages and the numbers replaced, so a mod t
 without forking base (the project-wide rule for single-valued data, Design draft 91):
 
 ```ron
-limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 14, monsters_near: 8,
-         spawn_every: 1.5, empty_for_monsters: 1.5, empty_for_animals: 2.5),
+limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8,
+         spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5),
 ```
 
 Wild creatures and kept animals have budgets of their own, so a big ranch never stops wild
@@ -64,10 +64,13 @@ animals and monsters spawning for anyone:
   players at their cap, wild ones get fewer.
 - `animals_near` and `monsters_near` cap each kind within 64 blocks of a player.
 - `spawn_every` is the seconds between spawn attempts around each player (one spot an
-  attempt, 20 to 56 blocks out), and `empty_for_animals` / `empty_for_monsters` how heavy
-  "nothing here" weighs against the species that suit the spot (a common one at home weighs
-  about 1), so a higher number leaves more spots empty. Together with the caps these set
-  how full the land feels.
+  attempt), `spawn_near` and `spawn_far` how far from the player the spot lies (20 to 40
+  blocks: nearer puts more of what the caps allow within sight), and `empty_for_animals` /
+  `empty_for_monsters` how heavy "nothing here" weighs against the species that suit the
+  spot (a common one at home weighs about 1), so a higher number leaves more spots empty.
+  Together with the caps these set how full the land feels, and how fast it refills: with
+  these numbers a player's surroundings fill in 10 to 30 seconds of standing still, not the
+  minutes to an hour older notes assumed. Fast refill is intended.
 
 What no package sets keeps the defaults above.
 
@@ -269,7 +272,9 @@ Content fails to load, with the file and a reason, when:
 - a supernatural species has no aether minimum;
 - the limits leave no room for wild creatures (`wild_most` 0), one player's `animals_near`
   and `monsters_near` together are more than `wild_most`, or `most` is less than
-  `wild_most` and `keepers` players' `kept_each`;
+  `wild_most` and `keepers` players' `kept_each`; `spawn_every` is under 0.05 s or not a
+  number, `empty_for_animals` or `empty_for_monsters` is negative or not finite, or
+  `spawn_far` is not more than `spawn_near` (which must be 0 or more);
 - `defence` makes a fight last no time (`fought_within` 0 or less) or asks a negative
   `least_level`;
 - the condition rules have a share outside 0..1, a need met counting less than partly

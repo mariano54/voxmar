@@ -52,9 +52,6 @@ const NEAR: f32 = 64.0;
 const DESPAWN: f32 = 128.0;
 /// Players are told about creatures within this many blocks.
 const SEEN_WITHIN: f32 = 96.0;
-/// Spawn spots lie this far from the player, in blocks.
-const SPAWN_NEAR: f32 = 20.0;
-const SPAWN_FAR: f32 = 56.0;
 /// How far kin hear an alarm, and are counted as kin by herding.
 const KIN_RANGE: f32 = 14.0;
 /// How far creatures look for food.
@@ -803,9 +800,12 @@ impl Server {
                 .count()
         };
         let (animals, monsters) = (nearby(Kind::Animal), nearby(Kind::Monster));
+        if animals >= limits.animals_near && monsters >= limits.monsters_near {
+            return;
+        }
         let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x5ba7);
         let angle = unit_from(seed) * std::f32::consts::TAU;
-        let distance = SPAWN_NEAR + unit_from(mix(seed, 1)) * (SPAWN_FAR - SPAWN_NEAR);
+        let distance = limits.spawn_near + unit_from(mix(seed, 1)) * (limits.spawn_far - limits.spawn_near);
         let x = (at.x + angle.cos() * distance).floor() as i32;
         let z = (at.z + angle.sin() * distance).floor() as i32;
         if !self.world.contains(ColumnPos::of_block(IVec3::new(x, 0, z))) {
@@ -1227,25 +1227,9 @@ mod density_tests {
         let noon = (0..24_000u64).step_by(100).max_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
         let midnight = (0..24_000u64).step_by(100).min_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
         let [near, animals, ..] = density(&mut server, spot, noon, 3);
-        assert!(animals >= 10 && near >= 2, "{animals} animals within 64 blocks, {near} within 32, after three minutes by day");
+        assert!(animals >= 10 && near >= 3, "{animals} animals within 64 blocks, {near} within 32, after three minutes by day");
         let [_, _, _, monsters, _] = density(&mut server, spot, midnight, 3);
-        assert!(monsters >= 5, "{monsters} monsters within 64 blocks after three minutes of night");
-    }
-
-    #[test]
-    #[ignore = "prints the biomes near the origin"]
-    fn which_biomes_are_near() {
-        let server = crate::test_server();
-        let biomes = server.overworld.biomes();
-        let mut seen: std::collections::BTreeMap<String, (i32, i32)> = Default::default();
-        for r in 0..60 {
-            for i in 0..(8 * r).max(1) {
-                let (dx, dz) = ring(r, i);
-                let (x, z) = (dx * 100, dz * 100);
-                seen.entry(biomes.get(server.overworld.site(x, z).biome).name.clone()).or_insert((x, z));
-            }
-        }
-        println!("{seen:?}");
+        assert!(monsters >= 7, "{monsters} monsters within 64 blocks after three minutes of night");
     }
 
     #[test]
