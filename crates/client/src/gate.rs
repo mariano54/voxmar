@@ -6145,6 +6145,16 @@ struct TarnVisit {
     return_teleports: (u32, u32),
 }
 
+/// `/tp` centres integer-looking horizontal coordinates on a block. Retain the saved
+/// f32's full decimal precision and spell integral positions with a fractional part.
+fn return_teleport(at: Vec3) -> String {
+    let horizontal = |value: f32| {
+        let word = value.to_string();
+        if word.contains('.') { word } else { format!("{word}.0") }
+    };
+    format!("tp {} {} {}", horizontal(at.x), at.y, horizontal(at.z))
+}
+
 /// Visits a real pool filled by the tarn rule. Both peers must receive at least twenty
 /// matching source-water surface columns, then the loaded pool is captured from above.
 /// The generator chooses the place; no hand-built pool can satisfy this step. Both peers
@@ -6239,11 +6249,11 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let player = world.resource::<LocalPlayer>();
             visit.return_teleports.0 = player.teleports;
             let at = visit.player;
-            world.resource::<Net>().command(&format!("tp {} {} {}", at.x, at.y, at.z));
+            world.resource::<Net>().command(&return_teleport(at));
             if let Some(observer) = gate.observer.as_mut() {
                 visit.return_teleports.1 = observer.teleports;
                 let at = visit.observer;
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y, at.z) });
+                observer.connection.send(ClientMessage::Command { line: return_teleport(at) });
             }
             gate.advance(now);
         }
