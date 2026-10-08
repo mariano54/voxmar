@@ -1902,7 +1902,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if ready && gate.server_now - gate.machines_asked >= 3.0 {
                 gate.machines_asked = gate.server_now;
                 let actions = world.resource::<crate::Actions>().0.clone();
-                world.resource::<Net>().propose(actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
+                // With the player's input first, as a click sends it: the slot just selected
+                // reaches the server before the use, not with the next input. A use from the
+                // slot held before (emptied by the last use) takes an idle machine's inputs
+                // back out (`Factory::take_outputs_into`).
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
             }
             // No progress for 30 seconds of the server's time (a loaded machine stretches it);
             // the game's clock only catches a server that stopped.
@@ -2022,7 +2026,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     } else {
                         let target = if gate.machines_stage == 0 { boiler } else { washer };
                         let actions = world.resource::<crate::Actions>().0.clone();
-                        world.resource::<Net>().propose(actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
+                        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
                     }
                 }
             }
@@ -2188,7 +2192,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     }
                     if stage != 5 {
                         let actions = world.resource::<crate::Actions>().0.clone();
-                        world.resource::<Net>().propose(actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
+                        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
                     }
                 }
             }
@@ -2309,7 +2313,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     } else {
                         let target = if stage == 0 { oven } else { furnace };
                         let actions = world.resource::<crate::Actions>().0.clone();
-                        world.resource::<Net>().propose(actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
+                        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
                     }
                 }
             }
