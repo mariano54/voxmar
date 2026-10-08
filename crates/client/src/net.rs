@@ -288,13 +288,21 @@ pub(crate) fn receive(
                 debug!("chat: {text}");
                 console.push(kind, &text, time.elapsed_secs())
             }
+            ServerMessage::Refused { why } => {
+                let why = locale.render(&why, &world.registry);
+                debug!("refused: {why}");
+                toasts.refused(why, time.elapsed_secs())
+            }
             ServerMessage::Weather { weather: report, effects, nearby, quick } => {
                 weather.receive(report, effects, nearby, quick, time.elapsed_secs())
             }
             ServerMessage::Lightning { at, seed, cloud } => weather.lightning(at, seed, at.distance(player.eye()), cloud),
             ServerMessage::Died => player.dead = true,
             ServerMessage::Journal { entries } => player.journal.merge(entries),
-            ServerMessage::Quests { states } => player.quests = states,
+            ServerMessage::Quests { states } => {
+                player.quests = states;
+                player.quests_rev = player.quests_rev.wrapping_add(1);
+            }
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
             ServerMessage::Struck { creature, damage, killed, blow, pips } => {

@@ -152,6 +152,13 @@ fn heading(angle: f32) -> Vec3 {
     Vec3::new(angle.cos(), 0.0, angle.sin())
 }
 
+/// How far over its foot any tree of `content` reaches at most: its trunk at a giant's
+/// age (half again its species' tallest, as `Size::draw` grows it, and never over 48), and
+/// a crown over that of a third as much again (a spire's) and a round crown's radius.
+pub fn tallest(content: &WorldContent) -> i32 {
+    content.trees.iter().map(|t| ((t.height.1 as f32 * 1.5).round() as i32).clamp(1, 48)).map(|trunk| trunk + trunk / 3 + 8).max().unwrap_or(0)
+}
+
 impl Trees {
     pub fn new(content: &WorldContent, registry: &BlockRegistry) -> Self {
         let species = content

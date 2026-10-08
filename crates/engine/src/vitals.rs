@@ -50,26 +50,27 @@ pub fn rates(modifiers: &Modifiers) -> Rates {
     Rates { heal_every: heal, hurt_every: modifiers.hurt_every }
 }
 
-/// How much eating an item heals, from its tags: `heal:N` or `food:N` (the larger) say it
-/// outright; otherwise fruit and produce 4, roots and grain 3, berries and fungi 2,
-/// anything else edible 1. Nothing for what is not food.
+/// How much eating an item heals, from its tags: `heal:N` says it outright (cooked food,
+/// by the level that cooks it); otherwise fruit and berries 2 and anything else edible 1,
+/// raw produce and meat among it (design draft 63). Nothing for what is not food.
 pub fn food_value(tags: &[String]) -> u8 {
-    let tagged = |prefix: &str| tags.iter().find_map(|tag| tag.strip_prefix(prefix)?.parse::<u8>().ok());
-    if let Some(value) = tagged("heal:").max(tagged("food:")) {
+    if let Some(value) = tags.iter().find_map(|tag| tag.strip_prefix("heal:")?.parse::<u8>().ok()) {
         return value;
     }
     let has = |tag: &str| tags.iter().any(|t| t == tag);
     if !has("edible") {
         0
-    } else if has("fruit") || has("produce") {
-        4
-    } else if has("root") || has("grain") {
-        3
-    } else if has("berry") || has("fungus") {
+    } else if has("fruit") || has("berry") {
         2
     } else {
         1
     }
+}
+
+/// What cooked food heals by the level that cooks it: 0.4 × that level, at least 4 (design
+/// drafts 55 and 107). Wonder fruit heals 0.4 × the Farming level that picks it, at least 2.
+pub fn cooked_heal(level: u8) -> u8 {
+    ((0.4 * level as f32).round() as u8).max(4)
 }
 
 /// What a player ate lately, for how much the same food heals again: each time in a row
@@ -131,12 +132,12 @@ mod tests {
     #[test]
     fn food_comes_from_tags() {
         let tags = |list: &[&str]| list.iter().map(|t| t.to_string()).collect::<Vec<_>>();
-        assert_eq!(food_value(&tags(&["produce", "fruit", "edible"])), 4);
         assert_eq!(food_value(&tags(&["plant", "berry", "edible"])), 2);
         assert_eq!(food_value(&tags(&["flower", "edible"])), 1);
-        assert_eq!(food_value(&tags(&["edible", "food:7"])), 7);
-        assert_eq!(food_value(&tags(&["edible", "food:5", "heal:4"])), 5);
-        assert_eq!(food_value(&tags(&["edible", "food:3", "heal:6"])), 6);
+        assert_eq!(food_value(&tags(&["edible", "heal:7"])), 7);
+        assert_eq!(food_value(&tags(&["edible", "fruit", "produce"])), 2);
+        assert_eq!(food_value(&tags(&["edible", "meat", "raw"])), 1);
+        assert_eq!((cooked_heal(1), cooked_heal(12), cooked_heal(65)), (4, 5, 26));
         assert_eq!(food_value(&tags(&["stone"])), 0);
     }
 

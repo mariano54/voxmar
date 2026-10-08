@@ -64,7 +64,7 @@ the last few servers are remembered) and Settings. A new world takes a name, an 
 flight, Survival does not. Either way you are the world's admin, who can run commands.
 
 Controls: WASD move, Space jump, Ctrl (or W tapped twice) sprint, Shift descend, F toggle flight, left mouse break
-(hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
+(hold), right mouse place (on an animal: feed or tame it; Shift and right click one of yours twice to let it go), middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
 inventory, C character screen, T chat, / command, F3 debug overlay (frame rate, and the worst frame, p99 and frames over 25 ms of the last 5 s), Esc menu, R respawn, Z (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
 Movement feels like Minecraft's: a sprint lasts while forward is held, until you run head-on
@@ -165,7 +165,12 @@ its blocks and skills, or adds a whole language. Definitions are named by key fr
 (`block.base.oak_log`, `skill.core.farming`), and a template's members by pattern, so
 `block.base.{name}_log` with `family.base.oak` names オークの原木 and a new wood needs one
 line per language; anything a language leaves out shows in English, then as a name made from
-the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
+the id. A shader pack is named by `shader_pack.<key>`, its key being its name in lower case
+with anything but a letter or a digit made `_` (Verdant is `shader_pack.verdant`, 新緑
+`shader_pack.新緑`, "R&D v1.2" `shader_pack.r_d_v1_2`); a pack no language names shows its own
+name. The packs the game ships (`assets/shaderpacks/shipped.ron`) load first; a pack with a
+name already loaded is refused, and one whose key is already taken ("soft_light" after "Soft
+Light") loads but keeps its own name. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
 way. Kanji and kana come from Fusion Pixel 12px, a Japanese pixel font (listed in
 `assets/ui/fonts/fallback.ron`) whose glyphs are read at startup and merged under the chosen
 interface font, its pixels drawn at three quarters of ours; BIZ UDGothic, a smooth font,
@@ -721,6 +726,23 @@ exclusive rights to these tracks. The loading screen's picture, `assets/ui/loadi
 own: 36 frames of the game itself, captured along the coast near spawn, then cropped, softened,
 tinted and tiled (801915d). Starting a game fades the menu's music out, so a world
 opens in quiet; returning to the menus brings it back.
+
+Voxmar ships none of Minecraft's or any modpack's music. Only with the Minecraft assets setting on
+does music from the player's own install play: the tracks of their Prism Launcher instance join
+Voxmar's (the most recently launched GT New Horizons one, or the instance `prism_instance` names in
+`settings.ron`, in the launcher folder `prism_folder` names, empty for the standard one; a named one
+that is missing is logged). They are the vanilla music and records the launcher's asset store holds
+for its Minecraft version, a music mod's soundtrack zip (HorizonMelodies, with the newer Minecraft
+and the StaTech tracks), and music in its resource packs and mod jars. A file found once (the same
+size and CRC-32) is not added again, so packs repeating the soundtrack add nothing; the log names
+every copy skipped and the track it repeats. Nothing is copied: each track is read from where it is
+as it is about to play, and played only once it is checked to decode (one that does not leaves the
+rotation). `assets/content/base/music.ron` holds the numbers, where to look, and which moments each
+track suits by its path: menu tracks on the title screen, Nether, End, cave and structure tracks
+deep underground, the rest in the world; Voxmar's own play everywhere, a quarter of the picks.
+`cargo test --profile iter -p voxmar_client prism_music_decodes -- --ignored --nocapture` lists
+what this machine's instance has, with every copy skipped from the 1.21 and StaTech resource packs,
+and checks every track is placed and decodes.
 
 Block sounds follow each block's material (`sound: Wood` in its definition; the kinds are listed
 in `blocks.ron`), so new blocks sound right without new audio. Steps, landings, placing, the taps

@@ -329,6 +329,9 @@ pub struct SiteDef {
     pub caves: i32,
     /// No trees within the first many blocks of a house, fewer out to the second.
     pub glade: (i32, i32),
+    /// The land's trees are cut back over each building and this many blocks round it, as
+    /// their crowns reach past the glade's treeless ring.
+    pub eaves: i32,
     /// The share of trees left just past the treeless ring, and how many more where it is
     /// green.
     pub glade_trees: (f32, f32),
@@ -366,7 +369,8 @@ impl Default for SiteDef {
             relief: 14,
             caves: 150,
             glade: (5, 16),
-            glade_trees: (0.08, 0.3),
+            glade_trees: (0.08, 0.1),
+            eaves: 1,
             water: 48,
             fertility: 0.3,
             poor: BTreeMap::new(),
@@ -663,6 +667,8 @@ pub struct RulesDef {
     /// spawn: the square of the grid they spawn in always holds one, standing within
     /// that reach (none promised at 0).
     pub spawn_settlement_within: i32,
+    /// No two settlements within this many blocks of each other share a name.
+    pub names_apart: i32,
     pub levers: LeversDef,
     pub lanes: LanesDef,
     pub lots: LotsDef,
@@ -677,6 +683,7 @@ impl Default for RulesDef {
     fn default() -> Self {
         Self {
             spawn_settlement_within: 1024,
+            names_apart: 4096,
             levers: LeversDef::default(),
             lanes: LanesDef::default(),
             lots: LotsDef::default(),
@@ -1006,6 +1013,7 @@ struct StyleFile {
 #[serde(deny_unknown_fields, default)]
 struct RulesFile {
     spawn_settlement_within: Option<i32>,
+    names_apart: Option<i32>,
     levers: Option<LeversDef>,
     lanes: Option<LanesDef>,
     lots: Option<LotsDef>,
@@ -1266,6 +1274,9 @@ impl SettlementsDef {
             if let Some(within) = rules.spawn_settlement_within {
                 mine.spawn_settlement_within = within;
             }
+            if let Some(apart) = rules.names_apart {
+                mine.names_apart = apart;
+            }
             if let Some(levers) = rules.levers {
                 mine.levers = levers;
             }
@@ -1514,6 +1525,9 @@ impl SettlementsDef {
         if !(0..=4096).contains(&rules.spawn_settlement_within) {
             return fail(format!("rules: a settlement is promised within 0 to 4096 blocks of spawn: {}", rules.spawn_settlement_within));
         }
+        if !(0..=16384).contains(&rules.names_apart) {
+            return fail(format!("rules: names are kept apart by 0 to 16384 blocks: {}", rules.names_apart));
+        }
         if site.look == 0 || site.creek < 1 {
             return fail(format!("the site's closer look for creeks needs `look` and `creek` of 1 or more: {}, {}", site.look, site.creek));
         }
@@ -1559,8 +1573,8 @@ impl SettlementsDef {
         if !(every.0 > 0.0 && every.1 >= 0.0 && every.1.is_finite()) || self.sizes.iter().any(|s| every.0 * s.lamps < 1.0) {
             return fail(format!("rules: dressing needs `every` above nothing then nothing or more, and every size's lamps that far apart times its `lamps` a block or more: {every:?}"));
         }
-        if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 {
-            return fail(format!("the site needs ranges low to high and a glade of at most 48 blocks, its treeless ring the smaller: {site:?}"));
+        if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 || !(0..=8).contains(&site.eaves) {
+            return fail(format!("the site needs ranges low to high, a glade of at most 48 blocks, its treeless ring the smaller, and eaves of 0 to 8: {site:?}"));
         }
         for c in &self.centrepieces {
             if let CentreKind::Blocks(name, blocks) = &c.kind {
@@ -1760,6 +1774,7 @@ impl SettlementsDef {
             ("fruit", &f.fruit),
             ("hay", &f.hay),
             ("hanging", &f.hanging),
+            ("nets", &f.nets),
             ("sacks", &f.sacks),
             ("cloth", &f.cloth),
         ] {
@@ -1769,6 +1784,31 @@ impl SettlementsDef {
                     Select::Tag(tag, _) if registry.tagged(tag).next().is_none() => return fail(format!("furnishings: {what} names the tag `{tag}`, which no block has")),
                     _ => {}
                 }
+            }
+        }
+        // What a village furnishes its yards and barns with gives nothing when broken
+        // (design draft 80): each block in those slots drops nothing, or is a `furnishing`,
+        // which gives itself back only where a player placed it. So a mod's barrel can't
+        // make every village a free store. An altar is checked once it is one (tagged
+        // `altar`): a building block standing in for it is no village's to give.
+        let named = |select: &Select| -> Vec<String> {
+            match select {
+                Select::Name(name, _) => vec![name.clone()],
+                Select::Tag(tag, _) => registry.tagged(tag).map(|b| registry.def(b).name.clone()).collect(),
+            }
+        };
+        let altar = f.altar.clone().filter(|name| registry.id(name).is_some_and(|id| registry.def(id).has_tag("altar")));
+        let singles = [("campfire", &f.campfire), ("table", &f.table), ("planter", &f.planter), ("barrel", &f.barrel), ("bell", &f.bell), ("altar", &altar)];
+        let singles = singles.into_iter().filter_map(|(what, name)| Some((what, name.clone()?)));
+        // A centrepiece's own bell hangs in its frame as the furnishings' does.
+        let bells = self.centrepieces.iter().flat_map(|c| c.parts.iter()).filter(|(part, name)| part == "bell" && !name.contains('{')).map(|(_, name)| ("centrepiece's bell", name.clone()));
+        let lists = [("hay", &f.hay), ("hanging", &f.hanging), ("nets", &f.nets), ("sacks", &f.sacks)];
+        let lists = lists.into_iter().flat_map(|(what, list)| list.iter().flat_map(named).map(move |name| (what, name)));
+        for (what, name) in singles.chain(bells).chain(lists) {
+            let Some(id) = registry.id(&name) else { continue };
+            let info = registry.info(id);
+            if !(info.drops.is_air() || info.drop_count == 0 || registry.def(id).has_tag("furnishing")) {
+                return fail(format!("furnishings: the {what} `{name}` drops itself from every village: tag it `furnishing`, or have it drop nothing"));
             }
         }
         Ok(())

@@ -77,6 +77,12 @@ impl Console {
         }
     }
 
+    /// The lines received at or after `since` (seconds since startup), oldest first: what
+    /// the gate reads the server's replies from.
+    pub fn since(&self, since: f32) -> impl Iterator<Item = &str> {
+        self.lines.iter().filter(move |line| line.at >= since).map(|line| line.text.as_str())
+    }
+
     /// Runs these lines (commands with a `/`) as soon as the game has started.
     pub fn run_when_joined(&mut self, lines: Vec<String>) {
         self.pending.extend(lines);
@@ -154,7 +160,7 @@ fn type_line(
 ) {
     let pressed: Vec<&KeyboardInput> = keys.read().filter(|key| key.state == ButtonState::Pressed).collect();
     if !ui.console_open {
-        if ui.menu_open || ui.inventory_open || ui.character_open || ui.journal_open || !player.joined {
+        if ui.menu_open || ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || !player.joined {
             return;
         }
         let slash = pressed.iter().any(|key| key.logical_key == Key::Character("/".into()));
@@ -268,7 +274,7 @@ fn draw(
         let line = (slot.0 + shown).checked_sub(SHOWN).map(|i| &console.lines[first + i]);
         // Over an open screen (inventory, character, menu) the chat would run into its words:
         // it waits until the screen closes, or the chat is opened.
-        let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open;
+        let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open;
         let alpha = line.map_or(0.0, |line| if open { 1.0 } else if screen { 0.0 } else { ((line.at + LINGER - now) / FADE).clamp(0.0, 1.0) });
         visibility.set_if_neq(if alpha > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
         let (Some(line), Some(&child)) = (line.filter(|_| alpha > 0.0), children.first()) else { continue };

@@ -93,6 +93,8 @@ pub struct CapturePlugin {
     pub press: Option<MouseButton>,
     /// An item whose hotbar slot to select once the inventory has it (`--hold`).
     pub hold: Option<String>,
+    /// Armour to put on once the inventory has it (`--wear`, again for each piece).
+    pub wear: Vec<String>,
     /// Click `press` over and over through the clip (`--repeat`).
     pub repeat: bool,
     /// Keep looking at the nearest creature (`--face-creature`).
@@ -168,6 +170,8 @@ impl Plugin for CapturePlugin {
             }),
             press: self.press,
             hold: self.hold.clone(),
+            wear: self.wear.clone(),
+            dressed: self.wear.is_empty(),
             repeat: self.repeat,
             face_creature: self.face_creature,
             strike: self.strike.clone(),
@@ -191,7 +195,7 @@ impl Plugin for CapturePlugin {
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
         )
-        .add_systems(Update, (hold, press, dig, showcase, fill_grid).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
+        .add_systems(Update, (hold, wear, press, dig, showcase, fill_grid).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time)
@@ -228,6 +232,9 @@ struct Capture {
     clip: Option<Clip>,
     press: Option<MouseButton>,
     hold: Option<String>,
+    wear: Vec<String>,
+    /// Every piece of `wear` is on (the shot waits for it).
+    dressed: bool,
     repeat: bool,
     face_creature: bool,
     strike: Option<String>,
@@ -358,6 +365,43 @@ fn hold(state: Res<Capture>, world: Res<crate::world::ClientWorld>, mut player: 
         player.selected = slot;
     }
 }
+
+/// Puts on each piece of `--wear` once the inventory has it, moving it into its worn slot
+/// as a click would. The shot waits until every piece is on; a piece the server has not
+/// put on `WEAR_TICKS` after it was asked fails the capture, naming it.
+fn wear(
+    mut state: ResMut<Capture>,
+    world: Res<crate::world::ClientWorld>,
+    player: Res<LocalPlayer>,
+    net: Res<crate::net::Net>,
+    actions: Res<crate::Actions>,
+    mut asked: Local<Vec<(String, usize, u64)>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    use voxmar_engine::inventory::{WORN, worn_slot};
+    let ticks = net.server().map_or(0, |server| server.ticks());
+    let id = |name: &str| world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}")));
+    let new: Vec<String> = state.wear.iter().filter(|name| !asked.iter().any(|(n, ..)| n == *name)).cloned().collect();
+    for name in &new {
+        let Some(item) = id(name) else { continue };
+        let (Some(from), Some(at)) = ((0..WORN).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == item)), worn_slot(item)) else { continue };
+        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (WORN + at) as u8, count: 1 };
+        net.propose(actions.0.expect("core:transfer"), target);
+        asked.push((name.clone(), WORN + at, ticks));
+    }
+    let worn = |(name, slot, _): &(String, usize, u64)| player.inventory.get(*slot).is_some_and(|stack| Some(stack.item) == id(name));
+    if let Some((name, ..)) = asked.iter().find(|piece| !worn(piece) && ticks.saturating_sub(piece.2) > WEAR_TICKS) {
+        error!("capture: {name} was not put on {WEAR_TICKS} server ticks after asking");
+        exit.write(AppExit::error());
+    }
+    let dressed = asked.len() == state.wear.len() && asked.iter().all(worn);
+    if state.dressed != dressed {
+        state.dressed = dressed;
+    }
+}
+
+/// Server ticks a piece `--wear` asks for has to come on.
+const WEAR_TICKS: u64 = 40;
 
 /// Clip frames `--press` holds its button for: a second, long enough to dig soil.
 const PRESS_FRAMES: u32 = CLIP_RATE;
@@ -668,13 +712,17 @@ fn capture(
     }
     let busy = joining
         || (*screen.get() == Screen::InGame && !ready.0)
+        || (*screen.get() == Screen::InGame && !state.dressed)
         || stats.jobs_in_flight > 0
         || stats.pending_columns > 0
         || world.voxels.len() < 9
         || lod_tiles < lod_wanted;
     // Flying and digging keep the world busy streaming and remeshing; once started they
-    // run their course.
-    let flying = state.flight_started.is_some() || state.dig_started.is_some();
+    // run their course. While a flight's teleport up is unanswered, the world settling
+    // must not hold back the check on its deadline; once the player is up, the land there
+    // settles before the flight is timed, so its frame times are the flight's own.
+    let lift_pending = state.lift_asked.is_some() && state.flight_started.is_none() && player.position.y < FLIGHT_HEIGHT - 1.0;
+    let flying = state.flight_started.is_some() || state.dig_started.is_some() || lift_pending;
     // A mined block's pieces are caught in the air, while its column remeshes.
     let broken = state.broken_at.map(|at| now - at);
     let patience = if state.flicker.is_some() { 300.0 } else { 60.0 };
@@ -699,10 +747,23 @@ fn capture(
     // the flight's and not the teleport's. A teleport the server never answers fails it.
     if state.flight.is_some() && player.position.y < FLIGHT_HEIGHT - 1.0 {
         player.flying = true;
+        // Once flying, a drop below the height (a correction from the server) fails the
+        // flight rather than being taken for a teleport not yet answered.
+        if state.flight_started.is_some() {
+            error!("flight: fell to y {:.1}, below its height of {FLIGHT_HEIGHT}", player.position.y);
+            exit.write(AppExit::error());
+            return;
+        }
+        // The server's clock when the server is this process's own; for a remote join, the
+        // client's (whose frames count for at most 250 ms each).
         let server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
         match state.lift_asked {
             None => {
-                net.command(&format!("tp {} {FLIGHT_HEIGHT} {}", player.position.x, player.position.z));
+                // `VOXMAR_CAPTURE_DROP_LIFT` asks for nothing, as if the teleport were lost: to
+                // show that an unanswered one fails the capture.
+                if std::env::var_os("VOXMAR_CAPTURE_DROP_LIFT").is_none() {
+                    net.command(&format!("tp {} {FLIGHT_HEIGHT} {}", player.position.x, player.position.z));
+                }
                 state.lift_asked = Some(server_now);
             }
             Some(asked) if server_now - asked > LIFT_WAIT => {

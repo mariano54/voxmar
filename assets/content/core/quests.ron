@@ -1,0 +1,12 @@
+// How the interface follows quests pinned in the quest book (engine/src/quest.rs, the
+// interface's hud/quests.rs). The quests themselves are each package's own quests.ron.
+(
+    tracker: (
+        // Quests pinned at once, at most.
+        pins: 3,
+        // Seconds a done quest stays on screen, ticked, before it drops off.
+        done_stays: 5.0,
+        // How opaque the backing behind each pinned quest is, 0 to 1.
+        backing_alpha: 0.5,
+    ),
+)

@@ -15,7 +15,7 @@ use std::collections::BinaryHeap;
 
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
-use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
+use voxmar_engine::coords::{ColumnPos, Face, WORLD_HEIGHT};
 use voxmar_engine::crop::{self, Conditions, CropId};
 use voxmar_engine::dropped;
 use voxmar_engine::glam::IVec3;
@@ -23,6 +23,8 @@ use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
+use voxmar_engine::action::ActionTarget;
+use voxmar_engine::lang::Words;
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
@@ -44,6 +46,8 @@ pub struct Planted {
     pub stage: u8,
     /// Tick its next stage is due; `u64::MAX` once ripe.
     pub due: u64,
+    /// A player sowed it: its harvest pays the sowing's experience.
+    pub sown: bool,
 }
 
 /// Every planted crop, and when each grows next.
@@ -68,7 +72,7 @@ impl Farm {
         let mut saved: Vec<SavedCrop> = self
             .planted
             .iter()
-            .map(|(pos, p)| SavedCrop { position: pos.to_array(), crop: name(p.crop), stage: p.stage, due: p.due })
+            .map(|(pos, p)| SavedCrop { position: pos.to_array(), crop: name(p.crop), stage: p.stage, due: p.due, sown: p.sown })
             .collect();
         saved.sort_by_key(|c| c.position);
         saved
@@ -80,10 +84,15 @@ impl Farm {
         for crop in saved {
             let Some((id, stages)) = id(&crop.crop) else { continue };
             let pos = IVec3::from_array(crop.position);
-            farm.schedule(pos, Planted { crop: id, stage: crop.stage.min(stages - 1), due: crop.due });
+            farm.schedule(pos, Planted { crop: id, stage: crop.stage.min(stages - 1), due: crop.due, sown: crop.sown });
             farm.unseen.entry(ColumnPos::of_block(pos)).or_default().push(pos);
         }
         farm
+    }
+
+    /// The crop at `pos` is gone (broken): whether a player had sown it.
+    pub(crate) fn take_sown(&mut self, pos: IVec3) -> bool {
+        self.planted.remove(&pos).is_some_and(|p| p.sown)
     }
 }
 
@@ -149,6 +158,11 @@ impl Server {
 
     /// How fast the crop grows at `pos` (see `crop::rate`).
     fn crop_rate(&self, crop: CropId, pos: IVec3) -> f32 {
+        crop::rate(&self.content.crops.get(crop).def, self.crop_conditions(pos))
+    }
+
+    /// The climate, light, ground and water a crop at `pos` grows in.
+    fn crop_conditions(&self, pos: IVec3) -> Conditions {
         let blocks = &self.content.blocks;
         let site = self.overworld.site(pos.x, pos.z);
         let fertile = self.block(pos - IVec3::Y).is_some_and(|b| blocks.def(b).has_tag("fertile"));
@@ -161,9 +175,7 @@ impl Server {
                 })
             })
         });
-        let conditions =
-            Conditions { temperature: site.temperature, moisture: site.soil_moisture(), light: self.light_at(pos), fertile, watered };
-        crop::rate(&self.content.crops.get(crop).def, conditions)
+        Conditions { temperature: site.temperature, moisture: site.soil_moisture(), light: self.light_at(pos), fertile, watered }
     }
 
     /// The brighter of sky light (open sky straight above, through nothing that blocks
@@ -235,6 +247,17 @@ impl Server {
         let pos = ground + IVec3::Y;
         // The seed in hand, or the one a seed pouch in hand gives (see `actor_seed`).
         let Some(seed) = voxmar_engine::action::ActionContext::actor_seed(&crate::actions::context(self, agent)) else { return };
+        let Some(id) = self.content.crops.planted_by(seed) else { return };
+        // Where it could never grow, the seed stays in hand and the player hears why
+        // (the client showed the sprout and gets the ground back), naming the crop by what
+        // it bears ("Rice", "Wheat"), or else by its seed, never by a growing stage.
+        let crop = self.content.crops.get(id);
+        if let Some(why) = crop::unsuited(&crop.def, self.crop_conditions(pos)) {
+            let named = self.content.blocks.id(&crop.def.name).unwrap_or(seed);
+            self.refuse(agent, Words::key(why.key()).with("crop", Words::Block(self.content.blocks.def(named).name.clone())));
+            self.reject(agent, ActionTarget::Block { block: ground, face: Face::PosY });
+            return;
+        }
         let player = self.players.get_mut(&agent).expect("an actor");
         let selected = player.selected;
         let taken = if player.held() == Some(seed) { player.inventory.take_one(selected).is_some() } else { player.inventory.take_pouched(seed) };
@@ -242,13 +265,12 @@ impl Server {
             return;
         }
         player.changed(traits::INVENTORY);
-        let Some(id) = self.content.crops.planted_by(seed) else { return };
         let crop = self.content.crops.get(id);
         let sprout = crop.stages[0];
         self.set_block(pos, sprout);
         let rate = self.crop_rate(id, pos);
         let due = if rate > 0.0 { self.stage_due(id, pos, 0, rate) } else { self.tick + RETRY };
-        self.farm.schedule(pos, Planted { crop: id, stage: 0, due });
+        self.farm.schedule(pos, Planted { crop: id, stage: 0, due, sown: true });
         // Sowing's experience comes with the harvest: paid at sowing, sowing a seed and
         // breaking the sprout for it back paid without end.
     }
@@ -260,11 +282,18 @@ impl Server {
         let crop = self.content.crops.get(id);
         let Some(regrow) = crop.def.regrow else { return };
         let block = crop.stages[regrow as usize];
-        self.harvest(agent, id, pos, 0, false);
+        let sown = self.farm.planted.get(&pos).is_some_and(|p| p.sown);
+        // Tomatoes nobody sowed are picked as they would be broken (see `unsown_ripe`).
+        // Fruit on trees is anyone's.
+        if sown || crop.def.fruit {
+            self.harvest(agent, id, pos, 0, false);
+        } else {
+            self.unsown_ripe(agent, id, pos, 0);
+        }
         self.set_block(pos, block);
         let rate = self.crop_rate(id, pos);
         let due = if rate > 0.0 { self.stage_due(id, pos, regrow, rate) } else { self.tick + RETRY };
-        self.farm.schedule(pos, Planted { crop: id, stage: regrow, due });
+        self.farm.schedule(pos, Planted { crop: id, stage: regrow, due, sown });
     }
 
     /// What a ripe crop at `pos` yields for `agent`, popped out into the world, and the
@@ -293,7 +322,7 @@ impl Server {
     }
 
     /// Rolls `loot` for `agent`'s level in the crop's skill and pops it out at `pos`.
-    fn yield_loot(&mut self, agent: PlayerId, id: CropId, loot: &[(BlockId, crop::Loot)], pos: IVec3, salt: u32) {
+    pub(crate) fn yield_loot(&mut self, agent: PlayerId, id: CropId, loot: &[(BlockId, crop::Loot)], pos: IVec3, salt: u32) {
         let crop = self.content.crops.get(id);
         let level = self.players.get(&agent).map_or(1, |p| self.content.skills.level(p.skills.xp(crop.skill)));
         let bonus = crop::level_bonus(level, crop.def.level, self.content.skills.max_level());
@@ -331,11 +360,43 @@ impl Server {
 mod tests {
     use super::*;
 
+    /// Crops whose seed nothing supplies yet, waiting on another thread's change.
+    const AWAITING_SETTLEMENTS: [&str; 0] = [];
+
+    #[test]
+    fn every_sown_crop_is_obtainable() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&dir).unwrap();
+        let world = voxmar_worldgen::WorldContent::load(&content).unwrap();
+        let crops = &content.crops;
+        let fields: Vec<&str> = world.settlements.styles.iter().flat_map(|s| s.crops.iter().map(|(c, _)| c.as_str())).collect();
+        let mut nowhere = Vec::new();
+        for (id, crop) in crops.iter() {
+            let Some(seed) = crop.seed else { continue };
+            let gives = |loot: &[(BlockId, crop::Loot)]| loot.iter().any(|(item, _)| *item == seed);
+            // Foraged from its wild form, given by another crop, or harvested from a
+            // settlement's field.
+            // A wild form the world grows (plants.ron), or the crop itself grown wild and
+            // ripe, or it is found nowhere.
+            let ripe = &crop.def.stages[crop.ripe_stage() as usize];
+            let generated = crop.def.wild.iter().chain([ripe]).any(|wild| world.plants.iter().any(|p| p.block == *wild || format!("base:{}", p.block) == *wild));
+            let foraged = generated && gives(&crop.forage);
+            let other = crops.iter().any(|(other, c)| other != id && (gives(&c.harvest) || gives(&c.forage)));
+            // Village fields grow unripe, so what an unripe stage drops.
+            let field = fields.iter().any(|f| *f == crop.def.name || format!("base:{f}") == crop.def.name) && content.blocks.info(crop.stages[0]).drops == seed;
+            let name = crop.def.name.as_str();
+            if !(foraged || other || field || AWAITING_SETTLEMENTS.contains(&name)) {
+                nowhere.push(name.to_owned());
+            }
+        }
+        assert!(nowhere.is_empty(), "nothing in survival gives these crops' seeds: {nowhere:?}");
+    }
+
     #[test]
     fn saved_crops_round_trip_by_name_and_show_when_their_column_loads() {
         let mut farm = Farm::default();
-        farm.schedule(IVec3::new(5, 70, -3), Planted { crop: CropId(1), stage: 2, due: 900 });
-        farm.schedule(IVec3::new(1, 70, 1), Planted { crop: CropId(0), stage: 3, due: u64::MAX });
+        farm.schedule(IVec3::new(5, 70, -3), Planted { crop: CropId(1), stage: 2, due: 900, sown: true });
+        farm.schedule(IVec3::new(1, 70, 1), Planted { crop: CropId(0), stage: 3, due: u64::MAX, sown: false });
         let saved = farm.saved(|id| format!("base:crop{}", id.0));
         let back = Farm::restore(saved, |name| match name {
             "base:crop0" => Some((CropId(0), 4)),

@@ -18,7 +18,8 @@
 # The landing gate runs only the tests of the crates the change can reach (from the files
 # it touches against main), skips the slow tests listed in SLOW_TESTS, plays the session
 # in a small world, and skips everything a tree already passed. The full gate runs every
-# test and plays at the normal view distance.
+# test and plays at the normal view distance, with the steps too long for every landing
+# (the workshop's later machine phases, `VOXMAR_GATE_FULL=1`).
 #
 # Every heavy step runs through ~/Projects/voxmar-wt/memcap. On a clean tree a pass is
 # recorded against the tree (so a merge or rebase that changes nothing keeps it). The
@@ -200,7 +201,7 @@ his_settings=$(if [[ $(uname -s) == Darwin ]]; then echo ~/Library/Application\ 
 fingerprint() { [[ -e $his_settings ]] && shasum "$his_settings" | cut -d' ' -f1 || echo none; }
 his_before=$(fingerprint)
 mkdir -p "$out/config"
-VOXMAR_CONFIG=$out/config GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
+VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
   $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
 
 # A check the session skipped (a hitch, on a machine too loaded for a long frame to say
@@ -221,7 +222,7 @@ if ((session)) && [[ -n $(skipped) ]]; then
   mkdir -p "$out/first-run" && mv "$out"/*.png "$out/first-run/" 2>/dev/null
   rm -f "$out/game.status"
   mv "$out/tests.list" "$out/tests.list.ran" && : >"$out/tests.list"
-  VOXMAR_CONFIG=$out/config GATE_ARGS=$( ((full)) || echo --view-distance 4) \
+  VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) \
     $memcap 24 -- bash -c "$run" --gate "$out" 1 >"$out/rerun.txt" 2>&1
   mv "$out/tests.list.ran" "$out/tests.list"
   if [[ -n $(skipped) ]]; then
