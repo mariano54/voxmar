@@ -385,8 +385,11 @@ impl Client {
 /// a longer backlog, see `Server::run`), plus the one in progress: how much earlier by the
 /// clock than its ticks say an action can complete.
 /// How long the server may send nothing, and how long a wait may last in all, before a
-/// test gives up on it.
-const SERVER_SILENT: Duration = Duration::from_secs(20);
+/// test gives up on it. Silence as the gate allows it (`gate::SERVER_SILENT`): at load 60 a
+/// whole machine starved the server thread for 20 s and more while this one ran, so a
+/// shorter limit failed landings on a server that was only waiting for a core. A real hang
+/// still fails, a little later.
+const SERVER_SILENT: Duration = Duration::from_secs(60);
 const SERVER_WAIT: Duration = Duration::from_secs(120);
 
 const CATCH_UP: Duration = Duration::from_millis(11 * 1000 / TICKS_PER_SECOND as u64);
