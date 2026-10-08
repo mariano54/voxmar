@@ -204,6 +204,9 @@ enum Step {
     Sky,
     /// A small tree with an apple among its leaves, drawn with its leaf cards and fruit.
     Tree,
+    /// Blocks drawn as shapes (a slab, stairs both ways up, a barrel, a crate and a sack)
+    /// reach the client and draw.
+    Shapes,
     /// Creatures summoned on a pad beside the test ground reach the client and draw.
     Creatures,
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
@@ -307,6 +310,8 @@ struct Gate {
     /// it was first lit.
     kiln: IVec3,
     kiln_since: f32,
+    /// Where the shapes step sets its row of shaped blocks: in the air before the player.
+    shapes_row: IVec3,
     /// When (server seconds) the kiln was last asked to light.
     kiln_asked: f32,
     /// The highest the player's feet reached while climbing out of the pool.
@@ -417,6 +422,7 @@ impl Gate {
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
             kiln_since: 0.0,
+            shapes_row: IVec3::ZERO,
             kiln_asked: f32::MIN,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
@@ -971,6 +977,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Overlay => overlay(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
+        Step::Shapes => shapes(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
@@ -3200,6 +3207,51 @@ fn tree(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the tree barely shows: the view changed by {change:.1} levels")),
             };
             gate.check("tree", result);
+            gate.next(Step::Shapes, now);
+        }
+        _ => {}
+    }
+}
+
+/// Blocks drawn as their shapes, set in a row in the air just in front of the player, clear
+/// of whatever the earlier steps built and seen against the sky: they must reach the
+/// client and change the view.
+fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let blocks = ["oak_slab", "oak_stairs", "oak_stairs_top_east", "oak_slab_top", "barrel", "crate", "sack"];
+    if gate.phase == 0 {
+        gate.shapes_row = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(-3, 3, 4);
+    }
+    let row = gate.shapes_row;
+    let cells: Vec<IVec3> = (0..blocks.len() as i32).map(|i| row + IVec3::X * i).collect();
+    match gate.phase {
+        0 => {
+            aim(world, row + IVec3::new(3, 0, 0));
+            gate.advance(now);
+        }
+        // The view turned to the row first, so only the blocks change it.
+        1 if in_phase > 0.5 => {
+            aim(world, row + IVec3::new(3, 0, 0));
+            if gate.shot(world, "shapes-before").is_some() {
+                for (cell, block) in cells.iter().zip(blocks) {
+                    world.resource::<Net>().command(&format!("setblock {} {} {} {block}", cell.x, cell.y, cell.z));
+                }
+                gate.advance(now);
+            }
+        }
+        2 => {
+            let client = world.resource::<ClientWorld>();
+            let arrived = cells.iter().all(|&cell| client.block(cell).is_some_and(|b| !b.is_air()));
+            if !(arrived && settled(world, row) && in_phase > SETTLE) && gate.server_in_step() < STEP_LIMIT - 1.0 {
+                return;
+            }
+            let Some(shot) = gate.shot(world, "shapes") else { return };
+            let change = gate.earlier_shot("shapes-before").map_or(0.0, |before| change(&before, &shot, 0.25));
+            let result = match (arrived, change >= SCREEN_CHANGE) {
+                (true, true) => Ok(format!("{} shaped blocks drawn, changing the view by {change:.1} levels", blocks.len())),
+                (false, _) => Err("the shaped blocks never reached the client".into()),
+                (true, false) => Err(format!("the shaped blocks barely show: the view changed by {change:.1} levels")),
+            };
+            gate.check("shapes", result);
             gate.next(Step::Creatures, now);
         }
         _ => {}
