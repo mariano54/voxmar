@@ -30,6 +30,8 @@ struct Client {
     allow_flight: bool,
     /// The last position the server corrected us to.
     teleported: Option<Vec3>,
+    /// Teleports the server sent, ever.
+    teleports: u32,
     health: u8,
     max_health: u8,
     vitals: voxmar_engine::vitals::Vitals,
@@ -44,14 +46,20 @@ struct Client {
     refused: Vec<String>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
-    /// The server's tick as last told (once a second).
+    /// The server's tick, as it last told (once a second): the clock waits are judged by.
     server_tick: u64,
     /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
     blows: u32,
-    /// The damage each of our blows did (0 for a miss).
+    /// The damage each of our blows did (0 for a miss), what kind of blow each was, and our
+    /// rhythm pips after it.
     damage: Vec<u16>,
+    kinds: Vec<voxmar_engine::combat::Blow>,
+    pips: Vec<u8>,
+    /// Creatures' blows at us, what came of each, and when we heard.
+    hurt: Vec<(u16, voxmar_engine::combat::Defended)>,
+    hurt_at: Vec<Instant>,
     journal: voxmar_engine::journal::Journal,
     quests: Vec<voxmar_engine::quest::QuestState>,
     /// The server, for the first player to join it (dropping it stops the server).
@@ -109,6 +117,7 @@ impl Client {
             admin: false,
             allow_flight: false,
             teleported: None,
+            teleports: 0,
             health: 0,
             max_health: 0,
             vitals: Default::default(),
@@ -124,11 +133,16 @@ impl Client {
             deaths: 0,
             blows: 0,
             damage: Vec::new(),
+            kinds: Vec::new(),
+            pips: Vec::new(),
+            hurt: Vec::new(),
+            hurt_at: Vec::new(),
             journal: Default::default(),
             quests: Vec::new(),
             _server: server,
         };
-        client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
+        // Joined once it stands in its land and has been told the time.
+        client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())) && c.day.is_some());
         client
     }
 
@@ -169,8 +183,12 @@ impl Client {
             ServerMessage::Teleport { position } => {
                 self.position = position;
                 self.teleported = Some(position);
+                self.teleports += 1;
             }
             ServerMessage::Column { pos, column } => self.world.insert(pos, column),
+            ServerMessage::Unload { pos } => {
+                self.world.remove(pos);
+            }
             ServerMessage::BlockChanged { pos, block } => {
                 self.world.set_block(pos, block);
             }
@@ -210,9 +228,15 @@ impl Client {
                     self.deaths += gone.died as u32;
                 }
             }
-            ServerMessage::Struck { damage, .. } => {
+            ServerMessage::Struck { damage, blow, pips, .. } => {
                 self.blows += 1;
                 self.damage.push(damage);
+                self.kinds.push(blow);
+                self.pips.push(pips);
+            }
+            ServerMessage::Hurt { damage, defended, .. } => {
+                self.hurt.push((damage, defended));
+                self.hurt_at.push(Instant::now());
             }
             ServerMessage::Journal { entries } => self.journal.merge(entries),
             ServerMessage::Quests { states } => self.quests = states,
@@ -238,6 +262,18 @@ impl Client {
 
     fn send_position(&self, position: Vec3, flying: bool) {
         self.connection.send(ClientMessage::Input(PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }));
+    }
+
+    /// The server's own clock, read as it runs: the ticks it has simulated (finer than the
+    /// `Time` it tells once a second). Only the client holding the server has it.
+    fn ticks(&self) -> u64 {
+        self._server.as_ref().expect("the first player holds the server").ticks()
+    }
+
+    /// Waits until the server's clock has run at least `seconds` on (it tells the time every
+    /// second, so a little more).
+    fn wait_server(&mut self, seconds: u64) {
+        self.after_ticks(seconds * TICKS_PER_SECOND as u64);
     }
 
     /// Runs a command and returns the console lines it answers with.
@@ -824,8 +860,9 @@ fn strike_a_snail(mut client: Client) {
         let blows = client.blows;
         client.propose("core:attack", ActionTarget::Creature(id));
         // The answer, or a later swing if the server was still cooling down.
-        let asked = Instant::now();
-        client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || asked.elapsed() > Duration::from_millis(400));
+        // (Asked again after 8 server ticks, 400 ms at speed: a busy server is waited for.)
+        let asked = client.ticks();
+        client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || c.ticks() >= asked + 8);
     }
     assert_eq!(client.deaths, 1);
     // Walk onto where it died, as a player goes for the loot.
@@ -861,8 +898,8 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
             std::thread::sleep(Duration::from_millis(650));
             let blows = client.blows;
             client.propose("core:attack", ActionTarget::Creature(id));
-            let asked = Instant::now();
-            client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || asked.elapsed() > Duration::from_millis(400));
+            let asked = client.ticks();
+            client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || c.ticks() >= asked + 8);
         }
         client.damage[start..].iter().copied().filter(|&d| d > 0).collect::<Vec<u16>>()
     };
@@ -1281,8 +1318,8 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     let crucible = client.content.blocks.expect("base:crucible");
     let (ore, ingot) = (client.content.blocks.expect("base:copper_ore"), client.content.blocks.expect("base:copper_ingot"));
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
-    // The ore given, in slot 0 once the clear has emptied the starting kit.
-    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.inventory.get(0).is_some_and(|s| s.item == ore && s.count == 2));
+    // Wait for the ore itself: the starting kit fills slot 0 before /clear and /give arrive.
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && count(c, ore) == 2);
     let smelt = |client: &mut Client| {
         client.chat.clear();
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
@@ -1323,6 +1360,73 @@ fn a_sleeping_bag_is_where_the_homeless_wake() {
 }
 
 #[test]
+fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
+    let mut client = Client::join();
+    let boiler = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let crusher = boiler + IVec3::X;
+    for line in ["/clear", "/fill ~3 ~ ~-1 ~4 ~1 ~1 air", "/setblock ~3 ~ ~ boiler", "/setblock ~4 ~ ~ steam_crusher"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    // A crusher with nothing to work says so; coal in hand goes into the boiler.
+    use_at(&mut client, crusher);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Steam Crusher: idle")));
+    client.ok("/give coal_ore 2");
+    client.pump_until(|c| count(c, coal) == 2);
+    use_at(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0 && c.chat.iter().any(|(_, t)| t.contains("Put in 2")));
+    // Ore in hand goes into the crusher, which works it on the boiler's steam.
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_at(&mut client, crusher);
+    client.pump_until(|c| count(c, ore) == 0 && c.chat.iter().any(|(_, t)| t.contains("making")));
+    // With an empty hand, what it made comes out: two dust from one ore.
+    let started = client.server_tick;
+    while count(&client, dust) == 0 {
+        assert!(server_seconds(&client, started) < 30, "the crusher made nothing: {:?}", client.chat);
+        wait_server(&mut client, 1);
+        use_at(&mut client, crusher);
+        client.pump_until(|c| !c.chat.is_empty());
+    }
+    assert_eq!(count(&client, dust), 2);
+}
+
+#[test]
+fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
+    let mut client = Client::join();
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in [
+        "/clear",
+        "/fill ~3 ~ ~-1 ~5 ~2 ~1 air",
+        "/fill ~3 ~ ~-1 ~5 ~ ~1 kiln_bricks",
+        "/setblock ~4 ~ ~ crucible",
+        "/setblock ~3 ~1 ~-1 kiln_bricks",
+        "/setblock ~5 ~1 ~-1 kiln_bricks",
+        "/setblock ~3 ~1 ~1 kiln_bricks",
+        "/setblock ~5 ~1 ~1 kiln_bricks",
+        "/give copper_dust 2",
+        "/skill engineering 20",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (crucible, dust, ingot) = (blocks.expect("base:crucible"), blocks.expect("base:copper_dust"), blocks.expect("base:copper_ingot"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks") && count(c, dust) == 2);
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    client.pump_until(|c| count(c, ingot) == 1 && count(c, dust) == 1);
+}
+
+#[test]
 fn gravel_sometimes_breaks_to_flint_instead() {
     let mut client = Client::join();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
@@ -1350,6 +1454,1255 @@ fn gravel_sometimes_breaks_to_flint_instead() {
         }
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
+}
+
+/// Faces a player at `from` toward `at`, as `PlayerInput` takes it.
+fn yaw_toward(from: Vec3, at: Vec3) -> f32 {
+    let d = at - from;
+    (-d.x).atan2(-d.z)
+}
+
+/// A player with an iron sword at Attack 20, beside a summoned brown bear facing it:
+/// the bear's id and the sword's hotbar slot. Fights are timed on the clock the server takes
+/// players' messages by (`fight`), the wall's, so a fight's waits are the wall's too; what
+/// they wait for is answered by the server.
+fn beside_a_bear(client: &mut Client) -> (u32, usize) {
+    beside(client, "brown_bear")
+}
+
+/// As [`beside_a_bear`], beside a summoned creature of species `name`.
+fn beside(client: &mut Client, name: &str) -> (u32, usize) {
+    let bear = client.content.creatures.find(name).unwrap_or_else(|| panic!("a {name} in the content"));
+    let sword = client.content.blocks.id("base:iron_sword").unwrap();
+    // A flat floor with room around, so the bear and we stand on the ground.
+    client.ok("/fill ~-8 ~-1 ~-8 ~8 ~-1 ~8 stone");
+    client.ok("/fill ~-8 ~ ~-8 ~8 ~4 ~8 air");
+    client.ok("/skill attack 20");
+    client.ok("/give iron_sword 1");
+    client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == sword)));
+    let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == sword)).unwrap();
+    client.ok(&format!("/summon {name} 1 ~ ~ ~"));
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
+    let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
+    (id, slot)
+}
+
+/// Faces creature `id` holding `slot` and provokes it, a blow every three server seconds
+/// while it does not fight back, until it is seen to begin a wind-up: its attack pose
+/// coming on, not one still shown from the blow before (its end not yet heard). Returns
+/// how many of its blows had come before, for the next to be waited past.
+fn provoke_until_it_winds_up(client: &mut Client, id: u32, slot: usize, name: &str) -> usize {
+    let attacking = |c: &Client| c.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking);
+    client.pump_until(|c| !attacking(c));
+    let before = client.hurt.len();
+    let mut poked = None;
+    loop {
+        assert!(client.creatures.contains_key(&id), "the {name} went");
+        face(client, id, slot, false);
+        if poked.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64) {
+            client.propose("core:attack", ActionTarget::Creature(id));
+            poked = Some(client.server_tick);
+        }
+        let asked = client.server_tick;
+        client.pump_until(|c| attacking(c) || !c.creatures.contains_key(&id) || c.server_tick >= asked + 4);
+        if attacking(client) {
+            return before;
+        }
+    }
+}
+
+/// Stands `client` 1.2 blocks from creature `id`, facing it, holding `slot`.
+fn face(client: &mut Client, id: u32, slot: usize, flying: bool) {
+    let at = client.creatures[&id].position;
+    if client.position.with_y(0.0).distance(at.with_y(0.0)) > 1.6 || (client.position.y - at.y).abs() > 0.5 {
+        client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
+    }
+    let yaw = yaw_toward(client.position, at);
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying }));
+}
+
+#[test]
+fn blows_on_the_beat_build_to_a_flourish() {
+    use voxmar_engine::combat::Blow;
+    let mut client = Client::join();
+    // Creative, so the bear's blows pass us by; held still, so every swing reaches it.
+    client.ok("/gamemode creative");
+    let (id, slot) = beside_a_bear(&mut client);
+    client.ok("/creatures hold");
+    face(&mut client, id, slot, true);
+    client.pump_until(|c| c.creatures[&id].position.with_y(0.0).distance(c.position.with_y(0.0)) < 2.0);
+    // A sword's beat is 0.6 s after each swing starts: the first click starts the meter, and
+    // each next one comes a little before the beat, in the buffer, so it is held for it.
+    let start = Instant::now();
+    for k in 0..5u32 {
+        let due = start + Duration::from_secs_f32(if k == 0 { 0.0 } else { 0.6 * k as f32 - 0.06 });
+        while Instant::now() < due {
+            client.pump_until(|_| true);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        client.propose("core:attack", ActionTarget::Creature(id));
+    }
+    client.pump_until(|c| c.kinds.len() >= 5 || !c.creatures.contains_key(&id));
+    assert_eq!(client.kinds, [Blow::Plain, Blow::Beat, Blow::Beat, Blow::Beat, Blow::Flourish], "damage {:?}", client.damage);
+    // The server tells the pips after each, for the client's meter: one a beat, spent on the
+    // flourish.
+    assert_eq!(client.pips, [0, 1, 2, 3, 0]);
+}
+
+#[test]
+fn a_swing_is_dropped_when_its_weapon_leaves_the_hand() {
+    let mut client = Client::join();
+    client.ok("/gamemode creative");
+    let (id, slot) = beside_a_bear(&mut client);
+    client.ok("/creatures hold");
+    face(&mut client, id, slot, true);
+    let other = (slot + 1) % voxmar_engine::inventory::HOTBAR_SLOTS;
+    // Swung with the sword, then switched to an empty hand before it lands (its wind-up is
+    // 0.1 s): no blow lands, neither the sword's nor a fist's.
+    client.propose("core:attack", ActionTarget::Creature(id));
+    face(&mut client, id, other, true);
+    client.wait_server(2);
+    assert_eq!(client.blows, 0, "the dropped swing still landed, for {:?}", client.damage);
+    // Swung and kept in hand, it lands.
+    face(&mut client, id, slot, true);
+    client.wait_server(1);
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.blows == 1);
+}
+
+/// Whether a dodge proposed now is taken: a second one at once must then be refused by its
+/// cooldown, so exactly one Teleport comes back (two: the first was refused too; none: the
+/// cooldown did not hold).
+fn dodge_taken(client: &mut Client) -> bool {
+    let before = client.teleports;
+    client.propose("core:dodge", ActionTarget::None);
+    client.propose("core:dodge", ActionTarget::None);
+    client.wait_server(1);
+    client.teleports - before == 1
+}
+
+#[test]
+fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    client.ok("/fill ~-2 ~-1 ~-2 ~2 ~-1 ~2 stone");
+    client.ok("/tp ~ ~6 ~");
+    client.pump_until(|c| c.teleported.is_some());
+    // Six blocks up and told nothing else, the server has us in the air past the grace.
+    client.wait_server(1);
+    client.teleported = None;
+    client.propose("core:dodge", ActionTarget::None);
+    client.pump_until(|c| c.teleported.is_some());
+    // Landing, told just before the dodge (between the server's ticks), counts as ground.
+    client.ok("/tp ~ ~-5 ~");
+    client.wait_server(1);
+    client.teleported = None;
+    let landed = client.position - Vec3::Y;
+    client.connection.send(ClientMessage::Input(PlayerInput { position: landed, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.position = landed;
+    assert!(dodge_taken(&mut client), "a dodge as the player landed was refused");
+    // On the ground it is taken.
+    client.ok("/tp ~ ~ ~");
+    client.wait_server(2);
+    assert!(dodge_taken(&mut client), "a dodge on the ground was refused");
+}
+
+#[test]
+fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
+    use voxmar_engine::combat::{Blow, Defended};
+    let mut client = Client::join();
+    // In survival: creatures' blows pass a player in creative by.
+    client.ok("/gamemode survival");
+    client.ok("/skill hitpoints 60");
+    client.pump_until(|c| c.health >= 100);
+    let (id, slot) = beside_a_bear(&mut client);
+    let bear = client.creatures[&id].species;
+    let attack = client.content.creatures.get(bear).def.attack.expect("bears attack");
+    let feel = client.content.combat.feel;
+    let (windup, recovery) = (attack.windup.unwrap_or(feel.creature_windup), attack.recovery.unwrap_or(feel.creature_recovery));
+    // Waits for the bear to wind up at us (standing beside it, facing it, striking it every
+    // few seconds so it fights back), then answers `respond` `after` seconds later; returns
+    // what came of the blow.
+    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> Defended {
+        let before = provoke_until_it_winds_up(client, id, slot, "bear");
+        std::thread::sleep(Duration::from_secs_f32(after));
+        respond(client);
+        client.pump_until(|c| c.hurt.len() > before);
+        client.hurt[before].1
+    };
+    // Each answer's moment moves by what came of the last, so a slow machine is met where
+    // its blows fall: a block not perfect was too soon, a hit too late.
+    let answer = |client: &mut Client, want: Defended, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| {
+        let mut after = windup - 0.1;
+        let mut outcomes = Vec::new();
+        for _ in 0..8 {
+            let outcome = fight(client, after.max(0.0), respond);
+            undo(client);
+            outcomes.push(outcome);
+            if outcome == want {
+                return;
+            }
+            after += if outcome == Defended::Blocked { 0.05 } else { -0.05 };
+            client.wait_server(1);
+        }
+        panic!("answers to the bear's blows came to {outcomes:?}");
+    };
+    // Raised just before the blow: a perfect block, and the next blow a counter.
+    let raise = |c: &Client| {
+        let _ = c.connection.send(ClientMessage::Guard { up: true });
+    };
+    let lower = |c: &Client| {
+        let _ = c.connection.send(ClientMessage::Guard { up: false });
+    };
+    let health = client.health;
+    answer(&mut client, Defended::Perfect, &raise, &lower);
+    let perfect = client.hurt.len() - 1;
+    assert_eq!(client.hurt[perfect].0, 0, "a perfect block takes nothing");
+    assert!(client.health <= health);
+    let blows = client.kinds.len();
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.kinds.len() > blows);
+    assert_eq!(client.kinds[blows], Blow::Counter);
+    assert!(client.damage[blows] > 0, "a counter cannot miss");
+    // Staggered after its recovery: its next blow comes no sooner than both, and a wind-up.
+    face(&mut client, id, slot, false);
+    client.pump_until(|c| c.hurt.len() > perfect + 1);
+    let gap = client.hurt_at[perfect + 1] - client.hurt_at[perfect];
+    let least = recovery + feel.stagger + windup;
+    assert!(gap.as_secs_f32() > least - 0.1, "its next blow came {:.2}s after the perfect block: under {least:.2}s", gap.as_secs_f32());
+    // A dodge just before the blow: it passes through.
+    client.wait_server(1);
+    answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
+}
+
+#[test]
+fn armour_goes_on_from_the_hand_a_shield_guards_and_death_counts_what_is_worn() {
+    use voxmar_engine::combat::Defended;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
+    let [shirt, shield, sword] = ["base:chainmail_shirt", "base:wooden_shield", "base:iron_sword"].map(|n| client.content.blocks.id(n).unwrap());
+    for line in ["/clear", "/gamemode survival", "/skill defence 20", "/skill attack 20", "/skill hitpoints 60", "/give chainmail_shirt 1", "/give wooden_shield 1", "/give iron_sword 1"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.health >= 100 && [shirt, shield, sword].iter().all(|&i| (0..HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == i))));
+    let slot = |c: &Client, item| (0..HOTBAR_SLOTS).find(|&s| c.inventory.get(s).is_some_and(|s| s.item == item)).unwrap();
+    // Each goes on in its own worn slot; anywhere else it is refused.
+    let (from, sword_slot) = (slot(&client, shield), slot(&client, sword));
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: WORN as u8, count: 1 });
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + 5) as u8, count: 1 });
+    let from = slot(&client, shirt);
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + 1) as u8, count: 1 });
+    client.pump_until(|c| c.inventory.worn[1].is_some_and(|s| s.item == shirt) && c.inventory.worn[5].is_some_and(|s| s.item == shield));
+    assert!(client.inventory.worn[0].is_none(), "a shield is not a helmet");
+    // A guard held up long before the blow is no perfect block: the shield stops 55% of it.
+    client.ok("/summon brown_bear 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
+    let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
+    // Struck once so it fights back (again every three server seconds until a blow of ours
+    // is heard), then the guard goes up while it is not winding up.
+    let mut struck: Option<u64> = None;
+    let mut guarded: Option<usize> = None;
+    client.pump_until(|c| c.server_tick > 0);
+    let started = client.server_tick;
+    loop {
+        assert!(client.server_tick < started + 30 * TICKS_PER_SECOND as u64, "no guarded blow came (guard up: {}, our blows {})", guarded.is_some(), client.kinds.len());
+        let at = client.creatures[&id].position;
+        if client.position.distance(at) > 2.0 {
+            client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
+        }
+        let yaw = yaw_toward(client.position, at);
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: sword_slot as u8, flying: false }));
+        if guarded.is_none() && struck.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64) {
+            client.propose("core:attack", ActionTarget::Creature(id));
+            struck = Some(client.server_tick);
+        }
+        let winding = client.creatures[&id].pose == voxmar_engine::creature::brain::Pose::Attacking;
+        if guarded.is_none() && !client.kinds.is_empty() && !winding {
+            let _ = client.connection.send(ClientMessage::Guard { up: true });
+            guarded = Some(client.hurt.len());
+        }
+        if guarded.is_some_and(|n| client.hurt.len() > n) {
+            break;
+        }
+        // One round trip: the server has handled all of the above, a tick at most.
+        client.settle();
+    }
+    // Raised long before the blow: no perfect block, the shield stops 55% of it.
+    let (damage, defended) = client.hurt[guarded.unwrap()];
+    assert_eq!(defended, Defended::Blocked, "a guard up long before is a plain block");
+    assert!(damage <= 3, "the shield stops 55% of a blow of at most 6: {damage}");
+    let _ = client.connection.send(ClientMessage::Guard { up: false });
+    // Death counts what is worn among what is carried: the three most valuable are kept.
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0);
+    client.propose("core:respawn", ActionTarget::None);
+    client.pump_until(|c| c.health > 0);
+    client.pump_until(|c| c.inventory.worn.iter().all(Option::is_none));
+    let carried = |item| client.inventory.slots.iter().flatten().any(|s| s.item == item);
+    assert!(carried(shirt) && carried(shield) && carried(sword), "the shirt, the shield and the sword are kept");
+}
+
+#[test]
+fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
+    use voxmar_engine::combat::Defended;
+    // The wiki's draft 65: a wind-up follows its target at a run for its first part and
+    // the blow lunges as it lands, so stepping back at a walk (4.7 blocks a second) as it
+    // winds up is still within its reach; only a dodge passes it (the test above). Big and
+    // slow (a bear, a frost stag) and small and quick (a cave crawler, an ember salamander).
+    let walk = 4.7;
+    for name in ["brown_bear", "frost_stag", "cave_crawler", "ember_salamander"] {
+        let mut client = Client::join();
+        client.ok("/clear");
+        client.ok("/gamemode survival");
+        client.ok("/skill hitpoints 60");
+        client.pump_until(|c| c.health >= 100);
+        let (id, _) = beside(&mut client, name);
+        // Provoked with bare hands at Attack 1, so a small one (a salamander has 9
+        // hitpoints, an iron sword's max hit) lives to strike twice.
+        client.ok("/skill attack 1");
+        let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_none()).expect("an empty hand");
+        let mut outcomes = Vec::new();
+        for _ in 0..2 {
+            let before = provoke_until_it_winds_up(&mut client, id, slot, name);
+            // Straight back from it, facing it, until the blow lands: a walk's worth each
+            // server tick, as the creature moves by them (a server running behind moves
+            // both slower). Ticks are read off the server as it runs: the `Time` it tells
+            // once a second would move us in jumps of a whole second's walk.
+            let away = (client.position - client.creatures[&id].position).with_y(0.0).normalize_or_zero();
+            let started = client.ticks();
+            let mut last = started;
+            while client.hurt.len() == before {
+                let now = client.ticks();
+                assert!(now < started + 5 * TICKS_PER_SECOND as u64, "the {name}'s blow never came: {:?}", client.creatures.get(&id).map(|v| v.pose));
+                client.position += away * walk * (now - last) as f32 / TICKS_PER_SECOND as f32;
+                last = now;
+                let yaw = yaw_toward(client.position, client.creatures[&id].position);
+                client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+                client.pump_until(|c| c.hurt.len() > before || c.ticks() > last);
+            }
+            outcomes.push(client.hurt[before].1);
+            client.wait_server(1);
+        }
+        assert!(outcomes.iter().all(|&o| matches!(o, Defended::Hit | Defended::Missed)), "backing off a {name} at a walk came to {outcomes:?}");
+    }
+}
+
+/// Waits for the bear `id` to strike while the guard is up and the player looks `off`
+/// radians away from it, holding `slot`; returns what came of the blow.
+fn guarded_blow(client: &mut Client, id: u32, slot: usize, off: f32) -> voxmar_engine::combat::Defended {
+    let before = client.hurt.len();
+    let blows = client.kinds.len();
+    // Struck once so it fights back (again every one and a half server seconds until a blow
+    // of ours is heard); then the guard goes up while it is not winding up.
+    let mut struck: Option<u64> = None;
+    let mut guarded = false;
+    client.pump_until(|c| c.server_tick > 0);
+    let started = client.server_tick;
+    while client.hurt.len() == before {
+        assert!(client.server_tick < started + 30 * TICKS_PER_SECOND as u64, "no blow came (guard up: {guarded}, our blows {})", client.kinds.len() - blows);
+        assert!(client.creatures.contains_key(&id), "the bear went");
+        let at = client.creatures[&id].position;
+        if client.position.with_y(0.0).distance(at.with_y(0.0)) > 1.6 || (client.position.y - at.y).abs() > 0.5 {
+            client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
+        }
+        let yaw = yaw_toward(client.position, at) + off;
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+        if client.kinds.len() == blows && struck.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64 / 2) {
+            client.propose("core:attack", ActionTarget::Creature(id));
+            struck = Some(client.server_tick);
+        }
+        let winding = client.creatures[&id].pose == voxmar_engine::creature::brain::Pose::Attacking;
+        if !guarded && client.kinds.len() > blows && !winding {
+            let _ = client.connection.send(ClientMessage::Guard { up: true });
+            guarded = true;
+        }
+        // One round trip: the server has handled all of the above, a tick at most.
+        client.settle();
+    }
+    let _ = client.connection.send(ClientMessage::Guard { up: false });
+    let outcome = client.hurt[before].1;
+    client.wait_server(1);
+    outcome
+}
+
+#[test]
+fn a_shield_guards_wider_than_a_sword_but_not_below_its_level_or_beside_a_spear() {
+    use voxmar_engine::combat::Defended;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    client.ok("/skill hitpoints 60");
+    client.ok("/skill defence 20");
+    client.ok("/skill attack 20");
+    client.pump_until(|c| c.health >= 100);
+    let (id, sword) = beside_a_bear(&mut client);
+    let [shield, spear] = ["base:iron_shield", "base:bronze_spear"].map(|n| client.content.blocks.id(n).unwrap());
+    client.ok("/give iron_shield 1");
+    client.ok("/give bronze_spear 1");
+    let slot = |c: &Client, item| (0..HOTBAR_SLOTS).find(|&s| c.inventory.get(s).is_some_and(|s| s.item == item));
+    client.pump_until(|c| slot(c, shield).is_some() && slot(c, spear).is_some());
+    let from = slot(&client, shield).unwrap();
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + 5) as u8, count: 1 });
+    client.pump_until(|c| c.inventory.worn[5].is_some_and(|s| s.item == shield));
+    let spear = slot(&client, spear).unwrap();
+    // Looking 60 degrees off the bear: inside the shield's 150 but outside a sword's 90.
+    let off = 60f32.to_radians();
+    // A guarded blow inside the guard's arc is blocked even when the defence roll turns it.
+    assert_eq!(guarded_blow(&mut client, id, sword, off), Defended::Blocked, "the iron shield at Defence 20 guards 60 degrees off");
+    let two_handed = guarded_blow(&mut client, id, spear, off);
+    assert!(matches!(two_handed, Defended::Hit | Defended::Missed), "a spear takes both hands, but the shield guarded: {two_handed:?}");
+    client.ok("/skill defence 1");
+    let below = guarded_blow(&mut client, id, sword, off);
+    assert!(matches!(below, Defended::Hit | Defended::Missed), "below its level the shield guarded: {below:?}");
+}
+
+#[test]
+fn a_dodge_waits_longer_in_heavier_armour() {
+    use voxmar_engine::inventory::WORN;
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    client.ok("/fill ~-2 ~-1 ~-2 ~2 ~-1 ~2 stone");
+    let shirt = client.content.blocks.id("base:chainmail_shirt").unwrap();
+    client.ok("/give chainmail_shirt 1");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == shirt));
+    client.wait_server(1);
+    // Two dodges 1.0 s apart (the fight's clock is the wall's): unarmoured (light, 1.0 s
+    // less the 0.1 a client's clock may run ahead) the second is taken; in chainmail
+    // (medium, 1.2 s less 0.1) it is refused and puts us back.
+    let twice = |client: &mut Client| {
+        let before = client.teleports;
+        client.propose("core:dodge", ActionTarget::None);
+        let first = Instant::now();
+        // One at once is refused by the first's cooldown: the first was taken.
+        client.propose("core:dodge", ActionTarget::None);
+        client.pump_until(|c| c.teleports > before);
+        client.pump_until(|_| first.elapsed() > Duration::from_millis(1000));
+        let refused = !dodge_taken(client);
+        assert_eq!(client.teleports - before, if refused { 3 } else { 2 }, "the first dodge was refused");
+        // Past any cooldown before the next pair.
+        client.wait_server(2);
+        refused
+    };
+    assert!(!twice(&mut client), "unarmoured, a dodge 1.0 s after the last was refused");
+    let from = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == shirt)).unwrap();
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + 1) as u8, count: 1 });
+    client.pump_until(|c| c.inventory.worn[1].is_some_and(|s| s.item == shirt));
+    assert!(twice(&mut client), "in chainmail, a dodge 1.0 s after the last was taken");
+}
+
+#[test]
+fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
+    let mut client = Client::join();
+    let transformer = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let washer = transformer + IVec3::X;
+    // Boiler and turbine above the transformer (MV in on top), the washer beside it (LV).
+    for line in [
+        "/clear",
+        "/fill ~3 ~ ~-1 ~6 ~1 ~1 air",
+        "/setblock ~3 ~ ~ lv_transformer",
+        "/setblock ~3 ~1 ~ steam_turbine",
+        "/setblock ~4 ~1 ~ boiler",
+        "/setblock ~4 ~ ~ ore_washer",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.world.block(washer) == c.content.blocks.id("base:ore_washer") && c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give coal_ore 4");
+    client.pump_until(|c| count(c, coal) == 4);
+    use_at(&mut client, washer + IVec3::new(0, 1, 0));
+    client.pump_until(|c| count(c, coal) == 0);
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_at(&mut client, washer);
+    client.pump_until(|c| count(c, ore) == 0);
+    // Dry, it waits and says what it needs.
+    let started = client.server_tick;
+    loop {
+        assert!(server_seconds(&client, started) < 20, "the washer never said it needs water: {:?}", client.chat);
+        wait_server(&mut client, 1);
+        use_at(&mut client, washer);
+        client.pump_until(|c| !c.chat.is_empty());
+        if client.chat.iter().any(|(_, t)| t.contains("needs water")) {
+            break;
+        }
+    }
+    // `/machine` tells the same.
+    assert!(client.ok("/machine ~4 ~ ~").contains("needs water"));
+    // Water beside it: three dust for the one ore.
+    client.ok("/setblock ~5 ~ ~ water");
+    let started = client.server_tick;
+    while count(&client, dust) < 3 {
+        assert!(server_seconds(&client, started) < 40, "the washer made {} dust: {:?}", count(&client, dust), client.chat);
+        wait_server(&mut client, 1);
+        use_at(&mut client, washer);
+        client.pump_until(|c| !c.chat.is_empty());
+    }
+    assert_eq!(count(&client, dust), 3);
+}
+
+#[test]
+fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom() {
+    let mut client = Client::join();
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~3 ~ ~-1 ~8 ~2 ~3 air", "/setblock ~4 ~ ~ bloomery"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (ore, coal, bloom) = (blocks.expect("base:iron_ore"), blocks.expect("base:coal_ore"), blocks.expect("base:iron_bloom"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.world.block(core) == c.content.blocks.id("base:bloomery") && c.inventory.slots.iter().all(Option::is_none));
+    // Alone, the bloomery says what its structure needs.
+    use_at(&mut client, core);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("needs kiln bricks")));
+    // The shaft round it, bellows in its ring, a shaft out to a treadwheel, and an aurochs,
+    // tamed and held, beside the wheel.
+    for line in [
+        "/fill ~3 ~ ~-1 ~5 ~2 ~1 kiln_bricks",
+        "/fill ~4 ~1 ~ ~4 ~2 ~ air",
+        "/setblock ~4 ~ ~ bloomery",
+        "/setblock ~5 ~ ~ bellows",
+        "/setblock ~6 ~ ~ shaft",
+        "/setblock ~7 ~ ~ treadwheel",
+        "/summon aurochs 1 ~7 ~ ~2",
+        "/creatures tame aurochs",
+        "/creatures hold aurochs",
+        "/give iron_ore 2",
+        "/give coal_ore 1",
+    ] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(core + IVec3::X) == c.content.blocks.id("base:bellows") && count(c, ore) == 2 && count(c, coal) == 1);
+    use_at(&mut client, core);
+    client.pump_until(|c| count(c, ore) == 0);
+    // The coal is in the next slot now selected... put it in from wherever it lies.
+    client.ok("/clear");
+    client.ok("/give coal_ore 1");
+    client.pump_until(|c| count(c, coal) == 1 && c.inventory.get(0).is_some_and(|s| s.item == coal));
+    use_at(&mut client, core);
+    client.pump_until(|c| count(c, coal) == 0 && c.chat.iter().any(|(_, t)| t.contains("making")));
+    client.ok("/clear");
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+    // Twenty seconds of work at the bellows: an empty hand takes the bloom.
+    let started = client.server_tick;
+    while count(&client, bloom) == 0 {
+        if server_seconds(&client, started) > 60 {
+            let wheel = client.ok("/machine ~7 ~ ~");
+            panic!("the bloomery made no bloom: {:?}; the wheel: {wheel}", client.chat);
+        }
+        wait_server(&mut client, 1);
+        use_at(&mut client, core);
+        client.pump_until(|c| !c.chat.is_empty());
+    }
+    assert_eq!(count(&client, bloom), 1);
+    // One animal walks one wheel: a second wheel beside it, farther from the aurochs, stays
+    // still while the first turns.
+    client.ok("/setblock ~8 ~ ~ treadwheel");
+    let started = client.server_tick;
+    while !client.ok("/machine ~8 ~ ~").contains("needs a kept animal") {
+        assert!(server_seconds(&client, started) < 10, "one aurochs walks two wheels");
+        wait_server(&mut client, 1);
+    }
+    assert!(!client.ok("/machine ~7 ~ ~").contains("needs a kept animal"), "the nearer wheel still turns");
+    // The aurochs, kept, can be taken away again; then the wheel stops.
+    assert!(client.ok("/creatures remove aurochs").contains("for 1 creature within"));
+    let started = client.server_tick;
+    while !client.ok("/machine ~7 ~ ~").contains("needs a kept animal") {
+        assert!(server_seconds(&client, started) < 10, "the wheel still turns without its aurochs");
+        wait_server(&mut client, 1);
+    }
+}
+
+#[test]
+fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two_ingots_an_ore() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    // The coke oven: a chamber of kiln bricks three on a side round a hollow middle, the
+    // oven in the middle of its south face.
+    let oven = start + IVec3::new(-3, 1, 3);
+    // The blast furnace: the bloomery's ring four high, bellows in it, blown by an aurochs
+    // on a treadwheel out east.
+    let furnace = start + IVec3::new(4, 0, 0);
+    for line in [
+        "/clear",
+        "/fill ~-5 ~ ~ ~8 ~4 ~5 air",
+        "/fill ~-4 ~ ~1 ~-2 ~2 ~3 kiln_bricks",
+        "/setblock ~-3 ~1 ~2 air",
+        "/setblock ~-3 ~1 ~3 coke_oven",
+        "/fill ~3 ~ ~-1 ~5 ~3 ~1 kiln_bricks",
+        "/fill ~4 ~1 ~ ~4 ~3 ~ air",
+        "/setblock ~4 ~ ~ blast_furnace",
+        "/setblock ~5 ~ ~ bellows",
+        "/setblock ~6 ~ ~ shaft",
+        "/setblock ~7 ~ ~ treadwheel",
+        "/summon aurochs 1 ~7 ~ ~2",
+        "/creatures tame aurochs",
+        "/creatures hold aurochs",
+        "/give coal_ore 1",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, coke, ore, ingot) = (blocks.expect("base:coal_ore"), blocks.expect("base:coke"), blocks.expect("base:iron_ore"), blocks.expect("base:iron_ingot"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| count(c, coal) == 1 && c.world.block(oven) == c.content.blocks.id("base:coke_oven") && c.world.block(furnace + IVec3::X) == c.content.blocks.id("base:bellows"));
+    // The coal goes in, and the oven bakes it by its own heat.
+    use_machine(&mut client, oven);
+    client.pump_until(|c| count(c, coal) == 0);
+    machine_says(&mut client, &format!("{} {} {}", oven.x, oven.y, oven.z), "making Coke", 10);
+    // Taken out once baked (each `/seed` answer comes after the server dealt with the take).
+    let started = client.server_tick;
+    while count(&client, coke) == 0 {
+        assert!(server_seconds(&client, started) < 60, "the coke oven baked no coke: {}", client.ok(&format!("/machine {} {} {}", oven.x, oven.y, oven.z)));
+        wait_server(&mut client, 1);
+        use_machine(&mut client, oven);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, coke), 1);
+    // Two ore and the coke into the blast furnace: four ingots.
+    client.ok("/give iron_ore 2");
+    client.pump_until(|c| count(c, ore) == 2);
+    for item in [ore, coke] {
+        let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == item)).expect("held") as u8;
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: furnace, face: Face::NegX });
+        client.pump_until(|c| count(c, item) == 0);
+    }
+    let started = client.server_tick;
+    while count(&client, ingot) == 0 {
+        assert!(server_seconds(&client, started) < 60, "the blast furnace made no iron: {}", client.ok(&format!("/machine {} {} {}", furnace.x, furnace.y, furnace.z)));
+        wait_server(&mut client, 1);
+        client.ok("/creatures hold aurochs");
+        use_machine(&mut client, furnace);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, ingot), 4, "two ore and a coke, four ingots");
+}
+
+#[test]
+fn a_hopper_feeds_a_crusher_by_conveyor_and_a_chest_above_collects_its_dust() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    let (boiler, hopper) = (start + IVec3::new(4, 0, -1), start + IVec3::new(2, 0, 0));
+    for line in [
+        "/clear",
+        "/fill ~2 ~ ~-1 ~4 ~2 ~1 air",
+        "/setblock ~4 ~ ~-1 boiler",
+        "/setblock ~4 ~ ~ steam_crusher",
+        "/setblock ~3 ~ ~ conveyor",
+        "/setblock ~2 ~ ~ hopper",
+        "/setblock ~4 ~1 ~ chute",
+        "/setblock ~4 ~2 ~ chest",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(start + IVec3::new(4, 2, 0)) == c.content.blocks.id("base:chest"));
+    let conveyor_says = client.ok("/machine ~3 ~ ~");
+    assert!(conveyor_says.contains("moves up to 4 items a second"), "{conveyor_says}");
+    client.ok("/give coal_ore 2");
+    client.pump_until(|c| count(c, coal) == 2);
+    use_at(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0);
+    // Ore put into the hopper rides the conveyor into the crusher; the crusher's dust goes
+    // up the chute into the chest, not back into the hopper.
+    client.ok("/give copper_ore 2");
+    client.pump_until(|c| count(c, ore) == 2);
+    client.earned.clear();
+    use_at(&mut client, hopper);
+    client.pump_until(|c| count(c, ore) == 0 && c.chat.iter().any(|(_, t)| t.contains("Put in 2")));
+    let started = client.server_tick;
+    loop {
+        let chest_says = client.ok("/machine ~4 ~2 ~");
+        if chest_says.contains("holds 4 items") {
+            break;
+        }
+        assert!(server_seconds(&client, started) < 40, "the chest got no dust: {chest_says}; crusher: {}", client.ok("/machine ~4 ~ ~"));
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(client.ok("/machine ~2 ~ ~").contains("holds 0 items"));
+    // A running line earns nothing: Engineering xp is for making and placing its parts.
+    assert!(client.earned.is_empty(), "the running line paid xp: {:?}", client.earned);
+}
+
+/// Right clicks the machine at `at` with what is in the first slot (`base:use_machine`).
+fn use_machine(client: &mut Client, at: IVec3) {
+    client.chat.clear();
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+}
+
+/// Server seconds since `tick`, by the clock it last told.
+fn server_seconds(client: &Client, tick: u64) -> u64 {
+    client.server_tick.saturating_sub(tick) / TICKS_PER_SECOND as u64
+}
+
+/// Waits `seconds` of the server's clock, from the next time it tells it.
+fn wait_server(client: &mut Client, seconds: u64) {
+    client.after_ticks(seconds * TICKS_PER_SECOND as u64);
+}
+
+/// Asks `/machine` about a block until its answer contains `want`, or panics after `seconds`
+/// of the server's clock.
+fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> String {
+    let started = client.server_tick;
+    loop {
+        let said = client.ok(&format!("/machine {at}"));
+        if said.contains(want) {
+            return said;
+        }
+        assert!(server_seconds(client, started) < seconds, "/machine {at} never said `{want}`: {said}");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+#[test]
+fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is_kept_aside() {
+    let dir = world_dir("machines");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    for line in ["/clear", &format!("/setblock {at} chest"), "/give copper_ore 5"] {
+        client.ok(line);
+    }
+    let ore = client.content.blocks.expect("base:copper_ore");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == ore && s.count == 5) && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    use_machine(&mut client, chest);
+    machine_says(&mut client, &at, "holds 5 items", 10);
+    drop(client);
+    assert!(std::fs::read_to_string(dir.join("machines.ron")).unwrap().contains("chest"));
+
+    let mut client = Client::join_with(config());
+    machine_says(&mut client, &at, "holds 5 items", 10);
+
+    // Work half done is not done again after a restart.
+    let crusher = chest + IVec3::new(0, 0, 2);
+    let crusher_at = format!("{} {} {}", crusher.x, crusher.y, crusher.z);
+    for line in [
+        "/clear".to_string(),
+        format!("/setblock {} {} {} boiler", crusher.x + 1, crusher.y, crusher.z),
+        format!("/setblock {crusher_at} steam_crusher"),
+        "/give coal_ore 1".to_string(),
+    ] {
+        client.ok(&line);
+    }
+    let coal = client.content.blocks.expect("base:coal_ore");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == coal) && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    use_machine(&mut client, crusher + IVec3::X);
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give iron_ore 1");
+    client.pump_until(|c| c.inventory.slots.iter().any(Option::is_some));
+    use_machine(&mut client, crusher);
+    let progress = |said: &str| said.split(", ").find_map(|part| part.strip_suffix("% done")).and_then(|p| p.trim_end_matches('.').parse::<u32>().ok());
+    let started = client.server_tick;
+    let done = loop {
+        let said = client.ok(&format!("/machine {crusher_at}"));
+        if let Some(done) = progress(&said).filter(|&p| p >= 40) {
+            break done;
+        }
+        assert!(server_seconds(&client, started) < 20, "the crusher never got going: {said}");
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    drop(client);
+    let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
+    assert!(save.contains("base:iron_dust"), "the save keeps the work: {save}");
+    let mut client = Client::join_with(config());
+    // Until its first step it says it is idle; then it goes on from where it was.
+    let said = machine_says(&mut client, &crusher_at, "making", 20);
+    assert!(progress(&said).is_some_and(|p| p >= done), "the crusher began again: {said}, was {done}% done");
+    // Finished, the one ore made two dust: not two lots of it, nor none. The limit is the
+    // server's time with no progress: a crowded test machine runs the server slow.
+    let (mut moved, mut last) = (client.server_tick, progress(&said));
+    loop {
+        let said = client.ok(&format!("/machine {crusher_at}"));
+        if said.contains("idle") {
+            break;
+        }
+        if progress(&said) != last {
+            (moved, last) = (client.server_tick, progress(&said));
+        }
+        assert!(server_seconds(&client, moved) < 20, "the crusher stopped after the restart: {said}");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    let dust = client.content.blocks.expect("base:iron_dust");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == dust).map(|s| s.count as u32).sum::<u32>();
+    use_machine(&mut client, crusher);
+    client.pump_until(|c| held(c) > 0);
+    let made = held(&client);
+    assert_eq!(made, 2, "one iron ore crushed across a restart");
+    drop(client);
+
+    // A machines file that cannot be read is kept aside before the next save writes over it,
+    // the server goes on, and the machines standing in saved land join the factory again,
+    // empty.
+    std::fs::write(dir.join("machines.ron"), "not a machine").unwrap();
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
+    client.ok(&format!("/machine {at}"));
+    drop(client);
+    let aside: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().contains("machines.unreadable.")).collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "not a machine");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// How often the server saves on its own (`SAVE_INTERVAL`), in ticks.
+const SAVE_EVERY: u64 = 30 * TICKS_PER_SECOND as u64;
+
+/// The generation of the save in `dir`, from its `world.ron`.
+fn saved_generation(dir: &std::path::Path) -> u64 {
+    let meta = std::fs::read_to_string(dir.join("world.ron")).expect("world.ron");
+    let at = meta.find("generation:").expect("a generation") + "generation:".len();
+    meta[at..].trim_start().split(|c: char| !c.is_ascii_digit()).next().and_then(|n| n.parse().ok()).expect("a number")
+}
+
+/// Waits until the server has finished the loop that handled what was sent before now: a
+/// `/seed` answer, then the next time it tells, sent by a later step of that loop or after.
+fn after_this_loop(client: &mut Client) {
+    client.ok("/seed");
+    let told = client.server_tick;
+    client.pump_until(|c| c.server_tick > told);
+}
+
+#[test]
+fn only_a_joined_player_leaving_saves_the_world() {
+    let dir = world_dir("leavers");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let autosaves = |from: u64, to: u64| (to / SAVE_EVERY).saturating_sub(from.saturating_sub(TICKS_PER_SECOND as u64) / SAVE_EVERY);
+    after_this_loop(&mut client);
+    let (before, from) = (saved_generation(&dir), client.server_tick);
+    // Three connections that close without a hello: none of them is a player leaving.
+    for _ in 0..3 {
+        let (connection, server_side) = local_pair();
+        drop(connection);
+        client._server.as_ref().unwrap().connections().send(server_side).unwrap();
+    }
+    after_this_loop(&mut client);
+    let saves = saved_generation(&dir) - before;
+    assert!(saves <= autosaves(from, client.server_tick), "{saves} saves for connections that never joined");
+    // A player who joined does save the world as they leave.
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    let (before, from) = (saved_generation(&dir), client.server_tick);
+    drop(other);
+    after_this_loop(&mut client);
+    let saves = saved_generation(&dir) - before;
+    assert!(saves >= 1 && saves <= 1 + autosaves(from, client.server_tick), "{saves} saves for a player leaving");
+    drop(client);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() {
+    let dir = world_dir("cut");
+    let config = |cut_saves| ServerConfig { view_distance: 2, world: Some(dir.clone()), cut_saves, ..Default::default() };
+    let mut client = Client::join_with(config(false));
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    for line in ["/clear", &format!("/setblock {at} chest"), "/give iron_ore 64"] {
+        client.ok(line);
+    }
+    let ore = client.content.blocks.expect("base:iron_ore");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| held(c) == 64 && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    drop(client);
+    // The ore goes into the chest, and every save after is cut short once the machines
+    // are written: the chest holding it is saved, the player without it is not.
+    let mut client = Client::join_with(config(true));
+    client.pump_until(|c| held(c) == 64);
+    use_machine(&mut client, chest);
+    client.pump_until(|c| held(c) == 0);
+    machine_says(&mut client, &at, "holds 64 items", 10);
+    drop(client);
+    // The last whole save: the ore in hand, the chest empty. Sixty-four in all.
+    let mut client = Client::join_with(config(false));
+    client.pump_until(|c| held(c) > 0);
+    let said = client.ok(&format!("/machine {at}"));
+    let in_chest = said.split(' ').zip(said.split(' ').skip(1)).find_map(|(n, word)| (word == "items").then(|| n.parse::<u32>().ok()).flatten()).unwrap_or(0);
+    assert_eq!(held(&client) + in_chest, 64, "the player holds {}, the chest: {said}", held(&client));
+    drop(client);
+    assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new(), "the cut save was forgotten");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Files a save staged and left, in the world and its players and columns.
+fn staged_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    [dir.to_path_buf(), dir.join("players"), dir.join("columns")]
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|entries| entries.flatten().map(|e| e.path()))
+        .filter(|p| p.to_string_lossy().ends_with(".new"))
+        .collect()
+}
+
+#[test]
+fn a_save_whose_machines_cannot_be_written_does_not_count_and_leaves_nothing_staged() {
+    let dir = world_dir("failing");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    after_this_loop(&mut client);
+    let before = saved_generation(&dir);
+    // The machines can't be written for the next saves: a directory stands where they go.
+    let blocked: Vec<_> = (before + 1..before + 40).map(|g| dir.join(format!("machines.ron.{g}.new"))).collect();
+    for path in &blocked {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    // A player leaving saves the world, players and all; none of it counts.
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    drop(other);
+    after_this_loop(&mut client);
+    assert_eq!(saved_generation(&dir), before, "a save missing its machines counted");
+    let staged: Vec<_> = staged_files(&dir).into_iter().filter(|p| !blocked.contains(p)).collect();
+    assert!(staged.is_empty(), "the failed save left {staged:?}");
+    // With room again, the next save counts.
+    for path in &blocked {
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    drop(other);
+    after_this_loop(&mut client);
+    assert!(saved_generation(&dir) > before, "the save after counted");
+    drop(client);
+    assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_multiblock_counts_as_built_for_whoever_placed_its_core_not_whoever_uses_it_first() {
+    let dir = world_dir("builder");
+    let mut owner = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let core = owner.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~1 ~ ~-1 ~6 ~2 ~1 air", "/fill ~1 ~-1 ~-1 ~6 ~-1 ~1 stone", "/give bloomery 1"] {
+        owner.ok(line);
+    }
+    let bloomery = owner.content.blocks.expect("base:bloomery");
+    owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == bloomery) && c.world.block(core - IVec3::Y) == c.content.blocks.id("base:stone"));
+    // The core placed by hand on open ground, then the shaft built round it.
+    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.propose("core:place", ActionTarget::Block { block: core - IVec3::Y, face: Face::PosY });
+    owner.pump_until(|c| c.world.block(core) == Some(bloomery));
+    for line in ["/fill ~3 ~ ~-1 ~5 ~2 ~-1 kiln_bricks", "/fill ~3 ~ ~1 ~5 ~2 ~1 kiln_bricks", "/fill ~3 ~ ~ ~3 ~2 ~ kiln_bricks", "/fill ~5 ~1 ~ ~5 ~2 ~ kiln_bricks", "/setblock ~5 ~ ~ bellows"] {
+        owner.ok(line);
+    }
+    owner.pump_until(|c| c.world.block(core + IVec3::X) == c.content.blocks.id("base:bellows"));
+    // Another player uses it first: the build is the owner's.
+    let mut other = owner.another("other");
+    other.pump_until(|c| c.world.block(core) == Some(bloomery));
+    // Empty-handed (its starting kit's first slot holds what a bloomery does not take).
+    let empty = other.inventory.slots.iter().take(9).position(Option::is_none).expect("an empty hotbar slot") as u8;
+    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: empty, flying: false }));
+    other.propose("base:use_machine", ActionTarget::Block { block: core, face: Face::NegX });
+    other.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Bloomery")));
+    drop(other);
+    drop(owner);
+    let read = |name: &str| std::fs::read_to_string(dir.join("players").join(format!("{name}.ron"))).unwrap();
+    assert!(read("test").contains("built:base:bellows_bloomery"), "the owner built it: {}", read("test"));
+    assert!(!read("other").contains("built:"), "the first to use it did not: {}", read("other"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
+    let dir = world_dir("spill");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    client.ok(&format!("/setblock {at} chest"));
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
+    drop(client);
+    // Thirty stacks saved in a chest of twenty-seven slots, as when a package gives it fewer.
+    let stacks = vec![r#"("base:cobblestone",64)"#; 30].join(",");
+    let saved = format!(r#"[(position:({},{},{}),block:"base:chest",inputs:[],outputs:[],fuel:None,burning:0.0,energy:0.0,condition:0.0,made:0,bin:[{stacks}])]"#, chest.x, chest.y, chest.z);
+    std::fs::write(dir.join("machines.ron"), saved).unwrap();
+    let mut client = Client::join_with(config());
+    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
+    let cobblestone = client.content.blocks.expect("base:cobblestone");
+    client.pump_until(|c| c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>() == 3 * 64);
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_broken_chest_drops_what_it_held_and_a_chute_in_hand_is_not_put_in() {
+    let mut client = Client::join();
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    for line in ["/clear", "/setblock ~2 ~ ~ chest", "/give copper_ore 7"] {
+        client.ok(line);
+    }
+    let (ore, chute) = (client.content.blocks.expect("base:copper_ore"), client.content.blocks.expect("base:chute"));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == ore && s.count == 7) && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    use_machine(&mut client, chest);
+    machine_says(&mut client, "~2 ~ ~", "holds 7 items", 10);
+    // A machine in hand is laid against a bin, not put in it.
+    client.ok("/give chute 1");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == chute));
+    use_machine(&mut client, chest);
+    client.ok("/seed");
+    machine_says(&mut client, "~2 ~ ~", "holds 7 items", 5);
+    assert!(client.inventory.slots.iter().flatten().any(|s| s.item == chute), "the chute stays in hand");
+    // Broken, it drops all it held.
+    client.ok("/setblock ~2 ~ ~ air");
+    client.pump_until(|c| c.items.values().filter(|i| i.stack.item == ore).map(|i| i.stack.count as u32).sum::<u32>() == 7);
+}
+
+#[test]
+fn a_water_wheel_turns_on_falling_water_but_not_on_water_poured_out_on_flat_ground() {
+    let mut client = Client::join();
+    for line in ["/clear", "/fill ~2 ~ ~-2 ~6 ~3 ~2 air", "/fill ~2 ~-1 ~-2 ~6 ~-1 ~2 stone", "/setblock ~4 ~ ~ water_wheel", "/setblock ~5 ~ ~ shaft"] {
+        client.ok(line);
+    }
+    // Poured beside it, water spreads but does not run: the wheel stays still.
+    client.ok("/setblock ~3 ~ ~ water");
+    machine_says(&mut client, "~4 ~ ~", "a fall of water", 10);
+    wait_server(&mut client, 2);
+    machine_says(&mut client, "~4 ~ ~", "a fall of water", 5);
+    // Falling past it, from a spring above, it turns.
+    for line in ["/fill ~2 ~ ~-2 ~3 ~2 ~2 air", "/setblock ~3 ~3 ~ water"] {
+        client.ok(line);
+    }
+    let started = client.server_tick;
+    while client.ok("/machine ~4 ~ ~").contains("a fall of water") {
+        assert!(server_seconds(&client, started) < 15, "falling water never turned the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+#[test]
+fn water_wheels_within_four_blocks_of_another_share_its_water_and_both_turn_once_it_moves_away() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    for line in ["/clear", "/fill ~2 ~ ~-2 ~10 ~4 ~2 air", "/fill ~2 ~-1 ~-2 ~10 ~-1 ~2 stone", "/setblock ~3 ~4 ~ water", "/setblock ~4 ~1 ~ water_wheel"] {
+        client.ok(line);
+    }
+    let at = |dx: i32, dz: i32| format!("{} {} {}", start.x + dx, start.y + 1, start.z + dz);
+    // Alone beside the fall it turns: idle, with nothing to drive.
+    machine_says(&mut client, &at(4, 0), "idle", 20);
+    // A second wheel on the same fall shares it, and neither turns.
+    client.ok("/setblock ~2 ~1 ~ water_wheel");
+    machine_says(&mut client, &at(4, 0), "a fall of water", 20);
+    machine_says(&mut client, &at(2, 0), "a fall of water", 20);
+    client.ok("/setblock ~2 ~1 ~ air");
+    machine_says(&mut client, &at(4, 0), "idle", 20);
+    // On a fall of its own four blocks off (the data's `water_spacing`, diagonals too),
+    // it stills the first all the same.
+    client.ok("/setblock ~8 ~4 ~ water");
+    client.ok("/setblock ~8 ~1 ~1 water_wheel");
+    machine_says(&mut client, &at(4, 0), "a fall of water", 20);
+    machine_says(&mut client, &at(8, 1), "a fall of water", 20);
+    // Five blocks off, both turn.
+    client.ok("/setblock ~8 ~1 ~1 air");
+    client.ok("/setblock ~9 ~1 ~ water_wheel");
+    machine_says(&mut client, &at(4, 0), "idle", 20);
+    machine_says(&mut client, &at(9, 0), "idle", 20);
+}
+
+#[test]
+fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_wheel_there() {
+    // A world folder, so edited land is saved and may unload (unsaved land never does).
+    let dir = world_dir("unloaded");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let start = client.position.floor().as_ivec3();
+    let (boiler, crusher) = (start + IVec3::new(3, 0, 0), start + IVec3::new(4, 0, 0));
+    for line in [
+        "/clear",
+        "/fill ~3 ~ ~-1 ~4 ~1 ~1 air",
+        "/setblock ~3 ~ ~ boiler",
+        "/setblock ~4 ~ ~ steam_crusher",
+        "/fill ~2 ~ ~3 ~4 ~1 ~5 air",
+        "/setblock ~3 ~ ~4 treadwheel",
+        "/summon aurochs 1 ~3 ~ ~5",
+        "/creatures tame aurochs",
+        "/creatures hold aurochs",
+        "/give coal_ore 2",
+        "/fill ~2 ~3 ~-6 ~4 ~5 ~-4 air",
+        "/setblock ~3 ~4 ~-5 windmill",
+        "/wind calm 600",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    // In calm air the windmill does not turn.
+    let windmill = format!("{} {} {}", start.x + 3, start.y + 4, start.z - 5);
+    machine_says(&mut client, &windmill, "no wind", 20);
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| count(c, coal) == 2 && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    let wheel = format!("{} {} {}", start.x + 3, start.y, start.z + 4);
+    let started = client.server_tick;
+    while client.ok(&format!("/machine {wheel}")).contains("needs a kept animal") {
+        assert!(server_seconds(&client, started) < 10, "the aurochs never walked the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    use_machine(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0);
+    client.ok("/give copper_ore 3");
+    client.pump_until(|c| count(c, ore) == 3);
+    use_machine(&mut client, crusher);
+    client.pump_until(|c| count(c, ore) == 0);
+    // Far away, the land unloads once saved: the crusher works the ore all the same, and
+    // the wheel, its aurochs not about, stops.
+    let at = format!("{} {} {}", crusher.x, crusher.y, crusher.z);
+    client.ok(&format!("/tp {} {}", start.x + 3000, start.z));
+    machine_says(&mut client, &wheel, "needs a kept animal", 60);
+    machine_says(&mut client, &at, "idle", 60);
+    // Unloaded, the windmill is reckoned to catch an average wind (`wind_mean`), not the
+    // calm it was left in.
+    machine_says(&mut client, &windmill, "idle", 20);
+    client.ok(&format!("/tp {} {} {}", start.x, start.y, start.z));
+    client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    use_machine(&mut client, crusher);
+    client.pump_until(|c| count(c, dust) == 6);
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_windmill_within_four_blocks_of_another_is_becalmed_and_both_turn_once_it_moves_away() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    for line in ["/clear", "/fill ~3 ~3 ~-2 ~12 ~6 ~5 air", "/wind gale w 30", "/setblock ~3 ~4 ~ windmill"] {
+        client.ok(line);
+    }
+    let at = |dx: i32| format!("{} {} {}", start.x + dx, start.y + 4, start.z);
+    // Alone in a gale it has wind: idle, with nothing to turn (becalmed, it says "no wind").
+    machine_says(&mut client, &at(3), "idle", 20);
+    // Sails four blocks off (the data's `wind_spacing`) steal its wind, and it theirs.
+    client.ok("/setblock ~7 ~4 ~ windmill");
+    machine_says(&mut client, &at(3), "no wind", 20);
+    machine_says(&mut client, &at(7), "no wind", 20);
+    // Four off on both ways (diagonals count), the same.
+    client.ok("/setblock ~7 ~4 ~ air");
+    client.ok("/setblock ~7 ~4 ~4 windmill");
+    machine_says(&mut client, &at(3), "no wind", 20);
+    // Five blocks off, both turn.
+    client.ok("/setblock ~7 ~4 ~4 air");
+    client.ok("/setblock ~8 ~4 ~ windmill");
+    machine_says(&mut client, &at(3), "idle", 20);
+    machine_says(&mut client, &at(8), "idle", 20);
+}
+
+#[test]
+fn a_treadwheel_a_player_placed_is_walked_only_by_their_own_animals() {
+    let config = ServerConfig { view_distance: 2, admins: vec!["other".into()], ..Default::default() };
+    let mut owner = Client::join_with(config);
+    let mut other = owner.another("other");
+    let wheel = owner.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let at = format!("{} {} {}", wheel.x, wheel.y, wheel.z);
+    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/fill ~2 ~-1 ~-1 ~4 ~-1 ~3 stone", "/give treadwheel 1"] {
+        owner.ok(line);
+    }
+    let treadwheel = owner.content.blocks.expect("base:treadwheel");
+    owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel - IVec3::Y) == c.content.blocks.id("base:stone"));
+    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
+    owner.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
+    // Another player's aurochs beside it does not walk it.
+    for line in ["/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+        other.ok(line);
+    }
+    machine_says(&mut owner, &at, "needs a kept animal", 10);
+    wait_server(&mut owner, 3);
+    machine_says(&mut owner, &at, "needs a kept animal", 1);
+    // Their own wheel in its place, it does.
+    owner.ok(&format!("/setblock {at} air"));
+    for line in ["/clear", "/give treadwheel 1"] {
+        other.ok(line);
+    }
+    other.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel).is_some_and(|b| b.is_air()));
+    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    other.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
+    other.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
+    let started = owner.server_tick;
+    while owner.ok(&format!("/machine {at}")).contains("needs a kept animal") {
+        assert!(server_seconds(&owner, started) < 10, "the other player's aurochs never walked their own wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+#[test]
+fn a_full_hopper_leaves_the_stack_in_hand_and_gives_nothing_back() {
+    let mut client = Client::join();
+    let hopper = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    for line in ["/clear", "/setblock ~2 ~ ~ hopper"] {
+        client.ok(line);
+    }
+    let ore = client.content.blocks.expect("base:copper_ore");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(hopper) == c.content.blocks.id("base:hopper"));
+    // Five stacks fill its five slots.
+    for filled in 1..=5 {
+        client.ok("/give copper_ore 64");
+        client.pump_until(|c| held(c) == 64);
+        use_machine(&mut client, hopper);
+        client.pump_until(|c| held(c) == 0);
+        machine_says(&mut client, "~2 ~ ~", &format!("holds {} items", filled * 64), 5);
+    }
+    // A sixth stays in hand, and the hopper keeps what it holds.
+    client.ok("/give copper_ore 64");
+    client.pump_until(|c| held(c) == 64);
+    use_machine(&mut client, hopper);
+    client.ok("/seed");
+    machine_says(&mut client, "~2 ~ ~", "holds 320 items", 5);
+    assert_eq!(held(&client), 64, "the full hopper emptied into the inventory");
+}
+
+#[test]
+fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_it_is_fed() {
+    let mut client = Client::join();
+    let aurochs = client.content.creatures.find("aurochs").expect("aurochs in the content");
+    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/setblock ~3 ~ ~ treadwheel", "/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+        client.ok(line);
+    }
+    let start = client.position.floor().as_ivec3();
+    let wheel = format!("{} {} {}", start.x + 3, start.y, start.z);
+    let turns = |client: &mut Client| !client.ok(&format!("/machine {wheel}")).contains("needs a kept animal");
+    let started = client.server_tick;
+    while !turns(&mut client) {
+        assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    // Three days on, unfed, it will not walk.
+    client.ok("/time add 3d");
+    let said = machine_says(&mut client, &wheel, "fed in the last 2 days", 10);
+    assert!(said.contains("needs a kept animal"), "{said}");
+    // Fed its wheat, it walks again.
+    client.ok("/give wheat 1");
+    let wheat = client.content.blocks.expect("base:wheat");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == wheat) && c.creatures.values().any(|v| v.species == aurochs));
+    let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == aurochs).unwrap();
+    let at = view.position;
+    client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:tend", ActionTarget::Creature(id));
+    client.pump_until(|c| c.inventory.get(0).is_none());
+    let started = client.server_tick;
+    while !turns(&mut client) {
+        assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
 }
 
 #[test]
@@ -1421,6 +2774,8 @@ fn sowing_where_a_crop_cannot_grow_is_refused_with_why() {
     // A refusal, for the interface to show as one, not a console line.
     let text = client.refused[0].clone();
     assert!(text.contains("water close by") || text.contains("here for"), "refused sowing said {text:?}");
+    // Named as the player knows it: the rice they hold, not a growing stage.
+    assert!(text.contains("Rice") && !text.contains("Crop"), "refused sowing named the crop as {text:?}");
     client.settle();
     assert!(client.chat.is_empty(), "a refused sowing also wrote to the console: {:?}", client.chat);
     assert_eq!(client.world.block(ground + IVec3::Y), Some(BlockId::AIR), "rice was sown where it cannot grow");

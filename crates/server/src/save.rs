@@ -10,13 +10,21 @@
 //! - `items.ron`: the dropped items lying about, by item name.
 //! - `crops.ron`: the crops players planted, by crop name, with their stage and the tick
 //!   their next is due.
+//! - `machines.ron`: the machines players built, by block name, with what they hold.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
 //! never leaves a half-written file behind.
+//!
+//! A save is one generation: everything but `world.ron` is first written beside its file as
+//! `<file>.<generation>.new`, then `world.ron` takes the new generation (the moment the save
+//! counts), then each is renamed into place. A save cut short before `world.ron` leaves the
+//! last whole save as it was, so nothing a player put in a machine (or took out) is both
+//! held and in the machine; one cut short after it is finished the next time the world
+//! opens ([`WorldSave::recover`]).
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use flate2::Compression;
@@ -38,6 +46,11 @@ const META_FILE: &str = "world.ron";
 const CREATURES_FILE: &str = "creatures.ron";
 const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
+const MACHINES_FILE: &str = "machines.ron";
+/// Where an unreadable machines file is kept aside, before the seconds since the epoch.
+const MACHINES_UNREADABLE_FILE: &str = "machines.unreadable";
+/// What a file being saved ends with, after its generation.
+const STAGED: &str = "new";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
 /// layout changes.
 const COLUMN_MAGIC: &[u8; 4] = b"vxc4";
@@ -86,6 +99,9 @@ pub struct WorldMeta {
     pub regrowing: Vec<SavedRegrowing>,
     #[serde(default)]
     pub planter_grown: Vec<[i32; 3]>,
+    /// The last whole save: files of a later one were cut short and are not used.
+    #[serde(default)]
+    pub generation: u64,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -118,6 +134,7 @@ impl WorldMeta {
             placed: Vec::new(),
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
+            generation: 0,
         }
     }
 }
@@ -162,6 +179,9 @@ struct PlayerFile {
     flying: bool,
     health: Health,
     inventory: Vec<Option<(String, u8)>>,
+    /// What is worn, slot by slot (`inventory::WORN`).
+    #[serde(default)]
+    worn: Vec<Option<String>>,
     #[serde(default)]
     skills: Vec<(String, u32)>,
     #[serde(default)]
@@ -189,15 +209,92 @@ struct ColumnFile<C> {
     column: C,
 }
 
+/// A save being written: its generation and the files it has staged.
+type Staging = (u64, Vec<PathBuf>);
+
 /// A world directory. Cheap to clone, so worker threads can load columns.
 #[derive(Clone, Debug)]
 pub struct WorldSave {
     dir: Arc<Path>,
+    /// The save being written, if one is.
+    staging: Arc<Mutex<Option<Staging>>>,
 }
 
 impl WorldSave {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into().into() }
+        Self { dir: dir.into().into(), staging: Arc::default() }
+    }
+
+    /// Starts a save of `generation`: until [`WorldSave::commit`], files are written beside
+    /// their own and the world as last saved stays as it was.
+    pub fn begin(&self, generation: u64) {
+        *self.staging.lock().expect("save staging") = Some((generation, Vec::new()));
+    }
+
+    /// Ends the save begun: `meta`, carrying its generation, is written, and with that the
+    /// save counts (an error: it does not); then its files take their places. Returns
+    /// whether all did (any left are moved when the world next opens).
+    pub fn commit(&self, meta: &WorldMeta) -> io::Result<bool> {
+        let staged = self.staging.lock().expect("save staging").take();
+        if let Err(e) = self.write_meta(meta) {
+            if let Some((generation, files)) = &staged {
+                discard(*generation, files);
+            }
+            return Err(e);
+        }
+        let Some((generation, files)) = staged else { return Ok(true) };
+        let mut moved = true;
+        for file in files {
+            if let Err(e) = std::fs::rename(staged_path(&file, generation), &file) {
+                tracing::error!("could not move the saved {} into place: {e}", file.display());
+                moved = false;
+            }
+        }
+        Ok(moved)
+    }
+
+    /// Gives up the save begun, as a failed write must: what it staged is deleted and the
+    /// world stays as last saved, so nothing held is ever both there and in a newer file.
+    pub fn abandon(&self) {
+        if let Some((generation, files)) = self.staging.lock().expect("save staging").take() {
+            discard(generation, &files);
+        }
+    }
+
+    /// Where a file of the save being written goes: beside its own while one is begun.
+    fn target(&self, path: PathBuf) -> PathBuf {
+        let mut staging = self.staging.lock().expect("save staging");
+        match staging.as_mut() {
+            Some((generation, files)) => {
+                let staged = staged_path(&path, *generation);
+                files.push(path);
+                staged
+            }
+            None => path,
+        }
+    }
+
+    /// Finishes or forgets a save cut short: files of the generation `meta` counts are moved
+    /// into place (it was cut while moving them), those of a later one deleted (it was cut
+    /// before it counted). Run before anything is read.
+    pub fn recover(&self, meta: &WorldMeta) {
+        for dir in [self.dir.to_path_buf(), self.dir.join("players"), self.dir.join("columns")] {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some((file, generation)) = staged_of(&path) else { continue };
+                let result = if generation == meta.generation {
+                    tracing::warn!("finishing a save cut short: {}", file.display());
+                    std::fs::rename(&path, &file)
+                } else {
+                    tracing::warn!("forgetting a save cut short: {}", path.display());
+                    std::fs::remove_file(&path)
+                };
+                if let Err(e) = result {
+                    tracing::error!("could not recover {}: {e}", path.display());
+                }
+            }
+        }
     }
 
     pub fn dir(&self) -> &Path {
@@ -231,6 +328,11 @@ impl WorldSave {
 
     fn column_path(&self, pos: ColumnPos) -> PathBuf {
         self.dir.join("columns").join(format!("{}.{}.bin", pos.0.x, pos.0.y))
+    }
+
+    /// Whether the column at `pos` was ever saved.
+    pub fn has_column(&self, pos: ColumnPos) -> bool {
+        self.column_path(pos).is_file()
     }
 
     /// The saved column at `pos`, if it was ever saved. Blocks are mapped to the current
@@ -287,7 +389,7 @@ impl WorldSave {
         encoder.write_all(&encoded)?;
         let path = self.column_path(pos);
         std::fs::create_dir_all(path.parent().expect("column files are in a directory"))?;
-        write_atomic(&path, &encoder.finish()?)
+        write_atomic(&self.target(path), &encoder.finish()?)
     }
 
     fn player_path(&self, name: &str) -> PathBuf {
@@ -308,6 +410,9 @@ impl WorldSave {
             *slot = stack
                 .filter(|&(_, count)| count > 0)
                 .and_then(|(item, count)| Some(ItemStack { item: registry.id(&item)?, count: count.min(MAX_STACK) }));
+        }
+        for (slot, item) in inventory.worn.iter_mut().zip(file.worn) {
+            *slot = item.and_then(|item| Some(ItemStack { item: registry.id(&item)?, count: 1 }));
         }
         inventory.pouched = file.pouched.iter().filter_map(|(item, count)| Some((registry.id(item)?, *count))).filter(|&(_, n)| n > 0).collect();
         let position = Vec3::from(file.position);
@@ -335,6 +440,7 @@ impl WorldSave {
             flying: player.flying,
             health: player.health,
             inventory,
+            worn: held.worn.iter().map(|slot| slot.map(|stack| registry.def(stack.item).name.clone())).collect(),
             skills: player.skills.clone(),
             effects: player.effects.clone(),
             home: player.home,
@@ -347,7 +453,7 @@ impl WorldSave {
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
         std::fs::create_dir_all(path.parent().expect("player files are in a directory"))?;
-        write_atomic(&path, text.as_bytes())
+        write_atomic(&self.target(path), text.as_bytes())
     }
 }
 
@@ -397,7 +503,30 @@ impl WorldSave {
 
     pub fn write_crops(&self, crops: &[SavedCrop]) -> io::Result<()> {
         let text = ron::ser::to_string(crops).map_err(io::Error::other)?;
-        write_atomic(&self.dir.join(CROPS_FILE), text.as_bytes())
+        write_atomic(&self.target(self.dir.join(CROPS_FILE)), text.as_bytes())
+    }
+
+    /// The machines, none if the world has no machines file. A file that cannot be read is
+    /// first kept aside (`machines.unreadable.<seconds since the epoch>.ron`), since the
+    /// next save writes over it: every machine and everything chests hold would be lost.
+    pub fn read_machines(&self) -> io::Result<Vec<crate::machines::SavedMachine>> {
+        let path = self.dir.join(MACHINES_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(source) => ron::from_str(&source).map_err(|e| {
+                let aside = self.dir.join(format!("{MACHINES_UNREADABLE_FILE}.{}.ron", unix_time()));
+                if let Err(copy) = std::fs::copy(&path, &aside) {
+                    tracing::error!("could not keep the unreadable machines file aside: {copy}");
+                }
+                invalid(&path, e)
+            }),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn write_machines(&self, machines: &[crate::machines::SavedMachine]) -> io::Result<()> {
+        let text = ron::ser::to_string(machines).map_err(io::Error::other)?;
+        write_atomic(&self.target(self.dir.join(MACHINES_FILE)), text.as_bytes())
     }
 
     /// The dropped items lying about, none if the world has no items file.
@@ -422,12 +551,12 @@ impl WorldSave {
 
     pub fn write_creatures(&self, creatures: &[crate::husbandry::SavedCreature]) -> io::Result<()> {
         let text = ron::ser::to_string(creatures).map_err(io::Error::other)?;
-        write_atomic(&self.dir.join(CREATURES_FILE), text.as_bytes())
+        write_atomic(&self.target(self.dir.join(CREATURES_FILE)), text.as_bytes())
     }
 
     pub fn write_items(&self, items: &[SavedItem]) -> io::Result<()> {
         let text = ron::ser::to_string(items).map_err(io::Error::other)?;
-        write_atomic(&self.dir.join(ITEMS_FILE), text.as_bytes())
+        write_atomic(&self.target(self.dir.join(ITEMS_FILE)), text.as_bytes())
     }
 }
 
@@ -452,15 +581,48 @@ pub fn list_worlds(root: &Path) -> Vec<(WorldSave, WorldMeta)> {
     worlds
 }
 
+/// Where `path` is written while a save of `generation` is staged.
+fn staged_path(path: &Path, generation: u64) -> PathBuf {
+    let mut name = path.file_name().expect("saved files have names").to_os_string();
+    name.push(format!(".{generation}.{STAGED}"));
+    path.with_file_name(name)
+}
+
+/// Deletes the files a save of `generation` staged for `files`. One left behind is deleted
+/// when the world next opens, as that generation never counted.
+fn discard(generation: u64, files: &[PathBuf]) {
+    for file in files {
+        let staged = staged_path(file, generation);
+        if let Err(e) = std::fs::remove_file(&staged)
+            && e.kind() != io::ErrorKind::NotFound
+        {
+            tracing::error!("could not delete the unsaved {}: {e}", staged.display());
+        }
+    }
+}
+
+/// The file a staged one is for, and its generation.
+fn staged_of(path: &Path) -> Option<(PathBuf, u64)> {
+    let name = path.file_name()?.to_str()?;
+    let (rest, generation) = name.strip_suffix(&format!(".{STAGED}"))?.rsplit_once('.')?;
+    Some((path.with_file_name(rest), generation.parse().ok()?))
+}
+
 /// Writes a file through a temporary file and a rename, so readers and crashes only ever
 /// see the old or the new contents.
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temporary = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&temporary)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&temporary, path)
+    let written = (|| {
+        let mut file = std::fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 /// A file name for any player name: letters, digits, `-` and `_` are kept and everything
@@ -501,6 +663,84 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("voxmar-save-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// A save is one generation: cut before `world.ron` takes it, none of it counts; cut
+    /// while its files are moved into place, the next opening finishes it.
+    #[test]
+    fn a_save_cut_short_counts_whole_or_not_at_all() {
+        let dir = temp_dir("generations");
+        let save = WorldSave::new(&dir);
+        let mut meta = WorldMeta::new("Test", 7, GameMode::Creative);
+        save.create(&meta).unwrap();
+        let crops = |stage: u8| vec![SavedCrop { position: [1, 2, 3], crop: "base:wheat".into(), stage, due: 9, sown: true }];
+        let machines = |count: u8| vec![crate::machines::SavedMachine { position: [0, 64, 0], block: "base:chest".into(), inputs: Vec::new(), outputs: Vec::new(), fuel: None, burning: 0.0, energy: 0.0, condition: 0.0, made: 0, bin: vec![("base:iron_ore".into(), count)], owner: None, counted: false, work: None }];
+        // Generation 1, whole.
+        save.begin(1);
+        save.write_machines(&machines(0)).unwrap();
+        save.write_crops(&crops(0)).unwrap();
+        meta.generation = 1;
+        assert!(save.commit(&meta).unwrap());
+        // Generation 2 cut after its machines: the machines of 1, and nothing left over.
+        save.begin(2);
+        save.write_machines(&machines(64)).unwrap();
+        let meta = save.read_meta().unwrap();
+        assert_eq!(meta.generation, 1);
+        save.recover(&meta);
+        assert_eq!(save.read_machines().unwrap(), machines(0));
+        assert_eq!(save.read_crops().unwrap(), crops(0));
+        assert!(!staged_path(&dir.join(MACHINES_FILE), 2).exists(), "the cut save is forgotten");
+        // Generation 2 again, cut once `world.ron` took it but before its files moved: the
+        // next opening moves them.
+        save.begin(2);
+        save.write_machines(&machines(64)).unwrap();
+        save.write_crops(&crops(1)).unwrap();
+        let mut taken = save.read_meta().unwrap();
+        taken.generation = 2;
+        save.write_meta(&taken).unwrap();
+        save.recover(&save.read_meta().unwrap());
+        assert_eq!(save.read_machines().unwrap(), machines(64));
+        assert_eq!(save.read_crops().unwrap(), crops(1));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A save with a part that could not be written never counts, and leaves nothing
+    /// staged: what moved since the last save is never in two places.
+    #[test]
+    fn a_save_with_a_failed_write_or_meta_leaves_the_last_one_whole() {
+        let dir = temp_dir("failed");
+        let save = WorldSave::new(&dir);
+        let mut meta = WorldMeta::new("Test", 7, GameMode::Creative);
+        save.create(&meta).unwrap();
+        let crops = |stage: u8| vec![SavedCrop { position: [1, 2, 3], crop: "base:wheat".into(), stage, due: 9, sown: true }];
+        save.begin(1);
+        save.write_crops(&crops(0)).unwrap();
+        meta.generation = 1;
+        assert!(save.commit(&meta).unwrap());
+        // Generation 2: the crops write, the machines cannot (their place is a directory).
+        let blocked = staged_path(&dir.join(MACHINES_FILE), 2);
+        std::fs::create_dir_all(&blocked).unwrap();
+        save.begin(2);
+        save.write_crops(&crops(1)).unwrap();
+        assert!(save.write_machines(&[]).is_err());
+        save.abandon();
+        assert_eq!(save.read_meta().unwrap().generation, 1);
+        assert!(!staged_path(&dir.join(CROPS_FILE), 2).exists(), "nothing of it is left staged");
+        assert_eq!(save.read_crops().unwrap(), crops(0));
+        std::fs::remove_dir_all(&blocked).unwrap();
+        // Generation 3: everything writes, but `world.ron` cannot: it does not count either.
+        let meta_blocked = dir.join(META_FILE).with_extension("tmp");
+        std::fs::create_dir_all(&meta_blocked).unwrap();
+        save.begin(3);
+        save.write_crops(&crops(2)).unwrap();
+        save.write_machines(&[]).unwrap();
+        meta.generation = 3;
+        assert!(save.commit(&meta).is_err());
+        std::fs::remove_dir_all(&meta_blocked).unwrap();
+        assert_eq!(save.read_meta().unwrap().generation, 1);
+        assert!(!staged_path(&dir.join(CROPS_FILE), 3).exists() && !staged_path(&dir.join(MACHINES_FILE), 3).exists(), "nothing of it is left staged");
+        assert_eq!(save.read_crops().unwrap(), crops(0));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -571,6 +811,9 @@ mod tests {
         let mut inventory = Inventory::default();
         inventory.add(registry.expect("base:cobblestone"), 70);
         inventory.pouched.push((registry.expect("base:cobblestone"), 300));
+        // What is worn keeps its slot (the save keeps names; content judges what fits).
+        inventory.worn[1] = Some(ItemStack { item: registry.expect("base:dirt"), count: 1 });
+        inventory.worn[5] = Some(ItemStack { item: registry.expect("base:cobblestone"), count: 1 });
         let player = SavedPlayer {
             position: Vec3::new(1.5, 80.0, -20.25),
             yaw: 1.25,

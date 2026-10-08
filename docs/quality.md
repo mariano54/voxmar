@@ -70,7 +70,7 @@ A change that touches only docs or tools skips 2, 3 and 4. A tree that already p
 gated again, so merging or rebasing without changing anything costs nothing.
 
 `tools/gate --full`, before every play build: every test and the session at the normal
-view distance, a few minutes. A scheduled full run on main also reports any failure to
+view distance, with the workshop's longer machine phases (`VOXMAR_GATE_FULL=1`), a few minutes. A scheduled full run on main also reports any failure to
 the coordinator, so a miss of the quick gate is caught within hours, and always before
 Mariano plays.
 
@@ -85,7 +85,7 @@ changes don't move it, and checks:
 | dig | holds the left button over the ground | a hole three blocks deep, with the same four checks |
 | drops | walks into the hole | every dug block's drop is picked up |
 | breaks | holds the left button along a row of glass, dirt, stone, snow, gravel and cobblestone, with the bare hand, the starting planks (throwing one with Q halfway) and every item tagged `tool`, while busy threads contend for the cores and the game's own frames stall 80 to 320 ms every fifth frame or so | every block ends broken on the client and the server, none comes back, the two agree on every block around. The server judges breaks by when the player's messages arrived, so a server held up decides as one that kept up (crates/server/src/actions.rs) |
-| workshop | crafts sticks and a crafting table in the two-by-two grid, places the table and right clicks it, crafts a stone pickaxe in its three-by-three grid, clicks an iron ore at Mining 1, then at 15 holds the button on it, right clicks dirt with a hoe, is given three loaves, casts a rod into the pool | sticks and a table come back with Engineering experience; the table is on both sides and its grid shows nine cells; the ore refuses with "Needs Mining 15", then breaks on both sides with Mining experience; the dirt turns to farmland on both sides; three loaves given take three slots; holding right click with a rod over the pool catches a fish |
+| workshop | crafts sticks and a crafting table in the two-by-two grid, places the table and right clicks it, crafts a stone pickaxe in its three-by-three grid, clicks an iron ore at Mining 1, then at 15 holds the button on it, right clicks dirt with a hoe, is given three loaves, casts a rod into the pool, fires a boiler with coal and puts copper ore in the steam crusher beside it; in the full gate only, then an MV ore washer on a turbine and transformer, a Bellows Bloomery worked by a kept aurochs on a treadwheel with a hopper line into a chest, and a Coke Oven and Blast Furnace | sticks and a table come back with Engineering experience; the table is on both sides and its grid shows nine cells; the ore refuses with "Needs Mining 15", then breaks on both sides with Mining experience; the dirt turns to farmland on both sides; three loaves given take three slots; holding right click with a rod over the pool catches a fish; the crusher gives two dust for the ore; (full) the dry washer says it needs water and gives three dust once wet, the bloomery gives an iron bloom and the chest gets four dust, the oven says it is making coke and the furnace iron (shot `iron_age`) |
 | swim | holds forward and jump in a pool against a step | climbs out onto the step; the server has the player where the client does |
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
 | overlay | F3, then F3 again | the debug overlay opens and closes, and PostUpdate (UI layout among it) takes no longer with it open than closed: within 0.5 ms in the median |
@@ -132,7 +132,9 @@ The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loa
   that stops is caught all the same: the session fails "the server stopped" once its
   ticks stand still for `SERVER_SILENT` (60 s) of the wall clock, and on `WALL_LIMIT`
   (15 min) of it in all, with frames longer than 10 s (memcap stopping the run while
-  Mariano plays) counted as 10 s.
+  Mariano plays) counted as 10 s. In the full gate the session's limits (`TIME_LIMIT`,
+  `WALL_LIMIT`) grow by the seconds its full-only workshop phases take
+  (`FULL_ONLY_PHASES` in gate.rs, 420 s for the three machine phases now).
 - Propose actions (clicks that ask the server for something) at most every few server
   seconds while waiting, or once and then wait: `SERVER_LAG` stalls 600 ms on every other
   proposal, so a step proposing every 30 frames starves the server of ticks and the

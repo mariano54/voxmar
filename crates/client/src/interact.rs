@@ -28,9 +28,10 @@ pub struct InteractPlugin;
 impl Plugin for InteractPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Target>()
+            .init_resource::<crate::fight::Fighting>()
             .add_systems(
                 Update,
-                (select_slot.after(player::zoom), find_target, crate::creatures::aim, pick_block, break_and_place, draw_target)
+                (select_slot.after(player::zoom), find_target, crate::creatures::aim, pick_block, break_and_place, crate::fight::guard, draw_target)
                     .chain()
                     .in_set(InteractSystems)
                     .run_if(in_state(crate::menu::Screen::InGame)),
@@ -49,8 +50,13 @@ pub struct Target {
     block_hit: Option<RayHit>,
     /// The creature under the crosshair, nearer than any block (see `creatures::aim`).
     pub creature: Option<u32>,
+    /// The right press this frame did something (a table, a bed, cooking, eating), so it
+    /// raises no guard (`fight`).
+    pub used_right: bool,
     /// Block being broken and progress in 0..1.
     pub breaking: Option<(IVec3, f32)>,
+    /// Until when (seconds of game time) the player is eating: no dodge before.
+    pub eating_until: f32,
     /// The target the mining in progress was proposed at, which its `Finished` names.
     mining: Option<ActionTarget>,
     mining_seconds: f32,
@@ -202,9 +208,23 @@ impl ActionContext for ClientContext<'_> {
         Some(&self.content.tools)
     }
 
+    fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
+        Some(&self.content.machines)
+    }
+
     fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
         Some(&self.content.combat)
     }
+}
+
+/// Whether a right click with food in hand eats it: not with a creature under the
+/// crosshair (it is tended), not over a block the food would be placed on, and not over
+/// ground the food is a seed for (`sowing`, the plant action's check there): rice on
+/// farmland is sown, or refused for the sowing's reason (a Farming level), never eaten or
+/// answered with "you are at full health".
+fn eats(food: bool, placeable: bool, on_creature: bool, on_block: bool, sowing: Option<&Result<(), Rejection>>) -> bool {
+    let sows = matches!(sowing, Some(Ok(()) | Err(Rejection::Unmet(Requirement::SkillLevel))));
+    food && !on_creature && (!on_block || !placeable) && !sows
 }
 
 /// Mining proposes `core:mine` and shows progress over the same duration the server
@@ -294,6 +314,7 @@ fn break_and_place(
 
     // Food in hand is eaten when it would not be placed: an item, or nothing in reach to
     // put it on. Eating takes a moment, so it starts on the press, not again while held.
+    // (`used_right` was cleared by `creatures::aim`, which runs first.)
     if mouse.just_pressed(MouseButton::Right) && ui.cursor_locked && !player.dead {
         let content = &launch.content;
         // A crafting table opens the inventory with its three-by-three grid.
@@ -302,8 +323,20 @@ fn break_and_place(
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             if actions.0.get(use_table).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
                 net.propose_from(&player, use_table, action_target);
+                target.used_right = true;
                 player.station = Some(hit.block);
                 ui.inventory_open = true;
+                return;
+            }
+        }
+        // A machine takes what it burns or works from the hand, or gives what it made; the
+        // server says how it is doing. Anything else in hand is placed against it.
+        if let (Some(hit), Some(use_machine)) = (hit, actions.0.id("base:use_machine")) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            if actions.0.get(use_machine).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                net.propose_from(&player, use_machine, action_target);
+                target.place_cooldown = 0.4;
                 return;
             }
         }
@@ -317,6 +350,7 @@ fn break_and_place(
                 let cooks = actions.0.id("base:cook").and_then(|cook| actions.0.get(cook)).is_some_and(|def| def.validate(&context, action_target).is_ok());
                 if !cooks && actions.0.get(action).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
                     net.propose_from(&player, action, action_target);
+                    target.used_right = true;
                     return;
                 }
             }
@@ -331,6 +365,7 @@ fn break_and_place(
                 Some(Ok(())) => {
                     let seconds = actions.0.get(cook).map_or(0.0, |def| def.seconds(&context, action_target));
                     net.propose_from(&player, cook, action_target);
+                    target.used_right = true;
                     target.place_cooldown = 0.4;
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
                     return;
@@ -351,8 +386,13 @@ fn break_and_place(
         let held = player.inventory.get(player.selected).map(|s| s.item);
         let food = held.is_some_and(|item| world.registry.info(item).food > 0);
         let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
+        // A seed that is also food (rice) on ground it can be sown in is sown, below.
+        let sowing = hit.zip(actions.0.id("base:plant")).and_then(|(hit, plant)| {
+            let context = ClientContext { world: &world, player: &player, content };
+            actions.0.get(plant).map(|def| def.validate(&context, ActionTarget::Block { block: hit.block, face: hit.face }))
+        });
         // With a creature under the crosshair, a right click tends it instead (`creatures::aim`).
-        if food && target.creature.is_none() && (hit.is_none() || !placeable) {
+        if eats(food, placeable, target.creature.is_some(), hit.is_some(), sowing.as_ref()) {
             let eat = actions.0.expect("core:eat");
             let context = ClientContext { world: &world, player: &player, content };
             match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {
@@ -360,6 +400,10 @@ fn break_and_place(
                     // Eating takes the player's hands: the server drops (or, if nearly
                     // done, completes) any mining it replaces, and so does the client.
                     net.propose_from(&player, eat, ActionTarget::None);
+                    if let Some(voxmar_engine::action::Duration::Seconds(seconds)) = actions.0.get(eat).map(|def| def.duration) {
+                        target.eating_until = time.elapsed_secs() + seconds;
+                    }
+                    target.used_right = true;
                     target.breaking = None;
                     target.mine_cooldown = 1.2;
                     target.place_cooldown = 1.2;
@@ -367,6 +411,22 @@ fn break_and_place(
                 Some(Err(Rejection::Unmet(Requirement::Hurt))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),
                 _ => {}
             }
+            return;
+        }
+        // Armour or a shield in hand goes on, swapped for what was worn there, unless a
+        // creature or a ripe crop is looked at (it is tended or picked).
+        let ripe = hit.zip(actions.0.id("base:pick")).is_some_and(|(hit, pick)| {
+            let context = ClientContext { world: &world, player: &player, content };
+            actions.0.get(pick).is_some_and(|def| def.validate(&context, ActionTarget::Block { block: hit.block, face: hit.face }).is_ok())
+        });
+        if let Some(at) = held.and_then(voxmar_engine::inventory::worn_slot).filter(|_| target.creature.is_none() && !ripe) {
+            let to = voxmar_engine::inventory::WORN + at;
+            let slots = ActionTarget::Slots { from: player.selected as u8, to: to as u8, count: 1 };
+            net.propose_from(&player, actions.0.expect("core:transfer"), slots);
+            let selected = player.selected;
+            player.inventory.move_items(selected, to, 1);
+            target.used_right = true;
+            target.place_cooldown = 0.4;
             return;
         }
     }
@@ -530,5 +590,27 @@ fn draw_target(target: Res<Target>, mut gizmos: Gizmos) {
         // pipelines the cube needs, and a world whose first block looked at came only after
         // loading compiled the other mid-play.
         None => gizmos.cube(Transform::from_scale(Vec3::ZERO), Color::NONE),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Food is eaten on a right click unless the click tends a creature, places the food,
+    /// or sows it: rice over farmland is sown (or refused for its Farming level), over
+    /// grass it is eaten.
+    #[test]
+    fn a_seed_that_is_food_is_sown_where_it_can_be_and_eaten_elsewhere() {
+        let sown = Ok(());
+        let too_low = Err(Rejection::Unmet(Requirement::SkillLevel));
+        let not_ground = Err(Rejection::Unmet(Requirement::Plantable));
+        assert!(!eats(true, false, false, true, Some(&sown)), "rice on farmland is sown");
+        assert!(!eats(true, false, false, true, Some(&too_low)), "rice on farmland below its level is refused as a sowing");
+        assert!(eats(true, false, false, true, Some(&not_ground)), "rice on grass is eaten");
+        assert!(eats(true, false, false, false, None), "rice in the air is eaten");
+        assert!(!eats(true, false, true, true, Some(&not_ground)), "a creature is tended");
+        assert!(!eats(true, true, false, true, Some(&not_ground)), "a placeable food is placed");
+        assert!(!eats(false, false, false, true, Some(&not_ground)), "what is no food is not eaten");
     }
 }
