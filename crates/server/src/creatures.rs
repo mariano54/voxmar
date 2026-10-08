@@ -972,7 +972,7 @@ impl Server {
                 let distance = to.length();
                 distance < SEEN_WITHIN
                     && (distance < 0.001 || player.look().dot(to / distance) >= cos)
-                    && voxmar_engine::physics::raycast(eye, to, distance, |cell| self.is_solid(cell)).is_none_or(|hit| hit.distance >= distance)
+                    && voxmar_engine::physics::raycast(eye, to, distance, |cell| self.block(cell).is_some_and(|b| self.content.blocks.info(b).occludes)).is_none_or(|hit| hit.distance >= distance)
             })
         })
     }
@@ -1563,6 +1563,13 @@ mod density_tests {
         let high_wall: Vec<_> = (-3..=3).flat_map(|x| (y + 2..=y + 5).map(move |h| (IVec3::new(x, h, -6), stone))).collect();
         server.set_blocks(&high_wall);
         assert!(!server.body_seen_by_a_player(front.as_vec3() + Vec3::new(0.5, 0.0, 0.5), (0.6, 4.0), 75.0), "a fully hidden body may spawn");
+
+        let glass = server.content.blocks.id("base:glass").unwrap();
+        assert!(server.content.blocks.info(glass).solid && !server.content.blocks.info(glass).occludes);
+        let glass_wall: Vec<_> = (-3..=3).flat_map(|x| (y..=y + 5).map(move |h| (IVec3::new(x, h, -6), glass))).collect();
+        server.set_blocks(&glass_wall);
+        assert!(server.seen_by_a_player(front, 75.0), "solid glass is transparent to a player's view");
+        assert!(server.body_seen_by_a_player(front.as_vec3() + Vec3::new(0.5, 0.0, 0.5), (0.6, 4.0), 75.0));
 
         let (client, connection) = voxmar_protocol::local_pair();
         let _keep_other = client;
