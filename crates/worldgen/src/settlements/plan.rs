@@ -27,6 +27,29 @@ pub(super) static GIVEN_UP: [std::sync::atomic::AtomicU32; 12] = [const { std::s
 #[cfg(test)]
 pub(super) static PLACE_FAILS: [std::sync::atomic::AtomicU32; 8] = [const { std::sync::atomic::AtomicU32::new(0) }; 8];
 
+#[cfg(test)]
+thread_local! {
+    static PROFILE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Optional coarse CPU measurements, only while the release budget replans a known cell.
+#[cfg(test)]
+pub(super) fn profile(enabled: bool) {
+    PROFILE.with(|p| p.set(enabled));
+}
+
+#[cfg(test)]
+fn phase_start() -> Option<std::time::Duration> {
+    PROFILE.with(|p| p.get()).then(crate::perf::thread_time)
+}
+
+#[cfg(test)]
+fn phase_end(name: &str, start: Option<std::time::Duration>) {
+    if let Some(start) = start {
+        eprintln!("  plan phase {name}: {:.3} ms CPU", (crate::perf::thread_time() - start).as_secs_f64() * 1000.0);
+    }
+}
+
 fn miss<T>(reason: usize) -> Option<T> {
     #[cfg(test)]
     PLACE_FAILS[reason].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -108,10 +131,14 @@ fn solid(g: &GeoSample) -> bool {
 struct Ground<'a> {
     land: &'a dyn Land,
     seen: FxHashMap<IVec2, GeoSample>,
+    #[cfg(test)]
+    queries: usize,
 }
 
 impl Ground<'_> {
     fn at(&mut self, p: IVec2) -> GeoSample {
+        #[cfg(test)]
+        { self.queries += 1; }
         if let Some(g) = self.seen.get(&p) {
             return *g;
         }
@@ -238,7 +265,11 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
     let step = site.step;
     let first = cell * grid.spacing + grid.margin;
     let size = (grid.spacing - 2 * grid.margin) / step + 1;
+    #[cfg(test)]
+    let time = phase_start();
     let samples = ctx.land.grid(first, step, size);
+    #[cfg(test)]
+    phase_end(&format!("site grid ({} points)", size * size), time);
     let at = |i: i32, j: i32| -> Option<&GeoSample> { (i >= 0 && j >= 0 && i < size && j < size).then(|| &samples[(j * size + i) as usize]) };
     let (reach, core, wet) = (site.reach / step, site.firm / step, site.water / step);
     let within = |di: i32, dj: i32, r: i32| di * di + dj * dj <= r * r + 1;
@@ -526,7 +557,11 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     }
     // Where one spot cannot be laid out (too few homes fit, no level ground for the well),
     // the spawn's square tries its next; any other square has the one.
+    #[cfg(test)]
+    let time = phase_start();
     let sites = site(ctx, cell, spawn);
+    #[cfg(test)]
+    phase_end("site search total", time);
     let first = sites.iter().find_map(|&(centre, fresh)| lay_out(ctx, cell, centre, fresh, rng.clone(), false));
     if spawn.is_none() || first.is_some() {
         return first;
@@ -658,6 +693,8 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
 /// Lays out the settlement of the square `cell` round `centre`, if it can.
 /// `smallest`: as the size with fewest houses, whatever the draw.
 fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool) -> Option<Plan> {
+    #[cfg(test)]
+    let time = phase_start();
     let def = ctx.def;
     let mut levers = levers(ctx, centre, fresh, &mut rng);
     let ground_site = ctx.world.site(centre.x, centre.y);
@@ -711,6 +748,10 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     let layout_index = pick(&mut rng, &layouts)?;
     let shape = def.layouts[layout_index].shape;
     let kit = kit(ctx, style, &levers, &culture, size.crop_level, &mut rng);
+    #[cfg(test)]
+    phase_end("site/levers/culture/kit", time);
+    #[cfg(test)]
+    let time = phase_start();
     let list = culture.family;
     let names = &def.cultures.families[list].names;
     let name = {
@@ -728,7 +769,11 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
         }
     };
 
-    let mut ground = Ground { land: ctx.land, seen: FxHashMap::default() };
+    #[cfg(test)]
+    phase_end("name", time);
+    #[cfg(test)]
+    let time = phase_start();
+    let mut ground = Ground { land: ctx.land, seen: FxHashMap::default(), #[cfg(test)] queries: 0 };
     let square_height = ground.at(centre).height;
     let order = levers.get(Lever::Order);
     let crowding = levers.get(Lever::Crowding);
@@ -1286,6 +1331,15 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     }
 
     // Draw everything.
+    #[cfg(test)]
+    {
+        phase_end("lanes/lots/props", time);
+        if PROFILE.with(|p| p.get()) {
+            eprintln!("  plan ground: {} distinct samples, {} queries", ground.seen.len(), ground.queries);
+        }
+    }
+    #[cfg(test)]
+    let time = phase_start();
     for lot in &lots {
         match (lot.spec.kind, lot.centre) {
             (Kind::Centrepiece, Some(i)) => {
@@ -1447,6 +1501,9 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     }
 
     let gates: Vec<IVec2> = lanes.iter().filter(|l| l.main).map(|l| l.points.last().unwrap().round().as_ivec2()).collect();
+    let voxels = canvas.into_columns();
+    #[cfg(test)]
+    phase_end("drawing/raster/voxel columns", time);
     Some(Plan {
         id: hash3(ctx.seed, cell.x, 0, cell.y),
         size: def.sizes[size_index].name.clone(),
@@ -1464,7 +1521,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
         min: raster.min,
         max: raster.max,
         raster,
-        voxels: canvas.into_columns(),
+        voxels,
     })
 }
 
@@ -2234,10 +2291,10 @@ mod level_tests {
         let rect = Rect::new(IVec2::new(0, 0), IVec2::new(10, 8));
         let bank = 3;
         let dry = Creek(None, None);
-        assert_eq!(level(&mut Ground { land: &dry, seen: FxHashMap::default() }, &rect, bank, 2), Some((140, 140)));
+        assert_eq!(level(&mut Ground { land: &dry, seen: FxHashMap::default(), queries: 0 }, &rect, bank, 2), Some((140, 140)));
         for at in -bank..=9 + bank {
             for creek in [Creek(Some(at), None), Creek(None, Some(at.min(7 + bank)))] {
-                let found = level(&mut Ground { land: &creek, seen: FxHashMap::default() }, &rect, bank, 2);
+                let found = level(&mut Ground { land: &creek, seen: FxHashMap::default(), queries: 0 }, &rect, bank, 2);
                 assert_eq!(found, None, "a creek at x {:?} z {:?} beside a lot from 0,0 to 9,7 let it stand", creek.0, creek.1);
             }
         }

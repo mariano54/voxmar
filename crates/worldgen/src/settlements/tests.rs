@@ -2496,6 +2496,15 @@ fn culture_planning_budget() {
     use crate::water::cache::Weigh;
     assert!(!cfg!(debug_assertions), "run this budget with --release");
     crate::perf::prefer_fast_cores();
+    // Keep all measured work on this thread; a cache miss must not hide helper CPU.
+    crate::parallel::set_enabled(false);
+    struct Helpers;
+    impl Drop for Helpers {
+        fn drop(&mut self) { crate::parallel::set_enabled(true); }
+    }
+    let _helpers = Helpers;
+    let profile = std::env::var_os("PROFILE_PLAN").is_some();
+    let mut failures = Vec::new();
     let mut count = 0;
     let mut peak = 0usize;
     let mut times: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
@@ -2512,15 +2521,26 @@ fn culture_planning_budget() {
             let plan = slot.0.as_ref().unwrap();
             let cell = world.settlements.cell_of(plan.centre.x, plan.centre.y);
             let spawn_at = world.settlements.spawn.get().and_then(|s| s.square).filter(|s| s.1 == cell).map(|s| s.0);
+            if profile { eprintln!("budget seed {seed} {size} at {}", plan.centre); }
+            super::plan::profile(profile);
             let start = crate::perf::thread_time();
-            let again = world.settlements.plan(&world, world.settlements.fixed.as_ref().unwrap(), cell, spawn_at).unwrap();
+            let replan = || world.settlements.plan(&world, world.settlements.fixed.as_ref().unwrap(), cell, spawn_at).unwrap();
+            let (again, stages) = if profile { crate::stage::measure(replan) } else { (replan(), crate::stage::Times::default()) };
             let ms = (crate::perf::thread_time() - start).as_secs_f64() * 1000.0;
+            super::plan::profile(false);
+            if profile {
+                eprintln!("  plan total {ms:.3} ms CPU; river-region creation {:.3} ms elapsed", stages.get(crate::stage::Stage::RiverRegions).as_secs_f64() * 1000.0);
+            }
             assert_eq!(again.culture, plan.culture);
             let budget = match plan.size.as_str() { "hamlet" => 3.0, "village" => 6.0, other => panic!("unbudgeted size {other}") };
-            assert!(ms <= budget * 2.0, "seed {seed} {} at {}: {ms:.2} ms CPU, budget {budget} ms", plan.size, plan.centre);
+            if ms > budget * 2.0 {
+                failures.push(format!("seed {seed} {} at {}: {ms:.2} ms CPU, budget {budget} ms", plan.size, plan.centre));
+            }
             times.entry(plan.size.clone()).or_default().push(ms);
             let bytes = slot.bytes();
-            assert!(bytes <= 2 * super::MB, "seed {seed} {size} at {}: {bytes} allocated bytes exceeds 2 MiB", plan.centre);
+            if bytes > 2 * super::MB {
+                failures.push(format!("seed {seed} {size} at {}: {bytes} allocated bytes exceeds 2 MiB", plan.centre));
+            }
             peak = peak.max(bytes);
             count += 1;
         }
@@ -2534,4 +2554,5 @@ fn culture_planning_budget() {
     }
     assert!(count >= 20, "only {count} plans");
     println!("culture budget: {count} plans over 20 seeds, peak {peak} bytes including culture");
+    assert!(failures.is_empty(), "planning budgets failed:\n{}", failures.join("\n"));
 }
