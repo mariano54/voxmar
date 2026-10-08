@@ -1846,11 +1846,26 @@ fn the_spawn_plans_each_square_once() {
 
 /// The family each region cell of `world` names, with the land asked once per cell.
 fn cell_families(world: &Overworld) -> impl Fn(IVec2) -> usize + '_ {
-    let probe = |p: IVec2| {
-        let s = world.site(p.x, p.y);
-        (world.biomes().get(s.biome), s.temperature)
-    };
+    let probe = |p: IVec2| world.regional_biome(p.x, p.y);
     move |g| world.settlements.def.cultures.cached_family(world.settlements.seed, g, &world.settlements.cells, &probe)
+}
+
+/// Learning the family of distant country must not generate that country's rivers.
+#[test]
+fn culture_regions_do_not_plan_distant_rivers() {
+    let world = base_world(7);
+    let before = world.rivers.made();
+    let family = cell_families(&world);
+    for z in -6..6 {
+        for x in -6..6 {
+            family(IVec2::new(x, z));
+        }
+    }
+    assert_eq!(world.rivers.made(), before, "culture fits planned distant water regions");
+    // The coarse decision uses the same home biome as the full site, including borders.
+    for at in [IVec2::ZERO, IVec2::new(2000, -4000), IVec2::new(-6000, 8000)] {
+        assert_eq!(world.regional_biome(at.x, at.y).0.name, world.biomes().get(world.site(at.x, at.y).home).name);
+    }
 }
 
 /// A culture rolled at `at` in square `cell` with middling levers, a village.
@@ -2119,13 +2134,27 @@ fn a_family_shows_in_what_it_builds() {
 /// good share borrow something, and few share every entry.
 #[test]
 fn settlements_of_a_family_are_not_alike() {
+    use super::culture::Site;
     let world = base_world(1);
+    let mut def = world.settlements.def.cultures.clone();
+    // Hold the family fixed so the test measures mutations within one family. Claims
+    // and the real region field are covered separately.
+    def.rules.claim.0 = 0.0;
+    let family = def.families.iter().position(|f| f.name == "hearth").unwrap();
+    let fixed_family = |_| family;
     let mut quirks = std::collections::BTreeSet::new();
     let mut borrowed = 0;
     let mut sets = std::collections::BTreeSet::new();
     for k in 0..300i32 {
         let cell = IVec2::new(k, 5);
-        let c = rolled(&world, cell, cell * 1024 + 300, k % 2 == 0);
+        let site = Site {
+            seed: world.settlements.seed, cell, at: cell * 1024 + 300, level: 1,
+            fresh: k % 2 == 0, relief: 0.3, forest: 0.3,
+            levers: super::Levers { levers: [0.5; 5], axes: [0.5; 8] }, cell_family: &fixed_family,
+        };
+        let mut c = def.roll(&site);
+        def.finish(&mut c, &site, "village");
+        assert_eq!(c.family, family);
         quirks.extend(c.quirks.iter().copied());
         borrowed += usize::from(!c.borrowed.is_empty());
         sets.insert((c.family, c.entries.iter().map(|e| format!("{}{}{}", e.listing.name(), e.name, e.mult)).collect::<Vec<_>>(), format!("{:?}", c.palette.walls.0)));

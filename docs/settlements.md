@@ -117,7 +117,10 @@ borrowed (`ONLY=glen` draws just that family), and `Overworld::settlements_near`
 the eight axes, so people and shops can use the same lean keys as planning. Culture rolls
 use streams of their own; adding culture draws does not consume building draws.
 
-Region terrain fits share a 1 MiB cache weighed by owned bytes, including mod families;
+Region fits read home biomes and regional temperature from the smooth climate fields;
+they do not generate rivers at their distant probes. The settlement's own site still
+supplies its water, slopes, vegetation and biome level. These fits share a 1 MiB cache
+weighed by owned bytes, including mod families;
 eviction changes only how often the terrain is sampled. Culture storage also counts in
 the settlement plan's 32 MiB cache, along with allocated vector capacities, names,
 building strings, lane polylines and the voxel table. The ignored release

@@ -599,6 +599,15 @@ impl Overworld {
         self.sampler(IVec2::new(x, z), IVec2::new(x, z)).site(x, z)
     }
 
+    /// The home biome and regional temperature for decisions spanning kilometres, such
+    /// as culture regions. Reading their smooth fields must not plan distant rivers or
+    /// sample local slopes and vegetation, which only a settlement's own site needs.
+    pub(crate) fn regional_biome(&self, x: i32, z: i32) -> (&Biome, f32) {
+        let sampler = self.sampler(IVec2::new(x, z), IVec2::new(x, z));
+        let home = sampler.pick(x, z).home;
+        (self.biomes.get(home), sampler.grid.at(x, z).temperature())
+    }
+
     /// What the surface looks like from far away, given its local steepness in blocks.
     /// Matches full generation except for caves and individual trees and plants.
     pub fn surface_sample(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {

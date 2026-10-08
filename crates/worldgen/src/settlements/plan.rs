@@ -664,10 +664,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     let biome = ctx.world.biomes().get(ground_site.biome);
     // Whose it is: a family of the land round, its axes and its mutations, from streams
     // of their own so the rolls below are the ones they were.
-    let probe = |p: IVec2| {
-        let s = ctx.world.site(p.x, p.y);
-        (ctx.world.biomes().get(s.biome), s.temperature)
-    };
+    let probe = |p: IVec2| ctx.world.regional_biome(p.x, p.y);
     let cell_family = |g: IVec2| def.cultures.cached_family(ctx.seed, g, ctx.cells, &probe);
     let site = Site {
         seed: ctx.seed,
