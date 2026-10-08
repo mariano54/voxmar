@@ -2261,9 +2261,13 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
             let said: Vec<String> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
             let stage = gate.machines_stage;
-            // Flying until the teleport to the vantage lands (as the sky step does).
-            if stage == 5 && world.resource::<LocalPlayer>().position.distance(vantage) >= 1.0 {
+            // Flying until the teleport to the vantage lands (as the sky step does), then turned
+            // to both works every frame, so the camera has turned by the time of the shot.
+            let arrived = world.resource::<LocalPlayer>().position.distance(vantage) < 1.0;
+            if stage == 5 && !arrived {
                 world.resource_mut::<LocalPlayer>().flying = true;
+            } else if stage == 5 {
+                aim(world, k + IVec3::new(-1, 0, 0));
             }
             let client = world.resource::<ClientWorld>();
             if client.block(oven) != client.registry.id("base:coke_oven") || client.block(wheel) != client.registry.id("base:treadwheel") {
@@ -2291,8 +2295,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 // Making iron with the wheel's power, not only started: power or progress
                 // above none (`machine.working_powered`), asked on the server's clock.
                 4 => said.iter().any(|r| r.to_lowercase().contains("making iron ingot") && blown(r)),
-                // Up where both works show, for the shot.
-                _ => world.resource::<LocalPlayer>().position.distance(vantage) < 1.0,
+                // Up where both works show, for the shot, a server second after the teleport.
+                _ => arrived && gate.server_now - gate.machines_since > 1.0,
             };
             if done {
                 let net = world.resource::<Net>();
