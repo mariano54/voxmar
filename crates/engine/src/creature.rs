@@ -553,7 +553,7 @@ pub struct Limits {
     /// At most this many animals, and this many monsters, near each player.
     pub animals_near: usize,
     pub monsters_near: usize,
-    /// The most monsters near a player during a new world's first night (before its first
+    /// The most monsters near a player during a new world's first night (until its first
     /// dawn), so a first night in the open is a scare, not a siege.
     pub first_night_monsters: usize,
     /// Seconds between spawn attempts around each player, one spot an attempt.

@@ -847,8 +847,10 @@ impl Server {
                 .count()
         };
         let (animals, monsters) = (nearby(Kind::Animal), nearby(Kind::Monster));
-        // A new world's first night brings only a few (until the first dawn).
-        let monsters_cap = if self.day < TICKS_PER_DAY as f64 { limits.monsters_near.min(limits.first_night_monsters) } else { limits.monsters_near };
+        // A new world's first night brings only a few, until its first dawn: the world begins
+        // at sunrise, so that is the first day, and any darkness that runs on past its end.
+        let first_night = self.day < TICKS_PER_DAY as f64 || (self.day < 1.5 * TICKS_PER_DAY as f64 && self.daylight() < 0.25);
+        let monsters_cap = if first_night { limits.monsters_near.min(limits.first_night_monsters) } else { limits.monsters_near };
         if animals >= limits.animals_near && monsters >= monsters_cap {
             return;
         }
@@ -1382,6 +1384,12 @@ mod density_tests {
         let spot = spot_of(&server);
         let [_, _, _, first, _] = density(&mut server, spot, midnight, 3, false);
         assert!((1..=3).contains(&first), "{first} monsters on the first night");
+        // Darkness that runs on past the first 24000 ticks is still the first night.
+        if let Some(dawn) = (TICKS_PER_DAY..TICKS_PER_DAY * 3 / 2).find(|&t| creature::daylight(t) >= 0.25).filter(|&t| t > TICKS_PER_DAY) {
+            let mut server = crate::test_server();
+            let [_, _, _, late, _] = density(&mut server, spot, dawn - 1, 3, false);
+            assert!(late <= 3, "{late} monsters in the first night's last dark before dawn");
+        }
         let mut server = crate::test_server();
         let [_, _, _, lit, _] = density(&mut server, spot, midnight + LATER, 3, true);
         assert_eq!(lit, 0, "{lit} monsters among torches");

@@ -64,8 +64,9 @@ animals and monsters spawning for anyone:
   still waiting in the save, so those always have room to come back; past `keepers`
   players at their cap, wild ones get fewer.
 - `animals_near` and `monsters_near` cap each kind within 64 blocks of a player;
-  `first_night_monsters` is the lower cap on monsters while the world is in its first day
-  (before its first dawn), when the first night is a new player's first meeting with them.
+  `first_night_monsters` is the lower cap on monsters until the world's first dawn (a world
+  begins at sunrise: its first day, and any darkness running past its end), when the first
+  night is a new player's first meeting with them.
 - A spot with a block giving light within 5 blocks is never dark: torches and lit bases keep
   monsters from spawning there, on the surface as underground.
 - `spawn_every` is the seconds between spawn attempts around each player (one spot an
