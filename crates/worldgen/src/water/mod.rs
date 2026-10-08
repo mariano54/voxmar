@@ -1104,6 +1104,8 @@ mod tests {
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.columns.len(), 5);
         // Registry pressure independently resets IDs and their raw values together.
+        let id = scratch.column_key(key);
+        scratch.columns.insert((p, id), wrong);
         let fill = RAW_COLUMN_LIMIT - scratch.column_keys.len();
         for k in 0..fill { scratch.column_key([IVec2::new(300_000 + k as i32, 300_000); 4]); }
         assert_eq!(scratch.column_keys.len(), RAW_COLUMN_LIMIT);

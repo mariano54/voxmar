@@ -144,14 +144,20 @@ checks permit a terrain read, then keeps the original best-cost and tie decision
 The temporary terrain memo caps samples at 32,768 so spawn layout retries can reuse
 the same land without the observed 16,384-point eviction. Water-query samples remain
 bounded to 16,384. Relief evaluation allocates noise state only for missing corners;
-house weights and extra chances are computed once per layout, while availability and
-all random draws retain their original order. Water is searched for a house request
+house weights and extra chances are computed once per layout. Each request's ordered
+wet and dry house choices are reused until a house is counted, which invalidates every
+choice list. Zero weights and all random draws retain their original order. Interiors
+are copied only after a lot passes placement checks, before stair/chimney adaptation.
+Water is searched for a house request
 only when an otherwise eligible water-dependent house can serve it. Scratch caps
 corners at 8,192, and channel groups at 16; eviction repeats
 the same pure computation. None of this scratch storage is retained in the plan cache.
 Sealing also reuses up to 32,768 raw columns keyed by position and the requesting
 centre's exact channel-region bounds. Its four neighbours keep those same bounds;
 corner-only eviction preserves the raw values, and changing worlds clears all scratch.
+The complete bounds are interned to IDs in a separate registry capped at 32,768 keys.
+Tier-group eviction preserves those IDs; registry or raw-column pressure resets both
+maps together before the whole batch. Raw-column lookups hash only position and ID.
 The larger corner bound avoids observed close-site relief eviction; the raw-column
 bound avoids eviction just before the successful ninth layout of a spawn village.
 The close-water memo remains bounded to 16,384 points.
