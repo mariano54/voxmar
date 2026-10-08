@@ -131,6 +131,10 @@ their exact region bounds, including the neighbour halo used to seal water. Layo
 retries reuse those original land samples. Temporary caches cap samples at 16,384,
 corners at 4,096 plus one sample's corners, and channel groups at 16; eviction repeats
 the same pure computation. None of this scratch storage is retained in the plan cache.
+Site water checks walk the same ranked qualifying prefix lazily, stopping when enough
+usable sites have been found. Lot-clearance checks stop at the first lane point that
+rejects the lot, retaining the same strict and inclusive boundaries. Layout RNG draws
+for name prefixes stay in place; only the successful layout constructs its final name.
 Allocator metadata is outside this storage count. Later packages replace only culture rule fields they
 name, preserving the others and reporting which package and field they replaced. Loading
 refuses unknown catalogue names, missing palette blocks, non-finite weights and shifts,

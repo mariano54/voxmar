@@ -50,6 +50,14 @@ fn phase_end(name: &str, start: Option<std::time::Duration>) {
     }
 }
 
+#[cfg(test)]
+struct LayoutTime(Option<std::time::Duration>);
+
+#[cfg(test)]
+impl Drop for LayoutTime {
+    fn drop(&mut self) { phase_end("layout total (including rejected attempts)", self.0); }
+}
+
 fn miss<T>(reason: usize) -> Option<T> {
     #[cfg(test)]
     PLACE_FAILS[reason].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -226,6 +234,7 @@ impl Lane {
         self.points.windows(2).map(|w| segment_distance(p, w[0], w[1])).fold(f32::MAX, f32::min).min(self.points.first().map_or(f32::MAX, |q| q.distance(p)))
     }
 
+    #[cfg(test)]
     fn rect_distance(&self, rect: &Rect) -> f32 {
         let mut best = f32::MAX;
         for w in self.points.windows(2) {
@@ -235,6 +244,15 @@ impl Lane {
             }
         }
         best
+    }
+
+    /// Whether any of the same sampled lane points passes a distance check. Placement
+    /// needs only this predicate, so stop as soon as a point rules a lot out.
+    fn rect_any(&self, rect: &Rect, test: impl Fn(f32) -> bool) -> bool {
+        self.points.windows(2).any(|w| {
+            let n = (w[0].distance(w[1]).ceil() as i32).max(1);
+            (0..=n).any(|i| test(rect.distance(w[0].lerp(w[1], i as f32 / n as f32))))
+        })
     }
 
     fn length(&self) -> f32 {
@@ -335,13 +353,13 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         give_up::<()>(10);
         return Vec::new();
     }
-    if site.water > 0 {
-        let close = site.creek;
-        let n = site.water * 2 / close + 1;
-        candidates = candidates
-            .into_iter()
-            .take(tries.saturating_mul(site.look))
-            .filter_map(|(score, at, fresh)| {
+    let candidates = candidates
+        .into_iter()
+        .take(if site.water > 0 { tries.saturating_mul(site.look) } else { tries })
+        .filter_map(|(_, at, fresh)| {
+            if site.water > 0 {
+                let close = site.creek;
+                let n = site.water * 2 / close + 1;
                 let near = fresh || {
                     let first = at - site.water;
                     let samples = ctx.land.grid(first, close, n);
@@ -350,15 +368,18 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
                         p.as_vec2().distance(at.as_vec2()) <= site.water as f32 && fresh_at(g)
                     })
                 };
-                near.then_some((score, at, true))
-            })
-            // Only this prefix is examined below. Do not probe water for sites the
-            // planner cannot use; those grids are part of its actual planning cost.
-            .take(tries)
-            .collect();
-    }
+                near.then_some((at, true))
+            } else {
+                Some((at, fresh))
+            }
+        })
+        // Keep the qualifying-prefix limit, but examine it lazily: a normal cell
+        // returns its first usable site, and a spawn cell needs only SPAWN_TRIES.
+        .take(tries);
     let mut found = Vec::new();
-    for &(_, at, fresh) in candidates.iter().take(tries) {
+    let mut examined = 0;
+    for (at, fresh) in candidates {
+        examined += 1;
         if !habitable(ctx, at) {
             continue;
         }
@@ -385,7 +406,7 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         }
     }
     if found.is_empty() {
-        give_up::<()>(if candidates.is_empty() { 0 } else { 1 });
+        give_up::<()>(if examined == 0 { 0 } else { 1 });
     }
     found
 }
@@ -711,6 +732,8 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
 #[allow(clippy::too_many_arguments)]
 fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, mut ground: &mut Ground) -> Option<Plan> {
     #[cfg(test)]
+    let _layout = LayoutTime(phase_start());
+    #[cfg(test)]
     let time = phase_start();
     let def = ctx.def;
     let mut levers = levers(ctx, centre, fresh, &mut rng);
@@ -771,23 +794,14 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     let time = phase_start();
     let list = culture.family;
     let names = &def.cultures.families[list].names;
-    let name = {
-        let small = size_index == 0 && !names.small.is_empty() && Rng::new(ctx.seed, NAMING, cell.x, cell.y).chance(names.small_chance);
-        let name = unique_name(def, ctx.seed, ctx.promised, cell, list, small);
-        // Now and then a word before it, leaning on the levers ("Old" where it is old).
-        let prefixes: Vec<(usize, f32)> = names.prefixes.iter().enumerate().map(|(i, p)| (i, p.3.weigh(p.2, &levers))).collect();
-        match (rng.chance(names.prefix_chance), pick(&mut rng, &prefixes)) {
-            (true, Some(i)) => {
-                let p = &names.prefixes[i];
-                let joiner = if names.script == Script::Kanji { "" } else { "・" };
-                (format!("{} {}", p.0, name.0), format!("{}{joiner}{}", p.1, name.1))
-            }
-            _ => name,
-        }
-    };
+    let small_name = size_index == 0 && !names.small.is_empty() && Rng::new(ctx.seed, NAMING, cell.x, cell.y).chance(names.small_chance);
+    let prefixes: Vec<(usize, f32)> = names.prefixes.iter().enumerate().map(|(i, p)| (i, p.3.weigh(p.2, &levers))).collect();
+    // Consume both original draws here, even when the chance is false. Name strings
+    // use an independent stream and are needed only after this layout succeeds.
+    let prefix = (rng.chance(names.prefix_chance), pick(&mut rng, &prefixes));
 
     #[cfg(test)]
-    phase_end("name", time);
+    phase_end("name choices", time);
     #[cfg(test)]
     let time = phase_start();
     let square_height = ground.at(centre).height;
@@ -1047,7 +1061,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
         let mut placed = false;
         for at in spots {
             let rect = Rect::new(at - width / 2, extent);
-            if occupied.iter().any(|o| o.gap(&rect) < 1) || lanes.iter().any(|l| l.rect_distance(&rect.grow(RING)) < l.half + 0.5) {
+            if occupied.iter().any(|o| o.gap(&rect) < 1) || lanes.iter().any(|l| l.rect_any(&rect.grow(RING), |d| d < l.half + 0.5)) {
                 continue;
             }
             if level(&mut ground, &rect, def.site.bank, 1).is_none_or(|(low, high)| high - low > lanes_def.well.1 || (low - square_height).abs() > lanes_def.well.1) {
@@ -1075,7 +1089,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
         let (low, high) = spec.envelope();
         let extent = Frame::extent(low, high, facing);
         let rect = Rect::new(p.round().as_ivec2() - extent / 2, extent);
-        if occupied.iter().any(|o| o.gap(&rect) < 1) || lanes.iter().any(|l| l.rect_distance(&rect) < l.half + 0.5) {
+        if occupied.iter().any(|o| o.gap(&rect) < 1) || lanes.iter().any(|l| l.rect_any(&rect, |d| d < l.half + 0.5)) {
             continue;
         }
         let slope = rules.specials.get("stall").map_or(2, |s| s.slope);
@@ -1279,7 +1293,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
         };
         let free = bounds.covers(&rect)
             && occupied.iter().all(|o| o.gap(&rect) >= 0)
-            && lanes.iter().all(|l| l.rect_distance(&rect) > l.half + clearance)
+            && lanes.iter().all(|l| !l.rect_any(&rect, |d| d <= l.half + clearance))
             && [rect.min, rect.max, IVec2::new(rect.min.x, rect.max.y), IVec2::new(rect.max.x, rect.min.y)].iter().all(|&c| walkable(&ground.at(c)));
         free.then_some(rect)
     };
@@ -1520,6 +1534,19 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     let voxels = canvas.into_columns();
     #[cfg(test)]
     phase_end("drawing/raster/voxel columns", time);
+    #[cfg(test)]
+    let name_time = phase_start();
+    let name = unique_name(def, ctx.seed, ctx.promised, cell, list, small_name);
+    let name = match prefix {
+        (true, Some(i)) => {
+            let p = &names.prefixes[i];
+            let joiner = if names.script == Script::Kanji { "" } else { "・" };
+            (format!("{} {}", p.0, name.0), format!("{}{joiner}{}", p.1, name.1))
+        }
+        _ => name,
+    };
+    #[cfg(test)]
+    phase_end("name", name_time);
     Some(Plan {
         id: hash3(ctx.seed, cell.x, 0, cell.y),
         size: def.sizes[size_index].name.clone(),
@@ -1991,7 +2018,7 @@ fn place(
         return miss(2);
     }
     let ring = if matches!(kind, Kind::Well | Kind::Centrepiece) { RING } else { 0 };
-    if lanes.iter().any(|l| l.rect_distance(&rect.grow(ring)) < l.half + 0.6) {
+    if lanes.iter().any(|l| l.rect_any(&rect.grow(ring), |d| d < l.half + 0.6)) {
         return miss(3);
     }
     // Firm, gentle ground under it all, and no water under it or on its banks.
@@ -2286,6 +2313,33 @@ mod level_tests {
     use crate::geology::GeoSample;
     use crate::trails::Land;
     use crate::water::Body;
+
+    #[test]
+    fn lane_rect_predicates_keep_boundaries_and_stop_at_a_match() {
+        let rect = Rect::new(IVec2::ZERO, IVec2::splat(3));
+        let make = |points| Lane { points, half: 1.0, paved: false, main: false };
+        let boundary = make(vec![Vec2::new(5.0, -5.0), Vec2::new(5.0, 5.0)]);
+        assert_eq!(boundary.rect_distance(&rect), 2.5);
+        assert!(!boundary.rect_any(&rect, |d| d < 2.5));
+        assert!(boundary.rect_any(&rect, |d| d <= 2.5));
+        for points in [
+            Vec::new(), vec![Vec2::ZERO], vec![Vec2::new(5.0, 0.0); 2],
+            vec![Vec2::new(-30.0, 8.0), Vec2::new(18.0, -4.0)],
+            vec![Vec2::new(-20.0, 20.0), Vec2::new(20.0, 20.0), Vec2::new(1.0, 1.0)],
+            boundary.points.clone(),
+        ] {
+            let lane = make(points);
+            let distance = lane.rect_distance(&rect);
+            for reach in [0.0, 0.5, 2.5, 5.0, 50.0] {
+                assert_eq!(lane.rect_any(&rect, |d| d < reach), distance < reach);
+                assert_eq!(lane.rect_any(&rect, |d| d <= reach), distance <= reach);
+            }
+        }
+        let near = make(vec![Vec2::ONE, Vec2::splat(1000.0)]);
+        let tested = std::cell::Cell::new(0);
+        assert!(near.rect_any(&rect, |d| { tested.set(tested.get() + 1); d < 1.0 }));
+        assert_eq!(tested.get(), 1, "a known intersecting point must stop the check");
+    }
 
     /// Flat ground with a creek one block wide along `x == creek.0` (a column) or
     /// `z == creek.1` (a row).

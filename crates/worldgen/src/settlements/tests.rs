@@ -2517,22 +2517,24 @@ fn site_water_search_stops_after_the_used_prefix() {
     let world = base_world(1);
     let mut def = world.settlements.def.clone();
     def.avoid.clear();
-    def.site.temperature = (-1000.0, 1000.0);
     def.site.mild = (-1000.0, 1000.0);
     def.site.levels = (7, 1.0);
     def.site.caves = 0;
     for spawn in [None, Some(IVec2::splat(def.grid.spacing / 2))] {
         let tries = def.site.tries * if spawn.is_some() { 8 } else { 1 };
-        for wet in [true, false] {
+        for (wet, usable) in [(true, true), (true, false), (false, true), (false, false)] {
+            def.site.temperature = if usable { (-1000.0, 1000.0) } else { (10_000.0, 10_001.0) };
             let land = Creeks { step: def.site.step, creek: def.site.creek, wet, close: AtomicUsize::new(0) };
             let ctx = super::plan::Ctx { world: &world, land: &land, def: &def, resolved: &world.settlements.resolved,
                 fixed: world.settlements.fixed.as_ref().unwrap(), seed: world.settlements.seed,
                 spawn, promised: &[], cells: &world.settlements.cells };
             let found = super::plan::site(&ctx, IVec2::ZERO, spawn);
-            assert_eq!(!found.is_empty(), wet, "spawn {spawn:?}, wet {wet}");
+            let used = if spawn.is_some() { 8 } else { 1 };
+            assert_eq!(found.len(), if wet && usable { used } else { 0 }, "spawn {spawn:?}, wet {wet}, usable {usable}");
             assert!(found.iter().all(|s| s.1), "every selected site has fresh water");
-            assert_eq!(land.close.load(Ordering::Relaxed), tries * if wet { 1 } else { def.site.look },
-                "spawn {spawn:?}, wet {wet}: unused candidates were probed or dry ones skipped");
+            let expected = if !wet { tries * def.site.look } else if usable { used } else { tries };
+            assert_eq!(land.close.load(Ordering::Relaxed), expected,
+                "spawn {spawn:?}, wet {wet}, usable {usable}: unused candidates were probed or dry ones skipped");
         }
     }
 }

@@ -790,7 +790,7 @@ mod tests {
                     assert_eq!(actual, expected, "seed {seed} at {x},{z}, reverse {reverse}");
                     assert!(scratch.corners.len() < 4096 + 20);
                     assert!(scratch.tiers.len() <= 16);
-                    if expected.submerged() && expected.body != Body::Sea { wet += 1; } else { dry += 1; }
+                    if expected.submerged() && expected.body != Body::Sea { wet += 1; } else if !expected.submerged() { dry += 1; }
                 }
             }
         }
