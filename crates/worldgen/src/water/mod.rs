@@ -578,8 +578,9 @@ impl Rivers {
         let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
         let key = Samples::key(min, max);
         let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, min, max));
-        let ground = land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0];
-        self.sealed(land, tiers, x, z, ground, &mut scratch.corners)
+        let p = IVec2::new(x, z);
+        let ground = (!scratch.columns.contains_key(&(p, key))).then(|| land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0]);
+        self.sealed_cached(land, tiers, key, p, ground, &mut scratch.corners, &mut scratch.columns)
     }
 
     /// Exact standalone samples in a bounded batch: only the geology of these centres
@@ -588,14 +589,20 @@ impl Rivers {
         assert!(points.len() <= SAMPLE_BATCH);
         scratch.prepare(self.id, points.len());
         if points.is_empty() { return Vec::new(); }
-        let grounds = land.geology.lands_with(points, &mut scratch.corners);
-        points.iter().zip(grounds).map(|(&(x, z), ground)| {
+        let keys: Vec<_> = points.iter().map(|&(x, z)| Samples::key(IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1))).collect();
+        let needed: Vec<_> = points.iter().zip(&keys).map(|(&(x, z), &key)| !scratch.columns.contains_key(&(IVec2::new(x, z), key))).collect();
+        let missing: Vec<_> = points.iter().zip(&needed).filter_map(|(&p, &need)| need.then_some(p)).collect();
+        let mut grounds = land.geology.lands_with(&missing, &mut scratch.corners).into_iter();
+        points.iter().enumerate().map(|(i, &(x, z))| {
             // Clear only channel groups here: the already computed centre landforms
             // remain valid, and the reserved corner headroom covers all neighbours.
             if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
             let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
-            let tiers = scratch.tiers.entry(Samples::key(min, max)).or_insert_with(|| self.tiers(land, min, max));
-            self.sealed(land, tiers, x, z, ground, &mut scratch.corners)
+            let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, min, max));
+            // Keep the initial miss mask: an earlier neighbour may have populated
+            // this column since its landform was batched, but that work still counts.
+            let ground = needed[i].then(|| grounds.next().expect("batched missing landform"));
+            self.sealed_cached(land, tiers, keys[i], IVec2::new(x, z), ground, &mut scratch.corners, &mut scratch.columns)
         }).collect()
     }
 
@@ -689,6 +696,24 @@ impl Rivers {
         settle(column.sample, &neighbours)
     }
 
+    /// Reuse only unsealed columns computed under these exact channel bounds. A
+    /// neighbour keeps the requesting centre's key, not its own standalone halo key.
+    #[allow(clippy::too_many_arguments)]
+    fn sealed_cached(&self, land: Stages, tiers: &(Near, Near), key: [IVec2; 4], p: IVec2, ground: Option<Landform>, corners: &mut Corners, columns: &mut FxHashMap<(IVec2, [IVec2; 4]), Column>) -> GeoSample {
+        let column = *columns.entry((p, key)).or_insert_with(|| self.unsealed(tiers, p.x, p.y, ground.expect("uncached centre landform")));
+        if !column.near { return column.sample; }
+        let around = [p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y];
+        let missing: Vec<_> = around.iter().filter(|&&at| !columns.contains_key(&(at, key))).map(|at| (at.x, at.y)).collect();
+        if !missing.is_empty() {
+            let grounds = land.geology.lands_with(&missing, corners);
+            for ((x, z), ground) in missing.into_iter().zip(grounds) {
+                columns.insert((IVec2::new(x, z), key), self.unsealed(tiers, x, z, ground));
+            }
+        }
+        let neighbours = around.map(|at| columns[&(at, key)].sample);
+        settle(column.sample, &neighbours)
+    }
+
     /// The geology of the `size`×`size` columns `step` blocks apart from `origin`, row by
     /// row: the same as sampling each without crags, finding the rivers near them once.
     pub fn grid(&self, land: Stages, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
@@ -740,6 +765,7 @@ pub struct Samples {
     id: u64,
     corners: Corners,
     tiers: FxHashMap<[IVec2; 4], (Near, Near)>,
+    columns: FxHashMap<(IVec2, [IVec2; 4]), Column>,
 }
 
 /// Exact water-bearing terrain shared by a site's overlapping close looks. Only
@@ -755,9 +781,12 @@ impl Samples {
     fn prepare(&mut self, id: u64, count: usize) {
         // Each centre and its four cardinal neighbours add at most twenty corners.
         // Reserve the whole batch before any centre or neighbour work is performed.
-        if self.id != id || self.corners.len() + 20 * count > 4096 {
+        if self.id != id {
             *self = Self { id, ..Self::default() };
         }
+        if self.corners.len() + 20 * count > 4096 { self.corners = Corners::default(); }
+        // A batch inserts at most its centres and four neighbours per centre.
+        if self.columns.len() + 5 * count > 16_384 { self.columns.clear(); }
         if self.tiers.len() >= 16 { self.tiers.clear(); }
     }
 
@@ -823,6 +852,7 @@ impl Near {
 }
 
 /// A column before sealing, and whether it lies near any river or lake.
+#[derive(Clone, Copy)]
 struct Column {
     sample: GeoSample,
     near: bool,
@@ -902,6 +932,10 @@ mod tests {
                 points.push((-1976 + 16 * x, 552 + 16 * z));
             }
         }
+        // Dense, overlapping centre/neighbour work near the same actual river.
+        for z in 0..9 {
+            for x in 0..35 { points.push((-1793 + x, 748 + z)); }
+        }
         // Each side of the exact tier-group transitions, including negative regions
         // and the one-block halo used to seal water against its four neighbours.
         for margin in [TRUNK_MARGIN, STREAM_MARGIN] {
@@ -927,6 +961,7 @@ mod tests {
                     assert_eq!(actual, expected, "seed {seed} at {x},{z}, reverse {reverse}");
                     assert!(scratch.corners.len() <= 4096);
                     assert!(scratch.tiers.len() <= 16);
+                    assert!(scratch.columns.len() <= 16_384);
                     if expected.submerged() && expected.body != Body::Sea { wet += 1; } else if !expected.submerged() { dry += 1; }
                 }
                 let ordered: Vec<_> = if reverse { points.iter().rev().copied().collect() } else { points.clone() };
@@ -937,6 +972,7 @@ mod tests {
                         assert_eq!(actual, expected, "batch {batch_size}, seed {seed}, reverse {reverse}");
                         assert!(scratch.corners.len() <= 4096);
                         assert!(scratch.tiers.len() <= 16);
+                        assert!(scratch.columns.len() <= 16_384);
                     }
                 }
                 assert!(world.rivers.samples_cached(world.stages(), &[], &mut scratch).is_empty());
@@ -959,6 +995,45 @@ mod tests {
             }
         }
         assert!(wet > 0 && dry > 0, "fixture needs fresh water and dry ground: {wet}/{dry}");
+    }
+
+    #[test]
+    fn planning_raw_columns_reuse_neighbours_and_respect_exact_keys() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let world = crate::Overworld::new(7, registry.clone());
+        let p = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
+            .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual river fixture");
+        let expected = world.rivers.sample(world.stages(), p.x, p.y, false);
+        let key = Samples::key(p - 1, p + 1);
+        let mut scratch = Samples { id: world.rivers.id, ..Samples::default() };
+        let wrong_key = Samples::key(p - REGION, p + REGION);
+        assert_ne!(key, wrong_key);
+        let wrong = Column { sample: GeoSample { height: 9999, ..expected }, near: true };
+        scratch.columns.insert((p, wrong_key), wrong);
+        assert_eq!(world.rivers.sample_cached(world.stages(), p.x, p.y, &mut scratch), expected, "same position under different channel bounds cannot alias");
+        assert!(scratch.columns[&(p, key)].near);
+        assert_eq!(scratch.columns.len(), 6, "exact centre and all four raw neighbours are retained beside the unrelated key");
+        let corners = scratch.corners.len();
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.columns.len(), 6);
+        assert_eq!(scratch.corners.len(), corners, "all warm centres and neighbours need no new terrain");
+        // Corner-only eviction must not discard pure raw columns or their keys.
+        scratch.corners = Corners::default();
+        let distant: Vec<_> = (0..900).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
+        world.geology.reliefs_with(&distant, &mut scratch.corners);
+        assert!(scratch.corners.len() > 4096 - 20 * SAMPLE_BATCH);
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.corners.len(), 0, "retained raw values survive the corner reset without recomputation");
+        // Pressure entries are never queried. Full-batch headroom clears them first.
+        scratch.columns.extend((0..16_384 - 6).map(|k| ((IVec2::new(200_000 + k, 200_000), key), wrong)));
+        assert_eq!(scratch.columns.len(), 16_384);
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.columns.len(), 5);
+        let another = crate::Overworld::new(42, registry);
+        assert_eq!(another.rivers.sample_cached(another.stages(), p.x, p.y, &mut scratch), another.rivers.sample(another.stages(), p.x, p.y, false));
+        assert_eq!(scratch.id, another.rivers.id);
+        assert!(!scratch.columns.contains_key(&(p, wrong_key)));
+        assert!(scratch.columns.len() <= 5);
     }
 
     #[test]

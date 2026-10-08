@@ -139,6 +139,9 @@ all random draws retain their original order. Water is searched for a house requ
 only when an otherwise eligible water-dependent house can serve it. Scratch caps
 corners at 4,096, and channel groups at 16; eviction repeats
 the same pure computation. None of this scratch storage is retained in the plan cache.
+Sealing also reuses up to 16,384 raw columns keyed by position and the requesting
+centre's exact channel-region bounds. Its four neighbours keep those same bounds;
+corner-only eviction preserves the raw values, and changing worlds clears all scratch.
 Climate, biome, home level and fertility checks reuse the same full original site at
 each position, rather than sampling its five-block terrain neighbourhood repeatedly.
 Site water checks walk the same ranked qualifying prefix lazily, stopping when enough
