@@ -1113,6 +1113,7 @@ mod tests {
         assert!(!scratch.landforms.is_empty() && scratch.landforms.len() <= 5 * SAMPLE_BATCH, "whole batch reserves geology headroom before any work");
         scratch.columns.insert((p, key), wrong);
         scratch.columns.insert((p, wrong_key), wrong);
+        scratch.landforms.insert(p, Landform { mountain: 9999.0, ..filler });
         let another = crate::Overworld::new(42, registry);
         assert_eq!(another.rivers.sample_cached(another.stages(), p.x, p.y, &mut scratch), another.rivers.sample(another.stages(), p.x, p.y, false));
         assert_eq!(scratch.id, another.rivers.id);
