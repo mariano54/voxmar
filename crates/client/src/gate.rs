@@ -4179,13 +4179,49 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if tags.contains(&kept.as_str()) {
                 let detail = format!("{} {}: {}", readout.name, readout.level, tags.join(", "));
                 gate.check("readout: kept", Ok(detail));
-                gate.next(Step::Ore, now);
+                gate.advance(now);
             } else if in_phase > 3.0 {
                 let detail = format!("aimed at the tamed junglefowl, it read {:?} {:?} with tags {tags:?}", readout.name, readout.level);
                 gate.check("readout: kept", Err(detail));
                 gate.next(Step::Ore, now);
             }
         }
+        4 => {
+            // Looking closely at it with nothing it eats in hand: a newly tamed one reads in good
+            // condition (improving, holding or getting worse).
+            let lines: Vec<String> = {
+                let locale = world.resource::<crate::lang::Locale>();
+                let good = locale.get("condition.good").to_owned();
+                ["inspect.kept", "inspect.kept_improving", "inspect.kept_worsening"].map(|key| locale.format(key, &[("state", &good)])).into()
+            };
+            let replied = world.resource::<crate::hud::console::Console>().since(gate.phase_since).find(|line| lines.iter().any(|l| line.contains(l.as_str()))).map(str::to_owned);
+            if let Some(line) = replied {
+                mouse(world, MouseButton::Right, false);
+                gate.check("condition", Ok(format!("looking closely read \"{line}\" after {in_phase:.1}s")));
+                gate.advance(now);
+            } else if gate.server_in_phase() > 3.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("condition", Err(format!("3 server seconds of looking closely at our junglefowl read none of {lines:?}")));
+                gate.next(Step::Ore, now);
+            } else if let Some(view) = hen(world) {
+                // A hotbar slot holding nothing it eats: an empty one first.
+                let free = {
+                    let launch = world.resource::<Launch>();
+                    let species = launch.content.creatures.get(view.species);
+                    let eats = |item: BlockId| species.tame_food.contains(&item) || species.breed_food.contains(&item) || launch.content.blocks.def(item).tags.iter().any(|t| t == "breeding_feed");
+                    let player = world.resource::<LocalPlayer>();
+                    let slots = 0..voxmar_engine::inventory::HOTBAR_SLOTS;
+                    slots.clone().find(|&s| player.inventory.get(s).is_none()).or_else(|| slots.into_iter().find(|&s| player.inventory.get(s).is_some_and(|stack| !eats(stack.item))))
+                };
+                if let Some(slot) = free {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                }
+                aim_at(world, view.position + Vec3::Y * 0.3);
+                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
+        5 => gate.next(Step::Ore, now),
         _ => {}
     }
 }
