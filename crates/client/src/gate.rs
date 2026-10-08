@@ -4605,9 +4605,10 @@ struct FeelRun {
     died: bool,
     calm: bool,
     /// The first telegraph faces the target on the server; shots keep the same camera
-    /// before provoking it and when its attacking pose first arrives.
+    /// before provoking it and during its wind-up, once the drawn body has turned.
     facing_checked: bool,
     facing_camera: Option<(f32, f32)>,
+    facing_frames: u8,
 }
 
 /// The bear in survival: provoked with a click every few server seconds until it winds up,
@@ -4701,6 +4702,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let mut player = world.resource_mut::<LocalPlayer>();
                 player.yaw = yaw;
                 player.pitch = pitch;
+                if gate.feel.facing_frames < 3 {
+                    gate.feel.facing_frames += 1;
+                }
             } else {
                 aim_at(world, view.position + Vec3::Y * 0.6);
             }
@@ -4752,6 +4756,11 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         let player = world.resource::<LocalPlayer>();
                         gate.feel.facing_camera = Some((player.yaw, player.pitch));
                         key(world, KeyCode::KeyW, false);
+                    }
+                    // The gate runs in Last: the renderer needs later frames to see
+                    // this camera direction before the first image is requested.
+                    if gate.feel.facing_frames < 3 {
+                        return;
                     }
                     if gate.shot(world, "windup-before").is_none() {
                         return;
