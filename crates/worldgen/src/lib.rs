@@ -1583,6 +1583,19 @@ mod tests {
         }
     }
 
+    /// No tree reaches over a hole the caves carved beside its trunk: roots and thick-trunk
+    /// feet reach the columns next to the candidate, and a pit there can be deeper than a
+    /// foot sinks. Seed 22's sinkhole near (319, 2061) had a dark oak whose flare root, two
+    /// columns out, hung over its rim.
+    #[test]
+    fn trees_keep_off_the_rims_of_cave_mouths() {
+        let registry = registry();
+        let world = Overworld::new(22, registry.clone());
+        let first = ColumnPos::of_block(IVec3::new(319, 0, 2061)).offset(-2, -2);
+        let floating = floating_wood(&world, &registry, first, 5);
+        assert!(floating.is_empty(), "wood floats at the sinkhole's rim: {floating:?}");
+    }
+
     /// Every trunk, root, stump, fallen log, cactus and mushroom stem rests on the ground,
     /// branches through their trunks: on several seeds, in forests, at cave mouths, ravines
     /// and sinkholes, by rivers and in the biomes of snags and cacti, where carving and
@@ -1592,7 +1605,7 @@ mod tests {
         let registry = registry();
         let mut failures = Vec::new();
         let mut places = 0;
-        for seed in [1u64, 7, 42, 0x5eed] {
+        for seed in [1u64, 7, 22, 42, 0x5eed] {
             let world = Overworld::new(seed, registry.clone());
             let spawn = world.spawn_point();
             let mut at: Vec<(String, IVec2)> = vec![("spawn".into(), IVec2::new(spawn.x, spawn.z))];
