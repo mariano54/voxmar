@@ -831,6 +831,8 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
     let time = phase_start();
     #[cfg(test)]
     let before = (ground.queries, ground.misses, ground.clears, ground.levels, LANE_COUNTS.with(|c| c.get()), ground.prefetched);
+    #[cfg(test)]
+    let failures = time.map(|_| (PLACE_FAILS.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed)), GIVEN_UP.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))));
     let result = layout(ctx, cell, centre, fresh, rng, smallest, ground);
     #[cfg(test)]
     if time.is_some() {
@@ -841,6 +843,11 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
             ground.prefetched - before.5, ground.misses - before.1 + ground.prefetched - before.5,
             ground.clears - before.2, ground.levels - before.3,
             lane[0] - before.4[0], lane[1] - before.4[1], lane[3] - before.4[3], lane[2] - before.4[2]);
+        if let Some((places, abandoned)) = failures {
+            let places = std::array::from_fn::<_, 8, _>(|i| PLACE_FAILS[i].load(std::sync::atomic::Ordering::Relaxed) - places[i]);
+            let abandoned = std::array::from_fn::<_, 12, _>(|i| GIVEN_UP[i].load(std::sync::atomic::Ordering::Relaxed) - abandoned[i]);
+            eprintln!("  layout placement failures [spec,bounds,occupied,lane,land,slope,road,unused]: {places:?}; give-up reasons: {abandoned:?}");
+        }
         phase_end("layout total (including rejected attempts)", time);
     }
     result
@@ -1130,6 +1137,10 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     if lanes.is_empty() {
         return give_up(3);
     }
+    #[cfg(test)]
+    phase_end("square/lanes", time);
+    #[cfg(test)]
+    let lots_time = phase_start();
 
     // What to build: the size's own places, then homes and working buildings.
     let mut wanted: Vec<Special> = size.always.clone();
@@ -1247,7 +1258,11 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         }
     }
 
-    let mut town = Town { ctx, kit: &kit, levers: &levers, culture: &culture, style, size: &size.name, built: FxHashMap::default(), bounds, square: square_rect, gap };
+    // These weights stay fixed throughout a layout. Availability still checks the
+    // current built counts for every attempt; extras still draw in catalogue order.
+    let house_weights = def.houses.iter().map(|h| h.lean.weigh(h.weight, &levers) * culture.mult(Listing::House, &h.name)).collect();
+    let extra_chances = def.extras.iter().map(|e| e.lean.weigh(e.chance, &levers) * culture.mult(Listing::Extra, &format!("{:?}", e.name))).collect();
+    let mut town = Town { ctx, kit: &kit, levers: &levers, house_weights, extra_chances, style, size: &size.name, built: FxHashMap::default(), bounds, square: square_rect, gap };
     // On a green, houses first take the rim, facing in.
     if shape == Shape::Green {
         let rim = (square as f32 + lanes_def.rim.0 + gap as f32).max(lanes_def.rim.1);
@@ -1337,6 +1352,10 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         }
         pass += 1;
     }
+    #[cfg(test)]
+    phase_end("main lots (including rejected attempts)", lots_time);
+    #[cfg(test)]
+    let outskirts_time = phase_start();
     // A place missing what it must have (its inn, smithy or trader, the works it always
     // has, or too few homes) is not built.
     let left_homes = queue.iter().filter(|w| matches!(w, Want::Home)).count() as i32;
@@ -1392,6 +1411,10 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     if fertility / (lots.len() as f32) < least {
         return give_up(9);
     }
+    #[cfg(test)]
+    phase_end("outskirts/habitability", outskirts_time);
+    #[cfg(test)]
+    let props_time = phase_start();
 
     // Props by the lanes and in the yards, and by the water.
     let mut canvas = Canvas::default();
@@ -1478,6 +1501,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     // Draw everything.
     #[cfg(test)]
     {
+        phase_end("props", props_time);
         phase_end("lanes/lots/props", time);
         if PROFILE.with(|p| p.get()) {
             eprintln!("  plan ground: {} cached samples, {} queries including retries", ground.seen.len(), ground.queries);
@@ -1904,7 +1928,8 @@ struct Town<'a> {
     ctx: &'a Ctx<'a>,
     kit: &'a Kit,
     levers: &'a Levers,
-    culture: &'a Culture,
+    house_weights: Vec<f32>,
+    extra_chances: Vec<f32>,
     style: &'a StyleDef,
     size: &'a str,
     built: FxHashMap<usize, u32>,
@@ -1955,7 +1980,7 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
                 Want::Work(work) => h.work.as_deref() == Some(work.as_str()),
             }
     };
-    let houses: Vec<(usize, f32)> = def.houses.iter().enumerate().filter(|(i, h)| fits(*i, h)).map(|(i, h)| (i, h.lean.weigh(h.weight, levers) * town.culture.mult(Listing::House, &h.name))).collect();
+    let houses: Vec<(usize, f32)> = def.houses.iter().enumerate().filter(|(i, h)| fits(*i, h)).map(|(i, _)| (i, town.house_weights[i])).collect();
     let index = pick(rng, &houses)?;
     let h = &def.houses[index];
     let mut w = between(rng, h.width);
@@ -1974,8 +1999,8 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
         d = d.clamp(d0 as i32, d1 as i32);
     }
     let mut extras: Vec<Extra> = Vec::new();
-    for e in &def.extras {
-        if rng.chance(e.lean.weigh(e.chance, levers) * town.culture.mult(Listing::Extra, &format!("{:?}", e.name))) {
+    for (e, &chance) in def.extras.iter().zip(&town.extra_chances) {
+        if rng.chance(chance) {
             extras.push(e.name);
         }
     }
