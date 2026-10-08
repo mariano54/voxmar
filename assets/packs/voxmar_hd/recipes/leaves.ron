@@ -1,0 +1,17 @@
+// Voxmar HD leaves drawn for themselves (docs/voxmar-hd.md); every wood's plain leaves come
+// from the `wood` template in wood.ron.
+(
+    textures: {
+        // Azalea in flower at 32×32: small five-petalled blossoms with pale hearts strewn
+        // over the leaves, each lit on its upper left and shadowed below, instead of
+        // default's blobs drawn twice as large.
+        "block/flowering_azalea_leaves": (base: "block/azalea_leaves", palettes: {"bloom": ["#5e1e60", "#8a3384", "#b5509f", "#d572bd", "#f2a6dc"]}, layers: [
+            Grid(legend: {'a': "bloom:0", 'b': "bloom:1", 'c': "bloom:2", 'd': "bloom:3", 'e': "bloom:4"}, rows: [
+                ".dc.",
+                "deec",
+                "ceeb",
+                ".ba.",
+            ], at: [(2, 3), (11, 1), (21, 4), (27, 12), (6, 12), (16, 10), (24, 21), (3, 22), (13, 19), (19, 27), (9, 28), (29, 29)], wrap: true),
+        ]),
+    },
+)
