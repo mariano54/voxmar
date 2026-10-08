@@ -3,6 +3,7 @@
 
 mod actions;
 mod commands;
+mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
 pub use commands::{weather_name, weather_numbers};
 mod cooking;
