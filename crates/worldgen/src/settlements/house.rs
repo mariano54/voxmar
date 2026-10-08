@@ -217,7 +217,8 @@ impl Spec {
             return Some(((x, d - 2), (x, d - 1)));
         }
         let gabled = matches!(self.roof, Roof::Gable | Roof::HalfHip | Roof::Saltbox | Roof::Gambrel);
-        let back = self.wing.is_none_or(|(ww, _)| w / 2 < w - ww);
+        // The altar occupies the back centre; its hearth must use the side wall.
+        let back = !self.inside.contains(&Fitting::Altar) && self.wing.is_none_or(|(ww, _)| w / 2 < w - ww);
         if gabled && !self.ridge_x && back { Some(((w / 2, d - 2), (w / 2, d - 1))) } else { Some(((1, d / 2), (0, d / 2))) }
     }
 

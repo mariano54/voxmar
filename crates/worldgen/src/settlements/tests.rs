@@ -1135,6 +1135,11 @@ fn chimneys_stand_inside_and_just_clear_the_roof() {
                 let mut canvas = super::canvas::Canvas::default();
                 house::draw(&spec, &frame, &mats, &fixed, &mut canvas);
                 let is = |p: &IVec3, b: BlockId| matches!(canvas.absolute.get(p), Some(super::canvas::Put::Set(x)) if *x == b);
+                if spec.inside.contains(&super::def::Fitting::Altar) {
+                    let altar = fixed.altar.expect("base altar");
+                    assert!(canvas.absolute.values().any(|put| matches!(put, super::canvas::Put::Set(b) if *b == altar)), "chapel altar lost with {roof:?}, ridge {ridge_x}, wing {wing}");
+                    assert_ne!(spec.chimney().map(|c| c.0), Some((w / 2, d - 2)), "a chimney must keep off its altar");
+                }
                 let cells: Vec<IVec3> = canvas.absolute.keys().filter(|p| is(p, stack)).copied().collect();
                 let what = format!("{} with a {roof:?} roof, ridge {}, {w} by {d}{}", h.name, if ridge_x { "across" } else { "back" }, if wing { ", a wing" } else { "" });
                 let Some(first) = cells.first() else { continue };
@@ -1947,7 +1952,10 @@ fn naming_never_repeats_near() {
                 let h = crate::rng::hash3(7, x, 0, z);
                 let list = (h % def.cultures.families.len() as u64) as usize;
                 let small = (h >> 32) % every == 0 && !def.cultures.families[list].names.small.is_empty();
-                let name = super::plan::unique_name(def, world.settlements.seed, &promised, cell, list, small).0;
+                let name = super::plan::unique_name(def, world.settlements.seed, &promised, cell, list, small);
+                let span = super::plan::name_span(def);
+                let colour = (cell.y.rem_euclid(span) * span + cell.x.rem_euclid(span)) as usize;
+                assert_eq!(super::plan::name_owner(&name.1, span), colour, "selected name must belong to its cell");
                 named.push((cell, list, name));
             }
         }
@@ -1955,8 +1963,8 @@ fn naming_never_repeats_near() {
         let mut clashes = Vec::new();
         for (i, a) in named.iter().enumerate() {
             for b in &named[i + 1..] {
-                if a.2 == b.2 && gap(a.0, b.0) <= apart {
-                    clashes.push(format!("{} in squares {} and {}", a.2, a.0, b.0));
+                if (a.2.0 == b.2.0 || a.2.1 == b.2.1) && gap(a.0, b.0) <= apart {
+                    clashes.push(format!("{:?} in squares {} and {}", a.2, a.0, b.0));
                 }
             }
         }
@@ -1975,7 +1983,11 @@ fn a_taken_name_only_when_the_list_has_no_other() {
     let mut def = world.settlements.def.clone();
     let mut list = def.cultures.families[0].names.clone();
     list.first = vec![("Ash".to_owned(), "アッシュ".to_owned())];
-    list.last = (0..30).map(|i| (format!("b{i}"), format!("ブ{i}"))).collect();
+    // All thirty names belong to the middle square's colour, so the entire
+    // catalogue remains available to this adversarial whole-list fallback check.
+    let span = 5;
+    list.last = (0..).map(|i| (format!("b{i}"), format!("ブ{i}")))
+        .filter(|p| super::plan::name_owner(&format!("アッシュ{}", p.1), span) == 0).take(30).collect();
     list.small = Vec::new();
     def.cultures.families.truncate(1);
     def.cultures.families[0].names = list;
@@ -1996,6 +2008,27 @@ fn a_taken_name_only_when_the_list_has_no_other() {
     }
     // Some found their name only by walking the list.
     assert!(walked > 0);
+}
+
+/// Unnameable colours and English aliases with conflicting readings are rejected
+/// before generation can select a name from an empty or inconsistent owned pool.
+#[test]
+fn name_ownership_refuses_empty_colours_and_conflicting_aliases() {
+    let world = base_world(1);
+    let mut def = world.settlements.def.clone();
+    super::plan::check_name_ownership(&def).unwrap();
+    let names = &mut def.cultures.families[0].names;
+    names.first.truncate(1);
+    names.last.truncate(1);
+    assert!(super::plan::check_name_ownership(&def).is_err_and(|e| e.0.contains("naming colours")));
+    let mut def = world.settlements.def.clone();
+    let span = super::plan::name_span(&def);
+    let names = &mut def.cultures.families[0].names;
+    names.last[1].0 = names.last[0].0.clone();
+    let owner = super::plan::name_owner(&format!("{}{}", names.first[0].1, names.last[0].1), span);
+    names.last[1].1 = (0..).map(|i| format!("別{i}"))
+        .find(|last| super::plan::name_owner(&format!("{}{}", names.first[0].1, last), span) != owner).unwrap();
+    assert!(super::plan::check_name_ownership(&def).is_err_and(|e| e.0.contains("different owners")));
 }
 
 /// Settling the spawn plans each square in its reach once: the plans made finding the

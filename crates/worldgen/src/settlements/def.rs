@@ -1656,6 +1656,7 @@ impl SettlementsDef {
             return fail("needs a style for anywhere (no biome tags)".into());
         }
         self.cultures.check(self, registry)?;
+        super::plan::check_name_ownership(self)?;
         for style in &self.styles {
             if style.woods.is_empty() || style.roofs.is_empty() || style.crops.is_empty() {
                 return fail(format!("style `{}` needs woods, roofs and crops", style.name));

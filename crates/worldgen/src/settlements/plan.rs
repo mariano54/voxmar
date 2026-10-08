@@ -804,20 +804,61 @@ fn echoes(first: &(String, String), last: &(String, String)) -> bool {
     a.contains(&b) || b.contains(&a)
 }
 
-/// The name of square `cell`'s settlement, drawn from names list `list`: the first it
-/// offers that no square within `rules.names_apart` blocks offers too. Each square takes
-/// one of its own offers and keeps off its neighbours', so no two near share a name, and
-/// none needs another planned to know it. Only where every offer is taken (rare) does it
-/// look further, still keeping off its neighbours' offers; a hamlet takes a first and
-/// last part it offered before that, rather than a taken small name.
-/// Past its offers it walks the whole list, so it gives a taken name only when the list
-/// has no other.
+/// A periodic colouring of settlement squares. Two equal colours differ by at
+/// least `span` squares in one direction, beyond the closest possible site pair's
+/// naming reach. Equal complete readings own one colour across all families.
+pub(super) fn name_span(def: &SettlementsDef) -> i32 {
+    def.rules.names_apart.div_euclid(def.grid.spacing) + 2
+}
+
+pub(super) fn name_owner(reading: &str, span: i32) -> usize {
+    let hash = reading.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+    (mix(hash) % (span as u64 * span as u64)) as usize
+}
+
+/// Validate that every family can name every colour and that equal English names
+/// with different readings still have the same owner. This also catches aliases
+/// across families; equal Japanese readings have equal owners by construction.
+pub(super) fn check_name_ownership(def: &SettlementsDef) -> Result<(), crate::content::ContentError> {
+    if def.rules.names_apart == 0 { return Ok(()); }
+    let span = name_span(def);
+    let mut english = std::collections::BTreeMap::new();
+    for family in &def.cultures.families {
+        let names = &family.names;
+        let mut colours = vec![false; (span * span) as usize];
+        for first in &names.first {
+            let full = names.last.iter().filter(|last| !echoes(first, last))
+                .map(|last| (format!("{}{}", first.0, last.0), join_parts(&def.kana, names.script, first, last)));
+            let small = names.small.iter().map(|last| small_name(names.script, first, last));
+            for ((name, reading), normal) in full.map(|n| (n, true)).chain(small.map(|n| (n, false))) {
+                let owner = name_owner(&reading, span);
+                if normal { colours[owner] = true; }
+                if english.insert(name.clone(), owner).is_some_and(|old| old != owner) {
+                    return Err(crate::content::ContentError(format!("cultures.ron: English name `{name}` has readings with different owners")));
+                }
+            }
+        }
+        if colours.iter().any(|&present| !present) {
+            return Err(crate::content::ContentError(format!("cultures.ron: family `{}` needs a name for each of {} naming colours", family.name, span * span)));
+        }
+    }
+    Ok(())
+}
+
+/// Each complete name belongs to a periodic cell colour, so nearby squares
+/// cannot select the same name even past their three initial offers. Prefer its
+/// own offers, then further draws, then every name, avoiding neighbours' offers
+/// while its owned pool has others. Exhaustion can reuse an offered owned name:
+/// that neighbour's different colour prevents it from selecting the name.
 pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], cell: IVec2, list: usize, small: bool) -> (String, String) {
     let (grid, apart) = (&def.grid, def.rules.names_apart);
     let first = offered_name(def, seed, cell, list, 0, small);
     if apart <= 0 {
         return first;
     }
+    let span = name_span(def);
+    let colour = (cell.y.rem_euclid(span) * span + cell.x.rem_euclid(span)) as usize;
+    let owns = |name: &(String, String)| name_owner(&name.1, span) == colour;
     let inner = |c: IVec2| (c * grid.spacing + grid.margin, (c + 1) * grid.spacing - grid.margin - 1);
     let (lo, hi) = inner(cell);
     let reach = apart.div_euclid(grid.spacing) + 1;
@@ -864,7 +905,14 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
             words
         })
     });
-    own.chain(further).chain(every).find(|n| !taken.contains(&n.0)).unwrap_or(first)
+    let mut first_owned = None;
+    for name in own.chain(further).chain(every).filter(owns) {
+        if !taken.contains(&name.0) { return name; }
+        first_owned.get_or_insert(name);
+    }
+    // Even if every owned name is offered nearby, those other colours cannot
+    // select it. Validated catalogues always supply at least one owned name.
+    first_owned.expect("validated family has a name for every colour")
 }
 
 /// Lays out the settlement of the square `cell` round `centre`, if it can.
