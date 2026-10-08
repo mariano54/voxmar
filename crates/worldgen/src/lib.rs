@@ -1596,6 +1596,79 @@ mod tests {
         assert!(floating.is_empty(), "wood floats at the sinkhole's rim: {floating:?}");
     }
 
+    /// Bare-capable herbs still need actual earth. Both plant paths take the same
+    /// admitted surface: rock, gravel, ice and snow work; removed ground, water and
+    /// wooden obstacles do not become a Bare surface to grow on.
+    #[test]
+    fn ground_plants_require_actual_earth() {
+        use crate::ecology::Plant;
+        let registry = registry();
+        let world = Overworld::new(1, registry.clone());
+        let meadow = world.biomes.id("base:alpine_meadow").unwrap();
+        let site = Site { height: 201, water: 200, body: Body::Lake, home: meadow, biome: meadow,
+            forest: 0.0, trail: 0.0, ..world.site(0, 0) };
+        let looks = plant_looks(&["edelweiss", "windroot"]);
+        for (name, supported) in [("air", false), ("water", false), ("oak_wood", false),
+            ("oak_leaves", false), ("short_grass", false), ("stone", true),
+            ("gravel", true), ("ice", true), ("snowy_grass_block", true), ("snow_block", true)]
+        {
+            let floor = registry.expect(&format!("base:{name}"));
+            let ground = world.terrain.plant_ground(&site, floor, BlockId::AIR);
+            let (mut ordinary, mut bank) = (0, 0);
+            for cell in 0..256 {
+                let first = IVec2::new(cell % 16 * 32, cell / 16 * 32);
+                bank += world.ecology.edge_patches(first, |_| ground.map(|g| (&site, g))).len();
+                for i in 0..32 * 32 {
+                    let Some(ground) = ground else { continue };
+                    match world.ecology.plant(&site, ground, first.x + i % 32, first.y + i / 32) {
+                        Some(Plant::One(b) | Plant::Tall(b, _) | Plant::Stack(b, _)) if looks.contains_key(&b) => ordinary += 1,
+                        _ => {}
+                    }
+                }
+            }
+            assert_eq!((ordinary > 0, bank > 0), (supported, supported), "{name}: {ordinary} ordinary patch plants, {bank} bank patch plants");
+            assert_eq!(ground.is_some(), supported, "{name} admitted as ground");
+        }
+        let stone = registry.expect("base:stone");
+        assert!(world.terrain.plant_ground(&site, stone, stone).is_none(), "an occupied surface");
+        assert!(world.terrain.plant_ground(&Site { height: 199, ..site }, stone, BlockId::AIR).is_none(), "under water");
+        assert!(world.terrain.plant_ground(&Site { trail: 1.0, ..site }, stone, BlockId::AIR).is_none(), "on a trail");
+    }
+
+    /// Actual carving removes ground at the seed-22 mouth; analytic height alone must
+    /// not admit a plant there. Also retain admitted earth nearby and check the plants
+    /// that generation really placed, so the mouth fixture cannot become vacuous.
+    #[test]
+    fn ground_plants_keep_off_carved_mouths() {
+        let registry = registry();
+        let world = Overworld::new(22, registry.clone());
+        let first = ColumnPos::of_block(IVec3::new(319, 0, 2061)).offset(-1, -1);
+        let area = generate_area(&world, first, 3);
+        let origin = first.origin();
+        let (mut holes, mut earth, mut plants) = (0, 0, 0);
+        for z in 0..96 {
+            for x in 0..96 {
+                let site = world.site(origin.x + x, origin.z + z);
+                if site.height + 1 >= WORLD_HEIGHT_FOR_TESTS {
+                    continue;
+                }
+                let column = &area[((z >> 5) * 3 + (x >> 5)) as usize];
+                let p = IVec3::new(x & 31, site.height, z & 31);
+                let (below, above) = (column.block(p), column.block(p + IVec3::Y));
+                if site.height >= site.water && below.is_air() && above.is_air() && site.trail <= 0.2 {
+                    holes += 1;
+                    assert!(world.terrain.plant_ground(&site, below, above).is_none(), "a carved mouth at {} {}", origin.x + x, origin.z + z);
+                }
+                earth += usize::from(world.terrain.plant_ground(&site, below, above).is_some());
+                if registry.info(above).render == voxmar_engine::block::RenderKind::Plant {
+                    plants += 1;
+                    assert!(crate::terrain::earth(&registry, below), "{} above {} at {} {}", registry.def(above).name, registry.def(below).name, origin.x + x, origin.z + z);
+                }
+            }
+        }
+        assert!(holes > 0 && earth > 100 && plants > 0, "{holes} holes, {earth} admitted surfaces, {plants} plants");
+    }
+
     /// Every trunk, root, stump, fallen log, cactus and mushroom stem rests on the ground,
     /// branches through their trunks: on several seeds, in forests, at cave mouths, ravines
     /// and sinkholes, by rivers and in the biomes of snags and cacti, where carving and
@@ -2003,14 +2076,46 @@ mod tests {
         positions.dedup();
         let area = generate_columns(world, &positions);
         let looks = plant_looks(&["sky_lotus"]);
+        let audit = std::env::var("AT").is_ok();
+        let registry = registry();
+        let content = crate::content::WorldContent::base(&registry).unwrap();
+        let lotus = content.plants.iter().find(|p| p.name == "base:sky_lotus").unwrap();
+        let (_, _, pairs) = rare_herbs();
+        let named: std::collections::HashSet<_> = pairs.iter().filter(|p| p.0 == "sky_lotus")
+            .filter_map(|p| world.biomes.id(&format!("base:{}", p.1))).collect();
+        // Per home biome: banks, eligible banks, obstructions, absent earth and trails. Existing ground
+        // plants were placed after the edge patches and do not obstruct their candidates.
+        let mut banks_by_home = std::collections::BTreeMap::<String, [usize; 5]>::new();
         let mut placed = Vec::new();
         for (p, height) in shore {
             let at = IVec3::new(p.x, height + 1, p.y);
             let pos = ColumnPos::of_block(at);
             let i = positions.binary_search_by_key(&(pos.0.x, pos.0.y), |p| (p.0.x, p.0.y)).unwrap();
-            if looks.contains_key(&area[i].block(at - pos.origin())) {
+            let above = area[i].block(at - pos.origin());
+            if looks.contains_key(&above) {
                 placed.push((p.x, p.y));
+                if audit {
+                    println!("    lotus sight {at}");
+                }
             }
+            if audit {
+                let site = sampler.site(p.x, p.y);
+                let below = area[i].block(at - pos.origin() - IVec3::Y);
+                let blocked = !above.is_air() && registry.info(above).render != voxmar_engine::block::RenderKind::Plant;
+                let ground = world.terrain.plant_ground(&site, below, if blocked { above } else { BlockId::AIR });
+                let rooted = ground.is_some_and(|ground| lotus.ground.contains(&ground) || (ground == crate::content::Ground::Snow
+                    && lotus.snowy.is_some() && lotus.ground.contains(&crate::content::Ground::Soil)));
+                let trail = site.trail > 0.2;
+                let counts = banks_by_home.entry(world.biomes.get(site.home).name.clone()).or_default();
+                counts[0] += 1;
+                counts[1] += usize::from(named.contains(&site.home) && rooted);
+                counts[2] += usize::from(blocked);
+                counts[3] += usize::from(!crate::terrain::earth(&registry, below));
+                counts[4] += usize::from(trail);
+            }
+        }
+        if audit {
+            println!("    lotus shore at {pit}: banks/eligible/blocked/absent-earth/trail by home {banks_by_home:?}");
         }
         placed.sort_unstable();
         Some((pool.len(), placed.len(), patches(&placed).len(), anchor))

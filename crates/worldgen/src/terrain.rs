@@ -566,9 +566,10 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         for x in 0..CHUNK_SIZE {
             let (site, _) = &surfaces[(z * CHUNK_SIZE + x) as usize];
             let h = site.height;
-            if h < site.water || h + 1 >= WORLD_HEIGHT || !blocks.get_local(x, h + 1, z).is_air() || site.trail > 0.2 {
+            if h + 1 >= WORLD_HEIGHT {
                 continue;
             }
+            let Some(ground) = terrain.plant_ground(site, blocks.get_local(x, h, z), blocks.get_local(x, h + 1, z)) else { continue };
             if let Some(boulder) = boulder(world, site, &geology, origin.x + x, origin.z + z) {
                 for (y, block) in (h + 1..).zip(boulder.into_iter().flatten()) {
                     if y >= WORLD_HEIGHT || !blocks.get_local(x, y, z).is_air() {
@@ -578,7 +579,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 }
                 continue;
             }
-            open_ground[(z * CHUNK_SIZE + x) as usize] = Some(terrain.ground(blocks.get_local(x, h, z)));
+            open_ground[(z * CHUNK_SIZE + x) as usize] = Some(ground);
         }
     }
     let edges = world.ecology.edge_patches(IVec2::new(origin.x, origin.z), |i| open_ground[i].map(|ground| (&surfaces[i].0, ground)));
@@ -886,6 +887,15 @@ impl Terrain {
     /// What a surface block offers plants.
     pub fn ground(&self, block: BlockId) -> Ground {
         self.grounds[block.0 as usize]
+    }
+
+    /// What the actual surface offers a ground plant. Cave mouths can remove the
+    /// nominal surface: air, water and wood also classify as Bare, but are not earth.
+    /// Both ordinary plants and bank patches take their candidates from this check.
+    pub(crate) fn plant_ground(&self, site: &crate::Site, ground: BlockId, above: BlockId) -> Option<Ground> {
+        (site.height >= site.water && site.height + 1 < WORLD_HEIGHT && above.is_air()
+            && site.trail <= 0.2 && self.firm[ground.0 as usize] && self.earth[ground.0 as usize])
+            .then(|| self.ground(ground))
     }
 
     /// Whether a block is a small plant.
