@@ -59,6 +59,11 @@ pub struct Multiblock {
 }
 
 impl Multiblock {
+    /// How far from its core, across, its farthest cell lies (any way it is turned).
+    pub fn reach(&self) -> i32 {
+        self.cells.iter().map(|(o, _)| o.x.abs().max(o.z.abs())).max().unwrap_or(0)
+    }
+
     /// Whether the structure stands with its core at `core`, turned any way; `block` says
     /// what is where (none for a place not loaded, which never matches).
     pub fn stands(&self, core: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> bool {
