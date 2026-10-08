@@ -2089,7 +2089,7 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
             }
         }
     };
-    let mut spec = Spec {
+    let spec = Spec {
         kind,
         w,
         d,
@@ -2110,7 +2110,6 @@ fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: b
         centre: None,
         seed: rng.next_u64(),
     };
-    house::make_room_for_stairs(&mut spec);
     Some((spec, index))
 }
 
@@ -2145,7 +2144,7 @@ fn place(
         Want::Home | Want::Workshop | Want::Work(_) => Kind::House,
     };
     let mut house = None;
-    let spec = match (given, kind) {
+    let mut spec = match (given, kind) {
         (Some(spec), _) => spec,
         (None, Kind::House | Kind::Trader | Kind::Inn) => {
             let near_water = town.needs_water(want) && wet(ground, front);
@@ -2193,6 +2192,9 @@ fn place(
             return miss(6);
         }
     }
+    // Adapt only a placed house. Chimney removal and wall/storey reductions do not
+    // change its envelope, stilts, door or any of the placement checks above.
+    if house.is_some() { house::make_room_for_stairs(&mut spec); }
     let frame = Frame::fit(low, high, facing, rect.min, floor);
     let door = kind.indoors().then(|| {
         let outside = frame.at(spec.door, 0, -2);

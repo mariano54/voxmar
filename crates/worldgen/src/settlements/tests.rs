@@ -1281,7 +1281,9 @@ fn every_storey_has_a_stair_up() {
                         extras: if chimney { vec![Extra::Chimney] } else { Vec::new() }, door: w / 2, shed: 0, wing: None, stilts: 0,
                         regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 1,
                     };
+                    let envelope = spec.envelope();
                     house::make_room_for_stairs(&mut spec);
+                    assert_eq!(spec.envelope(), envelope, "stair adaptation must not alter placement bounds");
                     let door = spec.door.clamp(1, w - 2);
                     let hearth = spec.chimney().map(|c| c.0);
                     let up = house::stairs(&spec, door, hearth);
