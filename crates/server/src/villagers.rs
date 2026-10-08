@@ -612,7 +612,7 @@ impl Server {
     pub(crate) fn villager_calm_for(&self, id: u32, player: u32) -> bool {
         self.villagers.by_creature.get(&id).is_some_and(|&(town, i)| {
             let p = &self.villagers.towns[&town].people[i];
-            p.calm_until > self.tick && p.calm_player.as_ref().zip(self.players.get(&player)).is_some_and(|(name, player)| name.eq_ignore_ascii_case(&player.name))
+            p.calm_until > self.tick && p.calm_player.as_ref().zip(self.players.get(&player)).is_some_and(|(name, player)| crate::player::same_name(name, &player.name))
         })
     }
 
@@ -970,7 +970,7 @@ mod tests {
         let (_, connection) = voxmar_protocol::local_pair();
         let mut player = crate::player::Player::new(1, connection, Vec3::new(8.0, 200.0, 8.0), 2, server.tick, server.survival.max_health, &server.config.limits);
         player.joined = true;
-        player.name = "Tester".into();
+        player.name = "Tëster".into();
         server.players.insert(1, player);
     }
 
@@ -1058,7 +1058,7 @@ mod tests {
         assert_eq!(server.creatures.live[&id].health, full - 1, "forgetting healed it");
         let (_, connection) = voxmar_protocol::local_pair();
         let mut rejoined = crate::player::Player::new(2, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
-        rejoined.name = "tester".into();
+        rejoined.name = "tËSTER".into();
         server.players.insert(2, rejoined);
         assert!(server.villager_calm_for(id, 2), "rejoining reset the cooldown");
         server.tick += ticks(live.give_up) - 1;
