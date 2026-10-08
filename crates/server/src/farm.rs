@@ -249,11 +249,12 @@ impl Server {
         let Some(seed) = voxmar_engine::action::ActionContext::actor_seed(&crate::actions::context(self, agent)) else { return };
         let Some(id) = self.content.crops.planted_by(seed) else { return };
         // Where it could never grow, the seed stays in hand and the player hears why
-        // (the client showed the sprout and gets the ground back).
+        // (the client showed the sprout and gets the ground back), naming the crop by what
+        // it bears ("Rice", "Wheat"), or else by its seed, never by a growing stage.
         let crop = self.content.crops.get(id);
         if let Some(why) = crop::unsuited(&crop.def, self.crop_conditions(pos)) {
-            let ripe = self.content.blocks.def(crop.stages[crop.ripe_stage() as usize]).name.clone();
-            self.refuse(agent, Words::key(why.key()).with("crop", Words::Block(ripe)));
+            let named = self.content.blocks.id(&crop.def.name).unwrap_or(seed);
+            self.refuse(agent, Words::key(why.key()).with("crop", Words::Block(self.content.blocks.def(named).name.clone())));
             self.reject(agent, ActionTarget::Block { block: ground, face: Face::PosY });
             return;
         }

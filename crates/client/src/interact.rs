@@ -213,6 +213,16 @@ impl ActionContext for ClientContext<'_> {
     }
 }
 
+/// Whether a right click with food in hand eats it: not with a creature under the
+/// crosshair (it is tended), not over a block the food would be placed on, and not over
+/// ground the food is a seed for (`sowing`, the plant action's check there): rice on
+/// farmland is sown, or refused for the sowing's reason (a Farming level), never eaten or
+/// answered with "you are at full health".
+fn eats(food: bool, placeable: bool, on_creature: bool, on_block: bool, sowing: Option<&Result<(), Rejection>>) -> bool {
+    let sows = matches!(sowing, Some(Ok(()) | Err(Rejection::Unmet(Requirement::SkillLevel))));
+    food && !on_creature && (!on_block || !placeable) && !sows
+}
+
 /// Mining proposes `core:mine` and shows progress over the same duration the server
 /// uses; releasing the button or looking away cancels it. Placing proposes `core:place`.
 /// Both are predicted locally and corrected by the server if it disagrees.
@@ -369,8 +379,13 @@ fn break_and_place(
         let held = player.inventory.get(player.selected).map(|s| s.item);
         let food = held.is_some_and(|item| world.registry.info(item).food > 0);
         let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
+        // A seed that is also food (rice) on ground it can be sown in is sown, below.
+        let sowing = hit.zip(actions.0.id("base:plant")).and_then(|(hit, plant)| {
+            let context = ClientContext { world: &world, player: &player, content };
+            actions.0.get(plant).map(|def| def.validate(&context, ActionTarget::Block { block: hit.block, face: hit.face }))
+        });
         // With a creature under the crosshair, a right click tends it instead (`creatures::aim`).
-        if food && target.creature.is_none() && (hit.is_none() || !placeable) {
+        if eats(food, placeable, target.creature.is_some(), hit.is_some(), sowing.as_ref()) {
             let Some(eat) = actions.named("core:eat") else { return };
             let context = ClientContext { world: &world, player: &player, content };
             match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {
@@ -628,5 +643,22 @@ mod tests {
         assert!(refusals.iter().any(|why| why.contains("Farming") && why.contains(&level)), "{refusals:?}");
         let proposed = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).count();
         assert_eq!(proposed, 0);
+    }
+
+    /// Food is eaten on a right click unless the click tends a creature, places the food,
+    /// or sows it: rice over farmland is sown (or refused for its Farming level), over
+    /// grass it is eaten.
+    #[test]
+    fn a_seed_that_is_food_is_sown_where_it_can_be_and_eaten_elsewhere() {
+        let sown = Ok(());
+        let too_low = Err(Rejection::Unmet(Requirement::SkillLevel));
+        let not_ground = Err(Rejection::Unmet(Requirement::Plantable));
+        assert!(!eats(true, false, false, true, Some(&sown)), "rice on farmland is sown");
+        assert!(!eats(true, false, false, true, Some(&too_low)), "rice on farmland below its level is refused as a sowing");
+        assert!(eats(true, false, false, true, Some(&not_ground)), "rice on grass is eaten");
+        assert!(eats(true, false, false, false, None), "rice in the air is eaten");
+        assert!(!eats(true, false, true, true, Some(&not_ground)), "a creature is tended");
+        assert!(!eats(true, true, false, true, Some(&not_ground)), "a placeable food is placed");
+        assert!(!eats(false, false, false, true, Some(&not_ground)), "what is no food is not eaten");
     }
 }

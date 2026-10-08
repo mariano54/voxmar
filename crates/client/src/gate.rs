@@ -2847,12 +2847,12 @@ const DRY_PLOT: IVec3 = IVec3::new(-2, -1, 2);
 const REFUSAL_WAIT: f32 = 8.0;
 
 /// Rice (which grows only with water near) sown on a dry plot: the server refuses it and
-/// says why as a refusal, which shows by the hotbar with the others.
+/// says why as a refusal, which shows by the hotbar with the others, naming the crop as
+/// the player holds it ("Rice"), not its growing stage.
 fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let plot = gate.feet + DRY_PLOT;
     let rice = world.resource::<ClientWorld>().registry.id("base:rice");
-    let crop = world.resource::<Launch>().content.blocks.id("base:rice_crop");
-    let (Some(rice), Some(crop)) = (rice, crop) else {
+    let Some(rice) = rice else {
         gate.check("refusal", Err("no rice in the content".into()));
         gate.next(Step::Effects, now);
         return;
@@ -2900,7 +2900,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             aim_at(world, plot.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
             let name = {
                 let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
-                locale.block(launch.content.blocks.def(crop))
+                locale.block(launch.content.blocks.def(rice))
             };
             let said = world.resource::<crate::hud::skills::SkillToasts>().refusals().find(|why| why.contains(&name)).map(str::to_owned);
             if let Some(said) = said {
@@ -4435,7 +4435,37 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
             }
         }
-        5 => gate.next(Step::Ore, now),
+        5 => {
+            // Letting it go: Shift and right click on it, twice (the first only asks).
+            let Some(view) = hen(world) else {
+                key(world, KeyCode::ShiftLeft, false);
+                key(world, KeyCode::KeyW, false);
+                gate.check("release", Err("the junglefowl went before it was let go".into()));
+                gate.next(Step::Ore, now);
+                return;
+            };
+            if !view.kept {
+                mouse(world, MouseButton::Right, false);
+                key(world, KeyCode::ShiftLeft, false);
+                key(world, KeyCode::KeyW, false);
+                gate.check("release", Ok(format!("the junglefowl went wild again after {in_phase:.1}s")));
+                gate.next(Step::Ore, now);
+            } else if gate.server_in_phase() > 8.0 {
+                mouse(world, MouseButton::Right, false);
+                key(world, KeyCode::ShiftLeft, false);
+                key(world, KeyCode::KeyW, false);
+                gate.check("release", Err("8 server seconds of Shift and right clicks on our junglefowl did not let it go".into()));
+                gate.next(Step::Ore, now);
+            } else {
+                // It wanders (up to 7 blocks from home) and reach is 5: walk toward it while far.
+                let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
+                key(world, KeyCode::KeyW, far);
+                aim_at(world, view.position + Vec3::Y * 0.3);
+                key(world, KeyCode::ShiftLeft, true);
+                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
         _ => {}
     }
 }

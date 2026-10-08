@@ -81,6 +81,8 @@ pub enum Requirement {
     /// The target creature takes what the actor holds: food that tames it or readies it
     /// to breed, or a tool that takes its product.
     CreatureAccepts,
+    /// The target creature is one the actor keeps.
+    CreatureIsMine,
     /// The target block is a station that cooks what the actor holds.
     Cookable,
     /// The actor's Cooking level is at least what the held item's recipe there needs.
@@ -145,6 +147,8 @@ pub enum Effect {
     Tend,
     /// Look closely at the target creature: what the actor learns grows with Farming.
     Inspect,
+    /// Let the target creature, one the actor keeps, go wild again (asked twice).
+    Release,
     /// Restore the actor's health and return it to spawn.
     Respawn,
     /// Sow one held seed on top of the target, and grant the crop's planting experience.
@@ -303,6 +307,10 @@ pub trait ActionContext {
     fn creature_accepts(&self, _id: u32, _item: BlockId) -> bool {
         false
     }
+    /// Whether the creature with that id is one the actor keeps.
+    fn creature_is_mine(&self, _id: u32) -> bool {
+        false
+    }
     /// The box of a living creature, if there is one with that id.
     fn creature_box(&self, _id: u32) -> Option<crate::physics::Aabb> {
         None
@@ -436,6 +444,10 @@ impl ActionDef {
             Requirement::CreatureAccepts => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
                 ctx.actor_held().is_some_and(|item| ctx.creature_accepts(id, item))
+            }
+            Requirement::CreatureIsMine => {
+                let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
+                ctx.creature_is_mine(id)
             }
             Requirement::Cookable | Requirement::CookingLevel => {
                 let (block, _) = block_target()?;

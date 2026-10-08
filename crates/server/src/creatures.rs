@@ -91,6 +91,9 @@ pub struct Live {
     /// miss train that player's Defence for a while (`DefenceTraining`). With two players
     /// at it, only the last hitter's is kept. Not saved.
     pub fought: Option<(PlayerId, u64)>,
+    /// Once kept and let go (`release`): taming it again pays no Hunter xp and counts for
+    /// no quest. Only wild creatures carry it, and those are never saved.
+    pub was_kept: bool,
     /// Seconds without getting nearer its goal, to notice being stuck.
     pub stuck: f32,
     /// The player who keeps it, by name (tamed or bred), and the id they have now.
@@ -181,6 +184,9 @@ pub struct Creatures {
     pub unplaced: Vec<crate::husbandry::SavedCreature>,
     /// Loot waiting for its body to finish falling: the tick it drops, and what.
     pub(crate) falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
+    /// The animal each player last asked to let go, and the tick: a second ask soon after
+    /// lets it go (`release`).
+    pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
 }
 
 impl Creatures {
@@ -258,12 +264,13 @@ impl Server {
         self.replicate_creatures();
     }
 
-    /// Notes where each player has stayed, for tolerance.
+    /// Notes where each player has stayed, for tolerance, and forgets the asks of those who left.
     fn settle_players(&mut self) {
         let tick = self.tick;
         let players: Vec<(PlayerId, Vec3)> = self.players.values().filter(|p| p.joined).map(|p| (p.id, p.position)).collect();
         let settled = &mut self.creatures.settled;
         settled.retain(|id, _| players.iter().any(|(p, _)| p == id));
+        self.creatures.release_asked.retain(|id, _| players.iter().any(|(p, _)| p == id));
         for (id, position) in players {
             let entry = settled.entry(id).or_insert((position, tick));
             if entry.0.distance(position) > SETTLE_RADIUS {
@@ -701,6 +708,7 @@ impl Server {
             seed,
             hurt_by: None,
             fought: None,
+            was_kept: false,
             stuck: 0.0,
             owner: None,
             owner_id: None,
