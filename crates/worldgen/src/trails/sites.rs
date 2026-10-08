@@ -122,7 +122,8 @@ impl Poi {
         self.cell * CELL
     }
 
-    /// The order trails are owned by: the lower end owns a trail.
+    /// The order of a trail's ends: it is routed from the lower, which owns it only where
+    /// trails are laid everywhere (near settlements, its gate's region does).
     pub fn below(&self, other: &Poi) -> bool {
         (self.height, self.cell.x, self.cell.y) < (other.height, other.cell.x, other.cell.y)
     }

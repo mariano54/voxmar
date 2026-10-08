@@ -307,7 +307,6 @@ impl Trails {
         near(centre, radius, |region| self.gates(land, region))
     }
 
-
     /// The trails a region owns, routed but not yet merged: where trails are laid
     /// everywhere, those whose lower end lies in it; near settlements, those leaving its
     /// settlements' gates (between two gates, the lower one's), so a region without one
@@ -577,7 +576,8 @@ mod tests {
     }
 
     /// Near settlements, where each trail is planned from a settlement's gate, the ground
-    /// along a trail is the same whichever region, tile or column is asked for first.
+    /// along a trail is the same whichever region, tile or column is asked for first: here
+    /// round a gate two trails leave, where their stamps meet with equal weights.
     #[test]
     fn trails_near_settlements_never_depend_on_order() {
         use crate::Generator;
@@ -585,13 +585,23 @@ mod tests {
         let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
         let world = || Overworld::new(1, registry.clone());
         let (a, b) = (world(), world());
-        // Round a point on a trail near spawn, found in a third world.
+        // Round the gate nearest spawn that two trails leave (their ends within a block of
+        // each other, by a settlement's gate), found in a third world.
         let third = world();
         let spawn = third.spawn_point();
         let centre = IVec2::new(spawn.x, spawn.z);
-        let (lines, _) = third.trails_in(centre - 600, centre + 600);
-        let near = lines.iter().flatten().map(|p| p.0).min_by(|p, q| p.distance(centre.as_vec2()).total_cmp(&q.distance(centre.as_vec2()))).expect("a trail near spawn");
-        let corner = near.as_ivec2() - 24;
+        let (lines, places) = third.trails_in(centre - 600, centre + 600);
+        let centre = centre.as_vec2();
+        let ends: Vec<Vec2> = lines.iter().filter(|l| l.len() > 1).flat_map(|l| [l[0].0, l[l.len() - 1].0]).collect();
+        let gate = |e: Vec2| places.iter().any(|p| p.kind == Kind::Settlement && p.at().as_vec2().distance(e) <= CELL as f32);
+        let shared = ends
+            .iter()
+            .enumerate()
+            .filter(|&(i, &e)| gate(e) && ends.iter().enumerate().any(|(j, &f)| j != i && e.distance(f) <= 1.0))
+            .map(|(_, &e)| e)
+            .min_by(|p, q| p.distance(centre).total_cmp(&q.distance(centre)))
+            .expect("a gate near spawn that two trails leave");
+        let corner = shared.as_ivec2() - 24;
         let area: Vec<(i32, i32)> = (0..48 * 48).map(|i| (corner.x + i % 48, corner.y + i / 48)).collect();
         let forward: Vec<GeoSample> = area.iter().map(|&(x, z)| a.geo(x, z)).collect();
         // The other world plans the far side of the trail's settlement first, on several threads.

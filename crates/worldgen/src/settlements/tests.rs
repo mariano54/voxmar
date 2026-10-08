@@ -761,7 +761,7 @@ fn spawn_needs_only_so_much_planning() {
     // settlement squares: the server's default seed has trails laid at spawn, 0 has none.
     // Seed 0 plans the squares in reach of spawn first, for the settlement promised there
     // (rules, `spawn_settlement_within`). Since trails near settlements plan only round
-    // the gates near spawn, the default seed reads 25 stream regions (36 before) and 19
+    // the gates near spawn, the default seed reads 25 stream regions (34 before) and 19
     // squares (28), and its trails' grid 257 patches of 128 blocks (60 whole regions).
     for (seed, streams, grids, squares) in [(0x5eed, 25, 257, 19), (0, 9, 0, 9)] {
         let world = Overworld::with_content(seed, content.blocks.clone(), &world_content);
