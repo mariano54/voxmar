@@ -26,7 +26,7 @@ use serde::de::DeserializeOwned;
 use voxmar_engine::block::{BlockRegistry, RenderKind};
 use voxmar_engine::content::{Content, ContentFile};
 
-use crate::levels::{LevelsDef, MAX_LEVEL};
+use crate::levels::{Homes, LevelsDef, MAX_LEVEL};
 use crate::rarity::Rarity;
 
 #[derive(Debug, PartialEq)]
@@ -98,7 +98,9 @@ macro_rules! layered {
 
             fn into_set(self) -> $set {
                 // Exhaustive (no `..`): a field added to `$whole` and not listed above is a
-                // compile error here, not a field a later package silently cannot set.
+                // compile error here, not a field a later package silently cannot set. A
+                // compile error here means a field is missing from the `layered!` list; never
+                // add `..`.
                 let $whole { $($field,)* $($($nfield,)*)? $($($lfield,)*)? } = self;
                 $set {
                     $($field: Some($field),)*
@@ -224,8 +226,13 @@ pub struct ClimateDef {
 
 layered!(ClimateSet for ClimateDef {
     replace { temperature: BandsDef, moisture: BandsDef, continentalness: BandsDef, erosion: BandsDef, remaps: Vec<RemapDef>, zones: f32 }
-    nested { scales: ScalesSet, humidity: HumiditySet, frost: FrostSet }
+    nested { scales: ScalesSet, humidity: HumiditySet, frost: FrostSet, levels: LevelsSet }
 });
+layered!(LevelsSet for LevelsDef {
+    replace { step: f32, earlier: f32, lean: f32, reach: f32, wildness: f32, trees: Vec<String> }
+    nested { homes: HomesSet }
+});
+layered!(HomesSet for Homes { replace { common: u8, uncommon: u8, rare: u8, very_rare: u8, legendary: u8 } });
 layered!(ScalesSet for ScalesDef { replace { anomaly: f32, wetness: f32, weirdness: f32, aether: f32, fertility: f32, variant: f32 } });
 layered!(HumiditySet for HumidityDef { replace { median: f32, spread: f32, wetness: f32, wind: f32, belts: f32 } });
 layered!(FrostSet for FrostDef {
@@ -3134,7 +3141,7 @@ mod tests {
         let base = WorldContent::base(&registry).unwrap();
         let mut files = base_files();
         for (name, source) in [
-            ("climate.ron", "(scales: (aether: 3000.0), frost: (ice: \"base:packed_ice\"))"),
+            ("climate.ron", "(scales: (aether: 3000.0), frost: (ice: \"base:packed_ice\"), levels: (homes: (very_rare: 8)))"),
             ("land.ron", "(vertical_scale: 1.25, density: (squash: 2.0), noises: [(\"hills\", (wavelength: 700.0, octaves: [1.0])), (\"dunes\", (wavelength: 90.0, octaves: [1.0]))])"),
             ("trails.ron", "(edge: \"base:coarse_dirt\")"),
             ("trees.ron", "(density: 0.5, trees: [])"),
@@ -3146,6 +3153,8 @@ mod tests {
         // What the mod set.
         let (climate, land, trails) = (&content.climate, &content.land, &content.trails);
         assert_eq!((climate.scales.aether, climate.frost.ice.as_str()), (3000.0, "base:packed_ice"));
+        assert_eq!(climate.levels.homes.very_rare, 8);
+        assert_eq!(climate.levels, crate::levels::LevelsDef { homes: crate::levels::Homes { very_rare: 8, ..base.climate.levels.homes }, ..base.climate.levels.clone() }, "the rest of the levels is base's");
         assert_eq!((land.vertical_scale, land.density.squash, trails.edge.as_str()), (1.25, 2.0, "base:coarse_dirt"));
         let hills = land.noises.iter().position(|(n, _)| n == "hills").unwrap();
         assert_eq!(hills, base.land.noises.iter().position(|(n, _)| n == "hills").unwrap(), "a named entry is replaced in place");
@@ -3164,7 +3173,7 @@ mod tests {
         assert_eq!(*trails, TrailsDef { edge: "base:coarse_dirt".into(), ..base.trails.clone() });
         // And the notes say so.
         for note in [
-            "mod/climate.ron replaces the climate.ron base set (scales.aether, frost.ice)".to_owned(),
+            "mod/climate.ron replaces the climate.ron base set (scales.aether, frost.ice, levels.homes.very_rare)".to_owned(),
             "mod/land.ron replaces the land.ron base set (vertical_scale, density.squash, noises.hills)".to_owned(),
             "mod/land.ron adds to the land.ron (noises.dunes)".to_owned(),
             "mod/trails.ron replaces the trails.ron base set (edge)".to_owned(),
@@ -3225,6 +3234,7 @@ mod tests {
             ("climate.ron", "(scales: (aether: \"far\"))".into(), "mod/climate.ron:"),
             ("climate.ron", "(scales: (aether_: 1.0))".into(), "mod/climate.ron:"),
             ("climate.ron", "(scales: (aether_: 1.0))".into(), "aether_"),
+            ("climate.ron", "(levels: (homes: (rare: 6)))".into(), "strictly decreasing"),
             ("trees.ron", "(woods: (common: [\"base:oak_lgo\"]), trees: [])".into(), "unknown block `base:oak_lgo`"),
             ("trees.ron", "(woods: (families: {\"base:acacia_log\": [\"baobob\"]}), trees: [])".into(), "no tree is named `mod:baobob`"),
             ("trees.ron", "(woods: (common: [\"base:acacia_log\"], families: {\"base:acacia_log\": [\"base:acacia\"]}), trees: [])".into(), "both as a common wood and with a family"),
