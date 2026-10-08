@@ -2582,18 +2582,24 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             let language = if i % 2 == 0 { "en" } else { "ja" };
             let (name, position, target, pick) = match i / 2 {
                 0 => (if language == "en" { "hv-hall-en" } else { "hv-hall-ja" }, rel(-5, 5, -3), core, "base:bone_lockpick"),
-                1 => (if language == "en" { "hv-array-en" } else { "hv-array-ja" }, rel(-5, 4, 1), array, "base:copper_lockpick"),
+                1 => (if language == "en" { "hv-array-en" } else { "hv-array-ja" }, rel(-3, 1, 2), array, "base:copper_lockpick"),
                 2 => (if language == "en" { "hv-smelter-en" } else { "hv-smelter-ja" }, rel(-5, 5, -1), smelter, "base:bronze_lockpick"),
                 3 => (if language == "en" { "hv-power-en" } else { "hv-power-ja" }, rel(-5, 2, -2), rel(-1, 2, 1), "base:iron_lockpick"),
                 _ => (if language == "en" { "treasure-row-en" } else { "treasure-row-ja" }, rel(-1, 2, 12), chest, "base:copper_lockpick"),
             };
             if gate.phase % 2 == 0 {
+                // The full-cube cable covers the controller's only outward face. After
+                // proving the powered job, uncover it for the paired close-ups, then
+                // restore the connection before the remaining factory shots.
+                if gate.phase == 12 { world.resource::<Net>().command(&format!("setblock {} air", at(rel(-1, 2, 3)))); }
+                if gate.phase == 16 { world.resource::<Net>().command(&format!("setblock {} hv_cable", at(rel(-1, 2, 3)))); }
                 set_language(world, language);
                 world.resource_mut::<Settings>().language = language.into();
                 world.resource::<Net>().command(&format!("tp {}", at(position)));
                 empty_hand(world);
                 gate.advance(now);
-            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0 {
+            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0
+                && world.resource::<ClientWorld>().block(rel(-1, 2, 3)) == content.blocks.id(if i / 2 == 1 { "core:air" } else { "base:hv_cable" }) {
                 aim(world, target);
                 select(world, pick);
                 gate.settled += 1;
