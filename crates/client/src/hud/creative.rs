@@ -246,6 +246,15 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     });
 }
 
+/// Whether an item is one a player would hold, and so is searched for: not air, a
+/// variant's other looks, nor a fluid's other states.
+fn listed(blocks: &voxmar_engine::block::BlockRegistry, id: BlockId) -> bool {
+    !id.is_air()
+        && blocks.def(id).render != RenderKind::Invisible
+        && !blocks.placement_form(id)
+        && blocks.fluid(id).is_none_or(|state| blocks.fluids()[state.fluid.0 as usize].source == id)
+}
+
 /// Reads every item's names once the game's content is there.
 fn index(launch: Res<Launch>, viewer: Res<super::recipes::RecipeViewer>, mut catalogue: ResMut<Catalogue>) {
     if !catalogue.entries.is_empty() {
@@ -257,9 +266,7 @@ fn index(launch: Res<Launch>, viewer: Res<super::recipes::RecipeViewer>, mut cat
     let blocks = &launch.content.blocks;
     catalogue.entries = blocks
         .ids()
-        // Not a variant's other looks, nor a fluid's other states: what a player would hold.
-        .filter(|&id| !id.is_air() && blocks.def(id).render != RenderKind::Invisible && !blocks.placement_form(id))
-        .filter(|&id| blocks.fluid(id).is_none_or(|state| blocks.fluids()[state.fluid.0 as usize].source == id))
+        .filter(|&id| listed(blocks, id))
         .map(|item| {
             let def = blocks.def(item);
             let mut words = vec![def.name.rsplit(':').next().unwrap_or(&def.name).replace('_', " ")];
