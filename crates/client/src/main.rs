@@ -426,7 +426,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let terrain = app.world().resource::<render::terrain::Terrain>().clone();
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
-    .insert_resource(Actions(content.actions))
+    .insert_resource(Actions::new(content.actions))
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
     .insert_resource(shader_packs)
     .insert_resource(lang::Locale::load(&assets.join("content"), &settings.language))
@@ -602,6 +602,25 @@ struct Registry {
 /// Action definitions, shared with the server, for proposing and predicting actions.
 #[derive(Resource)]
 pub struct Actions(pub Arc<ActionRegistry>);
+
+/// The actions the client asks for by name.
+const NAMED_ACTIONS: [&str; 9] = ["core:mine", "core:place", "core:transfer", "core:quick_move", "core:stow", "core:drop", "core:craft", "core:eat", "core:respawn"];
+
+impl Actions {
+    /// The content's actions, warning once for each the client asks for that no package
+    /// defines (a broken or partial mod): its gesture will do nothing.
+    pub fn new(actions: Arc<voxmar_engine::action::ActionRegistry>) -> Self {
+        for name in NAMED_ACTIONS.into_iter().filter(|name| actions.id(name).is_none()) {
+            warn!("no package defines the action {name}, so it cannot be done");
+        }
+        Self(actions)
+    }
+
+    /// The action called `name`, which the game asks for by name, if the content has it.
+    pub fn named(&self, name: &str) -> Option<voxmar_engine::action::ActionId> {
+        self.0.id(name)
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn setup(

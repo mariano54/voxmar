@@ -45,12 +45,12 @@ impl Launch {
         }
         let (client, server_side) = local_pair();
         server.connections().send(server_side).map_err(|_| "The world's server stopped".to_owned())?;
-        Ok(Net::new(client, Some(server), self.name.clone(), self.content.fingerprint()))
+        Ok(Net::new(client, Some(server), self.name.clone(), self.content.fingerprint(), None))
     }
 
-    /// Joins a server over a new connection.
-    pub fn multiplayer(&self, connection: ClientConnection) -> Net {
-        Net::new(connection, None, self.name.clone(), self.content.fingerprint())
+    /// Joins the server at `address` (`host:port`) over a new connection.
+    pub fn multiplayer(&self, connection: ClientConnection, address: &str) -> Net {
+        Net::new(connection, None, self.name.clone(), self.content.fingerprint(), Some(address))
     }
 }
 
