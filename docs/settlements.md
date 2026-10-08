@@ -37,9 +37,12 @@ spot tried where one cannot be laid out. Where no spot in reach will do (a strip
 under mountains), none is promised. A player never spawns inside a settlement.
 
 No two settlements within `rules.names_apart` (4096) blocks of each other share a name
-(design, draft 81). Names draw from a stream of their own: each square offers a few
-names, takes the first its neighbours in that reach don't also offer, and so needs no
-neighbour planned to know its own.
+(design, draft 81). Complete Japanese readings belong to periodic groups of grid
+squares; squares in the same group are farther apart than that reach. A square draws
+from its group's names, preferring offers its neighbours have not also offered, then
+further draws and the complete list. This needs no neighbour planned to know its own.
+Loading requires every family to cover every group and checks that equal final English
+or Japanese names, including prefixes and echoed parts, belong to the same group.
 
 ## The levers
 
@@ -123,7 +126,8 @@ supplies its water, slopes, vegetation and biome level. These fits share a 1 MiB
 weighed by owned bytes, including mod families;
 eviction changes only how often the terrain is sampled. Culture storage also counts in
 the settlement plan's 32 MiB cache, along with allocated vector capacities, names,
-building strings, lane polylines and the voxel table. The ignored release
+building strings, room cells, residents and their species strings, lane polylines and
+the voxel table. The ignored release
 `culture_planning_budget` checks warm planning over 20 seeds, requiring both hamlets and
 villages, at twice the 3/6 ms CPU budgets and at most 2 MiB of retained plan storage.
 Within one planning call, terrain samples share relief corners and channel groups for
