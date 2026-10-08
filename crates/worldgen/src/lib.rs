@@ -1942,6 +1942,64 @@ mod tests {
         plant_counts(seeds, chunks, &herbs, &biomes).into_iter().filter(|r| pairs.contains(&(r.0.clone(), r.1.clone()))).collect()
     }
 
+    /// The actual lotus plants on one visible pool's connected shore. Follow lake water
+    /// and banks at its level, rather than count another pool in the same bounding box.
+    /// None means that the boundary cut the pool, so its occupancy would be incomplete.
+    fn tarn_lotus(world: &Overworld, pit: IVec2, water: i32, reach: i32) -> Option<(usize, usize, usize, IVec2)> {
+        let sampler = world.dense_sampler(pit - reach, pit + reach);
+        let wet = |p: IVec2| {
+            let s = sampler.site(p.x, p.y);
+            s.body == Body::Lake && s.water == water && s.height < water
+        };
+        let start = (pit.y - 8..=pit.y + 8).flat_map(|z| (pit.x - 8..=pit.x + 8).map(move |x| IVec2::new(x, z)))
+            .filter(|&p| wet(p)).min_by_key(|p| ((*p - pit).length_squared(), p.x, p.y))?;
+        let mut seen = std::collections::HashSet::new();
+        let mut todo = vec![start];
+        let mut banks = Vec::new();
+        let mut water_columns = 0;
+        let mut anchor = start;
+        while let Some(p) = todo.pop() {
+            if !seen.insert(p) {
+                continue;
+            }
+            let s = sampler.site(p.x, p.y);
+            if s.body != Body::Lake || s.water != water || s.height > water + 2 {
+                continue;
+            }
+            if (p - pit).abs().max_element() >= reach {
+                return None;
+            }
+            if s.height < water {
+                water_columns += 1;
+                if (p.x, p.y) < (anchor.x, anchor.y) {
+                    anchor = p;
+                }
+            } else {
+                banks.push((p, s.height));
+            }
+            todo.extend([p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y]);
+        }
+        if water_columns < 20 {
+            return None;
+        }
+        let mut positions: Vec<ColumnPos> = banks.iter().map(|&(p, _)| ColumnPos::of_block(IVec3::new(p.x, 0, p.y))).collect();
+        positions.sort_unstable_by_key(|p| (p.0.x, p.0.y));
+        positions.dedup();
+        let area = generate_columns(world, &positions);
+        let looks = plant_looks(&["sky_lotus"]);
+        let mut placed = Vec::new();
+        for (p, height) in banks {
+            let at = IVec3::new(p.x, height + 1, p.y);
+            let pos = ColumnPos::of_block(at);
+            let i = positions.binary_search_by_key(&(pos.0.x, pos.0.y), |p| (p.0.x, p.0.y)).unwrap();
+            if looks.contains_key(&area[i].block(at - pos.origin())) {
+                placed.push((p.x, p.y));
+            }
+        }
+        placed.sort_unstable();
+        Some((water_columns, placed.len(), patches(&placed).len(), anchor))
+    }
+
     /// Tarns and lake banks in mountains and their alpine meadows (and snowy peaks, whose
     /// own lakes the sky lotus shares): `cargo test --profile iter -p voxmar_worldgen
     /// tarn_census -- --ignored --nocapture` (SEEDS=1,2,3,4, REGIONS=3, AT=1 for places to
@@ -1962,6 +2020,9 @@ mod tests {
         let mut tally = [[[0u64; 4]; 2]; 3];
         // Each tarn's generated water in blocks (columns), inside tarn country and out.
         let mut sizes: [[Vec<usize>; 2]; 3] = Default::default();
+        // LOTUS=n also measures n visible pools a seed, after actual chunk generation.
+        let lotus: usize = std::env::var("LOTUS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let mut lotus_counts = Vec::new();
         const STEP: i32 = 8;
         // Stream-tier cells in a lake under which a pit is small, not big (drainage `min_area`).
         const TARN_CELLS: usize = 48;
@@ -1986,6 +2047,8 @@ mod tests {
             let mut dry: Option<((i32, i32), i32)> = None;
             let mut banks = std::collections::HashSet::new();
             let mut waters = std::collections::HashSet::new();
+            let mut lotus_sampled = 0;
+            let mut lotus_water = std::collections::HashSet::new();
             for region in around {
                 let first = region * size;
                 // The land, every `STEP` blocks, a sampler a 256-block tile.
@@ -2036,6 +2099,14 @@ mod tests {
                     if is_tarn {
                         assert_eq!(c, 1, "seed {seed}: a tarn outside its country at {pit}");
                         sizes[b][c].push(wet);
+                        if b < 2 && wet >= 20 && lotus_sampled < lotus
+                            && let Some((water_columns, plants, groups, anchor)) = tarn_lotus(&world, pit, water, reach)
+                            && lotus_water.insert((water, anchor))
+                        {
+                            lotus_sampled += 1;
+                            lotus_counts.push((plants, groups));
+                            println!("  lotus seed {seed} pool {}, {}: {water_columns} connected water columns, {plants} actual plants in {groups} shore patches", pit.x, pit.y);
+                        }
                     }
                     if std::env::var("AT").is_ok() && b < 2 {
                         println!("  seed {seed}: a {} of {wet} water blocks across, at {}, {} ({}{})", if is_tarn { "tarn" } else { "high lake" }, pit.x, pit.y, names[b], if c == 1 { ", tarn country" } else { "" });
@@ -2059,6 +2130,14 @@ mod tests {
             {
                 println!("  seed {seed}: high ground outside tarn country at {at:?}, height {height}");
             }
+        }
+        if !lotus_counts.is_empty() {
+            let plants: usize = lotus_counts.iter().map(|p| p.0).sum();
+            let groups: usize = lotus_counts.iter().map(|p| p.1).sum();
+            let empty = lotus_counts.iter().filter(|p| p.0 == 0).count();
+            let distribution: Vec<usize> = (0..=4).map(|n| lotus_counts.iter().filter(|p| p.1.min(4) == n).count()).collect();
+            println!("lotus patches per pool (0, 1, 2, 3, 4+): {distribution:?}");
+            println!("lotus occupancy: {} visible pools, {:.2} patches and {:.2} plants per pool, {empty} empty; {:.2} plants per patch", lotus_counts.len(), groups as f64 / lotus_counts.len() as f64, plants as f64 / lotus_counts.len() as f64, plants as f64 / groups.max(1) as f64);
         }
         for (b, name) in names.iter().enumerate() {
             let land: u64 = tally[b].iter().map(|t| t[0]).sum();

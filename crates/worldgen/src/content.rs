@@ -162,30 +162,37 @@ fn lay_file<T: Layered + DeserializeOwned + Clone>(
         Some((whole, setters)) => {
             let mut set = parse::<T::Set>(&at, &file.source)?;
             qualify(&mut set);
-            let mut changed = Vec::new();
-            whole.lay(set, "", &mut changed);
-            // One note for each package whose fields were replaced (in the order they were
-            // first set), and one for the fields that are new.
-            let mut by_package: Vec<(String, Vec<String>)> = Vec::new();
-            let mut added = Vec::new();
-            for path in changed {
-                match setters.insert(path.clone(), file.package.clone()) {
-                    Some(earlier) => match by_package.iter_mut().find(|(p, _)| *p == earlier) {
-                        Some((_, paths)) => paths.push(path),
-                        None => by_package.push((earlier, vec![path])),
-                    },
-                    None => added.push(path),
-                }
-            }
-            for (earlier, paths) in by_package {
-                notes.push(format!("{at} replaces the {} {earlier} set ({})", file.name, paths.join(", ")));
-            }
-            if !added.is_empty() {
-                notes.push(format!("{at} adds to the {} ({})", file.name, added.join(", ")));
-            }
+            lay_set(whole, setters, set, file, "", notes);
         }
     }
     Ok(())
+}
+
+/// Lays a later package's settings over a value, retaining the setter of every field.
+/// `path` names a section within a file, such as `tarns.` in terrain.ron.
+fn lay_set<T: Layered>(whole: &mut T, setters: &mut Setters, set: T::Set, file: &ContentFile, path: &str, notes: &mut Vec<String>) {
+    let at = format!("{}/{}", file.package, file.name);
+    let mut changed = Vec::new();
+    whole.lay(set, path, &mut changed);
+    // One note for each package whose fields were replaced (in the order they were
+    // first set), and one for the fields that are new.
+    let mut by_package: Vec<(String, Vec<String>)> = Vec::new();
+    let mut added = Vec::new();
+    for path in changed {
+        match setters.insert(path.clone(), file.package.clone()) {
+            Some(earlier) => match by_package.iter_mut().find(|(p, _)| *p == earlier) {
+                Some((_, paths)) => paths.push(path),
+                None => by_package.push((earlier, vec![path])),
+            },
+            None => added.push(path),
+        }
+    }
+    for (earlier, paths) in by_package {
+        notes.push(format!("{at} replaces the {} {earlier} set ({})", file.name, paths.join(", ")));
+    }
+    if !added.is_empty() {
+        notes.push(format!("{at} adds to the {} ({})", file.name, added.join(", ")));
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1382,8 +1389,8 @@ pub struct ShapeDef {
 
 /// Tarns: small still lakes in hollows high in the hills, which the stream tier of the
 /// rivers fills where it would otherwise breach a small pit (see `crate::water`). Nothing is
-/// carved for them: the land's own hollows hold them. A later package's tarn definitions
-/// replace the earlier set.
+/// carved for them: the land's own hollows hold them. A later package sets only the
+/// fields it changes, including individual fields of tarn country.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TarnsDef {
@@ -1402,12 +1409,19 @@ pub struct TarnsDef {
     pub country: TarnCountryDef,
 }
 
+layered!(TarnsSet for TarnsDef {
+    replace { climate: Vec<ClimateBox>, floor: f32, depth: f32, chance: f32 }
+    nested { country: TarnCountrySet }
+});
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TarnCountryDef {
     pub scale: f32,
     pub share: f32,
 }
+
+layered!(TarnCountrySet for TarnCountryDef { replace { scale: f32, share: f32 } });
 
 /// What a shape makes, and its sizes in blocks.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -1615,10 +1629,9 @@ struct BiomeFile {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ShapeFile {
+struct ShapeFile<T> {
     shapes: Vec<ShapeDef>,
-    #[serde(default)]
-    tarns: Option<TarnsDef>,
+    tarns: Option<T>,
 }
 
 #[derive(Deserialize)]
@@ -1813,7 +1826,7 @@ impl WorldContent {
     }
 
     /// Parses definition files given in package order. Single-valued data (`climate.ron`,
-    /// `land.ron`, `trails.ron`, the tree and plant densities) a later package sets over an
+    /// `land.ron`, `trails.ron`, terrain's tarn settings, the tree and plant densities) a later package sets over an
     /// earlier one's, field by field, with a note; other definitions accumulate.
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
         let mut climate: Option<(ClimateDef, Setters)> = None;
@@ -1830,8 +1843,7 @@ impl WorldContent {
         let mut weather = voxmar_engine::weather::WeatherTable::default();
         let mut ores = crate::ores::OresDef::default();
         let mut settlements = crate::settlements::SettlementsDef::default();
-        let mut tarns = None;
-        let mut tarns_package = None;
+        let mut tarns: Option<(TarnsDef, Setters)> = None;
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
@@ -1912,19 +1924,30 @@ impl WorldContent {
                     }));
                 }
                 "terrain.ron" => {
-                    let file_shapes = parse::<ShapeFile>(&at, &file.source)?;
-                    shapes.extend(file_shapes.shapes.into_iter().map(|s| ShapeDef {
+                    let file_shapes = match &mut tarns {
+                        None => {
+                            let def = parse::<ShapeFile<TarnsDef>>(&at, &file.source)?;
+                            if let Some(mut whole) = def.tarns {
+                                let mut changed = Vec::new();
+                                whole.lay(whole.clone().into_set(), "tarns.", &mut changed);
+                                tarns = Some((whole, changed.into_iter().map(|path| (path, file.package.clone())).collect()));
+                            }
+                            def.shapes
+                        }
+                        Some((whole, setters)) => {
+                            let def = parse::<ShapeFile<TarnsSet>>(&at, &file.source)?;
+                            if let Some(set) = def.tarns {
+                                lay_set(whole, setters, set, file, "tarns.", &mut notes);
+                            }
+                            def.shapes
+                        }
+                    };
+                    shapes.extend(file_shapes.into_iter().map(|s| ShapeDef {
                         name: q(&s.name),
                         surface: s.surface.map(|surface| qualify_surface(&file.package, surface)),
                         strata: s.strata.iter().map(|n| q(n)).collect(),
                         ..s
                     }));
-                    if file_shapes.tarns.is_some() {
-                        if let Some(earlier) = tarns_package.replace(file.package.clone()) {
-                            notes.push(format!("{at} replaces the terrain.ron tarns {earlier} set"));
-                        }
-                        tarns = file_shapes.tarns;
-                    }
                 }
                 "land.ron" => lay_file(&mut land, file, |_: &mut LandSet| {}, &mut notes)?,
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
@@ -2035,7 +2058,7 @@ impl WorldContent {
             land,
             ores,
             settlements,
-            tarns,
+            tarns: tarns.map(|(t, _)| t),
             notes,
         };
         content.ores.check(registry, &content.provinces)?;
@@ -3441,6 +3464,28 @@ mod tests {
         }
     }
 
+    /// Single-valued tarn settings inherit field by field, including nested country
+    /// settings. Notes must name the last setter of the field, rather than the last file.
+    #[test]
+    fn tarn_packages_inherit_each_field() {
+        let registry = registry();
+        let base = WorldContent::base(&registry).unwrap().tarns.unwrap();
+        let mut files = base_files();
+        for (package, settings) in [("tune", "chance: 0.4"), ("country", "country: (share: 0.6)")] {
+            files.push(ContentFile { package: package.into(), name: "terrain.ron".into(), source: format!("#![enable(implicit_some)]\n(shapes: [], tarns: ({settings}))") });
+        }
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        let mut expected = base;
+        expected.chance = 0.4;
+        expected.country.share = 0.6;
+        assert_eq!(content.tarns.unwrap(), expected);
+        assert!(content.notes.contains(&"tune/terrain.ron replaces the terrain.ron base set (tarns.chance)".into()));
+        assert!(content.notes.contains(&"country/terrain.ron replaces the terrain.ron base set (tarns.country.share)".into()));
+        files.retain(|f| f.name != "terrain.ron" || f.package != "base");
+        let error = WorldContent::from_files(files.iter(), &registry).unwrap_err().0;
+        assert!(error.contains("tune/terrain.ron") && error.contains("missing field"), "a partial first declaration was accepted: {error}");
+    }
+
     /// Tarn data is refused at load unless it makes sense, naming what is wrong.
     #[test]
     fn bad_tarns_are_refused() {
@@ -3449,12 +3494,12 @@ mod tests {
             let mut files = base_files();
             files.push(ContentFile { package: "mod".into(), name: "terrain.ron".into(), source: format!("#![enable(implicit_some)]\n(shapes: [], tarns: ({tarns}))") });
             WorldContent::from_files(files.iter(), &registry).map(|c| {
-                assert!(c.notes.iter().any(|n| n == "mod/terrain.ron replaces the terrain.ron tarns base set"));
+                assert!(c.notes.iter().any(|n| n == "mod/terrain.ron replaces the terrain.ron base set (tarns.climate, tarns.floor, tarns.depth, tarns.chance, tarns.country.scale, tarns.country.share)"));
                 c.tarns.unwrap().chance
             }).map_err(|e| e.0)
         };
         let good = "climate: [(temperature: (\"frozen\", \"cool\"))], floor: 56.0, depth: 2.0, chance: 0.3, country: (scale: 1000.0, share: 0.5)";
-        assert_eq!(load(good), Ok(0.3), "a later package's tarns replace the base's");
+        assert_eq!(load(good), Ok(0.3), "a later package sets every tarn field");
         for (from, to, expected) in [
             ("chance: 0.3", "chance: 1.5", "chance 1.5"),
             ("floor: 56.0", "floor: -3.0", "floor -3"),

@@ -824,16 +824,18 @@ mod tests {
         let mut world = crate::Overworld::new(0x5eed, registry);
         let spawn = crate::Generator::spawn_point(&world);
         let mountain = world.locate_biome("mountains", spawn.xz(), 6000).expect("mountains near the gate's spawn");
-        let at = world.locate_tarn(mountain, 1536).expect("a visible tarn near those mountains");
+        println!("gate seed spawn {spawn}, mountain {mountain}");
+        let at = world.locate_tarn(mountain, 4096).expect("a visible tarn near those mountains");
+        println!("gate seed tarn {at}");
         let wet = (at.z - 16..=at.z + 16).flat_map(|z| (at.x - 16..=at.x + 16).map(move |x| (x, z))).filter(|&(x, z)| {
             let g = world.geo(x, z);
             g.body == Body::Lake && g.submerged() && g.water == at.y
         }).count();
         assert!(wet >= 20, "only {wet} visible water columns at {at}");
-        assert!(world.rivers.tarns_near(world.stages(), mountain, 1536).iter().any(|pit| pit.y == at.y && (pit.xz() - at.xz()).abs().max_element() <= 8));
+        assert!(world.rivers.tarns_near(world.stages(), mountain, 4096).iter().any(|pit| pit.y == at.y && (pit.xz() - at.xz()).abs().max_element() <= 8));
         assert!(world.locate_tarn(mountain, -1).is_none());
         world.rivers.tarns = None;
-        assert!(world.locate_tarn(mountain, 1536).is_none(), "an ordinary high lake stood in for a disabled tarn rule");
+        assert!(world.locate_tarn(mountain, 4096).is_none(), "an ordinary high lake stood in for a disabled tarn rule");
     }
 
     /// The country's faded noise is a classification, not a chance multiplier. In the

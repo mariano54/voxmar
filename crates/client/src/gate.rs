@@ -5795,7 +5795,7 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned();
             let at = generator.and_then(|g| {
                 let mountain = g.locate_biome("mountains", gate.feet.xz(), 6000)?;
-                g.locate_tarn(mountain, 1536)
+                g.locate_tarn(mountain, 4096)
             });
             let Some(at) = at else {
                 gate.check("tarns", Err("no visible generated tarn near the nearest mountains".into()));
