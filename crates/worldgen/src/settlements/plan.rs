@@ -54,6 +54,14 @@ fn phase_end(name: &str, start: Option<std::time::Duration>) {
     }
 }
 
+#[cfg(test)]
+fn report_close_scratch(water: &crate::water::Freshwater) {
+    if PROFILE.with(|p| p.get()) {
+        let scratch = water.work();
+        eprintln!("  close scratch: corner clears {}, raw-column clears {}, peak corners {}, peak raw columns {}", scratch[0], scratch[1], scratch[2], scratch[3]);
+    }
+}
+
 fn miss<T>(reason: usize) -> Option<T> {
     #[cfg(test)]
     PLACE_FAILS[reason].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -505,6 +513,8 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         // above `taper`.
         let climate = site.climate(ground_site.temperature) * site.level(ctx.world.biomes().get(ground_site.home).level);
         if spawn.is_none() {
+            #[cfg(test)]
+            report_close_scratch(&water);
             if unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
                 give_up::<()>(2);
                 return Vec::new();
@@ -520,10 +530,7 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         give_up::<()>(if examined == 0 { 0 } else { 1 });
     }
     #[cfg(test)]
-    if PROFILE.with(|p| p.get()) {
-        let scratch = water.work();
-        eprintln!("  close scratch: corner clears {}, raw-column clears {}, peak corners {}, peak raw columns {}", scratch[0], scratch[1], scratch[2], scratch[3]);
-    }
+    report_close_scratch(&water);
     found
 }
 

@@ -2669,6 +2669,20 @@ fn culture_plan_weight_counts_spare_allocations() {
     plan.gates.reserve_exact(1024);
     plan.lanes[0].reserve_exact(1024);
     assert!(slot.bytes() >= before + 4096 + 1024 * std::mem::size_of::<IVec2>() + 1024 * std::mem::size_of::<Vec2>());
+    // Villagers adds resident records, owned species names and room columns. Their
+    // spare allocations must count even when the population and room stay unchanged.
+    let plan = slot.0.as_mut().unwrap();
+    assert!(!plan.people.is_empty());
+    let room = plan.buildings.iter().position(|b| !b.room.is_empty()).expect("an indoor room");
+    plan.people.shrink_to_fit();
+    plan.people[0].species.shrink_to_fit();
+    plan.buildings[room].room.shrink_to_fit();
+    let before = slot.bytes();
+    let plan = slot.0.as_mut().unwrap();
+    plan.people.reserve_exact(1024);
+    plan.people[0].species.reserve_exact(4096);
+    plan.buildings[room].room.reserve_exact(1024);
+    assert!(slot.bytes() >= before + 1024 * std::mem::size_of::<super::people::Resident>() + 4096 + 1024 * std::mem::size_of::<IVec2>());
 }
 
 /// Creeks missed by the coarse grid require a closer search, but water-positive sites

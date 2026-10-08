@@ -965,7 +965,7 @@ mod tests {
     /// streaming, wall clock, or expensive settlement search.
     fn fixture(species: &str, count: usize) -> Server {
         use voxmar_engine::world::Column;
-        use voxmar_worldgen::{SettlementBuilding, SettlementFacing, people::Resident};
+        use voxmar_worldgen::{CultureInfo, SettlementBuilding, SettlementFacing, people::Resident};
         let mut server = crate::test_server();
         server.world = Default::default();
         let mut column = Column::default();
@@ -981,7 +981,9 @@ mod tests {
         let routine = server.overworld.settlement_people().routine("worker").unwrap();
         let info = SettlementInfo {
             id: 1, name: ("Test".into(), "テスト".into()), size: "village".into(), style: "timber".into(), layout: "test".into(),
-            centre: IVec3::new(8, 200, 8), levers: [0.5; 5], gates: vec![IVec2::new(8, 12)], lanes: Vec::new(),
+            centre: IVec3::new(8, 200, 8), levers: SettlementLevers { levers: [0.5; 5], axes: [0.5; 8] }, gates: vec![IVec2::new(8, 12)], lanes: Vec::new(),
+            culture: CultureInfo { family: "hearth".into(), title: ("Hearth".into(), "炉辺".into()), second: None,
+                quirks: Vec::new(), axes: [0.5; 8], dropped: Vec::new(), borrowed: Vec::new() },
             buildings: vec![SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(4, 4), max: IVec2::new(12, 12), floor: 199,
                 room: (6..=10).flat_map(|x| (6..=10).map(move |z| IVec2::new(x, z))).collect(),
                 door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None }],
