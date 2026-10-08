@@ -225,6 +225,14 @@ impl Town {
             _ => true,
         }
     }
+
+    /// Outdoor errands use the ground around these features, never their walls or pool.
+    fn outdoor_column(&self, at: IVec3) -> bool {
+        !self.info.buildings.iter().any(|b| {
+            matches!(b.kind, BuildingKind::Well | BuildingKind::Centrepiece | BuildingKind::Shrine)
+                && at.x >= b.min.x && at.x <= b.max.x && at.z >= b.min.y && at.z <= b.max.y
+        })
+    }
 }
 
 /// Days since the world began, from the server's clock.
@@ -689,7 +697,7 @@ impl Server {
             Place::Yard => {
                 stay(trip, 2);
                 let door = home.door.unwrap_or(centre);
-                self.near_spot(door, r.yard, seed)
+                self.near_spot(t, door, r.yard, seed)
             }
             Place::Work => match resident.work {
                 Some(w) => {
@@ -705,13 +713,13 @@ impl Server {
                 }
                 None => {
                     stay(trip, 2);
-                    self.near_spot(home.door.unwrap_or(centre), r.yard, seed)
+                    self.near_spot(t, home.door.unwrap_or(centre), r.yard, seed)
                 }
             },
             Place::Square => {
                 stay(trip, 5);
                 trip.face = Some(centre.as_vec3() + Vec3::new(0.5, 1.5, 0.5));
-                self.near_spot(centre, r.square, seed)
+                self.near_spot(t, centre, r.square, seed)
             }
             Place::Well => {
                 stay(trip, 6);
@@ -735,7 +743,7 @@ impl Server {
                 let b = *houses.get((mix(seed, 10) % houses.len().max(1) as u64) as usize)?;
                 let door = buildings[b].door?;
                 trip.face = Some(door.as_vec3() - buildings[b].facing.step().extend(0).xzy().as_vec3() * 2.0 + Vec3::new(0.5, 1.5, 0.5));
-                self.near_spot(door, r.neighbour, seed)
+                self.near_spot(t, door, r.neighbour, seed)
             }
             Place::Gate => {
                 stay(trip, 11);
@@ -743,7 +751,7 @@ impl Server {
                 let g = gates[(mix(seed, 12) % gates.len() as u64) as usize];
                 let out = (g - IVec2::new(centre.x, centre.z)).as_vec2().normalize_or_zero();
                 trip.face = Some(Vec3::new(g.x as f32 + out.x * 8.0, centre.y as f32 + 1.5, g.y as f32 + out.y * 8.0));
-                self.near_spot(IVec3::new(g.x, centre.y, g.y), r.gate, seed)
+                self.near_spot(t, IVec3::new(g.x, centre.y, g.y), r.gate, seed)
             }
             Place::Patrol => {
                 // Gate to gate by way of the square, a leg at a time.
@@ -751,10 +759,10 @@ impl Server {
                 let stops = gates.len() * 2;
                 let leg = (trip.leg + (seed % stops as u64) as usize) % stops;
                 if leg % 2 == 1 {
-                    self.near_spot(centre, r.patrol_square, seed)
+                    self.near_spot(t, centre, r.patrol_square, seed)
                 } else {
                     let g = gates[leg / 2];
-                    self.near_spot(IVec3::new(g.x, centre.y, g.y), r.patrol_gate, seed)
+                    self.near_spot(t, IVec3::new(g.x, centre.y, g.y), r.patrol_gate, seed)
                 }
             }
             Place::Wander => {
@@ -762,7 +770,7 @@ impl Server {
                 let lanes: Vec<&Vec<Vec2>> = t.info.lanes.iter().filter(|l| !l.is_empty()).collect();
                 let lane = lanes[(mix(seed, 14) % lanes.len() as u64) as usize];
                 let p = lane[(mix(seed, 15) % lane.len() as u64) as usize];
-                self.near_spot(IVec3::new(p.x as i32, centre.y, p.y as i32), r.wander, seed)
+                self.near_spot(t, IVec3::new(p.x as i32, centre.y, p.y as i32), r.wander, seed)
             }
         };
         spot
@@ -786,10 +794,9 @@ impl Server {
     /// ring outside their footprint; nobody stands on their walls or in the pool.
     fn about(&self, b: usize, town: &Town, seed: u64) -> Option<IVec3> {
         let b = &town.info.buildings[b];
-        let outside = matches!(b.kind, BuildingKind::Well | BuildingKind::Centrepiece | BuildingKind::Shrine);
         let cells: Vec<IVec3> = (b.min.x - 1..=b.max.x + 1)
             .flat_map(|x| (b.min.y - 1..=b.max.y + 1).map(move |z| (x, z)))
-            .filter(|&(x, z)| !outside || x < b.min.x || x > b.max.x || z < b.min.y || z > b.max.y)
+            .filter(|&(x, z)| town.outdoor_column(IVec3::new(x, b.floor, z)))
             .filter_map(|(x, z)| (b.floor..=b.floor + 1).map(|y| IVec3::new(x, y, z)).find(|&c| self.stands(c)))
             .collect();
         if cells.is_empty() {
@@ -799,16 +806,17 @@ impl Server {
     }
 
     /// A cell a body can stand in within `r` blocks of `at`, by `seed`.
-    fn near_spot(&self, at: IVec3, r: i32, seed: u64) -> Option<IVec3> {
+    fn near_spot(&self, town: &Town, at: IVec3, r: i32, seed: u64) -> Option<IVec3> {
         for attempt in 0..12u64 {
             let h = mix(seed, 0x5907 + attempt);
             let dx = (h % (2 * r as u64 + 1)) as i32 - r;
             let dz = ((h >> 20) % (2 * r as u64 + 1)) as i32 - r;
-            if let Some(c) = self.standing_near(at + IVec3::new(dx, 0, dz), 4) {
+            let column = at + IVec3::new(dx, 0, dz);
+            if town.outdoor_column(column) && let Some(c) = self.standing_near(column, 4) {
                 return Some(c);
             }
         }
-        self.standing_near(at, 6)
+        town.outdoor_column(at).then(|| self.standing_near(at, 6)).flatten()
     }
 
     /// The cell nearest `at`'s height in its column, within `reach` up or down, where a
@@ -1171,6 +1179,37 @@ mod tests {
         server.scan_towns(&live);
         assert!(server.villagers.by_creature.len() < 48, "far people still live");
         assert!(server.villagers.saved().is_empty(), "releasing people marked them dead");
+    }
+
+    #[test]
+    fn square_and_patrol_spots_reject_raised_features_and_the_centre_fallback() {
+        let mut server = fixture("base:guard", 1);
+        let stone = server.content.blocks.expect("base:stone");
+        for x in 6..=10 {
+            for z in 6..=10 {
+                server.set_block(IVec3::new(x, 200, z), stone);
+            }
+        }
+        let live = server.live();
+        for kind in [BuildingKind::Well, BuildingKind::Centrepiece, BuildingKind::Shrine] {
+            let b = &mut server.villagers.towns.get_mut(&1).unwrap().info.buildings[0];
+            b.kind = kind;
+            b.min = IVec2::splat(6);
+            b.max = IVec2::splat(10);
+            let town = &server.villagers.towns[&1];
+            assert_eq!(server.standing_near(town.info.centre, 6).unwrap().y, 201, "raised feature must be standable to expose the bug");
+            assert!(server.near_spot(town, town.info.centre, 0, 1).is_none(), "centre fallback stood on the feature");
+            for place in [Place::Square, Place::Patrol] {
+                for seed in 0..100 {
+                    // Patrol's square leg, including both seed parities.
+                    let mut trip = Trip { place, slot: 0, day: 0, path: Vec::new(), step: 0, pose: Pose::Idle, face: None,
+                        next_spot: None, leg: 1 - (seed % 2) as usize, best: (f32::MAX, 0), retry: 0, pursuit: None };
+                    let cell = server.target(1, 0, seed, &mut trip, &live).expect("usable outdoor ground");
+                    assert!(town.outdoor_column(cell), "{place:?} selected raised {kind:?} at {cell}");
+                    assert_eq!(cell.y, 200, "outdoor feet stay on the surrounding ground");
+                }
+            }
+        }
     }
 
     #[test]

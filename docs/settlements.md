@@ -185,10 +185,13 @@ one who did it, and only them; a guard that comes no nearer them for `give_up` s
 that player earns no combat or Defence XP from the guard, and their blows cannot restart
 the chase. Recovery waits a further `give_up` seconds without a blow; each new blow delays
 it. Each quarry keeps an independent cooldown by the player's canonical name; a second
-player cannot replace the first cooldown. These outlive forgetting a town, so
-leaving and rejoining cannot reset it. A disappearance without a death releases the resident without starting a newcomer
-clock. Wells and centrepieces use ground spots outside their footprint, and indoor
-spots use the planned room shape, including connected wings, with feet one block
+player cannot replace the first cooldown. These outlive forgetting a town, so leaving
+and rejoining within the same running server cannot reset them. Cooldown and injury
+recovery reset when that server restarts; earned XP and death/newcomer records persist.
+A disappearance without a death releases the resident without starting a newcomer
+clock. All outdoor errands, including square visits and patrol stops, use ground spots
+outside wells, centrepieces and outdoor shrines. Indoor spots use the planned room
+shape, including connected wings, with feet one block
 above the solid floor. Live block checks exclude furnishings and low headroom;
 porches, courtyard ground and exterior door steps are not indoor destinations.
 
