@@ -727,7 +727,7 @@ mod tests {
     fn keeper(server: &mut Server) -> (PlayerId, voxmar_protocol::ClientConnection) {
         let (client, connection) = voxmar_protocol::local_pair();
         let id = 1;
-        let mut player = crate::player::Player::new(id, connection, server.spawn, 2);
+        let mut player = crate::player::Player::new(id, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
         (player.joined, player.admin, player.name) = (true, true, "test".into());
         server.players.insert(id, player);
         let at = server.spawn.floor().as_ivec3();

@@ -26,6 +26,7 @@ use serde::de::DeserializeOwned;
 use voxmar_engine::block::{BlockRegistry, RenderKind};
 use voxmar_engine::content::{Content, ContentFile};
 
+use crate::levels::{LevelsDef, MAX_LEVEL};
 use crate::rarity::Rarity;
 
 #[derive(Debug, PartialEq)]
@@ -86,6 +87,10 @@ pub struct ClimateDef {
     #[serde(default)]
     pub humidity: HumidityDef,
     pub frost: FrostDef,
+    /// How biome levels scale finds and how distance from spawn leans the biome picker
+    /// towards higher levels (see `crate::levels`).
+    #[serde(default)]
+    pub levels: LevelsDef,
 }
 
 /// Wavelengths of the regional climate's own noise fields, in blocks: how large the
@@ -491,6 +496,7 @@ struct RawBiome {
     ecotone: Option<EcotoneDef>,
     weight: Option<f32>,
     rarity: Option<Rarity>,
+    level: Option<u8>,
     surface: Option<SurfaceDef>,
     stones: Option<Stones>,
     field_stones: Option<Vec<Select>>,
@@ -515,6 +521,10 @@ pub struct BiomeDef {
     /// Its share of the cells it claims, against other claimants.
     pub weight: f32,
     pub rarity: Rarity,
+    /// How harsh, rare and aether-touched it is, 1 ..= 10 (`crate::levels`): it makes its
+    /// rarer finds commoner and, far from spawn, the biome itself likelier. 1 when left
+    /// out (and not inherited).
+    pub level: u8,
     pub surface: SurfaceDef,
     pub stones: Stones,
     /// The stones lying on gentle open ground (boulders, rocks), where a biome wants its own
@@ -1537,6 +1547,33 @@ impl WorldContent {
         Ok(world)
     }
 
+    /// A fingerprint of what decides what land is made: the generator's files from every
+    /// package (mods too), in package order, and every block's name and tags in id order
+    /// (land picks blocks by tag). A world records it, so it can tell when land made from
+    /// now on may not line up with land made before. Ambient particles change no land and
+    /// are left out.
+    pub fn fingerprint<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> u64 {
+        let shapes_land = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        let mut add = |text: &str| {
+            for b in text.bytes().chain([0]) {
+                hash = (hash ^ b as u64).wrapping_mul(0x100_0000_01b3);
+            }
+        };
+        for file in files.filter(|file| shapes_land(&file.name)) {
+            [&file.package, &file.name, &file.source].into_iter().for_each(|text| add(text));
+        }
+        for id in 0..registry.len() {
+            let def = registry.def(voxmar_engine::block::BlockId(id as u16));
+            let mut tags: Vec<&str> = def.tags.iter().map(String::as_str).collect();
+            tags.sort_unstable();
+            add(&def.name);
+            tags.into_iter().for_each(&mut add);
+            add("");
+        }
+        hash
+    }
+
     /// The base package's definitions alone.
     pub fn base(registry: &BlockRegistry) -> Result<Self, ContentError> {
         let files: Vec<ContentFile> =
@@ -1820,6 +1857,12 @@ impl WorldContent {
                 return Err(ContentError(format!("climate.ron: the {:?} remap must have increasing points", remap.axis)));
             }
         }
+        self.climate.levels.check().map_err(|e| ContentError(format!("climate.ron: {e}")))?;
+        for tag in &self.climate.levels.trees {
+            if !self.trees.iter().any(|t| t.tags.contains(tag)) {
+                return Err(ContentError(format!("climate.ron: levels.trees names the tag `{tag}`, which no tree carries")));
+            }
+        }
         let frost = &self.climate.frost;
         for name in [&frost.snow, &frost.powder, &frost.snowy_ground, &frost.ice, &frost.thick_ice, &frost.rare_ice] {
             block(&climate_at, name)?;
@@ -1864,6 +1907,9 @@ impl WorldContent {
                 return Err(ContentError(format!("{}: defined twice", at())));
             }
             positive(&at, "weight", biome.weight)?;
+            if !(1..=MAX_LEVEL).contains(&biome.level) {
+                return Err(ContentError(format!("{}: level {} is not within 1 ..= {MAX_LEVEL}", at(), biome.level)));
+            }
             for climate in &biome.climate {
                 self.check_box(climate, &at)?;
                 let underground = climate.depth.is_some() || climate.height.is_some() || climate.provinces.is_some();
@@ -2699,6 +2745,7 @@ fn inherit(raw: &[(String, RawBiome)]) -> Result<Vec<BiomeDef>, ContentError> {
                 ecotone: biome.ecotone.clone(),
                 weight: field!(weight).unwrap_or(1.0),
                 rarity: field!(rarity).unwrap_or_default(),
+                level: field!(level).unwrap_or(1),
                 surface,
                 stones: field!(stones).unwrap_or_default(),
                 field_stones: field!(field_stones).unwrap_or_default(),
@@ -2814,6 +2861,29 @@ mod tests {
         let registry = registry();
         let log = registry.def(registry.expect("base:dead_log"));
         assert_eq!(log.drops.as_deref(), Some("core:air"), "a dead log is never an item (it breaks to a stick: tools.ron)");
+    }
+
+    /// Every base biome, on the surface and underground, sets its own level (P15), as one
+    /// left out would quietly take its parent's or 1: the gentle land players start in is
+    /// level 1 and the fantastical lands lie high. A level outside 1 ..= 10 is refused.
+    #[test]
+    fn every_base_biome_has_its_level() {
+        for (name, source) in BASE_FILES.iter().filter(|(name, _)| name.ends_with("biomes.ron")) {
+            let file: BiomeFile = parse(name, source).unwrap();
+            for biome in &file.biomes {
+                assert!(biome.level.is_some(), "{name}: biome `{}` has no level", biome.name);
+            }
+        }
+        let content = WorldContent::base(&registry()).unwrap();
+        let level = |name: &str| content.biomes.iter().find(|b| b.name == format!("base:{name}")).unwrap().level;
+        for gentle in ["plains", "meadow", "forest", "river", "cave"] {
+            assert_eq!(level(gentle), 1, "{gentle}");
+        }
+        for biome in content.biomes.iter().filter(|b| b.tags.iter().any(|t| t == "fantastical" || t == "fantasy")) {
+            assert!(biome.level >= 7, "{} is fantastical at level {}", biome.name, biome.level);
+        }
+        let error = load_with(&biomes(&format!("(name: \"harsh\", level: 11, climate: [()], {GROUND})"))).unwrap_err();
+        assert!(error.0.contains("level 11"), "{error}");
     }
 
     /// The snow blanket spares what its rules say, and refuses tags no block has and

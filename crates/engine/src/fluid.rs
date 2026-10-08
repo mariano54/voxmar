@@ -88,11 +88,14 @@ pub struct FluidDef {
     pub currents: bool,
     /// What happens where it touches another fluid.
     pub meets: Vec<MeetingDef>,
+    /// Players swim in it (and climb out of it onto a bank), as in water; in any other
+    /// fluid they stand on its bottom.
+    pub swim: bool,
 }
 
 impl Default for FluidDef {
     fn default() -> Self {
-        Self { tick: 5, drop: 1, slope: 4, infinite: false, pools: false, crust: None, currents: false, meets: Vec::new() }
+        Self { tick: 5, drop: 1, slope: 4, infinite: false, pools: false, crust: None, currents: false, meets: Vec::new(), swim: false }
     }
 }
 

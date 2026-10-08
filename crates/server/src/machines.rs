@@ -480,7 +480,7 @@ impl Server {
     /// longer known are lost.
     pub(crate) fn restore_machines(&mut self, saved: Vec<SavedMachine>) {
         let (blocks, machines) = (self.content.blocks.clone(), self.content.machines.clone());
-        let stack = |(name, count): &(String, u8)| blocks.id(name).map(|item| ItemStack { item, count: *count });
+        let stack = |(name, count): &(String, u8)| blocks.item_named(name).map(|item| ItemStack { item, count: *count });
         for machine in saved {
             let Some(block) = blocks.id(&machine.block) else { continue };
             let mut state = MachineState {
