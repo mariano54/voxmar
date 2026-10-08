@@ -377,7 +377,16 @@ impl Source {
                 (frames.len() > 1).then(|| {
                     let path = format!("block/{}", r.name);
                     let ticks = self.packs.iter_mut().find(|pack| pack.contains(&path)).and_then(|pack| pack.frame_ticks(&path));
-                    Animation { frames: frames[1..].iter().map(|frame| frame.square(size)).collect(), ticks: ticks.unwrap_or(FRAME_TICKS) }
+                    Animation {
+                        frames: frames[1..]
+                            .iter()
+                            .map(|frame| match r.tint {
+                                Some(tint) => frame.square(size).multiplied(tint),
+                                None => frame.square(size),
+                            })
+                            .collect(),
+                        ticks: ticks.unwrap_or(FRAME_TICKS),
+                    }
                 })
             })
             .collect();
@@ -683,6 +692,51 @@ mod tests {
         let tinted = texture.clone().multiplied([255, 128, 0]);
         assert_eq!(tinted.pixels, [200, 50, 0, 255, 200, 50, 0, 90]);
         assert_eq!(texture.clone().multiplied([255, 255, 255]).pixels, texture.pixels);
+    }
+
+    /// A pack's animated drawing retains a block's fixed colour after the first frame,
+    /// including its translucent texels and the pack's own frame time.
+    #[test]
+    fn a_fixed_tint_colours_every_animation_frame_from_a_pack() {
+        let root = std::env::temp_dir().join(format!("voxmar-tinted-animation-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("textures/block")).unwrap();
+        let pixels = [[200, 100, 50, 255].repeat(4), [120, 80, 60, 90].repeat(4)].concat();
+        image::RgbaImage::from_raw(2, 4, pixels).unwrap().save(root.join("textures/block/cloth.png")).unwrap();
+        std::fs::write(root.join("textures/block/cloth.png.mcmeta"), r#"{"animation":{"frametime":7}}"#).unwrap();
+        let mut source = Source { packs: vec![Pack::open(&root).unwrap()] };
+        let refs = [Some([255, 128, 0]), None].map(|tint| TextureRef { name: "cloth".into(), under: None, color: [0; 3], render: RenderKind::Model, tint });
+        let (size, textures, animations) = source.block_textures(&refs);
+        assert_eq!(size, 2);
+        assert_eq!(textures[0].pixels, [200, 50, 0, 255].repeat(4));
+        assert_eq!(textures[1].pixels, [200, 100, 50, 255].repeat(4));
+        let tinted = animations[0].as_ref().unwrap();
+        assert_eq!(tinted.ticks, 7);
+        assert_eq!(tinted.frames.len(), 1);
+        assert_eq!(tinted.frames[0].pixels, [120, 40, 0, 90].repeat(4));
+        assert_eq!(animations[1].as_ref().unwrap().frames[0].pixels, [120, 80, 60, 90].repeat(4));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Every face of the decor models resolves in both shipped looks, including the
+    /// separate drawings on their boxes. HD may inherit the default recipe at 32 texels.
+    #[test]
+    fn decor_faces_resolve_in_both_shipped_packs() {
+        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).expect("content");
+        let blocks = &content.blocks;
+        let decor: Vec<_> = blocks.ids().filter(|&id| blocks.def(id).has_tag("decor")).collect();
+        assert!(decor.len() >= 172, "only {} decor blocks", decor.len());
+        for name in ["default", HD_PACK] {
+            let mut pack = Pack::open(&assets.join("packs").join(name)).expect("pack");
+            for &id in &decor {
+                for &layer in blocks.info(id).layers.iter().chain(blocks.shape_layers(id)) {
+                    let reference = &blocks.textures()[layer as usize];
+                    let path = format!("block/{}", reference.name);
+                    let drawn = pack.read(&path).unwrap_or_else(|| panic!("{name}: {} has no {path}", blocks.def(id).name));
+                    assert!(drawn.pixels.chunks_exact(4).any(|p| p[3] != 0), "{name}: {path} is invisible");
+                }
+            }
+        }
     }
 
     /// A pack we don't ship hears once of its opaque faces more than half see-through,

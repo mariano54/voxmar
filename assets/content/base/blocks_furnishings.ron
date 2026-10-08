@@ -8,8 +8,8 @@
 // twelve dyes, and crockery in three glazes, each a template that one family line fills in.
 // Their boxes are in shapes.ron and their greyscale drawings, which a block's `tint:
 // Fixed(r, g, b)` colours (a wood's, a dye's), in the default pack's decor.ron. Decor drops
-// little: furniture breaks to half its planks, cloth and crockery to nothing, so a town is
-// no mine of goods.
+// little: player-placed furniture breaks to half its planks, cloth and crockery to nothing.
+// The `furnishing` tag prevents world-placed furniture from yielding those planks.
 (
     // The dyes `dyes: true` families are made over: each is a name (`family.base.<name>` in
     // the language files) and the colour a greyscale drawing is multiplied by. The colours
@@ -154,11 +154,11 @@
         // spinning wheel and a quern for a weaver's or a miller's room.
         (
             name: "loom_frame", render: Model, shape: "loom_frame", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
-            drops: "oak_planks", drop_count: 2, hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood"],
+            drops: "oak_planks", drop_count: 2, hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "furnishing"],
         ),
         (
             name: "spindle_stand", render: Model, shape: "spindle_stand", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
-            drops: "oak_planks", drop_count: 1, hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood"],
+            drops: "oak_planks", drop_count: 1, hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "furnishing"],
         ),
         (
             name: "quern_stones", render: Model, shape: "quern_stones", facing: true, sound: Stone, textures: All("cobblestone"),
@@ -178,14 +178,14 @@
 
     families: [
         // The three tones: pale birch, warm oak, dark oak.
-        (template: "furniture", name: "birch", all: (tint: Fixed(236, 212, 164), color: (200, 175, 125))),
-        (template: "furniture", name: "oak", all: (tint: Fixed(205, 150, 86), color: (160, 120, 70))),
-        (template: "furniture", name: "dark_oak", all: (tint: Fixed(130, 88, 58), color: (100, 70, 45))),
+        (template: "furniture", name: "birch", tags: ["furnishing"], all: (tint: Fixed(236, 212, 164), color: (200, 175, 125))),
+        (template: "furniture", name: "oak", tags: ["furnishing"], all: (tint: Fixed(205, 150, 86), color: (160, 120, 70))),
+        (template: "furniture", name: "dark_oak", tags: ["furnishing"], all: (tint: Fixed(130, 88, 58), color: (100, 70, 45))),
         (template: "dyed", dyes: true),
         (template: "crockery", name: "earthen", all: (tint: Fixed(196, 120, 82), color: (196, 120, 82))),
         (template: "crockery", name: "ivory", all: (tint: Fixed(238, 230, 208), color: (238, 230, 208))),
-        (template: "metal_lantern", name: "iron", all: (tint: Fixed(176, 178, 190), color: (176, 178, 190))),
-        (template: "metal_lantern", name: "copper", all: (tint: Fixed(214, 128, 86), color: (214, 128, 86))),
+        (template: "metal_lantern", name: "iron", tags: ["furnishing"], all: (tint: Fixed(176, 178, 190), color: (176, 178, 190))),
+        (template: "metal_lantern", name: "copper", tags: ["furnishing"], all: (tint: Fixed(214, 128, 86), color: (214, 128, 86))),
         (template: "stone_lantern", name: "stone"),
         (template: "stone_lantern", name: "sandstone"),
         (template: "column", name: "calcite"),

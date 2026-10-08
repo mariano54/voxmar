@@ -84,6 +84,7 @@ fn furniture_breaks_to_planks_and_everything_else_to_nothing() {
         let def: &BlockDef = content.blocks.def(id);
         let drops = content.blocks.info(id).drops;
         if def.has_tag("furniture") {
+            assert!(def.has_tag("furnishing"), "{} would yield free planks when world-placed", def.name);
             let planks = format!("{}_planks", def.family.as_deref().unwrap());
             assert_eq!(drops, content.blocks.id(&planks).unwrap(), "{}", def.name);
             // Half what it cost, at most: breaking furniture is no way to make planks.
@@ -97,7 +98,7 @@ fn furniture_breaks_to_planks_and_everything_else_to_nothing() {
 #[test]
 fn every_recipe_for_decor_can_be_crafted_as_written() {
     let content = content();
-    let decor: BTreeSet<BlockId> = made(&content).into_iter().collect();
+    let decor: BTreeSet<BlockId> = content.blocks.ids().filter(|&id| content.blocks.def(id).has_tag("decor")).collect();
     let mut crafted = 0;
     for recipe in content.recipes.iter().filter(|r| decor.contains(&r.output)) {
         // The recipe's own ingredients, laid out as it asks, are matched by a recipe with the
@@ -107,7 +108,7 @@ fn every_recipe_for_decor_can_be_crafted_as_written() {
         assert_eq!(found.output, recipe.output, "{} is shadowed by {}", content.blocks.def(recipe.output).name, content.blocks.def(found.output).name);
         crafted += 1;
     }
-    assert!(crafted >= 100, "{crafted} recipes");
+    assert!(crafted >= 172, "{crafted} recipes");
 }
 
 /// The singles and the lanterns and columns of metal and stone: each a block with a way to

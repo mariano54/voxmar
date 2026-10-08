@@ -3916,7 +3916,10 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         2 => {
             let client = world.resource::<ClientWorld>();
-            let arrived = cells.iter().all(|&cell| client.block(cell).is_some_and(|b| !b.is_air()));
+            let arrived = cells.iter().zip(blocks).all(|(&cell, name)| {
+                let wanted = client.registry.id(&format!("base:{name}"));
+                wanted.is_some() && client.block(cell) == wanted && gate.observer.as_ref().is_none_or(|o| o.world.block(cell) == wanted)
+            });
             if !(arrived && settled(world, row) && in_phase > SETTLE) && gate.server_in_step() < STEP_LIMIT - 1.0 {
                 return;
             }
@@ -3924,7 +3927,7 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let change = gate.earlier_shot("shapes-before").map_or(0.0, |before| change(&before, &shot, 0.25));
             let result = match (arrived, change >= SCREEN_CHANGE) {
                 (true, true) => Ok(format!("{} shaped blocks drawn, changing the view by {change:.1} levels", blocks.len())),
-                (false, _) => Err("the shaped blocks never reached the client".into()),
+                (false, _) => Err("the shaped blocks did not agree on client and server".into()),
                 (true, false) => Err(format!("the shaped blocks barely show: the view changed by {change:.1} levels")),
             };
             gate.check("shapes", result);

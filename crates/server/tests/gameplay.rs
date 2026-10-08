@@ -736,34 +736,44 @@ fn copy_content(from: &std::path::Path, to: &std::path::Path) {
 
 #[test]
 fn a_world_placed_altar_drops_nothing_and_a_players_drops_itself_across_restarts() {
-    let dir = world_dir("altar");
+    furnishing_drops_across_restarts("altar", "stone_altar", "stone_altar", 1);
+}
+
+#[test]
+fn a_village_crate_stack_gives_no_free_planks_but_a_players_keeps_its_drop_across_restarts() {
+    furnishing_drops_across_restarts("crate-stack", "oak_crate_stack", "oak_planks", 2);
+}
+
+fn furnishing_drops_across_restarts(label: &str, name: &str, material: &str, count: usize) {
+    let dir = world_dir(label);
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
     let feet = client.position.floor().as_ivec3();
     let (village, own) = (feet + IVec3::new(1, 0, 1), feet + IVec3::new(-1, 0, 1));
-    // One set by the world (a village chapel's, as /setblock sets it), one the player places.
-    for line in ["/clear", "/give stone_altar 1", "/setblock ~1 ~ ~1 stone_altar", "/fill ~-1 ~ ~1 ~-1 ~1 ~1 air", "/fill ~-1 ~-1 ~1 ~-1 ~-1 ~1 stone"] {
-        client.ok(line);
+    // One set by the world (a village's furnishing, as /setblock sets it), one the player places.
+    for line in ["/clear".to_owned(), format!("/give {name} 1"), format!("/setblock ~1 ~ ~1 {name}"), "/fill ~-1 ~ ~1 ~-1 ~1 ~1 air".to_owned(), "/fill ~-1 ~-1 ~1 ~-1 ~-1 ~1 stone".to_owned()] {
+        client.ok(&line);
     }
-    let altar = client.content.blocks.expect("base:stone_altar");
-    client.pump_until(|c| c.world.block(village) == Some(altar) && c.inventory.get(0).is_some_and(|s| s.item == altar));
+    let furnishing = client.content.blocks.expect(&format!("base:{name}"));
+    let material = client.content.blocks.expect(&format!("base:{material}"));
+    client.pump_until(|c| c.world.block(village) == Some(furnishing) && c.inventory.get(0).is_some_and(|s| s.item == furnishing));
     client.propose("core:place", ActionTarget::Block { block: own - IVec3::Y, face: Face::PosY });
-    client.pump_until(|c| c.world.block(own) == Some(altar));
-    let altars = |c: &Client| {
-        c.inventory.slots.iter().flatten().filter(|s| s.item == altar).map(|s| s.count as usize).sum::<usize>()
-            + c.items.values().filter(|i| i.stack.item == altar).map(|i| i.stack.count as usize).sum::<usize>()
+    client.pump_until(|c| c.world.block(own) == Some(furnishing));
+    let goods = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == material).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == material).map(|i| i.stack.count as usize).sum::<usize>()
     };
     // The village's: nothing.
     client.propose("core:mine", ActionTarget::Block { block: village, face: Face::PosY });
     client.pump_until(|c| c.world.block(village) == Some(BlockId::AIR));
-    assert_eq!(client.quiet(altars), 0, "a village's altar dropped itself");
-    // Saved and loaded, the player's is still the player's: it gives itself back.
+    assert_eq!(client.quiet(goods), 0, "a village's {name} dropped goods");
+    // Saved and loaded, the player's is still the player's: its material drop is retained.
     drop(client);
     let mut client = Client::join_with(config());
-    client.pump_until(|c| c.world.block(own) == Some(altar));
+    client.pump_until(|c| c.world.block(own) == Some(furnishing));
     client.propose("core:mine", ActionTarget::Block { block: own, face: Face::PosY });
     client.pump_until(|c| c.world.block(own) == Some(BlockId::AIR));
-    assert_eq!(client.quiet(altars), 1, "a player's altar did not give itself back");
+    assert_eq!(client.quiet(goods), count, "a player's {name} lost its material drop");
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
