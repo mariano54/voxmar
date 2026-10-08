@@ -309,7 +309,7 @@ pub struct HitSplat {
 
 impl HitSplat {
     /// Continuous game time drawn over a fallen body. A hidden splat starts again when
-    /// it becomes visible, so a menu or an offscreen body cannot satisfy the gate.
+    /// it becomes visible, so time hidden by a menu cannot satisfy the gate.
     fn over_fallen(&mut self, now: f64, drawn: bool) -> f32 {
         if drawn {
             let since = *self.fallen_since.get_or_insert(now);
