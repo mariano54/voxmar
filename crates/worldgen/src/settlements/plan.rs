@@ -145,6 +145,7 @@ const GROUND_SAMPLE_LIMIT: usize = 32_768;
 struct Ground<'a> {
     land: &'a dyn Land,
     seen: FxHashMap<IVec2, GeoSample>,
+    dry_water: rustc_hash::FxHashSet<IVec2>,
     scratch: crate::water::Samples,
     #[cfg(test)]
     queries: usize,
@@ -160,7 +161,16 @@ struct Ground<'a> {
 
 impl Ground<'_> {
     fn new(land: &dyn Land) -> Ground<'_> {
-        Ground { land, seen: FxHashMap::default(), scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0, #[cfg(test)] prefetched: 0 }
+        Ground { land, seen: FxHashMap::default(), dry_water: Default::default(), scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0, #[cfg(test)] prefetched: 0 }
+    }
+
+    fn reserve(&mut self, count: usize) {
+        if self.seen.len() + self.dry_water.len() + count > GROUND_SAMPLE_LIMIT {
+            self.seen.clear();
+            self.dry_water.clear();
+            #[cfg(test)]
+            { self.clears += 1; }
+        }
     }
 
     /// Group only missing original samples for the next bounded portion of a row.
@@ -175,11 +185,7 @@ impl Ground<'_> {
     /// A bounded set of original points, also used by wholly consumed water rings.
     fn prefetch_points(&mut self, points: &[IVec2]) {
         assert!(points.len() <= crate::water::SAMPLE_BATCH);
-        if self.seen.len() + points.len() > GROUND_SAMPLE_LIMIT {
-            self.seen.clear();
-            #[cfg(test)]
-            { self.clears += 1; }
-        }
+        self.reserve(points.len());
         let mut missing = Vec::new();
         for p in points {
             let point = (p.x, p.y);
@@ -193,7 +199,11 @@ impl Ground<'_> {
         #[cfg(test)]
         { self.prefetched += points.len(); }
         let samples = self.land.samples_cached(&points, &mut self.scratch);
-        self.seen.extend(points.into_iter().zip(samples).map(|((x, z), g)| (IVec2::new(x, z), g)));
+        for ((x, z), g) in points.into_iter().zip(samples) {
+            let p = IVec2::new(x, z);
+            self.dry_water.remove(&p);
+            self.seen.insert(p, g);
+        }
     }
 
     fn at(&mut self, p: IVec2) -> GeoSample {
@@ -204,16 +214,31 @@ impl Ground<'_> {
         }
         // Even a spawn cell's many layout retries keep bounded temporary storage.
         // Clearing changes only how often the original land is recomputed.
-        if self.seen.len() >= GROUND_SAMPLE_LIMIT {
-            self.seen.clear();
-            #[cfg(test)]
-            { self.clears += 1; }
-        }
+        self.reserve(1);
         #[cfg(test)]
         { self.misses += 1; }
         let g = self.land.sample_cached(p.x, p.y, &mut self.scratch);
+        self.dry_water.remove(&p);
         self.seen.insert(p, g);
         g
+    }
+
+    /// The same Boolean house-water predicate, with exact negative witnesses kept
+    /// separate from terrain. Full samples always take precedence; possible water
+    /// still uses at(), including its original sealing and cache accounting.
+    fn freshwater(&mut self, p: IVec2) -> bool {
+        if let Some(g) = self.seen.get(&p) {
+            #[cfg(test)]
+            { self.queries += 1; }
+            return crate::water::freshwater(g);
+        }
+        if self.dry_water.contains(&p) { return false; }
+        if self.land.freshwater_absent_cached(p, &mut self.scratch) {
+            self.reserve(1);
+            self.dry_water.insert(p);
+            return false;
+        }
+        crate::water::freshwater(&self.at(p))
     }
 }
 
@@ -2408,10 +2433,7 @@ fn house_spec(town: &mut Town, want: &Want, kind: Kind, rng: &mut Rng, near_wate
 /// Whether fresh water lies within a few blocks of `at`.
 fn wet(ground: &mut Ground, at: Vec2) -> bool {
     let at = at.round().as_ivec2();
-    (0..8).any(|k| {
-        let g = ground.at(at + (Vec2::from_angle(k as f32 * std::f32::consts::FRAC_PI_4) * 7.0).round().as_ivec2());
-        (g.submerged() || g.river > 0.5) && g.body != crate::Body::Sea
-    })
+    (0..8).any(|k| ground.freshwater(at + (Vec2::from_angle(k as f32 * std::f32::consts::FRAC_PI_4) * 7.0).round().as_ivec2()))
 }
 
 /// Tries to place a building of `kind` (or `given`) with its front at `front`, facing
@@ -3341,6 +3363,66 @@ mod level_tests {
             let (height, water) = if wet { (139, 140) } else { (140, 140) };
             GeoSample { height, mountain: 0.0, river: 0.0, water, top: 8, body: Body::Creek, current: None, cavity: None, crag: Default::default(), trail: None, form: Default::default() }
         }
+    }
+
+    #[test]
+    fn house_water_absence_keeps_original_spokes_and_full_samples() {
+        let mut wet_count = 0;
+        let mut dry_count = 0;
+        let mut skipped = 0;
+        for (seed, centres) in [(7, [IVec2::new(-1776, 752), IVec2::new(-336, 816)]),
+            (42, [IVec2::new(720, -784), IVec2::new(-1776, 752)])]
+        {
+            let world = super::super::tests::base_world(seed);
+            let land = world.land();
+            let (mut original, mut fast) = (Ground::new(&land), Ground::new(&land));
+            for centre in centres {
+                for offset in [Vec2::ZERO, Vec2::new(0.49, -0.51), Vec2::new(-0.5, 0.5)] {
+                    for i in 0..25 {
+                        let at = (centre + IVec2::new(i % 5 - 2, i / 5 - 2) * 16).as_vec2() + offset;
+                        let rounded = at.round().as_ivec2();
+                        let expected = (0..8).any(|k| {
+                            let g = original.at(rounded + (Vec2::from_angle(k as f32 * std::f32::consts::FRAC_PI_4) * 7.0).round().as_ivec2());
+                            (g.submerged() || g.river > 0.5) && g.body != Body::Sea
+                        });
+                        assert_eq!(wet(&mut fast, at), expected, "seed{seed} at{at}");
+                        wet_count += usize::from(expected);
+                        dry_count += usize::from(!expected);
+                        assert!(fast.seen.len() + fast.dry_water.len() <= GROUND_SAMPLE_LIMIT);
+                    }
+                }
+            }
+            assert!(fast.misses <= original.misses);
+            skipped += original.misses - fast.misses;
+            assert!(!fast.dry_water.is_empty(), "real absence proof must be used");
+            for &p in fast.dry_water.iter().take(16) {
+                assert!(!crate::water::freshwater(&land.sample(p.x, p.y)), "every negative witness agrees with complete terrain");
+            }
+            // Full terrain is authoritative and removes its former negative witness.
+            let p = *fast.dry_water.iter().next().unwrap();
+            let expected = land.sample(p.x, p.y);
+            assert_eq!(fast.at(p), expected);
+            assert!(!fast.dry_water.contains(&p));
+            assert_eq!(fast.freshwater(p), crate::water::freshwater(&expected));
+            // Fill only unused false witnesses. Both scalar and row-batch pressure
+            // must discard them, and still return the full original terrain.
+            for scalar in [true, false] {
+                let fill = GROUND_SAMPLE_LIMIT - fast.seen.len() - fast.dry_water.len();
+                fast.dry_water.extend((0..fill).map(|i| IVec2::new(200_000 + i as i32, 200_000)));
+                assert_eq!(fast.seen.len() + fast.dry_water.len(), GROUND_SAMPLE_LIMIT);
+                let p = IVec2::new(-200_000 - i32::from(scalar), -200_000);
+                assert!(!fast.seen.contains_key(&p) && !fast.dry_water.contains(&p));
+                let before = fast.clears;
+                if scalar { assert_eq!(fast.at(p), land.sample(p.x, p.y)); }
+                else {
+                    fast.prefetch(p, 7);
+                    for i in 0..7 { assert_eq!(fast.at(p + IVec2::new(i, 0)), land.sample(p.x + i, p.y)); }
+                }
+                assert_eq!(fast.clears, before + 1);
+                assert!(fast.dry_water.is_empty());
+            }
+        }
+        assert!(wet_count > 0 && dry_count > 0 && skipped > 0, "actual wet/dry decisions and saved terrain reads are required");
     }
 
     #[test]

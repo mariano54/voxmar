@@ -88,6 +88,12 @@ pub trait Land: Sync {
         points.iter().map(|&(x, z)| self.sample_cached(x, z, scratch)).collect()
     }
 
+    /// Prove freshwater absent without a terrain sample, where supported. False
+    /// means unknown, so synthetic land keeps its original full-sample predicate.
+    fn freshwater_absent_cached(&self, _at: IVec2, _scratch: &mut crate::water::Samples) -> bool {
+        false
+    }
+
     /// Whether the close-look grid's circle contains freshwater. Synthetic land keeps
     /// its grid implementation; real river land can stop before unused terrain reads.
     /// Like settlement definitions, callers supply radius >= 0 and step >= 1.

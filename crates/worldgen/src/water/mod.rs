@@ -727,17 +727,28 @@ impl Rivers {
         found.is_some()
     }
 
+    /// The original channel indexes prove absence at every geology height. Keep
+    /// the exact halo/tier bounds and scratch world identity used by full samples.
+    pub fn freshwater_absent_cached(&self, land: Stages, p: IVec2, scratch: &mut Samples) -> bool {
+        scratch.prepare(self.id, 1);
+        self.freshwater_absent(land, p, scratch)
+    }
+
+    fn freshwater_absent(&self, land: Stages, p: IVec2, scratch: &mut Samples) -> bool {
+        if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
+        let key = Samples::key(p - 1, p + 1);
+        let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, p - 1, p + 1));
+        !tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().expect("filled").may_have_water(p.x, p.y))
+    }
+
     fn freshwater_batch(&self, land: Stages, points: &[(i32, i32)], cache: &mut Freshwater) -> (Option<usize>, bool, usize) {
         let cleared = cache.seen.len() + cache.dry.len() + points.len() > 16_384;
         if cleared { cache.seen.clear(); cache.dry.clear(); }
         cache.scratch.prepare(self.id, points.len());
         let mut possible = Vec::new();
         for &(x, z) in points {
-            if cache.scratch.tiers.len() >= 16 { cache.scratch.tiers.clear(); }
             let p = IVec2::new(x, z);
-            let key = Samples::key(p - 1, p + 1);
-            let tiers = cache.scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, p - 1, p + 1));
-            if tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().expect("filled").may_have_water(x, z)) {
+            if !self.freshwater_absent(land, p, &mut cache.scratch) {
                 possible.push((x, z));
             } else {
                 // Carving sets neither a body nor wetness; unsealed() assigns Sea

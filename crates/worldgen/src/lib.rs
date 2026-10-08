@@ -661,6 +661,10 @@ impl trails::Land for RiverLand<'_> {
         self.rivers.samples_cached(self.stages, points, scratch)
     }
 
+    fn freshwater_absent_cached(&self, at: IVec2, scratch: &mut water::Samples) -> bool {
+        self.rivers.freshwater_absent_cached(self.stages, at, scratch)
+    }
+
     fn freshwater_near(&self, centre: IVec2, radius: i32, step: i32, cache: &mut water::Freshwater) -> bool {
         self.rivers.freshwater_near(self.stages, centre, radius, step, cache)
     }
