@@ -5994,11 +5994,15 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         0 => {
             let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned();
             let at = generator.and_then(|g| {
-                let mountain = g.locate_biome("alpine_meadow", gate.feet.xz(), 60000)?;
-                g.locate_tarn(mountain, 4096)
+                // The first highland can lie below the tarn floor. Try a bounded spread
+                // of alpine districts, so the gate visits suitable high ground in this world.
+                [IVec2::ZERO, IVec2::new(24000, 8000), IVec2::new(-8000, 24000), IVec2::new(-24000, -8000), IVec2::new(8000, -24000)].into_iter().find_map(|offset| {
+                    let alpine = g.locate_biome("alpine_meadow", gate.feet.xz() + offset, 60000)?;
+                    g.locate_tarn(alpine, 4096)
+                })
             });
             let Some(at) = at else {
-                gate.check("tarns", Err("no visible generated tarn near the nearest alpine highlands".into()));
+                gate.check("tarns", Err("no visible generated tarn in the sampled alpine highlands".into()));
                 gate.next(Step::Settlements, now);
                 return;
             };

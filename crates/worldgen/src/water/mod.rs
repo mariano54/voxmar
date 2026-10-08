@@ -852,9 +852,14 @@ mod tests {
         let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
         let mut world = crate::Overworld::new(0x5eed, registry);
         let spawn = crate::Generator::spawn_point(&world);
-        let mountain = world.locate_biome("alpine_meadow", spawn.xz(), 60000).expect("alpine highlands in the gate's world");
-        println!("gate seed spawn {spawn}, alpine highland {mountain}, site {:?}", world.site(mountain.x, mountain.y));
-        let at = world.locate_tarn(mountain, 4096).expect("a visible tarn near those alpine highlands");
+        let offsets = [IVec2::ZERO, IVec2::new(24000, 8000), IVec2::new(-8000, 24000), IVec2::new(-24000, -8000), IVec2::new(8000, -24000)];
+        let (mountain, at) = offsets.into_iter().find_map(|offset| {
+            let alpine = world.locate_biome("alpine_meadow", spawn.xz() + offset, 60000)?;
+            let site = world.site(alpine.x, alpine.y);
+            let pools = world.rivers.tarns_near(world.stages(), alpine, 4096).len();
+            println!("gate seed spawn {spawn}, alpine {alpine}, height {}, continentalness {:.2}, {pools} marked pits", site.height, site.continentalness);
+            world.locate_tarn(alpine, 4096).map(|at| (alpine, at))
+        }).expect("a visible tarn in the gate's sampled alpine highlands");
         println!("gate seed tarn {at}");
         let wet = lake_component(at.xz(), 16, |p| {
             let g = world.geo(p.x, p.y);
