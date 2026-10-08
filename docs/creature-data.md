@@ -71,12 +71,17 @@ animals and monsters spawning for anyone:
   monsters from spawning there, on the surface as underground.
 - `spawn_every` is the seconds between spawn attempts around each player (one spot an
   attempt), `spawn_near` and `spawn_far` how far from the player the spot lies (20 to 40
-  blocks: nearer puts more of what the caps allow within sight), `spawn_unseen_angle` the half angle in degrees around where any player looks (75 covers the screen; 0 is off) in which nothing spawns that they could see from their eye (out of sight, behind a hill or trees is fine, so animals are never seen appearing), and `empty_for_animals` /
+  blocks: nearer puts more of what the caps allow within sight), and `empty_for_animals` /
   `empty_for_monsters` how heavy "nothing here" weighs against the species that suit the
   spot (a common one at home weighs about 1), so a higher number leaves more spots empty.
   Together with the caps these set how full the land feels, and how fast it refills: with
   these numbers a player's surroundings fill in 10 to 30 seconds of standing still, not the
   minutes to an hour older notes assumed. Fast refill is intended.
+- `spawn_unseen_angle` is the half angle in degrees around where any joined player looks
+  (75 covers the screen; 0 is off). Natural spawns, including every group member, wait
+  while a player could see them appear. The individual's gene-scaled body is checked at
+  its centre and corners, so heads above walls and flanks round their edges count too.
+  Behind a hill or trees is fine. Explicit summons and settlement people are unaffected.
 
 What no package sets keeps the defaults above.
 
@@ -280,7 +285,8 @@ Content fails to load, with the file and a reason, when:
   and `monsters_near` together are more than `wild_most`, or `most` is less than
   `wild_most` and `keepers` players' `kept_each`; `spawn_every` is under 0.05 s or not a
   number, `empty_for_animals` or `empty_for_monsters` is negative or not finite, or
-  `spawn_far` is not more than `spawn_near` (which must be 0 or more), or `spawn_unseen_angle` is outside 0 to 180;
+  `spawn_far` is not more than `spawn_near` (which must be 0 or more), or
+  `spawn_unseen_angle` is not finite or is outside 0 to 180;
 - `defence` makes a fight last no time (`fought_within` 0 or less) or asks a negative
   `least_level`;
 - the condition rules have a share outside 0..1, a need met counting less than partly

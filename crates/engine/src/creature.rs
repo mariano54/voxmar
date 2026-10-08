@@ -1014,13 +1014,14 @@ mod tests {
 
     #[test]
     fn limits_load_from_the_file_and_are_checked() {
-        let source = RABBIT.replacen("(creatures:", "(limits: (wild_most: 20, kept_each: 5), creatures:", 1);
+        let source = RABBIT.replacen("(creatures:", "(limits: (wild_most: 20, kept_each: 5, spawn_unseen_angle: 45.0), creatures:", 1);
         let set = CreatureRegistry::read("base", &source).unwrap().limits.expect("set");
-        assert_eq!(set, SetLimits { wild_most: Some(20), kept_each: Some(5), ..Default::default() });
+        assert_eq!(set, SetLimits { wild_most: Some(20), kept_each: Some(5), spawn_unseen_angle: Some(45.0), ..Default::default() });
         assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().limits, None, "a file without limits leaves them to another");
         // What a package sets replaces what was there; the rest stays.
         let (limits, changed) = Limits::default().with(&set);
-        assert_eq!(changed, ["wild_most", "kept_each"]);
+        assert_eq!(changed, ["wild_most", "kept_each", "spawn_unseen_angle"]);
+        assert_eq!(limits.spawn_unseen_angle, 45.0);
         assert_eq!((limits.wild_most, limits.kept_each, limits.most), (20, 5, Limits::default().most));
         assert!(Limits::default().check().is_ok());
         // Room for no wild ones, less than one player's surroundings draw, or less in all
@@ -1035,6 +1036,9 @@ mod tests {
             Limits { spawn_far: ok.spawn_near, ..ok },
             Limits { spawn_near: -1.0, ..ok },
             Limits { spawn_unseen_angle: 200.0, ..ok },
+            Limits { spawn_unseen_angle: -1.0, ..ok },
+            Limits { spawn_unseen_angle: f32::NAN, ..ok },
+            Limits { spawn_unseen_angle: f32::INFINITY, ..ok },
             Limits { spawn_every: f32::NAN, ..ok },
             Limits { empty_for_monsters: f32::INFINITY, ..ok },
             Limits { empty_for_animals: -1.0, ..ok },

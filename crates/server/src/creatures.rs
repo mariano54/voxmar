@@ -756,11 +756,16 @@ impl Server {
 
     /// Puts a creature of `species` at `at`, with a home there.
     pub(crate) fn spawn_creature(&mut self, species: CreatureId, at: Vec3, salt: u64) -> Option<u32> {
+        self.spawn_unseen(species, at, salt, 0.0)
+    }
+
+    /// Natural spawns also check the individual's gene-scaled body before it enters the
+    /// world. Summons and residents use spawn_creature and may appear in view.
+    fn spawn_unseen(&mut self, species: CreatureId, at: Vec3, salt: u64, angle: f32) -> Option<u32> {
         if self.creatures.live.len() >= self.content.creatures.limits().most {
             return None;
         }
         let id = self.creatures.next;
-        self.creatures.next += 1;
         let seed = mix(mix(self.meta.seed, id as u64), salt);
         let genome = self.wild_genome(species, at, seed);
         let def = &self.content.creatures.get(species).def;
@@ -772,6 +777,10 @@ impl Server {
             (0.88 + 0.24 * unit_from(mix(seed, 0x5ca1e))) * traits.scale
         };
         let size = (def.body.size.0 * scale, def.body.size.1 * scale);
+        if self.body_seen_by_a_player(at, size, angle) {
+            return None;
+        }
+        self.creatures.next += 1;
         let yaw = unit_from(mix(seed, 3)) * std::f32::consts::TAU;
         // Its genes' temper moves its own personality toward fierce or calm.
         let mut mind = Mind::new(&def.temperament, seed);
@@ -849,8 +858,7 @@ impl Server {
         let (animals, monsters) = (nearby(Kind::Animal), nearby(Kind::Monster));
         // A new world's first night brings only a few, until its first dawn: the world begins
         // at sunrise, so that is the first day, and any darkness that runs on past its end.
-        let first_night = self.day < TICKS_PER_DAY as f64 || (self.day < 1.5 * TICKS_PER_DAY as f64 && self.daylight() < 0.25);
-        let monsters_cap = if first_night { limits.monsters_near.min(limits.first_night_monsters) } else { limits.monsters_near };
+        let monsters_cap = if first_night(self.day, self.daylight()) { limits.monsters_near.min(limits.first_night_monsters) } else { limits.monsters_near };
         if animals >= limits.animals_near && monsters >= monsters_cap {
             return;
         }
@@ -915,15 +923,16 @@ impl Server {
             group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
         };
         // Never past the cap: a herd arriving near it comes smaller.
-        let room = if self.content.creatures.get(species).def.kind == Kind::Monster { monsters_cap.saturating_sub(monsters) } else { limits.animals_near.saturating_sub(animals) };
+        let monster = self.content.creatures.get(species).def.kind == Kind::Monster;
+        let room = if monster { monsters_cap.saturating_sub(monsters) } else { limits.animals_near.saturating_sub(animals) };
         let count = count.min(room.max(1).min(wild_room).min(u8::MAX as usize) as u8);
         for i in 0..count.max(1) {
             let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
             let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
-            if self.seen_by_a_player(cell, limits.spawn_unseen_angle) {
+            if (monster && self.lit_near(cell)) || self.seen_by_a_player(cell, limits.spawn_unseen_angle) {
                 continue;
             }
-            self.spawn_creature(species, cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5), seed ^ i as u64);
+            self.spawn_unseen(species, cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5), seed ^ i as u64, limits.spawn_unseen_angle);
         }
     }
 
@@ -931,16 +940,40 @@ impl Server {
     /// degrees of where they look, within sight range, and nothing solid stands between
     /// their eye and it.
     pub(crate) fn seen_by_a_player(&self, spot: IVec3, angle: f32) -> bool {
+        self.points_seen_by_a_player(&[spot.as_vec3() + Vec3::new(0.5, 1.0, 0.5)], angle)
+    }
+
+    /// Test the centre and corners as well as the feet: a head above a wall or a flank
+    /// around its edge must not appear merely because the middle is hidden.
+    fn body_seen_by_a_player(&self, at: Vec3, size: (f32, f32), angle: f32) -> bool {
+        if angle == 0.0 {
+            return false;
+        }
+        let half = size.0 * 0.5;
+        let points = std::array::from_fn::<_, 9, _>(|i| {
+            if i == 8 {
+                at + Vec3::Y * size.1 * 0.5
+            } else {
+                at + Vec3::new(if i & 1 == 0 { -half } else { half }, if i & 2 == 0 { 0.0 } else { size.1 }, if i & 4 == 0 { -half } else { half })
+            }
+        });
+        self.points_seen_by_a_player(&points, angle)
+    }
+
+    fn points_seen_by_a_player(&self, targets: &[Vec3], angle: f32) -> bool {
+        if angle == 0.0 {
+            return false;
+        }
         let cos = angle.to_radians().cos();
-        let target = spot.as_vec3() + Vec3::new(0.5, 1.0, 0.5);
         self.players.values().filter(|p| p.joined).any(|player| {
             let eye = player.eye();
-            let to = target - eye;
-            let distance = to.length();
-            distance < SEEN_WITHIN
-                && angle > 0.0
-                && player.look().dot(to / distance.max(0.001)) > cos
-                && voxmar_engine::physics::raycast(eye, to, distance, |cell| self.is_solid(cell)).is_none_or(|hit| hit.distance > distance - 1.0)
+            targets.iter().any(|&target| {
+                let to = target - eye;
+                let distance = to.length();
+                distance < SEEN_WITHIN
+                    && (distance < 0.001 || player.look().dot(to / distance) >= cos)
+                    && voxmar_engine::physics::raycast(eye, to, distance, |cell| self.is_solid(cell)).is_none_or(|hit| hit.distance >= distance)
+            })
         })
     }
 
@@ -1076,6 +1109,12 @@ fn spawn_factor(rarity: Rarity) -> f32 {
         Rarity::VeryRare => 0.015,
         Rarity::Legendary => 0.002,
     }
+}
+
+/// The first night can run past the nominal day boundary, but never into the second
+/// night's darkness. Use the same dawn threshold as natural monster spawning.
+fn first_night(day: f64, daylight: f32) -> bool {
+    day < TICKS_PER_DAY as f64 || (day < 1.5 * TICKS_PER_DAY as f64 && daylight < 0.25)
 }
 
 /// The `i`th cell of the square ring `r` blocks out, as (dx, dz).
@@ -1298,6 +1337,61 @@ mod combat_tests {
 mod density_tests {
     use super::*;
 
+    #[test]
+    fn first_night_ends_at_dawn_even_when_darkness_crosses_the_day_boundary() {
+        let day = TICKS_PER_DAY as f64;
+        assert!(first_night(day - 1.0, 0.0));
+        assert!(first_night(day, 0.0), "the nominal day end is not necessarily dawn");
+        assert!(first_night(day + 1.0, 0.249));
+        assert!(!first_night(day + 1.0, 0.25), "dawn releases the lower cap");
+        assert!(!first_night(day * 1.5, 0.0), "later darkness is never night one");
+        assert!(!first_night(day * 2.0, 0.0));
+    }
+
+    #[test]
+    fn torch_boundaries_protect_every_member_of_a_monster_group() {
+        let mut server = crate::test_server();
+        let species = server.content.creatures.find("base:shambler").unwrap();
+        let mut def = server.content.creatures.get(species).def.clone();
+        (def.supernatural, def.habitat, def.group.size) = (false, Default::default(), (6, 6));
+        let rules = creature::Rules { limits: creature::Limits { spawn_unseen_angle: 0.0, empty_for_monsters: 0.0, ..Default::default() }, ..Default::default() };
+        server.content.creatures = std::sync::Arc::new(creature::CreatureRegistry::new(vec![def], rules, &server.content.blocks, &server.content.skills).unwrap());
+        let y = server.overworld.site(0, 0).height + 30;
+        server.load_area(IVec3::new(-44, y, -44), IVec3::new(44, y, 44));
+        let stone = server.content.blocks.id("base:stone").unwrap();
+        let torch = server.content.blocks.id("base:torch").unwrap();
+        for z in -44..=44 {
+            for x in -44..=44 {
+                server.world.set_block(IVec3::new(x, y - 1, z), stone);
+            }
+        }
+        // Eleven lit cells out of twelve leave narrow dark lanes. A leader in a lane
+        // may be allowed while its group offsets enter the adjacent torchlight.
+        for z in -3..=3 {
+            for x in -3..=3 {
+                server.world.set_block(IVec3::new(x * 12, y, z * 12), torch);
+            }
+        }
+        let (client, connection) = voxmar_protocol::local_pair();
+        let _keep = client;
+        let mut player = crate::player::Player::new(1, connection, Vec3::new(0.5, y as f32, 0.5), 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        server.day = (LATER + 20_000) as f64;
+        let mut monsters = 0;
+        for salt in 0..400 {
+            server.creatures.live.clear();
+            server.tick = 40 + salt * 7;
+            server.spawn_near(1, salt);
+            for creature in server.creatures.live.values() {
+                monsters += 1;
+                assert!(!server.lit_near(creature.body.position.floor().as_ivec3()), "a group member entered torchlight");
+            }
+            assert!(server.creatures.live.len() <= rules.limits.monsters_near);
+        }
+        assert!(monsters > 20, "only {monsters} monsters in dark lanes; the fixture must exercise actual groups");
+    }
+
     /// The nearest place to the origin, spiralling out, whose biome is `biome`.
     fn find_biome(server: &Server, biome: &str) -> Option<(i32, i32)> {
         let biomes = server.overworld.biomes();
@@ -1413,19 +1507,71 @@ mod density_tests {
         server.load_area(cell - IVec3::new(80, 0, 80), cell + IVec3::new(80, 0, 80));
         server.day = (LATER + 6_000) as f64;
         let angle = server.content.creatures.limits().spawn_unseen_angle;
-        let (mut seen, mut behind) = (0, 0);
-        for salt in 0..400u64 {
-            server.creatures.live.clear();
-            server.tick = 40 + salt * 7;
-            server.spawn_near(1, salt);
-            for creature in server.creatures.live.values() {
-                let cell = creature.body.position.floor().as_ivec3();
-                seen += usize::from(server.seen_by_a_player(cell, angle));
-                behind += usize::from(creature.body.position.z > at.z);
+        let mut draws = Vec::new();
+        for _ in 0..2 {
+            server.creatures.next = 1;
+            let (mut seen, mut behind) = (0, 0);
+            let mut draw = Vec::new();
+            for salt in 0..400u64 {
+                server.creatures.live.clear();
+                server.tick = 40 + salt * 7;
+                server.spawn_near(1, salt);
+                for (&id, creature) in &server.creatures.live {
+                    let cell = creature.body.position.floor().as_ivec3();
+                    seen += usize::from(server.seen_by_a_player(cell, angle) || server.body_seen_by_a_player(creature.body.position, creature.body.size, angle));
+                    behind += usize::from(creature.body.position.z > at.z);
+                    draw.push((salt, id, creature.species, creature.seed, creature.body.position.to_array()));
+                }
+                assert!(server.creatures.live.len() <= server.content.creatures.limits().animals_near);
             }
+            assert_eq!(seen, 0, "{seen} creatures appeared in view");
+            assert!(behind >= 20, "only {behind} appeared behind the player");
+            draw.sort_by_key(|(salt, id, ..)| (*salt, *id));
+            draws.push(draw);
         }
-        assert_eq!(seen, 0, "{seen} creatures appeared in view");
-        assert!(behind >= 20, "only {behind} appeared behind the player");
+        assert_eq!(draws[0], draws[1], "the same loaded world, clock and players must draw the same creatures");
+    }
+
+    #[test]
+    fn unseen_spawning_checks_other_players_and_heads_above_walls() {
+        let mut server = crate::test_server();
+        let y = server.overworld.site(0, 0).height + 20;
+        server.load_area(IVec3::new(-16, y, -16), IVec3::new(16, y, 16));
+        let (client, connection) = voxmar_protocol::local_pair();
+        let _keep = client;
+        let mut player = crate::player::Player::new(1, connection, Vec3::new(0.5, y as f32, 0.5), 2, server.tick, server.survival.max_health, &server.config.limits);
+        (player.joined, player.yaw, player.pitch) = (true, 0.0, 0.0);
+        server.players.insert(1, player);
+        let front = IVec3::new(0, y, -12);
+        let back = IVec3::new(0, y, 12);
+        assert!(server.seen_by_a_player(front, 75.0));
+        assert!(!server.seen_by_a_player(back, 75.0));
+        assert!(server.seen_by_a_player(back, 180.0));
+        assert!(!server.seen_by_a_player(front, 0.0), "zero disables the rule");
+        let shambler = server.content.creatures.find("base:shambler").unwrap();
+        let next = server.creatures.next;
+        assert!(server.spawn_unseen(shambler, front.as_vec3() + Vec3::splat(0.5), 7, 75.0).is_none());
+        assert_eq!(server.creatures.next, next, "an unseen rejection consumes no creature id");
+        assert!(server.creatures.live.is_empty());
+        assert!(server.spawn_creature(shambler, front.as_vec3(), 7).is_some(), "explicit summons still work in view");
+
+        let stone = server.content.blocks.id("base:stone").unwrap();
+        let low_wall: Vec<_> = (-3..=3).flat_map(|x| (y..=y + 1).map(move |h| (IVec3::new(x, h, -6), stone))).collect();
+        server.set_blocks(&low_wall);
+        assert!(!server.seen_by_a_player(front, 75.0), "the wall hides the fixed middle point");
+        assert!(server.body_seen_by_a_player(front.as_vec3() + Vec3::new(0.5, 0.0, 0.5), (0.6, 4.0), 75.0), "the head above the wall is still visible");
+        let high_wall: Vec<_> = (-3..=3).flat_map(|x| (y + 2..=y + 5).map(move |h| (IVec3::new(x, h, -6), stone))).collect();
+        server.set_blocks(&high_wall);
+        assert!(!server.body_seen_by_a_player(front.as_vec3() + Vec3::new(0.5, 0.0, 0.5), (0.6, 4.0), 75.0), "a fully hidden body may spawn");
+
+        let (client, connection) = voxmar_protocol::local_pair();
+        let _keep_other = client;
+        let mut other = crate::player::Player::new(2, connection, Vec3::new(0.5, y as f32, 0.5), 2, server.tick, server.survival.max_health, &server.config.limits);
+        (other.joined, other.yaw, other.pitch) = (true, std::f32::consts::PI, 0.0);
+        server.players.insert(2, other);
+        assert!(server.seen_by_a_player(back, 75.0), "the second player can see behind the first");
+        server.players.get_mut(&2).unwrap().joined = false;
+        assert!(!server.seen_by_a_player(back, 75.0), "a player who has not joined has no view");
     }
 
     #[test]
