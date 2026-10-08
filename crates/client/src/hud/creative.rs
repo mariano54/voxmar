@@ -386,7 +386,7 @@ fn lay_out(
 
 /// Typing, tabs, pages, the wheel, and clicks on items.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn read_input(
+fn read_input(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,

@@ -129,7 +129,9 @@ impl Plugin for GatePlugin {
     fn build(&self, app: &mut App) {
         let dir = self.dir.clone();
         app.insert_resource(Gate::new(dir))
+            .init_resource::<UiClicks>()
             .add_systems(PostStartup, render_offscreen)
+            .add_systems(PreUpdate, ui_clicks.after(bevy::ui::UiSystems::Focus))
             .add_systems(Update, crate::capture::target_ui)
             .add_systems(Last, run);
         let mut order = app.world_mut().resource_mut::<MainScheduleOrder>();
@@ -141,6 +143,49 @@ impl Plugin for GatePlugin {
                 time.ms = time.start.take().map_or(0.0, |start| start.elapsed().as_secs_f32() * 1000.0);
             });
     }
+}
+
+/// Pointer input for headless UI steps. Delivered after focus (there is no window
+/// cursor), then consumed by the normal Update systems; the gate never calls a handler.
+#[derive(Resource, Default)]
+struct UiClicks {
+    next: Option<(Entity, MouseButton)>,
+    active: Vec<Entity>,
+    button: Option<MouseButton>,
+}
+
+fn ui_clicks(world: &mut World) {
+    world.resource_scope(|world, mut clicks: Mut<UiClicks>| {
+        if let Some(button) = clicks.button.take() {
+            world.resource_mut::<ButtonInput<MouseButton>>().release(button);
+        }
+        for entity in clicks.active.drain(..) {
+            if let Some(mut cursor) = world.get_mut::<bevy::ui::RelativeCursorPosition>(entity) {
+                *cursor = default();
+            }
+            if let Some(mut interaction) = world.get_mut::<Interaction>(entity) {
+                *interaction = Interaction::None;
+            }
+        }
+        let Some((entity, button)) = clicks.next.take() else { return };
+        world.resource_mut::<ButtonInput<MouseButton>>().press(button);
+        if button == MouseButton::Left
+            && let Some(mut interaction) = world.get_mut::<Interaction>(entity)
+        {
+            *interaction = Interaction::Pressed;
+        }
+        // The pointer is over the cell and its parents, so clicking a search result is
+        // also inside the inventory card rather than an outside click that drops items.
+        let mut over = Some(entity);
+        while let Some(entity) = over {
+            if let Some(mut cursor) = world.get_mut::<bevy::ui::RelativeCursorPosition>(entity) {
+                *cursor = bevy::ui::RelativeCursorPosition { cursor_over: true, normalized: Some(Vec2::ZERO) };
+            }
+            clicks.active.push(entity);
+            over = world.get::<ChildOf>(entity).map(ChildOf::parent);
+        }
+        clicks.button = Some(button);
+    });
 }
 
 /// How long this frame's PostUpdate took (UI layout, transforms, visibility), for the
@@ -2939,8 +2984,7 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     return;
                 }
                 gate.check("recipe lookup: search", Ok(format!("\"pick\" in the inventory's search finds {} items, the stone pickaxe among them", found.len())));
-                // The headless target has no window cursor. Give the visible cell the
-                // pointer, then exercise the same input system as a real left click.
+                // Give the visible search cell the pointer on the next Update.
                 let cell = world.query::<(Entity, &Cell, &InheritedVisibility)>().iter(world)
                     .find(|(_, cell, visible)| visible.get() && found.get(cell.0) == Some(&pickaxe))
                     .map(|(entity, _, _)| entity);
@@ -2948,11 +2992,7 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     fail(world, gate, "recipe lookup: search", "the pickaxe has no visible search cell".into());
                     return;
                 };
-                *world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap() = bevy::ui::RelativeCursorPosition { cursor_over: true, normalized: Some(Vec2::ZERO) };
-                world.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
-                world.run_system_cached(crate::hud::creative::read_input).unwrap();
-                world.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
-                *world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap() = default();
+                world.resource_mut::<UiClicks>().next = Some((cell, MouseButton::Left));
                 gate.advance(now);
             } else if in_phase > 3.0 {
                 fail(world, gate, "recipe lookup: search", format!("\"pick\" found {found:?} (recipe search {recipes_only})"));
@@ -3003,9 +3043,7 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let input = inputs[0];
             let cell = world.query::<(Entity, &ViewerItem, &InheritedVisibility)>().iter(world)
                 .find(|(_, item, visible)| visible.get() && item.0 == input).map(|(entity, _, _)| entity).unwrap();
-            *world.get_mut::<Interaction>(cell).unwrap() = Interaction::Pressed;
-            world.run_system_cached(crate::hud::recipes::click).unwrap();
-            *world.get_mut::<Interaction>(cell).unwrap() = Interaction::None;
+            world.resource_mut::<UiClicks>().next = Some((cell, MouseButton::Left));
             gate.counted = input.0 as u32;
             gate.advance(now);
         }
@@ -3021,9 +3059,7 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             let back = world.query::<(Entity, &ViewerButton, &InheritedVisibility)>().iter(world)
                 .find(|(_, button, visible)| visible.get() && **button == ViewerButton::Back).map(|(entity, _, _)| entity).unwrap();
-            *world.get_mut::<Interaction>(back).unwrap() = Interaction::Pressed;
-            world.run_system_cached(crate::hud::recipes::click).unwrap();
-            *world.get_mut::<Interaction>(back).unwrap() = Interaction::None;
+            world.resource_mut::<UiClicks>().next = Some((back, MouseButton::Left));
             gate.advance(now);
         }
         5 => {
@@ -3040,11 +3076,7 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let cell = world.query::<(Entity, &ViewerItem, &InheritedVisibility)>().iter(world)
                 .find(|(_, item, visible)| visible.get() && item.0.0 as u32 == gate.counted).map(|(entity, _, _)| entity);
             let Some(cell) = cell else { return };
-            *world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap() = bevy::ui::RelativeCursorPosition { cursor_over: true, normalized: Some(Vec2::ZERO) };
-            world.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
-            world.run_system_cached(crate::hud::recipes::click).unwrap();
-            world.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Right);
-            *world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap() = default();
+            world.resource_mut::<UiClicks>().next = Some((cell, MouseButton::Right));
             gate.advance(now);
         }
         _ => {

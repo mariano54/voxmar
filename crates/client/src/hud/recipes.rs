@@ -199,7 +199,7 @@ fn look_up(
     ui.recipes_open = !viewer.trail.is_empty();
 }
 
-pub(crate) fn click(
+fn click(
     buttons: Query<(&ViewerButton, &Interaction, &InheritedVisibility), Changed<Interaction>>,
     items: Query<(&ViewerItem, &Interaction, &InheritedVisibility), Changed<Interaction>>,
     mouse: Res<ButtonInput<MouseButton>>,
