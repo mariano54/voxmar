@@ -258,6 +258,9 @@ enum Step {
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
     Merged,
+    /// A player saved under one spelling rejoins with another case and keeps their
+    /// canonical identity in the server's replicated player list.
+    Identity,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
     /// An effect that comes on pops up with its name, and the first look at the inventory
@@ -312,6 +315,8 @@ struct Gate {
     /// Where the player stands on the test ground.
     feet: IVec3,
     observer: Option<Observer>,
+    identity_peer: Option<Observer>,
+    identity_id: Option<PlayerId>,
     /// Shots asked for, and those that arrived.
     requested: Vec<&'static str>,
     shots: Arc<Mutex<FxHashMap<&'static str, Image>>>,
@@ -418,7 +423,7 @@ struct Gate {
     ticks_changed: f32,
     server_stopped: bool,
     /// The step last frame, and the failures by then: a step that fails lets go of every key
-    /// and button (a step that passes may hand one on, as digging hands walking on).
+    /// and button (a step that passes may hand one on).
     last_step: Step,
     failures_then: usize,
     /// The player's health last frame, and whether a death was reported: the session must
@@ -455,6 +460,8 @@ impl Gate {
             settled: 0,
             feet: IVec3::ZERO,
             observer: None,
+            identity_peer: None,
+            identity_id: None,
             requested: Vec::new(),
             shots: default(),
             placed: Vec::new(),
@@ -616,6 +623,7 @@ struct Observer {
     moved: bool,
     /// Where the server says the other players are.
     others: FxHashMap<PlayerId, Vec3>,
+    names: FxHashMap<PlayerId, String>,
     /// The last teleport applied, which its inputs echo.
     teleports: u32,
     /// What the server answered the observer's commands.
@@ -624,11 +632,15 @@ struct Observer {
 
 impl Observer {
     fn join(net: &Net, content: u64) -> Option<Self> {
+        Self::join_named(net, content, "gate-observer")
+    }
+
+    fn join_named(net: &Net, content: u64, name: &str) -> Option<Self> {
         let (connection, server_side) = local_pair();
         net.server()?.connections().send(server_side).ok()?;
-        connection.send(ClientMessage::Hello { name: "gate-observer".into(), protocol: PROTOCOL_VERSION, content, admin_token: None });
+        connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content, admin_token: None });
         connection.send(ClientMessage::Settings { view_distance: 2, fly_speed: 1.0 });
-        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), teleports: 0, replies: Vec::new() })
+        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), names: default(), teleports: 0, replies: Vec::new() })
     }
 
     /// Applies what the server sent, and keeps the observer floating where it was put.
@@ -658,6 +670,7 @@ impl Observer {
                     }
                     ServerMessage::Chat { text, .. } => self.replies.push(text),
                     ServerMessage::Players { players } => {
+                        self.names = players.iter().map(|p| (p.id, p.name.clone())).collect();
                         self.others = players.iter().filter(|p| Some(p.id) != self.id).map(|p| (p.id, p.position)).collect();
                     }
                     _ => {}
@@ -1025,13 +1038,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             smooth(gate, "dig", Step::Dig, None);
             gate.count_before = dropped_count(world, gate);
             look(world, 0.0, 0.0);
-            key(world, KeyCode::KeyW, true);
             gate.next(Step::Collect, now);
         }
         Step::Collect => {
-            if since > 1.0 {
-                key(world, KeyCode::KeyW, false);
-            }
+            key(world, KeyCode::KeyW, since <= 1.0);
             let wanted = gate.count_before + gate.dug.len() as u32;
             let count = dropped_count(world, gate);
             // Breaking pops items out with a random kick, and one from the top block can
@@ -1094,6 +1104,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
+        Step::Identity => identity(world, gate, now),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
@@ -2583,18 +2594,24 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             let language = if i % 2 == 0 { "en" } else { "ja" };
             let (name, position, target, pick) = match i / 2 {
                 0 => (if language == "en" { "hv-hall-en" } else { "hv-hall-ja" }, rel(-5, 5, -3), core, "base:bone_lockpick"),
-                1 => (if language == "en" { "hv-array-en" } else { "hv-array-ja" }, rel(-5, 4, 1), array, "base:copper_lockpick"),
+                1 => (if language == "en" { "hv-array-en" } else { "hv-array-ja" }, rel(-3, 1, 2), array, "base:copper_lockpick"),
                 2 => (if language == "en" { "hv-smelter-en" } else { "hv-smelter-ja" }, rel(-5, 5, -1), smelter, "base:bronze_lockpick"),
                 3 => (if language == "en" { "hv-power-en" } else { "hv-power-ja" }, rel(-5, 2, -2), rel(-1, 2, 1), "base:iron_lockpick"),
                 _ => (if language == "en" { "treasure-row-en" } else { "treasure-row-ja" }, rel(-1, 2, 12), chest, "base:copper_lockpick"),
             };
             if gate.phase % 2 == 0 {
+                // The full-cube cable covers the controller's only outward face. After
+                // proving the powered job, uncover it for the paired close-ups, then
+                // restore the connection before the remaining factory shots.
+                if gate.phase == 12 { world.resource::<Net>().command(&format!("setblock {} air", at(rel(-1, 2, 3)))); }
+                if gate.phase == 16 { world.resource::<Net>().command(&format!("setblock {} hv_cable", at(rel(-1, 2, 3)))); }
                 set_language(world, language);
                 world.resource_mut::<Settings>().language = language.into();
                 world.resource::<Net>().command(&format!("tp {}", at(position)));
                 empty_hand(world);
                 gate.advance(now);
-            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0 {
+            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0
+                && world.resource::<ClientWorld>().block(rel(-1, 2, 3)) == content.blocks.id(if i / 2 == 1 { "core:air" } else { "base:hv_cable" }) {
                 aim(world, target);
                 select(world, pick);
                 gate.settled += 1;
@@ -3198,7 +3215,7 @@ fn merged(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let blocks = world.resource::<ClientWorld>().registry.clone();
     let (Some(oregano), Some(herbs)) = (blocks.id("base:oregano"), blocks.id("base:kitchen_herbs")) else {
         gate.check("merged", Err("no oregano or kitchen herbs in the content".into()));
-        gate.next(Step::Effects, now);
+        gate.next(Step::Identity, now);
         return;
     };
     match gate.phase {
@@ -3226,8 +3243,62 @@ fn merged(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         }
         _ => {
             world.resource::<Net>().command("clear kitchen_herbs");
-            gate.next(Step::Effects, now);
+            gate.next(Step::Identity, now);
         }
+    }
+}
+
+fn identity(world: &mut World, gate: &mut Gate, now: f32) {
+    let net = world.resource::<Net>();
+    let content = world.resource::<Launch>().content.fingerprint();
+    let failed = if let Some(peer) = &mut gate.identity_peer { peer.pump().err() } else { None };
+    if let Some(reason) = failed {
+        gate.check("identity", Err(reason));
+        gate.identity_peer = None;
+        gate.next(Step::Effects, now);
+        return;
+    }
+    match gate.phase {
+        0 => {
+            gate.identity_peer = Observer::join_named(net, content, "Gate-Keeper");
+            gate.advance(now);
+        }
+        1 => {
+            if let Some(id) = gate.identity_peer.as_ref().and_then(|p| p.id)
+                && gate.observer.as_ref().is_some_and(|p| p.names.get(&id).is_some_and(|n| n == "Gate-Keeper"))
+            {
+                gate.identity_id = Some(id);
+                // Closing the channel uses the server's normal save-and-leave path.
+                gate.identity_peer = None;
+                gate.advance(now);
+            }
+        }
+        2 => {
+            // A player disappears only after leave saved their state and removed them.
+            if gate.identity_id.is_some_and(|id| gate.observer.as_ref().is_some_and(|p| !p.names.contains_key(&id))) {
+                gate.identity_peer = Observer::join_named(net, content, "GATE-KEEPER");
+                gate.advance(now);
+            }
+        }
+        _ => {
+            if let Some(id) = gate.identity_peer.as_ref().and_then(|p| p.id)
+                && let Some(name) = gate.observer.as_ref().and_then(|p| p.names.get(&id))
+            {
+                gate.check("identity", if name == "Gate-Keeper" {
+                    Ok("GATE-KEEPER rejoined with the saved Gate-Keeper server identity".into())
+                } else {
+                    Err(format!("GATE-KEEPER rejoined as {name}, losing the saved identity"))
+                });
+                gate.identity_peer = None;
+                gate.next(Step::Effects, now);
+                return;
+            }
+        }
+    }
+    if gate.server_in_phase() > UNANSWERED {
+        gate.check("identity", Err(format!("saved-name reconnect did not complete phase {}", gate.phase)));
+        gate.identity_peer = None;
+        gate.next(Step::Effects, now);
     }
 }
 
@@ -4618,6 +4689,11 @@ struct FeelRun {
     bear: Option<u32>,
     died: bool,
     calm: bool,
+    /// The first telegraph faces the target on the server; shots keep the same camera
+    /// before provoking it and during its wind-up, once the drawn body has turned.
+    facing_checked: bool,
+    facing_camera: Option<(f32, f32)>,
+    facing_frames: u8,
 }
 
 /// The bear in survival: provoked with a click every few server seconds until it winds up,
@@ -4705,8 +4781,18 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
-            key(world, KeyCode::KeyW, distance > 2.0 && gate.feel.seen.is_none());
-            aim_at(world, view.position + Vec3::Y * 0.6);
+            let fixed_camera = gate.feel.facing_camera.filter(|_| !gate.shots.lock().expect("gate shots").contains_key("windup-facing"));
+            key(world, KeyCode::KeyW, fixed_camera.is_none() && distance > 2.0 && gate.feel.seen.is_none());
+            if let Some((yaw, pitch)) = fixed_camera {
+                let mut player = world.resource_mut::<LocalPlayer>();
+                player.yaw = yaw;
+                player.pitch = pitch;
+                if gate.feel.facing_frames < 3 {
+                    gate.feel.facing_frames += 1;
+                }
+            } else {
+                aim_at(world, view.position + Vec3::Y * 0.6);
+            }
             // A wind-up is timed from its pose coming on: one still shown from the blow just
             // judged (its end not yet heard) is not a new one.
             if view.pose != Pose::Attacking {
@@ -4714,6 +4800,23 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if gate.feel.calm && gate.feel.seen.is_none() && !gate.feel.answered {
                 gate.feel.seen = Some(Instant::now());
                 gate.feel.calm = false;
+                if !gate.feel.facing_checked {
+                    let target = gate.observer.as_ref().and_then(|o| o.others.values().next().copied()).unwrap_or(world.resource::<LocalPlayer>().position);
+                    let to = (target - view.position).with_y(0.0).normalize_or_zero();
+                    let forward = Vec3::new(-view.yaw.sin(), 0.0, -view.yaw.cos());
+                    let cosine = forward.dot(to);
+                    let result = if cosine > 0.8 { Ok(format!("the first attacking pose faces its target (cosine {cosine:.3})")) } else { Err(format!("the attacking pose faced away from its target (cosine {cosine:.3}, yaw {})", view.yaw)) };
+                    gate.check("wind-up facing", result);
+                    gate.feel.facing_checked = true;
+                }
+            }
+            // The first update checks the server heading; give the drawn body's smooth
+            // turn time to show it, while it is still winding up. Keep the camera held
+            // until this later image has arrived.
+            if gate.feel.facing_checked && fixed_camera.is_some() && view.pose == Pose::Attacking
+                && gate.feel.seen.is_some_and(|seen| seen.elapsed().as_secs_f32() >= windup * 0.35)
+            {
+                gate.shot(world, "windup-facing");
             }
             if let Some(seen) = gate.feel.seen
                 && !gate.feel.answered
@@ -4733,6 +4836,21 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             // Provoked at most every few server seconds while it does not fight back.
             if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 {
+                if !gate.feel.facing_checked {
+                    if gate.feel.facing_camera.is_none() {
+                        let player = world.resource::<LocalPlayer>();
+                        gate.feel.facing_camera = Some((player.yaw, player.pitch));
+                        key(world, KeyCode::KeyW, false);
+                    }
+                    // The gate runs in Last: the renderer needs later frames to see
+                    // this camera direction before the first image is requested.
+                    if gate.feel.facing_frames < 3 {
+                        return;
+                    }
+                    if gate.shot(world, "windup-before").is_none() {
+                        return;
+                    }
+                }
                 gate.feel.poked = gate.server_now;
                 mouse(world, MouseButton::Left, true);
                 gate.feel.clicked = true;
