@@ -70,6 +70,15 @@ pub struct Executor {
     proposals: u64,
 }
 
+impl Server {
+    /// Whether `player` is part way through a timed action that eats (a bite of food).
+    pub(crate) fn eating(&self, player: PlayerId) -> bool {
+        self.executor.timed.iter().any(|t| {
+            t.agent == player && !t.finished && self.content.actions.get(t.action).is_some_and(|def| def.effects.contains(&Effect::EatHeld))
+        })
+    }
+}
+
 /// The validation view of the world from `agent`'s point of view.
 pub(crate) fn context(server: &Server, agent: PlayerId) -> impl ActionContext + '_ {
     Context { server, agent }
@@ -143,6 +152,10 @@ impl ActionContext for Context<'_> {
         Some(&self.server.content.tools)
     }
 
+    fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
+        Some(&self.server.content.machines)
+    }
+
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
     }
@@ -152,7 +165,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
-        self.server.creatures.reach_box(id)
+        self.server.creatures.reach_box(id, self.server.content.combat.feel.reach_lag)
     }
 
     fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
@@ -291,6 +304,7 @@ impl Server {
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
                 (Effect::Pick, ActionTarget::Block { block, .. }) => self.pick(agent, block),
                 (Effect::Strike, ActionTarget::Creature(id)) => self.player_strikes(agent, id),
+                (Effect::Dodge, _) => self.dodge(agent),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
@@ -316,6 +330,7 @@ impl Server {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);
+                    self.placed_machine(agent, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     let player = self.players.get_mut(&agent).unwrap();
@@ -363,6 +378,7 @@ impl Server {
                     }
                 }
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
+                (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => {
                     let player = self.players.get_mut(&agent).unwrap();
                     player.bed = Some(block.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
