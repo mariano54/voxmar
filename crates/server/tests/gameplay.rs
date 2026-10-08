@@ -1763,8 +1763,24 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
         client.ok("/skill attack 1");
         let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_none()).expect("an empty hand");
         let mut outcomes = Vec::new();
-        for _ in 0..2 {
+        let mut askew = 0;
+        while outcomes.len() < 2 {
             let before = provoke_until_it_winds_up(&mut client, id, slot, name);
+            // Only a wind-up begun facing us: one begun facing away (a creature struck from
+            // behind or the side) turns at its turn rate, and walks at a third of its pace
+            // while it does, so stepping back from it is a different matter. (Its view goes
+            // out the tick its pose comes on, with the way it faces then.) Such a blow is
+            // let fall, and the creature provoked again.
+            let view = client.creatures[&id];
+            let to_us = (client.position - view.position).with_y(0.0).normalize_or_zero();
+            let facing = Vec3::new(-view.yaw.sin(), 0.0, -view.yaw.cos());
+            if to_us.dot(facing) < 45f32.to_radians().cos() {
+                askew += 1;
+                assert!(askew <= 6, "the {name} wound up facing away {askew} times");
+                client.pump_until(|c| c.hurt.len() > before);
+                client.wait_server(1);
+                continue;
+            }
             // Straight back from it, facing it, until the blow lands: a walk's worth each
             // server tick, as the creature moves by them (a server running behind moves
             // both slower). Ticks are read off the server as it runs: the `Time` it tells
@@ -1790,17 +1806,22 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
 
 /// Waits for the bear `id` to strike while the guard is up and the player looks `off`
 /// radians away from it, holding `slot`; returns what came of the blow.
+///
+/// The bear, once struck, may wind up at once, and a blow from that wind-up can land before
+/// the guard is raised or heard (on a busy machine it did, 4 runs in 8: `Hit` with the
+/// guard down). So the guard goes up as soon as a blow of ours is heard, and only a blow
+/// whose wind-up began after the server had the guard up counts: one after the bear is
+/// seen out of its attack pose once the server has handled the raise. (A blow's `Hurt`
+/// comes before the view of its recovery, so any blow from an earlier wind-up has come by
+/// then.) Raised a whole wind-up before the blow, the guard blocks it, never perfectly.
 fn guarded_blow(client: &mut Client, id: u32, slot: usize, off: f32) -> voxmar_engine::combat::Defended {
-    let before = client.hurt.len();
+    use voxmar_engine::creature::brain::Pose;
     let blows = client.kinds.len();
-    // Struck once so it fights back (again every one and a half server seconds until a blow
-    // of ours is heard); then the guard goes up while it is not winding up.
-    let mut struck: Option<u64> = None;
-    let mut guarded = false;
     client.pump_until(|c| c.server_tick > 0);
     let started = client.server_tick;
-    while client.hurt.len() == before {
-        assert!(client.server_tick < started + 30 * TICKS_PER_SECOND as u64, "no blow came (guard up: {guarded}, our blows {})", client.kinds.len() - blows);
+    let limit = started + 60 * TICKS_PER_SECOND as u64;
+    // Beside it, looking `off` away from it.
+    let face = |client: &mut Client| {
         assert!(client.creatures.contains_key(&id), "the bear went");
         let at = client.creatures[&id].position;
         if client.position.with_y(0.0).distance(at.with_y(0.0)) > 1.6 || (client.position.y - at.y).abs() > 0.5 {
@@ -1808,22 +1829,40 @@ fn guarded_blow(client: &mut Client, id: u32, slot: usize, off: f32) -> voxmar_e
         }
         let yaw = yaw_toward(client.position, at) + off;
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-        if client.kinds.len() == blows && struck.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64 / 2) {
+    };
+    // Struck so it fights back: again every one and a half server seconds until a blow of
+    // ours is heard. Each loop is one round trip: the server has handled all before it.
+    let mut struck: Option<u64> = None;
+    while client.kinds.len() == blows {
+        assert!(client.server_tick < limit, "none of our blows was heard");
+        face(client);
+        if struck.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64 / 2) {
             client.propose("core:attack", ActionTarget::Creature(id));
             struck = Some(client.server_tick);
         }
-        let winding = client.creatures[&id].pose == voxmar_engine::creature::brain::Pose::Attacking;
-        if !guarded && client.kinds.len() > blows && !winding {
-            let _ = client.connection.send(ClientMessage::Guard { up: true });
-            guarded = true;
-        }
-        // One round trip: the server has handled all of the above, a tick at most.
         client.settle();
     }
-    let _ = client.connection.send(ClientMessage::Guard { up: false });
-    let outcome = client.hurt[before].1;
-    client.wait_server(1);
-    outcome
+    let _ = client.connection.send(ClientMessage::Guard { up: true });
+    client.settle();
+    // The blows before the first wind-up begun with the guard up.
+    let mut before = None;
+    loop {
+        assert!(client.server_tick < limit, "no blow came with the guard up");
+        face(client);
+        let winding = client.creatures.get(&id).is_some_and(|v| v.pose == Pose::Attacking);
+        if before.is_none() && !winding {
+            before = Some(client.hurt.len());
+        }
+        if let Some(before) = before
+            && client.hurt.len() > before
+        {
+            let _ = client.connection.send(ClientMessage::Guard { up: false });
+            let outcome = client.hurt[before].1;
+            client.wait_server(1);
+            return outcome;
+        }
+        client.settle();
+    }
 }
 
 #[test]
