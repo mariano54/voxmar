@@ -2831,6 +2831,37 @@ fn site_water_search_stops_after_the_used_prefix() {
 
 /// Planning budgets are measured in release with thread CPU time, after the surrounding
 /// land is known. Report cold region discovery separately in settlement_preview.
+/// Repeat one known expensive whole plan for an external CPU sampler. This diagnostic
+/// does not supply acceptance timings; culture_planning_budget retains all 20 seeds.
+#[test]
+#[ignore]
+fn culture_planning_hotspots() {
+    assert!(!cfg!(debug_assertions), "run this diagnostic with --release");
+    crate::perf::prefer_fast_cores();
+    crate::parallel::set_enabled(false);
+    struct Helpers;
+    impl Drop for Helpers {
+        fn drop(&mut self) { crate::parallel::set_enabled(true); }
+    }
+    let _helpers = Helpers;
+    let world = base_world(14);
+    let spawn = world.spawn_point();
+    let centre = IVec2::new(spawn.x, spawn.z);
+    let found = world.settlements.near(&world, centre, 2048);
+    let plan = found.iter().filter_map(|s| s.0.as_ref()).find(|p| p.size == "village").expect("seed 14 village");
+    let cell = world.settlements.cell_of(plan.centre.x, plan.centre.y);
+    let spawn_at = world.settlements.spawn.get().and_then(|s| s.square).filter(|s| s.1 == cell).map(|s| s.0);
+    eprintln!("planning sampler ready: pid {}, centre {}", std::process::id(), plan.centre);
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    for _ in 0..512 {
+        let again = world.settlements.plan(&world, world.settlements.fixed.as_ref().unwrap(), cell, spawn_at).unwrap();
+        assert_eq!((again.centre, &again.name, &again.culture), (plan.centre, &plan.name, &plan.culture));
+        std::hint::black_box(again);
+    }
+}
+
+/// Planning budgets are measured in release with thread CPU time, after the surrounding
+/// land is known. Report cold region discovery separately in settlement_preview.
 #[test]
 #[ignore]
 fn culture_planning_budget() {
