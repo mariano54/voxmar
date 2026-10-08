@@ -130,6 +130,8 @@ building strings, room cells, residents and their species strings, lane polyline
 the voxel table. The ignored release
 `culture_planning_budget` checks warm planning over 20 seeds, requiring both hamlets and
 villages, at twice the 3/6 ms CPU budgets and at most 2 MiB of retained plan storage.
+Final voxel sorting needs no stable merge storage: positions are unique within each
+canvas map, and the ground-relative flag separates their keys, so no keys tie.
 Within one planning call, terrain samples share relief corners and channel groups for
 their exact region bounds, including the neighbour halo used to seal water. Layout
 retries reuse those original land samples. Rectangle checks prefetch only missing

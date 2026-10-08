@@ -62,7 +62,9 @@ impl Canvas {
             .collect();
         // Clearing goes first, then from the bottom up, so what is built is never cleared
         // and posts fill down onto what is already there.
-        all.sort_by_key(|v| (v.ground, !matches!(v.put, Put::Clear), v.pos.y, v.pos.x, v.pos.z));
+        // Each map has one voxel per position, and `ground` distinguishes the maps,
+        // so no keys tie. An unstable sort gives the same order without merge storage.
+        all.sort_unstable_by_key(|v| (v.ground, !matches!(v.put, Put::Clear), v.pos.y, v.pos.x, v.pos.z));
         for v in all {
             columns.entry(IVec2::new(v.pos.x, v.pos.z).div_euclid(IVec2::splat(voxmar_engine::coords::CHUNK_SIZE))).or_default().push(v);
         }
@@ -172,4 +174,50 @@ impl Palette {
 /// A hash's top bits as a unit value.
 pub fn unit(h: u64) -> f32 {
     (h >> 40) as f32 / (1u64 << 24) as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn column_sort_keeps_original_order_and_last_writes() {
+        let positions: Vec<_> = (-19..19).flat_map(|z| (-23..23).flat_map(move |x|
+            (-2..5).map(move |y| IVec3::new(x, y, z)))).collect();
+        let put = |p: IVec3| match (p.x + p.y + p.z).rem_euclid(4) {
+            0 => Put::Clear,
+            1 => Put::Set(BlockId(1)),
+            2 => Put::Soft(BlockId(2)),
+            _ => Put::Down(BlockId(3)),
+        };
+        let mut previous = None;
+        for reverse in [false, true] {
+            let mut canvas = Canvas::default();
+            for i in 0..positions.len() {
+                let p = positions[if reverse { positions.len() - 1 - i } else { i }];
+                canvas.put(p, Put::Clear);
+                canvas.put(p, put(p));
+                canvas.on_ground(p.x, p.z, p.y, Put::Set(BlockId(4)));
+                canvas.on_ground(p.x, p.z, p.y, put(-p));
+            }
+            // The original full stable sort, independent of the new sorter; overlapping
+            // positions in the two maps and all put forms must survive in exact order.
+            let mut all: Vec<_> = canvas.absolute.iter().map(|(&pos, &put)| Voxel { pos, ground: false, put })
+                .chain(canvas.grounded.iter().map(|(&pos, &put)| Voxel { pos, ground: true, put })).collect();
+            let key = |v: &Voxel| (v.ground, !matches!(v.put, Put::Clear), v.pos.y, v.pos.x, v.pos.z);
+            all.sort_by_key(key);
+            assert!(all.windows(2).all(|pair| key(&pair[0]) < key(&pair[1])), "every key must be distinct");
+            let mut original: FxHashMap<IVec2, Vec<Voxel>> = FxHashMap::default();
+            for v in all {
+                let column = IVec2::new(v.pos.x, v.pos.z).div_euclid(IVec2::splat(voxmar_engine::coords::CHUNK_SIZE));
+                original.entry(column).or_default().push(v);
+            }
+            let actual = canvas.into_columns();
+            assert_eq!(actual, original);
+            assert!(actual.keys().any(|p| p.x < 0) && actual.keys().any(|p| p.x >= 0));
+            assert_eq!(actual.values().map(Vec::len).sum::<usize>(), positions.len() * 2);
+            if let Some(before) = &previous { assert_eq!(&actual, before, "insertion order must not affect painting"); }
+            previous = Some(actual);
+        }
+    }
 }
