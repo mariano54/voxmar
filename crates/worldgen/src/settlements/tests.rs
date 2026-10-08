@@ -2488,6 +2488,55 @@ fn culture_plan_weight_counts_spare_allocations() {
     assert!(slot.bytes() >= before + 4096 + 1024 * std::mem::size_of::<IVec2>() + 1024 * std::mem::size_of::<Vec2>());
 }
 
+/// Creeks missed by the coarse grid require a closer search, but water-positive sites
+/// beyond the examined prefix must not cost more grids. Dry candidates still get the
+/// full search allowance: stop after qualifying sites, not before filtering them.
+#[test]
+fn site_water_search_stops_after_the_used_prefix() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use crate::geology::GeoSample;
+    use crate::trails::Land;
+    struct Creeks {
+        step: i32,
+        creek: i32,
+        wet: bool,
+        close: AtomicUsize,
+    }
+    impl Land for Creeks {
+        fn sample(&self, x: i32, _z: i32) -> GeoSample {
+            let wet = self.wet && x.rem_euclid(self.step) == self.creek;
+            GeoSample { height: if wet { 139 } else { 140 }, water: 140, mountain: 0.0, river: 0.0,
+                top: 8, body: crate::Body::Creek, current: None, cavity: None, crag: Default::default(),
+                trail: None, form: Default::default() }
+        }
+        fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
+            if step == self.creek { self.close.fetch_add(1, Ordering::Relaxed); }
+            (0..size * size).map(|i| self.sample(origin.x + i % size * step, origin.y + i / size * step)).collect()
+        }
+    }
+    let world = base_world(1);
+    let mut def = world.settlements.def.clone();
+    def.avoid.clear();
+    def.site.temperature = (-1000.0, 1000.0);
+    def.site.mild = (-1000.0, 1000.0);
+    def.site.levels = (7, 1.0);
+    def.site.caves = 0;
+    for spawn in [None, Some(IVec2::splat(def.grid.spacing / 2))] {
+        let tries = def.site.tries * if spawn.is_some() { 8 } else { 1 };
+        for wet in [true, false] {
+            let land = Creeks { step: def.site.step, creek: def.site.creek, wet, close: AtomicUsize::new(0) };
+            let ctx = super::plan::Ctx { world: &world, land: &land, def: &def, resolved: &world.settlements.resolved,
+                fixed: world.settlements.fixed.as_ref().unwrap(), seed: world.settlements.seed,
+                spawn, promised: &[], cells: &world.settlements.cells };
+            let found = super::plan::site(&ctx, IVec2::ZERO, spawn);
+            assert_eq!(!found.is_empty(), wet, "spawn {spawn:?}, wet {wet}");
+            assert!(found.iter().all(|s| s.1), "every selected site has fresh water");
+            assert_eq!(land.close.load(Ordering::Relaxed), tries * if wet { 1 } else { def.site.look },
+                "spawn {spawn:?}, wet {wet}: unused candidates were probed or dry ones skipped");
+        }
+    }
+}
+
 /// Planning budgets are measured in release with thread CPU time, after the surrounding
 /// land is known. Report cold region discovery separately in settlement_preview.
 #[test]

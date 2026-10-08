@@ -342,6 +342,9 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
                 };
                 near.then_some((score, at, true))
             })
+            // Only this prefix is examined below. Do not probe water for sites the
+            // planner cannot use; those grids are part of its actual planning cost.
+            .take(tries)
             .collect();
     }
     let mut found = Vec::new();
