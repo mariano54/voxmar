@@ -753,7 +753,6 @@ impl CulturesDef {
             }
             Ok(())
         };
-        let woods: BTreeSet<&str> = def.styles.iter().flat_map(|s| s.woods.iter().map(|(w, _)| w.as_str())).collect();
         let mut names = BTreeSet::new();
         for f in &self.families {
             if !names.insert(f.name.as_str()) {
@@ -786,10 +785,14 @@ impl CulturesDef {
                     if !(0.0..=16.0).contains(w) || *w == 0.0 {
                         return fail(format!("family `{}`: a palette weight of nothing or less", f.name));
                     }
-                    for wood in &woods {
-                        let one = fill(name, wood, wood);
-                        if registry.id(&one).is_none() {
-                            return fail(format!("family `{}`'s palette names `{one}`, which is no block", f.name));
+                    for style in &def.styles {
+                        for (wood, _) in &style.woods {
+                            for (trim, _) in &style.woods {
+                                let one = fill(name, wood, trim);
+                                if registry.id(&one).is_none() {
+                                    return fail(format!("family `{}`'s palette names `{one}`, which is no block", f.name));
+                                }
+                            }
                         }
                     }
                 }

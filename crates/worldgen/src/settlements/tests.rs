@@ -2351,3 +2351,37 @@ fn culture_quirks_are_applied_before_style_selection() {
     let quirky = Overworld::with_content(7, registry, &content);
     assert!(quirky.settlements_near(IVec2::ZERO, 2048).is_empty(), "styles were picked before their zero quirk weights applied");
 }
+
+/// A palette must resolve mixed wood/trim pairs, even when diagonal pairs exist.
+#[test]
+fn culture_palette_checks_every_wood_and_trim_combination() {
+    let world = base_world(1);
+    let mut def = world.settlements.def.clone();
+    let mut blocks = BlockRegistry::parse("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap();
+    let template = blocks.iter().find(|b| b.name == "base:oak_planks").unwrap().clone();
+    for style in &mut def.styles {
+        style.woods.truncate(1);
+    }
+    def.styles[0].woods = vec![("a".into(), 1.0)];
+    let woods: std::collections::BTreeSet<_> = def.styles.iter().flat_map(|s| s.woods.iter().map(|w| w.0.clone())).chain(["b".into()]).collect();
+    for wood in woods {
+        let mut block = template.clone();
+        block.name = format!("base:{wood}_{wood}_planks");
+        blocks.push(block);
+    }
+    let registry = BlockRegistry::new(blocks).unwrap();
+    for family in &mut def.cultures.families {
+        for material in [&mut family.palette.walls, &mut family.palette.trim, &mut family.palette.roof] {
+            for (name, _) in &mut material.0 {
+                if name.contains('{') {
+                    *name = "base:oak_planks".into();
+                }
+            }
+        }
+    }
+    def.cultures.families[0].palette.walls.0[0].0 = "base:{wood}_{trim}_planks".into();
+    def.cultures.check(&def, &registry).unwrap();
+    def.styles[0].woods.push(("b".into(), 1.0));
+    let error = def.cultures.check(&def, &registry).unwrap_err();
+    assert!(error.0.contains("base:a_b_planks"), "{error}");
+}
