@@ -1,6 +1,9 @@
 // The land: the large noise fields every position's parameters come from, and the fields
 // derived from them through nested splines, ending in `surface`, the height of the land
-// (see crates/worldgen/src/router.rs and docs/terrain-foundation.md).
+// (see crates/worldgen/src/router.rs and docs/terrain-foundation.md). A later package's
+// land.ron names only what it changes: a number, or a warp, noise or field by its name
+// (replaced where it stands, or added after the rest), laid over this one; the load log
+// says what it replaced.
 //
 // The structure and most knot values are adapted from Tectonic 3.0.25 by Apollo (MIT; see
 // THIRD_PARTY_NOTICES.md): its continents, erosion and ridges fields, its terrain splines
