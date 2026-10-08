@@ -3788,7 +3788,7 @@ const HURT_SHOWN: [(u16, voxmar_engine::combat::Defended); 7] = {
 /// The splats drawn now, by their words and colour (without its fade).
 fn splats_drawn(world: &mut World) -> Vec<(String, Color)> {
     world
-        .query::<(&crate::hud::combat::HitSplat, &Text, &TextColor, &InheritedVisibility)>()
+        .query::<(&crate::hud::combat::SplatWords, &Text, &TextColor, &InheritedVisibility)>()
         .iter(world)
         .filter(|(.., shown)| shown.get())
         .map(|(_, text, color, _)| (text.0.clone(), color.0.with_alpha(1.0)))

@@ -4,8 +4,8 @@
 //! hitsplats, the number each blow did rising and fading over the body of the creature it
 //! struck (following it as it falls, so the killing blow shows too), or above the hotbar
 //! for those that came at the player, coloured by what kind of blow it was or what came of
-//! it (a miss, a block, a perfect block, a dodge), stacked newest lowest so quick blows
-//! never cover each other. A blow that hurts the player also flashes what the health bar
+//! it (a miss, a block, a perfect block, a dodge), ringed by a dark pixel so they read over
+//! fur and grass, stacked newest lowest so quick blows never cover each other. A blow that hurts the player also flashes what the health bar
 //! lost. All of it follows the design wiki's combat feel (the meter, pips and hitsplats;
 //! damage numbers can be switched off, and the guard put on a toggle, in the settings).
 //!
@@ -28,7 +28,7 @@ use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, font_size};
-use crate::ui::widgets::{Meter, SHADOW, TRAIL, UiFont, shadowed};
+use crate::ui::widgets::{Meter, TRAIL, UiFont, text};
 
 pub struct CombatHudPlugin;
 
@@ -306,6 +306,18 @@ pub struct HitSplat {
     over_fallen: u32,
 }
 
+/// A splat's words, in its kind's colour (whole, before it fades).
+#[derive(Component)]
+pub struct SplatWords(pub Color);
+/// One of the dark copies ringing a splat's words, so they read over fur and grass alike
+/// (as stack counts are ringed, `hud::spawn_count`).
+#[derive(Component)]
+struct SplatRing;
+
+/// Where the ring's copies stand from the words, in font pixels: one each way, and the
+/// corner below right.
+const RING: [(f32, f32); 5] = [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (1.0, 1.0)];
+
 /// What the splats have drawn so far: for the gate to check against what the server told.
 #[derive(Resource, Default)]
 pub struct SplatsShown {
@@ -469,9 +481,9 @@ fn splats(
     settings: Res<Settings>,
     mut shown: ResMut<SplatsShown>,
     mut scratch: Local<Scratch>,
-    camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    layer: Query<(Entity, &ComputedNode), With<SplatLayer>>,
-    mut marks: Query<(Entity, &mut HitSplat, &ComputedNode, &mut Node, &mut TextColor, &mut TextShadow, &mut Visibility)>,
+    (camera, layer): (Query<(&Camera, &GlobalTransform), With<Camera3d>>, Query<(Entity, &ComputedNode), With<SplatLayer>>),
+    mut marks: Query<(Entity, &mut HitSplat, &ComputedNode, &mut Node, &mut Visibility, &Children)>,
+    mut texts: Query<(&mut TextColor, Option<&SplatWords>), Or<(With<SplatWords>, With<SplatRing>)>>,
 ) {
     let Ok((layer, area)) = layer.single() else { return };
     let now = time.elapsed_secs_f64();
@@ -487,8 +499,18 @@ fn splats(
         let node = Node { position_type: PositionType::Absolute, ..default() };
         let centred = UiTransform::from_translation(Val2::percent(-50.0, -100.0));
         let size = font_size(look.scale);
+        let pixel = size / font_size(1);
         let mark = HitSplat { creature, at, size, anchor: None, over_fallen: 0 };
-        commands.entity(layer).with_child((node, centred, shadowed(&font.0, words, size, look.color.color()), TightLine, mark, Visibility::Hidden));
+        commands.entity(layer).with_children(|layer| {
+            layer.spawn((node, centred, mark, Visibility::Hidden)).with_children(|splat| {
+                for (x, y) in RING {
+                    let at = Node { position_type: PositionType::Absolute, left: Val::Px(x * pixel), top: Val::Px(y * pixel), ..default() };
+                    splat.spawn((at, text(&font.0, words.clone(), size, super::OUTLINE), TightLine, SplatRing, crate::ui::fit::Decoration));
+                }
+                let colour = look.color.color();
+                splat.spawn((text(&font.0, words, size, colour), TightLine, ZIndex(1), SplatWords(colour)));
+            });
+        });
     };
     for &(creature, damage, blow, at) in fighting.struck.iter().rev().take(new_struck).rev() {
         let words = struck_words(&locale, damage, blow);
@@ -515,7 +537,7 @@ fn splats(
     }
     lifts(stack, splat.gap * PX, splat.most, order, lifted);
     for (&entity, &lift) in entities.iter().zip(lifted.iter()) {
-        let Ok((_, mut mark, _, mut node, mut color, mut shadow, mut visibility)) = marks.get_mut(entity) else { continue };
+        let Ok((_, mut mark, _, mut node, mut visibility, children)) = marks.get_mut(entity) else { continue };
         let age = (now - mark.at) as f32 / splat.seconds;
         // Gone with its time, or pushed off the top of a full stack.
         let Some(lift) = lift.filter(|_| age < 1.0) else {
@@ -542,12 +564,13 @@ fn splats(
         let at = base - Vec2::Y * (lift + age * splat.rise * PX);
         node.left = Val::Px(at.x);
         node.top = Val::Px(at.y);
-        // Whole for the first part of its time, then fading out, its shadow with it.
+        // Whole for the first part of its time, then fading out, its ring with it.
         let alpha = if age < splat.fade { 1.0 } else { 1.0 - (age - splat.fade) / (1.0 - splat.fade) };
-        let faded = color.0.with_alpha(alpha);
-        if color.0 != faded {
-            color.0 = faded;
-            shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
+        for &child in children {
+            if let Ok((mut colour, words)) = texts.get_mut(child) {
+                let whole = words.map_or(super::OUTLINE, |w| w.0);
+                colour.set_if_neq(TextColor(whole.with_alpha(whole.alpha() * alpha)));
+            }
         }
         visibility.set_if_neq(Visibility::Inherited);
         if fallen {

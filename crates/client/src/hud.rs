@@ -160,8 +160,8 @@ pub fn spawn_count(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, corne
     });
 }
 
-/// The dark ring round a stack count.
-const OUTLINE: Color = Color::srgb(0.0, 0.0, 0.02);
+/// The dark ring round a stack count (and a hitsplat's words, `combat`).
+pub(crate) const OUTLINE: Color = Color::srgb(0.0, 0.0, 0.02);
 
 /// One of the copies ringing the count it names.
 #[derive(Component)]
