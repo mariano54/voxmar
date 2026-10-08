@@ -295,18 +295,21 @@ impl Server {
         self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.released").with("creature", what));
     }
 
-    /// Where a ready creature's mate is: another of its kind, ready too, within range.
-    pub(crate) fn mate_for(&self, id: u32) -> Option<Vec3> {
+    /// Where a ready creature's mate is: the nearest other of its kind, ready too, within
+    /// range.
+    pub(crate) fn mate_for(&self, id: u32, neighbours: &crate::creatures::Neighbours) -> Option<Vec3> {
         let creature = self.creatures.live.get(&id)?;
         if creature.ready_until == 0 {
             return None;
         }
         let at = creature.body.position;
-        self.creatures
-            .live
-            .iter()
-            .filter(|(other, c)| **other != id && c.species == creature.species && c.ready_until > 0 && c.body.position.distance(at) < MATE_RANGE)
-            .map(|(_, c)| c.body.position)
+        neighbours
+            .around(at)
+            .into_iter()
+            .filter(|&other| other != id)
+            .filter_map(|other| self.creatures.live.get(&other))
+            .filter(|c| c.species == creature.species && c.ready_until > 0 && c.body.position.distance(at) < MATE_RANGE)
+            .map(|c| c.body.position)
             .min_by(|a, b| a.distance(at).total_cmp(&b.distance(at)))
     }
 

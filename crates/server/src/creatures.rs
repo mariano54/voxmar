@@ -59,6 +59,11 @@ const SPAWN_NEAR: f32 = 20.0;
 const SPAWN_FAR: f32 = 56.0;
 /// How far kin hear an alarm, and are counted as kin by herding.
 const KIN_RANGE: f32 = 14.0;
+/// The width of a `Neighbours` cell, in blocks: the widest search (kin) and a block more for
+/// how far a creature moves in a pass, so the three by three cells around one hold every
+/// creature in range.
+const CELL: f32 = 16.0;
+const _: () = assert!(KIN_RANGE + 1.0 <= CELL && voxmar_engine::creature::husbandry::MATE_RANGE + 1.0 <= CELL);
 /// How far creatures look for food.
 const FOOD_RANGE: i32 = 6;
 /// How far, in blocks, a blow may reach past a creature's box on the server: the client
@@ -189,6 +194,35 @@ pub struct Creatures {
     pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
 }
 
+/// Every live creature by where it stood when a pass began, in square cells `CELL` blocks
+/// across, so finding those near one looks at nine cells instead of every creature in the
+/// world: kin for herding and alarms, a mate.
+pub(crate) struct Neighbours(FxHashMap<(i32, i32), Vec<u32>>);
+
+impl Neighbours {
+    pub(crate) fn of(live: &BTreeMap<u32, Live>) -> Self {
+        let mut cells: FxHashMap<(i32, i32), Vec<u32>> = FxHashMap::default();
+        for (&id, creature) in live {
+            cells.entry(Self::cell(creature.body.position)).or_default().push(id);
+        }
+        Self(cells)
+    }
+
+    fn cell(at: Vec3) -> (i32, i32) {
+        ((at.x / CELL).floor() as i32, (at.z / CELL).floor() as i32)
+    }
+
+    /// The creatures that stood in the cells around `at`, in id order (as the world's own
+    /// order, so what is found does not change with the search): every one within `CELL`
+    /// blocks less a pass's movement, and some further.
+    pub(crate) fn around(&self, at: Vec3) -> Vec<u32> {
+        let (cx, cz) = Self::cell(at);
+        let mut ids: Vec<u32> = (-1..=1).flat_map(|dx| (-1..=1).map(move |dz| (cx + dx, cz + dz))).filter_map(|cell| self.0.get(&cell)).flatten().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+}
+
 impl Creatures {
     /// The box a blow at a creature may land in: its own, widened by what the player's
     /// view of it may lag behind (`REACH_SLACK`, `REACH_LAG`).
@@ -294,6 +328,7 @@ impl Server {
     fn think_and_move(&mut self) {
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ids: Vec<u32> = self.creatures.live.keys().copied().collect();
+        let neighbours = Neighbours::of(&self.creatures.live);
         let daylight = self.daylight();
         let mut actions: Vec<(u32, Decision)> = Vec::new();
         for &id in &ids {
@@ -309,14 +344,8 @@ impl Server {
             if (self.tick + id as u64).is_multiple_of(every) {
                 let range = species.def.senses.sight.max(species.def.senses.hearing).max(16.0) * 1.5;
                 let players = self.seen_from(position, range, &species.favourite, creature.owner.as_deref());
-                let mate = self.mate_for(id);
-                let kin: Vec<Vec3> = self
-                    .creatures
-                    .live
-                    .iter()
-                    .filter(|(other, c)| **other != id && c.species == creature.species && c.body.position.distance(position) < KIN_RANGE)
-                    .map(|(_, c)| c.body.position)
-                    .collect();
+                let mate = self.mate_for(id, &neighbours);
+                let kin = self.kin_of(id, &neighbours);
                 let food = if species.eats.is_empty() { None } else { self.food_near(position, &species.eats, id) };
                 let situation = Situation {
                     position,
@@ -345,8 +374,22 @@ impl Server {
         }
         self.push_apart();
         for (id, decision) in actions {
-            self.carry_out(id, decision);
+            self.carry_out(id, decision, &neighbours);
         }
+    }
+
+    /// Where creature `id`'s kin are: others of its kind within `KIN_RANGE`, in id order.
+    pub(crate) fn kin_of(&self, id: u32, neighbours: &Neighbours) -> Vec<Vec3> {
+        let Some(creature) = self.creatures.live.get(&id) else { return Vec::new() };
+        let (species, at) = (creature.species, creature.body.position);
+        neighbours
+            .around(at)
+            .into_iter()
+            .filter(|&other| other != id)
+            .filter_map(|other| self.creatures.live.get(&other))
+            .filter(|c| c.species == species && c.body.position.distance(at) < KIN_RANGE)
+            .map(|c| c.body.position)
+            .collect()
     }
 
     /// Creatures that touch push each other apart, as Minecraft's mobs do: they may brush
@@ -465,7 +508,7 @@ impl Server {
     }
 
     /// Acts on what a creature decided.
-    fn carry_out(&mut self, id: u32, decision: Decision) {
+    fn carry_out(&mut self, id: u32, decision: Decision, neighbours: &Neighbours) {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species_id = creature.species;
         let position = creature.body.position;
@@ -506,8 +549,11 @@ impl Server {
             }
         }
         if decision.alarm {
-            for (&other, kin) in self.creatures.live.iter_mut() {
-                if other != id && kin.species == species_id && kin.body.position.distance(position) < KIN_RANGE {
+            for other in neighbours.around(position).into_iter().filter(|&other| other != id) {
+                if let Some(kin) = self.creatures.live.get_mut(&other)
+                    && kin.species == species_id
+                    && kin.body.position.distance(position) < KIN_RANGE
+                {
                     kin.mind.alarmed();
                 }
             }
@@ -995,6 +1041,50 @@ mod tests {
             }
         }
         assert_eq!(seen.len(), 49);
+    }
+}
+
+#[cfg(test)]
+mod neighbour_tests {
+    use super::*;
+
+    #[test]
+    fn neighbours_find_what_looking_at_every_creature_finds() {
+        let mut server = crate::test_server();
+        // Three hundred of three kinds over 120 blocks square, a third of them ready to breed,
+        // some on cell edges and some in negative cells.
+        let kinds: Vec<CreatureId> = ["base:rabbit", "base:junglefowl", "base:mouflon"].map(|name| server.content.creatures.id(name).expect("species")).into();
+        for i in 0..300u64 {
+            let (x, z) = (unit_from(mix(i, 1)) * 120.0 - 60.0, unit_from(mix(i, 2)) * 120.0 - 60.0);
+            let (x, z) = if i % 25 == 0 { ((x / CELL).round() * CELL, z) } else { (x, z) };
+            let id = server.spawn_creature(kinds[i as usize % 3], server.spawn + Vec3::new(x, 0.0, z), i).expect("room");
+            if i % 3 == 0 {
+                server.creatures.live.get_mut(&id).unwrap().ready_until = 1;
+            }
+        }
+        let neighbours = Neighbours::of(&server.creatures.live);
+        let ids: Vec<u32> = server.creatures.live.keys().copied().collect();
+        let (mut with_kin, mut with_mates) = (0, 0);
+        for &id in &ids {
+            let me = &server.creatures.live[&id];
+            let everyone = |range: f32, ready: bool| -> Vec<Vec3> {
+                server
+                    .creatures
+                    .live
+                    .iter()
+                    .filter(|&(&other, c)| other != id && c.species == me.species && (!ready || c.ready_until > 0) && c.body.position.distance(me.body.position) < range)
+                    .map(|(_, c)| c.body.position)
+                    .collect()
+            };
+            let kin = server.kin_of(id, &neighbours);
+            assert_eq!(kin, everyone(KIN_RANGE, false), "kin of {id}");
+            with_kin += usize::from(!kin.is_empty());
+            let nearest = everyone(voxmar_engine::creature::husbandry::MATE_RANGE, true).into_iter().min_by(|a, b| a.distance(me.body.position).total_cmp(&b.distance(me.body.position)));
+            let mate = server.mate_for(id, &neighbours);
+            assert_eq!(mate, if me.ready_until > 0 { nearest } else { None }, "mate of {id}");
+            with_mates += usize::from(mate.is_some());
+        }
+        assert!(with_kin > 100 && with_mates > 10, "too sparse to judge: {with_kin} with kin, {with_mates} with mates");
     }
 }
 
