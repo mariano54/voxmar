@@ -6,7 +6,8 @@
 //
 // Goals: Craft(item, n), Cook(item, n), Catch(fish, n) (Catch("Kinds", n) for kinds),
 // Kill(creature, n), Tame(creature, n), Pick(plant, n), Mine(ore, n), Visit(biomes),
-// Discover(page, n), Level(skill, n), Have(item, n), Home, Built(multiblock, n). Cook
+// Discover(page, n), Level(skill, n), Have(item, n), Home, Built(multiblock, n),
+// LookUp(item) (opened it in the recipe viewer). Cook
 // counts what any station turns out: fired pots and smelted ingots too. Items and creatures may be
 // `any` or `tag:TAG`. Rewards: Xp(skill, xp), Item(item, count).
 //
@@ -14,6 +15,12 @@
 // for what is still to come (tracks, snares, slings, teas, Old Tusk) join as it lands.
 (
     quests: [
+        (
+            name: "look_it_up", age: "nomad", branch: "main", title: "Look It Up",
+            why: "Forgotten a recipe? Open the inventory, type part of a name in its search box, and click the item to see how it is made; a right click shows what it goes into. Look up the stone pickaxe.",
+            tasks: [[LookUp("stone_pickaxe")]],
+            rewards: [Xp("crafting", 40.0)],
+        ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
             why: "Night comes fast. Cooked food heals far more than raw, and a fire keeps the cold off.",

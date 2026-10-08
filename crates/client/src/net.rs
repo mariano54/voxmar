@@ -107,6 +107,11 @@ impl Net {
         self.connection.send(ClientMessage::Take { item, count, held });
     }
 
+    /// Says the recipe viewer was opened on `item` (see `ClientMessage::LookedUp`).
+    pub fn looked_up(&self, item: voxmar_engine::block::BlockId) {
+        self.connection.send(ClientMessage::LookedUp { item });
+    }
+
     /// Says something to everyone.
     pub fn chat(&self, text: &str) {
         self.connection.send(ClientMessage::Chat { text: text.into() });

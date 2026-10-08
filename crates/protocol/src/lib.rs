@@ -67,6 +67,9 @@ pub enum ClientMessage {
     /// Creative mode's catalogue of every item (the inventory's item panel): `count` of
     /// `item`, onto the pointer (`held`) or into the inventory. Refused in survival.
     Take { item: BlockId, count: u8, held: bool },
+    /// The player opened the recipe viewer on `item` (to look up how it is made or what it
+    /// goes into): what the quest book's "look it up" goals count.
+    LookedUp { item: BlockId },
     /// The player raised (`up`) or lowered their guard (`voxmar_engine::combat`).
     Guard { up: bool },
 }

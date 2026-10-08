@@ -37,7 +37,7 @@ impl Plugin for RecipesPlugin {
         app.init_resource::<RecipeViewer>()
             .init_resource::<HoveredItem>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (look_up, click, draw).chain().run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (look_up, click, report, draw).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
                 viewer.trail.clear();
                 ui.recipes_open = false;
@@ -114,7 +114,7 @@ enum ViewerButton {
 }
 /// An item drawn in the viewer: hover to look it up, click for its recipes.
 #[derive(Component)]
-struct ViewerItem(BlockId);
+pub struct ViewerItem(pub BlockId);
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -170,7 +170,7 @@ fn look_up(
         }
     }
     // Over an item in the viewer, it is the one to look up.
-    if ui.recipes_open {
+    if ui.recipes_open || ui.quests_open {
         hovered.0 = items.iter().find(|(_, cursor)| cursor.cursor_over()).map(|(item, _)| item.0);
     }
     if ui.console_open {
@@ -198,7 +198,8 @@ fn click(
     mut viewer: ResMut<RecipeViewer>,
     mut ui: ResMut<UiState>,
 ) {
-    if viewer.trail.is_empty() {
+    // The quest book's item icons look their item up too, opening the viewer over it.
+    if viewer.trail.is_empty() && !ui.quests_open {
         return;
     }
     let pages = viewer.pages();
@@ -226,6 +227,7 @@ fn click(
     for (item, interaction, _) in &items {
         if *interaction == Interaction::Pressed {
             viewer.open(item.0, false);
+            ui.recipes_open = true;
         }
     }
     // A right click on an item looks up its uses (Interaction answers only the left).
@@ -233,6 +235,20 @@ fn click(
         && let Some((item, _)) = hovered_items.iter().find(|(_, cursor)| cursor.cursor_over())
     {
         viewer.open(item.0, true);
+        ui.recipes_open = true;
+    }
+}
+
+/// Tells the server of each item the viewer is opened on, once (for the quest book's
+/// look-up goals).
+fn report(viewer: Res<RecipeViewer>, net: Res<crate::net::Net>, mut told: Local<Option<BlockId>>) {
+    let Some(item) = viewer.trail.last().map(|look| look.item) else {
+        *told = None;
+        return;
+    };
+    if *told != Some(item) {
+        *told = Some(item);
+        net.looked_up(item);
     }
 }
 
@@ -288,34 +304,7 @@ fn draw(
             let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::GAP)), ..default() };
             body.spawn((card, Piece::Well.image())).with_children(|card| {
                 // What goes in, as it is laid out in the game.
-                match &entry.method {
-                    Method::Craft { variants, .. } => {
-                        // Looking up a use, the variant with that item; else they take turns.
-                        let wanted = |cells: &&[Option<BlockId>; GRID]| lookup.uses && cells.contains(&Some(lookup.item));
-                        let cells = variants.iter().find(wanted).unwrap_or(&variants[tick as usize % variants.len()]);
-                        // Two by two, or three by three for what takes a crafting table.
-                        let side = if variants.iter().any(|v| (0..GRID).any(|i| v[i].is_some() && (i % SIDE == 2 || i / SIDE == 2))) { SIDE } else { 2 };
-                        let grid = Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(side as u16, SLOT), row_gap: Val::Px(PX), column_gap: Val::Px(PX), ..default() };
-                        card.spawn(grid).with_children(|grid| {
-                            for i in (0..GRID).filter(|i| i % SIDE < side && i / SIDE < side) {
-                                item_cell(grid, font, &images, cells[i], None);
-                            }
-                        });
-                    }
-                    Method::Cook { input, station, .. } => {
-                        item_cell(card, font, &images, Some(*input), None);
-                        if let Some(fire) = content.blocks.tagged(station).next() {
-                            card.spawn(text(font, "+", BODY, MUTED));
-                            item_cell(card, font, &images, Some(fire), None);
-                        }
-                    }
-                    Method::Product { tool, .. } => {
-                        if let Some(tool) = tool.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
-                            item_cell(card, font, &images, Some(tool), None);
-                        }
-                    }
-                    Method::Drop { .. } => {}
-                }
+                way_inputs(card, font, &images, content, &entry.method, lookup.uses.then_some(lookup.item), tick);
                 card.spawn(shadowed(font, "→", LARGE, GOLD));
                 // A fixed count sits on the slot's corner, as in the inventory; a range of
                 // amounts is too wide for that and goes with the name instead.
@@ -334,6 +323,39 @@ fn draw(
             });
         }
     });
+}
+
+/// What goes into a way, as it is laid out in the game: the crafting grid (two by two, or
+/// three by three for what takes a crafting table), a cooked item and its station, or the
+/// tool that takes a creature's product. A family of recipes shows the variant with `using`
+/// if it has one, else each in turn by `tick`.
+pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &voxmar_engine::content::Content, method: &Method, using: Option<BlockId>, tick: u32) {
+    match method {
+        Method::Craft { variants, .. } => {
+            let wanted = |cells: &&[Option<BlockId>; GRID]| using.is_some_and(|item| cells.contains(&Some(item)));
+            let cells = variants.iter().find(wanted).unwrap_or(&variants[tick as usize % variants.len()]);
+            let side = if variants.iter().any(|v| (0..GRID).any(|i| v[i].is_some() && (i % SIDE == 2 || i / SIDE == 2))) { SIDE } else { 2 };
+            let grid = Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(side as u16, SLOT), row_gap: Val::Px(PX), column_gap: Val::Px(PX), ..default() };
+            card.spawn(grid).with_children(|grid| {
+                for i in (0..GRID).filter(|i| i % SIDE < side && i / SIDE < side) {
+                    item_cell(grid, font, images, cells[i], None);
+                }
+            });
+        }
+        Method::Cook { input, station, .. } => {
+            item_cell(card, font, images, Some(*input), None);
+            if let Some(fire) = content.blocks.tagged(station).next() {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(fire), None);
+            }
+        }
+        Method::Product { tool, .. } => {
+            if let Some(tool) = tool.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
+                item_cell(card, font, images, Some(tool), None);
+            }
+        }
+        Method::Drop { .. } => {}
+    }
 }
 
 /// The words under a way's result: how it is done, and what it takes.
@@ -370,7 +392,7 @@ fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, C
 
 /// A slot showing `item` (or empty), with a count under it if given; hover it to look it
 /// up, click it for its recipes.
-fn item_cell(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, item: Option<BlockId>, count: Option<String>) {
+pub(super) fn item_cell(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, item: Option<BlockId>, count: Option<String>) {
     let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), flex_shrink: 0.0, ..default() };
     let mut cell = parent.spawn((node, Piece::Well.image()));
     let Some(item) = item else { return };

@@ -794,6 +794,8 @@
     "multiblock.base.homestead_hearth.hint": "炉には、炉石を囲む石の輪と、角に2ブロックの高さの煙突が必要です。",
     "multiblock.base.crucible_kiln": "るつぼ窯",
     "multiblock.base.crucible_kiln.hint": "窯には、るつぼを囲む窯レンガと、四隅に窯レンガの柱が必要です。",
+    "quest.base.look_it_up": "調べてみよう",
+    "quest.base.look_it_up.why": "作り方を忘れた？持ち物画面を開き、検索欄に名前の一部を入力して、アイテムをクリックすると作り方が見られる。右クリックなら使い道が分かる。石のツルハシを調べてみよう。",
     "quest.base.first_night": "最初の夜",
     "quest.base.first_night.why": "夜はすぐに来る。焼いた食べ物は生よりずっと回復し、火は寒さを防ぐ。",
     "quest.base.stone_in_hand": "石の道具",

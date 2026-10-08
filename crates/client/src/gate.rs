@@ -240,6 +240,11 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
+    /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
+    /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
+    /// returns to the book.
+    LookUp,
     /// Rice sown on farmland with no water near is refused by the server, and the refusal
     /// shows by the hotbar, as a level the player lacks does (the server sends it as a
     /// refusal, not a console line).
@@ -1054,6 +1059,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Settlements => settlements(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
@@ -2793,7 +2799,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::Refusal, now);
+        gate.next(Step::LookUp, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -2818,7 +2824,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::Refusal, now);
+                gate.next(Step::LookUp, now);
             }
         }
         2 => {
@@ -2853,6 +2859,130 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
+            gate.next(Step::LookUp, now);
+        }
+    }
+}
+
+/// The recipe lookup as a survival player does it: type "pick" in the inventory's search,
+/// open the stone pickaxe's recipe (the pointer's click is told as the viewer opening, as
+/// the other recipe steps tell it), see "Look It Up" finish, then open the quest book on
+/// the stone tools quest, whose goal shows the pickaxe's recipe inline, look an input up
+/// from there and come Back to the book.
+fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::creative::{Catalogue, SearchField};
+    use crate::hud::quests::QuestView;
+    use crate::hud::recipes::{RecipeViewer, ViewerItem};
+    use crate::ui::widgets::TextField;
+    const QUEST: &str = "base:look_it_up";
+    const BOOK_QUEST: &str = "base:stone_in_hand";
+    let blocks = world.resource::<Launch>().content.blocks.clone();
+    let Some(pickaxe) = blocks.id("base:stone_pickaxe") else {
+        gate.check("recipe lookup", Err("no stone pickaxe in the content".into()));
+        gate.next(Step::Refusal, now);
+        return;
+    };
+    let fail = |world: &mut World, gate: &mut Gate, name: &str, why: String| {
+        gate.check(name, Err(why));
+        world.resource_mut::<RecipeViewer>().trail.clear();
+        let mut ui = world.resource_mut::<UiState>();
+        (ui.recipes_open, ui.inventory_open, ui.quests_open) = (false, false, false);
+        gate.next(Step::Refusal, now);
+    };
+    match gate.phase {
+        0 => {
+            if world.resource::<LocalPlayer>().allow_flight && gate.server_in_phase() < 3.0 {
+                return;
+            }
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.menu_open, ui.character_open, ui.console_open, ui.quests_open, ui.inventory_open) = (false, false, false, false, true);
+            // As typed in the search box.
+            for mut field in world.query_filtered::<&mut TextField, With<SearchField>>().iter_mut(world) {
+                field.value = "pick".into();
+            }
+            world.resource_mut::<Catalogue>().query = "pick".into();
+            gate.advance(now);
+        }
+        1 => {
+            let found = world.resource::<Catalogue>().found.clone();
+            let recipes_only = world.resource::<Catalogue>().recipes;
+            if found.contains(&pickaxe) && recipes_only {
+                if gate.shot(world, "lookup-search").is_none() {
+                    return;
+                }
+                gate.check("recipe lookup: search", Ok(format!("\"pick\" in the inventory's search finds {} items, the stone pickaxe among them", found.len())));
+                world.resource_mut::<RecipeViewer>().open(pickaxe, false);
+                world.resource_mut::<UiState>().recipes_open = true;
+                gate.advance(now);
+            } else if in_phase > 3.0 {
+                fail(world, gate, "recipe lookup: search", format!("\"pick\" found {found:?} (recipe search {recipes_only})"));
+            }
+        }
+        2 => {
+            let done = world.resource::<LocalPlayer>().quests.iter().any(|q| q.name == QUEST && q.done);
+            if done {
+                if gate.shot(world, "lookup-viewer").is_none() {
+                    return;
+                }
+                gate.check("recipe lookup: quest", Ok("opening the stone pickaxe's recipe finished Look It Up".into()));
+                world.resource_mut::<RecipeViewer>().trail.clear();
+                let mut ui = world.resource_mut::<UiState>();
+                (ui.recipes_open, ui.inventory_open, ui.quests_open) = (false, false, true);
+                *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked: Some(BOOK_QUEST.into()), ..default() };
+                gate.advance(now);
+            } else if gate.server_in_phase() > UNANSWERED {
+                fail(world, gate, "recipe lookup: quest", "the viewer opened on the pickaxe and the server never finished Look It Up".into());
+            }
+        }
+        3 => {
+            if in_phase < 0.5 {
+                return;
+            }
+            // The first way to make a pickaxe, and the inputs it should draw.
+            let inputs: Vec<BlockId> = world
+                .resource::<RecipeViewer>()
+                .book()
+                .and_then(|book| book.making(pickaxe).first().map(|entry| entry.method.clone()))
+                .map(|method| match method {
+                    voxmar_engine::recipe_book::Method::Craft { variants, .. } => variants[0].iter().flatten().copied().collect(),
+                    _ => Vec::new(),
+                })
+                .unwrap_or_default();
+            let drawn: Vec<BlockId> = world.query::<(&ViewerItem, &InheritedVisibility)>().iter(world).filter(|(_, shown)| shown.get()).map(|(item, _)| item.0).collect();
+            if inputs.is_empty() || !inputs.iter().all(|item| drawn.contains(item)) || !drawn.contains(&pickaxe) {
+                if in_phase > 3.0 {
+                    fail(world, gate, "recipe lookup: inline", format!("the pickaxe's quest page draws {drawn:?}, its recipe needs {inputs:?}"));
+                }
+                return;
+            }
+            if gate.shot(world, "lookup-quest").is_none() {
+                return;
+            }
+            gate.check("recipe lookup: inline", Ok(format!("the quest page draws the pickaxe's recipe: {} inputs and the result, each a clickable icon", inputs.len())));
+            // An input clicked, as the pointer would.
+            let input = inputs[0];
+            world.resource_mut::<RecipeViewer>().open(input, false);
+            world.resource_mut::<UiState>().recipes_open = true;
+            gate.counted = input.0 as u32;
+            gate.advance(now);
+        }
+        _ => {
+            if in_phase < 0.3 {
+                return;
+            }
+            let shown = world.resource::<RecipeViewer>().trail.last().map(|look| look.item.0 as u32);
+            let opened = shown == Some(gate.counted) && world.resource::<UiState>().recipes_open;
+            // Back, as its button does.
+            world.resource_mut::<RecipeViewer>().trail.pop();
+            let mut ui = world.resource_mut::<UiState>();
+            ui.recipes_open = false;
+            let back = ui.quests_open;
+            ui.quests_open = false;
+            world.resource_mut::<RecipeViewer>().trail.clear();
+            gate.check(
+                "recipe lookup: back",
+                if opened && back { Ok("an input clicked in the quest book opens the viewer and Back returns to the book".into()) } else { Err(format!("viewer on the input {opened}, quest book still open after Back {back}")) },
+            );
             gate.next(Step::Refusal, now);
         }
     }
@@ -3648,7 +3778,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
             let chapter: Vec<_> = content.quests.iter().filter(|q| Some(&q.age) == first_age.as_ref()).collect();
             chapter.iter().find(|q| standing(content, player, q) == Standing::Waiting).or(chapter.first()).map(|q| q.name.clone())
         };
-        *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked };
+        *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked, ..default() };
     }
     if let Some(View::Journal(page)) = view {
         world.resource_mut::<crate::hud::journal::JournalView>().page = page;

@@ -1308,6 +1308,28 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table")));
 }
 
+/// The recipe viewer opened on an item is reported by the client: looking up the stone
+/// pickaxe finishes "Look It Up", looking up anything else, or an item that does not
+/// exist, does not.
+#[test]
+fn looking_an_item_up_finishes_the_look_it_up_quest() {
+    let mut client = Client::join();
+    let done = |c: &Client| c.quests.iter().any(|q| q.name == "base:look_it_up" && q.done);
+    client.pump_until(|c| !c.quests.is_empty());
+    assert!(!done(&client));
+    let planks = client.content.blocks.expect("base:oak_planks");
+    client.connection.send(ClientMessage::LookedUp { item: planks });
+    client.connection.send(ClientMessage::LookedUp { item: BlockId(u16::MAX) });
+    client.connection.send(ClientMessage::LookedUp { item: BlockId(0) });
+    // Two server seconds, enough for the quest check to have run on all of it.
+    client.wait_server(2);
+    assert!(!done(&client), "other items' look-ups finished it");
+    let pickaxe = client.content.blocks.expect("base:stone_pickaxe");
+    client.chat.clear();
+    client.connection.send(ClientMessage::LookedUp { item: pickaxe });
+    client.pump_until(|c| done(c) && c.chat.iter().any(|(_, t)| t.contains("Quest done: Look It Up")));
+}
+
 #[test]
 fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     let mut client = Client::join();

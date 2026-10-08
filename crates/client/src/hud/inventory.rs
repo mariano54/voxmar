@@ -1015,6 +1015,9 @@ fn tooltip(
             for (line, color) in lines_after {
                 lines.spawn(text(&font.0, line, BODY, color));
             }
+            // How to look it up.
+            let keys = [("recipes", settings.recipes_key.name(&locale)), ("uses", settings.uses_key.name(&locale))];
+            lines.spawn(text(&font.0, locale.format("tooltip.lookup", &[(keys[0].0, &keys[0].1), (keys[1].0, &keys[1].1)]), BODY, MUTED));
         });
     }
     visibility.set_if_neq(Visibility::Inherited);

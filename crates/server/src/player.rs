@@ -213,12 +213,23 @@ impl Server {
             ClientMessage::Chat { text } => self.chat(id, &text),
             ClientMessage::Take { item, count, held } => self.take_from_catalogue(id, item, count, held),
             ClientMessage::Guard { up } => self.raise_guard(id, up),
+            ClientMessage::LookedUp { item } => self.looked_up(id, item),
         }
     }
 
     /// Creative mode's catalogue: `count` of any item onto the pointer (topping up a stack
     /// of it there) or into the inventory, where what does not fit is not given. A survival
     /// player gets nothing.
+    /// A player looked an item up in the recipe viewer: counted once for quests, if the item
+    /// exists.
+    fn looked_up(&mut self, id: PlayerId, item: BlockId) {
+        if (item.0 as usize) < self.content.blocks.len() && !item.is_air() {
+            let name = self.content.blocks.def(item).name.clone();
+            let player = self.players.get_mut(&id).expect("a joined player");
+            player.tallies.entry(format!("lookedup:{name}")).or_insert(1);
+        }
+    }
+
     fn take_from_catalogue(&mut self, id: PlayerId, item: BlockId, count: u8, held: bool) {
         let known = (item.0 as usize) < self.content.blocks.len() && !item.is_air();
         let Some(player) = self.players.get_mut(&id) else { return };
