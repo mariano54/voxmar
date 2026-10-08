@@ -133,13 +133,13 @@
             harvest: [(item: "coconut")],
         ),
         (
-            name: "golden_apple", sown: false, fruit: true, regrow: 0, level: 1, rarity: Legendary, xp: (plant: 0.0, harvest: 400.0), minutes: 120.0,
+            name: "golden_apple", sown: false, fruit: true, regrow: 0, level: 70, rarity: Legendary, xp: (plant: 0.0, harvest: 400.0), minutes: 120.0,
             stages: ["golden_apple_leaves_0", "golden_apple_leaves_1", "golden_apple_leaves_2", "golden_apple_leaves"],
             comfort: (temperature: (0.0, 24.0), moisture: (0.4, 2.0)),
             harvest: [(item: "golden_apple")],
         ),
         (
-            name: "emberfruit", sown: false, fruit: true, regrow: 0, level: 1, rarity: VeryRare, xp: (plant: 0.0, harvest: 120.0), minutes: 60.0,
+            name: "emberfruit", sown: false, fruit: true, regrow: 0, level: 41, rarity: VeryRare, xp: (plant: 0.0, harvest: 120.0), minutes: 60.0,
             stages: ["emberfruit_leaves_0", "emberfruit_leaves_1", "emberfruit_leaves_2", "emberfruit_leaves"],
             comfort: (temperature: (18.0, 45.0), moisture: (0.0, 1.0)),
             harvest: [(item: "emberfruit", count: (1, 2))],

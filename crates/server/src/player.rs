@@ -59,6 +59,8 @@ pub struct Player {
     /// What the player ate lately, for how much the same food heals again, and the
     /// seconds toward its next recovery.
     pub recent_food: voxmar_engine::vitals::Recent,
+    /// The most health the Hitpoints level gives, before effects (0 until first worked out).
+    pub health_base: u8,
     /// Where the player wakes after dying (a bed or hearth sets it), and whether what
     /// they carried has been left where they fell since they last died (`death`).
     pub home: Option<Vec3>,
@@ -75,6 +77,8 @@ pub struct Player {
     pub food_clock: f32,
     /// Highest point of the current fall, if airborne.
     pub fall_start: Option<f32>,
+    /// The last tick they stood on something, on foot (a dodge needs it, or nearly).
+    pub grounded: u64,
     pub last_input_tick: u64,
     /// Owner-replicated traits changed since they were last sent.
     pub dirty: Vec<TraitDecl>,
@@ -107,6 +111,7 @@ impl Player {
             timed_effects: Vec::new(),
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
+            health_base: 0,
             home: None,
             bed: None,
             buried: false,
@@ -118,6 +123,7 @@ impl Player {
             heal_clock: 0.0,
             hurt_clock: 0.0,
             fall_start: None,
+            grounded: 0,
             last_input_tick: 0,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
@@ -206,6 +212,7 @@ impl Server {
             ClientMessage::Command { line } => self.command(id, &line),
             ClientMessage::Chat { text } => self.chat(id, &text),
             ClientMessage::Take { item, count, held } => self.take_from_catalogue(id, item, count, held),
+            ClientMessage::Guard { up } => self.raise_guard(id, up),
         }
     }
 

@@ -59,6 +59,21 @@ pub struct Multiblock {
 }
 
 impl Multiblock {
+    /// What it is built of: each set of blocks a cell takes, with how many cells take it,
+    /// the core's among them.
+    pub fn pieces(&self) -> Vec<(&[BlockId], u32)> {
+        let mut pieces: Vec<(&[BlockId], u32)> = Vec::new();
+        for (_, cell) in &self.cells {
+            if let Cell::OneOf(accepts) = cell {
+                match pieces.iter_mut().find(|(takes, _)| *takes == accepts.as_slice()) {
+                    Some((_, n)) => *n += 1,
+                    None => pieces.push((accepts, 1)),
+                }
+            }
+        }
+        pieces
+    }
+
     /// How far from its core, across, its farthest cell lies (any way it is turned).
     pub fn reach(&self) -> i32 {
         self.cells.iter().map(|(o, _)| o.x.abs().max(o.z.abs())).max().unwrap_or(0)

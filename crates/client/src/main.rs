@@ -38,6 +38,7 @@ mod creature_sounds;
 mod creatures;
 mod drops;
 mod emitters;
+mod fight;
 mod gate;
 mod hud;
 mod interact;
@@ -145,6 +146,8 @@ struct Options {
     press: Option<MouseButton>,
     /// `--hold ITEM`: select the hotbar slot holding an item, once it is there.
     hold: Option<String>,
+    /// `--wear ITEM` (again for each piece): put armour on, once it is in the inventory.
+    wear: Vec<String>,
     /// `--repeat`: click `--press`'s button over and over through the clip.
     repeat: bool,
     /// `--face-creature`: keep looking at the nearest creature.
@@ -203,6 +206,7 @@ fn parse_options() -> Result<Options, String> {
         clip_commands: Vec::new(),
         press: None,
         hold: None,
+        wear: Vec::new(),
         repeat: false,
         face_creature: false,
         size: UVec2::new(1920, 1080),
@@ -265,6 +269,7 @@ fn parse_options() -> Result<Options, String> {
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--hold" => options.hold = Some(value()?),
+            "--wear" => options.wear.push(value()?),
             "--repeat" => options.repeat = true,
             "--face-creature" => options.face_creature = true,
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
@@ -320,6 +325,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
+    let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -455,7 +461,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }
@@ -525,6 +531,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             clip_commands: options.clip_commands,
             press: options.press,
             hold: options.hold,
+            wear: options.wear,
             repeat: options.repeat,
             face_creature: options.face_creature,
             strike: options.strike,

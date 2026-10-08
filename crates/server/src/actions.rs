@@ -70,6 +70,15 @@ pub struct Executor {
     proposals: u64,
 }
 
+impl Server {
+    /// Whether `player` is part way through a timed action that eats (a bite of food).
+    pub(crate) fn eating(&self, player: PlayerId) -> bool {
+        self.executor.timed.iter().any(|t| {
+            t.agent == player && !t.finished && self.content.actions.get(t.action).is_some_and(|def| def.effects.contains(&Effect::EatHeld))
+        })
+    }
+}
+
 /// The validation view of the world from `agent`'s point of view.
 pub(crate) fn context(server: &Server, agent: PlayerId) -> impl ActionContext + '_ {
     Context { server, agent }
@@ -151,8 +160,12 @@ impl ActionContext for Context<'_> {
         self.server.creature_accepts(self.agent, id, item)
     }
 
+    fn creature_is_mine(&self, id: u32) -> bool {
+        self.server.keeps(self.agent, id)
+    }
+
     fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
-        self.server.creatures.reach_box(id)
+        self.server.creatures.reach_box(id, self.server.content.combat.feel.reach_lag)
     }
 
     fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
@@ -291,9 +304,11 @@ impl Server {
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
                 (Effect::Pick, ActionTarget::Block { block, .. }) => self.pick(agent, block),
                 (Effect::Strike, ActionTarget::Creature(id)) => self.player_strikes(agent, id),
+                (Effect::Dodge, _) => self.dodge(agent),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
+                (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     for pos in std::iter::once(block).chain(plants) {

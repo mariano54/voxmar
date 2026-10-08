@@ -8,6 +8,7 @@ mod condition;
 pub use commands::{weather_name, weather_numbers};
 mod cooking;
 mod creatures;
+mod fight;
 mod fishing;
 mod death;
 mod hearth;
@@ -314,8 +315,14 @@ pub(crate) struct Server {
     planter_grown: FxHashSet<IVec3>,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
+    /// The moment before which every player message has been handled: the last time all
+    /// were taken in. A creature's blow is judged once it has landed by then (`fight`).
+    /// None until messages are first taken in (unit tests tick without them).
+    heard: Option<Instant>,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
+    /// Swings, guards, dodges and creatures' wind-ups (`fight`).
+    fights: fight::Fights,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -421,7 +428,9 @@ impl Server {
             regrowing,
             planter_grown,
             arrival: Instant::now(),
+            heard: None,
             creatures: creatures::Creatures::default(),
+            fights: fight::Fights::default(),
             processes,
             temperature,
             wear_rules,
@@ -519,6 +528,9 @@ impl Server {
     }
 
     fn handle_messages(&mut self) {
+        // A message is stamped as it goes into its channel, so every one stamped before now
+        // is handled below.
+        let heard = Instant::now();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for id in ids {
             while let Some(player) = self.players.get(&id) {
@@ -539,6 +551,7 @@ impl Server {
                 }
             }
         }
+        self.heard = Some(heard);
     }
 
     fn tick(&mut self) {
@@ -554,6 +567,7 @@ impl Server {
         self.check_quests();
         self.tick_items();
         self.tick_creatures();
+        self.tick_fights();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
