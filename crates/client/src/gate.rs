@@ -129,6 +129,7 @@ impl Plugin for GatePlugin {
     fn build(&self, app: &mut App) {
         let dir = self.dir.clone();
         app.insert_resource(Gate::new(dir))
+            .insert_resource(crate::creatures::InspectEyes)
             .add_systems(PostStartup, render_offscreen)
             .add_systems(Update, crate::capture::target_ui)
             .add_systems(Last, run);

@@ -107,6 +107,11 @@ const LIGHT_STEPS: f32 = 128.0;
 
 pub struct CreaturesPlugin;
 
+/// The gate retains its eye fixture's CPU pixels after their upload to the GPU. Other
+/// skins give up their pixels as usual, so normal play pays no memory cost for the check.
+#[derive(Resource)]
+pub(crate) struct InspectEyes;
+
 impl Plugin for CreaturesPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "creature_skin.wgsl");
@@ -478,7 +483,7 @@ fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mes
 
 /// Paints an individual's skin through its species' body volume, off the main thread, so
 /// a herd coming into view never holds a frame: the body shows once its skin is ready.
-fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32) -> Task<Image> {
+fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32, inspect: bool) -> Task<Image> {
     let (shape, origin, dims) = (body.shape.clone(), body.origin, body.dims);
     AsyncComputeTaskPool::get().spawn(async move {
         let shell = shape.cell * 0.75 + 1.5 / skin::TEXELS;
@@ -486,7 +491,8 @@ fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed
         let pixels = skin::paint_volume(&def, &parts, seed, origin, dims, shell, |p| shape.nearest(p).map(|(i, _)| (i, shape.distance(p))));
         let [w, h, d] = dims;
         let extent = Extent3d { width: w, height: h, depth_or_array_layers: d };
-        let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+        let usage = if inspect { RenderAssetUsages::all() } else { RenderAssetUsages::RENDER_WORLD };
+        let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, usage);
         image.sampler = nearest();
         image
     })
@@ -538,6 +544,7 @@ fn show(
     mut commands: Commands,
     time: Res<Time>,
     launch: Res<Launch>,
+    inspect: Option<Res<InspectEyes>>,
     world: Res<ClientWorld>,
     air: Air,
     player: Res<LocalPlayer>,
@@ -659,7 +666,7 @@ fn show(
         // Painted as its genes show: its coat colours and markings.
         let genes = &species.def.genes;
         let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));
-        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed));
+        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed, inspect.is_some() && species.def.name == "base:shambler"));
         let skin = creatures.blank.get_or_insert_with(|| images.add(blank_skin())).clone();
         let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
         let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };
