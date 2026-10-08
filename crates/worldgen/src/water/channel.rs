@@ -99,6 +99,21 @@ impl Edge {
     /// Distance from `p` to the edge's line, where along it (0..1) the nearest point
     /// lies, and the direction of flow there.
     fn nearest(&self, p: Vec2) -> (f32, f32, Vec2) {
+        #[cfg(target_arch = "aarch64")]
+        if p.abs().cmple(Vec2::splat(1e15)).all() && self.points.iter().all(|q| q.abs().cmple(Vec2::splat(1e15)).all()) {
+            // This bound keeps subtraction, both dot products and division finite,
+            // even at the minimum denominator. Other values keep the scalar path.
+            // SAFETY: NEON is available on every aarch64 processor; the helper reads
+            // only its four-element arrays and performs the same unfused operations.
+            let (distances, fractions) = unsafe { nearest_four(&self.points, p) };
+            let mut best = (f32::MAX, 0.0, Vec2::X);
+            for k in 0..SUB {
+                if distances[k] < best.0 {
+                    best = (distances[k], (k as f32 + fractions[k]) / SUB as f32, self.points[k + 1] - self.points[k]);
+                }
+            }
+            return best;
+        }
         let mut best = (f32::MAX, 0.0, Vec2::X);
         for k in 0..SUB {
             let (a, b) = (self.points[k], self.points[k + 1]);
@@ -128,6 +143,38 @@ impl Edge {
     /// How much of a slot gorge the river runs in at `t` along the edge, 0 ..= 1.
     fn gorge(&self, t: f32) -> f32 {
         self.gorge[0] + (self.gorge[1] - self.gorge[0]) * t.clamp(0.0, 1.0)
+    }
+}
+
+/// The four segments of one edge, one per lane. Projection and square root retain
+/// their original per-segment arithmetic; the caller still selects in segment order.
+#[cfg(target_arch = "aarch64")]
+unsafe fn nearest_four(points: &[Vec2; SUB + 1], p: Vec2) -> ([f32; SUB], [f32; SUB]) {
+    use std::arch::aarch64::*;
+    let ax: [f32; SUB] = std::array::from_fn(|k| points[k].x);
+    let az: [f32; SUB] = std::array::from_fn(|k| points[k].y);
+    let bx: [f32; SUB] = std::array::from_fn(|k| points[k + 1].x);
+    let bz: [f32; SUB] = std::array::from_fn(|k| points[k + 1].y);
+    // SAFETY: all loads and stores address four initialized floats. Every vector
+    // operation uses NEON, which is part of this target's architecture.
+    unsafe {
+        let (ax, az, bx, bz) = (vld1q_f32(ax.as_ptr()), vld1q_f32(az.as_ptr()), vld1q_f32(bx.as_ptr()), vld1q_f32(bz.as_ptr()));
+        let (dx, dz) = (vsubq_f32(bx, ax), vsubq_f32(bz, az));
+        let (px, pz) = (vdupq_n_f32(p.x), vdupq_n_f32(p.y));
+        let dot = vaddq_f32(vmulq_f32(vsubq_f32(px, ax), dx), vmulq_f32(vsubq_f32(pz, az), dz));
+        let length = vmaxnmq_f32(vaddq_f32(vmulq_f32(dx, dx), vmulq_f32(dz, dz)), vdupq_n_f32(1e-6));
+        let mut s = vdivq_f32(dot, length);
+        let (zero, one) = (vdupq_n_f32(0.0), vdupq_n_f32(1.0));
+        // Strict comparisons also preserve the scalar clamp's signed zeros.
+        s = vbslq_f32(vcltq_f32(s, zero), zero, s);
+        s = vbslq_f32(vcgtq_f32(s, one), one, s);
+        let ex = vsubq_f32(px, vaddq_f32(ax, vmulq_f32(dx, s)));
+        let ez = vsubq_f32(pz, vaddq_f32(az, vmulq_f32(dz, s)));
+        let d = vsqrtq_f32(vaddq_f32(vmulq_f32(ex, ex), vmulq_f32(ez, ez)));
+        let (mut distances, mut fractions) = ([0.0; SUB], [0.0; SUB]);
+        vst1q_f32(distances.as_mut_ptr(), d);
+        vst1q_f32(fractions.as_mut_ptr(), s);
+        (distances, fractions)
     }
 }
 
@@ -604,4 +651,76 @@ fn current(edge: &Edge, along: Vec2, n: f32, t: f32) -> Current {
     // Slack water by the banks.
     let speed = if n > 0.75 { speed.saturating_sub(1).max(1) } else { speed };
     Current { direction, speed }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearest_segments_keep_original_bits_and_ties() {
+        fn original(edge: &Edge, p: Vec2) -> (f32, f32, Vec2) {
+            let mut best = (f32::MAX, 0.0, Vec2::X);
+            for k in 0..4 {
+                let (a, b) = (edge.points[k], edge.points[k + 1]);
+                let ab = b - a;
+                let s = ((p - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
+                let d = p.distance(a + ab * s);
+                if d < best.0 { best = (d, (k as f32 + s) / 4.0, ab); }
+            }
+            best
+        }
+        let bits = |(d, t, v): (f32, f32, Vec2)| [d.to_bits(), t.to_bits(), v.x.to_bits(), v.y.to_bits()];
+        let check = |edge: &Edge, p: Vec2| assert_eq!(bits(edge.nearest(p)), bits(original(edge, p)), "{:?} at {p:?}", edge.points);
+        let mut edge = Edge { points: [Vec2::ZERO; 5], from: 0, to: 0, fall: -1.0, half: 1.0,
+            depth: 1.0, reach: 2.0, tunnel: false, body: Body::Creek, slope: 0.0, gorge: [0.0; 2] };
+        let curves = [
+            [Vec2::ZERO; 5],
+            [Vec2::new(-0.0, 0.0), Vec2::new(0.0, -0.0), Vec2::ZERO, Vec2::ONE, Vec2::ZERO],
+            [Vec2::new(-2.0, -2.0), Vec2::new(2.0, -2.0), Vec2::new(2.0, 2.0), Vec2::new(-2.0, 2.0), Vec2::new(-2.0, -2.0)],
+            [Vec2::new(-7.0, 3.0), Vec2::new(1.0, 1.0), Vec2::new(1.0, 1.0), Vec2::new(3.0, -5.0), Vec2::new(-7.0, 3.0)],
+            [Vec2::splat(1e-20), Vec2::splat(-1e-20), Vec2::ZERO, Vec2::splat(1e-4), Vec2::splat(-1e-4)],
+            [Vec2::splat(1e15), Vec2::splat(-1e15), Vec2::ZERO, Vec2::splat(1e15), Vec2::splat(-1e15)],
+            [Vec2::splat(1e30), Vec2::splat(-1e30), Vec2::ZERO, Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)],
+            [Vec2::new(f32::NAN, 0.0), Vec2::ZERO, Vec2::ONE, Vec2::new(0.0, f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)],
+        ];
+        for curve in curves {
+            for shift in [Vec2::ZERO, Vec2::new(-1031.0, 1019.0), Vec2::splat(16_777_216.0)] {
+                edge.points = curve.map(|p| p + shift);
+                for z in -8..=8 {
+                    for x in -8..=8 {
+                        let p = shift + Vec2::new(x as f32 * 0.5, z as f32 * 0.5);
+                        check(&edge, p);
+                    }
+                }
+                for q in edge.points {
+                    for p in [q, q + Vec2::splat(0.5), q - Vec2::splat(0.5), Vec2::splat(1e15), Vec2::splat(1e30), Vec2::new(f32::NAN, 0.0), Vec2::new(0.0, f32::NAN), Vec2::splat(f32::INFINITY)] {
+                        check(&edge, p);
+                    }
+                }
+            }
+        }
+        // At the centre of this square, all distances tie. The first segment wins.
+        edge.points = curves[2];
+        assert_eq!(edge.nearest(Vec2::ZERO), (2.0, 0.125, Vec2::new(4.0, 0.0)));
+
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let mut actual_edges = 0;
+        for (seed, at) in [(7, IVec2::new(-1776, 752)), (14, IVec2::new(656, -304))] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            let (trunks, streams) = world.rivers.tiers(world.stages(), at - 1, at + 1);
+            for channels in trunks.list().iter().chain(streams.list()).flatten() {
+                for edge in &channels.edges {
+                    actual_edges += 1;
+                    for k in 0..SUB {
+                        for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                            let p = edge.points[k] + (edge.points[k + 1] - edge.points[k]) * t;
+                            for offset in [Vec2::ZERO, Vec2::splat(0.5), Vec2::new(-7.0, 7.0)] { check(edge, p + offset); }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(actual_edges > 0, "the oracle must include real generated river curves");
+    }
 }
