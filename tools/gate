@@ -99,24 +99,32 @@ SLOW_TESTS=(
 
 # The crates whose tests a changed file can reach: the crate itself and its dependents.
 # Assets reach every crate whose tests read them (engine: crops, movement, recipes, weather;
-# texgen: assets/ui/fonts; worldgen, server and client: everything).
+# texgen: assets/ui/fonts; worldgen, server and client: everything). Docs, tools and the
+# repository's own files reach nothing; anything else (the workspace's Cargo files,
+# .cargo/config.toml, rust-toolchain.toml, a file not met before) reaches every crate.
 crates_for() {
   case $1 in
-    Cargo.toml | Cargo.lock | crates/engine/*) echo voxmar_engine voxmar_worldgen voxmar_server voxmar_client ;;
-    assets/*) echo voxmar_engine voxmar_worldgen voxmar_server voxmar_client voxmar_texgen ;;
+    crates/engine/*) echo voxmar_engine voxmar_protocol voxmar_worldgen voxmar_server voxmar_client ;;
     crates/worldgen/*) echo voxmar_worldgen voxmar_server voxmar_client ;;
-    crates/protocol/*) echo voxmar_server voxmar_client ;;
+    crates/protocol/*) echo voxmar_protocol voxmar_server voxmar_client ;;
     crates/server/*) echo voxmar_server voxmar_client ;;
     crates/texgen/*) echo voxmar_texgen voxmar_client ;;
     crates/client/*) echo voxmar_client ;;
+    assets/*) echo voxmar_engine voxmar_worldgen voxmar_server voxmar_client voxmar_texgen ;;
+    docs/* | tools/* | *.md | .gitignore | .gitattributes | .cursor/*) ;;
+    *) echo voxmar_engine voxmar_protocol voxmar_worldgen voxmar_server voxmar_client voxmar_texgen ;;
   esac
 }
 
-# A path in each area reaches the crates whose tests read it.
+# A path in each area reaches the crates whose tests read it, and docs and tools none.
 reach_self_check() {
   local path want
   while IFS='|' read -r path want; do
-    [[ " $(crates_for "$path") " == *" $want "* ]] || { echo "gate: $path does not reach $want"; return 1; }
+    if [[ -z $want ]]; then
+      [[ -z $(crates_for "$path") ]] || { echo "gate: $path reaches $(crates_for "$path")"; return 1; }
+    else
+      [[ " $(crates_for "$path") " == *" $want "* ]] || { echo "gate: $path does not reach $want"; return 1; }
+    fi
   done <<'EOF_REACH'
 assets/content/base/crops.ron|voxmar_engine
 assets/content/core/movement.ron|voxmar_engine
@@ -128,11 +136,32 @@ assets/packs/voxmar/textures/blocks/stone.png|voxmar_client
 assets/ui/fonts/pixel.ttf|voxmar_texgen
 assets/ui/fonts/pixel.ttf|voxmar_client
 crates/engine/src/lib.rs|voxmar_server
-crates/texgen/src/font.rs|voxmar_client
+crates/engine/src/lib.rs|voxmar_protocol
+crates/protocol/src/lib.rs|voxmar_protocol
 crates/protocol/src/lib.rs|voxmar_client
+crates/texgen/src/font.rs|voxmar_client
 Cargo.lock|voxmar_engine
+Cargo.toml|voxmar_texgen
+.cargo/config.toml|voxmar_texgen
+.cargo/config.toml|voxmar_protocol
+rust-toolchain.toml|voxmar_client
+rust-toolchain.toml|voxmar_engine
+docs/quality.md|
+tools/gate|
+README.md|
+.gitignore|
+.gitattributes|
 EOF_REACH
-  [[ -z $(crates_for docs/quality.md) ]] || { echo "gate: docs reach a crate"; return 1; }
+}
+
+# What a change is judged against: main, or origin/main when main is behind it (the GPU box
+# and other threads push straight there) or this is main itself (what was last pushed).
+diff_base() {
+  if git merge-base --is-ancestor main origin/main || [[ $(git rev-parse HEAD) == $(git rev-parse main) ]]; then
+    echo origin/main
+  else
+    echo main
+  fi
 }
 
 started=$(date +%s)
@@ -155,9 +184,7 @@ fi
 tools/bench --self-check || fail "tools/bench's self-check"
 reach_self_check || fail "the map from files to the crates they reach"
 tools/test-waits --self-check || fail "tools/test-waits' self-check"
-hygiene_base=main
-[[ $(git rev-parse HEAD) == $(git rev-parse main) ]] && hygiene_base=origin/main
-tools/test-waits "$(git merge-base HEAD "$hygiene_base")" || fail "a test waits on the wall clock"
+tools/test-waits "$(git merge-base HEAD "$(diff_base)")" || fail "a test waits on the wall clock"
 [[ -z $(git status --porcelain --untracked-files=no) ]] && clean=1 || clean=0
 tree=$(git rev-parse HEAD^{tree})
 if ((clean)) && passed "$tree"; then
@@ -166,13 +193,11 @@ if ((clean)) && passed "$tree"; then
 fi
 
 # What the change can reach: crates and their dependents, from the files it touches
-# against main (or, on main itself, against what was last pushed).
+# against `diff_base`.
 packages=()
 session=1
 if ((!full)); then
-  base=main
-  [[ $(git rev-parse HEAD) == $(git rev-parse main) ]] && base=origin/main
-  changed=$( (git diff --name-only "$(git merge-base HEAD "$base")" HEAD; git diff --name-only HEAD) | sort -u)
+  changed=$( (git diff --name-only "$(git merge-base HEAD "$(diff_base)")" HEAD; git diff --name-only HEAD) | sort -u)
   reach() { for p in "$@"; do [[ " ${packages[*]+"${packages[*]}"} " == *" $p "* ]] || packages+=("$p"); done; }
   while read -r path; do
     [[ -n $path ]] && reach $(crates_for "$path")

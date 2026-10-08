@@ -34,17 +34,24 @@ it takes well under a minute.
 
 1. Hygiene: `git diff main --check`, no conflict markers, and no new wall-clock wait in a
    test (`tools/test-waits`). A test that waits until `Instant::now()` passes a deadline,
-   or ends a `pump_until` by the clock, passes on a quick machine and fails on a loaded one
-   (main once went red from an 800 ms wait racing the once-a-second quest check): wait for
-   what the server says (`settle`, a message, its ticks) and space a player's actions with
-   arrival stamps (`propose_at`). Only watchdogs that can never let a check pass
-   (`SERVER_WAIT`, `SERVER_SILENT`, `assert!(Instant::now() < ...)`) and the timing tests
-   that sleep to stand for a player's real time are allowed, by name, in the script.
+   or ends a `pump_until` by the clock, compares `.elapsed()` with anything outside an
+   assert, or sleeps a fixed time (a sleep only paces a poll inside a `loop` or `while`),
+   passes on a quick machine and fails on a loaded one (main once went red from an 800 ms
+   wait racing the once-a-second quest check): wait for what the server says (`settle`, a
+   message, its ticks) and space a player's actions with arrival stamps (`propose_at`).
+   Only watchdogs in their exact shapes, which can never let a check pass
+   (`Instant::now() + SERVER_WAIT;`, `- since < SERVER_SILENT`,
+   `assert!(Instant::now() < ...)`), are allowed, and by file and test name in the script
+   the tests that sleep to stand for a player's real time (the sleep only) and the
+   real-time measurements Review allowed until they move to `propose_at`. Its self-check
+   also counts the waits gameplay.rs had when the rule came in: replacing one means
+   lowering `GAMEPLAY_WAITS`.
 2. An incremental build of the workspace, tests included (`--profile iter`); any warning
    fails.
 3. The tests of the crates the change can reach, worked out from the files it touches
-   against main (a client change runs the client's; an engine change or any asset
-   everything's, for the engine's and texgen's tests read assets too),
+   against main, or origin/main when main is behind it (a client change runs the
+   client's; an engine change or any asset everything's, for the engine's and texgen's
+   tests read assets too; docs and tools nothing; a file of no known kind everything's),
    less the few slow ones listed in the script's `SLOW_TESTS`, and meanwhile
 4. a scripted session in the real game (`voxmar --gate DIR`, crates/client/src/gate.rs) in
    a small world, headless and silent, with the integrated server made to run behind as

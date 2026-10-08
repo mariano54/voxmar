@@ -12,42 +12,68 @@ message, its ticks), and space a player's actions with arrival stamps (`propose_
 
 Refused, on a line added in a test file:
 - a deadline made from the clock: `Instant::now() + ...` or `Instant::now().checked_add(...)`;
-- the clock compared with anything (`Instant::now() > until`);
-- the clock or `.elapsed()` inside a `pump_until(` wait.
+- the clock compared with anything (`Instant::now() > until`, `Instant::now() - start < d`);
+- `.elapsed()` compared with anything (`while started.elapsed() < d`, a `pump_until`
+  closure split over lines), outside an `assert!`;
+- the clock or `.elapsed()` inside a `pump_until(` wait;
+- `thread::sleep(`, unless it paces a poll inside a `loop` or `while` block of the same
+  function (a fixed sleep and then `pump_until(|_| true)` is a wall-clock wait too).
 
 Allowed:
-- watchdogs: a deadline named after WATCHDOGS, and `assert!(Instant::now() < ...)`. They
-  only fail a server that hangs, and can never let a check pass;
-- TIMING_TESTS: the tests that sleep to stand for a player's real time (how long a block
-  takes to break, a blow's cooldown), which the server judges by arrival stamps;
-- `.elapsed()` measured in an assert (a timing check, not a wait).
+- watchdogs, in their exact shapes only: `Instant::now() + SERVER_WAIT;` (or
+  SERVER_SILENT), `- since < SERVER_WAIT`, and `assert!(Instant::now() < ...)`. They only
+  fail a server that hangs, and can never let a check pass. Naming one elsewhere on a line,
+  even in a comment, allows nothing;
+- `.elapsed()` measured in an assert (a timing check, not a wait);
+- by (file, test): SLEEP_TESTS, the tests that sleep to stand for a player's real time (how
+  long a block takes to break, a blow's cooldown), for the sleep rule only; and CLOCK_TESTS,
+  the real-time measurements Review ruled allowed until they move to `propose_at`, for
+  every rule.
 """
 
 import re
 import subprocess
 import sys
 
-# Watchdog limits, by name: gameplay.rs's `pump_until` gives up on a server silent for
-# SERVER_SILENT or waited on for SERVER_WAIT in all.
-WATCHDOGS = ["SERVER_SILENT", "SERVER_WAIT"]
+GAMEPLAY = "crates/server/tests/gameplay.rs"
 
-# Tests that sleep to stand for the player's real time, by function name.
-TIMING_TESTS = [
-    "break_and_place_blocks",
-    "a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started",
-    "falling_hurts",
-    "only_admins_fly_fast",
-    "walking_wears_a_path",
-    "a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it",
-    "placing_or_throwing_while_mining_does_not_cancel_the_mining",
-    "a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks",
+# Tests that sleep to stand for the player's real time, by (file, function): allowed the
+# sleep rule only.
+SLEEP_TESTS = [
+    (GAMEPLAY, "break_and_place_blocks"),
+    (GAMEPLAY, "a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started"),
+    (GAMEPLAY, "falling_hurts"),
+    (GAMEPLAY, "only_admins_fly_fast"),
+    (GAMEPLAY, "walking_wears_a_path"),
+    (GAMEPLAY, "a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it"),
+    (GAMEPLAY, "placing_or_throwing_while_mining_does_not_cancel_the_mining"),
+    (GAMEPLAY, "a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks"),
 ]
 
+# Real-time measurements Review allowed until they move to `propose_at`, by (file,
+# function): allowed every rule.
+CLOCK_TESTS = [
+    (GAMEPLAY, "a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it"),
+    (GAMEPLAY, "blows_on_the_beat_build_to_a_flourish"),
+    (GAMEPLAY, "a_dodge_waits_longer_in_heavier_armour"),
+]
+
+# The waits the tests had when this rule came in, every line of gameplay.rs taken as new
+# (`--self-check` counts them): replace one with a wait on the server and lower this.
+GAMEPLAY_WAITS = 17
+
 TEST_FILES = re.compile(r"^crates/[^/]+/tests/.*\.rs$")
-DEADLINE = re.compile(r"Instant::now\(\)\s*(\+|\.checked_add\()")
-COMPARED = re.compile(r"Instant::now\(\)\s*[<>]|[<>]=?\s*Instant::now\(\)")
+# The watchdogs' exact shapes, taken out of a line before it is judged: a deadline of
+# SERVER_WAIT or SERVER_SILENT from now, and the time since something under one.
+WATCHDOG_SHAPES = re.compile(r"Instant::now\(\)\s*\+\s*(SERVER_WAIT|SERVER_SILENT)\s*;|-\s*\w+\s*<\s*SERVER_(WAIT|SILENT)\b")
 WATCHDOG_ASSERT = re.compile(r"^\s*assert!\(\s*Instant::now\(\)\s*<")
+ASSERT = re.compile(r"^\s*(debug_)?assert(_eq|_ne)?!\(")
+DEADLINE = re.compile(r"Instant::now\(\)\s*(\+|\.checked_add\()")
+COMPARED = re.compile(r"Instant::now\(\)\s*(-\s*[\w.]+\s*)?[<>]|[<>]=?\s*Instant::now\(\)")
+ELAPSED_COMPARED = re.compile(r"\.elapsed\(\)(\.\w+\(\))?\s*[<>]|[<>]=?\s*[\w.]+\.elapsed\(\)")
 CLOCK = re.compile(r"Instant::now\(\)|\.elapsed\(\)")
+SLEEP = re.compile(r"thread::sleep\(")
+LOOP_OPEN = re.compile(r"(^|[^\w])(loop|while)\b[^{]*$")
 FN = re.compile(r"^\s*(?:pub(?:\([\w:]+\))?\s+)?fn\s+(\w+)")
 
 
@@ -59,16 +85,37 @@ def enclosing_fn(lines, index):
     return None
 
 
-def problem(line):
-    """Why an added line is a wall-clock wait, or None."""
-    if any(name in line for name in WATCHDOGS):
-        return None
-    if DEADLINE.search(line):
+def in_poll_loop(lines, index):
+    """Whether line `index` is inside a `loop` or `while` block of its function."""
+    start = index
+    while start > 0 and not FN.match(lines[start]):
+        start -= 1
+    blocks = []
+    for j in range(start, index + 1):
+        line = lines[j].split("//")[0]
+        for k, ch in enumerate(line):
+            if ch == "{":
+                blocks.append(bool(LOOP_OPEN.search(line[:k])))
+            elif ch == "}" and blocks:
+                blocks.pop()
+    return any(blocks)
+
+
+def problem(line, lines=None, index=None):
+    """Why an added line is a wall-clock wait (with `lines` and its `index`, for the sleep
+    rule), or None."""
+    asserted = ASSERT.match(line)
+    judged = WATCHDOG_SHAPES.sub(" ", line)
+    if DEADLINE.search(judged):
         return "a deadline on the wall clock"
-    if COMPARED.search(line) and not WATCHDOG_ASSERT.match(line):
+    if COMPARED.search(judged) and not WATCHDOG_ASSERT.match(line):
         return "the wall clock compared with a deadline"
-    if "pump_until(" in line and CLOCK.search(line):
+    if ELAPSED_COMPARED.search(judged) and not asserted:
+        return "time elapsed compared with a deadline"
+    if "pump_until(" in judged and CLOCK.search(judged):
         return "a wait that ends by the wall clock"
+    if SLEEP.search(judged) and not (lines is not None and in_poll_loop(lines, index)):
+        return "a sleep for a fixed time"
     return None
 
 
@@ -80,8 +127,10 @@ def findings(path, text, added):
         if number > len(lines):
             continue
         line = lines[number - 1]
-        why = problem(line)
-        if why and enclosing_fn(lines, number - 1) not in TIMING_TESTS:
+        why = problem(line, lines, number - 1)
+        test = (path, enclosing_fn(lines, number - 1))
+        allowed = test in CLOCK_TESTS or (why == "a sleep for a fixed time" and test in SLEEP_TESTS)
+        if why and not allowed:
             found.append(f"{path}:{number}: {why}: {line.strip()}")
     return found
 
@@ -89,7 +138,10 @@ def findings(path, text, added):
 def added_lines(base):
     """{path: (text, {added line numbers})} for test files changed since `base`, the
     working tree included."""
-    diff = subprocess.run(["git", "diff", "-U0", "--no-color", base, "--", "crates/*/tests/*.rs"], capture_output=True, text=True, check=True).stdout
+    # Prefixes and diff drivers fixed: diff.noprefix, diff.mnemonicPrefix or an external
+    # diff would otherwise leave no "+++ b/" line to find.
+    command = ["git", "diff", "-U0", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", base, "--", "crates/*/tests/*.rs"]
+    diff = subprocess.run(command, capture_output=True, text=True, check=True).stdout
     changed = {}
     path = None
     for line in diff.split("\n"):
@@ -112,12 +164,29 @@ def self_check():
     client.pump_until(|_| Instant::now() > until);
     client.pump_until(|c| c.done || started.elapsed() > Duration::from_millis(300));
     let later = Instant::now().checked_add(Duration::from_secs(1)).unwrap();
+    let until = Instant::now() + Duration::from_millis(800); // not SERVER_WAIT
+    client.pump_until(|_| Instant::now() > until); // SERVER_SILENT
+    std::thread::sleep(Duration::from_millis(800));
+    client.pump_until(|_| true);
+    client.pump_until(|c| {
+        c.done || first.elapsed() > Duration::from_millis(1000)
+    });
+    while started.elapsed() < Duration::from_secs(1) {
+        client.pump();
+    }
+    while Instant::now() - started < Duration::from_secs(1) {}
 }"""
-    every = set(range(1, 7))
-    refused = findings("crates/server/tests/gameplay.rs", planted, every)
-    assert len(refused) == 4, f"a planted wall-clock wait passed: {refused}"
-    timing = planted.replace("fn a_new_test", f"fn {TIMING_TESTS[0]}")
-    assert findings("crates/server/tests/gameplay.rs", timing, every) == [], "an allow-listed timing test was refused"
+    lines = planted.split("\n")
+    refused = findings(GAMEPLAY, planted, set(range(1, len(lines) + 1)))
+    assert len(refused) == 10, f"a planted wall-clock wait passed: {len(refused)} of 10 refused: {refused}"
+    # A clock test may measure; a sleep test may only sleep.
+    clock = planted.replace("fn a_new_test", f"fn {CLOCK_TESTS[1][1]}")
+    assert findings(GAMEPLAY, clock, set(range(1, len(lines) + 1))) == [], "an allowed clock test was refused"
+    sleeping = planted.replace("fn a_new_test", f"fn {SLEEP_TESTS[0][1]}")
+    left = findings(GAMEPLAY, sleeping, set(range(1, len(lines) + 1)))
+    assert len(left) == 9 and not any("sleep" in f for f in left), f"a sleep test was allowed more than its sleep: {left}"
+    # Allowed by file as well as name: the same test elsewhere is not.
+    assert len(findings("crates/engine/tests/other.rs", clock, set(range(1, len(lines) + 1)))) == 10, "a clock test was allowed in another file"
     watchdogs = """fn pump_until(&mut self) {
     let start = Instant::now();
     let deadline = Instant::now() + SERVER_WAIT;
@@ -125,22 +194,25 @@ def self_check():
     let now = Instant::now();
     assert!(now - heard < SERVER_SILENT && now - start < SERVER_WAIT, "timed out");
     assert!(started.elapsed() + CATCH_UP >= hardness, "mining completed too early");
+    assert!(Instant::now() - heard < SERVER_SILENT, "the server went silent");
+    loop {
+        std::thread::sleep(Duration::from_millis(2));
+        if done() { break; }
+    }
+    while !done() {
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }"""
-    passed = findings("crates/server/tests/gameplay.rs", watchdogs, set(range(1, 9)))
-    assert passed == [], f"a watchdog or timing assert was refused: {passed}"
-    # The tests as they stand, every line taken as new: only the timing tests' own clock
-    # and the ones written before this rule (gameplay replaces those) are found, never a
-    # watchdog.
+    passed = findings(GAMEPLAY, watchdogs, set(range(1, 17)))
+    assert passed == [], f"a watchdog, timing assert or polling sleep was refused: {passed}"
+    # The tests as they stand, every line taken as new: exactly the waits written before
+    # this rule (gameplay replaces those), so one more or one fewer is seen.
     try:
-        text = open("crates/server/tests/gameplay.rs", encoding="utf-8").read()
+        text = open(GAMEPLAY, encoding="utf-8").read()
     except OSError:
         return
-    lines = text.split("\n")
-    found = findings("crates/server/tests/gameplay.rs", text, set(range(1, len(lines) + 1)))
-    for f in found:
-        assert not any(w in f for w in WATCHDOGS), f"a watchdog was refused: {f}"
-        number = int(f.split(":")[1])
-        assert enclosing_fn(lines, number - 1) not in TIMING_TESTS, f"an allow-listed timing test was refused: {f}"
+    found = findings(GAMEPLAY, text, set(range(1, len(text.split("\n")) + 1)))
+    assert len(found) == GAMEPLAY_WAITS, f"{GAMEPLAY} has {len(found)} waits on the wall clock, not GAMEPLAY_WAITS = {GAMEPLAY_WAITS}:\n" + "\n".join(found)
 
 
 def main():
