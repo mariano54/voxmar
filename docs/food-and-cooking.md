@@ -67,20 +67,34 @@ camel, crocodile, wyrm), fish (trout, carp, cod, tuna, crab, frog legs), eggs (h
 turtle, sunwing), dairy (cow, goat, sheep, reindeer and camel milk), fat (lard, bear fat),
 honey and wax, and supernatural ingredients (moon dust, lumen slime, ember scale).
 
-Plants supply (all real items in plants.ron, crops.ron and trees.ron): grains (wheat,
-barley, oats, rice, millet, quinoa, corn), legumes (beans, peas, lentils), roots (carrot,
-potato, turnip, beet, radish, parsnip, yam, taro, ginger), vegetables (cabbage, tomato,
-onion, leek, garlic, asparagus, pumpkin, squash, chili), fruit (apple, pear, plum,
-cherries, fig, lemon, orange, olives, banana, mango, avocado, coconut, marula, baobab,
-melon, pineapple, grapes, prickly pear), berries (blueberry, raspberry, blackberry,
-elderberry, cranberry, lingonberry, cloudberry, gooseberry, currant, goji, rowan,
-strawberry, sweet berries), nuts (hazelnut, walnut, chestnut, almond), herbs (mint, sage,
-thyme, basil, rosemary, oregano, parsley, dill, fennel, coriander, lemongrass, wild
-garlic, sorrel, nettle), spices (cumin, saffron, vanilla, juniper), fungi (chanterelle,
-porcini, morel, puffball, oyster, shiitake, lion's mane, chicken of the woods, truffle),
-tea and coffee, cacao, and the fantastical plants (moonbloom, glowcap, emberbloom,
-frostpetal, starlily, heartbloom, emberfruit, golden apple and those proposed in
+Plants supply (the items players hold, as the content defines them in blocks.ron,
+crops.ron and trees.ron; since the P27 merge a wild plant of a kind gives one shared item,
+named in bold below). Farmed crops: wheat, rye, rice, chickpea, carrot, potato, taro,
+cabbage, tomato, strawberry, chili pepper, saffron. Tree fruit and nuts: apple, pear,
+plum, cherries, wild cherries, rowan berries, orange, lemon, fig, olives, banana, mango,
+avocado, coconut, dates, tamarind, baobab fruit, marula, almond, hazelnut, walnut,
+chestnut, pine nuts, cacao, and the golden apple and emberfruit. Wild plants, picked as
+items: grains (wild wheat, wild rice, wild corn, **wild grain**: barley, oats, millet,
+quinoa), legumes (wild beans, peas, lentils, chickpea), roots (wild carrot, taro, yam,
+ginger, cattail, paleroot, **wild roots**: turnip, beet, radish, parsnip), vegetables
+(wild asparagus, **wild onion**: onion, leek, garlic; **pumpkin**: pumpkin, squash),
+fruit (wild melon, wild pineapple, wild grapes, prickly pear, wild rose hips), berries
+(**sweet berry**: sweet berries, blueberry, raspberry, blackberry, cloudberry; **tart
+berry**: cranberry, lingonberry, gooseberry; elderberry, currant, goji, juniper), herbs
+(**kitchen herbs**: oregano, parsley, dill, fennel, coriander, basil, rosemary, cumin; mint,
+sage, thyme, lemongrass, sorrel, nettle, lavender, chamomile, yarrow), spices (wild
+vanilla, wild ginger, crocus, juniper), fungi (**mushroom**: porcini, oyster, shiitake,
+blewit, chanterelle, brown mushroom; morel, puffball, lion's mane, chicken of the woods,
+truffle, inkcap), tea and coffee (tea bush, hibiscus, heather, coffee), and the
+fantastical plants (moonbloom, moonmelon, lantern gourd, frost turnip, glowcap, ember
+pepper, starwheat, hearthgrain, whisper oats and those proposed in
 [systems-web.md](systems-web.md)).
+
+A merged-away plant (tagged `merged` in blocks.ron) stays in the world and drops the
+shared item. It is never held, so `BlockRegistry::listed` leaves it out of the creative
+catalogue, the journal's Plants page (finding one finds the item) and the recipe book;
+`/give` and `/drop` hand out the item, and an older save's stack of one loads as the item
+(`item_of`, `item_named`).
 
 ## Recipes
 
