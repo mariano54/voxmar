@@ -162,6 +162,10 @@ Tier-group eviction preserves those IDs; registry or raw-column pressure resets 
 maps together before the whole batch. Raw-column lookups hash only position and ID.
 The larger corner bound avoids observed close-site relief eviction; the raw-column
 bound avoids eviction just before the successful ninth layout of a spawn village.
+Once actual next-batch work fills a large terrain or raw-column table, allocation
+skips one intermediate rehash. Small maps keep ordinary growth; entry limits, reset
+rules and the maximum allocation of an ordinary full map are unchanged. Allocation
+and copying remain inside the full planning timer.
 The close-water memo remains bounded to 16,384 points.
 Freshwater-only queries first check the original channel indexes. Without an indexed
 edge or a home lake/shore/salt cell in either tier, carving cannot make freshwater at
