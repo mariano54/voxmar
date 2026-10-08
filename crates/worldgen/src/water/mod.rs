@@ -586,8 +586,10 @@ impl Rivers {
         self.sealed_cached(land, tiers, key, p, ground, &mut scratch.corners, &mut scratch.columns)
     }
 
-    /// Exact standalone samples in a bounded batch: only the geology of these centres
-    /// is grouped. Every centre keeps its own p +/- 1 channel bounds and sealed neighbours.
+    /// Exact standalone samples in a bounded batch. Every centre keeps its own
+    /// p +/- 1 channel bounds and sealed neighbours. Carve the original batched
+    /// centre landforms first, so sealing an earlier centre can reuse a later centre
+    /// under the same exact key rather than sampling its geology for a second time.
     pub fn samples_cached(&self, land: Stages, points: &[(i32, i32)], scratch: &mut Samples) -> Vec<GeoSample> {
         assert!(points.len() <= SAMPLE_BATCH);
         scratch.prepare(self.id, points.len());
@@ -596,16 +598,25 @@ impl Rivers {
         let needed: Vec<_> = points.iter().zip(&keys).map(|(&(x, z), &key)| !scratch.columns.contains_key(&(IVec2::new(x, z), key))).collect();
         let missing: Vec<_> = points.iter().zip(&needed).filter_map(|(&p, &need)| need.then_some(p)).collect();
         let mut grounds = land.geology.lands_with(&missing, &mut scratch.corners).into_iter();
+        for (i, &(x, z)) in points.iter().enumerate() {
+            if !needed[i] { continue; }
+            // Consume the original miss mask even for duplicate centres. Cache
+            // insertion order changes no pure value, but this keeps batch alignment.
+            let ground = grounds.next().expect("batched missing landform");
+            if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
+            let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
+            let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, min, max));
+            scratch.columns.entry((IVec2::new(x, z), keys[i])).or_insert_with(|| self.unsealed(tiers, x, z, ground));
+        }
         points.iter().enumerate().map(|(i, &(x, z))| {
             // Clear only channel groups here: the already computed centre landforms
             // remain valid, and the reserved corner headroom covers all neighbours.
             if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
             let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
             let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, min, max));
-            // Keep the initial miss mask: an earlier neighbour may have populated
-            // this column since its landform was batched, but that work still counts.
-            let ground = needed[i].then(|| grounds.next().expect("batched missing landform"));
-            self.sealed_cached(land, tiers, keys[i], IVec2::new(x, z), ground, &mut scratch.corners, &mut scratch.columns)
+            // All centres now hold their original raw values; neighbours still use
+            // the requesting centre's bounds, including when keys differ nearby.
+            self.sealed_cached(land, tiers, keys[i], IVec2::new(x, z), None, &mut scratch.corners, &mut scratch.columns)
         }).collect()
     }
 

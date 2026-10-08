@@ -2829,8 +2829,6 @@ fn site_water_search_stops_after_the_used_prefix() {
     }
 }
 
-/// Planning budgets are measured in release with thread CPU time, after the surrounding
-/// land is known. Report cold region discovery separately in settlement_preview.
 /// Repeat one known expensive whole plan for an external CPU sampler. This diagnostic
 /// does not supply acceptance timings; culture_planning_budget retains all 20 seeds.
 #[test]
