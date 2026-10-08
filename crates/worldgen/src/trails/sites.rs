@@ -1,8 +1,10 @@
 //! The planning grid trails are routed over, and the places they lead to.
 //!
-//! The grid samples the land (rivers and lakes carved in) every [`CELL`] blocks, one
-//! region of [`REGION`] blocks at a time. Each region's places of interest come from its
-//! own cells, reading neighbours' cells only to judge them: a summit must top the land
+//! The grid samples the land (rivers and lakes carved in) every [`CELL`] blocks, a patch
+//! of [`PATCH`] cells at a time, so that what reads only part of a region (a route's
+//! search, or a place judged against the land beyond its region's edge) samples only
+//! that part. Each region of [`REGION`] blocks has its places of interest, from its own
+//! cells, reading neighbours' cells only to judge them: a summit must top the land
 //! around it, a waterfall needs two water levels side by side. A place therefore depends
 //! only on the seed and the land near it, never on what was generated first.
 
@@ -20,6 +22,9 @@ pub const CELL: i32 = 8;
 pub const REGION: i32 = 512;
 /// Cells along a side of a region.
 pub const CELLS: i32 = REGION / CELL;
+/// Cells along a side of a patch of the grid, the unit it is sampled and kept in: a
+/// region's places read the regions around only within 10 cells of its edge.
+pub const PATCH: i32 = 16;
 
 /// The land at one grid point.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -50,7 +55,7 @@ impl Cell {
     }
 }
 
-/// One region's cells, row by row.
+/// One patch's cells, row by row.
 pub struct Grid(pub Box<[Cell]>);
 
 impl Weigh for Grid {
@@ -60,9 +65,12 @@ impl Weigh for Grid {
 }
 
 impl Grid {
-    pub fn new(land: &dyn Land, region: IVec2) -> Self {
+    /// The cells of patch `patch`, the `PATCH`×`PATCH` cells from `patch * PATCH`.
+    pub fn new(land: &dyn Land, patch: IVec2) -> Self {
+        let first = patch * PATCH;
+        let origin = first * CELL;
         let mut cells: Box<[Cell]> = land
-            .grid(region * REGION, CELL, CELLS)
+            .grid(origin, CELL, PATCH)
             .into_iter()
             .map(|g| {
                 let submerged = g.submerged();
@@ -70,12 +78,11 @@ impl Grid {
             })
             .collect();
         // Cells whose ground a building takes, or comes within a block of.
-        let first = region * CELLS;
-        for (min, max) in land.built(region * REGION - CELL, region * REGION + REGION + CELL) {
+        for (min, max) in land.built(origin - CELL, origin + PATCH * CELL + CELL) {
             let (lo, hi) = ((min - 1 + CELL / 2).div_euclid(IVec2::splat(CELL)), (max + 1 + CELL / 2).div_euclid(IVec2::splat(CELL)));
-            for cz in lo.y.max(first.y)..=hi.y.min(first.y + CELLS - 1) {
-                for cx in lo.x.max(first.x)..=hi.x.min(first.x + CELLS - 1) {
-                    cells[((cz - first.y) * CELLS + cx - first.x) as usize].built = true;
+            for cz in lo.y.max(first.y)..=hi.y.min(first.y + PATCH - 1) {
+                for cx in lo.x.max(first.x)..=hi.x.min(first.x + PATCH - 1) {
+                    cells[((cz - first.y) * PATCH + cx - first.x) as usize].built = true;
                 }
             }
         }
@@ -115,7 +122,8 @@ impl Poi {
         self.cell * CELL
     }
 
-    /// The order trails are owned by: the lower end owns a trail.
+    /// The order of a trail's ends: it is routed from the lower, which owns it only where
+    /// trails are laid everywhere (near settlements, its gate's region does).
     pub fn below(&self, other: &Poi) -> bool {
         (self.height, self.cell.x, self.cell.y) < (other.height, other.cell.x, other.cell.y)
     }
