@@ -426,7 +426,7 @@ pub(super) mod tests {
     use crate::skill::SkillRegistry;
 
     pub(super) fn species(source: &str) -> Creature {
-        let (defs, _) = CreatureRegistry::read("test", source).unwrap();
+        let defs = CreatureRegistry::read("test", source).unwrap().defs;
         CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).unwrap().get(CreatureId(0)).clone()
     }
 

@@ -109,6 +109,9 @@
         (
             name: "plains",
             tags: ["grassland", "temperate", "open"],
+            // Stones on gentle open ground: grey stone mottled with pale diorite, moss on their
+            // tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("diorite", 1.0)],
             climate: [(
                 temperature: ("cool", "temperate"),
                 moisture: ("moderate", "moderate"),
@@ -150,6 +153,9 @@
             name: "forest_steppe",
             inherit: "plains",
             tags: ["grassland", "temperate", "open", "groves"],
+            // Stones on gentle open ground: grey stone mottled with pale diorite, moss on their
+            // tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("diorite", 1.0)],
             flora: (
                 forest: 0.2,
                 trees: [Name("oak", 1.0), Name("birch", 1.0), Name("pine", 0.4), Name("shrub", 0.8), Name("pear_tree", 0.12), Name("wild_cherry", 0.12), Name("hazel", 0.3)],
@@ -162,6 +168,9 @@
             // Lush lowland grass, tall and deep, with old oaks standing alone.
             name: "meadow",
             tags: ["grassland", "temperate", "open", "lush"],
+            // Stones on gentle open ground: grey stone mottled with pale diorite, moss on their
+            // tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("diorite", 1.0)],
             weight: 0.5,
             climate: [(temperature: ("temperate", "temperate"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (
@@ -440,6 +449,8 @@
             // heath in places.
             name: "steppe",
             tags: ["grassland", "dry", "open"],
+            // Stones on gentle open ground: pale grey, moss on their tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("andesite", 1.5), Name("limestone", 0.5)],
             // Dry grass, straw-olive.
             colors: (grass: (164, 164, 100)),
             climate: [
@@ -807,6 +818,8 @@
             // Sunny scrub hills: cypress spires, sage, thyme and lavender, pale stone.
             name: "mediterranean",
             tags: ["scrubland", "warm", "dry", "open"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("limestone", 3.0), Name("calcite", 0.6)],
             weight: 0.7,
             climate: [(temperature: ("warm", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
@@ -883,7 +896,7 @@
             climate: [(temperature: ("hot", "hot"), moisture: ("humid", "wet"), continentalness: ("coast", "coast"), erosion: ("flat", "flat"))],
             flora: (
                 forest: 0.5,
-                trees: [Name("mangrove", 4.0), Name("palm", 0.5), Name("jungle_bush", 0.5), Name("banana", 0.15), Name("mango", 0.15)],
+                trees: [Name("mangrove", 4.0), Name("palm", 0.5), Name("jungle_bush", 0.5), Name("banana", 0.15)],
                 cover: 0.7, flowers: 0.01,
                 plants: [Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("wetland", 1.0), Name("papyrus", 3.0), Tag("forage", 0.02)],
             ),
@@ -1010,6 +1023,8 @@
         (
             name: "savanna",
             tags: ["grassland", "hot", "dry", "open", "savanna"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("limestone", 3.0), Name("granite", 1.0)],
             // Dry grass: dull olive to straw, as dry grassland reads, not the climate's green.
             colors: (grass: (184, 174, 92), foliage: (170, 160, 64)),
             climate: [
@@ -1103,7 +1118,9 @@
             // Where aether runs high in mild country: pale stone breaks through the turf in
             // patches and veins.
             name: "moonlit_meadow",
-            tags: ["grassland", "temperate", "open", "fantastical"],
+            tags: ["grassland", "temperate", "open", "fantastical", "no_settlement"],
+            // Stones on gentle open ground: pale grey, moss on their tops, not the dark rock.
+            field_stones: [Name("diorite", 2.0), Name("calcite", 1.0), Name("stone", 1.0)],
             rarity: Uncommon,
             climate: [(
                 temperature: ("cool", "temperate"),
@@ -1139,7 +1156,7 @@
         (
             // A cold wood of silver-barked trees whose leaves glow faintly at dusk.
             name: "silverwood_glade",
-            tags: ["forest", "cold", "fantastical"],
+            tags: ["forest", "cold", "fantastical", "no_settlement"],
             rarity: Rare,
             climate: [(temperature: ("frozen", "cool"), moisture: ("moderate", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.78, 1.0))],
             flora: (
@@ -1166,7 +1183,7 @@
         (
             // A damp wood of giant glowing mushrooms under a dark canopy.
             name: "glowcap_forest",
-            tags: ["forest", "fungal", "fantastical", "dense"],
+            tags: ["forest", "fungal", "fantastical", "no_settlement", "dense"],
             rarity: Rare,
             climate: [(temperature: ("cool", "warm"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.8, 1.0))],
             flora: (
@@ -1192,7 +1209,7 @@
         (
             // Hot barrens where emberwoods smoulder and the ground is ash and red earth.
             name: "ember_wastes",
-            tags: ["desert", "hot", "dry", "fantastical"],
+            tags: ["desert", "hot", "dry", "fantastical", "no_settlement"],
             rarity: Rare,
             climate: [(temperature: ("warm", "hot"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), aether: (0.78, 1.0))],
             flora: (
@@ -1220,7 +1237,7 @@
             // Frozen ground set with crystals of ice and pale stone, where blooms of crystal
             // grow.
             name: "crystal_expanse",
-            tags: ["frozen", "ice", "open", "fantastical"],
+            tags: ["frozen", "ice", "open", "fantastical", "no_settlement"],
             rarity: VeryRare,
             climate: [(temperature: ("frozen", "cold"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"), aether: (0.82, 1.0))],
             flora: (
@@ -1248,7 +1265,9 @@
             // Golden downs where the legendary sunspire grows: a place told of more often
             // than found.
             name: "sunspire_downs",
-            tags: ["grassland", "warm", "open", "fantastical"],
+            tags: ["grassland", "warm", "open", "fantastical", "no_settlement"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("chalk", 2.0), Name("limestone", 2.0)],
             rarity: Legendary,
             climate: [(temperature: ("temperate", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.85, 1.0))],
             flora: (

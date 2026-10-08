@@ -16,6 +16,7 @@
 
 pub mod anatomy;
 pub mod brain;
+pub mod condition;
 pub mod husbandry;
 pub mod model;
 pub mod motion;
@@ -428,6 +429,9 @@ pub struct CreatureDef {
     /// What kept ones give on timers.
     #[serde(default)]
     pub products: Vec<husbandry::Product>,
+    /// What kept ones need beyond food, water and their climate (docs/breeding.md).
+    #[serde(default)]
+    pub needs: condition::NeedsDef,
     /// What individuals inherit: coat colours, size, yield, temper (docs/breeding.md). At
     /// most [`crate::genes::MOST`].
     #[serde(default)]
@@ -482,6 +486,29 @@ struct CreatureFile {
     creatures: Vec<CreatureDef>,
     #[serde(default)]
     limits: Option<SetLimits>,
+    #[serde(default)]
+    defence: Option<SetDefenceTraining>,
+    #[serde(default)]
+    condition: Option<condition::SetConditionRules>,
+}
+
+/// One package's `creatures.ron`: its species, and what it sets of the world's rules.
+#[derive(Debug)]
+pub struct CreaturePackage {
+    pub defs: Vec<CreatureDef>,
+    pub limits: Option<SetLimits>,
+    pub defence: Option<SetDefenceTraining>,
+    pub condition: Option<condition::SetConditionRules>,
+}
+
+/// What packages set for every creature in the world: how many there are, how their
+/// blows train Defence, and how kept animals' condition is reckoned. Each is single-valued data a later package replaces field by field
+/// ([`crate::content::Settable`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Rules {
+    pub limits: Limits,
+    pub defence: DefenceTraining,
+    pub condition: condition::ConditionRules,
 }
 
 /// How many creatures the world holds. A package's `creatures.ron` may set any of them
@@ -513,38 +540,12 @@ impl Default for Limits {
     }
 }
 
-/// The limits one package sets: any of them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct SetLimits {
-    pub most: Option<usize>,
-    pub wild_most: Option<usize>,
-    pub kept_each: Option<usize>,
-    pub keepers: Option<usize>,
-    pub animals_near: Option<usize>,
-    pub monsters_near: Option<usize>,
+crate::content::settable! {
+    /// The limits one package sets: any of them.
+    SetLimits for Limits { most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize }
 }
 
 impl Limits {
-    /// These limits with `set` over them, and the names of those it set.
-    pub fn with(mut self, set: &SetLimits) -> (Self, Vec<&'static str>) {
-        let mut changed = Vec::new();
-        for (name, field, value) in [
-            ("most", &mut self.most, set.most),
-            ("wild_most", &mut self.wild_most, set.wild_most),
-            ("kept_each", &mut self.kept_each, set.kept_each),
-            ("keepers", &mut self.keepers, set.keepers),
-            ("animals_near", &mut self.animals_near, set.animals_near),
-            ("monsters_near", &mut self.monsters_near, set.monsters_near),
-        ] {
-            if let Some(value) = value {
-                *field = value;
-                changed.push(name);
-            }
-        }
-        (self, changed)
-    }
-
     /// Whether these limits can hold: room for one wild creature, for what one player draws
     /// near, and for every keeper's animals beside the wild ones.
     pub fn check(&self) -> Result<(), RegistryError> {
@@ -566,6 +567,49 @@ impl Limits {
             ));
         }
         Ok(())
+    }
+}
+
+/// When a creature's blow that misses trains the player's Defence (design wiki draft 63):
+/// only a blow from a creature the player landed a damaging blow on within
+/// `fought_within` seconds, and of at least `least_level` times their Defence level. So
+/// standing among weak monsters, or tapping a penned hen between their blows, trains
+/// nothing, and each creature feeds only the landed blows it lives through. A package's
+/// `creatures.ron` may set either (`defence`); a later package's replace an earlier one's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DefenceTraining {
+    /// Seconds a landed blow keeps the fight on.
+    pub fought_within: f32,
+    /// The least creature level that trains, as a share of the player's Defence level.
+    pub least_level: f32,
+}
+
+impl Default for DefenceTraining {
+    fn default() -> Self {
+        Self { fought_within: 10.0, least_level: 0.5 }
+    }
+}
+
+crate::content::settable! {
+    /// What one package sets of Defence training.
+    SetDefenceTraining for DefenceTraining { fought_within: f32, least_level: f32 }
+}
+
+impl DefenceTraining {
+    /// Whether these rules make sense: a fight lasts a while, and no level share is negative.
+    pub fn check(&self) -> Result<(), RegistryError> {
+        if !(self.fought_within.is_finite() && self.fought_within > 0.0) {
+            return Err(RegistryError(format!("defence: `fought_within` must be above 0 seconds, not {}", self.fought_within)));
+        }
+        if !(self.least_level.is_finite() && self.least_level >= 0.0) {
+            return Err(RegistryError(format!("defence: `least_level` must be 0 or more, not {}", self.least_level)));
+        }
+        Ok(())
+    }
+
+    /// Whether a creature of `level` is a match for a player's Defence level `defence`.
+    pub fn matches(&self, level: u8, defence: u8) -> bool {
+        level as f32 >= self.least_level * defence as f32
     }
 }
 
@@ -608,13 +652,13 @@ impl Creature {
 pub struct CreatureRegistry {
     creatures: Vec<Creature>,
     by_name: FxHashMap<String, CreatureId>,
-    limits: Limits,
+    rules: Rules,
 }
 
 impl CreatureRegistry {
     /// Reads a package's `creatures.ron`, qualifying names with its namespace: its species,
-    /// and the limits if it sets them.
-    pub fn read(namespace: &str, source: &str) -> Result<(Vec<CreatureDef>, Option<SetLimits>), RegistryError> {
+    /// and what it sets of the world's rules.
+    pub fn read(namespace: &str, source: &str) -> Result<CreaturePackage, RegistryError> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let file: CreatureFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/creatures.ron: {e}")))?;
         let qualify = |name: &mut String| {
@@ -622,7 +666,7 @@ impl CreatureRegistry {
                 *name = format!("{namespace}:{name}");
             }
         };
-        let limits = file.limits;
+        let (limits, defence, condition) = (file.limits, file.defence, file.condition);
         let defs = file
             .creatures
             .into_iter()
@@ -649,13 +693,15 @@ impl CreatureRegistry {
                 def
             })
             .collect();
-        Ok((defs, limits))
+        Ok(CreaturePackage { defs, limits, defence, condition })
     }
 
     /// Resolves species against the blocks (items) and skills.
-    pub fn new(defs: Vec<CreatureDef>, limits: Limits, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
-        limits.check()?;
-        let mut registry = Self { limits, ..Self::default() };
+    pub fn new(defs: Vec<CreatureDef>, rules: Rules, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
+        rules.limits.check()?;
+        rules.defence.check()?;
+        rules.condition.check()?;
+        let mut registry = Self { rules, ..Self::default() };
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
@@ -737,7 +783,17 @@ impl CreatureRegistry {
 
     /// How many creatures the world holds.
     pub fn limits(&self) -> Limits {
-        self.limits
+        self.rules.limits
+    }
+
+    /// When creatures' blows train Defence.
+    pub fn defence(&self) -> DefenceTraining {
+        self.rules.defence
+    }
+
+    /// How kept animals' condition is reckoned.
+    pub fn condition(&self) -> &condition::ConditionRules {
+        &self.rules.condition
     }
 
     pub fn id(&self, name: &str) -> Option<CreatureId> {
@@ -844,6 +900,7 @@ pub fn hit_chance(attack_level: u8, defence_level: u8) -> f32 {
 mod tests {
     use super::*;
     use crate::block::BlockDef;
+    use crate::content::Settable;
 
     const RABBIT: &str = r#"(creatures: [(
         name: "rabbit", health: 6, level: 1,
@@ -860,8 +917,8 @@ mod tests {
             BlockDef { name: "base:carrot".into(), ..Default::default() },
         ])
         .unwrap();
-        let (defs, _) = CreatureRegistry::read("base", RABBIT).unwrap();
-        CreatureRegistry::new(defs, Limits::default(), &blocks, &SkillRegistry::default()).unwrap()
+        let defs = CreatureRegistry::read("base", RABBIT).unwrap().defs;
+        CreatureRegistry::new(defs, Rules::default(), &blocks, &SkillRegistry::default()).unwrap()
     }
 
     #[test]
@@ -902,17 +959,16 @@ mod tests {
             BlockDef { name: "base:carrot".into(), ..Default::default() },
         ])
         .unwrap();
-        let (defs, _) = CreatureRegistry::read("base", &source).unwrap();
-        assert!(CreatureRegistry::new(defs, Limits::default(), &blocks, &SkillRegistry::default()).is_err());
+        let defs = CreatureRegistry::read("base", &source).unwrap().defs;
+        assert!(CreatureRegistry::new(defs, Rules::default(), &blocks, &SkillRegistry::default()).is_err());
     }
 
     #[test]
     fn limits_load_from_the_file_and_are_checked() {
         let source = RABBIT.replacen("(creatures:", "(limits: (wild_most: 20, kept_each: 5), creatures:", 1);
-        let (_, set) = CreatureRegistry::read("base", &source).unwrap();
-        let set = set.expect("set");
+        let set = CreatureRegistry::read("base", &source).unwrap().limits.expect("set");
         assert_eq!(set, SetLimits { wild_most: Some(20), kept_each: Some(5), ..Default::default() });
-        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().1, None, "a file without limits leaves them to another");
+        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().limits, None, "a file without limits leaves them to another");
         // What a package sets replaces what was there; the rest stays.
         let (limits, changed) = Limits::default().with(&set);
         assert_eq!(changed, ["wild_most", "kept_each"]);
@@ -928,8 +984,42 @@ mod tests {
             Limits { keepers: usize::MAX, ..ok },
         ] {
             let blocks = BlockRegistry::new(vec![]).unwrap();
-            assert!(CreatureRegistry::new(Vec::new(), bad, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
+            assert!(CreatureRegistry::new(Vec::new(), Rules { limits: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
         }
+    }
+
+    #[test]
+    fn defence_training_loads_from_the_file_and_is_checked() {
+        let source = RABBIT.replacen("(creatures:", "(defence: (least_level: 0.75), creatures:", 1);
+        let set = CreatureRegistry::read("base", &source).unwrap().defence.expect("set");
+        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().defence, None);
+        // What it leaves out keeps what was there.
+        let (rules, changed) = DefenceTraining::default().with(&set);
+        assert_eq!((rules.fought_within, rules.least_level, changed), (10.0, 0.75, vec!["least_level"]));
+        // At least three quarters of Defence 20 is 15.
+        assert!(rules.matches(15, 20) && !rules.matches(14, 20));
+        assert!(DefenceTraining::default().matches(10, 20) && !DefenceTraining::default().matches(9, 20));
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        for bad in [(0.0, 0.5), (f32::NAN, 0.5), (10.0, -0.1), (10.0, f32::INFINITY)] {
+            let defence = DefenceTraining { fought_within: bad.0, least_level: bad.1 };
+            assert!(CreatureRegistry::new(Vec::new(), Rules { defence, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
+        }
+    }
+
+    #[test]
+    fn condition_rules_load_from_the_file_and_are_checked() {
+        let source = RABBIT.replacen("(creatures:", "(condition: (up: 0.2, fed: (0.5, 1.5)), creatures:", 1);
+        let set = CreatureRegistry::read("base", &source).unwrap().condition.expect("set");
+        // What it leaves out keeps what was there.
+        let (rules, changed) = condition::ConditionRules::default().with(&set);
+        assert_eq!((rules.up, rules.fed, rules.down), (0.2, (0.5, 1.5), 0.25));
+        assert_eq!(changed, ["up", "fed"]);
+        let source = RABBIT.replace("health: 6,", "health: 6, needs: (space: 2, shelter: false),");
+        let rabbit = &CreatureRegistry::read("base", &source).unwrap().defs[0];
+        assert_eq!((rabbit.needs.space(0.5), rabbit.needs.shelter()), (2.0, false));
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        let bad = condition::ConditionRules { tamed: 2.0, ..Default::default() };
+        assert!(CreatureRegistry::new(Vec::new(), Rules { condition: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err());
     }
 
     #[test]

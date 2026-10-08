@@ -5,10 +5,11 @@
 (
     blocks: [
         // The crafting table: a three-by-three grid for what the inventory's two-by-two
-        // cannot make (tools, stations). Right click it to work at it.
+        // cannot make (tools, stations). Right click it to work at it. A `furnishing`: a
+        // village's gives nothing, one a player placed gives itself back.
         (
             name: "crafting_table", sound: Wood, textures: Sides(top: "crafting_table_top", bottom: "oak_planks", side: "crafting_table_side"),
-            hardness: 2.5, color: (150, 110, 70), tags: ["station", "crafting_table", "wood", "fuel", "building"],
+            hardness: 2.5, color: (150, 110, 70), tags: ["station", "crafting_table", "wood", "fuel", "building", "furnishing"],
         ),
         // The Homestead Hearth's pieces (multiblocks.ron): a hearthstone, ringed with stone
         // and lit with a right click, and a chimney two blocks tall at a corner.
@@ -42,16 +43,19 @@
             hardness: 0.3, color: (150, 110, 70), tags: ["bed", "sleeping_bag"],
         ),
         // A stone altar: blocks tagged `altar` restore prayer and take bones for Magic
-        // (combat's prayers.ron); settlements set them in chapels and shrines.
+        // (combat's prayers.ron); settlements set them in chapels and shrines. A
+        // `furnishing` drops itself only where a player placed it: a village's gives nothing
+        // (design draft 80).
         (
             name: "stone_altar", sound: Stone, textures: Sides(top: "stone_altar_top", bottom: "stone_bricks", side: "stone_altar_side"),
-            hardness: 2.0, color: (130, 130, 135), tags: ["altar", "building"],
+            hardness: 2.0, color: (130, 130, 135), tags: ["altar", "building", "furnishing"],
         ),
         // A herb planter: herbs and flowers placed in it grow back when picked (regrowth.ron),
-        // for a gardener whose Farming level is enough for them. Herbs cannot be sown.
+        // for a gardener whose Farming level is enough for them. Herbs cannot be sown. A
+        // `furnishing`, as villages set them too.
         (
             name: "herb_planter", sound: Wood, textures: Sides(top: "herb_planter_top", bottom: "oak_planks", side: "herb_planter_side"),
-            hardness: 1.5, color: (120, 85, 55), tags: ["planter", "wood", "building"],
+            hardness: 1.5, color: (120, 85, 55), tags: ["planter", "wood", "building", "furnishing"],
         ),
         // Farmland: soil a hoe has turned, where crops are sown.
         (

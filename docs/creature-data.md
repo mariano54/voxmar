@@ -65,6 +65,31 @@ animals and monsters spawning for anyone:
 
 What no package sets keeps the defaults above.
 
+The same file sets, the same way, when creatures' blows train Defence (design wiki draft
+63):
+
+```ron
+defence: (fought_within: 10.0, least_level: 0.5),
+```
+
+A blow that misses trains the player's Defence only if they landed a damaging blow on that
+very creature within `fought_within` seconds, and only from a creature of at least
+`least_level` times their Defence level. Standing among weak monsters, or tapping a penned
+hen between a strong one's blows, trains nothing; with two players at one creature, only
+the last to hurt it trains on its blows.
+
+The same file may set the condition rules of kept animals the same way, field by field
+(see breeding.md, "Keeping animals"):
+
+```ron
+condition: (up: 0.15, down: 0.25, met: 1.0, partly: 0.8, unmet: 0.5, tamed: 0.6, hurt: 0.5,
+    output: (0.5, 0.7), breed: 0.5, fed: (1.0, 2.0), space_radius: 5.0, company: 14.0,
+    climate: (0.75, 0.25), wet: 0.05, roof_within: 3.0, snow_hardy: -10.0),
+```
+
+A species says what it needs when kept with `needs: (space: 6, shelter: false, company:
+true)`, each optional: room from its width, shelter wanted, company if it is social.
+
 ## A creature
 
 ```ron
@@ -238,7 +263,13 @@ Content fails to load, with the file and a reason, when:
 - a supernatural species has no aether minimum;
 - the limits leave no room for wild creatures (`wild_most` 0), one player's `animals_near`
   and `monsters_near` together are more than `wild_most`, or `most` is less than
-  `wild_most` and `keepers` players' `kept_each`.
+  `wild_most` and `keepers` players' `kept_each`;
+- `defence` makes a fight last no time (`fought_within` 0 or less) or asks a negative
+  `least_level`;
+- the condition rules have a share outside 0..1, a need met counting less than partly
+  met (or that less than unmet), a rate or reach of 0, an output that falls below 0,
+  `fed` days or `climate` fits out of order, no company reach, a negative `wet` or
+  `roof_within`, or no `snow_hardy` temperature.
 
 Test-time checks (in `cargo test`): every species can be spawned and survives a simulated
 day in the sandbox; the supernatural share of species is 15–30% and of encounters, over a

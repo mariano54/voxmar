@@ -48,6 +48,8 @@ pub struct Biome {
     pub(crate) surface: Surface,
     /// The biome's own stones; the rock province's when `None`.
     pub(crate) stones: Option<Palette>,
+    /// Its stones for gentle open ground (see `BiomeDef::field_stones`).
+    pub(crate) field_stones: Option<Palette>,
     pub(crate) strata: Vec<BlockId>,
     /// The centre and half-width of its first climate box on each table axis, where
     /// bounded.
@@ -191,6 +193,7 @@ impl Biomes {
                     };
                     block.map(|b| crate::hue::shown(registry.def(b), grass, grass))
                 },
+                field_stones: (!def.field_stones.is_empty()).then(|| Palette::new(&def.field_stones, registry)),
                 stones: match &def.stones {
                     Stones::Province => None,
                     Stones::Blocks(selects) => Some(Palette::new(selects, registry)),

@@ -6,19 +6,25 @@
 use std::sync::Arc;
 
 use voxmar_engine::block::BlockRegistry;
+use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::fluid::{Fluids, unsettled};
 use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::VoxelWorld;
-use voxmar_server::load_content;
-use voxmar_worldgen::{Generator, Overworld, WaterSight, WorldContent};
+
+use crate::{Generator, Overworld, WaterSight, WorldContent};
 
 /// Columns along a side of each generated area; the middle ones have all their neighbours.
 const SIDE: i32 = 5;
 
+/// Every package's content, as a server loads it.
+fn load_content() -> Content {
+    Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap()
+}
+
 #[test]
 fn generated_water_does_not_move() {
-    let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let content = load_content();
     let world_content = WorldContent::load(&content).unwrap();
     let registry = content.blocks.clone();
     let (mut fluid_cells, mut curtain, mut pinned) = (0, 0, 0);
@@ -130,7 +136,7 @@ fn generate(generator: &Overworld, first: ColumnPos) -> VoxelWorld {
 /// spill sideways).
 #[test]
 fn water_still_settles_at_the_next_version() {
-    let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let content = load_content();
     let world_content = WorldContent::load(&content).unwrap();
     let registry = content.blocks.clone();
     let mut fluid_cells = 0;
@@ -152,12 +158,12 @@ fn water_still_settles_at_the_next_version() {
 
 /// One spot, seed and generation version: `SEED`, `X`, `Z`, `VERSION` (default the
 /// waterfall seed 5 left unsettled at version 24, at 851, 1030).
-/// `cargo test -p voxmar_server --test generated_water probe_water -- --ignored --nocapture`
+/// `cargo test -p voxmar_worldgen --lib generated_water::probe_water -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn probe_water() {
     let env = |name: &str, default: i64| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
-    let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let content = load_content();
     let world_content = WorldContent::load(&content).unwrap();
     let registry = content.blocks.clone();
     let generator = Overworld::with_content_at(env("SEED", 5) as u64, registry.clone(), &world_content, env("VERSION", 24) as u32);

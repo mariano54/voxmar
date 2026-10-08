@@ -21,7 +21,9 @@ creatures (their loot's `tools`), and shears wool.
 Block rules, first match wins, say what breaking a block takes and teaches: a level in a
 skill, a kind and tier of tool, and the experience. Ores ask for Mining levels as in
 RuneScape (copper 5, tin 10, iron 15, cobalt 25, silver 30, gold 35, diamond 45, aetherite
-50) and pickaxe tiers as in Minecraft (iron a stone pickaxe, gold and silver copper,
+50), teach more the higher they ask (stone 1, coal 13, copper 17.5, tin 25, iron 35 up to
+bauxite and aetherite 396, design draft 63, so stone alone no longer trains Mining) and
+pickaxe tiers as in Minecraft (iron a stone pickaxe, gold and silver copper,
 diamond iron). A click on a block that refuses says why: "Needs Mining 15", "Needs a stone
 pickaxe or better". Blocks players placed teach nothing (the world keeps where they put
 them, `WorldMeta::placed`).
@@ -64,13 +66,20 @@ with Engineering 30.
 
 `base/fishing.ron` (engine/src/fishing.rs) lists what bites: an item, the Fishing level it
 takes, its experience, a weight, salt or fresh water (salt is a biome tagged `ocean`),
-biome tags, and when (day, night, rain). A cast (`base:fish`, five seconds, a rod in hand,
+biome tags, and when (day, night, rain). The water's climate counts as a biome tag, from
+its temperature by `water`'s bands (frozen, cold, cool, temperate, warm, hot): the sea is
+one biome from pole to equator, so cod bite in cold water and tuna in warm. A cast (`base:fish`, five seconds, a rod in hand,
 water within nine blocks with open air above) lands something with a chance that starts at
 about a third for the water's best fish at its level and grows with each level above it
 and with the rod's tier, up to nine in ten; which fish is a weighted draw among those that
-can bite, rarer ones a little more often with a better rod's yield. Fish cook at a
-campfire (cooking.ron). Fishing tops out at level 75 for now (glimmer koi), with the cape
-perk at 80.
+can bite, rarer ones a little more often with a better rod's yield, and each fish bites
+twice as often, against those below it, for every 15 levels it asks (`outlevelled`). A
+fish's
+experience doubles every 10.5 levels, 10 × 2^((level − 1) ÷ 10.5): perch 18, cod 35, carp
+68, pike 131, tuna 254, sturgeon 353 (55), marlin 491 (60, deep ocean by day), deepwater
+lanternfish 951 (70, deep ocean at night), koi 1,323 (design draft 63). Fish cook at a
+campfire (cooking.ron) in two seconds, teaching what catching them does. Fishing tops out at level 75 for now (glimmer koi), with
+the cape perk at 80.
 
 ## Pouches
 
@@ -88,7 +97,7 @@ Flowers, herbs, fungi and berry bushes the world grew come back where they were 
 from is still there: dig out or replace the ground and the spot is gone. Commons take 20
 minutes of world time, uncommons an hour, rares half a day, very rares two days and
 legendaries four. Herbs cannot be sown, and a plant a player places does not come back,
-except on a herb planter (planks and dirt at a crafting table, Engineering 5) for a player
+except on a herb planter (planks and dirt at a crafting table, Construction 3) for a player
 whose Farming level reaches the plant's (1, 15, 40, 60, 80 by rarity); picking one there
 teaches Farming. Waiting plants are saved with the world (`WorldMeta::regrowing`), and
 `/grow` brings back those near you at once.
@@ -99,8 +108,8 @@ A multiblock is a structure recognised from a pattern of blocks (`multiblocks.ro
 `multiblock.rs`): layers from the bottom up, a key from characters to items, `tag:TAG` or
 `a|b`, `.` for anything and a space for air, and a core block; it counts turned any of four
 ways. The first is the Homestead Hearth, the Nomad age's gate: a hearthstone (eight
-cobbles at a crafting table, Mining 5) in a ring of stone, with a chimney (cobbles and
-clay, Crafting 3) two blocks tall at one corner. Right click the hearthstone
+cobbles at a crafting table, Construction 1) in a ring of stone, with a chimney (cobbles and
+clay, Construction 1) two blocks tall at one corner. Right click the hearthstone
 (`base:light_hearth`): if the hearth stands, it is your home (`Player::home`, saved) and
 you wake on it after dying; if not, you are told what it needs.
 
@@ -108,7 +117,7 @@ you wake on it after dying; if not, you are told what it needs.
 
 A sleeping bag (three wool and two hide, four pelts, or feathers and two hide) is where
 you wake after dying until a hearth gives you a home: right click it to sleep
-(`base:sleep`, `Player::bed`, saved). A pit kiln (cobbles round a campfire) fires clay into fired clay (`cooking.ron` at the
+(`base:sleep`, `Player::bed`, saved). A pit kiln (cobbles round a campfire, Construction 1) fires clay into fired clay (`cooking.ron` at the
 `pit_kiln` station; a station recipe may name its own `skill`, here Crafting), which pots,
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each

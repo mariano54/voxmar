@@ -76,8 +76,9 @@ pub struct WorldMeta {
     /// How fast the time of day runs, 0 when frozen.
     #[serde(default = "normal_speed")]
     pub day_speed: f32,
-    /// Where players put blocks that teach a skill when broken (ores), which then teach
-    /// nothing: experience comes from what the world holds, not from placing and breaking.
+    /// Cells whose block a player placed: ores, which then teach nothing (experience comes
+    /// from what the world holds, not from placing and breaking); plants, which don't regrow
+    /// by themselves; and furnishings, which give themselves back only from these cells.
     #[serde(default)]
     pub placed: Vec<[i32; 3]>,
     /// Picked wild plants waiting to grow back, and plants herb planters grew back.

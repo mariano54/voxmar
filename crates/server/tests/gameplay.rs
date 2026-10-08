@@ -544,6 +544,40 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
 }
 
 #[test]
+fn a_world_placed_altar_drops_nothing_and_a_players_drops_itself_across_restarts() {
+    let dir = world_dir("altar");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let feet = client.position.floor().as_ivec3();
+    let (village, own) = (feet + IVec3::new(1, 0, 1), feet + IVec3::new(-1, 0, 1));
+    // One set by the world (a village chapel's, as /setblock sets it), one the player places.
+    for line in ["/clear", "/give stone_altar 1", "/setblock ~1 ~ ~1 stone_altar", "/fill ~-1 ~ ~1 ~-1 ~1 ~1 air", "/fill ~-1 ~-1 ~1 ~-1 ~-1 ~1 stone"] {
+        client.ok(line);
+    }
+    let altar = client.content.blocks.expect("base:stone_altar");
+    client.pump_until(|c| c.world.block(village) == Some(altar) && c.inventory.get(0).is_some_and(|s| s.item == altar));
+    client.propose("core:place", ActionTarget::Block { block: own - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(altar));
+    let altars = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == altar).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == altar).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    // The village's: nothing.
+    client.propose("core:mine", ActionTarget::Block { block: village, face: Face::PosY });
+    client.pump_until(|c| c.world.block(village) == Some(BlockId::AIR));
+    assert_eq!(client.quiet(altars), 0, "a village's altar dropped itself");
+    // Saved and loaded, the player's is still the player's: it gives itself back.
+    drop(client);
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(own) == Some(altar));
+    client.propose("core:mine", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(BlockId::AIR));
+    assert_eq!(client.quiet(altars), 1, "a player's altar did not give itself back");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn game_mode_decides_flight_and_the_host_is_admin() {
     use voxmar_server::save::{GameMode, WorldMeta, WorldSave};
     for (mode, creative) in [(GameMode::Survival, false), (GameMode::Creative, true)] {
@@ -907,16 +941,24 @@ fn looking_closely_shows_more_with_farming() {
         client.pump_until(|c| c.chat.iter().any(|(_, text)| text.contains("level 1")));
         client.chat.iter().map(|(_, text)| text.clone()).collect::<Vec<_>>().join("\n")
     };
-    // At Farming 1: what anyone sees, and that more comes with level.
+    // Kept, newly tamed and just fed, so its condition shows (0.6, good).
+    client.ok("/creatures tame");
+    // At Farming 1: what anyone sees, its condition in a word, and that more comes with level.
     let first = look(&mut client);
     assert!(first.contains("health") && first.contains("Farming 10 shows more"), "{first}");
     assert!(!first.contains("Shows:"), "{first}");
+    assert!(first.contains("In good condition") && !first.contains("(0.6"), "{first}");
     // At 40, everything: what shows, what it carries, the numbers and the odds.
     client.ok("/skill farming 40");
     let all = look(&mut client);
-    for words in ["Shows:", "Carries", "Exactly:", "mutates"] {
+    for words in ["Shows:", "Carries", "Exactly:", "mutates", "condition (0.60)"] {
         assert!(all.contains(words), "{words} missing from {all}");
     }
+    // A day and a half unfed, it says what it wants.
+    assert!(!all.contains("It wants food"), "{all}");
+    client.ok("/time add 1.5d");
+    let hungry = look(&mut client);
+    assert!(hungry.contains("It wants") && hungry.contains("food"), "{hungry}");
 }
 
 #[test]
