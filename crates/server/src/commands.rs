@@ -532,14 +532,7 @@ impl Server {
         // Bounded natural attempts for inspecting birth positions, without bypassing
         // visibility, darkness or budgets. Only the admitted creatures are held.
         if what == "populate" && species.is_none() {
-            let first = self.creatures.next;
-            for salt in 0..128 {
-                self.spawn_near(player, salt);
-            }
-            for (_, creature) in self.creatures.live.iter_mut().filter(|(id, _)| **id >= first) {
-                creature.held_until = tick + 60 * voxmar_protocol::TICKS_PER_SECOND as u64;
-                count += 1;
-            }
+            let count = self.populate_near(player);
             return Ok(Words::key("command.creatures.populated").with("count", Words::text(count)));
         }
         if what == "disperse" && species.is_none() {

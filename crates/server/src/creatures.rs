@@ -941,6 +941,23 @@ impl Server {
         }
     }
 
+    /// A bounded admin inspection batch through the ordinary natural spawning path.
+    /// Hold admitted births so their initial poses can be inspected after replication.
+    pub(crate) fn populate_near(&mut self, player: PlayerId) -> usize {
+        let began = std::time::Instant::now();
+        let first = self.creatures.next;
+        for salt in 0..128 {
+            self.spawn_near(player, salt);
+        }
+        let mut count = 0;
+        for (_, creature) in self.creatures.live.iter_mut().filter(|(id, _)| **id >= first) {
+            creature.held_until = self.tick + 60 * TICKS_PER_SECOND as u64;
+            count += 1;
+        }
+        tracing::info!("natural population: {count} births from 128 attempts in {:.3} ms", began.elapsed().as_secs_f64() * 1000.0);
+        count
+    }
+
     /// Every joined player's nearby budget applies, including where two players' areas
     /// overlap. Count accepted members again so a group cannot cross either cap.
     fn nearby_room(&self, at: Vec3, monster: bool, cap: usize) -> bool {
