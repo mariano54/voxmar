@@ -100,6 +100,8 @@ pub struct Settings {
     pub chat_key: Key,
     /// Key that starts a sprint.
     pub sprint_key: Key,
+    /// Key that dodges, with a direction (a backstep without).
+    pub dodge_key: Key,
     /// Whether tapping forward twice quickly starts a sprint too.
     pub double_tap_sprint: bool,
     /// Whether the view widens a little while sprinting.
@@ -326,6 +328,7 @@ impl Default for Settings {
             zoom_key: Key(KeyCode::KeyZ),
             chat_key: Key(KeyCode::KeyT),
             sprint_key: Key(KeyCode::ControlLeft),
+            dodge_key: Key(KeyCode::AltLeft),
             double_tap_sprint: true,
             fov_effects: true,
             zoom: 400,
@@ -822,6 +825,7 @@ const FIXED_KEYS: [KeyCode; 20] = [
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Binding {
     Sprint,
+    Dodge,
     Zoom,
     Chat,
     Inventory,
@@ -864,6 +868,7 @@ impl Binding {
     fn key(self) -> &'static str {
         match self {
             Binding::Sprint => "settings.key.sprint",
+            Binding::Dodge => "settings.key.dodge",
             Binding::Zoom => "settings.key.zoom",
             Binding::Chat => "settings.key.chat",
             Binding::Inventory => "settings.key.inventory",
@@ -879,6 +884,7 @@ impl Binding {
     fn get(self, settings: &Settings) -> Key {
         match self {
             Binding::Sprint => settings.sprint_key,
+            Binding::Dodge => settings.dodge_key,
             Binding::Zoom => settings.zoom_key,
             Binding::Chat => settings.chat_key,
             Binding::Inventory => settings.inventory_key,
@@ -894,6 +900,7 @@ impl Binding {
     fn set(self, settings: &mut Settings, key: Key) {
         *match self {
             Binding::Sprint => &mut settings.sprint_key,
+            Binding::Dodge => &mut settings.dodge_key,
             Binding::Zoom => &mut settings.zoom_key,
             Binding::Chat => &mut settings.chat_key,
             Binding::Inventory => &mut settings.inventory_key,
@@ -1035,6 +1042,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Key(Binding::Screenshot),
             Control::Key(Binding::Chat),
             Control::Key(Binding::Sprint),
+            Control::Key(Binding::Dodge),
             Control::Key(Binding::Zoom),
         ],
     ),

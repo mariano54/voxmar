@@ -25,8 +25,8 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, KEEPALIVE, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-// 30: the server hardening's 27/28 (numbered teleports, keepalive) merged with main's 29.
-pub const PROTOCOL_VERSION: u32 = 30;
+// 31: the server hardening's 27/28 (numbered teleports, keepalive), after main's 29 and 30 (armour).
+pub const PROTOCOL_VERSION: u32 = 31;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -69,6 +69,8 @@ pub enum ClientMessage {
     /// Creative mode's catalogue of every item (the inventory's item panel): `count` of
     /// `item`, onto the pointer (`held`) or into the inventory. Refused in survival.
     Take { item: BlockId, count: u8, held: bool },
+    /// The player raised (`up`) or lowered their guard (`voxmar_engine::combat`).
+    Guard { up: bool },
 }
 
 /// The client's predicted movement state, sent every tick. The server checks it against
@@ -147,9 +149,15 @@ pub enum ServerMessage {
     /// Creatures near the player that appeared or changed, and those that went: died, or
     /// out of range.
     Creatures { changed: Vec<CreatureView>, gone: Vec<CreatureGone> },
-    /// The player's blow at a creature landed for `damage` (0: it missed), and whether it
-    /// killed. Every blow the server takes is answered, so the client can show it.
-    Struck { creature: u32, damage: u16, killed: bool },
+    /// The player's blow at a creature landed for `damage` (0: it missed), whether it
+    /// killed, what kind of blow it was (on the beat, a flourish, a counter: its hitsplat)
+    /// and the rhythm pips the player has after it. Every swing the server takes is
+    /// answered, so the client can show it.
+    Struck { creature: u32, damage: u16, killed: bool, blow: voxmar_engine::combat::Blow, pips: u8 },
+    /// A creature's blow at the player came down: for `damage`, or turned aside as
+    /// `defended` says. Every blow that comes down is answered; a wind-up a daze cuts short
+    /// comes to nothing and is not.
+    Hurt { creature: u32, damage: u16, defended: voxmar_engine::combat::Defended },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

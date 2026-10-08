@@ -8,6 +8,7 @@ mod condition;
 pub use commands::{weather_name, weather_numbers};
 mod cooking;
 mod creatures;
+mod fight;
 mod fishing;
 mod death;
 mod hearth;
@@ -453,10 +454,16 @@ pub(crate) struct Server {
     planter_grown: FxHashSet<IVec3>,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
+    /// The moment before which every player message has been handled: the last time all
+    /// were taken in. A creature's blow is judged once it has landed by then (`fight`).
+    /// None until messages are first taken in (unit tests tick without them).
+    heard: Option<Instant>,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     /// A new player's health and kit, and what falls, lava, fires and water do.
     survival: Arc<rules::SurvivalRules>,
+    /// Swings, guards, dodges and creatures' wind-ups (`fight`).
+    fights: fight::Fights,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -561,8 +568,10 @@ impl Server {
             regrowing,
             planter_grown,
             arrival: Instant::now(),
+            heard: None,
             creatures: creatures::Creatures::default(),
             survival,
+            fights: fight::Fights::default(),
             processes,
             temperature,
             wear_rules,
@@ -668,6 +677,9 @@ impl Server {
     }
 
     fn handle_messages(&mut self) {
+        // A message is stamped as it goes into its channel, so every one stamped before now
+        // is handled below.
+        let heard = Instant::now();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for id in ids {
             // A player's messages beyond their share of this tick wait for the next.
@@ -690,6 +702,7 @@ impl Server {
                 }
             }
         }
+        self.heard = Some(heard);
     }
 
     /// Lets a player go. Leaving dead buries first, or rejoining would revive them with
@@ -737,6 +750,7 @@ impl Server {
         self.check_quests();
         self.tick_items();
         self.tick_creatures();
+        self.tick_fights();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();

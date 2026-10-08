@@ -108,6 +108,8 @@ pub struct Player {
     pub chat_allowance: f32,
     pub chat_at: Option<Instant>,
     pub told_to_slow: bool,
+    /// The last tick they stood on something, on foot (a dodge needs it, or nearly).
+    pub grounded: u64,
     /// Owner-replicated traits changed since they were last sent.
     pub dirty: Vec<TraitDecl>,
     pub sent: FxHashSet<ColumnPos>,
@@ -164,6 +166,7 @@ impl Player {
             chat_allowance: limits.chat_burst,
             chat_at: None,
             told_to_slow: false,
+            grounded: 0,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
             items_seen: FxHashSet::default(),
@@ -278,6 +281,7 @@ impl Server {
                 }
             }
             ClientMessage::Take { item, count, held } => self.take_from_catalogue(id, item, count, held),
+            ClientMessage::Guard { up } => self.raise_guard(id, up),
         }
     }
 

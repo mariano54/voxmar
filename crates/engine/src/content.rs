@@ -59,6 +59,8 @@ pub struct Content {
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
+    /// What things are worth (`value`).
+    pub value: Arc<crate::value::Value>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -169,6 +171,7 @@ impl Content {
         let mut effects = Vec::new();
         let mut tools = Vec::new();
         let mut combat = Vec::new();
+        let mut value = Vec::new();
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
@@ -275,6 +278,10 @@ impl Content {
                         tools.push(ToolRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "value.ron" => {
+                        value.push(crate::value::Value::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "combat.ron" => {
                         combat.push(crate::combat::CombatRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -319,6 +326,7 @@ impl Content {
         }
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks)?);
+        crate::inventory::set_worn_slots(combat.worn_slots());
         // A furnishing gives itself back only where a player placed it: one that drops
         // nothing anyway has no business with the tag.
         if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag("furnishing") && (blocks.info(id).drops.is_air() || blocks.info(id).drop_count == 0)) {
@@ -343,6 +351,7 @@ impl Content {
             combat: Arc::new(combat),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            value: Arc::new(crate::value::Value::merge(value)),
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),

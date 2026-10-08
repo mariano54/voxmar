@@ -52,6 +52,7 @@ impl Process for Falling {
         let blocks = &server.content.blocks;
         let rules = server.survival.clone();
         let burns = server.tick.is_multiple_of(rules.burn_ticks());
+        let tick = server.tick;
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
             let player = &server.players[&id];
@@ -72,6 +73,9 @@ impl Process for Falling {
             // Where a grave would go: never in lava, nor on anything below the void.
             if on_ground && !in_lava && player.position.y >= rules.void_below {
                 player.last_ground = Some(player.position);
+            }
+            if on_ground && !player.flying {
+                player.grounded = tick;
             }
             let mut damage = 0.0;
             if in_lava && burns {

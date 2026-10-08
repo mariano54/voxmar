@@ -16,9 +16,6 @@ use crate::skill::SkillId;
 use crate::glam::{IVec3, Vec3};
 use crate::physics::player::REACH;
 
-/// How far a player reaches to strike a creature, from the eye to its box (Minecraft's 3,
-/// with a little slack for a server running behind).
-pub const REACH_CREATURE: f32 = 3.6;
 /// How far a fishing line is cast, from the eye.
 pub const CAST: f32 = 9.0;
 
@@ -76,8 +73,12 @@ pub enum Requirement {
     SkillLevel,
     /// The target is a ripe crop that fruits again when picked.
     Ripe,
-    /// The target creature is alive and within the actor's reach.
+    /// The target creature is alive and within the actor's reach with what they hold (to
+    /// strike it).
     CreatureInReach,
+    /// The target creature is alive and within the actor's touch, whatever they hold (to
+    /// tend, look closely at or let go of it: `Feel::touch`).
+    CreatureInTouch,
     /// The target creature takes what the actor holds: food that tames it or readies it
     /// to breed, or a tool that takes its product.
     CreatureAccepts,
@@ -140,6 +141,8 @@ pub enum Effect {
     StowCursor,
     /// Strike the target creature with what the actor holds.
     Strike,
+    /// A dodge: a moment no blow lands (`combat`); the client dashes.
+    Dodge,
     /// Cook one held item at the target station: its recipe's food, or burnt.
     Cook,
     /// Tend the target creature with what the actor holds: feed it (taming it, or readying
@@ -319,6 +322,14 @@ pub trait ActionContext {
     fn combat(&self) -> Option<&crate::combat::CombatRegistry> {
         None
     }
+}
+
+/// Whether creature `id` is alive and its box within `reach` of the actor's eye.
+fn creature_within(ctx: &impl ActionContext, id: u32, reach: f32) -> bool {
+    ctx.creature_box(id).is_some_and(|aabb| {
+        let nearest = ctx.actor_eye().clamp(aabb.min, aabb.max);
+        ctx.actor_eye().distance(nearest) <= reach
+    })
 }
 
 /// Where a block placed against `face` of `block` goes: into `block` itself when it can
@@ -524,12 +535,18 @@ impl ActionDef {
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
-                // A spear reaches further, for one who can wield it.
-                let reach = ctx.combat().map_or(0.0, |combat| combat.wielded(ctx.actor_held(), |skill| ctx.actor_own_level(skill)).reach);
-                ctx.creature_box(id).is_some_and(|aabb| {
-                    let nearest = ctx.actor_eye().clamp(aabb.min, aabb.max);
-                    ctx.actor_eye().distance(nearest) <= REACH_CREATURE + reach
-                })
+                // What is held reaches (a spear further, a dagger less, for one who can wield
+                // it), with slack for the player's view of the creature running behind.
+                let feel = crate::combat::Feel::default();
+                let reach = ctx.combat().map_or(feel.reach + feel.reach_slack, |combat| {
+                    combat.wielded(ctx.actor_held(), |skill| ctx.actor_own_level(skill)).reach + combat.feel.reach_slack
+                });
+                creature_within(ctx, id, reach)
+            }
+            Requirement::CreatureInTouch => {
+                let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
+                let feel = ctx.combat().map_or_else(crate::combat::Feel::default, |combat| combat.feel);
+                creature_within(ctx, id, feel.touch + feel.reach_slack)
             }
             Requirement::Replaceable => {
                 let (block, face) = block_target()?;
@@ -720,6 +737,70 @@ mod tests {
 
     /// A click on a machine's core (a bloomery) with a block in hand it does not take lays
     /// the block against it, as on any machine, rather than lighting it; an empty hand or
+    /// A creature is touched (tended, looked at closely, let go) from `Feel::touch` away
+    /// whatever is in hand, but struck only within the held weapon's reach.
+    #[test]
+    fn a_creature_is_touched_further_than_a_fist_strikes() {
+        struct Near<'a> {
+            content: &'a crate::content::Content,
+            held: Option<BlockId>,
+            /// Blocks from the actor's eye to the creature's nearest face.
+            away: f32,
+        }
+        impl ActionContext for Near<'_> {
+            fn block(&self, _: IVec3) -> Option<BlockId> {
+                Some(BlockId::AIR)
+            }
+            fn info(&self, block: BlockId) -> &BlockInfo {
+                self.content.blocks.info(block)
+            }
+            fn blocks(&self) -> &BlockRegistry {
+                &self.content.blocks
+            }
+            fn crops(&self) -> &CropRegistry {
+                &self.content.crops
+            }
+            fn actor_level(&self, _: SkillId) -> u8 {
+                1
+            }
+            fn actor_eye(&self) -> Vec3 {
+                Vec3::ZERO
+            }
+            fn actor_alive(&self) -> bool {
+                true
+            }
+            fn actor_held(&self) -> Option<BlockId> {
+                self.held
+            }
+            fn occupied(&self, _: IVec3) -> bool {
+                false
+            }
+            fn creature_box(&self, _: u32) -> Option<crate::physics::Aabb> {
+                Some(crate::physics::Aabb { min: Vec3::new(self.away, -1.0, -0.5), max: Vec3::new(self.away + 1.0, 1.0, 0.5) })
+            }
+            fn combat(&self) -> Option<&crate::combat::CombatRegistry> {
+                Some(&self.content.combat)
+            }
+        }
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let action = |name: &str| content.actions.get(content.actions.id(name).unwrap()).unwrap();
+        let (inspect, attack) = (action("base:inspect"), action("core:attack"));
+        let feel = content.combat.feel;
+        let fist = content.combat.wielded(None, |_| 1).reach;
+        assert!(feel.touch > fist, "touch {} is no further than a fist's reach {fist}", feel.touch);
+        let at = |away: f32| Near { content: &content, held: None, away };
+        let target = ActionTarget::Creature(1);
+        // Within the fist's reach (and its slack): struck and touched.
+        assert_eq!(attack.validate(&at(fist + feel.reach_slack - 0.1), target), Ok(()));
+        assert_eq!(inspect.validate(&at(fist + feel.reach_slack - 0.1), target), Ok(()));
+        // Past it, within touch: touched, not struck.
+        let between = (fist + feel.touch) / 2.0 + feel.reach_slack;
+        assert_eq!(attack.validate(&at(between), target), Err(Rejection::Unmet(Requirement::CreatureInReach)));
+        assert_eq!(inspect.validate(&at(between), target), Ok(()));
+        // Past touch and its slack: neither.
+        assert_eq!(inspect.validate(&at(feel.touch + feel.reach_slack + 0.1), target), Err(Rejection::Unmet(Requirement::CreatureInTouch)));
+    }
+
     /// a tool lights it, and a hearth's core (no machine) lights whatever is in hand.
     #[test]
     fn a_block_in_hand_is_laid_against_a_machine_core_not_lit() {
