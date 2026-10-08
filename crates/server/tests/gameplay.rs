@@ -3049,18 +3049,21 @@ fn every_merged_item_regrows_in_a_planter_at_its_level() {
         let plant = client.content.blocks.expect(&format!("base:{name}"));
         client.content.regrowth.rules.planter_level.of(client.content.blocks.def(plant).rarity) as u8
     };
-    // Place the item on the planter and pick it again: it comes back to the hand.
+    // Place the item on the planter and pick it again. What a picked plant drops is picked
+    // up some time later, so this neither clears the inventory nor assumes a slot: it gives
+    // one more, looks for the slot a plant is in, and places from that one.
     let pick = |client: &mut Client, name: &str| {
         let plant = client.content.blocks.expect(&format!("base:{name}"));
+        let slot_of = |c: &Client| c.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == plant));
         client.refused.clear();
-        client.ok("/clear");
         client.ok(&format!("/give {name} 1"));
-        client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == plant));
+        client.pump_until(|c| slot_of(c).is_some());
+        let slot = slot_of(client).unwrap() as u8;
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
         client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
         client.pump_until(|c| c.world.block(at) == Some(plant));
         client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
         client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
-        client.settle();
         plant
     };
     // Below its level the gardener is told, and nothing comes back.
