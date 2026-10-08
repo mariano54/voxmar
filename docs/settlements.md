@@ -161,6 +161,13 @@ maps together before the whole batch. Raw-column lookups hash only position and 
 The larger corner bound avoids observed close-site relief eviction; the raw-column
 bound avoids eviction just before the successful ninth layout of a spawn village.
 The close-water memo remains bounded to 16,384 points.
+Freshwater-only queries first check the original channel indexes. Without an indexed
+edge or a home lake/shore/salt cell in either tier, carving cannot make freshwater at
+any geology height. That exact false answer is stored separately from full terrain;
+both witness stores share the same cap and reset together. Possible water still uses
+the full original sampler. Physical-read diagnostics count only those actual samples.
+Batch sealing gathers the same missing cardinal neighbours in first-use order, under
+each requesting centre's exact key, and shares their original geology evaluation.
 Climate, biome, home level and fertility checks reuse the same full original site at
 each position, rather than sampling its five-block terrain neighbourhood repeatedly.
 Site water checks walk the same ranked qualifying prefix lazily, stopping when enough
@@ -195,6 +202,9 @@ Before attempting queued lots, a layout with an unsatisfiable mandatory catalogu
 request is rejected: its eligible houses have no positive weight even before built
 caps grow. Water is ignored in this necessary check. Successful layouts and their
 draws are unchanged; every retry starts from its own original RNG stream.
+Lane steps share their original seven interpolation samples across avoided rectangles.
+Actual sample extrema provide a conservative signed-distance bound; a possible match
+retains the original seven-point predicate, including inside distances and its MAX cap.
 Allocator metadata is outside this storage count. Later packages replace only culture rule fields they
 name, preserving the others and reporting which package and field they replaced. Loading
 refuses unknown catalogue names, missing palette blocks, non-finite weights and shifts,

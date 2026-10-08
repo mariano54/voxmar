@@ -1370,6 +1370,8 @@ mod tests {
         cache.seen.clear();
         cache.dry.clear();
         cache.seen.extend((0..16_384).map(|k| (IVec2::new(200_000 + k, 200_000), grid[dry_i])));
+        assert_eq!(cache.seen.len() + cache.dry.len(), 16_384);
+        assert!(!cache.seen.contains_key(&dry) && !cache.dry.contains(&dry));
         assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 4, &mut cache));
         assert_eq!(cache.seen.len(), 1);
         assert_eq!(cache.seen[&dry], grid[dry_i]);
