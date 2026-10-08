@@ -32,5 +32,8 @@
         // Sleep in a sleeping bag: wake there after dying, until a hearth makes a home.
         (name: "sleep", duration: Instant, requires: [Alive, InReach, Bed], effects: [Sleep]),
         (name: "light", duration: Instant, requires: [Alive, InReach, MultiblockCore], effects: [Light]),
+        // Use a machine (machines.ron): what is in hand goes in, if it burns it or works it;
+        // with nothing it takes, what the machine made comes out.
+        (name: "use_machine", duration: Instant, requires: [Alive, InReach, Machine], effects: [UseMachine]),
     ],
 )

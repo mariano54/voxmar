@@ -143,6 +143,10 @@ impl ActionContext for Context<'_> {
         Some(&self.server.content.tools)
     }
 
+    fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
+        Some(&self.server.content.machines)
+    }
+
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
     }
@@ -316,6 +320,7 @@ impl Server {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);
+                    self.placed_machine(agent, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     let player = self.players.get_mut(&agent).unwrap();
@@ -363,6 +368,7 @@ impl Server {
                     }
                 }
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
+                (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => {
                     let player = self.players.get_mut(&agent).unwrap();
                     player.bed = Some(block.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
