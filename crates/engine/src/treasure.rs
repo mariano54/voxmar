@@ -121,6 +121,7 @@ pub struct Chest {
 #[derive(Clone, Debug)]
 pub struct Table {
     pub name: String,
+    most_stacks: usize,
     pub loot: Vec<Resolved>,
     pub one_of: Vec<(f32, (u8, u8), Vec<BlockId>)>,
 }
@@ -231,7 +232,7 @@ impl Treasure {
             let loot = crate::loot::resolve(&table.loot, blocks).map_err(|e| error(format!("table `{}`: {e}", table.name)))?;
             let mut one_of = Vec::new();
             for group in &table.one_of {
-                if group.items.is_empty() || !(0.0..=1.0).contains(&group.chance) || group.count.0 > group.count.1 || group.count.1 == 0 {
+                if group.items.is_empty() || !(0.0..=1.0).contains(&group.chance) || group.count.0 == 0 || group.count.0 > group.count.1 {
                     return Err(error(format!("table `{}`: a one_of needs items, a chance 0..=1 and a count low..=high", table.name)));
                 }
                 one_of.push((group.chance, group.count, group.items.iter().map(|i| id(i)).collect::<Result<Vec<_>, _>>()?));
@@ -239,6 +240,9 @@ impl Treasure {
             // Every rarer mark runs below every plainer mark, even when a tier is absent.
             // Frequent unmarked staples are no bar to marked finds (the design's tenth).
             for rarer in &loot {
+                if rarer.loot.count.0 == 0 {
+                    return Err(error(format!("table `{}`: `{}` needs a count of at least one", table.name, rarer.loot.item)));
+                }
                 if !rarer.loot.when.is_empty() || !rarer.loot.tools.is_empty() {
                     return Err(error(format!("table `{}`: `{}` cannot use when or tools in a chest", table.name, rarer.loot.item)));
                 }
@@ -261,7 +265,10 @@ impl Treasure {
                     return Err(error(format!("table `{}`: `{item}` comes in one chest in {:.0}, rarer than one in 400", table.name, 1.0 / chance)));
                 }
             }
-            resolved.push(Table { name: table.name.clone(), loot, one_of });
+            let stack_count = |item: BlockId, count: u8| usize::from(count).div_ceil(usize::from(stacks.get(item.0 as usize).copied().unwrap_or(crate::inventory::MAX_STACK).max(1)));
+            let most_stacks = loot.iter().map(|r| stack_count(r.item, r.loot.count.1)).sum::<usize>()
+                + one_of.iter().map(|(_, (_, high), items)| items.iter().map(|&item| stack_count(item, *high)).max().unwrap_or(0)).sum::<usize>();
+            resolved.push(Table { name: table.name.clone(), most_stacks, loot, one_of });
         }
         let mut by_block = FxHashMap::default();
         for chest in &chests {
@@ -312,7 +319,7 @@ impl Treasure {
     pub fn most_stacks(&self, chest: &Chest) -> usize {
         let table = &self.tables[chest.table];
         let gold = self.gold.map_or(0, |(_, stack)| chest.gold.1.div_ceil(stack as u32) as usize);
-        gold + table.loot.len() + table.one_of.len()
+        gold + table.most_stacks
     }
 
     /// What a lockpick of `pick` age does to a chest of `chest` age.
@@ -490,6 +497,14 @@ mod tests {
         assert!(!bad(&tables(r#"(item: "helm", chance: 0.01, rarity: Legendary), (item: "coin", chance: 0.02, rarity: Uncommon)"#)));
         assert!(bad(&tables(r#"(item: "coin", when: [Night])"#)));
         assert!(bad(&tables(r#"(item: "coin", tools: [(tag: "knife")])"#)));
+        assert!(bad(&tables(r#"(item: "coin", count: (0, 255))"#)), "zero counts overflow the byte roll span");
+        assert!(bad(r#"(chests: [(block: "bronze_chest", age: 1, level: 5, table: "x", opens_to: "chest")], tables: [(name: "x", one_of: [(chance: 1.0, count: (0, 255), items: ["coin"])])])"#));
+        // The accepted byte boundary is safe, and room counts full stacks even for a group.
+        let file = Treasure::read("t", r#"(chests: [(block: "bronze_chest", age: 1, level: 5, table: "x", opens_to: "chest")], tables: [(name: "x", loot: [(item: "coin", count: (1, 255))], one_of: [(chance: 1.0, count: (1, 255), items: ["coin"])])])"#).unwrap();
+        let many = Treasure::new(vec![("t".into(), file)], &blocks, &value, &stacks, &mut Vec::new()).unwrap();
+        let chest = many.chest(blocks.expect("t:bronze_chest")).unwrap();
+        assert_eq!(many.most_stacks(chest), 128, "two 255-coin finds need 64 four-coin stacks each");
+        assert_eq!(many.roll(chest, || 0.999).iter().map(|(_, n)| *n).collect::<Vec<_>>(), [255, 255]);
         assert!(!bad(&tables(r#"(item: "helm", chance: 0.05, rarity: Rare), (item: "coin", chance: 0.5)"#)), "plain finds above a tenth are no bar");
     }
 }

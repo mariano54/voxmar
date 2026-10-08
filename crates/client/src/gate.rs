@@ -49,6 +49,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_dis
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::lang::Words;
 use voxmar_engine::world::VoxelWorld;
 use voxmar_server::Lag;
 use voxmar_protocol::{ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, local_pair};
@@ -2460,6 +2461,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// arrive in hand and then leave it; machine replies must show power/progress, not merely
 /// a queued recipe. Every wait on the server uses its clock.
 fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
+    let content = world.resource::<Launch>().content.clone();
+    let english = |words: &Words| content.english.render(words, &content.blocks);
     let h = gate.kiln + IVec3::new(1, 0, -5);
     let rel = |x, y, z| h + IVec3::new(x, y, z);
     let at = |p: IVec3| format!("{} {} {}", p.x, p.y, p.z);

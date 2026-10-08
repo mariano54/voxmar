@@ -77,7 +77,7 @@ pub struct Content {
 /// mod tunes one number without forking base. [`settable!`] declares one. Worldgen's
 /// `layered!` (crates/worldgen/src/content.rs) is the same rule for climate, land and trail
 /// data, with nested structs and named lists; the two should become one.
-pub trait Settable: Copy {
+pub trait Settable: Clone {
     /// Every field as an option: what one package sets.
     type Set;
     /// These values with `set` over them, and the names of the fields it set.
@@ -126,7 +126,7 @@ impl<T: Settable> Setting<T> {
     pub(crate) fn set(&mut self, package: &str, file: &str, what: &str, set: Option<T::Set>, notes: &mut Vec<String>) {
         let Some(set) = set else { return };
         let changed;
-        (self.value, changed) = self.value.with(&set);
+        (self.value, changed) = self.value.clone().with(&set);
         if let Some(earlier) = self.by.replace(package.to_owned()) {
             let note = format!("{package}/{file} replaces the {what} {earlier} set ({})", changed.join(", "));
             tracing::info!("{note}");
