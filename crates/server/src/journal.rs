@@ -48,7 +48,8 @@ impl Server {
         } else {
             return;
         };
-        let name = def.name.clone();
+        // A wild plant whose item merged is found as that item (the journal lists the item).
+        let name = self.content.blocks.def(self.content.blocks.item_of(block)).name.clone();
         self.discover(agent, page, &name, 1);
     }
 
