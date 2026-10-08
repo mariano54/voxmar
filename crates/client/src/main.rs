@@ -630,6 +630,12 @@ fn setup(
             }
         }
     }
+    // But an opaque block's face is always filled, though a shape or a cut-out block shares
+    // it (planks with the slabs): drawn without an alpha test, it would show clear texels
+    // in their own colour.
+    for (keep, block) in see_through.iter_mut().zip(&opaque) {
+        *keep &= block.is_none();
+    }
     for (texture, &keep) in block_textures.iter_mut().zip(&see_through) {
         if !keep {
             texture.fill_transparent();

@@ -401,10 +401,10 @@ phase 2) what it collides with are never something a texture pack can change.
 At load each shape is made into quads once for each facing and way up a block takes it in
 (blocks that share one, the stairs of every wood, share its quads) and checked: every box
 runs from less to more within the cell; a box may hide behind a solid neighbour (`cull`)
-only with a face on the cell's side; a box turned about the vertical (`turn`: a barrel is a
-square and the same turned 45°) hides nothing and counts, for what it hides and will
+only with a face on the cell's side; a box turned about the vertical (`turn`) hides nothing and counts, for what it hides and will
 collide with, as its unturned bound; and the caps on boxes per shape and on quads in all
-are data (core's `shapes.ron`). Which of the cell's six sides the boxes cover whole is
+are data (core's `shapes.ron`, which a later package may change field by field, though
+never past the 4096 quads a vertex can number); a shape is defined by one package only. Which of the cell's six sides the boxes cover whole is
 worked out by sampling every 16th, never read from a flag: only a shape covering all six
 hides its neighbours' faces and stops light as a cube does, so a slab's top or a stair's
 side never hides a face, and slabs and stairs neither darken what they touch nor stop
@@ -414,8 +414,11 @@ The renderer keeps every shape's quads in one storage buffer (`shape_quads`, bin
 the terrain bind group: each quad's corners, texture coordinates, normal and the cube face
 it is lit as). The mesher emits a shaped block's quads as plant faces of a seventh plant
 model (`PLANT_SHAPE`), with the quad's number in word 1 bits 12..23 where a plant keeps its
-tint and height, so the vertex stays 8 bytes and the cut-out pass draws them with its alpha
-test; the vertex shader looks each corner up. A quad on the cell's side takes the brighter
+tint and height, so the vertex stays 8 bytes; the vertex shader looks each corner up. They
+go into the cut-out stream with the cut-out cube faces, not with the plants (terrain.rs
+`split`, engine `mesh::is_shape_quad`): drawn from one side, alpha-tested, at every
+distance and into every shadow cascade, where plants stop at 320 blocks and the near
+cascades. A quad on the cell's side takes the brighter
 light of its cell and the one beyond, as a cube face takes the light in front of it; one
 inside the cell takes the cell's. Shapes have no ambient occlusion yet. In the coarse
 meshes of far chunks a shape is drawn as its block's cube, too small there to make out.

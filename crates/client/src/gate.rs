@@ -3137,7 +3137,7 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         2 => {
             let client = world.resource::<ClientWorld>();
             let arrived = cells.iter().all(|&cell| client.block(cell).is_some_and(|b| !b.is_air()));
-            if !(arrived && settled(world, row) && in_phase > SETTLE) && in_phase < STEP_LIMIT - 1.0 {
+            if !(arrived && settled(world, row) && in_phase > SETTLE) && gate.server_in_step() < STEP_LIMIT - 1.0 {
                 return;
             }
             let Some(shot) = gate.shot(world, "shapes") else { return };

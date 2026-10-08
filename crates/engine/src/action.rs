@@ -616,8 +616,9 @@ mod tests {
 
     #[test]
     fn stairs_face_whoever_places_them_and_go_upside_down_under_a_ceiling() {
-        let file = crate::shape::ShapeFile::read("test", r#"(limits: (boxes: 2, quads: 64), shapes: {"stairs": (boxes: [(to: (16, 8, 16)), (from: (0, 8, 8))])})"#);
-        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file.unwrap())]).unwrap();
+        let file = crate::shape::ShapeFile::read("test", r#"(shapes: {"stairs": (boxes: [(to: (16, 8, 16)), (from: (0, 8, 8))])})"#);
+        let limits = crate::shape::ShapeLimits { boxes: 2, quads: 64 };
+        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file.unwrap())], limits).unwrap();
         let stairs = BlockDef { name: "test:stairs".into(), render: RenderKind::Model, shape: Some("test:stairs".into()), facing: true, flips: true, ..Default::default() };
         let registry = BlockRegistry::with_shapes(vec![BlockDef { name: "test:stone".into(), ..Default::default() }, stairs], &shapes).unwrap();
         let held = registry.expect("test:stairs");

@@ -512,15 +512,19 @@ fn facing(min: Vec3, max: Vec3, eye: Vec3, light: Option<Vec3>) -> [bool; 6] {
 }
 
 /// The quads of a pass's mesh that go to each of its streams. The mesher emits opaque
-/// faces grouped by face, in `Face` order, and plants after the other cut-out faces.
+/// faces grouped by face, in `Face` order, and plants after the other cut-out faces. The
+/// quads of blocks' shapes, though plant faces, go with the cut-out faces: drawn from one
+/// side, at every distance and into every shadow cascade, as the blocks they stand for.
 fn split(pass: TerrainPass, mesh: &MeshBuffers) -> Vec<Range<usize>> {
-    let face = |quad: &[Vertex]| ((quad[0][0] >> 18) & 7) as usize;
-    let group = |face: usize| match pass {
-        TerrainPass::Opaque => face,
-        TerrainPass::Cutout => (face >= FACE_PLANT) as usize,
-        _ => 0,
+    let group = |quad: &[Vertex]| {
+        let face = ((quad[0][0] >> 18) & 7) as usize;
+        match pass {
+            TerrainPass::Opaque => face,
+            TerrainPass::Cutout => (face >= FACE_PLANT && !voxmar_engine::mesh::is_shape_quad(quad[0][0])) as usize,
+            _ => 0,
+        }
     };
-    let groups: Vec<usize> = mesh.vertices.chunks(4).map(|quad| group(face(quad))).collect();
+    let groups: Vec<usize> = mesh.vertices.chunks(4).map(group).collect();
     debug_assert!(groups.is_sorted(), "a pass's faces come grouped by stream");
     streams(pass)
         .enumerate()
@@ -1571,7 +1575,7 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
     );
     layout.entries.extend(cloud_map::layout_entries(ShaderStages::VERTEX_FRAGMENT));
     // Shape quads, for blocks drawn as their shapes (voxel.wgsl `shape_quads`).
-    layout.entries.push(storage_buffer_read_only_sized(false, None).build(SHAPE_BINDING, ShaderStages::VERTEX_FRAGMENT));
+    layout.entries.push(storage_buffer_read_only_sized(false, None).build(SHAPE_BINDING, ShaderStages::VERTEX));
     let chunks_layout = BindGroupLayoutDescriptor::new(
         "terrain_chunks_layout",
         &BindGroupLayoutEntries::single(ShaderStages::VERTEX, storage_buffer_read_only_sized(false, None)),
@@ -2036,6 +2040,22 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTerrain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A shape's quad goes with the cut-out faces, drawn one-sided at every distance; a
+    /// plant's with the plants.
+    #[test]
+    fn shape_quads_split_into_the_cutout_stream_and_plants_into_plants() {
+        use voxmar_engine::mesh::{PLANT_SHAPE, is_shape_quad};
+        // Word 0 of a plant face (face 6) of `model`: its low bits at 28, its high bit at 24.
+        let plant_face = |model: u32| 6 << 18 | (model & 3) << 28 | (model >> 2) << 24;
+        let (glass, shape, flower) = (2 << 18, plant_face(PLANT_SHAPE), plant_face(0));
+        assert!(is_shape_quad(shape) && !is_shape_quad(flower) && !is_shape_quad(glass));
+        let vertices = [glass, shape, shape, flower].into_iter().flat_map(|w0| [[w0, 0]; 4]).collect();
+        let ranges = split(TerrainPass::Cutout, &MeshBuffers { vertices, indices: Vec::new() });
+        assert_eq!(ranges, [0..3, 3..4]);
+        assert_eq!(streams(TerrainPass::Cutout).collect::<Vec<_>>(), [CUTOUT, PLANTS]);
+        assert_eq!((indices_per_quad(CUTOUT), indices_per_quad(PLANTS)), (6, 12));
+    }
 
     #[test]
     fn allocator_reuses_and_merges_freed_ranges() {

@@ -32,20 +32,29 @@ use crate::block::{Facing, RegistryError, Textures};
 use crate::coords::Face;
 
 /// How many boxes a shape may have, and how many quads all shapes together, as the
-/// renderer's table holds them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// renderer's table holds them. Single-valued data a package sets field by field (Design
+/// draft 91): core sets them, a later package may change them. None set, no shape loads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShapeLimits {
     pub boxes: usize,
     pub quads: usize,
 }
 
+crate::content::settable! {
+    /// What one package's `shapes.ron` sets of the shape limits.
+    SetShapeLimits for ShapeLimits { boxes: usize, quads: usize }
+}
+
+/// The most quads all shapes may have together, whatever the limits say: a quad's number in
+/// the renderer's table takes 12 bits of a vertex (mesh.rs `emit_model`).
+pub const MAX_SHAPE_QUADS: usize = 1 << 12;
+
 /// A package's `shapes.ron`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ShapeFile {
-    /// Set by one package (core): the limits every shape keeps to.
-    pub limits: Option<ShapeLimits>,
+    /// The limits every shape keeps to, as this package sets them.
+    pub limits: Option<SetShapeLimits>,
     pub shapes: BTreeMap<String, ShapeDef>,
 }
 
@@ -99,23 +108,29 @@ impl Default for ShapeBox {
 /// Shapes by full name (`base:barrel`), and the limits they keep to.
 #[derive(Clone, Debug, Default)]
 pub struct Shapes {
-    pub limits: Option<ShapeLimits>,
+    pub limits: ShapeLimits,
     pub defs: BTreeMap<String, ShapeDef>,
 }
 
 impl Shapes {
-    /// Every package's shapes, names qualified by its namespace.
-    pub fn gather(files: Vec<(String, ShapeFile)>) -> Result<Self, RegistryError> {
-        let mut shapes = Shapes::default();
+    /// Every package's shapes, names qualified by its namespace, under `limits` (as the
+    /// packages set them). A shape is defined once: a package naming another's shape
+    /// (`base:slab` from a mod) is refused, naming both.
+    pub fn gather(files: Vec<(String, ShapeFile)>, limits: ShapeLimits) -> Result<Self, RegistryError> {
+        if limits.quads > MAX_SHAPE_QUADS {
+            return Err(RegistryError(format!(
+                "shapes.ron: shapes may have at most {MAX_SHAPE_QUADS} quads in all, which is as many as a vertex can number, not {}",
+                limits.quads
+            )));
+        }
+        let mut shapes = Shapes { limits, defs: BTreeMap::new() };
+        let mut by = BTreeMap::new();
         for (namespace, file) in files {
-            if let Some(limits) = file.limits {
-                if shapes.limits.is_some() {
-                    return Err(RegistryError(format!("{namespace}/shapes.ron: another package already sets the shape limits")));
-                }
-                shapes.limits = Some(limits);
-            }
             for (name, def) in file.shapes {
                 let name = if name.contains(':') { name } else { format!("{namespace}:{name}") };
+                if let Some(earlier) = by.insert(name.clone(), namespace.clone()) {
+                    return Err(RegistryError(format!("{namespace}/shapes.ron: shape `{name}` is already defined by {earlier}")));
+                }
                 shapes.defs.insert(name, def);
             }
         }
@@ -239,13 +254,13 @@ pub fn compile(
         let (a, c) = (quarter_turn(from), quarter_turn(to));
         shape.bounds.push((a.min(c), a.max(c)));
     }
-    shape.full = full_faces(&shape.bounds, def, facing);
+    shape.full = full_faces(&shape.bounds, def);
     Ok((shape, names))
 }
 
 /// Which of the cell's faces the shape's unturned boxes cover whole, sampled at the
 /// middle of each 16th.
-fn full_faces(bounds: &[(Vec3, Vec3)], def: &ShapeDef, _facing: Facing) -> [bool; 6] {
+fn full_faces(bounds: &[(Vec3, Vec3)], def: &ShapeDef) -> [bool; 6] {
     let flat: Vec<&(Vec3, Vec3)> = bounds.iter().zip(&def.boxes).filter(|(_, b)| b.turn.rem_euclid(360.0) == 0.0).map(|(bound, _)| bound).collect();
     let mut full = [false; 6];
     for face in Face::ALL {
@@ -348,6 +363,20 @@ mod tests {
         assert!(refused(ShapeBox { turn: 45.0, cull: true, ..Default::default() }).contains("turned"));
         let many = (0..9).map(|_| ShapeBox::default()).collect();
         assert!(shape(many).unwrap_err().0.contains("more than the 8"));
+    }
+
+    /// A shape is defined once, and the limits never let more quads in than a vertex can
+    /// number; a later package may change the limits field by field.
+    #[test]
+    fn shapes_are_gathered_once_within_what_a_vertex_can_number() {
+        let file = |source: &str| ShapeFile::read("test", source).unwrap();
+        let slab = r#"(shapes: {"slab": (boxes: [(to: (16, 8, 16))])})"#;
+        let refused = Shapes::gather(vec![("base".into(), file(slab)), ("addon".into(), file(r#"(shapes: {"base:slab": (boxes: [(to: (16, 4, 16))])})"#))], LIMITS);
+        assert!(refused.unwrap_err().0.contains("addon/shapes.ron: shape `base:slab` is already defined by base"));
+        let too_many = ShapeLimits { quads: MAX_SHAPE_QUADS + 1, ..LIMITS };
+        assert!(Shapes::gather(vec![("base".into(), file(slab))], too_many).unwrap_err().0.contains("at most 4096"));
+        let set = file(r#"(limits: (quads: 64))"#).limits.unwrap();
+        assert_eq!(crate::content::Settable::with(LIMITS, &set), (ShapeLimits { boxes: 8, quads: 64 }, vec!["quads"]));
     }
 
     #[test]

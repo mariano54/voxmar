@@ -966,7 +966,10 @@ impl BlockRegistry {
                 (RenderKind::Model, Some(_), None) => None,
                 (RenderKind::Model, Some(name), Some(shape_defs)) => {
                     let shape_def = shape_defs.defs.get(name).ok_or_else(|| RegistryError(format!("block `{}` takes unknown shape `{name}`", def.name)))?;
-                    let limits = shape_defs.limits.ok_or_else(|| RegistryError("no package sets the shape limits (`limits` in shapes.ron)".into()))?;
+                    let limits = shape_defs.limits;
+                    if limits.boxes == 0 || limits.quads == 0 {
+                        return Err(RegistryError(format!("block `{}` takes shape `{name}`, but no package sets the shape limits (`limits` in shapes.ron)", def.name)));
+                    }
                     let turned_over;
                     let shape_def = if def.flipped {
                         turned_over = shape_def.upside_down();
@@ -1333,7 +1336,6 @@ mod tests {
         let file = crate::shape::ShapeFile::read(
             "base",
             r#"(
-                limits: (boxes: 4, quads: 128),
                 shapes: {
                     "slab": (boxes: [(to: (16, 8, 16), cull: true)]),
                     "stairs": (boxes: [(to: (16, 8, 16), cull: true), (from: (0, 8, 8), cull: true)]),
@@ -1341,7 +1343,7 @@ mod tests {
             )"#,
         )
         .unwrap();
-        crate::shape::Shapes::gather(vec![("base".into(), file)]).unwrap()
+        crate::shape::Shapes::gather(vec![("base".into(), file)], crate::shape::ShapeLimits { boxes: 4, quads: 128 }).unwrap()
     }
 
     #[test]

@@ -174,6 +174,7 @@ impl Content {
         let mut multiblocks = Vec::new();
         let mut quests = Vec::new();
         let mut shapes = Vec::new();
+        let mut shape_limits = Setting::<crate::shape::ShapeLimits>::default();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -193,7 +194,9 @@ impl Content {
                     name if name.starts_with("blocks") => blocks.push((package.clone(), BlockRegistry::read(package, &source)?)),
                     "actions.ron" => actions.extend(package, &source)?,
                     "shapes.ron" => {
-                        shapes.push((package.clone(), crate::shape::ShapeFile::read(package, &source)?));
+                        let file = crate::shape::ShapeFile::read(package, &source)?;
+                        shape_limits.set(package, &name, "shape limits", file.limits, &mut notes);
+                        shapes.push((package.clone(), file));
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "commands.ron" => commands.extend(package, &source)?,
@@ -284,7 +287,7 @@ impl Content {
         }
         let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?;
         skills.validate()?;
-        let blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes)?)?;
+        let blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
         let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
