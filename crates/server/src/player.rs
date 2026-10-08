@@ -390,7 +390,7 @@ impl Server {
         // A player plays under the name as first saved, whatever case they type now, so
         // everything that compares names (animals kept, drops left, machines owned) agrees.
         // Read it only after their full save has passed the checks above.
-        let name = saved.as_ref().and(self.save.as_ref()).and_then(|save| save.saved_name(&name)).unwrap_or(name);
+        let name = self.canonical_name(name, saved.is_some());
         // A new player gets the starting kit, but an address gets only so many in a while
         // (`survival.ron`), so fresh names do not farm it.
         let kit = saved.is_none() && self.players[&id].connection.peer().is_none_or(|address| self.grant_kit(address));
@@ -525,6 +525,45 @@ impl Server {
     /// send), on foot no higher above where they last stood or swam than a jump takes them
     /// (and coming down once they have been off the ground a while), and through no wall
     /// on the way.
+    /// Recover a legacy player's spelling from the ownership that still knows it, and
+    /// fold aliases left by older case-changing logins. New saves' explicit name wins.
+    fn canonical_name(&mut self, requested: String, saved: bool) -> String {
+        let mut owners: Vec<String> = self.creatures.live.values()
+            .flat_map(|c| c.owner.iter().chain(&c.trusting))
+            .chain(self.creatures.unplaced.iter().map(|c| &c.owner))
+            .chain(self.factory.iter().filter_map(|(_, _, s)| s.owner.as_ref()))
+            .filter(|name| same_name(name, &requested)).cloned().collect();
+        owners.sort();
+        owners.dedup();
+        let files = if saved { self.save.as_ref().map(|save| save.older_player_names(&requested)).unwrap_or_default() } else { Vec::new() };
+        let canonical = saved.then(|| self.save.as_ref().and_then(|save| save.saved_name(&requested))).flatten()
+            .or_else(|| owners.first().cloned())
+            .or_else(|| files.first().cloned())
+            .unwrap_or_else(|| requested.clone());
+        let mut hashes: Vec<_> = owners.iter().chain(&files).chain(std::iter::once(&requested)).map(|name| crate::items::owner_of(name)).collect();
+        hashes.sort_unstable();
+        hashes.dedup();
+        self.items.canonical_owner(&hashes, crate::items::owner_of(&canonical));
+        for creature in self.creatures.live.values_mut() {
+            for name in [&mut creature.owner, &mut creature.trusting].into_iter().flatten() {
+                if name != &canonical && same_name(name, &canonical) {
+                    name.clone_from(&canonical);
+                    creature.changed = true;
+                }
+            }
+        }
+        for creature in &mut self.creatures.unplaced {
+            if same_name(&creature.owner, &canonical) {
+                creature.owner.clone_from(&canonical);
+            }
+        }
+        let positions: Vec<_> = self.factory.iter().filter_map(|(pos, _, state)| state.owner.as_ref().filter(|name| same_name(name, &canonical)).map(|_| pos)).collect();
+        for pos in positions {
+            self.factory.state_mut(pos).expect("known machine").owner = Some(canonical.clone());
+        }
+        canonical
+    }
+
     fn input(&mut self, id: PlayerId, input: PlayerInput) {
         let at = self.arrival;
         let player = &self.players[&id];
@@ -815,8 +854,17 @@ mod tests {
     /// Drive the server directly: no tick race can hide an identity change or a cap bypass.
     #[test]
     fn the_saved_name_keeps_identity_herd_caps_births_and_death_drops() {
+        check_saved_ownership(false);
+    }
+
+    #[test]
+    fn a_legacy_name_recovers_ownership_and_folds_old_case_aliases() {
+        check_saved_ownership(true);
+    }
+
+    fn check_saved_ownership(legacy: bool) {
         let mut server = crate::test_server();
-        let dir = std::env::temp_dir().join(format!("voxmar-canonical-name-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("voxmar-canonical-name-{legacy}-{}", std::process::id()));
         let save = WorldSave::new(&dir);
         save.create(&server.meta).unwrap();
         server.save = Some(save.clone());
@@ -828,20 +876,37 @@ mod tests {
             creature.owner = Some("Bob".into());
             creature.fed = -1.0e6;
         }
+        // A previous case-changing login could already have left aliases in the world.
+        server.creatures.live.get_mut(&parents[1]).unwrap().owner = Some("bOb".into());
+        let wheel = server.content.blocks.expect("base:treadwheel");
+        let wheel_pos = (server.spawn + Vec3::X * 5.0).floor().as_ivec3();
+        assert!(server.factory.insert(wheel_pos, wheel, &server.content.machines));
+        server.factory.state_mut(wheel_pos).unwrap().owner = Some("bOb".into());
         // Both live animals and those waiting in the save count towards the keeper's cap.
         let kept_each = server.content.creatures.limits().kept_each;
         let waiting = server.saved_creatures()[0].clone();
         server.creatures.unplaced = vec![waiting; kept_each - parents.len()];
         let dirt = server.content.blocks.expect("base:dirt");
         server.items.spawn_for(ItemStack { item: dirt, count: 7 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("Bob")), 10_000);
+        server.items.spawn_for(ItemStack { item: dirt, count: 2 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("bOb")), 10_000);
+        server.items.spawn_for(ItemStack { item: dirt, count: 3 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("someone-else")), 10_000);
         server.leave(1);
         drop(original);
-        assert_eq!(save.saved_name("BOB").as_deref(), Some("Bob"));
+        if legacy {
+            let path = dir.join("players/bob.ron");
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(text.contains("name: Some(\"Bob\"),"));
+            std::fs::write(path, text.replace("name: Some(\"Bob\"),", "")).unwrap();
+            assert_eq!(save.saved_name("BOB"), None);
+        } else {
+            assert_eq!(save.saved_name("BOB").as_deref(), Some("Bob"));
+        }
         // Read the persisted drops back, so their owner hash must survive saving too.
         server.items = Items::restore(save.read_items().unwrap(), |name| server.content.blocks.item_named(name));
         let returning = join(&mut server, 2, "BOB");
         assert_eq!(server.players[&2].name, "Bob");
         assert_eq!(server.players[&2].view().name, "Bob", "replicated identity uses the saved name");
+        assert_eq!(server.factory.state_mut(wheel_pos).unwrap().owner.as_deref(), Some("Bob"));
         assert_eq!(server.kept_by(&server.players[&2].name), kept_each);
         assert_eq!(server.birth_room(&server.players[&2].name), 0, "case changes cannot evade the herd cap");
         let wheat = server.content.blocks.expect("base:wheat");
@@ -853,8 +918,11 @@ mod tests {
         assert!(!server.players[&3].joined);
         assert!(matches!(duplicate.try_recv().unwrap(), Some(ServerMessage::Rejected { .. })));
         server.tick_items();
-        assert!(server.players[&2].inventory.slots.iter().flatten().any(|s| s.item == dirt && s.count == 7), "their saved death drop is collectible");
-        assert!(server.items.saved(|item| server.content.blocks.def(item).name.clone()).is_empty());
+        let picked: u32 = server.players[&2].inventory.slots.iter().flatten().filter(|s| s.item == dirt).map(|s| s.count as u32).sum();
+        assert_eq!(picked, 9, "both known spellings of their saved death drops are collectible");
+        let left = server.items.saved(|item| server.content.blocks.def(item).name.clone());
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].owner, Some(owner_of("someone-else")), "an unknown hash stays protected");
         // Once there is room, a birth credits the returning keeper and retains ownership.
         server.creatures.unplaced.clear();
         let farming = server.content.skills.id("core:farming").unwrap();

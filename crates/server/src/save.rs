@@ -443,6 +443,21 @@ impl WorldSave {
         ron::from_str::<Named>(&source).ok()?.name.filter(|saved| saved.to_lowercase() == name.to_lowercase())
     }
 
+    /// Spellings preserved by actual older file names, before player files were named in
+    /// lower case. Read directory entries: a synthesised path loses the case on macOS.
+    pub(crate) fn older_player_names(&self, name: &str) -> Vec<String> {
+        let mut names: Vec<_> = std::fs::read_dir(self.dir.join("players"))
+            .into_iter().flatten().flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "ron"))
+            .filter_map(|path| path.file_stem().and_then(|stem| player_name(&stem.to_string_lossy())))
+            .filter(|saved| crate::player::same_name(saved, name))
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
     /// The saved state of the player called `name`. Items that no longer exist are dropped.
     pub fn read_player(&self, name: &str, registry: &BlockRegistry) -> io::Result<Option<SavedPlayer>> {
         let path = self.player_file(name);
@@ -1018,10 +1033,12 @@ mod tests {
         let legacy_text = ron::ser::to_string(&legacy).unwrap();
         std::fs::write(dir.join("players/legacy.ron"), legacy_text).unwrap();
         assert_eq!(save.saved_name("LEGACY"), None);
+        assert_eq!(save.older_player_names("LEGACY"), ["legacy"]);
         assert_eq!(save.read_player("LEGACY", &registry).unwrap(), Some(player.clone()));
         legacy.name = Some("someone-else".into());
         std::fs::write(dir.join("players/legacy.ron"), ron::ser::to_string(&legacy).unwrap()).unwrap();
         assert_eq!(save.saved_name("LEGACY"), None);
+        assert_eq!(save.older_player_names("über"), ["Über"], "decode the actual legacy file name");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
