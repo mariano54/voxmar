@@ -1465,7 +1465,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     // each counted house; extras still draw in catalogue order for every attempt.
     let house_weights = def.houses.iter().map(|h| h.lean.weigh(h.weight, &levers) * culture.mult(Listing::House, &h.name)).collect();
     let extra_chances = def.extras.iter().map(|e| e.lean.weigh(e.chance, &levers) * culture.mult(Listing::Extra, &format!("{:?}", e.name))).collect();
-    let mut town = Town { ctx, kit: &kit, levers: &levers, house_weights, extra_chances, style, size: &size.name, built: FxHashMap::default(), choices: Vec::new(), bounds, square: square_rect, gap };
+    let mut town = Town { ctx, kit: &kit, levers: &levers, house_weights, extra_chances, style, size: &size.name, built: FxHashMap::default(), choices: Vec::new(), spare_extras: Vec::new(), bounds, square: square_rect, gap };
     // A mandatory catalogue request with no positive-weight eligible house can
     // never be removed from the queue. Built counts only grow and these weights
     // stay fixed; water is deliberately ignored, making this a necessary check.
@@ -2224,6 +2224,8 @@ struct Town<'a> {
     /// Availability changes only after a lot is counted; rejected attempts reuse
     /// the original ordered choices, including zero-weight entries.
     choices: Vec<HouseChoices>,
+    /// One rejected house's allocation, cleared before the next original roll.
+    spare_extras: Vec<Extra>,
     /// What it may build on: inside `bounds`, clear of the square, `gap` between.
     bounds: Rect,
     square: Rect,
@@ -2282,6 +2284,11 @@ impl Town<'_> {
     fn needs_water(&mut self, want: &Want) -> bool {
         self.choices(want).needs_water
     }
+
+    fn reject(&mut self, spec: Spec, reason: usize) -> Option<Lot> {
+        if spec.extras.capacity() > self.spare_extras.capacity() { self.spare_extras = spec.extras; }
+        miss(reason)
+    }
 }
 
 /// Availability before testing the water: identical for selection and deciding whether
@@ -2330,7 +2337,8 @@ fn house_spec(town: &mut Town, want: &Want, kind: Kind, rng: &mut Rng, near_wate
         w = w.clamp(w0 as i32, w1 as i32);
         d = d.clamp(d0 as i32, d1 as i32);
     }
-    let mut extras: Vec<Extra> = Vec::new();
+    let mut extras = std::mem::take(&mut town.spare_extras);
+    extras.clear();
     for (e, &chance) in def.extras.iter().zip(&town.extra_chances) {
         if rng.chance(chance) {
             extras.push(e.name);
@@ -2481,29 +2489,29 @@ fn place(
     let rect = Rect::new(min, extent);
     // Inside its square of the grid, with room for the ground eased round it.
     if !town.bounds.covers(&rect.grow(FALLOFF + 1)) {
-        return miss(1);
+        return town.reject(spec, 1);
     }
     if occupied.iter().any(|o| o.gap(&rect) < town.gap) || town.square.gap(&rect) < 1 {
-        return miss(2);
+        return town.reject(spec, 2);
     }
     let ring = if matches!(kind, Kind::Well | Kind::Centrepiece) { RING } else { 0 };
     if lanes.iter().any(|l| l.rect_any(&rect.grow(ring), |d| d < l.half + 0.6)) {
-        return miss(3);
+        return town.reject(spec, 3);
     }
     // Firm, gentle ground under it all, and no water under it or on its banks.
-    let Some((lowest, highest)) = level(ground, &rect, ctx.def.site.bank, 2) else { return miss(4) };
+    let Some((lowest, highest)) = level(ground, &rect, ctx.def.site.bank, 2) else { return town.reject(spec, 4) };
     let limit = match rules.specials.get(kind.name()) {
         Some(size) => size.slope,
         None => rules.lots.slope + spec.stilts,
     };
     if highest - lowest > limit {
-        return miss(5);
+        return town.reject(spec, 5);
     }
     let floor = middle_height(ground, &rect);
     if let Some(at) = lane {
         let road = ground.at(at.round().as_ivec2()).height;
         if (road - floor).abs() > rules.lots.road {
-            return miss(6);
+            return town.reject(spec, 6);
         }
     }
     // Adapt only a placed house. Chimney removal and wall/storey reductions do not
@@ -2893,6 +2901,66 @@ mod level_tests {
     }
 
     #[test]
+    fn rejected_house_extras_keep_original_rolls_and_owned_specs() {
+        let world = super::super::tests::base_world(7);
+        let def = &world.settlements.def;
+        let land = Creek(None, None);
+        let ctx = Ctx { world: &world, land: &land, def, resolved: &world.settlements.resolved,
+            fixed: world.settlements.fixed.as_ref().unwrap(), seed: world.settlements.seed,
+            spawn: None, promised: &[], cells: &world.settlements.cells };
+        let style = def.styles.iter().find(|s| s.name == "timber_frame").unwrap();
+        let levers = Levers::default();
+        let kit = Kit { wood: String::new(), log: String::new(), foundation: Palette(Vec::new()),
+            floor: Vec::new(), walls: Vec::new(), frame: Vec::new(), roof: Vec::new(), trims: Vec::new(),
+            paving: Palette(Vec::new()), hedge: Palette(Vec::new()), weathered: Palette(Vec::new()),
+            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None };
+        let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
+        let new = || Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
+            extra_chances: vec![0.5; def.extras.len()], style, size: "village", built: FxHashMap::default(),
+            choices: Vec::new(), spare_extras: Vec::new(), bounds: rect, square: rect, gap: 1 };
+        let (mut reused, mut fresh) = (new(), new());
+        reused.spare_extras = Vec::with_capacity(32);
+        reused.spare_extras.extend([Extra::Chimney; 32]);
+        let (mut a, mut b) = (Rng::new(7, 71, -19, 23), Rng::new(7, 71, -19, 23));
+        let mut extras = 0;
+        for want in [Want::Home, Want::Workshop, Want::Kind(Kind::Trader), Want::Kind(Kind::Inn), Want::Work("absent".into())] {
+            let kind = match want { Want::Kind(kind) => kind, _ => Kind::House };
+            for _ in 0..32 {
+                let actual = house_spec(&mut reused, &want, kind, &mut a, true);
+                let original = house_spec(&mut fresh, &want, kind, &mut b, true);
+                assert_eq!(format!("{actual:?}"), format!("{original:?}"), "poisoned reusable storage must keep every original spec field and extra in order");
+                if let Some((spec, _)) = actual {
+                    extras += spec.extras.len();
+                    let pointer = spec.extras.as_ptr();
+                    let capacity = spec.extras.capacity();
+                    assert!(reused.reject(spec, 1).is_none());
+                    assert_eq!(reused.spare_extras.as_ptr(), pointer);
+                    assert_eq!(reused.spare_extras.capacity(), capacity);
+                }
+                // The reference discards each allocation, as the original path did.
+                drop(original);
+                assert_eq!(a.next_u64(), b.next_u64());
+            }
+        }
+        assert!(extras > 0);
+        // Exercise place's actual bounds-rejection route after the same house roll.
+        let original = house_spec(&mut fresh, &Want::Home, Kind::House, &mut b, false).unwrap();
+        let pointer = reused.spare_extras.as_ptr();
+        assert!(place(&mut reused, &mut Ground::new(&land), &mut a, &Want::Home, None,
+            Vec2::splat(1000.0), Facing::North, &[], &[], None).is_none());
+        assert_eq!(reused.spare_extras.as_ptr(), pointer);
+        assert_eq!(a.next_u64(), b.next_u64());
+        drop(original);
+        // A retained spec owns its extras; rolling another cannot overwrite it.
+        let (retained, _) = house_spec(&mut reused, &Want::Home, Kind::House, &mut a, false).unwrap();
+        let expected = retained.extras.clone();
+        let next = house_spec(&mut reused, &Want::Home, Kind::House, &mut a, false).unwrap();
+        assert_eq!(retained.extras, expected);
+        assert!(reused.spare_extras.is_empty());
+        drop(next);
+    }
+
+    #[test]
     fn counted_house_invalidates_every_warm_choice() {
         let world = super::super::tests::base_world(7);
         let def = &world.settlements.def;
@@ -2909,7 +2977,7 @@ mod level_tests {
             chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None };
         let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
         let mut town = Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
-            extra_chances: vec![0.0; def.extras.len()], style, size: "village", built: FxHashMap::default(), choices: Vec::new(), bounds: rect, square: rect, gap: 1 };
+            extra_chances: vec![0.0; def.extras.len()], style, size: "village", built: FxHashMap::default(), choices: Vec::new(), spare_extras: Vec::new(), bounds: rect, square: rect, gap: 1 };
         let want = Want::Work("boathouse".into());
         let index = def.houses.iter().position(|h| h.name == "boathouse").unwrap();
         assert_eq!(def.houses[index].most, Some(1));
