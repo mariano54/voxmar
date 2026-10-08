@@ -2209,7 +2209,7 @@ mod tests {
         let chunks = std::env::var("CHUNKS").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
         let other = std::env::var("WILD").is_ok() || std::env::var("WILDTAG").is_ok();
         for (herb, biome, rate, size, n, columns) in if other { Vec::new() } else { rare_herb_counts(&seeds, chunks) } {
-            println!("{herb:>13} {biome:<18} {rate:>6.0} per million columns, {n:>4} plants in {columns:>6} columns, {size:.1} a patch");
+            println!("{herb:>13} {biome:<18} {rate:>6.0} per million columns, {n:>4} plants in {columns:>6} columns, {size:.1} per visible cluster");
         }
         // WILD=plant,plant (or WILDTAG=tag, every plant carrying it) instead: those plants over
         // a spread of climates (or WILDBIOMES=a,b), every biome they appear in, as placed plants
@@ -2229,7 +2229,7 @@ mod tests {
             }
             for (plant, biome, rate, size, n, columns) in plant_counts(&seeds, chunks, &plants, &biomes) {
                 if n > 0 {
-                    println!("{plant:>16} {biome:<18} {rate:>6.0} per million columns, 1 in {:>6.0}, {n:>4} plants in {columns:>7} columns, {size:.1} a patch", 1e6 / rate);
+                    println!("{plant:>16} {biome:<18} {rate:>6.0} per million columns, 1 in {:>6.0}, {n:>4} plants in {columns:>7} columns, {size:.1} per visible cluster", 1e6 / rate);
                 }
             }
         }
@@ -2285,9 +2285,9 @@ mod tests {
             let rate = n as f64 * 1e6 / columns.max(1) as f64;
             let aim = def(herb).patches.as_ref().unwrap().aim as f64;
             let size = n as f64 / groups.max(1) as f64;
-            let line = format!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}, {:.2}x), {:.0} patches a million, {size:.1} a patch, {groups} patches in {columns} columns of {} places", rate / aim, groups as f64 * 1e6 / columns.max(1) as f64, tally[b].0);
+            let line = format!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}, {:.2}x), {:.0} visible clusters a million, {size:.1} per cluster, {groups} clusters in {columns} columns of {} places", rate / aim, groups as f64 * 1e6 / columns.max(1) as f64, tally[b].0);
             if groups < 25 {
-                println!("{line}: too few to judge, left to the census");
+                println!("{line}: too few clusters to judge, left to the census");
                 continue;
             }
             println!("{line}");
