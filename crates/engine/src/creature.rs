@@ -563,6 +563,10 @@ pub struct Limits {
     /// more of what the caps allow within sight.
     pub spawn_near: f32,
     pub spawn_far: f32,
+    /// Nothing spawns where a player could see it appear: within this many degrees of
+    /// where they look (a half angle: 75 covers the screen) and in line of sight. 0 turns
+    /// it off.
+    pub spawn_unseen_angle: f32,
     /// How heavy "nothing here" weighs against the species that suit a spot (each weighs
     /// its biome, climate, rarity and the hour, about 1 for a common one at home): an
     /// attempt where only monsters suit it (a dark place) or where animals do. Higher
@@ -573,7 +577,7 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, first_night_monsters: 3, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
+        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, first_night_monsters: 3, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, spawn_unseen_angle: 75.0, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
     }
 }
 
@@ -581,7 +585,7 @@ crate::content::settable! {
     /// The limits one package sets: any of them.
     SetLimits for Limits {
         most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize, first_night_monsters: usize,
-        spawn_every: f32, spawn_near: f32, spawn_far: f32, empty_for_monsters: f32, empty_for_animals: f32,
+        spawn_every: f32, spawn_near: f32, spawn_far: f32, spawn_unseen_angle: f32, empty_for_monsters: f32, empty_for_animals: f32,
     }
 }
 
@@ -598,6 +602,9 @@ impl Limits {
         }
         if !(self.spawn_near.is_finite() && self.spawn_near >= 0.0 && self.spawn_far.is_finite() && self.spawn_far > self.spawn_near) {
             return error(format!("`spawn_far` ({}) must be more than `spawn_near` ({}), which is 0 or more", self.spawn_far, self.spawn_near));
+        }
+        if !(self.spawn_unseen_angle.is_finite() && (0.0..=180.0).contains(&self.spawn_unseen_angle)) {
+            return error(format!("`spawn_unseen_angle` ({}) must be from 0 to 180 degrees", self.spawn_unseen_angle));
         }
         if !(self.empty_for_monsters.is_finite() && self.empty_for_monsters >= 0.0 && self.empty_for_animals.is_finite() && self.empty_for_animals >= 0.0) {
             return error("`empty_for_monsters` and `empty_for_animals` must be 0 or more".into());
@@ -1027,6 +1034,7 @@ mod tests {
             Limits { spawn_every: 0.0, ..ok },
             Limits { spawn_far: ok.spawn_near, ..ok },
             Limits { spawn_near: -1.0, ..ok },
+            Limits { spawn_unseen_angle: 200.0, ..ok },
             Limits { spawn_every: f32::NAN, ..ok },
             Limits { empty_for_monsters: f32::INFINITY, ..ok },
             Limits { empty_for_animals: -1.0, ..ok },

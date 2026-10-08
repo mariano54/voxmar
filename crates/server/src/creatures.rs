@@ -861,6 +861,9 @@ impl Server {
             return;
         }
         let Some(spot) = self.standing_spot(x, z, at.y.floor() as i32) else { return };
+        if self.seen_by_a_player(spot, limits.spawn_unseen_angle) {
+            return;
+        }
         let site = self.overworld.site(x, z);
         let biome = self.overworld.biomes().get(site.biome);
         let underground = spot.y < site.height - 4;
@@ -915,8 +918,28 @@ impl Server {
         for i in 0..count.max(1) {
             let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
             let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
+            if self.seen_by_a_player(cell, limits.spawn_unseen_angle) {
+                continue;
+            }
             self.spawn_creature(species, cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5), seed ^ i as u64);
         }
+    }
+
+    /// Whether a player could see something appear at `spot`: it lies within `angle`
+    /// degrees of where they look, within sight range, and nothing solid stands between
+    /// their eye and it.
+    pub(crate) fn seen_by_a_player(&self, spot: IVec3, angle: f32) -> bool {
+        let cos = angle.to_radians().cos();
+        let target = spot.as_vec3() + Vec3::new(0.5, 1.0, 0.5);
+        self.players.values().filter(|p| p.joined).any(|player| {
+            let eye = player.eye();
+            let to = target - eye;
+            let distance = to.length();
+            distance < SEEN_WITHIN
+                && angle > 0.0
+                && player.look().dot(to / distance.max(0.001)) > cos
+                && voxmar_engine::physics::raycast(eye, to, distance, |cell| self.is_solid(cell)).is_none_or(|hit| hit.distance > distance - 1.0)
+        })
     }
 
     /// Room left under the world's total: what `most` leaves after the living and the kept
@@ -1362,6 +1385,39 @@ mod density_tests {
         let mut server = crate::test_server();
         let [_, _, _, lit, _] = density(&mut server, spot, midnight + LATER, 3, true);
         assert_eq!(lit, 0, "{lit} monsters among torches");
+    }
+
+    /// Nothing spawns where the player looks and could see it: of 400 tries around a player
+    /// looking one way on open ground, every creature that appears lies out of their view,
+    /// and some do appear (behind them, to the sides).
+    #[test]
+    fn nothing_spawns_in_the_players_view() {
+        let mut server = crate::test_server();
+        let spot = find_biome(&server, "plains").expect("plains");
+        let (client, connection) = voxmar_protocol::local_pair();
+        let _keep = client;
+        let height = server.overworld.site(spot.0, spot.1).height;
+        let at = Vec3::new(spot.0 as f32 + 0.5, height as f32 + 1.0, spot.1 as f32 + 0.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        (player.joined, player.admin, player.name, player.yaw, player.pitch) = (true, true, "probe".into(), 0.0, 0.0);
+        server.players.insert(1, player);
+        let cell = at.floor().as_ivec3();
+        server.load_area(cell - IVec3::new(80, 0, 80), cell + IVec3::new(80, 0, 80));
+        server.day = (LATER + 6_000) as f64;
+        let angle = server.content.creatures.limits().spawn_unseen_angle;
+        let (mut seen, mut behind) = (0, 0);
+        for salt in 0..400u64 {
+            server.creatures.live.clear();
+            server.tick = 40 + salt * 7;
+            server.spawn_near(1, salt);
+            for creature in server.creatures.live.values() {
+                let cell = creature.body.position.floor().as_ivec3();
+                seen += usize::from(server.seen_by_a_player(cell, angle));
+                behind += usize::from(creature.body.position.z > at.z);
+            }
+        }
+        assert_eq!(seen, 0, "{seen} creatures appeared in view");
+        assert!(behind >= 20, "only {behind} appeared behind the player");
     }
 
     #[test]

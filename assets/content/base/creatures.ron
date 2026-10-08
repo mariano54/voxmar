@@ -27,7 +27,7 @@
     // number called too crowded, but with spots 20 to 40 blocks out instead of 56, more of
     // them in sight) and 8 monsters near a player, an attempt every 1.5 s, and a spot left
     // empty less often (measured in creatures.rs density_tests, `wild_density_probe`).
-    limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, first_night_monsters: 3, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5),
+    limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, first_night_monsters: 3, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, spawn_unseen_angle: 75.0, empty_for_monsters: 1.5, empty_for_animals: 2.5),
     // A creature's blow that misses trains Defence only from a creature the player landed a
     // damaging blow on within the last 10 seconds, and of at least half their Defence level
     // (design wiki draft 63), so it can't be trained standing among cave bats.
