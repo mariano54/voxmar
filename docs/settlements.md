@@ -152,6 +152,10 @@ the same pure computation. None of this scratch storage is retained in the plan 
 Sealing also reuses up to 32,768 raw columns keyed by position and the requesting
 centre's exact channel-region bounds. Its four neighbours keep those same bounds;
 corner-only eviction preserves the raw values, and changing worlds clears all scratch.
+Original landforms have a separate 32,768-position memo within that same planning
+call: geology is independent of channel bounds, while carved columns keep their exact
+keys. Both reserve the full batch's centre and cardinal-neighbour headroom. Batched
+centre columns are carved before sealing so neighbours can reuse their original work.
 The larger corner bound avoids observed close-site relief eviction; the raw-column
 bound avoids eviction just before the successful ninth layout of a spawn village.
 The close-water memo remains bounded to 16,384 points.
