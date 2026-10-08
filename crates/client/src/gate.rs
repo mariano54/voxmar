@@ -847,9 +847,17 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             // The ground, with a pool three deep east of where the player stands, a step
             // up on its far bank.
             let (x, y, z) = (feet.x, feet.y, feet.z);
+            // The steps from here lean on the blocks the starting kit once held in the hotbar
+            // (planks, cobblestone, glass, glowstone); the kit now is tools, food and torches,
+            // so the player is given those, as the steps after the grave do.
             for line in [
                 "time set noon".to_owned(),
                 "time freeze".into(),
+                "clear".into(),
+                "give oak_planks 64".into(),
+                "give cobblestone 64".into(),
+                "give glass 32".into(),
+                "give glowstone 16".into(),
                 "weather clear 600".into(),
                 format!("fill {} {} {} {} {} {} air", x - 7, y, z - 7, x + 7, y + 8, z + 7),
                 format!("fill {} {} {} {} {} {} dirt", x - 7, y - 4, z - 7, x + 7, y - 1, z + 7),
