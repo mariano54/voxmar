@@ -1401,6 +1401,8 @@ pub struct TarnsDef {
     pub floor: f32,
     /// Depth of a pit under its rim, in blocks, from which it may hold one.
     pub depth: f32,
+    /// The smallest and largest span of the natural water footprint, in blocks.
+    pub size: (i32, i32),
     /// The chance that such a pit in tarn country holds one, where the climate keeps lakes
     /// full; less in drier climates, none in deserts.
     pub chance: f32,
@@ -1410,7 +1412,7 @@ pub struct TarnsDef {
 }
 
 layered!(TarnsSet for TarnsDef {
-    replace { climate: Vec<ClimateBox>, floor: f32, depth: f32, chance: f32 }
+    replace { climate: Vec<ClimateBox>, floor: f32, depth: f32, size: (i32, i32), chance: f32 }
     nested { country: TarnCountrySet }
 });
 
@@ -2279,6 +2281,9 @@ impl WorldContent {
 
         if let Some(tarns) = &self.tarns {
             let at = || "terrain.ron: tarns".to_owned();
+            if !(1..=64).contains(&tarns.size.0) || !(tarns.size.0..=64).contains(&tarns.size.1) {
+                return Err(ContentError(format!("{}: size {:?} must increase within 1..=64 blocks", at(), tarns.size)));
+            }
             for climate in &tarns.climate {
                 if climate.aether.is_some() || climate.depth.is_some() || climate.height.is_some() || climate.provinces.is_some() {
                     return Err(ContentError(format!("{}: tarns follow the climate bands alone", at())));
@@ -3499,15 +3504,16 @@ mod tests {
         let registry = registry();
         let base = WorldContent::base(&registry).unwrap().tarns.unwrap();
         let mut files = base_files();
-        for (package, settings) in [("tune", "chance: 0.4"), ("country", "country: (share: 0.6)")] {
+        for (package, settings) in [("tune", "chance: 0.4, size: (9, 24)"), ("country", "country: (share: 0.6)")] {
             files.push(ContentFile { package: package.into(), name: "terrain.ron".into(), source: format!("#![enable(implicit_some)]\n(shapes: [], tarns: ({settings}))") });
         }
         let content = WorldContent::from_files(files.iter(), &registry).unwrap();
         let mut expected = base;
         expected.chance = 0.4;
+        expected.size = (9, 24);
         expected.country.share = 0.6;
         assert_eq!(content.tarns.unwrap(), expected);
-        assert!(content.notes.contains(&"tune/terrain.ron replaces the terrain.ron base set (tarns.chance)".into()));
+        assert!(content.notes.contains(&"tune/terrain.ron replaces the terrain.ron base set (tarns.size, tarns.chance)".into()));
         assert!(content.notes.contains(&"country/terrain.ron replaces the terrain.ron base set (tarns.country.share)".into()));
         files.retain(|f| f.name != "terrain.ron" || f.package != "base");
         let error = WorldContent::from_files(files.iter(), &registry).unwrap_err().0;
@@ -3522,16 +3528,18 @@ mod tests {
             let mut files = base_files();
             files.push(ContentFile { package: "mod".into(), name: "terrain.ron".into(), source: format!("#![enable(implicit_some)]\n(shapes: [], tarns: ({tarns}))") });
             WorldContent::from_files(files.iter(), &registry).map(|c| {
-                assert!(c.notes.iter().any(|n| n == "mod/terrain.ron replaces the terrain.ron base set (tarns.climate, tarns.floor, tarns.depth, tarns.chance, tarns.country.scale, tarns.country.share)"));
+                assert!(c.notes.iter().any(|n| n == "mod/terrain.ron replaces the terrain.ron base set (tarns.climate, tarns.floor, tarns.depth, tarns.size, tarns.chance, tarns.country.scale, tarns.country.share)"));
                 c.tarns.unwrap().chance
             }).map_err(|e| e.0)
         };
-        let good = "climate: [(temperature: (\"frozen\", \"cool\"))], floor: 56.0, depth: 2.0, chance: 0.3, country: (scale: 1000.0, share: 0.5)";
+        let good = "climate: [(temperature: (\"frozen\", \"cool\"))], floor: 56.0, depth: 2.0, size: (8, 25), chance: 0.3, country: (scale: 1000.0, share: 0.5)";
         assert_eq!(load(good), Ok(0.3), "a later package sets every tarn field");
         for (from, to, expected) in [
             ("chance: 0.3", "chance: 1.5", "chance 1.5"),
             ("floor: 56.0", "floor: -3.0", "floor -3"),
             ("depth: 2.0", "depth: 0.0", "depth 0"),
+            ("size: (8, 25)", "size: (26, 25)", "size (26, 25)"),
+            ("size: (8, 25)", "size: (0, 25)", "size (0, 25)"),
             ("share: 0.5", "share: 2.0", "country share 2"),
             ("\"cool\"", "\"balmy\"", "unknown Temperature band `balmy`"),
         ] {

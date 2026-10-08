@@ -2106,13 +2106,13 @@ mod tests {
         for z in pit.y - reach..=pit.y + reach {
             for x in pit.x - reach..=pit.x + reach {
                 let site = sampler.site(x, z);
-                if site.body != Body::Lake || site.water != water {
+                if site.water != water {
                     continue;
                 }
                 let p = IVec2::new(x, z);
                 if site.height < water {
                     wet.push(p);
-                } else if site.height <= water + 2 && site.height + 1 < WORLD_HEIGHT_FOR_TESTS {
+                } else if site.body == Body::Lake && site.height <= water + 2 && site.height + 1 < WORLD_HEIGHT_FOR_TESTS {
                     banks.push((p, site.height));
                 }
             }
@@ -2271,7 +2271,7 @@ mod tests {
                     if std::env::var("AT").is_ok() && b < 2 {
                         println!("  seed {seed}: a lake of {cells} cells, its water at {water}, at {}, {} ({}{})", pit.x, pit.y, names[b], if c == 1 { ", tarn country" } else { "" });
                     }
-                    let reach = 8 + 4 * (cells as f32).sqrt() as i32 * 2;
+                    let reach = (8 + 4 * (cells as f32).sqrt() as i32 * 2).max(32);
                     let sampler = world.dense_sampler(pit - reach, pit + reach);
                     // The tarn's generated water: its still-lake columns at its own level, which
                     // no other tarn has claimed.
@@ -2279,7 +2279,7 @@ mod tests {
                     for z in pit.y - reach..=pit.y + reach {
                         for x in pit.x - reach..=pit.x + reach {
                             let site = sampler.site(x, z);
-                            if site.body == Body::Lake && site.height < site.water && site.water == water {
+                            if site.height < site.water && site.water == water {
                                 water_columns.insert(IVec2::new(x, z));
                             }
                         }
@@ -2290,6 +2290,13 @@ mod tests {
                         clipped += 1;
                     }
                     if is_tarn {
+                        assert!(!pool.is_empty(), "seed {seed}: no physical water at {pit}");
+                        assert!(pool.iter().all(|p| (*p - pit).abs().max_element() < reach), "seed {seed}: clipped physical water at {pit}");
+                        let low = pool.iter().copied().fold(pool[0], IVec2::min);
+                        let high = pool.iter().copied().fold(pool[0], IVec2::max);
+                        let span = high - low + 1;
+                        assert!((8..=25).contains(&span.max_element()), "seed {seed}: connected physical water spans {span} at {pit}");
+                        println!("  physical tarn seed {seed} at {pit}: {} water columns, span {span}", pool.len());
                         assert_eq!(c, 1, "seed {seed}: a tarn outside its country at {pit}");
                         sizes[b][c].push(wet);
                         if b < 2 && wet >= 20 && lotus_sampled < lotus
