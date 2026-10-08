@@ -166,6 +166,9 @@ edge or a home lake/shore/salt cell in either tier, carving cannot make freshwat
 any geology height. That exact false answer is stored separately from full terrain;
 both witness stores share the same cap and reset together. Possible water still uses
 the full original sampler. Physical-read diagnostics count only those actual samples.
+Full columns also use that absence proof to skip both carving calls on finite bare
+land: neither tier can change any field. Their complete geology and sea-level facts
+still pass through the original conversion; non-finite heights keep both carving calls.
 House-water checks use the same proof at their original eight rounded spokes. Their
 false witnesses share the 32,768-point terrain memo bound and reset with it; a full
 sample always takes precedence and removes its former false witness. Possible water
