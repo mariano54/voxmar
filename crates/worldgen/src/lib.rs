@@ -1612,7 +1612,7 @@ mod tests {
             ("oak_leaves", false), ("short_grass", false), ("stone", true),
             ("gravel", true), ("ice", true), ("snowy_grass_block", true), ("snow_block", true)]
         {
-            let floor = registry.expect(&format!("base:{name}"));
+            let floor = if name == "air" { BlockId::AIR } else { registry.expect(&format!("base:{name}")) };
             let ground = world.terrain.plant_ground(&site, floor, BlockId::AIR);
             let (mut ordinary, mut bank) = (0, 0);
             for cell in 0..256 {
