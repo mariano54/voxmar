@@ -631,7 +631,8 @@ mod tests {
 
     #[test]
     fn explicit_front_eyes_have_sclera_iris_and_pupils_on_a_small_human_head() {
-        let mut def: BodyDef = ron::from_str(
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let mut def: BodyDef = options.from_str(
             r#"(
             size: (0.6, 1.8),
             model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
