@@ -1163,8 +1163,25 @@ mod tests {
         assert!(scratch.corners.len() > CORNER_LIMIT - 20 * SAMPLE_BATCH);
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.corners.len(), 0, "retained raw values survive the corner reset without recomputation");
+        // Cross the new allocation boundary with an original real batch. Unqueried
+        // pressure entries must survive, as must both exact key identities.
+        scratch.columns = FxHashMap::default();
+        scratch.columns.reserve(4096);
+        let capacity = scratch.columns.capacity();
+        assert!(capacity >= 4096 && capacity < RAW_COLUMN_LIMIT / 8 * 7);
+        scratch.columns.extend((0..capacity).map(|k| ((IVec2::new(200_000 + k as i32, 200_000), id), wrong)));
+        let before = scratch.work[1];
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.work[1], before, "growth must not clear original raw entries");
+        assert_eq!(scratch.column_keys, identities);
+        assert_eq!(scratch.columns.len(), capacity + 5);
+        assert!((0..capacity).all(|k| scratch.columns[&(IVec2::new(200_000 + k as i32, 200_000), id)] == wrong));
+        assert!(scratch.columns.capacity() >= RAW_COLUMN_LIMIT / 8 * 7, "the large growth path must actually run");
+        let prior_full_capacity = FxHashMap::<(IVec2, u32), Column>::with_capacity_and_hasher(RAW_COLUMN_LIMIT, Default::default()).capacity();
+        assert!(scratch.columns.capacity() <= prior_full_capacity, "allocation stays within ordinary growth at the original full limit");
         // Pressure entries are never queried. Full-batch headroom clears them first.
-        scratch.columns.extend((0..RAW_COLUMN_LIMIT - 6).map(|k| ((IVec2::new(200_000 + k as i32, 200_000), id), wrong)));
+        let fill = RAW_COLUMN_LIMIT - scratch.columns.len();
+        scratch.columns.extend((0..fill).map(|k| ((IVec2::new(300_000 + k as i32, 300_000), id), wrong)));
         assert_eq!(scratch.columns.len(), RAW_COLUMN_LIMIT);
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.columns.len(), 5);

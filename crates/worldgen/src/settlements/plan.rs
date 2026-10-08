@@ -3517,6 +3517,34 @@ mod level_tests {
     }
 
     #[test]
+    fn growing_ground_keeps_samples_without_clearing() {
+        let land = Creek(Some(-3), None);
+        let mut ground = Ground::new(&land);
+        ground.seen.reserve(4096);
+        let capacity = ground.seen.capacity();
+        assert!(capacity >= 4096 && capacity < GROUND_SAMPLE_LIMIT / 8 * 7);
+        let keep = IVec2::new(-3, 0);
+        let sample = land.sample(keep.x, keep.y);
+        ground.seen.insert(keep, sample);
+        ground.seen.extend((1..capacity).map(|i| (IVec2::new(100_000 + i as i32, 100_000), sample)));
+        assert_eq!(ground.seen.len(), capacity);
+        let retained = ground.seen.clone();
+        let first = IVec2::new(-9, -17);
+        ground.prefetch(first, 7);
+        for i in 0..7 {
+            let p = first + IVec2::new(i, 0);
+            assert_eq!(ground.at(p), land.sample(p.x, p.y));
+        }
+        assert_eq!(ground.at(keep), sample);
+        assert_eq!(ground.clears, 0);
+        assert_eq!(ground.seen.len(), capacity + 7);
+        assert!(retained.iter().all(|(p, g)| ground.seen.get(p) == Some(g)));
+        assert!(ground.seen.capacity() >= GROUND_SAMPLE_LIMIT / 8 * 7, "the large growth path must actually run");
+        let prior_full_capacity = FxHashMap::<IVec2, GeoSample>::with_capacity_and_hasher(GROUND_SAMPLE_LIMIT, Default::default()).capacity();
+        assert!(ground.seen.capacity() <= prior_full_capacity, "allocation stays within ordinary growth at the original full limit");
+    }
+
+    #[test]
     fn planning_prefetch_counts_lookahead_before_a_water_rejection() {
         struct Counted {
             creek: Creek,
