@@ -119,7 +119,11 @@ use streams of their own; adding culture draws does not consume building draws.
 
 Region terrain fits share a 1 MiB cache weighed by owned bytes, including mod families;
 eviction changes only how often the terrain is sampled. Culture storage also counts in
-the settlement plan's 32 MiB cache. Later packages replace only culture rule fields they
+the settlement plan's 32 MiB cache, along with allocated vector capacities, names,
+building strings, lane polylines and the voxel table. The ignored release
+`culture_planning_budget` checks warm planning over 20 seeds, requiring both hamlets and
+villages, at twice the 3/6 ms CPU budgets and at most 2 MiB of retained plan storage.
+Allocator metadata is outside this storage count. Later packages replace only culture rule fields they
 name, preserving the others and reporting which package and field they replaced. Loading
 refuses unknown catalogue names, missing palette blocks, non-finite weights and shifts,
 and unbounded mutation counts before a world can be created.

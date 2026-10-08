@@ -298,12 +298,23 @@ pub struct Slot(pub Option<Plan>);
 
 impl Weigh for Slot {
     fn bytes(&self) -> usize {
-        self.0.as_ref().map_or(0, |p| {
-            p.raster.cells.len() * std::mem::size_of::<Cell>()
-                + p.voxels.values().map(|v| v.len() * std::mem::size_of::<Voxel>() + 32).sum::<usize>()
-                + p.buildings.len() * std::mem::size_of::<Building>()
-                + p.culture.bytes()
-                + 256
+        std::mem::size_of::<Self>() + self.0.as_ref().map_or(0, |p| {
+            // Capacity counts allocated storage, even when a vector is only partly full.
+            // The hash table has vacant buckets and one control byte per bucket, plus
+            // a trailing control group. Round capacity up for its bucket allocation.
+            let buckets = if p.voxels.capacity() == 0 { 0 } else { p.voxels.capacity().next_power_of_two() };
+            let table = buckets * (std::mem::size_of::<(IVec2, Vec<Voxel>)>() + 1) + usize::from(buckets > 0) * 16;
+            p.raster.cells.capacity() * std::mem::size_of::<Cell>()
+                + p.raster.sums.capacity() * std::mem::size_of::<(f32, f32, f32)>()
+                + table + p.voxels.values().map(|v| v.capacity() * std::mem::size_of::<Voxel>()).sum::<usize>()
+                + p.buildings.capacity() * std::mem::size_of::<Building>()
+                + p.buildings.iter().map(|b| b.what.capacity() + b.work.as_ref().map_or(0, String::capacity)).sum::<usize>()
+                + p.gates.capacity() * std::mem::size_of::<IVec2>()
+                + p.lanes.capacity() * std::mem::size_of::<Vec<Vec2>>()
+                + p.lanes.iter().map(|l| l.capacity() * std::mem::size_of::<Vec2>()).sum::<usize>()
+                + p.lane_halves.capacity() * std::mem::size_of::<f32>()
+                + p.size.capacity() + p.layout.capacity() + p.style.capacity() + p.name.0.capacity() + p.name.1.capacity()
+                + p.culture.bytes() - std::mem::size_of::<culture::Culture>()
         })
     }
 }

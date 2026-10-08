@@ -1907,7 +1907,7 @@ fn a_culture_is_a_function_of_the_seed_and_the_place() {
 
 /// Neighbours share a family: regions 3 km apart have the same family at least 70% of the
 /// time (a family is a region, not a speckle), over several seeds, in every direction; and
-/// so do the planned settlements within 3 km of one another. The families all turn up.
+/// so do the planned settlements within 3 km of one another. Several families turn up.
 #[test]
 fn neighbouring_places_share_a_family() {
     let (mut same, mut pairs) = (0, 0);
@@ -1953,7 +1953,7 @@ fn neighbouring_places_share_a_family() {
 }
 
 /// Every biome a settlement may stand in suits two families or more, fully or at half
-/// weight (temperatures aside), and every family the region field can give out is given.
+/// weight (temperatures aside).
 #[test]
 fn every_settleable_biome_has_two_families_or_more() {
     let world = base_world(1);
@@ -2386,6 +2386,27 @@ fn culture_palette_checks_every_wood_and_trim_combination() {
     assert!(error.0.contains("base:a_b_planks"), "{error}");
 }
 
+/// Spare allocation capacity must count towards the plan cache, even when its lengths
+/// and its generated output have not changed.
+#[test]
+fn culture_plan_weight_counts_spare_allocations() {
+    use crate::water::cache::Weigh;
+    let world = base_world(7);
+    let spawn = world.spawn_point();
+    let found = world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2048);
+    let plan = found.iter().find_map(|s| s.0.as_ref()).expect("a settlement near spawn");
+    let cell = world.settlements.cell_of(plan.centre.x, plan.centre.y);
+    let spawn_at = world.settlements.spawn.get().and_then(|s| s.square).filter(|s| s.1 == cell).map(|s| s.0);
+    let again = world.settlements.plan(&world, world.settlements.fixed.as_ref().unwrap(), cell, spawn_at).unwrap();
+    let mut slot = super::Slot(Some(again));
+    let before = slot.bytes();
+    let plan = slot.0.as_mut().unwrap();
+    plan.name.0.reserve_exact(4096);
+    plan.gates.reserve_exact(1024);
+    plan.lanes[0].reserve_exact(1024);
+    assert!(slot.bytes() >= before + 4096 + 1024 * std::mem::size_of::<IVec2>() + 1024 * std::mem::size_of::<Vec2>());
+}
+
 /// Planning budgets are measured in release with thread CPU time, after the surrounding
 /// land is known. Report cold region discovery separately in settlement_preview.
 #[test]
@@ -2399,8 +2420,13 @@ fn culture_planning_budget() {
     for seed in 1..=20 {
         let world = base_world(seed);
         let spawn = world.spawn_point();
-        let found = world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2048);
-        for slot in found.iter().filter(|s| s.0.is_some()).take(2) {
+        let centre = IVec2::new(spawn.x, spawn.z);
+        let mut found = world.settlements.near(&world, centre, 2048);
+        if !found.iter().any(|s| s.0.as_ref().is_some_and(|p| p.size == "village")) {
+            found = world.settlements.near(&world, centre, 4096);
+        }
+        for size in ["hamlet", "village"] {
+            let Some(slot) = found.iter().find(|s| s.0.as_ref().is_some_and(|p| p.size == size)) else { continue };
             let plan = slot.0.as_ref().unwrap();
             let cell = world.settlements.cell_of(plan.centre.x, plan.centre.y);
             let spawn_at = world.settlements.spawn.get().and_then(|s| s.square).filter(|s| s.1 == cell).map(|s| s.0);
@@ -2411,9 +2437,14 @@ fn culture_planning_budget() {
             let budget = match plan.size.as_str() { "hamlet" => 3.0, "village" => 6.0, other => panic!("unbudgeted size {other}") };
             assert!(ms <= budget * 2.0, "seed {seed} {} at {}: {ms:.2} ms CPU, budget {budget} ms", plan.size, plan.centre);
             times.entry(plan.size.clone()).or_default().push(ms);
-            peak = peak.max(slot.bytes());
+            let bytes = slot.bytes();
+            assert!(bytes <= 2 * super::MB, "seed {seed} {size} at {}: {bytes} allocated bytes exceeds 2 MiB", plan.centre);
+            peak = peak.max(bytes);
             count += 1;
         }
+    }
+    for size in ["hamlet", "village"] {
+        assert!(times.get(size).is_some_and(|ms| ms.len() >= 5), "only {:?} {size} samples over 20 seeds", times.get(size).map(Vec::len));
     }
     for (size, mut ms) in times {
         ms.sort_by(f64::total_cmp);
