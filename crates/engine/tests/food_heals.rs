@@ -1,5 +1,5 @@
-//! Every food heals by the rule (design drafts 55 and 63): cooked food 0.4 × the lowest
-//! level that cooks it, at least 2; wonder fruit the same by the Farming level that picks
+//! Every food heals by the rule (design drafts 55, 63 and 107): cooked food 0.4 × the lowest
+//! level that cooks it, at least 4; wonder fruit the same by the Farming level that picks
 //! it; other fruit and berries 2; anything else edible, raw produce and meat among it, 1.
 
 use voxmar_engine::block::BlockId;

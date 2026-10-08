@@ -10,8 +10,8 @@ food and breeding design (see [creatures.md](creatures.md)).
 > Health comes back slowly by itself (a point every ten seconds). Read "hunger" below as
 > healing where it still appears.
 >
-> **2026-10-08: how much food heals** (design drafts 55 and 63): cooked food 0.4 × the
-> lowest level that cooks it, at least 2 (`vitals::cooked_heal`; about a fifth of the
+> **2026-10-08: how much food heals** (design drafts 55, 63 and 107): cooked food 0.4 × the
+> lowest level that cooks it, at least 4 (`vitals::cooked_heal`; about a fifth of the
 > health of a player who can make it), so cooking always makes food better; raw produce
 > and meat 1, fruit and berries 2; golden apple and emberfruit follow the cooked rule by
 > the Farming level that picks them (70 and 41: 28 and 16). Hearty gives a tenth more

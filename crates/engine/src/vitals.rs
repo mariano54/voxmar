@@ -67,10 +67,10 @@ pub fn food_value(tags: &[String]) -> u8 {
     }
 }
 
-/// What cooked food heals by the level that cooks it: 0.4 × that level, at least 2 (design
-/// draft 55). Wonder fruit heals so by the Farming level that picks it.
+/// What cooked food heals by the level that cooks it: 0.4 × that level, at least 4 (design
+/// drafts 55 and 107). Wonder fruit heals so by the Farming level that picks it.
 pub fn cooked_heal(level: u8) -> u8 {
-    ((0.4 * level as f32).round() as u8).max(2)
+    ((0.4 * level as f32).round() as u8).max(4)
 }
 
 /// What a player ate lately, for how much the same food heals again: each time in a row
@@ -137,7 +137,7 @@ mod tests {
         assert_eq!(food_value(&tags(&["edible", "heal:7"])), 7);
         assert_eq!(food_value(&tags(&["edible", "fruit", "produce"])), 2);
         assert_eq!(food_value(&tags(&["edible", "meat", "raw"])), 1);
-        assert_eq!((cooked_heal(1), cooked_heal(12), cooked_heal(65)), (2, 5, 26));
+        assert_eq!((cooked_heal(1), cooked_heal(12), cooked_heal(65)), (4, 5, 26));
         assert_eq!(food_value(&tags(&["stone"])), 0);
     }
 
