@@ -2099,7 +2099,9 @@ mod tests {
                 }
             }
             if audit {
-                let site = sampler.site(p.x, p.y);
+                let mut site = sampler.site(p.x, p.y);
+                // The climate sampler leaves paths out; generation's full geology does not.
+                site.trail = world.geo(p.x, p.y).trail.map_or(0.0, |t| t.tread);
                 let below = area[i].block(at - pos.origin() - IVec3::Y);
                 let blocked = !above.is_air() && registry.info(above).render != voxmar_engine::block::RenderKind::Plant;
                 let ground = world.terrain.plant_ground(&site, below, if blocked { above } else { BlockId::AIR });
