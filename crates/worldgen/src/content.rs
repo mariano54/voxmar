@@ -60,7 +60,9 @@ impl Select {
 /// package sets field by field (Design draft 91): its file names only what it changes,
 /// which is laid over what the packages before it set, and loading notes which package
 /// replaced which fields. So a mod tunes one number without restating the file.
-/// [`layered!`] declares one.
+/// [`layered!`] declares one. The engine's `settable!` (crates/engine/src/content.rs) is
+/// the same rule for creature limits: two mechanisms for one rule, until `settable!` grows
+/// nesting and named lists and this one is built on it.
 trait Layered: Sized {
     /// Every field as an option: what a later package's file sets.
     type Set: DeserializeOwned;
@@ -94,10 +96,13 @@ macro_rules! layered {
             type Set = $set;
 
             fn into_set(self) -> $set {
+                // Exhaustive (no `..`): a field added to `$whole` and not listed above is a
+                // compile error here, not a field a later package silently cannot set.
+                let $whole { $($field,)* $($($nfield,)*)? $($($lfield,)*)? } = self;
                 $set {
-                    $($field: Some(self.$field),)*
-                    $($($nfield: Some(self.$nfield.into_set()),)*)?
-                    $($($lfield: Some(self.$lfield),)*)?
+                    $($field: Some($field),)*
+                    $($($nfield: Some($nfield.into_set()),)*)?
+                    $($($lfield: Some($lfield),)*)?
                 }
             }
 
@@ -127,11 +132,16 @@ macro_rules! layered {
     };
 }
 
+/// The package that last set each field of a [`Layered`] value, by field path.
+type Setters = std::collections::HashMap<String, String>;
+
 /// One package's single-valued data, laid over the packages' before it (see [`Layered`]):
 /// the first file read whole (every field it must have), later ones field by field, each
-/// noted. `qualify` names the set's blocks in the package's namespace.
+/// noted. `setters` holds the package that last set each field, so a note names the
+/// package whose value a later one replaces, field by field. `qualify` names the set's
+/// blocks in the package's namespace.
 fn lay_file<T: Layered + DeserializeOwned + Clone>(
-    value: &mut Option<(T, String)>,
+    value: &mut Option<(T, Setters)>,
     file: &ContentFile,
     qualify: impl Fn(&mut T::Set),
     notes: &mut Vec<String>,
@@ -142,16 +152,34 @@ fn lay_file<T: Layered + DeserializeOwned + Clone>(
             let mut whole = parse::<T>(&at, &file.source)?;
             let mut set = whole.clone().into_set();
             qualify(&mut set);
-            whole.lay(set, "", &mut Vec::new());
-            *value = Some((whole, file.package.clone()));
+            let mut changed = Vec::new();
+            whole.lay(set, "", &mut changed);
+            *value = Some((whole, changed.into_iter().map(|path| (path, file.package.clone())).collect()));
         }
-        Some((whole, by)) => {
+        Some((whole, setters)) => {
             let mut set = parse::<T::Set>(&at, &file.source)?;
             qualify(&mut set);
             let mut changed = Vec::new();
             whole.lay(set, "", &mut changed);
-            notes.push(format!("{at} replaces the {} {by} set ({})", file.name, changed.join(", ")));
-            *by = file.package.clone();
+            // One note for each package whose fields were replaced (in the order they were
+            // first set), and one for the fields that are new.
+            let mut by_package: Vec<(String, Vec<String>)> = Vec::new();
+            let mut added = Vec::new();
+            for path in changed {
+                match setters.insert(path.clone(), file.package.clone()) {
+                    Some(earlier) => match by_package.iter_mut().find(|(p, _)| *p == earlier) {
+                        Some((_, paths)) => paths.push(path),
+                        None => by_package.push((earlier, vec![path])),
+                    },
+                    None => added.push(path),
+                }
+            }
+            for (earlier, paths) in by_package {
+                notes.push(format!("{at} replaces the {} {earlier} set ({})", file.name, paths.join(", ")));
+            }
+            if !added.is_empty() {
+                notes.push(format!("{at} adds to the {} ({})", file.name, added.join(", ")));
+            }
         }
     }
     Ok(())
@@ -1675,9 +1703,9 @@ impl WorldContent {
     /// `land.ron`, `trails.ron`, the tree and plant densities) a later package sets over an
     /// earlier one's, field by field, with a note; other definitions accumulate.
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
-        let mut climate: Option<(ClimateDef, String)> = None;
-        let mut trails: Option<(TrailsDef, String)> = None;
-        let mut land: Option<(LandDef, String)> = None;
+        let mut climate: Option<(ClimateDef, Setters)> = None;
+        let mut trails: Option<(TrailsDef, Setters)> = None;
+        let mut land: Option<(LandDef, Setters)> = None;
         let mut tree_density: Option<(f32, String)> = None;
         let mut notes = Vec::new();
         let mut woods = WoodsDef::default();
@@ -3093,14 +3121,45 @@ mod tests {
         assert_eq!(*trails, TrailsDef { edge: "base:coarse_dirt".into(), ..base.trails.clone() });
         // And the notes say so.
         for note in [
-            "mod/climate.ron replaces the climate.ron base set (scales.aether, frost.ice)",
-            "mod/land.ron replaces the land.ron base set (vertical_scale, density.squash, noises.hills, noises.dunes)",
-            "mod/trails.ron replaces the trails.ron base set (edge)",
-            "mod/trees.ron replaces the tree density base set (0.87 to 0.5)",
+            "mod/climate.ron replaces the climate.ron base set (scales.aether, frost.ice)".to_owned(),
+            "mod/land.ron replaces the land.ron base set (vertical_scale, density.squash, noises.hills)".to_owned(),
+            "mod/land.ron adds to the land.ron (noises.dunes)".to_owned(),
+            "mod/trails.ron replaces the trails.ron base set (edge)".to_owned(),
+            format!("mod/trees.ron replaces the tree density base set ({} to 0.5)", base.tree_density),
+        ] {
+            assert!(content.notes.iter().any(|n| *n == note), "no note `{note}` in {:?}", content.notes);
+        }
+        assert!(base.notes.is_empty(), "base alone replaces nothing: {:?}", base.notes);
+    }
+
+    /// With three packages a note names the package whose value each field replaces, field
+    /// by field (so one note a package replaced), says what is new, and a later file that
+    /// changes nothing leaves no note.
+    #[test]
+    fn notes_name_the_package_each_field_replaces() {
+        let registry = registry();
+        let mut files = base_files();
+        for (package, name, source) in [
+            ("first", "climate.ron", "(scales: (aether: 3000.0))"),
+            ("second", "climate.ron", "(scales: (aether: 2500.0, wetness: 1.5))"),
+            ("second", "land.ron", "(noises: [(\"dunes\", (wavelength: 90.0, octaves: [1.0]))])"),
+            ("third", "land.ron", "(noises: [(\"dunes\", (wavelength: 80.0, octaves: [1.0]))])"),
+            ("third", "trails.ron", "()"),
+        ] {
+            files.push(ContentFile { package: package.into(), name: name.into(), source: source.into() });
+        }
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        assert_eq!((content.climate.scales.aether, content.climate.scales.wetness), (2500.0, 1.5));
+        for note in [
+            "first/climate.ron replaces the climate.ron base set (scales.aether)",
+            "second/climate.ron replaces the climate.ron base set (scales.wetness)",
+            "second/climate.ron replaces the climate.ron first set (scales.aether)",
+            "second/land.ron adds to the land.ron (noises.dunes)",
+            "third/land.ron replaces the land.ron second set (noises.dunes)",
         ] {
             assert!(content.notes.iter().any(|n| n == note), "no note `{note}` in {:?}", content.notes);
         }
-        assert!(base.notes.is_empty(), "base alone replaces nothing: {:?}", base.notes);
+        assert!(!content.notes.iter().any(|n| n.contains("third/trails.ron")), "an empty file leaves no note: {:?}", content.notes);
     }
 
     #[test]
@@ -3118,8 +3177,11 @@ mod tests {
             ("trees.ron", tree("leaves: \"base:oak_leaves\", lean: 3.0, crown: Palm(fronds: (2, 3), length: (6.0, 7.0))"), "reaches 10"),
             ("trees.ron", tree("crown: Bare, comfort: (temperature: (20.0, 10.0))"), "comfort range"),
             ("trees.ron", tree("crown: Bare, colour: 1"), "colour"),
+            ("land.ron", "(vertical_scal: 1.0)".into(), "mod/land.ron:"),
             ("land.ron", "(vertical_scal: 1.0)".into(), "vertical_scal"),
-            ("climate.ron", "(scales: (aether: \"far\"))".into(), "climate.ron"),
+            ("climate.ron", "(scales: (aether: \"far\"))".into(), "mod/climate.ron:"),
+            ("climate.ron", "(scales: (aether_: 1.0))".into(), "mod/climate.ron:"),
+            ("climate.ron", "(scales: (aether_: 1.0))".into(), "aether_"),
             ("trees.ron", "(woods: (common: [\"base:oak_lgo\"]), trees: [])".into(), "unknown block `base:oak_lgo`"),
             ("trees.ron", "(woods: (families: {\"base:acacia_log\": [\"baobob\"]}), trees: [])".into(), "no tree is named `mod:baobob`"),
             ("trees.ron", "(woods: (common: [\"base:acacia_log\"], families: {\"base:acacia_log\": [\"base:acacia\"]}), trees: [])".into(), "both as a common wood and with a family"),
