@@ -207,7 +207,7 @@ impl Process for Survival {
 impl Server {
     /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in
     /// the rain.
-    fn open_sky(&self, at: voxmar_engine::glam::IVec3) -> bool {
+    pub(crate) fn open_sky(&self, at: voxmar_engine::glam::IVec3) -> bool {
         (0..self.survival.roof_scan).map(|dy| at + voxmar_engine::glam::IVec3::Y * dy).all(|p| !self.is_solid(p))
     }
 

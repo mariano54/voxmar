@@ -63,6 +63,9 @@ pub struct FishingFile {
     /// See [`FishingRules::outlevelled`]; a later package's replaces an earlier one's.
     #[serde(default)]
     pub outlevelled: Option<f32>,
+    /// See [`FishingRules::water`]; a later package's replaces an earlier one's.
+    #[serde(default)]
+    pub water: Option<WaterBands>,
     #[serde(default)]
     pub catches: Vec<CatchDef>,
 }
@@ -74,23 +77,65 @@ pub struct FishingRules {
     /// it asks (design draft 63: 15), so the water's best fish are what a high level mostly
     /// lands; infinite (the default) weighs them only by `weight`.
     pub outlevelled: f32,
+    /// The water's climate, from its temperature, which catches read as a biome tag.
+    pub water: WaterBands,
 }
 
 impl Default for FishingRules {
     fn default() -> Self {
-        Self { outlevelled: f32::INFINITY }
+        Self { outlevelled: f32::INFINITY, water: WaterBands::default() }
     }
 }
 
 crate::content::settable! {
     /// What one package's `fishing.ron` sets of the rules.
-    SetFishingRules for FishingRules { outlevelled: f32 }
+    SetFishingRules for FishingRules { outlevelled: f32, water: WaterBands }
 }
 
 impl FishingFile {
     /// The rules this file sets, if any.
     pub fn rules(&self) -> Option<SetFishingRules> {
-        self.outlevelled.map(|outlevelled| SetFishingRules { outlevelled: Some(outlevelled) })
+        (self.outlevelled.is_some() || self.water.is_some()).then_some(SetFishingRules { outlevelled: self.outlevelled, water: self.water })
+    }
+}
+
+/// Where water turns from one climate to the next, °C (as `climate.ron` reads the land):
+/// below `frozen` it is frozen, below `cold` cold, and so on up to warm below `warm`, and
+/// hot above. The sea has no biome for each climate, so a catch that wants cold water
+/// (cod) or warm (tuna) finds it by the water's own temperature.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WaterBands {
+    pub frozen: f32,
+    pub cold: f32,
+    pub cool: f32,
+    pub temperate: f32,
+    pub warm: f32,
+}
+
+impl Default for WaterBands {
+    /// The land's own bands (`climate.ron`).
+    fn default() -> Self {
+        Self { frozen: -3.0, cold: 4.0, cool: 10.0, temperate: 17.0, warm: 22.0 }
+    }
+}
+
+impl WaterBands {
+    /// Every climate water may have, coldest first.
+    pub const TAGS: [&'static str; 6] = ["frozen", "cold", "cool", "temperate", "warm", "hot"];
+
+    /// The climate of water at `temperature` °C.
+    pub fn tag(&self, temperature: f32) -> &'static str {
+        let edges = [self.frozen, self.cold, self.cool, self.temperate, self.warm];
+        Self::TAGS[edges.iter().take_while(|&&edge| temperature >= edge).count()]
+    }
+
+    fn check(&self) -> Result<(), RegistryError> {
+        let edges = [self.frozen, self.cold, self.cool, self.temperate, self.warm];
+        if edges.iter().any(|e| !e.is_finite()) || edges.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(RegistryError(format!("fishing.ron: the water's bands must rise from `frozen` to `warm`: {self:?}")));
+        }
+        Ok(())
     }
 }
 
@@ -146,6 +191,7 @@ impl FishingRegistry {
         if !(rules.outlevelled > 0.0) {
             return Err(RegistryError(format!("fishing.ron: `outlevelled: {}` is no number of levels above 0", rules.outlevelled)));
         }
+        rules.water.check()?;
         let catches = files
             .into_iter()
             .flat_map(|f| f.catches)
@@ -299,5 +345,15 @@ mod tests {
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
         assert_eq!(content.fishing.rules.outlevelled, 15.0);
+    }
+
+    /// Water takes its climate from its temperature, by bands that must rise.
+    #[test]
+    fn water_takes_its_climate_from_its_temperature() {
+        let bands = WaterBands::default();
+        let tags: Vec<&str> = [-10.0, -3.0, 0.0, 4.0, 12.0, 21.9, 22.0, 35.0].into_iter().map(|t| bands.tag(t)).collect();
+        assert_eq!(tags, ["frozen", "cold", "cold", "cool", "temperate", "warm", "hot", "hot"]);
+        assert!(WaterBands { cool: 3.0, ..bands }.check().is_err(), "bands out of order are refused");
+        assert!(bands.check().is_ok());
     }
 }

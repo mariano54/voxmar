@@ -26,6 +26,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::block::{BlockId, Rarity};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::brain::{self, Decision, Mind, Seen, Situation};
+use voxmar_engine::creature::condition::Needs;
 use voxmar_engine::creature::motion::{self, Body, Drive};
 use voxmar_engine::creature::{self, CreatureId, Kind, Water, mix, unit_from};
 use voxmar_engine::crop::level_bonus;
@@ -111,9 +112,14 @@ pub struct Live {
     pub adult_scale: f32,
     /// Tick each of its species' products is next due.
     pub products_due: Vec<u64>,
-    /// The time of day (the day clock) a player last fed it, or it came to be: a kept
-    /// animal walks a treadwheel only while fed.
+    /// How well it is kept, 0 to 1 (crate::condition): the day clock when it was last
+    /// reckoned and when it last ate, and its needs as last looked at.
+    pub condition: f32,
+    pub reckoned: f64,
     pub fed: f64,
+    pub needs: Needs,
+    /// How well its home suits its kind's climate (`Server::settle`).
+    pub climate_fit: f32,
     /// The last view each player was sent, to send only changes.
     sent: Option<CreatureView>,
     pub(crate) changed: bool,
@@ -468,6 +474,10 @@ impl Server {
             self.creature_strikes(id, player);
         }
         if let Some(cell) = decision.eat {
+            let day = self.day;
+            if let Some(creature) = self.creatures.live.get_mut(&id) {
+                creature.fed = day;
+            }
             // Grazing wears the land: now and then a tuft goes for good.
             let roll = unit_from(mix(self.creatures.live[&id].seed, self.tick ^ 0x6a2e));
             let block = self.block(cell);
@@ -704,7 +714,11 @@ impl Server {
             grows_up: None,
             adult_scale: scale,
             products_due: def.products.iter().enumerate().map(|(i, p)| self.tick + product_ticks(p.every, seed, i)).collect(),
+            condition: self.content.creatures.condition().tamed,
+            reckoned: self.day,
             fed: self.day,
+            needs: Needs::default(),
+            climate_fit: 1.0,
             sent: None,
             changed: true,
         };
@@ -915,6 +929,13 @@ impl Ground<'_> {
     }
 }
 
+impl Server {
+    /// Whether `cell` holds water a creature could drink or swim in.
+    pub(crate) fn is_water(&self, cell: IVec3) -> bool {
+        Ground(self).water_at(cell)
+    }
+}
+
 /// Ticks until a product is next due: its period, jittered a little by the creature and
 /// product, so a flock does not lay all at once.
 pub(crate) fn product_ticks(minutes: f32, seed: u64, index: usize) -> u64 {
@@ -935,7 +956,7 @@ fn spawn_factor(rarity: Rarity) -> f32 {
 }
 
 /// The `i`th cell of the square ring `r` blocks out, as (dx, dz).
-fn ring(r: i32, i: i32) -> (i32, i32) {
+pub(crate) fn ring(r: i32, i: i32) -> (i32, i32) {
     if r == 0 {
         return (0, 0);
     }

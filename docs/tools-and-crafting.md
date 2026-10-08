@@ -66,7 +66,9 @@ with Engineering 30.
 
 `base/fishing.ron` (engine/src/fishing.rs) lists what bites: an item, the Fishing level it
 takes, its experience, a weight, salt or fresh water (salt is a biome tagged `ocean`),
-biome tags, and when (day, night, rain). A cast (`base:fish`, five seconds, a rod in hand,
+biome tags, and when (day, night, rain). The water's climate counts as a biome tag, from
+its temperature by `water`'s bands (frozen, cold, cool, temperate, warm, hot): the sea is
+one biome from pole to equator, so cod bite in cold water and tuna in warm. A cast (`base:fish`, five seconds, a rod in hand,
 water within nine blocks with open air above) lands something with a chance that starts at
 about a third for the water's best fish at its level and grows with each level above it
 and with the rod's tier, up to nine in ten; which fish is a weighted draw among those that
