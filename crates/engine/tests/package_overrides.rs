@@ -61,3 +61,24 @@ fn a_later_package_replaces_the_level_curve_with_a_note() {
     assert!(notes[0].contains("zz_long") && notes[0].contains("core"), "{}", notes[0]);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_later_package_replaces_treasure_settings_with_both_package_names() {
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content").canonicalize().unwrap();
+    let dir = std::env::temp_dir().join(format!("voxmar-treasure-settings-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("zz_treasure")).unwrap();
+    for package in ["base", "core"] {
+        std::os::unix::fs::symlink(assets.join(package), dir.join(package)).unwrap();
+    }
+    std::fs::write(dir.join("zz_treasure/treasure.ron"), r#"(lucky: 0.1, gold: (item: "base:gold_coin", centre: 2.5, spread: 0.5))"#).unwrap();
+    let content = Content::load(&dir).unwrap();
+    assert_eq!(content.treasure.lucky, 0.1);
+    let chest = content.treasure.chest(content.blocks.expect("base:nomad_treasure_chest")).unwrap();
+    assert_eq!(chest.gold, (6, 9));
+    for what in ["treasure lucky chance", "treasure gold"] {
+        let notes: Vec<_> = content.notes.iter().filter(|n| n.contains(what)).collect();
+        assert_eq!(notes.len(), 1, "{:?}", content.notes);
+        assert!(notes[0].contains("zz_treasure/treasure.ron") && notes[0].contains("base"), "{}", notes[0]);
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
