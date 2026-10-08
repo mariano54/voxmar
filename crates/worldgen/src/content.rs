@@ -1709,6 +1709,33 @@ impl WorldContent {
         Ok(world)
     }
 
+    /// A fingerprint of what decides what land is made: the generator's files from every
+    /// package (mods too), in package order, and every block's name and tags in id order
+    /// (land picks blocks by tag). A world records it, so it can tell when land made from
+    /// now on may not line up with land made before. Ambient particles change no land and
+    /// are left out.
+    pub fn fingerprint<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> u64 {
+        let shapes_land = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        let mut add = |text: &str| {
+            for b in text.bytes().chain([0]) {
+                hash = (hash ^ b as u64).wrapping_mul(0x100_0000_01b3);
+            }
+        };
+        for file in files.filter(|file| shapes_land(&file.name)) {
+            [&file.package, &file.name, &file.source].into_iter().for_each(|text| add(text));
+        }
+        for id in 0..registry.len() {
+            let def = registry.def(voxmar_engine::block::BlockId(id as u16));
+            let mut tags: Vec<&str> = def.tags.iter().map(String::as_str).collect();
+            tags.sort_unstable();
+            add(&def.name);
+            tags.into_iter().for_each(&mut add);
+            add("");
+        }
+        hash
+    }
+
     /// The base package's definitions alone.
     pub fn base(registry: &BlockRegistry) -> Result<Self, ContentError> {
         let files: Vec<ContentFile> =

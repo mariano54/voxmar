@@ -181,7 +181,7 @@ pub struct Creatures {
     /// lost.
     pub unplaced: Vec<crate::husbandry::SavedCreature>,
     /// Loot waiting for its body to finish falling: the tick it drops, and what.
-    falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
+    pub(crate) falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
     /// The animal each player last asked to let go, and the tick: a second ask soon after
     /// lets it go (`release`).
     pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
@@ -1058,7 +1058,7 @@ mod combat_tests {
         let mut server = crate::test_server();
         let (client, connection) = voxmar_protocol::local_pair();
         let player = 1;
-        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2);
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
         joined.joined = true;
         server.players.insert(player, joined);
         let species = server.content.creatures.id("base:brown_bear").expect("a bear");
@@ -1083,7 +1083,7 @@ mod combat_tests {
         let mut server = crate::test_server();
         let (_client, connection) = voxmar_protocol::local_pair();
         let (player, other) = (1, 2);
-        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2);
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
         joined.joined = true;
         server.players.insert(player, joined);
         server.tick = 10_000;
@@ -1103,7 +1103,7 @@ mod combat_tests {
                 server.tick += 7;
                 let tick = server.tick;
                 server.creatures.live.get_mut(&attacker).unwrap().fought = fought.map(|(by, ago)| (by, tick - ago));
-                server.players.get_mut(&player).unwrap().health = traits::Health::full(crate::player::MAX_HEALTH);
+                server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
                 let species = server.creatures.live[&attacker].species;
                 server.creature_strikes(attacker, species, player, 1.0);
             }
@@ -1194,7 +1194,7 @@ mod density_tests {
         let _keep = client;
         let height = server.overworld.site(spot.0, spot.1).height;
         let at = Vec3::new(spot.0 as f32 + 0.5, height as f32 + 1.0, spot.1 as f32 + 0.5);
-        let mut player = crate::player::Player::new(1, connection, at, 2);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
         (player.joined, player.admin, player.name) = (true, true, "probe".into());
         server.players.clear();
         server.players.insert(1, player);

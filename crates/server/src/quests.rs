@@ -30,7 +30,8 @@ impl Server {
             let (finished, states) = {
                 let player = &self.players[&id];
                 let (skills, blocks) = (&self.content.skills, &self.content.blocks);
-                let level = |name: &str| skills.level_of(&player.skills, name);
+                // A skill as quests name it, `mining`, is core's unless it says whose.
+                let level = |name: &str| if name.contains(':') { skills.level_of(&player.skills, name) } else { skills.level_of(&player.skills, &format!("core:{name}")) };
                 let carried = |want: &str| {
                     let matches = |item: voxmar_engine::block::BlockId| {
                         let def = blocks.def(item);
