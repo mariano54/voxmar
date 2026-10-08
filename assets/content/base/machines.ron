@@ -62,6 +62,19 @@
         (block: "mv_cable", role: Conduit(carrier: Electric, tier: 2)),
         (block: "lv_transformer", role: Transformer(tier: 2, rate: 128.0)),
         (block: "mv_battery_bank", role: Store(carrier: Electric, tier: 2, capacity: 400000.0, rate: 128.0)),
+        // HV: the turbine hall turns steam into HV only while its hall of casing stands
+        // (multiblocks_machines.ron), on a fifth less steam for its power than a steam turbine and
+        // twice as much at once; HV cable and banks; transformers down to MV (HV in on top).
+        (block: "turbine_hall", role: Generator(carrier: Electric, tier: 3, power: 128.0, source: Converts(from: Steam, ratio: 1.0))),
+        (block: "hv_cable", role: Conduit(carrier: Electric, tier: 3)),
+        (block: "mv_transformer", role: Transformer(tier: 3, rate: 512.0)),
+        (block: "hv_battery_bank", role: Store(carrier: Electric, tier: 3, capacity: 1600000.0, rate: 512.0)),
+        // HV processors: speed for space, never yield nor power. The processing array is
+        // sixteen macerators in one hall of HV casing (multiblocks_machines.ron): sixteen times
+        // their speed and draw, so dust costs it what it costs them; the induction smelter is
+        // eight electric furnaces in a block, at eight times their speed and draw.
+        (block: "processing_array", role: Processor(kinds: ["crush"], speed: 32.0, yield: 1.0, power: Some((Electric, 256.0)), tier: 3, input_slots: 6, output_slots: 6)),
+        (block: "induction_smelter", role: Processor(kinds: ["smelt"], speed: 16.0, power: Some((Electric, 64.0)), tier: 3, input_slots: 4, output_slots: 4)),
     ],
     // How the world drives machines: wind (blocks a second) under which windmills stall and
     // at which they give all they can, and how their share grows between (`wind_curve`: 1
