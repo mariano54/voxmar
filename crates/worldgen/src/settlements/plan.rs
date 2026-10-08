@@ -287,6 +287,7 @@ pub struct Lane {
 struct LaneSamples {
     points: Vec<Vec2>,
     bounds: Vec<(Vec2, Vec2)>,
+    whole: (Vec2, Vec2),
 }
 
 const LANE_CHUNK: usize = 16;
@@ -309,10 +310,11 @@ impl Lane {
                 let n = (w[0].distance(w[1]).ceil() as i32).max(1);
                 sampled.extend((0..=n).map(|i| w[0].lerp(w[1], i as f32 / n as f32)));
             }
-            let bounds = sampled.chunks(LANE_CHUNK).map(|chunk| {
+            let bounds: Vec<_> = sampled.chunks(LANE_CHUNK).map(|chunk| {
                 chunk.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(min, max), &p| (min.min(p), max.max(p)))
             }).collect();
-            Arc::new(LaneSamples { points: sampled, bounds })
+            let whole = bounds.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(min, max), &(lo, hi)| (min.min(lo), max.max(hi)));
+            Arc::new(LaneSamples { points: sampled, bounds, whole })
         });
         Self { points, half, paved, main, samples }
     }
@@ -331,7 +333,8 @@ impl Lane {
     /// assumption is needed. Unusual non-finite paths keep the full original scan.
     fn paving_bounds(&self, raster: Rect) -> Option<Rect> {
         let Some(&first) = self.points.first() else { return Some(raster) };
-        if !first.is_finite() || !self.half.is_finite() || self.half < 0.0 { return Some(raster); }
+        // distance() caps even overflowing distances at its MAX fold sentinel.
+        if !first.is_finite() || !self.half.is_finite() || self.half < 0.0 || self.half == f32::MAX { return Some(raster); }
         let (mut min, mut max) = (first, first);
         for w in self.points.windows(2) {
             let ab = w[1] - w[0];
@@ -394,17 +397,23 @@ impl Lane {
         let found = if let Some(samples) = &self.samples {
             let lo = rect.min.as_vec2() - 0.5;
             let hi = rect.max.as_vec2() + 0.5;
-            samples.points.chunks(LANE_CHUNK).zip(&samples.bounds).any(|(chunk, &(min, max))| {
+            let lower = |(min, max): (Vec2, Vec2)| (lo - max).max(min - hi).max(Vec2::ZERO).length();
+            #[cfg(test)]
+            if profiling { bounds_tested += 1; }
+            if !test(lower(samples.whole)) {
+                #[cfg(test)]
+                if profiling { skips += 1; }
+                false
+            } else { samples.points.chunks(LANE_CHUNK).zip(&samples.bounds).any(|(chunk, &bounds)| {
                 #[cfg(test)]
                 if profiling { bounds_tested += 1; }
-                let lower = (lo - max).max(min - hi).max(Vec2::ZERO).length();
-                if !test(lower) {
+                if !test(lower(bounds)) {
                     #[cfg(test)]
                     if profiling { skips += 1; }
                     return false;
                 }
                 chunk.iter().copied().any(&mut point)
-            })
+            }) }
         } else {
             self.points.windows(2).any(|w| {
                 let n = (w[0].distance(w[1]).ceil() as i32).max(1);
@@ -900,6 +909,34 @@ pub(super) fn check_name_ownership(def: &SettlementsDef) -> Result<(), crate::co
     Ok(())
 }
 
+/// Only families that can spell this literal English candidate can offer it.
+/// Build each such family's original neighbour offers once, on first use. Echoes
+/// remain eligible here: the offered stream can keep one after its four retries.
+fn name_is_taken(def: &SettlementsDef, seed: u64, neighbours: &[IVec2], offered: &mut [Option<rustc_hash::FxHashSet<String>>], name: &str) -> bool {
+    for (l, family) in def.cultures.families.iter().enumerate() {
+        let names = &family.names;
+        let can_spell = names.first.iter().any(|first| name.strip_prefix(&first.0).is_some_and(|end| {
+            names.last.iter().any(|last| end == last.0)
+                || end.strip_prefix(' ').is_some_and(|word| names.small.iter().any(|small| word == small.0))
+        }));
+        if !can_spell { continue; }
+        let offers = offered[l].get_or_insert_with(|| {
+            let mut offers = rustc_hash::FxHashSet::default();
+            for &other in neighbours {
+                for k in 0..NAME_OFFERS {
+                    for small in [false, true] {
+                        if small && names.small.is_empty() { continue; }
+                        offers.insert(offered_english(def, seed, other, l, k, small));
+                    }
+                }
+            }
+            offers
+        });
+        if offers.contains(name) { return true; }
+    }
+    false
+}
+
 /// Each complete name belongs to a periodic cell colour, so nearby squares
 /// cannot select the same name even past their three initial offers. Prefer its
 /// own offers, then further draws, then every name, avoiding neighbours' offers
@@ -917,7 +954,7 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
     let inner = |c: IVec2| (c * grid.spacing + grid.margin, (c + 1) * grid.spacing - grid.margin - 1);
     let (lo, hi) = inner(cell);
     let reach = apart.div_euclid(grid.spacing) + 1;
-    let mut taken = rustc_hash::FxHashSet::default();
+    let mut neighbours = Vec::new();
     for dz in -reach..=reach {
         for dx in -reach..=reach {
             let other = cell + IVec2::new(dx, dz);
@@ -928,16 +965,7 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
             if other == cell || gap > apart as f32 || !(Rng::new(seed, 0x5e771e, other.x, other.y).chance(grid.chance) || promised.contains(&other)) {
                 continue;
             }
-            for l in 0..def.cultures.families.len() {
-                for k in 0..NAME_OFFERS {
-                    for small in [false, true] {
-                        if small && def.cultures.families[l].names.small.is_empty() {
-                            continue;
-                        }
-                        taken.insert(offered_english(def, seed, other, l, k, small));
-                    }
-                }
-            }
+            neighbours.push(other);
         }
     }
     // Its own offers first; a hamlet's small names are few (twenty first parts by three
@@ -960,9 +988,10 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
             words
         })
     });
+    let mut offered = vec![None; def.cultures.families.len()];
     let mut first_owned = None;
     for name in own.chain(further).chain(every).filter(owns) {
-        if !taken.contains(&name.0) { return name; }
+        if !name_is_taken(def, seed, &neighbours, &mut offered, &name.0) { return name; }
         first_owned.get_or_insert(name);
     }
     // Even if every owned name is offered nearby, those other colours cannot
@@ -2924,6 +2953,52 @@ mod level_tests {
     }
 
     #[test]
+    fn lazy_name_exclusions_match_all_neighbour_offers() {
+        let mut def = SettlementsDef::default();
+        def.extend("base", "base", include_str!("../../../../assets/content/base/settlements.ron")).unwrap();
+        def.cultures.extend("base", "base", include_str!("../../../../assets/content/base/cultures.ron")).unwrap();
+        // An alias in a different family must participate too, including echoes.
+        def.cultures.families[1].names = def.cultures.families[0].names.clone();
+        let mut positives = 0;
+        let mut negatives = 0;
+        for seed in [1, 7, 42, 0x5eed] {
+            for cell in [IVec2::new(-17, 8), IVec2::new(5, -11)] {
+                let neighbours: Vec<_> = (-2..=2).flat_map(|z| (-2..=2).map(move |x| cell + IVec2::new(x, z))).filter(|&c| c != cell).collect();
+                let mut all = rustc_hash::FxHashSet::default();
+                for &other in &neighbours {
+                    for l in 0..def.cultures.families.len() {
+                        for k in 0..NAME_OFFERS {
+                            for small in [false, true] {
+                                if small && def.cultures.families[l].names.small.is_empty() { continue; }
+                                all.insert(offered_english(&def, seed, other, l, k, small));
+                            }
+                        }
+                    }
+                }
+                let mut offered = vec![None; def.cultures.families.len()];
+                let mut check = |name: &str| {
+                    let expected = all.contains(name);
+                    positives += usize::from(expected);
+                    negatives += usize::from(!expected);
+                    assert_eq!(name_is_taken(&def, seed, &neighbours, &mut offered, name), expected, "seed {seed}, cell {cell}, name {name}");
+                };
+                for name in &all { check(name); }
+                for names in def.cultures.families.iter().map(|f| &f.names) {
+                    for first in names.first.iter().take(3) {
+                        for last in &names.last { check(&format!("{}{}", first.0, last.0)); }
+                        for small in &names.small { check(&format!("{} {}", first.0, small.0)); }
+                    }
+                }
+                check("No family can offer this name");
+                let mut unused = vec![None; def.cultures.families.len()];
+                assert!(!name_is_taken(&def, seed, &neighbours, &mut unused, "No family can offer this name"));
+                assert!(unused.iter().all(Option::is_none), "unrelated families must not draw offers");
+            }
+        }
+        assert!(positives > 1000 && negatives > 1000, "both taken and available candidates must be compared");
+    }
+
+    #[test]
     fn lane_paving_bounds_keep_full_scan_points_and_order() {
         let mut clipped = 0;
         let mut admitted = 0;
@@ -2976,6 +3051,18 @@ mod level_tests {
             let lane = Lane::bare(points, 1.0, true, true);
             let bounds = lane.paving_bounds(raster).unwrap();
             assert_eq!((bounds.min, bounds.max), (raster.min, raster.max), "non-finite arithmetic keeps the original scan");
+        }
+        let capped = Lane::bare(vec![Vec2::splat(1e30)], f32::MAX, true, true);
+        assert_eq!(capped.distance(Vec2::ZERO), f32::MAX, "the original minimum caps overflowing distances");
+        let bounds = capped.paving_bounds(raster).unwrap();
+        assert_eq!((bounds.min, bounds.max), (raster.min, raster.max));
+        for raster in [
+            Rect { min: IVec2::splat(i32::MIN), max: IVec2::splat(i32::MIN + 4) },
+            Rect { min: IVec2::splat(i32::MAX - 4), max: IVec2::splat(i32::MAX) },
+        ] {
+            let lane = Lane::bare(vec![raster.min.as_vec2()], 0.0, true, true);
+            let bounds = lane.paving_bounds(raster).unwrap();
+            assert_eq!((bounds.min, bounds.max), (raster.min, raster.max), "literal integer endpoints round to the same point");
         }
     }
 
@@ -3034,6 +3121,15 @@ mod level_tests {
         let after = LANE_COUNTS.with(|c| c.get());
         profile(false);
         assert_eq!(after[1] - before[1], 1, "a known intersecting point must stop the check");
+        let far = make(vec![Vec2::splat(50.0), Vec2::splat(500.0)]);
+        assert!(far.samples.as_ref().unwrap().bounds.len() > 10);
+        profile(true);
+        let before = LANE_COUNTS.with(|c| c.get());
+        assert!(!far.rect_any(&rect, |d| d <= 3.0));
+        let after = LANE_COUNTS.with(|c| c.get());
+        profile(false);
+        assert_eq!(after[1] - before[1], 0, "the whole bound excludes every sampled point");
+        assert_eq!(after[3] - before[3], 1, "far lanes need only the whole bound");
     }
 
     /// Flat ground with a creek one block wide along `x == creek.0` (a column) or
