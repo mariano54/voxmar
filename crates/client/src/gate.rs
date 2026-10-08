@@ -207,6 +207,8 @@ enum Step {
     /// Blocks drawn as shapes (a slab, stairs both ways up, a barrel, a crate and a sack)
     /// reach the client and draw.
     Shapes,
+    /// Natural births arrive out of view; a torch-lit pad rejects monsters.
+    NaturalSpawns,
     /// Creatures summoned on a pad beside the test ground reach the client and draw.
     Creatures,
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
@@ -314,6 +316,8 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
+    natural_before: Vec<u32>,
+    natural_home: Vec3,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -454,6 +458,8 @@ impl Gate {
             digging: None,
             dug: Vec::new(),
             count_before: 0,
+            natural_before: Vec::new(),
+            natural_home: Vec3::ZERO,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -1071,6 +1077,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Shapes => shapes(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
+        Step::NaturalSpawns => natural_spawns(world, gate, now),
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
         Step::Weapon => weapon(world, gate, now, in_phase),
@@ -3924,6 +3931,97 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the shaped blocks barely show: the view changed by {change:.1} levels")),
             };
             gate.check("shapes", result);
+            gate.next(Step::NaturalSpawns, now);
+        }
+        _ => {}
+    }
+}
+
+/// Births through ordinary spawning, driven through admin console inputs. The clear
+/// pad makes view-cone rejection observable from replicated birth poses; positive dark
+/// monsters and an emptied budget make the subsequent torch rejection meaningful.
+fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
+    let pad = gate.feet + IVec3::new(130, 12, 0);
+    let (x, y, z) = (pad.x, pad.y, pad.z);
+    let arrived = |world: &World, gate: &Gate| {
+        world.resource::<crate::creatures::Creatures>().views().filter(|v| {
+            !gate.natural_before.contains(&v.id) && (v.position.y - y as f32).abs() < 2.0 && v.position.distance(pad.as_vec3()) < 64.0
+        }).copied().collect::<Vec<_>>()
+    };
+    match gate.phase {
+        0 => {
+            gate.natural_home = world.resource::<LocalPlayer>().position;
+            let net = world.resource::<Net>();
+            net.command(&format!("fill {} {} {} {} {} {} stone", x - 44, y - 1, z - 44, x + 44, y - 1, z + 44));
+            for h in [y, y + 3] {
+                net.command(&format!("fill {} {h} {} {} {} {} air", x - 44, z - 44, x + 44, h + 2, z + 44));
+            }
+            net.command(&format!("tp {} {y} {}", x as f32 + 0.5, z as f32 + 0.5));
+            net.command("time set midnight");
+            look(world, 0.0, 0.0);
+            gate.advance(now);
+        }
+        1 => {
+            look(world, 0.0, 0.0);
+            let player = world.resource::<LocalPlayer>();
+            if gate.server_in_phase() < 2.0 || !player.on_ground || player.position.floor().as_ivec3() != pad {
+                return;
+            }
+            gate.natural_before = world.resource::<crate::creatures::Creatures>().views().map(|v| v.id).collect();
+            world.resource::<Net>().command("creatures populate");
+            gate.advance(now);
+        }
+        2 if gate.server_in_phase() > 3.0 => {
+            let births = arrived(world, gate);
+            let content = &world.resource::<Launch>().content;
+            let monsters = births.iter().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Monster).count();
+            let angle = content.creatures.limits().spawn_unseen_angle;
+            let eye = pad.as_vec3() + Vec3::new(0.5, voxmar_engine::physics::dims::EYE_HEIGHT, 0.5);
+            let visible = births.iter().any(|v| {
+                let turn = Quat::from_rotation_y(v.yaw);
+                content.creatures.get(v.species).parts.iter().any(|part| (0..9).any(|i| {
+                    let local = if i == 8 { Vec3::ZERO } else {
+                        Vec3::new(if i & 1 == 0 { -0.5 } else { 0.5 }, if i & 2 == 0 { -0.5 } else { 0.5 }, if i & 4 == 0 { -0.5 } else { 0.5 }) * part.size
+                    };
+                    let to = v.position + turn * (part.at_rest(local) * v.scale) - eye;
+                    -Vec3::Z.dot(to.normalize_or_zero()) >= angle.to_radians().cos()
+                }))
+            });
+            let cap = content.creatures.limits().monsters_near;
+            gate.check("natural births", if monsters > 0 && monsters <= cap && !visible {
+                Ok(format!("{} births reached the client, including {monsters} dark monsters; no model part appeared in the forward {angle} degree cone", births.len()))
+            } else {
+                Err(format!("{} births, {monsters} monsters (cap {cap}), visible model {visible}", births.len()))
+            });
+            gate.natural_before = births.iter().map(|v| v.id).collect();
+            let net = world.resource::<Net>();
+            net.command("creatures disperse");
+            net.command(&format!("fill {} {y} {} {} {y} {} torch", x - 44, z - 44, x + 44, z + 44));
+            gate.advance(now);
+        }
+        3 => {
+            let creatures = world.resource::<crate::creatures::Creatures>();
+            let cleared = creatures.views().all(|v| !gate.natural_before.contains(&v.id));
+            let content = &world.resource::<Launch>().content;
+            let torch = content.blocks.id("base:torch");
+            let client = world.resource::<ClientWorld>();
+            let lit = [-40, 0, 40].into_iter().all(|dx| [-40, 0, 40].into_iter().all(|dz| client.block(pad + IVec3::new(dx, 0, dz)) == torch));
+            if gate.server_in_phase() < 2.0 || !cleared || !lit {
+                return;
+            }
+            gate.natural_before = creatures.views().map(|v| v.id).collect();
+            world.resource::<Net>().command("creatures populate");
+            gate.advance(now);
+        }
+        4 if gate.server_in_phase() > 3.0 => {
+            let content = &world.resource::<Launch>().content;
+            let monsters = arrived(world, gate).iter().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Monster).count();
+            gate.check("natural torch protection", if monsters == 0 { Ok("no monsters born on the lit pad with the dark population dispersed".into()) } else { Err(format!("{monsters} monsters born among torches")) });
+            let net = world.resource::<Net>();
+            net.command("creatures disperse");
+            let home = gate.natural_home;
+            net.command(&format!("tp {} {} {}", home.x, home.y, home.z));
+            net.command("time set noon");
             gate.next(Step::Creatures, now);
         }
         _ => {}

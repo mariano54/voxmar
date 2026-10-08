@@ -328,3 +328,5 @@ large seeded sample of spawn spots, near 20%; every skill has unlocks through 99
 4. **Populations**: regional counts, hunting pressure, regrowth.
 5. **Cooking**: stations, recipes, dishes and effects on top of vitals.
 6. **Behaviour generation**: the ecology rules, quirks, regional modulation.
+
+For admin inspection, `/creatures populate` makes a bounded batch of ordinary natural spawn attempts and holds new arrivals still for a minute. It obeys visibility, darkness and all population budgets. `/creatures disperse` removes wild creatures within 64 blocks without loot, leaving kept animals alone. The game gate compares dark births on a clear pad with a torch-lit pad after dispersing the first population, so a full budget cannot falsely pass the light check.

@@ -529,6 +529,26 @@ impl Server {
         let name = self.players[&player].name.clone();
         let tick = self.tick;
         let mut count = 0;
+        // Bounded natural attempts for inspecting birth positions, without bypassing
+        // visibility, darkness or budgets. Only the admitted creatures are held.
+        if what == "populate" && species.is_none() {
+            let first = self.creatures.next;
+            for salt in 0..128 {
+                self.spawn_near(player, salt);
+            }
+            for (_, creature) in self.creatures.live.iter_mut().filter(|(id, _)| **id >= first) {
+                creature.held_until = tick + 60 * voxmar_protocol::TICKS_PER_SECOND as u64;
+                count += 1;
+            }
+            return Ok(Words::key("command.creatures.populated").with("count", Words::text(count)));
+        }
+        if what == "disperse" && species.is_none() {
+            let wild: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.owner.is_none() && c.body.position.distance(at) < 64.0).map(|(&id, _)| id).collect();
+            for &id in &wild {
+                self.creatures.take_away(id);
+            }
+            return Ok(Words::key("command.creatures.dispersed").with("count", Words::text(wild.len())));
+        }
         let only = match species {
             Some(species) => Some(self.content.creatures.find(species).ok_or_else(|| Words::key("command.summon.unknown").with("name", species))?),
             None => None,
