@@ -613,6 +613,48 @@ fn a_world_placed_altar_drops_nothing_and_a_players_drops_itself_across_restarts
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Plants that merged into one item since a world was saved come back as that item from a
+/// chest's contents and from items lying on the ground, as from the player's pockets.
+#[test]
+fn what_chests_and_the_ground_held_of_merged_plants_comes_back_merged() {
+    use voxmar_server::save::{SavedItem, WorldSave};
+    let dir = world_dir("merged-saved");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let (feet, spot) = (client.position, client.position.floor().as_ivec3() + IVec3::new(2, 0, 0));
+    for line in ["/clear", "/fill ~2 ~-1 ~ ~2 ~-1 ~ stone", "/fill ~2 ~ ~ ~2 ~1 ~ air", "/setblock ~2 ~ ~ chest"] {
+        client.ok(line);
+    }
+    let chest = client.content.blocks.expect("base:chest");
+    client.pump_until(|c| c.world.block(spot) == Some(chest));
+    drop(client);
+
+    // The world as an older version left it: oregano in the chest, parsley on the ground.
+    let save = WorldSave::new(&dir);
+    let mut machines = save.read_machines().unwrap();
+    let held = machines.iter_mut().find(|m| m.position == [spot.x, spot.y, spot.z]).expect("the chest was saved");
+    held.bin = vec![("base:oregano".into(), 3)];
+    save.write_machines(&machines).unwrap();
+    save.write_items(&[SavedItem { item: "base:parsley".into(), count: 2, position: [feet.x + 4.5, feet.y + 1.0, feet.z], age: 0.0, owner: None, lifetime: None }]).unwrap();
+
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(spot) == Some(chest));
+    client.propose("core:mine", ActionTarget::Block { block: spot, face: Face::PosY });
+    client.pump_until(|c| c.world.block(spot) == Some(BlockId::AIR));
+    let herbs = client.content.blocks.expect("base:kitchen_herbs");
+    let total = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == herbs).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == herbs).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    // The chest's three and the ground's two (the chest itself is not herbs).
+    client.pump_until(|c| total(c) == 5);
+    let oregano = client.content.blocks.expect("base:oregano");
+    let parsley = client.content.blocks.expect("base:parsley");
+    assert!(!client.items.values().any(|i| i.stack.item == oregano || i.stack.item == parsley), "an older item came back as itself");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn game_mode_decides_flight_and_the_host_is_admin() {
     use voxmar_server::save::{GameMode, WorldMeta, WorldSave};
@@ -1254,6 +1296,25 @@ fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
     std::thread::sleep(Duration::from_millis(1500));
     client.pump_until(|_| true);
     assert_eq!(client.world.block(far), Some(BlockId::AIR), "a flower came back on ground that was replaced");
+}
+
+#[test]
+fn picking_any_wild_herb_gives_kitchen_herbs_and_the_herb_regrows() {
+    let mut client = Client::join();
+    let at = client.position.floor().as_ivec3() + IVec3::new(1, 0, 0);
+    for line in ["/clear", "/fill ~1 ~-1 ~ ~2 ~-1 ~ grass_block", "/fill ~1 ~ ~ ~2 ~ ~ air", "/setblock ~1 ~ ~ oregano"] {
+        client.ok(line);
+    }
+    let (oregano, herbs) = (client.content.blocks.expect("base:oregano"), client.content.blocks.expect("base:kitchen_herbs"));
+    client.pump_until(|c| c.world.block(at) == Some(oregano));
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    // One item for every wild herb: the oregano itself is not what is handed out.
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == herbs && s.count == 1));
+    assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == oregano), "picked oregano is still an item of its own");
+    // The wild spot grows the same plant back.
+    client.ok("/grow");
+    client.pump_until(|c| c.world.block(at) == Some(oregano));
 }
 
 #[test]
@@ -2991,6 +3052,65 @@ fn a_planter_pays_once_for_each_flower_it_grew_back() {
     client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
     client.settle();
     assert_eq!(client.earned[earned..], [planter_xp], "the planter paid other than once for the flower it grew back");
+}
+
+/// The merged wild items (kitchen herbs, wild roots, pumpkin...) are gardened like the
+/// herbs they stand for: in a herb planter each regrows once picked, for a gardener whose
+/// Farming level reaches its rarity's `planter_level`, and is refused below it.
+#[test]
+fn every_merged_item_regrows_in_a_planter_at_its_level() {
+    let mut client = Client::join();
+    let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    let at = ground + IVec3::Y;
+    for line in ["/clear", "/fill ~ ~-1 ~2 ~ ~-1 ~2 herb_planter", "/fill ~ ~ ~2 ~ ~1 ~2 air"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(ground) == c.content.blocks.id("base:herb_planter"));
+    let merged = ["sweet_berry", "tart_berry", "kitchen_herbs", "wild_roots", "wild_grain", "mushroom", "pumpkin"];
+    let needs = |client: &Client, name: &str| {
+        let plant = client.content.blocks.expect(&format!("base:{name}"));
+        client.content.regrowth.rules.planter_level.of(client.content.blocks.def(plant).rarity) as u8
+    };
+    // Place the item on the planter and pick it again. What a picked plant drops is picked
+    // up some time later, so this neither clears the inventory nor assumes a slot: it gives
+    // one more, looks for the slot a plant is in, and places from that one.
+    let pick = |client: &mut Client, name: &str| {
+        let plant = client.content.blocks.expect(&format!("base:{name}"));
+        let slot_of = |c: &Client| c.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == plant));
+        client.refused.clear();
+        client.ok(&format!("/give {name} 1"));
+        client.pump_until(|c| slot_of(c).is_some());
+        let slot = slot_of(client).unwrap() as u8;
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(plant));
+        client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+        plant
+    };
+    // Below its level the gardener is told, and nothing comes back.
+    for name in merged {
+        let level = needs(&client, name);
+        if level <= 1 {
+            continue;
+        }
+        pick(&mut client, name);
+        client.pump_until(|c| !c.refused.is_empty());
+        client.ok("/grow");
+        client.settle();
+        assert_eq!(client.world.block(at), Some(BlockId::AIR), "{name} grew back in a planter for a gardener below Farming {level}");
+    }
+    // At Farming 40 (a Rare plant's level) each comes back.
+    client.ok("/skill farming 40");
+    for name in merged {
+        assert!(needs(&client, name) <= 40, "{name} asks more than Farming 40 of a gardener");
+        let plant = pick(&mut client, name);
+        assert!(client.refused.is_empty(), "{name} was refused to a gardener at Farming 40: {:?}", client.refused);
+        client.ok("/grow");
+        client.pump_until(|c| c.world.block(at) == Some(plant));
+        client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    }
 }
 
 #[test]
