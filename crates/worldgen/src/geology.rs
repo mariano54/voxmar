@@ -180,6 +180,10 @@ pub struct Corners {
     values: Vec<Relief>,
 }
 
+impl Corners {
+    pub(crate) fn len(&self) -> usize { self.values.len() }
+}
+
 pub struct Geology {
     router: Router,
     /// The 3D density the land's crags take.

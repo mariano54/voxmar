@@ -642,6 +642,10 @@ impl trails::Land for RiverLand<'_> {
         self.rivers.sample(self.stages, x, z, false)
     }
 
+    fn sample_cached(&self, x: i32, z: i32, scratch: &mut water::Samples) -> GeoSample {
+        self.rivers.sample_cached(self.stages, x, z, scratch)
+    }
+
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
         self.rivers.grid(self.stages, origin, step, size)
     }

@@ -126,6 +126,11 @@ the settlement plan's 32 MiB cache, along with allocated vector capacities, name
 building strings, lane polylines and the voxel table. The ignored release
 `culture_planning_budget` checks warm planning over 20 seeds, requiring both hamlets and
 villages, at twice the 3/6 ms CPU budgets and at most 2 MiB of retained plan storage.
+Within one planning call, terrain samples share relief corners and channel groups for
+their exact region bounds, including the neighbour halo used to seal water. Layout
+retries reuse those original land samples. Temporary caches cap samples at 16,384,
+corners at 4,096 plus one sample's corners, and channel groups at 16; eviction repeats
+the same pure computation. None of this scratch storage is retained in the plan cache.
 Allocator metadata is outside this storage count. Later packages replace only culture rule fields they
 name, preserving the others and reporting which package and field they replaced. Loading
 refuses unknown catalogue names, missing palette blocks, non-finite weights and shifts,

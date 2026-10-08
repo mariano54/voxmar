@@ -27,6 +27,7 @@ mod sights;
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use rustc_hash::FxHashMap;
 use voxmar_engine::glam::{IVec2, IVec3};
 
 use self::cache::Cache;
@@ -543,6 +544,22 @@ impl Rivers {
         sample[0]
     }
 
+    /// A planning sample, sharing relief corners and exactly the same channel regions
+    /// as standalone samples. The scratch storage belongs to one planning call.
+    pub fn sample_cached(&self, land: Stages, x: i32, z: i32, scratch: &mut Samples) -> GeoSample {
+        // A call adds at most the centre and four neighbours' corners and one group.
+        // Eviction only repeats pure terrain work; it never changes a sampled value.
+        if scratch.id != self.id || scratch.corners.len() >= 4096 || scratch.tiers.len() >= 16 {
+            *scratch = Samples { id: self.id, ..Samples::default() };
+        }
+        let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
+        let region = |at: IVec2| at.div_euclid(IVec2::splat(REGION));
+        let key = [region(min - TRUNK_MARGIN), region(max + TRUNK_MARGIN), region(min - STREAM_MARGIN), region(max + STREAM_MARGIN)];
+        let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, min, max));
+        let ground = land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0];
+        self.sealed(land, tiers, x, z, ground, &mut scratch.corners)
+    }
+
     /// One column with both tiers carved in and sealed: the same whatever the columns
     /// `tiers` were found for, as long as they include it and its neighbours. (A region
     /// whose index does not reach a column adds nothing to it, and `near` keeps regions
@@ -602,6 +619,15 @@ impl Rivers {
         crag_tops(land.geology, &mut samples, |i| (min.x + i as i32 % size, min.y + i as i32 / size));
         samples
     }
+}
+
+/// Temporary terrain work reused within a planner, never retained by a world cache.
+/// Switching worlds resets it so corners and channels cannot leak between seeds.
+#[derive(Default)]
+pub struct Samples {
+    id: u64,
+    corners: Corners,
+    tiers: FxHashMap<[IVec2; 4], (Near, Near)>,
 }
 
 /// The regional climate over one region, sampled every `RAIN_CELL` blocks.
@@ -727,6 +753,49 @@ fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
 mod tests {
     use super::*;
     use crate::dials::WorldDials;
+
+    #[test]
+    fn planning_samples_match_standalone_across_water_boundaries_and_worlds() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let mut points = Vec::new();
+        // The actual seed-7 river settlement's search area includes both narrow water
+        // and dry banks, not just an empty plane where every implementation agrees.
+        for z in 0..25 {
+            for x in 0..25 {
+                points.push((-1976 + 16 * x, 552 + 16 * z));
+            }
+        }
+        // Each side of the exact tier-group transitions, including negative regions
+        // and the one-block halo used to seal water against its four neighbours.
+        for margin in [TRUNK_MARGIN, STREAM_MARGIN] {
+            for boundary in [-REGION, 0, REGION] {
+                for delta in [-1, 0, 1] {
+                    for sign in [-1, 1] {
+                        let edge = boundary + sign * (margin + 1) + delta;
+                        points.extend([(edge, boundary + 17), (boundary - 19, edge)]);
+                    }
+                }
+            }
+        }
+        let mut scratch = Samples::default();
+        let mut wet = 0;
+        let mut dry = 0;
+        for seed in [7, 42, 7] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            for reverse in [false, true] {
+                for i in 0..points.len() {
+                    let (x, z) = points[if reverse { points.len() - i - 1 } else { i }];
+                    let expected = world.rivers.sample(world.stages(), x, z, false);
+                    let actual = world.rivers.sample_cached(world.stages(), x, z, &mut scratch);
+                    assert_eq!(actual, expected, "seed {seed} at {x},{z}, reverse {reverse}");
+                    assert!(scratch.corners.len() < 4096 + 20);
+                    assert!(scratch.tiers.len() <= 16);
+                    if expected.submerged() && expected.body != Body::Sea { wet += 1; } else { dry += 1; }
+                }
+            }
+        }
+        assert!(wet > 0 && dry > 0, "fixture needs fresh water and dry ground: {wet}/{dry}");
+    }
 
     /// `cargo test --release -p voxmar_worldgen river_stats -- --ignored --nocapture`
     #[test]

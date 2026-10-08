@@ -131,18 +131,28 @@ fn solid(g: &GeoSample) -> bool {
 struct Ground<'a> {
     land: &'a dyn Land,
     seen: FxHashMap<IVec2, GeoSample>,
+    scratch: crate::water::Samples,
     #[cfg(test)]
     queries: usize,
 }
 
 impl Ground<'_> {
+    fn new(land: &dyn Land) -> Ground<'_> {
+        Ground { land, seen: FxHashMap::default(), scratch: Default::default(), #[cfg(test)] queries: 0 }
+    }
+
     fn at(&mut self, p: IVec2) -> GeoSample {
         #[cfg(test)]
         { self.queries += 1; }
         if let Some(g) = self.seen.get(&p) {
             return *g;
         }
-        let g = self.land.sample(p.x, p.y);
+        // Even a spawn cell's many layout retries keep bounded temporary storage.
+        // Clearing changes only how often the original land is recomputed.
+        if self.seen.len() >= 16_384 {
+            self.seen.clear();
+        }
+        let g = self.land.sample_cached(p.x, p.y, &mut self.scratch);
         self.seen.insert(p, g);
         g
     }
@@ -565,7 +575,10 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let sites = site(ctx, cell, spawn);
     #[cfg(test)]
     phase_end("site search total", time);
-    let first = sites.iter().find_map(|&(centre, fresh)| lay_out(ctx, cell, centre, fresh, rng.clone(), false));
+    // Layout retries inspect overlapping land. Keep only this call's pure samples and
+    // relief/channel work, rather than recomputing them for every attempted layout.
+    let mut ground = Ground::new(ctx.land);
+    let first = sites.iter().find_map(|&(centre, fresh)| lay_out(ctx, cell, centre, fresh, rng.clone(), false, &mut ground));
     if spawn.is_none() || first.is_some() {
         return first;
     }
@@ -575,8 +588,8 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let salted = |salt: u64| Rng::new(ctx.seed ^ mix(salt), 0x5e771e, cell.x, cell.y);
     sites
         .iter()
-        .find_map(|&(centre, fresh)| (1..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), false)))
-        .or_else(|| sites.iter().find_map(|&(centre, fresh)| (0..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), true))))
+        .find_map(|&(centre, fresh)| (1..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), false, &mut ground)))
+        .or_else(|| sites.iter().find_map(|&(centre, fresh)| (0..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), true, &mut ground))))
 }
 
 /// How many draws the spawn's square tries laying out each spot with.
@@ -695,7 +708,8 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
 
 /// Lays out the settlement of the square `cell` round `centre`, if it can.
 /// `smallest`: as the size with fewest houses, whatever the draw.
-fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool) -> Option<Plan> {
+#[allow(clippy::too_many_arguments)]
+fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, mut ground: &mut Ground) -> Option<Plan> {
     #[cfg(test)]
     let time = phase_start();
     let def = ctx.def;
@@ -776,7 +790,6 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     phase_end("name", time);
     #[cfg(test)]
     let time = phase_start();
-    let mut ground = Ground { land: ctx.land, seen: FxHashMap::default(), #[cfg(test)] queries: 0 };
     let square_height = ground.at(centre).height;
     let order = levers.get(Lever::Order);
     let crowding = levers.get(Lever::Crowding);
@@ -1338,7 +1351,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     {
         phase_end("lanes/lots/props", time);
         if PROFILE.with(|p| p.get()) {
-            eprintln!("  plan ground: {} distinct samples, {} queries", ground.seen.len(), ground.queries);
+            eprintln!("  plan ground: {} cached samples, {} queries including retries", ground.seen.len(), ground.queries);
         }
     }
     #[cfg(test)]
@@ -2294,10 +2307,10 @@ mod level_tests {
         let rect = Rect::new(IVec2::new(0, 0), IVec2::new(10, 8));
         let bank = 3;
         let dry = Creek(None, None);
-        assert_eq!(level(&mut Ground { land: &dry, seen: FxHashMap::default(), queries: 0 }, &rect, bank, 2), Some((140, 140)));
+        assert_eq!(level(&mut Ground::new(&dry), &rect, bank, 2), Some((140, 140)));
         for at in -bank..=9 + bank {
             for creek in [Creek(Some(at), None), Creek(None, Some(at.min(7 + bank)))] {
-                let found = level(&mut Ground { land: &creek, seen: FxHashMap::default(), queries: 0 }, &rect, bank, 2);
+                let found = level(&mut Ground::new(&creek), &rect, bank, 2);
                 assert_eq!(found, None, "a creek at x {:?} z {:?} beside a lot from 0,0 to 9,7 let it stand", creek.0, creek.1);
             }
         }

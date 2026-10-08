@@ -76,6 +76,12 @@ pub enum Marker {
 pub trait Land: Sync {
     fn sample(&self, x: i32, z: i32) -> GeoSample;
 
+    /// The same sample, sharing temporary terrain calculations within one planner.
+    /// Synthetic land can keep the standalone implementation.
+    fn sample_cached(&self, x: i32, z: i32, _scratch: &mut crate::water::Samples) -> GeoSample {
+        self.sample(x, z)
+    }
+
     /// The `size`×`size` samples `step` blocks apart from `origin`, row by row: the same
     /// as sampling each, but free to share the work.
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
