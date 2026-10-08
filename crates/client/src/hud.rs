@@ -2,6 +2,7 @@
 //! inventory screen and the console, all in the interface's pixel look (`crate::ui`).
 
 pub mod character;
+pub mod combat;
 pub mod console;
 pub mod creative;
 pub mod death;
@@ -42,7 +43,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
-            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin))
+            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin, combat::CombatHudPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
@@ -108,8 +109,9 @@ struct HotbarSelection;
 /// What sits along the bottom edge: the hotbar, health and effects.
 #[derive(Component)]
 struct Bottom;
+/// The health bar's meter (a blow that hurts flashes it, `combat`).
 #[derive(Component)]
-struct HealthMeter;
+pub struct HealthMeter;
 /// The row of effects over the meters.
 #[derive(Component)]
 struct EffectChips;
@@ -158,8 +160,8 @@ pub fn spawn_count(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, corne
     });
 }
 
-/// The dark ring round a stack count.
-const OUTLINE: Color = Color::srgb(0.0, 0.0, 0.02);
+/// The dark ring round a stack count (and a hitsplat's words, `combat`).
+pub(crate) const OUTLINE: Color = Color::srgb(0.0, 0.0, 0.02);
 
 /// One of the copies ringing the count it names.
 #[derive(Component)]

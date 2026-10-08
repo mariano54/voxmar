@@ -31,6 +31,7 @@ use crate::SEA_LEVEL;
 use crate::content::{ClimateDef, HumidityDef};
 use crate::dials::WorldDials;
 use crate::geology::{Geology, Relief, noise, smoothstep, spline};
+use crate::levels::LevelsDef;
 
 /// Lattice spacing of the regional climate, in blocks.
 pub const CELL: i32 = 64;
@@ -116,6 +117,10 @@ pub struct Regional {
     pub variant: f32,
     /// Offset that warps rock province borders, in blocks.
     pub warp: [f32; 2],
+    /// How strongly distance from spawn favours higher-level biomes here (P15): 0 at the
+    /// origin, growing outwards and scaled by a slow wildness field, up to 2 far out where
+    /// the land is wildest (see `crate::levels`).
+    pub lean: f32,
 }
 
 impl Regional {
@@ -147,6 +152,7 @@ impl Regional {
             fertility: mix(self.fertility, other.fertility),
             variant: mix(self.variant, other.variant),
             warp: [mix(self.warp[0], other.warp[0]), mix(self.warp[1], other.warp[1])],
+            lean: mix(self.lean, other.lean),
         }
     }
 }
@@ -238,6 +244,9 @@ pub struct Climate {
     fertility: FastNoiseLite,
     variant: FastNoiseLite,
     warp: [FastNoiseLite; 2],
+    /// Where distance leans hardest towards higher-level biomes (see `Regional::lean`).
+    wildness: FastNoiseLite,
+    levels: LevelsDef,
     humidity: HumidityDef,
 }
 
@@ -261,6 +270,8 @@ impl Climate {
             fertility: noise(seed, 15, 1.0 / scales.fertility, FractalType::FBm, 2),
             variant: noise(seed, 16, 1.0 / scales.variant, FractalType::FBm, 2),
             warp: [noise(seed, 17, 1.0 / 1100.0, FractalType::FBm, 2), noise(seed, 18, 1.0 / 1100.0, FractalType::FBm, 2)],
+            wildness: noise(seed, 19, 1.0 / def.levels.wildness, FractalType::FBm, 2),
+            levels: def.levels.clone(),
             humidity: def.humidity.clone(),
         }
     }
@@ -386,6 +397,7 @@ impl Climate {
         let (wander, anomaly) = (sample(&self.latitude_warp), sample(&self.anomaly));
         let (weirdness, aether, fertility, variant) = (sample(&self.weirdness), sample(&self.aether), sample(&self.fertility), sample(&self.variant));
         let warp = self.warp.each_ref().map(sample);
+        let wildness = sample(&self.wildness);
         for (k, out) in out.iter_mut().enumerate() {
             let reliefs = &around[k];
             let relief = reliefs[0];
@@ -411,6 +423,7 @@ impl Climate {
                 fertility: uniform(fertility[k]),
                 variant: uniform(variant[k]),
                 warp: [warp[0][k] * PROVINCE_WARP, warp[1][k] * PROVINCE_WARP],
+                lean: self.levels.lean_at(x[k].hypot(z[k]), uniform(wildness[k])),
             };
         }
     }
