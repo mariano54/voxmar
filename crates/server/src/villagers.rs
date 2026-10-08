@@ -558,7 +558,7 @@ impl Server {
                 if place == Place::Home {
                     stay(trip, 1);
                 }
-                self.inside(resident.home, t, seed)
+                self.spot_inside(resident.home, t, seed)
             }
             Place::Yard => {
                 stay(trip, 2);
@@ -571,7 +571,7 @@ impl Server {
                     if matches!(b.kind, BuildingKind::House | BuildingKind::Trader | BuildingKind::Inn) {
                         stay(trip, 3);
                         trip.face = Some(((b.min + b.max).as_vec2() / 2.0).extend(b.floor as f32 + 1.5).xzy());
-                        self.inside(w, t, seed)
+                        self.spot_inside(w, t, seed)
                     } else {
                         stay(trip, 4);
                         self.about(w, t, seed)
@@ -596,12 +596,12 @@ impl Server {
             Place::Inn => {
                 stay(trip, 7);
                 let inn = first(BuildingKind::Inn)?;
-                self.inside(inn, t, seed)
+                self.spot_inside(inn, t, seed)
             }
             Place::Shrine => {
                 stay(trip, 8);
                 let s = buildings.iter().position(|b| is(b, &people.shrine))?;
-                if buildings[s].kind == BuildingKind::House { self.inside(s, t, seed) } else { self.about(s, t, seed) }
+                if buildings[s].kind == BuildingKind::House { self.spot_inside(s, t, seed) } else { self.about(s, t, seed) }
             }
             Place::Neighbour => {
                 stay(trip, 9);
@@ -643,7 +643,7 @@ impl Server {
     }
 
     /// A cell a body can stand in inside building `b`, by `seed`.
-    fn inside(&self, b: usize, town: &Town, seed: u64) -> Option<IVec3> {
+    fn spot_inside(&self, b: usize, town: &Town, seed: u64) -> Option<IVec3> {
         let b = &town.info.buildings[b];
         let cells: Vec<IVec3> = (b.min.x + 1..b.max.x)
             .flat_map(|x| (b.min.y + 1..b.max.y).map(move |z| (x, z)))
