@@ -209,7 +209,7 @@ impl Treasure {
         }
         let id = |name: &str| blocks.id(name).ok_or_else(|| error(format!("no item `{name}`")));
         let gold = match &gold {
-            Some(g) if !(g.spread >= 0.0 && g.centre > g.spread) => {
+            Some(g) if !(g.centre.is_finite() && g.spread.is_finite() && g.spread >= 0.0 && g.centre > g.spread) => {
                 return Err(error(format!("gold: the centre ({}) must be above the spread ({}), and the spread at least 0", g.centre, g.spread)));
             }
             Some(g) => {

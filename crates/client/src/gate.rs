@@ -2535,9 +2535,12 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
         }
         4 | 5 | 6 => {
             let (target, want) = match gate.phase { 4 => (core, "running"), 5 => (array, "making"), _ => (smelter, "making") };
-            let said = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.to_lowercase().contains(want) && (gate.phase == 4 || powered(r))));
+            let machine = match gate.phase { 4 => "base:turbine_hall", 5 => "base:processing_array", _ => "base:induction_smelter" };
+            let prefix = format!("{}:", english(&Words::Block(machine.into())));
+            let said = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.starts_with(&prefix) && r.to_lowercase().contains(want) && (gate.phase == 4 || powered(r))));
             if let Some(said) = said {
                 gate.check(&format!("HV age: {want}"), Ok(said));
+                if let Some(o) = gate.observer.as_mut() { o.replies.clear(); }
                 gate.machines_asked = f32::MIN;
                 gate.advance(now);
                 if gate.phase == 7 {
@@ -2567,11 +2570,13 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
                 set_language(world, language);
                 world.resource_mut::<Settings>().language = language.into();
                 world.resource::<Net>().command(&format!("tp {}", at(position)));
-                select(world, pick);
+                empty_hand(world);
                 gate.advance(now);
             } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0 {
                 aim(world, target);
-                if gate.shot(world, name).is_some() {
+                select(world, pick);
+                gate.settled += 1;
+                if gate.settled >= 3 && gate.shot(world, name).is_some() {
                     if i >= 9 {
                         set_language(world, "en");
                         world.resource_mut::<Settings>().language = "en".into();

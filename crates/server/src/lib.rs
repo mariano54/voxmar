@@ -1087,7 +1087,7 @@ mod tests {
         let join = |server: &mut Server| {
             let (client, server_side) = local_pair();
             connections.send(server_side).unwrap();
-            client.send(ClientMessage::Hello { name: "bob".into(), protocol: PROTOCOL_VERSION, content: fingerprint });
+            client.send(ClientMessage::Hello { name: "bob".into(), protocol: PROTOCOL_VERSION, content: fingerprint, admin_token: None });
             server.accept_connections();
             server.handle_messages();
             client
