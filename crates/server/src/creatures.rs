@@ -1182,7 +1182,10 @@ mod combat_tests {
         let mut server = crate::test_server();
         let (_client, connection) = voxmar_protocol::local_pair();
         let player = 1;
-        let at = server.spawn + Vec3::Y * 32.0;
+        // Centre of the loaded column, above terrain: unloaded neighbours are walls.
+        let origin = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin().as_vec3();
+        let half = voxmar_engine::coords::CHUNK_SIZE as f32 * 0.5;
+        let at = Vec3::new(origin.x + half, server.spawn.y + 32.0, origin.z + half);
         let joined = crate::player::Player::new(player, connection, at - Vec3::Z * 2.0, 2, server.tick, server.survival.max_health, &server.config.limits);
         server.players.insert(player, joined);
         let species = server.content.creatures.id("base:brown_bear").expect("a bear");
