@@ -2392,7 +2392,7 @@ mod tests {
             let rate = n as f64 * 1e6 / columns.max(1) as f64;
             let aim = def(herb).patches.as_ref().unwrap().aim as f64;
             let size = n as f64 / groups.max(1) as f64;
-            let line = format!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}, {:.2}x), {:.0} visible clusters a million, {size:.1} per cluster, {groups} clusters in {columns} columns of {} places", rate / aim, groups as f64 * 1e6 / columns.max(1) as f64, tally[b].0);
+            let line = format!("{herb} in {biome}: {rate:.1} per million (aim {aim:.0}, {:.2}x), {:.0} visible clusters a million, {size:.1} per cluster, {n} plants in {groups} clusters in {columns} columns of {} places", rate / aim, groups as f64 * 1e6 / columns.max(1) as f64, tally[b].0);
             if groups < 25 {
                 println!("{line}: too few clusters to judge, left to the census");
                 continue;

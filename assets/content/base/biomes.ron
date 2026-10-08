@@ -787,7 +787,7 @@
                 forest: 0.06,
                 trees: [Name("pine", 1.0), Name("spruce", 0.5), Name("larch", 0.5), Name("rowan", 0.3), Name("stone_pine", 0.4)],
                 cover: 0.85, flowers: 0.06,
-                plants: [Name("short_grass", 2.0), Tag("alpine", 1.5), Name("juniper_bush", 1.0), Name("crocus", 1.0), Name("edelweiss", 1.8), Name("windroot", 2.0), Name("sky_lotus", 0.8), Tag("forage", 0.02)],
+                plants: [Name("short_grass", 2.0), Tag("alpine", 1.5), Name("juniper_bush", 1.0), Name("crocus", 1.0), Name("edelweiss", 1.8), Name("windroot", 2.0), Name("sky_lotus", 2.4), Tag("forage", 0.02)],
             ),
         ),
         (
