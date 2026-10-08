@@ -129,10 +129,15 @@ villages, at twice the 3/6 ms CPU budgets and at most 2 MiB of retained plan sto
 Within one planning call, terrain samples share relief corners and channel groups for
 their exact region bounds, including the neighbour halo used to seal water. Layout
 retries reuse those original land samples. Temporary caches cap samples at 16,384,
-corners at 4,096 plus one sample's corners, and channel groups at 16; eviction repeats
+corners at 4,096, and channel groups at 16; eviction repeats
 the same pure computation. None of this scratch storage is retained in the plan cache.
 Site water checks walk the same ranked qualifying prefix lazily, stopping when enough
-usable sites have been found. Lot-clearance checks stop at the first lane point that
+usable sites have been found. A close freshwater query consumes the exact grid's circle
+row by row, grouping at most 32 centre samples and stopping after a matching batch.
+Each centre keeps the original neighbour halo and sealing; the corner memo reserves up
+to twenty corners per centre before the batch begins. At most 31 later centres in the
+matching batch are computed, all within the whole planning interval. Synthetic land
+retains its full-grid fallback. Lot-clearance checks stop at the first lane point that
 rejects the lot, retaining the same strict and inclusive boundaries. Temporary lanes
 share their exact interpolation samples, capped at 16,384 points per lane with the
 original on-demand calculation above that cap. Bounds of each 16-point chunk use the

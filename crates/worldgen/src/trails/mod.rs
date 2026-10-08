@@ -82,6 +82,23 @@ pub trait Land: Sync {
         self.sample(x, z)
     }
 
+    /// A bounded batch of exact planning samples, free to share centre calculations.
+    fn samples_cached(&self, points: &[(i32, i32)], scratch: &mut crate::water::Samples) -> Vec<GeoSample> {
+        assert!(points.len() <= crate::water::SAMPLE_BATCH);
+        points.iter().map(|&(x, z)| self.sample_cached(x, z, scratch)).collect()
+    }
+
+    /// Whether the close-look grid's circle contains freshwater. Synthetic land keeps
+    /// its grid implementation; real river land can stop before unused terrain reads.
+    fn freshwater_near(&self, centre: IVec2, radius: i32, step: i32) -> bool {
+        let first = centre - radius;
+        let size = radius * 2 / step + 1;
+        self.grid(first, step, size).iter().enumerate().any(|(i, g)| {
+            let p = first + IVec2::new(i as i32 % size, i as i32 / size) * step;
+            p.as_vec2().distance(centre.as_vec2()) <= radius as f32 && crate::water::freshwater(g)
+        })
+    }
+
     /// The `size`×`size` samples `step` blocks apart from `origin`, row by row: the same
     /// as sampling each, but free to share the work.
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {

@@ -38,6 +38,7 @@ thread_local! {
 #[cfg(test)]
 pub(super) fn profile(enabled: bool) {
     PROFILE.with(|p| p.set(enabled));
+    crate::water::profile_queries(enabled);
 }
 
 #[cfg(test)]
@@ -379,7 +380,7 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
     let at = |i: i32, j: i32| -> Option<&GeoSample> { (i >= 0 && j >= 0 && i < size && j < size).then(|| &samples[(j * size + i) as usize]) };
     let (reach, core, wet) = (site.reach / step, site.firm / step, site.water / step);
     let within = |di: i32, dj: i32, r: i32| di * di + dj * dj <= r * r + 1;
-    let fresh_at = |g: &GeoSample| (g.submerged() || g.river > 0.5) && g.body != crate::Body::Sea;
+    let fresh_at = crate::water::freshwater;
     let mut candidates: Vec<(f32, IVec2, bool)> = Vec::new();
     for j in (reach..size - reach).step_by(2) {
         for i in (reach..size - reach).step_by(2) {
@@ -436,16 +437,7 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         .take(if site.water > 0 { tries.saturating_mul(site.look) } else { tries })
         .filter_map(|(_, at, fresh)| {
             if site.water > 0 {
-                let close = site.creek;
-                let n = site.water * 2 / close + 1;
-                let near = fresh || {
-                    let first = at - site.water;
-                    let samples = ctx.land.grid(first, close, n);
-                    samples.iter().enumerate().any(|(k, g)| {
-                        let p = first + IVec2::new(k as i32 % n, k as i32 / n) * close;
-                        p.as_vec2().distance(at.as_vec2()) <= site.water as f32 && fresh_at(g)
-                    })
-                };
+                let near = fresh || ctx.land.freshwater_near(at, site.water, site.creek);
                 near.then_some((at, true))
             } else {
                 Some((at, fresh))
@@ -673,7 +665,12 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let time = phase_start();
     let sites = site(ctx, cell, spawn);
     #[cfg(test)]
-    phase_end("site search total", time);
+    {
+        phase_end("site search total", time);
+        if let Some(work) = crate::water::query_work() {
+            eprintln!("  close water: {} queries, {} square-grid centres, {} coordinates visited, {} centres sampled, {} batches, {} unused lookahead samples", work[0], work[1], work[2], work[3], work[4], work[5]);
+        }
+    }
     // Layout retries inspect overlapping land. Keep only this call's pure samples and
     // relief/channel work, rather than recomputing them for every attempted layout.
     let mut ground = Ground::new(ctx.land);

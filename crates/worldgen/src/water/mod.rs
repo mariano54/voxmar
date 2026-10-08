@@ -61,6 +61,33 @@ const STREAM_TILE: i32 = 32;
 /// How far a region's trunks and streams reach beyond it, in blocks.
 const TRUNK_MARGIN: i32 = 192;
 const STREAM_MARGIN: i32 = 64;
+
+/// Maximum centre samples sharing one bounded planning batch.
+pub const SAMPLE_BATCH: usize = 32;
+
+#[cfg(test)]
+thread_local! {
+    static QUERY_WORK: std::cell::Cell<Option<[usize; 6]>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn profile_queries(enabled: bool) {
+    QUERY_WORK.with(|c| c.set(enabled.then_some([0; 6])));
+}
+
+#[cfg(test)]
+pub(crate) fn query_work() -> Option<[usize; 6]> { QUERY_WORK.with(|c| c.get()) }
+
+#[cfg(test)]
+fn record_query(work: [usize; 6]) {
+    QUERY_WORK.with(|c| {
+        if let Some(previous) = c.get() { c.set(Some(std::array::from_fn(|i| previous[i] + work[i]))); }
+    });
+}
+
+pub(crate) fn freshwater(g: &GeoSample) -> bool {
+    (g.submerged() || g.river > 0.5) && g.body != Body::Sea
+}
 /// Spacing of the climate samples rivers read rainfall from, in blocks.
 const RAIN_CELL: i32 = 128;
 const MB: usize = 1 << 20;
@@ -547,17 +574,75 @@ impl Rivers {
     /// A planning sample, sharing relief corners and exactly the same channel regions
     /// as standalone samples. The scratch storage belongs to one planning call.
     pub fn sample_cached(&self, land: Stages, x: i32, z: i32, scratch: &mut Samples) -> GeoSample {
-        // A call adds at most the centre and four neighbours' corners and one group.
-        // Eviction only repeats pure terrain work; it never changes a sampled value.
-        if scratch.id != self.id || scratch.corners.len() >= 4096 || scratch.tiers.len() >= 16 {
-            *scratch = Samples { id: self.id, ..Samples::default() };
-        }
+        scratch.prepare(self.id, 1);
         let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
-        let region = |at: IVec2| at.div_euclid(IVec2::splat(REGION));
-        let key = [region(min - TRUNK_MARGIN), region(max + TRUNK_MARGIN), region(min - STREAM_MARGIN), region(max + STREAM_MARGIN)];
+        let key = Samples::key(min, max);
         let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, min, max));
         let ground = land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0];
         self.sealed(land, tiers, x, z, ground, &mut scratch.corners)
+    }
+
+    /// Exact standalone samples in a bounded batch: only the geology of these centres
+    /// is grouped. Every centre keeps its own p +/- 1 channel bounds and sealed neighbours.
+    pub fn samples_cached(&self, land: Stages, points: &[(i32, i32)], scratch: &mut Samples) -> Vec<GeoSample> {
+        assert!(points.len() <= SAMPLE_BATCH);
+        scratch.prepare(self.id, points.len());
+        if points.is_empty() { return Vec::new(); }
+        let grounds = land.geology.lands_with(points, &mut scratch.corners);
+        points.iter().zip(grounds).map(|(&(x, z), ground)| {
+            // Clear only channel groups here: the already computed centre landforms
+            // remain valid, and the reserved corner headroom covers all neighbours.
+            if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
+            let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
+            let tiers = scratch.tiers.entry(Samples::key(min, max)).or_insert_with(|| self.tiers(land, min, max));
+            self.sealed(land, tiers, x, z, ground, &mut scratch.corners)
+        }).collect()
+    }
+
+    /// The same sampled freshwater test as a full close-look grid. Consume its circle
+    /// row by row and stop after a matching batch; no outside-circle centre is needed,
+    /// but sealing still reads all four neighbours, including those outside the circle.
+    pub fn freshwater_near(&self, land: Stages, centre: IVec2, radius: i32, step: i32) -> bool {
+        let first = centre - radius;
+        let size = radius * 2 / step + 1;
+        let mut scratch = Samples::default();
+        let mut points = Vec::with_capacity(SAMPLE_BATCH);
+        #[cfg(test)]
+        let profiling = query_work().is_some();
+        #[cfg(test)]
+        let mut work = [1, (size * size) as usize, 0, 0, 0, 0];
+        for i in 0..size * size {
+            let p = first + IVec2::new(i % size, i / size) * step;
+            if p.as_vec2().distance(centre.as_vec2()) <= radius as f32 {
+                points.push((p.x, p.y));
+            }
+            if points.len() == SAMPLE_BATCH {
+                let found = self.samples_cached(land, &points, &mut scratch).iter().position(freshwater);
+                #[cfg(test)]
+                if profiling {
+                    work[2] = i as usize + 1;
+                    work[3] += points.len();
+                    work[4] += 1;
+                    if let Some(k) = found { work[5] += points.len() - k - 1; }
+                }
+                if found.is_some() {
+                    #[cfg(test)]
+                    if profiling { record_query(work); }
+                    return true;
+                }
+                points.clear();
+            }
+        }
+        let found = if points.is_empty() { None } else { self.samples_cached(land, &points, &mut scratch).iter().position(freshwater) };
+        #[cfg(test)]
+        if profiling {
+            work[2] = (size * size) as usize;
+            work[3] += points.len();
+            work[4] += usize::from(!points.is_empty());
+            if let Some(k) = found { work[5] += points.len() - k - 1; }
+            record_query(work);
+        }
+        found.is_some()
     }
 
     /// One column with both tiers carved in and sealed: the same whatever the columns
@@ -628,6 +713,22 @@ pub struct Samples {
     id: u64,
     corners: Corners,
     tiers: FxHashMap<[IVec2; 4], (Near, Near)>,
+}
+
+impl Samples {
+    fn prepare(&mut self, id: u64, count: usize) {
+        // Each centre and its four cardinal neighbours add at most twenty corners.
+        // Reserve the whole batch before any centre or neighbour work is performed.
+        if self.id != id || self.corners.len() + 20 * count > 4096 {
+            *self = Self { id, ..Self::default() };
+        }
+        if self.tiers.len() >= 16 { self.tiers.clear(); }
+    }
+
+    fn key(min: IVec2, max: IVec2) -> [IVec2; 4] {
+        let region = |at: IVec2| at.div_euclid(IVec2::splat(REGION));
+        [region(min - TRUNK_MARGIN), region(max + TRUNK_MARGIN), region(min - STREAM_MARGIN), region(max + STREAM_MARGIN)]
+    }
 }
 
 /// The regional climate over one region, sampled every `RAIN_CELL` blocks.
@@ -788,13 +889,92 @@ mod tests {
                     let expected = world.rivers.sample(world.stages(), x, z, false);
                     let actual = world.rivers.sample_cached(world.stages(), x, z, &mut scratch);
                     assert_eq!(actual, expected, "seed {seed} at {x},{z}, reverse {reverse}");
-                    assert!(scratch.corners.len() < 4096 + 20);
+                    assert!(scratch.corners.len() <= 4096);
                     assert!(scratch.tiers.len() <= 16);
                     if expected.submerged() && expected.body != Body::Sea { wet += 1; } else if !expected.submerged() { dry += 1; }
                 }
+                let ordered: Vec<_> = if reverse { points.iter().rev().copied().collect() } else { points.clone() };
+                for batch_size in [1, 31, 32] {
+                    for batch in ordered.chunks(batch_size) {
+                        let actual = world.rivers.samples_cached(world.stages(), batch, &mut scratch);
+                        let expected: Vec<_> = batch.iter().map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect();
+                        assert_eq!(actual, expected, "batch {batch_size}, seed {seed}, reverse {reverse}");
+                        assert!(scratch.corners.len() <= 4096);
+                        assert!(scratch.tiers.len() <= 16);
+                    }
+                }
+                assert!(world.rivers.samples_cached(world.stages(), &[], &mut scratch).is_empty());
+                let split: Vec<_> = ordered[..33].chunks(SAMPLE_BATCH).flat_map(|batch| world.rivers.samples_cached(world.stages(), batch, &mut scratch)).collect();
+                let expected: Vec<_> = ordered[..33].iter().map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect();
+                assert_eq!(split, expected, "33-point caller splits into bounded 32+1 batches");
+                // Populate valid relief corners near the capacity limit without
+                // creating distant river regions, then require a real batch to reset.
+                scratch.corners = Corners::default();
+                let distant: Vec<_> = (0..900).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
+                world.geology.reliefs_with(&distant, &mut scratch.corners);
+                assert!(scratch.corners.len() > 4096 - 20 * SAMPLE_BATCH);
+                assert!(scratch.corners.len() <= 4096, "reset fixture starts within the old single-point limit");
+                let batch = &ordered[..SAMPLE_BATCH];
+                let actual = world.rivers.samples_cached(world.stages(), batch, &mut scratch);
+                let expected: Vec<_> = batch.iter().map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect();
+                assert_eq!(actual, expected, "capacity reset, seed {seed}");
+                assert!(scratch.corners.len() <= 20 * SAMPLE_BATCH, "whole batch must reserve headroom before centre work");
+                assert!(scratch.tiers.len() <= 16);
             }
         }
         assert!(wet > 0 && dry > 0, "fixture needs fresh water and dry ground: {wet}/{dry}");
+    }
+
+    #[test]
+    fn freshwater_query_matches_full_grid_circle() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let mut wet = 0;
+        let mut dry = 0;
+        for (seed, centres) in [
+            (7, vec![IVec2::new(-1776, 752), IVec2::new(-1976, 552), IVec2::new(-336, 816)]),
+            (11, vec![IVec2::new(-688, 464), IVec2::new(1648, -784)]),
+            (42, vec![IVec2::new(720, -784), IVec2::new(-REGION + TRUNK_MARGIN + 1, STREAM_MARGIN - 1)]),
+        ] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            for centre in centres {
+                for (radius, step) in [(0, 8), (3, 8), (17, 8), (48, 8), (48, 4)] {
+                    let first = centre - radius;
+                    let size = radius * 2 / step + 1;
+                    let grid = world.rivers.grid(world.stages(), first, step, size);
+                    let expected = grid.iter().enumerate().any(|(i, g)| {
+                        let p = first + IVec2::new(i as i32 % size, i as i32 / size) * step;
+                        p.as_vec2().distance(centre.as_vec2()) <= radius as f32 && freshwater(g)
+                    });
+                    let actual = world.rivers.freshwater_near(world.stages(), centre, radius, step);
+                    assert_eq!(actual, expected, "seed {seed} at {centre}, radius {radius}, step {step}");
+                    if expected { wet += 1; } else { dry += 1; }
+                }
+            }
+        }
+        assert!(wet > 0 && dry > 0, "query oracle requires positive and negative controls: {wet}/{dry}");
+        let world = crate::Overworld::new(7, registry);
+        let mut sample = world.rivers.sample(world.stages(), -1776, 752, false);
+        sample.height = 140;
+        sample.water = 139;
+        sample.body = Body::River;
+        sample.river = 0.5;
+        assert!(!freshwater(&sample));
+        sample.river = 0.5f32.next_up();
+        assert!(freshwater(&sample));
+        sample.body = Body::Sea;
+        sample.water = 141;
+        assert!(!freshwater(&sample), "even submerged sea is not freshwater");
+        let first = IVec2::new(-1976, 552);
+        let grid = world.rivers.grid(world.stages(), first, 16, 25);
+        let i = grid.iter().position(|g| g.submerged() && g.body != Body::Sea).expect("fixture has actual freshwater");
+        let centre = first + IVec2::new(i as i32 % 25, i as i32 / 25) * 16;
+        profile_queries(true);
+        assert!(world.rivers.freshwater_near(world.stages(), centre, 16, 4));
+        let work = query_work().unwrap();
+        profile_queries(false);
+        assert!(work[3] > 0 && work[3] < work[1], "real freshwater query must save terrain reads: {work:?}");
+        assert!(work[2] < work[1], "a positive centre must stop before scanning the full square: {work:?}");
+        assert!(work[5] < SAMPLE_BATCH, "last-batch lookahead must be bounded: {work:?}");
     }
 
     /// `cargo test --release -p voxmar_worldgen river_stats -- --ignored --nocapture`
