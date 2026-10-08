@@ -127,6 +127,8 @@
     "quest.base.pockets.why": ("Herbs and seeds eat slots; a pouch holds a thousand of a kind in one.", "薬草や種は枠を取る。袋なら一種類千個を一つの枠に。"),
     "quest.base.red_metal": ("Red Metal", "赤い金属"),
     "quest.base.red_metal.why": ("Copper tools are faster and find more, and copper is three parts of bronze.", "銅の道具は速く、多く見つけ、銅は青銅の四分の三を占める。"),
+    "quest.base.look_it_up": ("Look It Up", "調べてみよう"),
+    "quest.base.look_it_up.why": ("Forgotten a recipe? Open the inventory, type part of a name in its search box, and click the item to see how it is made; a right-click shows what it goes into. Look up the stone pickaxe.", "作り方を忘れた？持ち物画面を開き、検索欄に名前の一部を入力して、アイテムをクリックすると作り方が見られる。右クリックなら使い道が分かる。石のツルハシを調べてみよう。"),
     "quest.base.stone_in_hand": ("Stone in Hand", "石の道具"),
     "quest.base.stone_in_hand.why": ("Bare hands are slow. Stone tools mine twice as fast and reach coal for torches.", "素手は遅い。石の道具は2倍速く掘れ、松明用の石炭にも届く。"),
     "quest.base.the_potter": ("The Potter", "陶工"),

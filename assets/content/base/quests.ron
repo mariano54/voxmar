@@ -17,7 +17,7 @@
     quests: [
         (
             name: "look_it_up", age: "nomad", branch: "main", title: "Look It Up",
-            why: "Forgotten a recipe? Open the inventory, type part of a name in its search box, and click the item to see how it is made; a right click shows what it goes into. Look up the stone pickaxe.",
+            why: "Forgotten a recipe? Open the inventory, type part of a name in its search box, and click the item to see how it is made; a right-click shows what it goes into. Look up the stone pickaxe.",
             tasks: [[LookUp("stone_pickaxe")]],
             rewards: [Xp("crafting", 40.0)],
         ),

@@ -805,7 +805,7 @@
     "multiblock.base.crucible_kiln": "Crucible Kiln",
     "multiblock.base.crucible_kiln.hint": "The kiln needs kiln bricks all round the crucible and a pillar of kiln bricks on each corner.",
     "quest.base.look_it_up": "Look It Up",
-    "quest.base.look_it_up.why": "Forgotten a recipe? Open the inventory, type part of a name in its search box, and click the item to see how it is made; a right click shows what it goes into. Look up the stone pickaxe.",
+    "quest.base.look_it_up.why": "Forgotten a recipe? Open the inventory, type part of a name in its search box, and click the item to see how it is made; a right-click shows what it goes into. Look up the stone pickaxe.",
     "quest.base.first_night": "First Night",
     "quest.base.first_night.why": "Night comes fast. Cooked food heals far more than raw, and a fire keeps the cold off.",
     "quest.base.stone_in_hand": "Stone in Hand",
