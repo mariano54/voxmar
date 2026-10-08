@@ -1979,7 +1979,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                             format!("setblock {} bellows", at(IVec3::X)),
                             format!("setblock {} shaft", at(IVec3::new(2, 0, 0))),
                             format!("setblock {} treadwheel", at(IVec3::new(3, 0, 0))),
-                            format!("summon aurochs 1 {}", at(IVec3::new(3, 0, 2))),
+                            // Asked for two blocks east of its spot: /summon sets the first of
+                            // a group 1.8 blocks west, which lands it on the floor beside the
+                            // wheel, not off its edge on the ground below, out of the wheel's reach.
+                            format!("summon aurochs 1 {}", at(IVec3::new(5, 0, 2))),
                             "creatures tame aurochs".to_owned(),
                             "creatures hold aurochs".to_owned(),
                             "clear".to_owned(),
@@ -2133,7 +2136,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                             format!("fill {} {} kiln_bricks", at(IVec3::new(-4, 0, -1)), at(IVec3::new(-2, 2, 1))),
                             format!("setblock {} air", at(IVec3::new(-3, 1, 0))),
                             format!("setblock {} coke_oven", at(IVec3::new(-3, 1, 1))),
-                            format!("summon aurochs 1 {}", at(IVec3::new(3, 0, 2))),
+                            // Asked for two blocks east of its spot: /summon sets the first of
+                            // a group 1.8 blocks west, which lands it on the floor beside the
+                            // wheel, not off its edge on the ground below, out of the wheel's reach.
+                            format!("summon aurochs 1 {}", at(IVec3::new(5, 0, 2))),
                             "creatures tame aurochs".to_owned(),
                             "creatures hold aurochs".to_owned(),
                             "clear".to_owned(),
