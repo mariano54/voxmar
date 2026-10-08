@@ -145,6 +145,7 @@ const GROUND_SAMPLE_LIMIT: usize = 32_768;
 struct Ground<'a> {
     land: &'a dyn Land,
     seen: FxHashMap<IVec2, GeoSample>,
+    row: Option<GroundRow>,
     scratch: crate::water::Samples,
     #[cfg(test)]
     queries: usize,
@@ -158,18 +159,52 @@ struct Ground<'a> {
     prefetched: usize,
 }
 
+/// The last bounded row, so its immediate consumers need no second hash lookup.
+struct GroundRow {
+    first: IVec2,
+    samples: [Option<GeoSample>; crate::water::SAMPLE_BATCH],
+}
+
 impl Ground<'_> {
     fn new(land: &dyn Land) -> Ground<'_> {
-        Ground { land, seen: FxHashMap::default(), scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0, #[cfg(test)] prefetched: 0 }
+        Ground { land, seen: FxHashMap::default(), row: None, scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0, #[cfg(test)] prefetched: 0 }
     }
 
     /// Group only missing original samples for the next bounded portion of a row.
     /// Lookahead may outlive an earlier rejected point; every read stays in the timer.
     fn prefetch(&mut self, first: IVec2, count: usize) {
         assert!(count <= crate::water::SAMPLE_BATCH);
-        let mut points = [IVec2::ZERO; crate::water::SAMPLE_BATCH];
-        for (i, p) in points[..count].iter_mut().enumerate() { *p = first + IVec2::new(i as i32, 0); }
-        self.prefetch_points(&points[..count]);
+        if self.seen.len() + count > GROUND_SAMPLE_LIMIT {
+            self.seen.clear();
+            self.row = None;
+            #[cfg(test)]
+            { self.clears += 1; }
+        }
+        let mut row = GroundRow { first, samples: [None; crate::water::SAMPLE_BATCH] };
+        let mut points = [(0, 0); crate::water::SAMPLE_BATCH];
+        let mut indices = [0; crate::water::SAMPLE_BATCH];
+        let mut missing = 0;
+        for i in 0..count {
+            let p = first + IVec2::new(i as i32, 0);
+            if let Some(&sample) = self.seen.get(&p) {
+                row.samples[i] = Some(sample);
+            } else {
+                points[missing] = (p.x, p.y);
+                indices[missing] = i;
+                missing += 1;
+            }
+        }
+        if missing > 0 {
+            #[cfg(test)]
+            { self.prefetched += missing; }
+            let samples = self.land.samples_cached(&points[..missing], &mut self.scratch);
+            for (i, sample) in samples.into_iter().enumerate() {
+                row.samples[indices[i]] = Some(sample);
+                let (x, z) = points[i];
+                self.seen.insert(IVec2::new(x, z), sample);
+            }
+        }
+        self.row = Some(row);
     }
 
     /// A bounded set of original points, also used by wholly consumed water rings.
@@ -177,6 +212,7 @@ impl Ground<'_> {
         assert!(points.len() <= crate::water::SAMPLE_BATCH);
         if self.seen.len() + points.len() > GROUND_SAMPLE_LIMIT {
             self.seen.clear();
+            self.row = None;
             #[cfg(test)]
             { self.clears += 1; }
         }
@@ -199,6 +235,13 @@ impl Ground<'_> {
     fn at(&mut self, p: IVec2) -> GeoSample {
         #[cfg(test)]
         { self.queries += 1; }
+        if let Some(row) = &self.row {
+            if p.y == row.first.y {
+                if let Some(i) = p.x.checked_sub(row.first.x).filter(|&i| i >= 0) {
+                    if let Some(Some(sample)) = row.samples.get(i as usize) { return *sample; }
+                }
+            }
+        }
         if let Some(g) = self.seen.get(&p) {
             return *g;
         }
@@ -206,6 +249,7 @@ impl Ground<'_> {
         // Clearing changes only how often the original land is recomputed.
         if self.seen.len() >= GROUND_SAMPLE_LIMIT {
             self.seen.clear();
+            self.row = None;
             #[cfg(test)]
             { self.clears += 1; }
         }
@@ -3340,6 +3384,65 @@ mod level_tests {
             let wet = self.0 == Some(x) || self.1 == Some(z);
             let (height, water) = if wet { (139, 140) } else { (140, 140) };
             GeoSample { height, mountain: 0.0, river: 0.0, water, top: 8, body: Body::Creek, current: None, cavity: None, crag: Default::default(), trail: None, form: Default::default() }
+        }
+    }
+
+    #[test]
+    fn planning_rows_keep_original_samples_reads_and_eviction() {
+        struct Counted(std::sync::Mutex<Vec<IVec2>>);
+        impl Land for Counted {
+            fn sample(&self, x: i32, z: i32) -> GeoSample {
+                self.0.lock().unwrap().push(IVec2::new(x, z));
+                let mut sample = Creek(Some(-3), Some(11)).sample(x, z);
+                sample.height += x.rem_euclid(7) + z.rem_euclid(5);
+                sample
+            }
+        }
+        let (a, b) = (Counted(Default::default()), Counted(Default::default()));
+        let (mut original, mut grouped) = (Ground::new(&a), Ground::new(&b));
+        // The unchanged arbitrary-point prefetch is the original row oracle.
+        // Mix cached positions, missing positions, short rows and adjacent rows.
+        for (first, count) in [(IVec2::new(-8, 11), 32), (IVec2::new(-5, 11), 7),
+            (IVec2::new(20, 11), 32), (IVec2::new(-8, 12), 17), (IVec2::new(i32::MAX, 0), 1),
+            (IVec2::new(i32::MIN, 0), 1), (IVec2::ZERO, 0)]
+        {
+            let points: Vec<_> = (0..count).map(|i| first + IVec2::new(i as i32, 0)).collect();
+            original.prefetch_points(&points);
+            grouped.prefetch(first, count);
+            for &p in &points { assert_eq!(grouped.at(p), original.at(p)); }
+            for p in [first - IVec2::Y, first + IVec2::Y, IVec2::new(99, 99)] {
+                assert_eq!(grouped.at(p), original.at(p));
+            }
+            assert_eq!(grouped.seen, original.seen);
+            assert_eq!((grouped.queries, grouped.misses, grouped.prefetched, grouped.clears),
+                (original.queries, original.misses, original.prefetched, original.clears));
+            assert_eq!(*b.0.lock().unwrap(), *a.0.lock().unwrap(), "physical read order and multiplicity stay identical");
+        }
+        let first = IVec2::new(-20, 40);
+        // Make an obsolete row visibly wrong, then force each non-row eviction
+        // path. A row surviving either clear would return this poisonous height.
+        for scalar in [false, true] {
+            grouped.prefetch(first, 7);
+            let mut poison = grouped.at(first);
+            poison.height = 9999;
+            grouped.row.as_mut().unwrap().samples[0] = Some(poison);
+            grouped.seen.insert(first, poison);
+            for k in 0..GROUND_SAMPLE_LIMIT as i32 {
+                if grouped.seen.len() == GROUND_SAMPLE_LIMIT { break; }
+                grouped.seen.insert(IVec2::new(100_000 + k, 100_000), poison);
+            }
+            assert_eq!(grouped.seen.len(), GROUND_SAMPLE_LIMIT);
+            let before = grouped.clears;
+            let outside = IVec2::new(200_000 + i32::from(scalar), 200_000);
+            assert!(!grouped.seen.contains_key(&outside));
+            if scalar { grouped.at(outside); }
+            else { grouped.prefetch_points(&[outside]); }
+            assert_eq!(grouped.clears, before + 1);
+            let before = b.0.lock().unwrap().len();
+            let sample = grouped.at(first);
+            assert_ne!(sample.height, 9999);
+            assert_eq!(b.0.lock().unwrap().len(), before + 1, "cleared row must read the real terrain again");
+            assert_eq!(grouped.misses + grouped.prefetched, b.0.lock().unwrap().len());
         }
     }
 

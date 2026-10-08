@@ -595,11 +595,21 @@ impl Rivers {
         assert!(points.len() <= SAMPLE_BATCH);
         scratch.prepare(self.id, points.len());
         if points.is_empty() { return Vec::new(); }
-        let keys: Vec<_> = points.iter().map(|&(x, z)| Samples::key(IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1))).collect();
-        let column_keys: Vec<_> = keys.iter().map(|&key| scratch.column_key(key)).collect();
-        let needed: Vec<_> = points.iter().zip(&column_keys).map(|(&(x, z), &key)| !scratch.columns.contains_key(&(IVec2::new(x, z), key))).collect();
-        let missing: Vec<_> = points.iter().zip(&needed).filter_map(|(&p, &need)| need.then_some(p)).collect();
-        let mut grounds = land.geology.lands_with(&missing, &mut scratch.corners).into_iter();
+        let mut keys = [[IVec2::ZERO; 4]; SAMPLE_BATCH];
+        let mut column_keys = [0; SAMPLE_BATCH];
+        let mut needed = [false; SAMPLE_BATCH];
+        let mut missing = [(0, 0); SAMPLE_BATCH];
+        let mut count = 0;
+        for (i, &(x, z)) in points.iter().enumerate() {
+            keys[i] = Samples::key(IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
+            column_keys[i] = scratch.column_key(keys[i]);
+            needed[i] = !scratch.columns.contains_key(&(IVec2::new(x, z), column_keys[i]));
+            if needed[i] {
+                missing[count] = (x, z);
+                count += 1;
+            }
+        }
+        let mut grounds = land.geology.lands_with(&missing[..count], &mut scratch.corners).into_iter();
         for (i, &(x, z)) in points.iter().enumerate() {
             if !needed[i] { continue; }
             // Consume the original miss mask even for duplicate centres. Cache
