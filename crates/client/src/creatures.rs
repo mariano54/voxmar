@@ -877,6 +877,7 @@ pub fn aim(
     time: Res<Time>,
     mut cooldown: Local<f32>,
     mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
     ui: Res<UiState>,
     launch: Res<Launch>,
     net: Res<Net>,
@@ -904,7 +905,8 @@ pub fn aim(
     *cooldown -= time.delta_secs();
     // A right click tends it with what is in hand: food that tames it or readies a kept one
     // to breed, or a tool for its product (the server judges; this only asks when it may).
-    // With anything else, or nothing, in hand, it looks closely at it.
+    // With anything else, or nothing, in hand, it looks closely at it. With Shift held, on
+    // one of your own, it asks to let it go wild (twice to do it).
     if let Some(id) = target.creature
         && ui.cursor_locked
         && !player.dead
@@ -920,7 +922,14 @@ pub fn aim(
             let food = species.tame_food.contains(&item) || species.breed_food.contains(&item) || tags.iter().any(|t| t == "breeding_feed");
             (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
         });
-        let action = if accepts { "base:tend" } else { "base:inspect" };
+        let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        let action = if shift && mine {
+            "base:release"
+        } else if accepts {
+            "base:tend"
+        } else {
+            "base:inspect"
+        };
         if let Some(action) = actions.0.id(action) {
             net.propose_from(&player, action, ActionTarget::Creature(id));
         }

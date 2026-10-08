@@ -81,6 +81,8 @@ pub enum Requirement {
     /// The target creature takes what the actor holds: food that tames it or readies it
     /// to breed, or a tool that takes its product.
     CreatureAccepts,
+    /// The target creature is one the actor keeps.
+    CreatureIsMine,
     /// The target block is a station that cooks what the actor holds.
     Cookable,
     /// The actor's Cooking level is at least what the held item's recipe there needs.
@@ -104,8 +106,12 @@ pub enum Requirement {
     /// The target is somewhere to sleep (tagged `bed`): a sleeping bag.
     Bed,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
-    /// a crucible.
+    /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
+    /// The target is a machine (`machines.ron`), and the actor holds nothing, something it
+    /// takes, or something that is not a block to place (a placeable block it does not
+    /// take is placed against it instead).
+    Machine,
     /// The actor holds a fishing rod and the target is water with open air above, near
     /// enough to cast to.
     Fishable,
@@ -141,6 +147,8 @@ pub enum Effect {
     Tend,
     /// Look closely at the target creature: what the actor learns grows with Farming.
     Inspect,
+    /// Let the target creature, one the actor keeps, go wild again (asked twice).
+    Release,
     /// Restore the actor's health and return it to spawn.
     Respawn,
     /// Sow one held seed on top of the target, and grant the crop's planting experience.
@@ -167,6 +175,9 @@ pub enum Effect {
     /// Light the multiblock whose core is the target, if it stands around it: the
     /// Homestead Hearth becomes the actor's home, a crucible kiln starts smelting.
     Light,
+    /// Use the target machine: what the actor holds goes in if it takes it, otherwise
+    /// what it made comes out; the actor is told how it is doing.
+    UseMachine,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -288,8 +299,16 @@ pub trait ActionContext {
     fn cooking(&self) -> Option<&crate::cooking::CookingRegistry> {
         None
     }
+    /// The machines, where the context knows them.
+    fn machines(&self) -> Option<&crate::machine::MachineRegistry> {
+        None
+    }
     /// Whether the creature with that id takes `item` from the actor's hand.
     fn creature_accepts(&self, _id: u32, _item: BlockId) -> bool {
+        false
+    }
+    /// Whether the creature with that id is one the actor keeps.
+    fn creature_is_mine(&self, _id: u32) -> bool {
         false
     }
     /// The box of a living creature, if there is one with that id.
@@ -426,6 +445,10 @@ impl ActionDef {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
                 ctx.actor_held().is_some_and(|item| ctx.creature_accepts(id, item))
             }
+            Requirement::CreatureIsMine => {
+                let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
+                ctx.creature_is_mine(id)
+            }
             Requirement::Cookable | Requirement::CookingLevel => {
                 let (block, _) = block_target()?;
                 let station = ctx.block(block).map(|b| ctx.blocks().def(b).tags.as_slice()).unwrap_or(&[]);
@@ -478,7 +501,26 @@ impl ActionDef {
             }
             Requirement::MultiblockCore => {
                 let (block, _) = block_target()?;
-                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("multiblock_core"))
+                let Some(core) = ctx.block(block).filter(|&b| ctx.blocks().def(b).has_tag("multiblock_core")) else { return Ok(false) };
+                // A machine's core with a block in hand that it does not take (use_machine
+                // takes what it does) has that block built against it, as any machine does.
+                let machine = ctx.machines().is_some_and(|machines| machines.get(core).is_some());
+                !(machine && ctx.actor_held().is_some_and(|item| ctx.info(item).placeable))
+            }
+            Requirement::Machine => {
+                let (block, _) = block_target()?;
+                let Some(machines) = ctx.machines() else { return Ok(false) };
+                let Some(machine) = ctx.block(block).and_then(|b| machines.get(b)) else { return Ok(false) };
+                match ctx.actor_held() {
+                    None => true,
+                    Some(item) => {
+                        let fuel = machine.burns() && machines.burn_seconds(item).is_some();
+                        let input = machine.is_processor() && machines.takes(machine, item);
+                        // A bin takes anything but machines: a chute in hand is laid against it.
+                        let bin = machine.bin_slots() > 0 && !ctx.blocks().def(item).has_tag(&machines.rules.machine_tag);
+                        fuel || input || bin || !ctx.info(item).placeable
+                    }
+                }
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
@@ -674,6 +716,58 @@ mod tests {
             requires: vec![Alive, InReach, HoldingBlock, Replaceable, Unobstructed, Supported],
             effects: vec![Effect::PlaceHeld],
         }
+    }
+
+    /// A click on a machine's core (a bloomery) with a block in hand it does not take lays
+    /// the block against it, as on any machine, rather than lighting it; an empty hand or
+    /// a tool lights it, and a hearth's core (no machine) lights whatever is in hand.
+    #[test]
+    fn a_block_in_hand_is_laid_against_a_machine_core_not_lit() {
+        struct Core<'a> {
+            content: &'a crate::content::Content,
+            core: BlockId,
+            held: Option<BlockId>,
+        }
+        impl ActionContext for Core<'_> {
+            fn block(&self, pos: IVec3) -> Option<BlockId> {
+                Some(if pos == IVec3::ZERO { self.core } else { BlockId::AIR })
+            }
+            fn info(&self, block: BlockId) -> &BlockInfo {
+                self.content.blocks.info(block)
+            }
+            fn blocks(&self) -> &BlockRegistry {
+                &self.content.blocks
+            }
+            fn crops(&self) -> &CropRegistry {
+                &self.content.crops
+            }
+            fn actor_level(&self, _: SkillId) -> u8 {
+                1
+            }
+            fn actor_eye(&self) -> Vec3 {
+                Vec3::new(0.5, 2.6, 2.5)
+            }
+            fn actor_alive(&self) -> bool {
+                true
+            }
+            fn actor_held(&self) -> Option<BlockId> {
+                self.held
+            }
+            fn occupied(&self, _: IVec3) -> bool {
+                false
+            }
+            fn machines(&self) -> Option<&crate::machine::MachineRegistry> {
+                Some(&self.content.machines)
+            }
+        }
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let id = |name: &str| content.blocks.expect(name);
+        let light = content.actions.get(content.actions.id("base:light").unwrap()).unwrap();
+        let lights = |core: &str, held: Option<&str>| light.validate(&Core { content: &content, core: id(core), held: held.map(id) }, ActionTarget::Block { block: IVec3::ZERO, face: Face::PosZ });
+        assert_eq!(lights("base:bloomery", Some("base:kiln_bricks")), Err(Rejection::Unmet(Requirement::MultiblockCore)));
+        assert_eq!(lights("base:bloomery", None), Ok(()));
+        assert_eq!(lights("base:bloomery", Some("base:iron_pickaxe")), Ok(()));
+        assert_eq!(lights("base:crucible", Some("base:kiln_bricks")), Ok(()));
     }
 
     #[test]
