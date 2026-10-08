@@ -15,7 +15,10 @@
 //! - `machines.ron`: the machines players built, by block name, with what they hold.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
-//! never leaves a half-written file behind.
+//! never leaves a half-written file behind. A file that cannot be read is never silently
+//! replaced: it is moved aside to `<file>.corrupt-<unix time>` (`set_aside`) and the error
+//! logged, and if it cannot even be moved the server refuses to start (world files) or the
+//! player to join (player files).
 //!
 //! A save is one generation: everything but `world.ron` is first written beside its file as
 //! `<file>.<generation>.new`, then `world.ron` takes the new generation (the moment the save
@@ -50,8 +53,6 @@ const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
 const VILLAGERS_FILE: &str = "villagers.ron";
 const MACHINES_FILE: &str = "machines.ron";
-/// Where an unreadable machines file is kept aside, before the seconds since the epoch.
-const MACHINES_UNREADABLE_FILE: &str = "machines.unreadable";
 /// What a file being saved ends with, after its generation.
 const STAGED: &str = "new";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
@@ -105,6 +106,11 @@ pub struct WorldMeta {
     /// The last whole save: files of a later one were cut short and are not used.
     #[serde(default)]
     pub generation: u64,
+    /// The fingerprint of the content land was last made from (`WorldContent::fingerprint`):
+    /// a world opened with different worldgen data warns that new land may not line up.
+    /// `None` until a world is first opened with it.
+    #[serde(default)]
+    pub worldgen_content: Option<u64>,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -138,6 +144,7 @@ impl WorldMeta {
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
             generation: 0,
+            worldgen_content: None,
         }
     }
 }
@@ -182,6 +189,9 @@ struct PlayerFile {
     flying: bool,
     health: Health,
     inventory: Vec<Option<(String, u8)>>,
+    /// What is worn, slot by slot (`inventory::WORN`).
+    #[serde(default)]
+    worn: Vec<Option<String>>,
     #[serde(default)]
     skills: Vec<(String, u32)>,
     #[serde(default)]
@@ -348,7 +358,7 @@ impl WorldSave {
             return Err(invalid(&path, "not a column file"));
         };
         let mut encoded = Vec::new();
-        ZlibDecoder::new(compressed).read_to_end(&mut encoded)?;
+        ZlibDecoder::new(compressed).read_to_end(&mut encoded).map_err(|e| invalid(&path, e))?;
         let file: ColumnFile<Column> = postcard::from_bytes(&encoded).map_err(|e| invalid(&path, e))?;
         let mut column = file.column;
         if column.colors.len() != COLUMN_AREA || !column.chunks.iter().all(Chunk::is_valid) {
@@ -392,13 +402,37 @@ impl WorldSave {
         write_atomic(&self.target(path), &encoder.finish()?)
     }
 
+    /// Where the player called `name` is saved: by the name in lower case, since names
+    /// differing only in case are one player (and one file on macOS and Windows).
     fn player_path(&self, name: &str) -> PathBuf {
-        self.dir.join("players").join(format!("{}.ron", file_name(name)))
+        self.dir.join("players").join(format!("{}.ron", file_name(&name.to_lowercase())))
+    }
+
+    /// The file the player called `name` is read from: theirs, or one saved before names
+    /// were kept in lower case, under the name as some player typed it, in any case
+    /// (written back to theirs at the next save).
+    fn player_file(&self, name: &str) -> PathBuf {
+        let path = self.player_path(name);
+        if path.exists() {
+            return path;
+        }
+        // Compared by the names they hold, so a name escaped in the file (`Ü` as `~dc~`)
+        // matches in any case too.
+        let wanted = name.to_lowercase();
+        let older = std::fs::read_dir(self.dir.join("players"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|older| older.extension().is_some_and(|e| e == "ron"))
+            .filter(|older| older.file_stem().and_then(|n| player_name(&n.to_string_lossy())).is_some_and(|n| n.to_lowercase() == wanted))
+            .min();
+        older.unwrap_or(path)
     }
 
     /// The saved state of the player called `name`. Items that no longer exist are dropped.
     pub fn read_player(&self, name: &str, registry: &BlockRegistry) -> io::Result<Option<SavedPlayer>> {
-        let path = self.player_path(name);
+        let path = self.player_file(name);
         let source = match std::fs::read_to_string(&path) {
             Ok(source) => source,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -409,15 +443,35 @@ impl WorldSave {
         for (slot, stack) in inventory.slots.iter_mut().zip(file.inventory) {
             *slot = stack
                 .filter(|&(_, count)| count > 0)
-                .and_then(|(item, count)| Some(ItemStack { item: registry.id(&item)?, count: count.min(MAX_STACK) }));
+                .and_then(|(item, count)| Some(ItemStack { item: registry.item_named(&item)?, count: count.min(MAX_STACK) }));
         }
-        inventory.pouched = file.pouched.iter().filter_map(|(item, count)| Some((registry.id(item)?, *count))).filter(|&(_, n)| n > 0).collect();
+        // Older saves' items that merged into one add up.
+        for (item, count) in file.pouched.iter().filter_map(|(item, count)| Some((registry.item_named(item)?, *count))).filter(|&(_, n)| n > 0) {
+            match inventory.pouched.iter_mut().find(|(have, _)| *have == item) {
+                Some((_, n)) => *n = n.saturating_add(count),
+                None => inventory.pouched.push((item, count)),
+            }
+        }
+        for (slot, item) in inventory.worn.iter_mut().zip(file.worn) {
+            *slot = item.and_then(|item| Some(ItemStack { item: registry.item_named(&item)?, count: 1 }));
+        }
         let position = Vec3::from(file.position);
         if !position.is_finite() {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+        let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+    }
+
+    /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
+    pub fn set_aside_player(&self, name: &str) -> io::Result<PathBuf> {
+        set_aside(&self.player_file(name))
+    }
+
+    /// Moves the column file at `pos` aside, as unreadable (`set_aside`).
+    pub fn set_aside_column(&self, pos: ColumnPos) -> io::Result<PathBuf> {
+        set_aside(&self.column_path(pos))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -437,6 +491,7 @@ impl WorldSave {
             flying: player.flying,
             health: player.health,
             inventory,
+            worn: held.worn.iter().map(|slot| slot.map(|stack| registry.def(stack.item).name.clone())).collect(),
             skills: player.skills.clone(),
             effects: player.effects.clone(),
             home: player.home,
@@ -513,19 +568,11 @@ impl WorldSave {
         write_atomic(&self.target(self.dir.join(CROPS_FILE)), text.as_bytes())
     }
 
-    /// The machines, none if the world has no machines file. A file that cannot be read is
-    /// first kept aside (`machines.unreadable.<seconds since the epoch>.ron`), since the
-    /// next save writes over it: every machine and everything chests hold would be lost.
+    /// The machines, none if the world has no machines file.
     pub fn read_machines(&self) -> io::Result<Vec<crate::machines::SavedMachine>> {
         let path = self.dir.join(MACHINES_FILE);
         match std::fs::read_to_string(&path) {
-            Ok(source) => ron::from_str(&source).map_err(|e| {
-                let aside = self.dir.join(format!("{MACHINES_UNREADABLE_FILE}.{}.ron", unix_time()));
-                if let Err(copy) = std::fs::copy(&path, &aside) {
-                    tracing::error!("could not keep the unreadable machines file aside: {copy}");
-                }
-                invalid(&path, e)
-            }),
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(e) => Err(e),
         }
@@ -580,6 +627,66 @@ impl WorldSave {
         let text = ron::ser::to_string(items).map_err(io::Error::other)?;
         write_atomic(&self.target(self.dir.join(ITEMS_FILE)), text.as_bytes())
     }
+}
+
+/// What a world keeps besides its columns and players, as read when it opens.
+#[derive(Debug, Default)]
+pub(crate) struct WorldState {
+    pub items: Vec<SavedItem>,
+    pub crops: Vec<SavedCrop>,
+    pub creatures: Vec<crate::husbandry::SavedCreature>,
+    pub machines: Vec<crate::machines::SavedMachine>,
+    pub villagers: Vec<SavedDead>,
+}
+
+impl WorldSave {
+    /// The dropped items, crops, kept creatures, machines and who of the villagers died. A file that is not what it should be is
+    /// moved aside and logged, and the world opens without what it held; a file that could
+    /// not be read at all, or moved aside (and so would be overwritten at the next save), is
+    /// an error.
+    pub(crate) fn read_state(&self) -> io::Result<WorldState> {
+        Ok(WorldState {
+            items: self.read_or_set_aside(ITEMS_FILE, Self::read_items)?,
+            crops: self.read_or_set_aside(CROPS_FILE, Self::read_crops)?,
+            creatures: self.read_or_set_aside(CREATURES_FILE, Self::read_creatures)?,
+            machines: self.read_or_set_aside(MACHINES_FILE, Self::read_machines)?,
+            villagers: self.read_or_set_aside(VILLAGERS_FILE, Self::read_villagers)?,
+        })
+    }
+
+    fn read_or_set_aside<T: Default>(&self, file: &str, read: fn(&Self) -> io::Result<T>) -> io::Result<T> {
+        let error = match read(self) {
+            Ok(value) => return Ok(value),
+            // Not read at all (no permission, a failing disk): the world does not open.
+            Err(error) if error.kind() != io::ErrorKind::InvalidData => return Err(error),
+            Err(error) => error,
+        };
+        let path = self.dir.join(file);
+        match set_aside(&path) {
+            Ok(aside) => {
+                tracing::error!("could not read {}: {error}; kept it as {} and opened the world without it", path.display(), aside.display());
+                Ok(T::default())
+            }
+            Err(moving) => Err(io::Error::new(error.kind(), format!("could not read {}: {error}; nor move it aside: {moving}", path.display()))),
+        }
+    }
+}
+
+/// Moves an unreadable save file aside, to `<file>.corrupt-<unix time>` beside it, so the
+/// next save does not replace it and it can be looked at or restored by hand. Returns
+/// where it went.
+pub fn set_aside(path: &Path) -> io::Result<PathBuf> {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let stamp = unix_time();
+    for n in 0..1000 {
+        let suffix = if n == 0 { String::new() } else { format!("-{n}") };
+        let aside = path.with_file_name(format!("{name}.corrupt-{stamp}{suffix}"));
+        if !aside.exists() {
+            std::fs::rename(path, &aside)?;
+            return Ok(aside);
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} has been set aside too often", path.display())))
 }
 
 /// Every world in `root`, most recently played first. Directories without a readable
@@ -659,6 +766,23 @@ fn file_name(name: &str) -> String {
         }
     }
     out
+}
+
+/// The player name a `file_name` holds, or `None` if it is not one.
+fn player_name(file: &str) -> Option<String> {
+    let mut out = String::with_capacity(file.len());
+    let mut rest = file;
+    while let Some(c) = rest.chars().next() {
+        if c == '~' {
+            let (hex, after) = rest[1..].split_once('~')?;
+            out.push(char::from_u32(u32::from_str_radix(hex, 16).ok()?)?);
+            rest = after;
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    Some(out)
 }
 
 fn invalid(path: &Path, error: impl std::fmt::Display) -> io::Error {
@@ -833,6 +957,9 @@ mod tests {
         let mut inventory = Inventory::default();
         inventory.add(registry.expect("base:cobblestone"), 70);
         inventory.pouched.push((registry.expect("base:cobblestone"), 300));
+        // What is worn keeps its slot (the save keeps names; content judges what fits).
+        inventory.worn[1] = Some(ItemStack { item: registry.expect("base:dirt"), count: 1 });
+        inventory.worn[5] = Some(ItemStack { item: registry.expect("base:cobblestone"), count: 1 });
         let player = SavedPlayer {
             position: Vec3::new(1.5, 80.0, -20.25),
             yaw: 1.25,
@@ -857,6 +984,59 @@ mod tests {
         // Names that are not plain file names stay inside the players directory.
         let files = std::fs::read_dir(dir.join("players")).unwrap().count();
         assert!(files >= 4, "{files} player files");
+        // Names differing only in case are one player, with one file, on any filesystem.
+        assert_eq!(save.read_player("STEVE", &registry).unwrap(), Some(player.clone()));
+        assert!(dir.join("players/steve.ron").exists() && !dir.join("players/Steve.ron").exists() || cfg!(not(target_os = "linux")));
+        // A file saved under the name as typed, before names were kept in lower case, is
+        // still found, and the next save goes to the lower-case one.
+        let old = SavedPlayer { yaw: 0.5, ..player.clone() };
+        let text = std::fs::read_to_string(dir.join("players/a~2f~b.ron")).unwrap();
+        std::fs::write(dir.join("players/Ada.ron"), text.replace("yaw: 1.25", "yaw: 0.5")).unwrap();
+        assert_eq!(save.read_player("Ada", &registry).unwrap(), Some(old.clone()));
+        assert_eq!(save.read_player("ada", &registry).unwrap(), Some(old.clone()), "on a case-sensitive disk too");
+        save.write_player("Ada", &player, &registry).unwrap();
+        assert_eq!(save.read_player("ADA", &registry).unwrap(), Some(player.clone()));
+        // A name escaped in the old file is matched by what it holds: `Über` as `~dc~ber`.
+        std::fs::write(dir.join("players/~dc~ber.ron"), text.replace("yaw: 1.25", "yaw: 0.5")).unwrap();
+        assert_eq!(save.read_player("über", &registry).unwrap(), Some(old.clone()));
+        assert_eq!(player_name("a~2f~b").as_deref(), Some("a/b"));
+        assert_eq!(player_name("a~zz~b"), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Items an older save holds that have since merged into one come back as that item
+    /// (every kind of wild herb is kitchen herbs now), pouched ones added up.
+    #[test]
+    fn items_merged_since_a_save_come_back_as_the_merged_item() {
+        let dir = temp_dir("merged");
+        let save = WorldSave::new(&dir);
+        let registry = registry(false);
+        let mut inventory = Inventory::default();
+        inventory.add(registry.expect("base:oregano"), 7);
+        inventory.add(registry.expect("base:cobblestone"), 5);
+        inventory.pouched.push((registry.expect("base:parsley"), 4));
+        inventory.pouched.push((registry.expect("base:dill"), 6));
+        let player = SavedPlayer {
+            position: Vec3::new(0.5, 80.0, 0.5),
+            yaw: 0.0,
+            mode: None,
+            flying: false,
+            health: Health { current: 20, max: 20 },
+            inventory,
+            skills: Vec::new(),
+            effects: Vec::new(),
+            home: None,
+            bed: None,
+            journal: Vec::new(),
+            quests: Vec::new(),
+            tallies: Vec::new(),
+        };
+        save.write_player("herbalist", &player, &registry).unwrap();
+        let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();
+        let herbs = registry.expect("base:kitchen_herbs");
+        assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == herbs).map(|s| s.count), Some(7));
+        assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == registry.expect("base:cobblestone")).map(|s| s.count), Some(5));
+        assert_eq!(loaded.inventory.pouched, vec![(herbs, 10)]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

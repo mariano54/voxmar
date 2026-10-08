@@ -20,6 +20,9 @@ best of the first `site.tries` (6) that:
   fantastical and giant biomes);
 - has a temperature between −10 and 36 °C: as likely as anywhere between 0 and 26, a
   quarter as likely at the edges (`site.taper`);
+- prefers gentler land: as likely as anywhere in biomes of level 1 to 5, 0.7 times as
+  likely in harsher ones (`site.levels`, biome levels P15, design draft 95; above level 5
+  rather than 3 so the level 4 and 5 villages that grow chickpea, rice and taro stay);
 - has no sinkhole or ravine within 150 blocks.
 
 Once planned, its buildings keep `site.bank` (3) blocks from water, and the ground under

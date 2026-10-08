@@ -18,8 +18,9 @@ use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
-use voxmar_protocol::{PlayerId, TICKS_PER_DAY, TICKS_PER_SECOND};
+use voxmar_protocol::{ChatKind, PlayerId, TICKS_PER_DAY, TICKS_PER_SECOND};
 
+use crate::commands::Source;
 use crate::Server;
 use crate::condition::RECKON_EVERY;
 use crate::creatures::product_ticks;
@@ -27,6 +28,8 @@ use crate::items::random3;
 
 /// How close two ready adults come before they breed, in blocks.
 const MEET: f32 = 1.6;
+/// How soon a second ask to let an animal go must follow the first, in ticks.
+const RELEASE_CONFIRM: u64 = 5 * TICKS_PER_SECOND as u64;
 /// Ticks between husbandry passes (products, breeding, growing up): twice a second.
 const EVERY: u64 = TICKS_PER_SECOND as u64 / 2;
 
@@ -218,9 +221,15 @@ impl Server {
         if creature.trust >= 1.0 {
             creature.owner = name;
             creature.owner_id = Some(player);
-            creature.condition = tamed;
+            let was_kept = creature.was_kept;
+            // One let go keeps the condition it had: taking it in again does not mend it.
+            creature.condition = if was_kept { creature.condition.min(tamed) } else { tamed };
             creature.reckoned = day;
             self.settle(id);
+            // One let go and taken in again pays nothing more (design draft 99).
+            if was_kept {
+                return;
+            }
             // For quests that ask for tamed animals.
             let hunter = self.content.skills.id("core:hunter");
             self.grant(player, hunter, taming.xp);
@@ -246,18 +255,61 @@ impl Server {
         (!wants.is_empty()).then_some(Words::List(wants))
     }
 
-    /// Where a ready creature's mate is: another of its kind, ready too, within range.
-    pub(crate) fn mate_for(&self, id: u32) -> Option<Vec3> {
+    /// Whether `player` keeps creature `id`.
+    pub(crate) fn keeps(&self, player: PlayerId, id: u32) -> bool {
+        let owner = self.creatures.live.get(&id).and_then(|c| c.owner.as_deref());
+        owner.is_some_and(|owner| self.players.get(&player).is_some_and(|p| p.name == owner))
+    }
+
+    /// `base:release`: a keeper lets one of their animals go wild again (design draft 99).
+    /// The first ask only says how to confirm; the same ask within `RELEASE_CONFIRM` lets
+    /// it go. It keeps its genes, breed and condition and loses its keeper, trust and
+    /// readiness: from then on it is wild like any other (not saved, gone when nobody is
+    /// near, no products or breeding), only marked as once kept, so taming it again pays
+    /// no Hunter xp and counts for no quest. Release gives nothing.
+    pub(crate) fn release(&mut self, player: PlayerId, id: u32) {
+        if !self.keeps(player, id) {
+            return;
+        }
+        let species = self.creatures.live[&id].species;
+        let what = crate::commands::creature_name(&self.content.creatures.get(species).def);
+        let tick = self.tick;
+        let confirmed = self.creatures.release_asked.get(&player).is_some_and(|&(asked, at)| asked == id && tick.saturating_sub(at) <= RELEASE_CONFIRM);
+        if !confirmed {
+            self.creatures.release_asked.insert(player, (id, tick));
+            self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.release_ask").with("creature", what));
+            return;
+        }
+        self.creatures.release_asked.remove(&player);
+        let def = &self.content.creatures.get(species).def;
+        let creature = self.creatures.live.get_mut(&id).expect("kept");
+        // A wild mind again: its own temper, wary of people as any wild one is.
+        let mut mind = Mind::new(&def.temperament, creature.seed);
+        mind.personality.aggression = (mind.personality.aggression + creature.traits.temper).clamp(0.0, 1.0);
+        creature.mind = mind;
+        (creature.owner, creature.owner_id, creature.trusting, creature.trust) = (None, None, None, 0.0);
+        (creature.ready_until, creature.needs) = (0, Default::default());
+        creature.home = creature.body.position;
+        creature.was_kept = true;
+        creature.changed = true;
+        self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.released").with("creature", what));
+    }
+
+    /// Where a ready creature's mate is: the nearest other of its kind, ready too, within
+    /// range.
+    pub(crate) fn mate_for(&self, id: u32, neighbours: &crate::creatures::Neighbours) -> Option<Vec3> {
         let creature = self.creatures.live.get(&id)?;
         if creature.ready_until == 0 {
             return None;
         }
         let at = creature.body.position;
-        self.creatures
-            .live
-            .iter()
-            .filter(|(other, c)| **other != id && c.species == creature.species && c.ready_until > 0 && c.body.position.distance(at) < MATE_RANGE)
-            .map(|(_, c)| c.body.position)
+        neighbours
+            .around(at)
+            .into_iter()
+            .filter(|&other| other != id)
+            .filter_map(|other| self.creatures.live.get(&other))
+            .filter(|c| c.species == creature.species && c.owner.is_some() && c.ready_until > 0 && c.body.position.distance(at) < MATE_RANGE)
+            .map(|c| c.body.position)
             .min_by(|a, b| a.distance(at).total_cmp(&b.distance(at)))
     }
 
@@ -326,7 +378,7 @@ impl Server {
         }
         // Ready pairs that have met.
         let ready: Vec<(u32, CreatureId, Vec3)> =
-            self.creatures.live.iter().filter(|(_, c)| c.ready_until > 0).map(|(&id, c)| (id, c.species, c.body.position)).collect();
+            self.creatures.live.iter().filter(|(_, c)| c.owner.is_some() && c.ready_until > 0).map(|(&id, c)| (id, c.species, c.body.position)).collect();
         for (i, &(a, species, at)) in ready.iter().enumerate() {
             if pairs.iter().any(|&(x, y)| x == a || y == a) {
                 continue;
@@ -692,7 +744,7 @@ mod tests {
     fn keeper(server: &mut Server) -> (PlayerId, voxmar_protocol::ClientConnection) {
         let (client, connection) = voxmar_protocol::local_pair();
         let id = 1;
-        let mut player = crate::player::Player::new(id, connection, server.spawn, 2);
+        let mut player = crate::player::Player::new(id, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
         (player.joined, player.admin, player.name) = (true, true, "test".into());
         server.players.insert(id, player);
         let at = server.spawn.floor().as_ivec3();
@@ -885,6 +937,143 @@ mod tests {
         creature.owner = Some("test".into());
         creature.products_due.iter_mut().for_each(|due| *due = 0);
         id
+    }
+
+    /// Lets one of "test"'s animals go: asked, then asked again a second later.
+    fn let_go(server: &mut Server, player: PlayerId, id: u32) {
+        server.release(player, id);
+        server.tick += TICKS_PER_SECOND as u64;
+        server.release(player, id);
+    }
+
+    #[test]
+    fn letting_an_animal_go_takes_two_asks_and_frees_its_place() {
+        let mut server = test_server();
+        let (player, client) = keeper(&mut server);
+        let species = server.content.creatures.id("base:rabbit").expect("rabbits");
+        let food = server.content.creatures.get(species).tame_food[0];
+        server.players.get_mut(&player).unwrap().inventory.add(food, 10);
+        // The keeper at their cap: two here, the rest waiting in the save; a wild one by them.
+        let kept_each = server.content.creatures.limits().kept_each;
+        let (mine, other) = (kept_rabbit(&mut server, 1), kept_rabbit(&mut server, 2));
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        server.creatures.unplaced = (0..kept_each - 2).map(|_| rabbit(far)).collect();
+        let wild = server.spawn_creature(species, server.spawn, 3).expect("room");
+        server.tend(player, wild);
+        assert_eq!(server.creatures.live[&wild].trust, 0.0, "a full keeper took a wild one in");
+        told(&client);
+        // One ask only asks; a second too late asks again.
+        server.release(player, mine);
+        server.tick += 6 * TICKS_PER_SECOND as u64;
+        server.release(player, mine);
+        assert!(server.creatures.live[&mine].owner.is_some(), "a lone ask let it go");
+        // Asking about another animal in between starts over.
+        server.release(player, other);
+        server.release(player, mine);
+        assert!(server.creatures.live[&mine].owner.is_some() && server.creatures.live[&other].owner.is_some());
+        assert_eq!(told(&client), ["husbandry.release_ask"; 4]);
+        // Two asks within a few seconds let it go: wild, marked, and its place is free.
+        server.tick += 6 * TICKS_PER_SECOND as u64;
+        let_go(&mut server, player, mine);
+        let freed = &server.creatures.live[&mine];
+        assert!(freed.owner.is_none() && freed.owner_id.is_none() && freed.was_kept && freed.trust == 0.0);
+        assert_eq!(told(&client), ["husbandry.release_ask", "husbandry.released"]);
+        assert_eq!(server.kept_by("test"), kept_each - 1);
+        server.tend(player, wild);
+        assert!(server.creatures.live[&wild].trust > 0.0 || server.creatures.live[&wild].owner.is_some(), "the freed place took no wild one");
+        // Nobody lets go of another keeper's animal, nor of a wild one.
+        server.creatures.live.get_mut(&other).unwrap().owner = Some("someone".into());
+        let stranger = server.spawn_creature(species, server.spawn, 4).expect("room");
+        let_go(&mut server, player, other);
+        let_go(&mut server, player, stranger);
+        assert_eq!(server.creatures.live[&other].owner.as_deref(), Some("someone"));
+        assert!(told(&client).iter().all(|key| !key.starts_with("husbandry.release")));
+    }
+
+    #[test]
+    fn taming_a_let_go_animal_again_pays_no_xp_and_counts_for_no_quest() {
+        let mut server = test_server();
+        let (player, _client) = keeper(&mut server);
+        let species = server.content.creatures.id("base:rabbit").expect("rabbits");
+        let food = server.content.creatures.get(species).tame_food[0];
+        let hunter = server.content.skills.id("core:hunter").expect("Hunter");
+        let paid = |server: &Server| (server.players[&player].skills.xp(hunter), server.players[&player].tallies.get("tamed:base:rabbit").copied().unwrap_or(0));
+        let tame = |server: &mut Server, id: u32| {
+            for _ in 0..60 {
+                if server.creatures.live[&id].owner.is_some() {
+                    return;
+                }
+                server.players.get_mut(&player).unwrap().inventory.add(food, 1);
+                server.tick += 1;
+                server.tend(player, id);
+            }
+            panic!("60 feeds did not tame it");
+        };
+        let wild = server.spawn_creature(species, server.spawn, 1).expect("room");
+        let (xp, tally) = paid(&server);
+        tame(&mut server, wild);
+        let (xp_tamed, tally_tamed) = paid(&server);
+        assert!(xp_tamed > xp && tally_tamed == tally + 1, "taming paid {xp} -> {xp_tamed}, tally {tally} -> {tally_tamed}");
+        let tamed = server.content.creatures.condition().tamed;
+        assert_eq!(server.creatures.live[&wild].condition, tamed);
+        // Poorly kept, let go and taken in again, it comes back as poorly kept; one in better
+        // condition than a newly tamed animal comes back as newly tamed.
+        for (before, after) in [(0.2, 0.2), (0.9, tamed)] {
+            server.creatures.live.get_mut(&wild).unwrap().condition = before;
+            let_go(&mut server, player, wild);
+            assert!(server.creatures.live[&wild].owner.is_none());
+            assert_eq!(server.creatures.live[&wild].condition, before, "letting go mended or spoiled it");
+            tame(&mut server, wild);
+            assert_eq!(server.creatures.live[&wild].condition, after, "taking it in again from {before}");
+        }
+        assert_eq!(paid(&server), (xp_tamed, tally_tamed), "taming a let-go animal again paid");
+    }
+
+    #[test]
+    fn a_let_go_animal_in_a_pen_gives_nothing_and_never_breeds() {
+        let mut server = test_server();
+        let (player, _client) = keeper(&mut server);
+        let eggs = |server: &Server| server.items.saved(|b| server.content.blocks.def(b).name.clone()).iter().filter(|i| i.item == "base:egg").count();
+        // Two kept hens, ready to breed and with an egg due: a pass lays.
+        let hens = [kept(&mut server, "base:junglefowl", 1), kept(&mut server, "base:junglefowl", 2)];
+        for &hen in &hens {
+            server.creatures.live.get_mut(&hen).unwrap().ready_until = server.tick + 1000;
+        }
+        let pass = |server: &mut Server| {
+            server.tick = server.tick.next_multiple_of(EVERY);
+            server.tick_husbandry();
+            server.tick += 1;
+        };
+        pass(&mut server);
+        assert!(eggs(&server) > 0, "kept hens laid nothing");
+        assert!(server.creatures.live.len() > 2, "kept hens, ready side by side, bred nothing");
+        // Let go, they lay nothing and breed no more, though due and side by side.
+        for &hen in &hens {
+            let_go(&mut server, player, hen);
+            let creature = server.creatures.live.get_mut(&hen).unwrap();
+            assert_eq!((creature.owner.as_deref(), creature.ready_until), (None, 0));
+            creature.products_due = vec![0; creature.products_due.len()];
+        }
+        let (laid, born) = (eggs(&server), server.creatures.live.len());
+        for _ in 0..20 {
+            pass(&mut server);
+        }
+        assert_eq!((eggs(&server), server.creatures.live.len()), (laid, born), "let-go hens laid or bred");
+        // Their old keeper's grain only starts taming them again; it readies neither.
+        let wheat = server.content.blocks.id("base:wheat").expect("wheat");
+        server.players.get_mut(&player).unwrap().inventory.add(wheat, 1);
+        server.tend(player, hens[0]);
+        assert_eq!(server.creatures.live[&hens[0]].ready_until, 0);
+        // Even ready, a let-go hen beside a ready kept one is no mate: no young, and the kept
+        // hen is left ready.
+        let keeper_hen = kept(&mut server, "base:junglefowl", 3);
+        server.creatures.live.get_mut(&keeper_hen).unwrap().ready_until = server.tick + 1000;
+        server.creatures.live.get_mut(&hens[0]).unwrap().ready_until = server.tick + 1000;
+        let born = server.creatures.live.len();
+        pass(&mut server);
+        assert_eq!(server.creatures.live.len(), born, "a let-go hen bred");
+        assert!(server.creatures.live[&keeper_hen].ready_until > 0, "a let-go hen took the kept hen's readiness");
+        assert!(server.mate_for(keeper_hen, &crate::creatures::Neighbours::of(&server.creatures.live)).is_none(), "a let-go hen is a mate");
     }
 
     #[test]

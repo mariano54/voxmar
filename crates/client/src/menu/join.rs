@@ -50,7 +50,7 @@ pub fn connect(address: &str) -> Connecting {
 }
 
 /// `address` with the default port added if it has none.
-fn with_port(address: &str) -> String {
+pub(crate) fn with_port(address: &str) -> String {
     if address.parse::<SocketAddr>().is_ok() {
         return address.to_owned();
     }
@@ -205,7 +205,7 @@ fn finish_connecting(
     match result {
         Ok(connection) => {
             remember(&connecting.address);
-            session::play(&mut commands, &mut next, launch.multiplayer(connection));
+            session::play(&mut commands, &mut next, launch.multiplayer(connection, &connecting.address));
         }
         Err(e) => {
             let reason = match e.kind() {

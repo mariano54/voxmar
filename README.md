@@ -64,7 +64,7 @@ the last few servers are remembered) and Settings. A new world takes a name, an 
 flight, Survival does not. Either way you are the world's admin, who can run commands.
 
 Controls: WASD move, Space jump, Ctrl (or W tapped twice) sprint, Shift descend, F toggle flight, left mouse break
-(hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
+(hold), right mouse place (on an animal: feed or tame it; Shift and right click one of yours twice to let it go), middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
 inventory, C character screen, T chat, / command, F3 debug overlay (frame rate, and the worst frame, p99 and frames over 25 ms of the last 5 s), Esc menu, R respawn, Z (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
 Movement feels like Minecraft's: a sprint lasts while forward is held, until you run head-on
@@ -183,8 +183,12 @@ language complete, every key the code names defined, and every character drawn.
 T opens the console to chat with everyone on the server; / opens it with a command. Up and down
 recall earlier lines, Tab completes a command's name, Enter sends and Esc closes. Replies and
 chat show above the hotbar and fade after ten seconds. The server checks and runs commands,
-like actions: admins (the singleplayer host, and players named with `--admin` on a dedicated
-server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
+like actions: admins (the singleplayer host, players named with `--admin` on a dedicated
+server who play on its machine, players who join with the server's admin token, and anyone an
+admin makes one with `/op NAME` for the session) may use them all, everyone else `/help`,
+`/seed`, `/biome` and `/list`. Chat (and a non-admin's commands) is limited to a burst of eight
+lines and two a second after it, by the clock; lines past that are dropped, and the first of
+them says so.
 
 - `/time` tells the time; `/time set sunrise|day|morning|noon|afternoon|sunset|dusk|night|midnight|dawn|TICKS`
   moves forward to that time of day (a day is 24000 ticks, 0 is sunrise), `/time add 100|30s|2h|1d`
@@ -234,12 +238,31 @@ broken blocks and the chips while mining, and the smoke, embers, sparks and flam
 and torches give off), how far the hotbar sits above the bottom edge (Raise
 HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the sprint key and double-tap sprint, the zoom key
 (click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
-smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
+smoothly while zoomed), zoom in survival, toggle guard (a right-click raises the guard and the next
+lowers it, instead of holding the button), damage numbers (the hitsplats a fight shows), and fly speed
+for admins, with Resume, Save and quit
 to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in
 the OS config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
 `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`);
 `--view-distance` and `--no-vsync` override them. On a dedicated server, name admins with
-`--admin NAME` (repeatable), and cap render distance with `--view-distance N` (default 32).
+`--admin NAME` (repeatable; names are not checked, so it counts only for players on the server's
+own machine; a tunnel or proxy that forwards players from elsewhere makes them all look local, so
+leave `--admin` out behind one). An admin token makes anyone who joins with it an admin from
+anywhere: the server reads it from `$VOXMAR_ADMIN_TOKEN` or the first line of
+`--admin-token-file FILE` (never the command line, which others on the machine can see), and a
+player gives it by starting the game with `VOXMAR_ADMIN_TOKENS=host:port=TOKEN` (several
+separated by spaces), so each token goes to its own server only. It travels unencrypted, so
+use it on networks you trust. `op NAME` typed at the server (or by an admin in game) makes
+anyone else an admin until they leave, and `deop NAME` undoes it (an admin by name or token is
+one again when they come back). Cap render distance with `--view-distance N` (default 32) and players with
+`--max-players N` (default 64). Each name plays once at a time, whatever its case (Ada and ada
+are one player, with one save); at most 16 connections may be waiting to say hello (4 from
+one address), and a player from elsewhere whose connection sends nothing for 15 seconds is
+let go (`--idle-seconds N`; the game's network thread says it is there every 5 seconds, even
+while the game is minimized). `--limits FILE` changes how much one connection may ask of the
+server, from a RON file naming any of `messages_per_tick` (64), `chat_burst` (8 lines) and
+`chat_per_second` (2), `hello_seconds` (3), `max_pending` (16), `max_pending_per_address`
+(4) and `name_length` (32), as in `(chat_burst: 4.0, max_pending_per_address: 2)`.
 
 ### Saved worlds
 
@@ -250,11 +273,18 @@ Singleplayer worlds live in `voxmar/worlds/<name>/` next to the settings:
 - `columns/<x>.<z>.bin`: each column a player has edited, as zlib-compressed postcard with the
   names of the blocks it uses, so a content change that renumbers blocks does not break saves.
   Untouched columns are not stored; generation recreates them exactly.
-- `players/<name>.ron`: each player's position, health and inventory, restored when they join.
+- `players/<name>.ron`: each player's position, health and inventory, restored when they join,
+  under the name in lower case (a file saved under the name as typed is still read).
 
 The server saves edited columns, players and the time every 30 seconds, when a player leaves
 and when it stops (leaving to the title screen or quitting). Every file is written to a
-temporary file and renamed, so a crash never leaves half a file. Saved columns are unloaded
+temporary file and renamed, so a crash never leaves half a file, and a file that cannot be read
+is never written over. One that is not what it should be is moved aside to
+`<file>.corrupt-<unix time>` and the error logged (a player whose file it was starts afresh and
+is told so); one that could not be read at all (no permission, a failing disk) or moved aside
+is left alone: its player is turned away, its column is not saved over, and a world whose
+items, crops or creatures file it is does not open. When a player leaves, the items they left
+are written before they are, so a crash in between can double things but never lose them. Saved columns are unloaded
 like any other. The dedicated server keeps its world in `--world DIR` (default `./world`),
 created with `--seed N` and, given `--no-flight`, in survival mode if it does not exist yet;
 type `stop` to save and quit. Anything else typed there runs as a command, as an admin

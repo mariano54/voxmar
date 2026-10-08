@@ -183,6 +183,8 @@ impl Server {
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
             Run::Kill => self.kill_command(id),
+            Run::Op => self.op_command(args, true),
+            Run::Deop => self.op_command(args, false),
             Run::Drop => self.drop_command(id, args),
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
@@ -320,12 +322,9 @@ impl Server {
             let at = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
             return Err(Words::key("command.error.too_far").with("place", at));
         }
-        let tick = self.tick;
         let player = self.players.get_mut(&who).unwrap();
-        player.position = position;
         player.fall_start = None;
-        player.last_input_tick = tick;
-        player.connection.send(ServerMessage::Teleport { position });
+        player.teleport(position);
         let name = player.name.clone();
         let place = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
         if id == Source::Player(who) {
@@ -903,6 +902,27 @@ impl Server {
         let id = effects.find(name).ok_or_else(|| Words::key("command.error.no_such_effect").with("effect", name.as_str()))?;
         player.give_effects(&[(id, seconds)]);
         Ok(Words::key("command.effect").with("effect", Words::Own(voxmar_engine::lang::def_key("effect", &effects.get(id).name), effects.get(id).title.clone())).with("seconds", Words::text(seconds)))
+    }
+
+    /// Makes a player an admin (`/op`), or no longer one (`/deop`), until they leave. One who
+    /// is an admin by right is one again when they come back.
+    fn op_command(&mut self, args: &[String], admin: bool) -> Reply {
+        let [name] = args else { return Err(Words::key(if admin { "command.error.op_whom" } else { "command.error.deop_whom" })) };
+        let who = self.find_player(name)?;
+        let player = self.players.get_mut(&who).unwrap();
+        player.admin = admin;
+        if !admin {
+            player.fly_speed = 1.0;
+        }
+        player.connection.send(ServerMessage::Abilities { allow_flight: player.allow_flight, admin });
+        let name = player.name.clone();
+        let (theirs, yours) = match (admin, player.admin_by_right) {
+            (true, _) => ("command.op", "command.op.you"),
+            (false, false) => ("command.deop", "command.deop.you"),
+            (false, true) => ("command.deop.until_rejoin", "command.deop.you.until_rejoin"),
+        };
+        self.tell(Source::Player(who), ChatKind::Info, Words::key(yours));
+        Ok(Words::key(theirs).with("name", name))
     }
 
     fn kill_command(&mut self, source: Source) -> Reply {

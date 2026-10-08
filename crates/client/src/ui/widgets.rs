@@ -488,6 +488,17 @@ pub struct Meter {
     label: Entity,
 }
 
+impl Meter {
+    /// What was lost lately: its `BackgroundColor` is [`TRAIL`] unless something tints it
+    /// (a blow flashes the health bar's, `hud::combat`).
+    pub fn trail(&self) -> Entity {
+        self.trail
+    }
+}
+
+/// The colour of what a meter lost lately, before it drains away.
+pub const TRAIL: Color = Color::srgba(1.0, 0.93, 0.85, 0.45);
+
 /// A meter's height: room for its number inside the track with a pixel to spare.
 pub const METER: f32 = 14.0 * PX;
 /// Tick marks across a meter, each a tenth of it.
@@ -511,7 +522,7 @@ pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece
         };
         // The track's inside, which the fill, what was lost and the notches lie over.
         well.spawn(Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }).with_children(|track| {
-            trail = track.spawn((inside(0.0, 0.0), BackgroundColor(Color::srgba(1.0, 0.93, 0.85, 0.45)), TrailWait(0.0))).id();
+            trail = track.spawn((inside(0.0, 0.0), BackgroundColor(TRAIL), TrailWait(0.0))).id();
             fill = track.spawn((inside(0.0, 0.0), piece.image())).id();
             // Notches every tenth, to read the meter at a glance.
             for tick in 1..TICKS {

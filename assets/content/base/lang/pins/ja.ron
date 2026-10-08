@@ -97,7 +97,7 @@
     "effect.base.forest_calm": ("Forest calm", "森の安らぎ"),
     "effect.base.forest_calm.description": ("Among the trees you heal a fifth faster.", "木々の中では、回復が5分の1速い。"),
     "effect.base.hearty": ("Hearty", "滋養"),
-    "effect.base.hearty.description": ("Cooked meat: 4 more health while it lasts.", "焼いた肉。続く間、体力の上限が4増える。"),
+    "effect.base.hearty.description": ("Cooked meat: room for a tenth more health while it lasts.", "焼いた肉。続く間、体力の上限が一割増える。"),
     "effect.base.hunters_vigour": ("Hunter's vigour", "狩人の活力"),
     "effect.base.hunters_vigour.description": ("Game cooked over a fire: quicker on your feet.", "火で焼いた獲物。足が速くなる。"),
     "effect.base.mired": ("Mired", "ぬかるみ"),

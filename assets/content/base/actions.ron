@@ -7,10 +7,13 @@
         (name: "pick", duration: Instant, requires: [Alive, InReach, Ripe, CropLevel], effects: [Pick]),
         // Tending a creature with what is in hand (right click on it): food that tames it or
         // readies a kept one to breed, or a tool that takes its product (creatures.ron).
-        (name: "tend", duration: Instant, requires: [Alive, CreatureInReach, CreatureAccepts], effects: [Tend]),
+        (name: "tend", duration: Instant, requires: [Alive, CreatureInTouch, CreatureAccepts], effects: [Tend]),
         // Looking closely at a creature (right click with nothing it wants in hand): more
         // with Farming level (server inspect.rs).
-        (name: "inspect", duration: Instant, requires: [Alive, CreatureInReach], effects: [Inspect]),
+        (name: "inspect", duration: Instant, requires: [Alive, CreatureInTouch], effects: [Inspect]),
+        // Letting one of your own animals go wild again (Shift and right click on it, twice):
+        // it leaves your keeping and gives nothing (design draft 99, server husbandry.rs).
+        (name: "release", duration: Instant, requires: [Alive, CreatureInTouch, CreatureIsMine], effects: [Release]),
         // Cooking what is in hand on a station that cooks it (cooking.ron): two seconds, so
         // a fish's Cooking experience (what catching it taught) comes at a cook's pace
         // (design draft 104).
