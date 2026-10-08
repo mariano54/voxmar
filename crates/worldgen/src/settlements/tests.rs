@@ -2220,7 +2220,12 @@ fn culture_load_checks_reject_invalid_numbers_and_references() {
     assert!(refused(&|c| c.rules.field.share.1 = f32::NAN));
     assert!(refused(&|c| c.rules.level_martial.1 = f32::NAN));
     assert!(refused(&|c| c.families[0].weight = f32::NAN));
+    assert!(refused(&|c| c.families[0].weight = f32::MAX));
+    assert!(refused(&|c| c.quirks[0].weight = f32::MAX));
+    assert!(refused(&|c| c.families[0].names.prefixes[0].2 = f32::MAX));
+    assert!(refused(&|c| { c.families[0].quirks.insert("bell_mad".into(), f32::MAX); }));
     assert!(refused(&|c| c.families[0].palette.walls.0[0].1 = f32::INFINITY));
+    assert!(refused(&|c| c.families[0].palette.walls.0[0].1 = f32::MAX));
     assert!(refused(&|c| c.families[0].palette.walls.0[0].0 = "base:missing".into()));
     assert!(refused(&|c| c.families[0].entries[0].name = "missing".into()));
     assert!(refused(&|c| { c.families[0].quirks.insert("missing".into(), 1.0); }));

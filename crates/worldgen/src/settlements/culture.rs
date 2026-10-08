@@ -759,7 +759,7 @@ impl CulturesDef {
             if !names.insert(f.name.as_str()) {
                 return fail(format!("two families are called `{}`", f.name));
             }
-            if !f.weight.is_finite() || f.weight < 0.0 || f.axes.iter().any(|a| !(0.0..=1.0).contains(a)) || !f.temperature.0.is_finite() || !f.temperature.1.is_finite() || f.temperature.0 > f.temperature.1 {
+            if !(0.0..=16.0).contains(&f.weight) || f.axes.iter().any(|a| !(0.0..=1.0).contains(a)) || !f.temperature.0.is_finite() || !f.temperature.1.is_finite() || f.temperature.0 > f.temperature.1 {
                 return fail(format!("family `{}` needs a weight of nothing or more, axes in [0, 1] and temperatures from low to high", f.name));
             }
             if f.title.0.is_empty() || f.title.1.is_empty() {
@@ -772,8 +772,8 @@ impl CulturesDef {
             if !(0.0..=1.0).contains(&n.small_chance) || !(0.0..=1.0).contains(&n.prefix_chance) {
                 return fail(format!("family `{}`: name chances are in [0, 1]", f.name));
             }
-            if n.prefixes.iter().any(|p| p.0.is_empty() || p.1.is_empty() || !p.2.is_finite() || p.2 < 0.0)
-                || f.quirks.values().any(|v| !v.is_finite() || *v < 0.0)
+            if n.prefixes.iter().any(|p| p.0.is_empty() || p.1.is_empty() || !(0.0..=16.0).contains(&p.2))
+                || f.quirks.values().any(|v| !(0.0..=16.0).contains(v))
             {
                 return fail(format!("family `{}`: prefixes and quirk weights need finite non-negative weights and both languages", f.name));
             }
@@ -783,7 +783,7 @@ impl CulturesDef {
             }
             for material in f.palette.materials() {
                 for (name, w) in &material.0 {
-                    if !w.is_finite() || *w <= 0.0 {
+                    if !(0.0..=16.0).contains(w) || *w == 0.0 {
                         return fail(format!("family `{}`: a palette weight of nothing or less", f.name));
                     }
                     for wood in &woods {
@@ -806,7 +806,7 @@ impl CulturesDef {
             if !quirks.insert(q.name.as_str()) {
                 return fail(format!("two quirks are called `{}`", q.name));
             }
-            if !q.weight.is_finite() || q.weight <= 0.0 || q.title.0.is_empty() || q.title.1.is_empty() || q.axes.iter().any(|v| !(-1.0..=1.0).contains(v)) {
+            if !(0.0..=16.0).contains(&q.weight) || q.weight == 0.0 || q.title.0.is_empty() || q.title.1.is_empty() || q.axes.iter().any(|v| !(-1.0..=1.0).contains(v)) {
                 return fail(format!("quirk `{}` needs a weight above nothing and a title in English and Japanese", q.name));
             }
             entries_ok(&format!("quirk `{}`", q.name), &q.entries)?;
