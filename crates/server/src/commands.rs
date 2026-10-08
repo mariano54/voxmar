@@ -183,6 +183,8 @@ impl Server {
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
             Run::Kill => self.kill_command(id),
+            Run::Op => self.op_command(args, true),
+            Run::Deop => self.op_command(args, false),
             Run::Drop => self.drop_command(id, args),
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
@@ -191,9 +193,10 @@ impl Server {
             Run::Creatures => match args.first().map(String::as_str) {
                 None => Ok(self.creatures_about(id)),
                 Some(_) if !self.is_admin(id) => Err(Words::key("command.creatures.admins_only")),
-                Some(what) => self.creatures_command(id, what),
+                Some(what) => self.creatures_command(id, what, args.get(1).map(String::as_str)),
             },
             Run::Skill => self.skill_command(id, args),
+            Run::Machine => self.machine_command(id, args),
         };
         let (Ok(text) | Err(text)) = &reply;
         tracing::debug!("/{}: {}", def.short_name(), self.english(text));
@@ -313,12 +316,9 @@ impl Server {
             let at = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
             return Err(Words::key("command.error.too_far").with("place", at));
         }
-        let tick = self.tick;
         let player = self.players.get_mut(&who).unwrap();
-        player.position = position;
         player.fall_start = None;
-        player.last_input_tick = tick;
-        player.connection.send(ServerMessage::Teleport { position });
+        player.teleport(position);
         let name = player.name.clone();
         let place = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
         if id == Source::Player(who) {
@@ -522,26 +522,34 @@ impl Server {
 
     /// `/creatures tame|ready|hasten`: for admins, the creatures within 8 blocks are tamed
     /// by them, readied to breed, or hastened (products due and young grown now).
-    fn creatures_command(&mut self, id: Source, what: &str) -> Reply {
+    /// With a species named, only creatures of it.
+    fn creatures_command(&mut self, id: Source, what: &str, species: Option<&str>) -> Reply {
         let player = Self::me(id)?;
         let at = self.position_of(id);
         let name = self.players[&player].name.clone();
         let tick = self.tick;
         let mut count = 0;
+        let only = match species {
+            Some(species) => Some(self.content.creatures.find(species).ok_or_else(|| Words::key("command.summon.unknown").with("name", species))?),
+            None => None,
+        };
+        let near = |c: &crate::creatures::Live| c.body.position.distance(at) <= 8.0 && only.is_none_or(|s| c.species == s);
+        if what == "remove" {
+            // Only those the player keeps: a gate step tidies away the animals it summoned.
+            let kept: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.owner_id == Some(player) && near(c)).map(|(&id, _)| id).collect();
+            for &id in &kept {
+                self.creatures.take_away(id);
+            }
+            return Ok(Words::key("command.creatures.done").with("count", Words::text(kept.len())));
+        }
         // Killed outright, as a blow would kill them: their death, their drops.
         if what == "kill" {
             // Never another player's kept animals: only wild ones and the admin's own.
-            let near: Vec<u32> = self
-                .creatures
-                .live
-                .iter()
-                .filter(|(_, c)| c.body.position.distance(at) <= 8.0 && c.owner.as_ref().is_none_or(|owner| *owner == name))
-                .map(|(&id, _)| id)
-                .collect();
-            for &id in &near {
+            let killed: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| near(c) && c.owner.as_ref().is_none_or(|owner| *owner == name)).map(|(&id, _)| id).collect();
+            for &id in &killed {
                 self.creature_dies(id);
             }
-            return Ok(Words::key("command.creatures.done").with("count", Words::text(near.len())));
+            return Ok(Words::key("command.creatures.done").with("count", Words::text(killed.len())));
         }
         // Taming here keeps to the keeper's cap as feeding does.
         let kept_each = self.content.creatures.limits().kept_each;
@@ -551,7 +559,7 @@ impl Server {
         }
         let (day, tamed_at) = (self.day, self.content.creatures.condition().tamed);
         let mut tamed = Vec::new();
-        for (&id, creature) in self.creatures.live.iter_mut().filter(|(_, c)| c.body.position.distance(at) <= 8.0) {
+        for (&id, creature) in self.creatures.live.iter_mut().filter(|(_, c)| near(c)) {
             match what {
                 // Taken in as feeding takes one in: newly tamed, just fed, at home here.
                 "tame" if creature.owner.is_none() && kept_room > 0 => {
@@ -761,6 +769,13 @@ impl Server {
     }
 
     /// The online player called `name`, ignoring case if no name matches exactly.
+    /// `/machine <x> <y> <z>`: how the machine there is doing.
+    fn machine_command(&mut self, source: Source, args: &[String]) -> Reply {
+        let [x, y, z] = args else { return Err(Words::key("command.error.which_block_where")) };
+        let at = self.block_position(source, [x, y, z])?;
+        self.machine_status(at).ok_or_else(|| Words::key("command.machine.none").with("place", format!("{} {} {}", at.x, at.y, at.z)))
+    }
+
     fn set_block_command(&mut self, source: Source, args: &[String]) -> Reply {
         let [x, y, z, name] = args else { return Err(Words::key("command.error.which_block_where")) };
         let at = self.block_position(source, [x, y, z])?;
@@ -868,6 +883,27 @@ impl Server {
         let id = effects.find(name).ok_or_else(|| Words::key("command.error.no_such_effect").with("effect", name.as_str()))?;
         player.give_effects(&[(id, seconds)]);
         Ok(Words::key("command.effect").with("effect", Words::Own(voxmar_engine::lang::def_key("effect", &effects.get(id).name), effects.get(id).title.clone())).with("seconds", Words::text(seconds)))
+    }
+
+    /// Makes a player an admin (`/op`), or no longer one (`/deop`), until they leave. One who
+    /// is an admin by right is one again when they come back.
+    fn op_command(&mut self, args: &[String], admin: bool) -> Reply {
+        let [name] = args else { return Err(Words::key(if admin { "command.error.op_whom" } else { "command.error.deop_whom" })) };
+        let who = self.find_player(name)?;
+        let player = self.players.get_mut(&who).unwrap();
+        player.admin = admin;
+        if !admin {
+            player.fly_speed = 1.0;
+        }
+        player.connection.send(ServerMessage::Abilities { allow_flight: player.allow_flight, admin });
+        let name = player.name.clone();
+        let (theirs, yours) = match (admin, player.admin_by_right) {
+            (true, _) => ("command.op", "command.op.you"),
+            (false, false) => ("command.deop", "command.deop.you"),
+            (false, true) => ("command.deop.until_rejoin", "command.deop.you.until_rejoin"),
+        };
+        self.tell(Source::Player(who), ChatKind::Info, Words::key(yours));
+        Ok(Words::key(theirs).with("name", name))
     }
 
     fn kill_command(&mut self, source: Source) -> Reply {

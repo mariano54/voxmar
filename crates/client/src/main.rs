@@ -38,6 +38,7 @@ mod creature_sounds;
 mod creatures;
 mod drops;
 mod emitters;
+mod fight;
 mod gate;
 mod hud;
 mod interact;
@@ -145,6 +146,8 @@ struct Options {
     press: Option<MouseButton>,
     /// `--hold ITEM`: select the hotbar slot holding an item, once it is there.
     hold: Option<String>,
+    /// `--wear ITEM` (again for each piece): put armour on, once it is in the inventory.
+    wear: Vec<String>,
     /// `--repeat`: click `--press`'s button over and over through the clip.
     repeat: bool,
     /// `--face-creature`: keep looking at the nearest creature.
@@ -203,6 +206,7 @@ fn parse_options() -> Result<Options, String> {
         clip_commands: Vec::new(),
         press: None,
         hold: None,
+        wear: Vec::new(),
         repeat: false,
         face_creature: false,
         size: UVec2::new(1920, 1080),
@@ -265,6 +269,7 @@ fn parse_options() -> Result<Options, String> {
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--hold" => options.hold = Some(value()?),
+            "--wear" => options.wear.push(value()?),
             "--repeat" => options.repeat = true,
             "--face-creature" => options.face_creature = true,
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
@@ -320,6 +325,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
+    let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
+    let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -419,7 +426,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let terrain = app.world().resource::<render::terrain::Terrain>().clone();
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
-    .insert_resource(Actions(content.actions))
+    .insert_resource(Actions::new(content.actions))
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
     .insert_resource(shader_packs)
     .insert_resource(lang::Locale::load(&assets.join("content"), &settings.language))
@@ -455,7 +462,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }
@@ -525,6 +532,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             clip_commands: options.clip_commands,
             press: options.press,
             hold: options.hold,
+            wear: options.wear,
             repeat: options.repeat,
             face_creature: options.face_creature,
             strike: options.strike,
@@ -594,6 +602,25 @@ struct Registry {
 /// Action definitions, shared with the server, for proposing and predicting actions.
 #[derive(Resource)]
 pub struct Actions(pub Arc<ActionRegistry>);
+
+/// The actions the client asks for by name.
+const NAMED_ACTIONS: [&str; 9] = ["core:mine", "core:place", "core:transfer", "core:quick_move", "core:stow", "core:drop", "core:craft", "core:eat", "core:respawn"];
+
+impl Actions {
+    /// The content's actions, warning once for each the client asks for that no package
+    /// defines (a broken or partial mod): its gesture will do nothing.
+    pub fn new(actions: Arc<voxmar_engine::action::ActionRegistry>) -> Self {
+        for name in NAMED_ACTIONS.into_iter().filter(|name| actions.id(name).is_none()) {
+            warn!("no package defines the action {name}, so it cannot be done");
+        }
+        Self(actions)
+    }
+
+    /// The action called `name`, which the game asks for by name, if the content has it.
+    pub fn named(&self, name: &str) -> Option<voxmar_engine::action::ActionId> {
+        self.0.id(name)
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn setup(

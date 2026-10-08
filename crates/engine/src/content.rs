@@ -51,12 +51,16 @@ pub struct Content {
     pub fishing: Arc<FishingRegistry>,
     /// Structures recognised from patterns of blocks (the Homestead Hearth).
     pub multiblocks: Arc<crate::multiblock::MultiblockRegistry>,
+    /// Machines, what they burn and what they make (`machines.ron`, `processing.ron`).
+    pub machines: Arc<crate::machine::MachineRegistry>,
     /// The quest book.
     pub quests: Arc<crate::quest::QuestRegistry>,
     /// What it takes to study and master the journal's entries.
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
+    /// What things are worth (`value`).
+    pub value: Arc<crate::value::Value>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -68,7 +72,9 @@ pub struct Content {
 
 /// Single-valued data a package may set field by field (Design draft 91): a later
 /// package's fields replace an earlier one's, and the load log names both packages, so a
-/// mod tunes one number without forking base. [`settable!`] declares one.
+/// mod tunes one number without forking base. [`settable!`] declares one. Worldgen's
+/// `layered!` (crates/worldgen/src/content.rs) is the same rule for climate, land and trail
+/// data, with nested structs and named lists; the two should become one.
 pub trait Settable: Copy {
     /// Every field as an option: what one package sets.
     type Set;
@@ -167,11 +173,14 @@ impl Content {
         let mut effects = Vec::new();
         let mut tools = Vec::new();
         let mut combat = Vec::new();
+        let mut value = Vec::new();
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
+        let mut machines = Vec::new();
+        let mut processes = Vec::new();
         let mut quests = Vec::new();
         let mut shapes = Vec::new();
         let mut shape_limits = Setting::<crate::shape::ShapeLimits>::default();
@@ -213,7 +222,8 @@ impl Content {
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "cooking.ron" => {
+                    // `cooking.ron`, and `cooking_<topic>.ron` for what a system smelts (machines).
+                    topic if topic.starts_with("cooking") => {
                         cooking.extend(CookingRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
@@ -225,7 +235,7 @@ impl Content {
                         condition.set(package, &name, "condition rules", read.condition, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons).
+                    // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons, machines).
                     topic if topic.starts_with("recipes") => {
                         recipes.extend(RecipeRegistry::read(package, &source)?);
                         // Kept with the other files too, so the fingerprint covers it.
@@ -241,8 +251,17 @@ impl Content {
                         quests.push(crate::quest::QuestRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "multiblocks.ron" => {
+                    // `multiblocks.ron`, and `multiblocks_<topic>.ron` for a system's own (machines).
+                    topic if topic.starts_with("multiblocks") => {
                         multiblocks.push(crate::multiblock::MultiblockRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "machines.ron" => {
+                        machines.push(crate::machine::MachineRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "processing.ron" => {
+                        processes.push(crate::machine::MachineRegistry::read_processes(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "journal.ron" => {
@@ -259,6 +278,10 @@ impl Content {
                     }
                     "tools.ron" => {
                         tools.push(ToolRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "value.ron" => {
+                        value.push(crate::value::Value::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "combat.ron" => {
@@ -299,8 +322,13 @@ impl Content {
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
+        let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
+        if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
+            return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
+        }
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks)?);
+        crate::inventory::set_worn_slots(combat.worn_slots());
         // A furnishing gives itself back only where a player placed it: one that drops
         // nothing anyway has no business with the tag.
         if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag("furnishing") && (blocks.info(id).drops.is_air() || blocks.info(id).drop_count == 0)) {
@@ -325,7 +353,9 @@ impl Content {
             combat: Arc::new(combat),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            value: Arc::new(crate::value::Value::merge(value)),
             multiblocks: Arc::new(multiblocks),
+            machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),
@@ -392,6 +422,7 @@ mod tests {
     use rustc_hash::FxHashMap;
 
     use super::*;
+    use crate::block::BlockId;
     use crate::skill::SkillId;
 
     /// Skills no content trains: the combat skills train by any fight, and Ranged, Magic
@@ -458,19 +489,9 @@ mod tests {
         assert_eq!(untrained, UNTRAINED, "the skills nothing trains");
     }
 
-    /// What finishing each main-line quest makes that its tasks don't name: the hearth's
-    /// pieces, the kilns' and what goes into them.
-    const ALSO_MADE: &[(&str, &[&str])] = &[
-        ("base:stone_in_hand", &["base:crafting_table"]),
-        ("base:homestead_hearth", &["base:hearthstone", "base:chimney"]),
-        ("base:the_potter", &["base:pit_kiln", "base:fired_clay"]),
-        ("base:red_metal", &["base:copper_ingot"]),
-        ("base:crucible_kiln", &["base:kiln_bricks", "base:crucible"]),
-        ("base:first_bronze", &["base:bronze_blend"]),
-    ];
-
     /// How a thing on the main line is made: at the crafting grid (a quest's Craft), by
-    /// cooking (its Cook), or either (`ALSO_MADE`'s pieces, what a quest asks to Have).
+    /// cooking (its Cook), or either (what goes into something else, a multiblock's pieces,
+    /// what a quest asks to Have).
     #[derive(Clone, Copy, PartialEq)]
     enum Way {
         Grid,
@@ -478,23 +499,45 @@ mod tests {
         Either,
     }
 
+    /// A recipe as the walk uses it: its skill, level and experience a batch, how many a
+    /// batch makes, what each of its cells takes, and the station it needs (the crafting
+    /// table for a big grid, a cooking station's tag).
+    struct Batch {
+        skill: Option<SkillId>,
+        level: u8,
+        xp: f32,
+        count: u32,
+        cells: Vec<Vec<BlockId>>,
+        station: Option<String>,
+    }
+
     /// One route through the main line so far: the experience it has earned, what it has
-    /// made, the ores it has mined and used up, and the walls it met.
+    /// made in all (what Craft and Cook goals count) and has in hand (what gets used up),
+    /// the ores it has mined and used up, the stations it has put down and the multiblocks
+    /// it has built, and the walls it met.
     #[derive(Clone)]
     struct Walk<'a> {
         content: &'a Content,
         quest: String,
         xp: crate::skill::Skills,
-        made: FxHashMap<crate::block::BlockId, u32>,
-        mined: FxHashMap<crate::block::BlockId, u32>,
-        used: FxHashMap<crate::block::BlockId, u32>,
+        made: FxHashMap<BlockId, u32>,
+        stock: FxHashMap<BlockId, u32>,
+        mined: FxHashMap<BlockId, u32>,
+        used: FxHashMap<BlockId, u32>,
+        stations: Vec<String>,
+        built: Vec<String>,
         walls: Vec<String>,
+        depth: u32,
     }
 
     impl Walk<'_> {
-        fn item(&self, name: &str) -> crate::block::BlockId {
+        fn item(&self, name: &str) -> BlockId {
             let blocks = &self.content.blocks;
             blocks.id(name).or_else(|| blocks.id(&format!("base:{name}"))).unwrap_or_else(|| panic!("{}: no item `{name}`", self.quest))
+        }
+
+        fn name(&self, id: BlockId) -> String {
+            self.content.blocks.def(id).name.clone()
         }
 
         /// A wall unless the line has reached `level` in `skill` by now.
@@ -506,7 +549,7 @@ mod tests {
         }
 
         /// Mined, in all, at least `total` of `ore`: what more that takes is mined now.
-        fn mine(&mut self, ore: crate::block::BlockId, total: u32, what: &str) {
+        fn mine(&mut self, ore: BlockId, total: u32, what: &str) {
             let had = self.mined.get(&ore).copied().unwrap_or(0);
             let Some(rule) = self.content.tools.rule(ore).filter(|_| total > had) else { return };
             self.mined.insert(ore, total);
@@ -515,65 +558,138 @@ mod tests {
             self.xp.grant(skill, (rule.xp * 10.0).round() as u32 * (total - had));
         }
 
-        /// Made, in all, at least `n` of `name`, `way`: the easiest recipe of that way, and
-        /// first the ores its batches use up (where nothing but a mined block will do).
-        fn make(&mut self, name: &str, n: u32, way: Way) {
+        /// The easiest recipe making `id` the given way, if any.
+        fn recipe(&self, id: BlockId, way: Way) -> Option<Batch> {
             let content = self.content;
-            let id = self.item(name);
-            let grid = || content.recipes.iter().filter(|r| r.output == id).min_by_key(|r| r.level).map(|r| {
-                let cells: Vec<Vec<crate::block::BlockId>> = r.alternatives().into_iter().flatten().map(|a| a.to_vec()).collect();
-                (r.skill, r.level, r.xp, r.count as u32, cells)
-            });
+            let grid = || {
+                content.recipes.iter().filter(|r| r.output == id).min_by_key(|r| r.level).map(|r| Batch {
+                    skill: r.skill,
+                    level: r.level,
+                    xp: r.xp,
+                    count: r.count as u32,
+                    cells: r.alternatives().into_iter().flatten().map(|a| a.to_vec()).collect(),
+                    station: r.needs_table().then(|| "crafting_table".to_owned()),
+                })
+            };
             let cooked = || {
                 let r = content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id).min_by_key(|r| r.def.level)?;
                 let inputs = content.cooking.iter().filter(|(_, other)| std::ptr::eq(*other, r)).map(|(input, _)| input).collect();
-                Some((r.skill, r.def.level, r.def.xp, 1, vec![inputs]))
+                Some(Batch { skill: r.skill, level: r.def.level, xp: r.def.xp, count: 1, cells: vec![inputs], station: Some(r.def.station.clone()) })
             };
-            let found = match way {
+            match way {
                 Way::Grid => grid(),
                 Way::Cooked => cooked(),
                 Way::Either => grid().or_else(cooked),
-            };
-            let Some((skill, level, xp, count, cells)) = found else { panic!("{}: no recipe makes `{name}` that way", self.quest) };
-            let had = self.made.get(&id).copied().unwrap_or(0);
-            let batches = n.saturating_sub(had).div_ceil(count);
-            if batches == 0 {
-                return;
-            }
-            self.made.insert(id, had + batches * count);
-            for accepts in cells {
-                let mined: Option<Vec<_>> = accepts.iter().map(|&b| content.tools.rule(b).filter(|r| r.skill.is_some()).map(|r| (b, r.level))).collect();
-                if let Some((ore, _)) = mined.and_then(|ores| ores.into_iter().min_by_key(|&(_, level)| level)) {
-                    let used = self.used.entry(ore).or_default();
-                    *used += batches;
-                    let total = *used;
-                    self.mine(ore, total, &format!("{name} using {}", content.blocks.def(ore).name));
-                }
-            }
-            if let Some(skill) = skill {
-                self.need(skill, level, name);
-                self.xp.grant(skill, (xp * 10.0).round() as u32 * batches);
             }
         }
 
-        /// The least of two routes: what both are sure to have earned, made and mined.
+        /// Makes `k` more of `id`, `way`: the easiest recipe, at its station, from what its
+        /// cells take (used up from what is in hand, or made, mined or gathered first).
+        fn produce(&mut self, id: BlockId, k: u32, way: Way) {
+            let name = self.name(id);
+            let Some(batch) = self.recipe(id, way) else { panic!("{}: no recipe makes `{name}` that way", self.quest) };
+            let batches = k.div_ceil(batch.count);
+            if batches == 0 {
+                return;
+            }
+            self.depth += 1;
+            assert!(self.depth < 24, "{}: making `{name}` goes round in a loop of recipes", self.quest);
+            if let Some(station) = &batch.station {
+                self.station(station);
+            }
+            for accepts in &batch.cells {
+                self.consume(accepts, batches, &name);
+            }
+            if let Some(skill) = batch.skill {
+                self.need(skill, batch.level, &name);
+                self.xp.grant(skill, (batch.xp * 10.0).round() as u32 * batches);
+            }
+            *self.made.entry(id).or_default() += batches * batch.count;
+            *self.stock.entry(id).or_default() += batches * batch.count;
+            self.depth -= 1;
+        }
+
+        /// Uses up `k` of what a cell takes, for `what`: a block only mining gives is mined
+        /// (the easiest of them); anything else a player gathers is gathered; otherwise the
+        /// easiest made one comes from what is in hand, the rest made now.
+        fn consume(&mut self, accepts: &[BlockId], k: u32, what: &str) {
+            let content = self.content;
+            let mined: Option<Vec<(BlockId, u8)>> = accepts.iter().map(|&b| content.tools.rule(b).filter(|r| r.skill.is_some()).map(|r| (b, r.level))).collect();
+            if let Some((ore, _)) = mined.and_then(|ores| ores.into_iter().min_by_key(|&(_, level)| level)) {
+                let used = self.used.entry(ore).or_default();
+                *used += k;
+                let total = *used;
+                self.mine(ore, total, &format!("{what} using {}", self.name(ore)));
+                return;
+            }
+            let made: Vec<(BlockId, u8)> = accepts.iter().filter_map(|&b| self.recipe(b, Way::Either).map(|r| (b, r.level))).collect();
+            if made.len() < accepts.len() {
+                return;
+            }
+            let Some(&(item, _)) = made.iter().min_by_key(|&&(_, level)| level) else { return };
+            let have = self.stock.get(&item).copied().unwrap_or(0);
+            let short = k.saturating_sub(have);
+            self.produce(item, short, Way::Either);
+            *self.stock.entry(item).or_default() -= k;
+        }
+
+        /// Puts down a station with `tag` once (the easiest block with it that is made), if
+        /// any block with it is made at all.
+        fn station(&mut self, tag: &str) {
+            if self.stations.iter().any(|s| s == tag) {
+                return;
+            }
+            self.stations.push(tag.to_owned());
+            let blocks = &self.content.blocks;
+            let made: Vec<BlockId> = blocks.tagged(tag).filter(|&b| self.recipe(b, Way::Either).is_some()).collect();
+            if !made.is_empty() {
+                self.consume(&made, 1, tag);
+            }
+        }
+
+        /// Builds the multiblock `name` once: every piece its cells take.
+        fn build(&mut self, name: &str) {
+            if self.built.iter().any(|b| b == name) {
+                return;
+            }
+            self.built.push(name.to_owned());
+            let content = self.content;
+            let multiblock = content.multiblocks.get(name).unwrap_or_else(|| panic!("{}: no multiblock `{name}`", self.quest));
+            for (accepts, n) in multiblock.pieces() {
+                self.consume(accepts, n, name);
+            }
+        }
+
+        /// The least of two routes: what both are sure to have earned, made, held, mined
+        /// and put down.
         fn least(self, other: Self) -> Self {
-            let both = |a: FxHashMap<crate::block::BlockId, u32>, b: &FxHashMap<crate::block::BlockId, u32>| -> FxHashMap<_, _> {
+            let both = |a: FxHashMap<BlockId, u32>, b: &FxHashMap<BlockId, u32>| -> FxHashMap<_, _> {
                 a.into_iter().map(|(k, v)| (k, v.min(b.get(&k).copied().unwrap_or(0)))).collect()
             };
             let mut xp = crate::skill::Skills::default();
             for id in self.content.skills.ids() {
                 xp.grant(id, self.xp.xp(id).min(other.xp.xp(id)));
             }
-            Walk { xp, made: both(self.made, &other.made), mined: both(self.mined, &other.mined), used: both(self.used, &other.used), ..self }
+            let common = |a: Vec<String>, b: &[String]| a.into_iter().filter(|x| b.contains(x)).collect();
+            Walk {
+                xp,
+                made: both(self.made, &other.made),
+                stock: both(self.stock, &other.stock),
+                mined: both(self.mined, &other.mined),
+                used: both(self.used, &other.used),
+                stations: common(self.stations, &other.stations),
+                built: common(self.built, &other.built),
+                ..self
+            }
         }
     }
 
     /// The main quest line, walked in order, reaches every level it asks for from what it
-    /// guarantees: quest rewards and the things it has the player make (each quest's own
-    /// crafts, cooks and ores, the pieces in `ALSO_MADE`, and the ores those recipes use
-    /// up, mined first). Where a quest has several routes, only what every route gives
-    /// counts. A level asked for before the walk has earned it is a wall: grinding
+    /// guarantees: quest rewards and the things it has the player make, all read from the
+    /// content (each quest's crafts, cooks and ores; the pieces of the multiblocks it
+    /// builds, its home among them; what each recipe uses up, made, mined or gathered
+    /// first; and the stations they need, the crafting table and kilns among them). Where
+    /// a quest has several routes, only what every route gives counts. A level asked for before the walk has earned it is a wall: grinding
     /// throwaway crafts to go on (design drafts 100 and 102 found the chimney, Engineering 5
     /// for copper and 10 for the crucible, and the tin in bronze at Mining 10).
     #[test]
@@ -596,32 +712,44 @@ mod tests {
             }
             i += 1;
         }
-        for (quest, _) in ALSO_MADE {
-            assert!(wanted.iter().any(|w| w == quest), "ALSO_MADE names {quest}, which the main line doesn't walk");
-        }
-        let mut walk = Walk { content: &content, quest: String::new(), xp: Default::default(), made: Default::default(), mined: Default::default(), used: Default::default(), walls: Vec::new() };
+        let mut walk = Walk {
+            content: &content,
+            quest: String::new(),
+            xp: Default::default(),
+            made: Default::default(),
+            stock: Default::default(),
+            mined: Default::default(),
+            used: Default::default(),
+            stations: Vec::new(),
+            built: Vec::new(),
+            walls: Vec::new(),
+            depth: 0,
+        };
         skills.start(&mut walk.xp);
         let mut done: Vec<String> = Vec::new();
         while done.len() < wanted.len() {
             let ready = |q: &&&crate::quest::QuestDef| !done.contains(&q.name) && wanted.contains(&q.name) && q.after.iter().all(|a| done.contains(a));
             let Some(quest) = quests.iter().find(ready) else { panic!("the main line can't go on after {done:?}") };
             walk.quest = quest.name.clone();
-            let also: Vec<&str> = ALSO_MADE.iter().filter(|(q, _)| *q == quest.name).flat_map(|(_, items)| items.iter().copied()).collect();
             // Each route on its own; then only what every open one is sure to give.
             let mut open: Option<Walk> = None;
             let mut first_walls = None;
             for task in &quest.tasks {
                 let mut route = walk.clone();
-                for name in &also {
-                    route.make(name, 1, Way::Either);
-                }
                 for goal in task {
                     match goal {
                         Goal::Craft(item, _) | Goal::Cook(item, _) if item == "any" => {}
                         Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::Have(item, _) if item.starts_with("tag:") => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
-                        Goal::Craft(item, n) => route.make(item, *n, Way::Grid),
-                        Goal::Cook(item, n) => route.make(item, *n, Way::Cooked),
-                        Goal::Have(item, n) => route.make(item, *n, Way::Either),
+                        Goal::Craft(item, n) | Goal::Cook(item, n) => {
+                            let id = route.item(item);
+                            let short = n.saturating_sub(route.made.get(&id).copied().unwrap_or(0));
+                            route.produce(id, short, if matches!(goal, Goal::Craft(..)) { Way::Grid } else { Way::Cooked });
+                        }
+                        Goal::Have(item, n) => {
+                            let id = route.item(item);
+                            let short = n.saturating_sub(route.stock.get(&id).copied().unwrap_or(0));
+                            route.produce(id, short, Way::Either);
+                        }
                         Goal::Mine(ore, n) => {
                             let ore = route.item(ore);
                             let what = format!("mining {}", content.blocks.def(ore).name);
@@ -631,7 +759,15 @@ mod tests {
                             let skill = skill_named(skill).unwrap_or_else(|| panic!("{}: no skill `{skill}`", quest.name));
                             route.need(skill, *n, "its own goal");
                         }
-                        Goal::Home | Goal::Visit(_) | Goal::Built(..) => {}
+                        Goal::Home => {
+                            let home = content.multiblocks.iter().find(|m| m.home).map(|m| m.name.clone());
+                            route.build(&home.unwrap_or_else(|| panic!("{}: no multiblock makes a home", quest.name)));
+                        }
+                        Goal::Built(name, _) => {
+                            let name = if name.contains(':') { name.clone() } else { format!("base:{name}") };
+                            route.build(&name);
+                        }
+                        Goal::Visit(_) => {}
                         Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
@@ -650,9 +786,12 @@ mod tests {
                 None => Walk { walls: first_walls.unwrap_or_default(), ..walk },
             };
             for reward in &quest.rewards {
-                if let Reward::Xp(name, amount) = reward {
-                    let skill = skill_named(name).unwrap_or_else(|| panic!("{}: no skill `{name}`", quest.name));
-                    walk.xp.grant(skill, (amount * 10.0).round() as u32);
+                match reward {
+                    Reward::Xp(name, amount) => {
+                        let skill = skill_named(name).unwrap_or_else(|| panic!("{}: no skill `{name}`", quest.name));
+                        walk.xp.grant(skill, (amount * 10.0).round() as u32);
+                    }
+                    Reward::Item(name, count) => *walk.stock.entry(walk.item(name)).or_default() += *count as u32,
                 }
             }
             done.push(quest.name.clone());

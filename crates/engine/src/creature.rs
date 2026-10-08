@@ -107,6 +107,27 @@ pub struct Attack {
     /// horns and hooves crush.
     #[serde(default)]
     pub style: crate::combat::Style,
+    /// Seconds it winds up before the blow lands, the tell a player can block or dodge
+    /// by, and seconds it recovers after, standing open to blows (unset, `combat::Feel`'s).
+    #[serde(default)]
+    pub windup: Option<f32>,
+    #[serde(default)]
+    pub recovery: Option<f32>,
+    /// A heavy blow goes through any guard: only a dodge escapes it.
+    #[serde(default)]
+    pub heavy: bool,
+    /// Blocks it lunges at its target as the blow lands, so backing off at a walk does not
+    /// escape it (unset, `combat::Feel`'s; quick animals more, big ones less).
+    #[serde(default)]
+    pub lunge: Option<f32>,
+    /// How fast it follows its target through the first part of a wind-up (unset,
+    /// `combat::Feel`'s, a run; slow creatures walk).
+    #[serde(default)]
+    pub pace: Option<crate::combat::Pace>,
+    /// What it adds to its attack roll (unset, `combat::Feel::creature_accuracy` of its
+    /// level), as a weapon's accuracy does a player's.
+    #[serde(default)]
+    pub accuracy: Option<u16>,
 }
 
 fn reach() -> f32 {
@@ -532,17 +553,33 @@ pub struct Limits {
     /// At most this many animals, and this many monsters, near each player.
     pub animals_near: usize,
     pub monsters_near: usize,
+    /// Seconds between spawn attempts around each player, one spot an attempt.
+    pub spawn_every: f32,
+    /// How far from the player a spot may lie, in blocks: no nearer than `spawn_near` (so
+    /// nothing appears at their feet) and no further than `spawn_far`. Nearer spots put
+    /// more of what the caps allow within sight.
+    pub spawn_near: f32,
+    pub spawn_far: f32,
+    /// How heavy "nothing here" weighs against the species that suit a spot (each weighs
+    /// its biome, climate, rarity and the hour, about 1 for a common one at home): an
+    /// attempt where only monsters suit it (a dark place) or where animals do. Higher
+    /// leaves more spots empty.
+    pub empty_for_monsters: f32,
+    pub empty_for_animals: f32,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 6, monsters_near: 6 }
+        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
     }
 }
 
 crate::content::settable! {
     /// The limits one package sets: any of them.
-    SetLimits for Limits { most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize }
+    SetLimits for Limits {
+        most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize,
+        spawn_every: f32, spawn_near: f32, spawn_far: f32, empty_for_monsters: f32, empty_for_animals: f32,
+    }
 }
 
 impl Limits {
@@ -552,6 +589,15 @@ impl Limits {
         let error = |why: String| Err(RegistryError(format!("creature limits: {why}")));
         if self.wild_most == 0 {
             return error("`wild_most` must be at least 1".into());
+        }
+        if !(self.spawn_every.is_finite() && self.spawn_every >= 0.05) {
+            return error(format!("`spawn_every` ({}) must be at least 0.05 seconds", self.spawn_every));
+        }
+        if !(self.spawn_near.is_finite() && self.spawn_near >= 0.0 && self.spawn_far.is_finite() && self.spawn_far > self.spawn_near) {
+            return error(format!("`spawn_far` ({}) must be more than `spawn_near` ({}), which is 0 or more", self.spawn_far, self.spawn_near));
+        }
+        if !(self.empty_for_monsters.is_finite() && self.empty_for_monsters >= 0.0 && self.empty_for_animals.is_finite() && self.empty_for_animals >= 0.0) {
+            return error("`empty_for_monsters` and `empty_for_animals` must be 0 or more".into());
         }
         if self.animals_near + self.monsters_near > self.wild_most {
             return error(format!(
@@ -889,13 +935,6 @@ pub fn daylight(day: u64) -> f32 {
     ((elevation + 0.1) / 0.35).clamp(0.0, 1.0)
 }
 
-/// A creature's chance to hit, RuneScape-style: attack and defence rolls from levels.
-pub fn hit_chance(attack_level: u8, defence_level: u8) -> f32 {
-    let a = (attack_level as f32 + 8.0) * 64.0;
-    let d = (defence_level as f32 + 8.0) * 64.0;
-    if a > d { 1.0 - (d + 2.0) / (2.0 * (a + 1.0)) } else { a / (2.0 * (d + 1.0)) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -982,6 +1021,12 @@ mod tests {
             Limits { wild_most: 10, ..ok },
             Limits { most: ok.wild_most + ok.keepers * ok.kept_each - 1, ..ok },
             Limits { keepers: usize::MAX, ..ok },
+            Limits { spawn_every: 0.0, ..ok },
+            Limits { spawn_far: ok.spawn_near, ..ok },
+            Limits { spawn_near: -1.0, ..ok },
+            Limits { spawn_every: f32::NAN, ..ok },
+            Limits { empty_for_monsters: f32::INFINITY, ..ok },
+            Limits { empty_for_animals: -1.0, ..ok },
         ] {
             let blocks = BlockRegistry::new(vec![]).unwrap();
             assert!(CreatureRegistry::new(Vec::new(), Rules { limits: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
@@ -1029,12 +1074,5 @@ mod tests {
         assert!(daylight(0) > 0.0 && daylight(0) < 1.0);
         assert!(daylight(16_000) > 0.0 && daylight(16_000) < 1.0);
         assert_eq!(daylight(30_000), 1.0);
-    }
-
-    #[test]
-    fn hits_follow_levels() {
-        assert!((hit_chance(1, 1) - 0.4975).abs() < 0.01);
-        assert!(hit_chance(60, 1) > 0.9);
-        assert!(hit_chance(1, 60) < 0.1);
     }
 }

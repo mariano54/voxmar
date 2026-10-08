@@ -211,8 +211,10 @@ impl RecipeRegistry {
         let mut recipes = Vec::new();
         let crafting = skills.id("core:crafting");
         for def in defs {
-            // The single item names, for families (`tag:` and `a|b` cells stand apart).
-            let names: Vec<&String> = def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.starts_with("tag:") && !n.contains('|')).collect();
+            // The single item names, for families (`tag:` and `a|b` cells stand apart, and an
+            // empty cell is no item: with it in, no name fits and the family has no recipes).
+            let names: Vec<&String> =
+                def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.is_empty() && !n.starts_with("tag:") && !n.contains('|')).collect();
             let bad = |what: &str| RegistryError(format!("recipe for {}: {what}", def.output));
             if def.pattern.len() > SIDE || def.pattern.iter().any(|row| row.len() > SIDE || row.len() != def.pattern[0].len()) {
                 return Err(bad("a pattern is up to three rows of three"));
@@ -282,6 +284,13 @@ impl RecipeRegistry {
     /// The recipe the grid holds, if any.
     pub fn find(&self, grid: &[Option<BlockId>; GRID]) -> Option<&Recipe> {
         self.recipes.iter().find(|recipe| recipe.matches(grid))
+    }
+
+    /// What each craft of the grid makes while it still holds `first`, the recipe it held
+    /// when the player crafted: crafting all stops once what is left makes another recipe.
+    /// The server judges a craft by this, and the client predicts it the same way.
+    pub fn while_making<'a>(&'a self, first: Option<&'a Recipe>) -> impl Fn(&[Option<BlockId>; GRID]) -> Option<(BlockId, u8)> + 'a {
+        move |grid| self.find(grid).filter(|r| first.is_some_and(|f| std::ptr::eq(*r, f))).map(|r| (r.output, r.count))
     }
 
     /// Every recipe, in the order packages list them.
@@ -380,6 +389,14 @@ mod tests {
     }
 
     #[test]
+    fn a_family_pattern_may_have_empty_cells() {
+        let item = |name: &str| BlockDef { name: name.into(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![item("test:oak_planks"), item("test:birch_planks"), item("test:stick"), item("test:oak_axe"), item("test:birch_axe")]).unwrap();
+        let registry = registry(&blocks, r#"(recipes: [(pattern: [["{name}_planks", "{name}_planks"], ["", "stick"]], output: "{name}_axe")])"#);
+        assert_eq!(registry.len(), 2, "an empty cell is no name to fit");
+    }
+
+    #[test]
     fn cells_may_take_any_item_with_a_tag_or_either_of_two() {
         let tagged = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
         let blocks = BlockRegistry::new(vec![
@@ -409,5 +426,33 @@ mod tests {
         // The viewer shows the first of each cell's choices.
         assert_eq!(fire.cells()[..3], [id("oak_log"), id("oak_log"), id("stick")]);
         assert_eq!(fire.alternatives()[0].map(<[BlockId]>::len), Some(2));
+    }
+
+    #[test]
+    fn crafting_all_stops_when_what_is_left_makes_another_recipe() {
+        use crate::inventory::{Inventory, ItemStack};
+        let blocks = blocks();
+        let source = r#"(recipes: [
+            (ingredients: ["oak_log", "stone"], output: "bread"),
+            (ingredients: ["oak_log"], output: "oak_planks", count: 4),
+        ])"#;
+        let registry = registry(&blocks, source);
+        let id = |name: &str| blocks.id(&format!("test:{name}")).unwrap();
+        // Four logs and one stone: one loaf, and then the logs alone would make planks.
+        let mut inventory = Inventory::default();
+        inventory.craft[0] = Some(ItemStack { item: id("oak_log"), count: 4 });
+        inventory.craft[1] = Some(ItemStack { item: id("stone"), count: 1 });
+        let first = registry.find(&inventory.grid());
+        assert_eq!(first.map(|r| r.output), Some(id("bread")));
+        assert_eq!(inventory.craft(registry.while_making(first), true), 1);
+        assert_eq!(inventory.craft[0].map(|s| s.count), Some(3), "the logs left are not made into planks");
+        let carried = |inventory: &Inventory, item| inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+        assert_eq!((carried(&inventory, id("bread")), carried(&inventory, id("oak_planks"))), (1, 0));
+        // Nothing held, nothing made.
+        assert_eq!(inventory.craft(registry.while_making(None), true), 0);
+        // The planks recipe, held from the start, crafts all three.
+        let first = registry.find(&inventory.grid());
+        assert_eq!(inventory.craft(registry.while_making(first), true), 3);
+        assert_eq!(carried(&inventory, id("oak_planks")), 12);
     }
 }

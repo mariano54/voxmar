@@ -33,6 +33,7 @@ use crate::content::{BiomeDef, Comfort, Habitat, PlantDef, Select, Spread, TreeD
 use crate::hue;
 use crate::dials::WorldDials;
 use crate::geology::{noise, smoothstep};
+use crate::levels::capped;
 use crate::rarity::{Rarity, Tier};
 use crate::rng::hash3;
 use crate::trees::TreeId;
@@ -309,10 +310,22 @@ impl Ecology {
             .collect();
         let properties = content.plants.iter().map(|p| plant_properties(content, p, registry)).collect();
 
+        // Each biome's level makes its rarer plants and gathering trees commoner
+        // (`crate::levels`); other trees, the canopy's own kinds, keep their shares (no class
+        // the levels scale).
+        let scaled = |t: &TreeDef| t.tags.iter().any(|tag| content.climate.levels.trees.contains(tag));
+        let tree_class: Vec<Option<Rarity>> = content.trees.iter().map(|t| scaled(t).then_some(t.rarity)).collect();
+        let plant_class: Vec<Option<Rarity>> = content.plants.iter().map(|p| Some(plant_rarity_of(p))).collect();
         let flora: Vec<Flora> = content
             .biomes
             .iter()
-            .map(|biome| Flora::new(biome, content, registry, &tree_rarity, &plant_rarity))
+            .map(|biome| {
+                let levels = &content.climate.levels;
+                let at_level = |classes: &[Option<Rarity>], rarity: &[f32]| -> Vec<f32> {
+                    classes.iter().zip(rarity).map(|(class, &m)| class.map_or(m, |class| capped(class, m * levels.finds(biome.level, class)))).collect()
+                };
+                Flora::new(biome, content, registry, &at_level(&tree_class, &tree_rarity), &at_level(&plant_class, &plant_rarity), &plant_rarity)
+            })
             .collect();
         let edges = flora.iter().any(|f| !f.edge_herbs.is_empty());
 
@@ -808,7 +821,9 @@ fn choose(list: &[(PlantId, f32)], total: f32, u: f32, grows: impl Fn(PlantId) -
 
 impl Flora {
     /// Resolves a biome's selectors against the pools, once per world.
-    fn new(biome: &BiomeDef, content: &WorldContent, registry: &BlockRegistry, tree_rarity: &[f32], plant_rarity: &[f32]) -> Self {
+    /// `tree_rarity` and `plant_rarity` are the pools' rarities at the biome's level;
+    /// `herb_rarity` the plants' own, for the rare herbs, whose rates are set per biome.
+    fn new(biome: &BiomeDef, content: &WorldContent, registry: &BlockRegistry, tree_rarity: &[f32], plant_rarity: &[f32], herb_rarity: &[f32]) -> Self {
         let def = &biome.flora;
         // The palette: the colours of the biome's grass and foliage, the canopy's anchor
         // and the flowers' where data sets them.
@@ -868,8 +883,9 @@ impl Flora {
                     }
                     continue;
                 }
-                let wonder = def.wonders.as_deref().map_or(0.0, named) * plant_rarity[i];
-                let weight = named(&def.plants) * plant_rarity[i];
+                // Rare herbs keep draft 89 rates independently of biome level.
+                let wonder = def.wonders.as_deref().map_or(0.0, named) * herb_rarity[i];
+                let weight = named(&def.plants) * herb_rarity[i];
                 if wonder > 0.0 {
                     flora.wonder_plants.push((id, wonder));
                 } else if weight > 0.0 {
@@ -1156,5 +1172,65 @@ mod tests {
         let dandelion = ecology.plant_properties("base:dandelion").unwrap();
         assert_eq!((dandelion.dye.as_deref(), dandelion.alchemy.clone(), dandelion.nutrition), (Some("yellow"), vec!["healing".to_owned()], 1.0));
         assert_eq!(ecology.plant_properties("base:red_mushroom").unwrap().alchemy, vec!["poison".to_owned()]);
+    }
+
+    /// A biome's level makes its rarer plants and gathering trees commoner by the levels
+    /// table and keeps its common plants at two thirds above level 1 (P15), within two tiers
+    /// of their own rarity; other trees keep their shares, and rare herbs the rates design
+    /// set for their biome.
+    #[test]
+    fn a_biome_s_level_scales_its_finds() {
+        let registry = registry();
+        let content = content(&[], &registry);
+        let mut higher = content.clone();
+        let plains = content.biomes.iter().position(|b| b.name == "base:plains").unwrap();
+        assert_eq!(content.biomes[plains].level, 1);
+        higher.biomes[plains].level = 5;
+        let dials = WorldDials::sample(1);
+        let (low, high) = (Ecology::new(1, &dials, &content, &registry), Ecology::new(1, &dials, &higher, &registry));
+        let levels = &content.climate.levels;
+        let plant_class = |p: PlantId| {
+            let def = &content.plants[p.0 as usize];
+            def.rarity.unwrap_or_else(|| registry.def(registry.expect(&def.block)).rarity)
+        };
+        let (flora_low, flora_high) = (&low.flora[plains], &high.flora[plains]);
+        let mut seen = [0; 5];
+        for (a, b) in [(&flora_low.carpet, &flora_high.carpet), (&flora_low.drifts, &flora_high.drifts), (&flora_low.alone, &flora_high.alone)] {
+            assert_eq!(a.len(), b.len());
+            for (&(plant, w1), &(other, w5)) in a.iter().zip(b) {
+                assert_eq!(plant, other);
+                let class = plant_class(plant);
+                let m = low.rarity[plant.0 as usize];
+                let want = capped(class, m * levels.finds(5, class)) / capped(class, m);
+                assert!((w5 / w1 - want).abs() < 1e-3 * want, "{} ({class:?}): {w1} at level 1, {w5} at level 5, wanted ×{want}", low.plant_names[plant.0 as usize]);
+                seen[class as usize] += 1;
+            }
+        }
+        // Plains grow commons and rarer finds alike, so both rules were tried.
+        assert!(seen[0] > 0 && seen[1..].iter().sum::<i32>() > 0, "{seen:?}");
+        let commons = flora_low.alone.iter().zip(&flora_high.alone).find(|((p, _), _)| plant_class(*p) == Rarity::Common);
+        assert!(commons.is_some_and(|((_, w1), (_, w5))| (w5 / w1 - 0.67).abs() < 1e-3));
+        // Gathering trees too; the canopy's own kinds keep their shares.
+        let mut gathering = 0;
+        for (&(tree, w1), &(_, w5)) in flora_low.canopy.iter().zip(&flora_high.canopy) {
+            let def = &content.trees[tree.0 as usize];
+            if def.tags.iter().any(|t| t == "gathering") {
+                gathering += 1;
+                // Rarer finds rise; a common one keeps two thirds, as the commons among plants do.
+                let common = def.rarity == Rarity::Common;
+                assert!(if common { (w5 / w1 - 0.67).abs() < 1e-3 } else { w5 > w1 }, "{} ({:?}): {w1} to {w5}", def.name, def.rarity);
+            } else {
+                assert_eq!(w5, w1, "{} keeps its share", def.name);
+            }
+        }
+        assert!(gathering > 0 && gathering < flora_low.canopy.len(), "plains' forest has gathering trees and others");
+        // A rare herb's biome may sit at any level; its rate stays as design set it.
+        let herb = |p: &PlantId| content.plant_tags(&content.plants[p.0 as usize], &registry).any(|t| t == "rare_herb");
+        let home = content.biomes.iter().position(|b| b.flora.plants.iter().any(|s| matches!(s, Select::Name(n, _) if n == "base:windroot"))).expect("windroot grows somewhere");
+        let mut wild = content.clone();
+        wild.biomes[home].level = 9;
+        let wild = Ecology::new(1, &dials, &wild, &registry);
+        let herbs = |e: &Ecology| [&e.flora[home].alone, &e.flora[home].carpet, &e.flora[home].drifts, &e.flora[home].wonder_plants].into_iter().flatten().filter(|(p, _)| herb(p)).copied().collect::<Vec<_>>();
+        assert!(!herbs(&low).is_empty() && herbs(&low) == herbs(&wild), "{:?} against {:?}", herbs(&low), herbs(&wild));
     }
 }

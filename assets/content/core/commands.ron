@@ -80,6 +80,20 @@
             run: Kill,
         ),
         (
+            name: "op",
+            usage: "<player>",
+            help: "Makes an online player an admin until they leave or /deop. Names are not checked, so admins named when the server starts count only when playing on its own machine (a tunnel that forwards players from elsewhere makes everyone look local); the server's admin token counts from anywhere.",
+            permission: Admin,
+            run: Op,
+        ),
+        (
+            name: "deop",
+            usage: "<player>",
+            help: "Takes an online player's admin rights away until they leave. One named when the server started, or with its admin token, is an admin again when they come back.",
+            permission: Admin,
+            run: Deop,
+        ),
+        (
             name: "clear",
             usage: "[item]",
             help: "Empties your inventory, or takes every one of an item out of it.",
@@ -122,8 +136,8 @@
         ),
         (
             name: "creatures",
-            usage: "[tame | ready | hasten | hold | kill]",
-            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, or kill them.",
+            usage: "[tame | ready | hasten | hold | kill | remove] [creature]",
+            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, kill them, or take away the ones they keep; only of one species, if they name it.",
             run: Creatures,
         ),
         (
@@ -132,6 +146,12 @@
             help: "Sets your level in a skill (farming, hunter, cooking, attack…), from 1 to the highest.",
             permission: Admin,
             run: Skill,
+        ),
+        (
+            name: "machine",
+            usage: "<x> <y> <z>",
+            help: "Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.",
+            run: Machine,
         ),
     ],
     // Real minutes a whole day takes at normal speed: the sun is up for two thirds of it.
