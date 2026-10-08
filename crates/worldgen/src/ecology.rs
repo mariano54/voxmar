@@ -989,7 +989,9 @@ mod tests {
             let def = &content.trees[tree.0 as usize];
             if def.tags.iter().any(|t| t == "gathering") {
                 gathering += 1;
-                assert!(w5 > w1, "{} ({:?}): {w1} to {w5}", def.name, def.rarity);
+                // Rarer finds rise; a common one keeps two thirds, as the commons among plants do.
+                let common = def.rarity == Rarity::Common;
+                assert!(if common { (w5 / w1 - 0.67).abs() < 1e-3 } else { w5 > w1 }, "{} ({:?}): {w1} to {w5}", def.name, def.rarity);
             } else {
                 assert_eq!(w5, w1, "{} keeps its share", def.name);
             }
