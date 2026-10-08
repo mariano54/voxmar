@@ -20,10 +20,14 @@
 (
     // How many creatures the world holds (docs/creature-data.md): 512 wild, and 64 kept
     // animals for each player, herds and pets together (Design, draft 91); `most` makes
-    // room for the wild ones and 8 keepers' animals. Animals near a player were 12: halved
-    // (Mariano, 2026-10-07: "too many animals, the world is too crowded"), so the land
-    // feels wild and an animal is something to come upon.
-    limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 6, monsters_near: 6),
+    // room for the wild ones and 8 keepers' animals. Animals near a player were 12, halved
+    // (Mariano, 2026-10-07: "too many animals, the world is too crowded") and then found
+    // too empty (2026-10-08: "we need more mobs spawning, world is feeling a bit dead"):
+    // the halved cap of 6 was always full, and only about one within 32 blocks. Now 12 (the
+    // number called too crowded, but with spots 20 to 40 blocks out instead of 56, more of
+    // them in sight) and 8 monsters near a player, an attempt every 1.5 s, and a spot left
+    // empty less often (measured in creatures.rs density_tests, `wild_density_probe`).
+    limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5),
     // A creature's blow that misses trains Defence only from a creature the player landed a
     // damaging blow on within the last 10 seconds, and of at least half their Defence level
     // (design wiki draft 63), so it can't be trained standing among cave bats.
