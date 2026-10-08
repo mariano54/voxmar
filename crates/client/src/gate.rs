@@ -2233,6 +2233,14 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         19 => {
             let k = gate.kiln;
             let (furnace, wheel, oven) = (k, k + IVec3::new(3, 0, 0), k + IVec3::new(-3, 1, 1));
+            let vantage = k.as_vec3() + Vec3::new(0.0, 4.0, 11.0);
+            // "at N% power" or "N% done" above nought in a /machine answer.
+            let blown = |said: &str| {
+                said.trim_end_matches('.').split(", ").any(|part| {
+                    let number = part.strip_prefix("at ").and_then(|p| p.strip_suffix("% power")).or_else(|| part.strip_suffix("% done"));
+                    number.and_then(|n| n.parse::<f32>().ok()).is_some_and(|n| n > 0.0)
+                })
+            };
             let teardown = move |world: &mut World| {
                 let (a, b) = (k + IVec3::new(-4, -1, -1), k + IVec3::new(4, 3, 3));
                 let net = world.resource::<Net>();
@@ -2247,6 +2255,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
             let said: Vec<String> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
             let stage = gate.machines_stage;
+            // Flying until the teleport to the vantage lands (as the sky step does).
+            if stage == 5 && world.resource::<LocalPlayer>().position.distance(vantage) >= 1.0 {
+                world.resource_mut::<LocalPlayer>().flying = true;
+            }
             let client = world.resource::<ClientWorld>();
             if client.block(oven) != client.registry.id("base:coke_oven") || client.block(wheel) != client.registry.id("base:treadwheel") {
                 if in_phase > WORKSHOP_WAIT && gate.server_now - gate.machines_since > 10.0 {
@@ -2270,7 +2282,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 0 | 2 | 3 => put_in,
                 // Names compared without case, so a renamed capital doesn't stall the step.
                 1 => said.iter().any(|r| r.to_lowercase().contains("making coke")),
-                _ => said.iter().any(|r| r.to_lowercase().contains("making iron ingot")),
+                // Making iron with the wheel's power, not only started: power or progress
+                // above none (`machine.working_powered`), asked on the server's clock.
+                4 => said.iter().any(|r| r.to_lowercase().contains("making iron ingot") && blown(r)),
+                // Up where both works show, for the shot.
+                _ => world.resource::<LocalPlayer>().position.distance(vantage) < 1.0,
             };
             if done {
                 let net = world.resource::<Net>();
@@ -2281,9 +2297,16 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         net.command("give coke 1");
                     }
                     2 | 3 => {}
+                    // Back and up, south of the works (the oven's face, the aurochs' side),
+                    // flying, for the shot.
+                    4 => {
+                        net.command(&format!("tp {} {} {}", vantage.x, vantage.y, vantage.z));
+                        world.resource_mut::<LocalPlayer>().flying = true;
+                    }
                     _ => {
-                        // Both structures in view, between them.
-                        aim(world, k + IVec3::new(-1, 1, 0));
+                        // Both works in view: the oven west, the furnace's shaft, its wheel
+                        // and the aurochs east.
+                        aim(world, k + IVec3::new(-1, 0, 0));
                         if gate.shot(world, "iron_age").is_none() {
                             return;
                         }
@@ -2291,6 +2314,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                             "workshop: iron age",
                             Ok("a coal in the Coke Oven set it baking coke; two iron ore and a coke in the Blast Furnace, blown by an aurochs on the treadwheel, set it making iron".into()),
                         );
+                        world.resource_mut::<LocalPlayer>().flying = false;
                         teardown(world);
                         end_workshop(world, gate, now);
                         return;
@@ -2338,9 +2362,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     "the coke oven never said it was making coke",
                     "the blast furnace never took the iron ore",
                     "the blast furnace never took the coke",
-                    "the blast furnace never said it was making iron",
-                ][stage.min(4) as usize];
+                    "the blast furnace never said it was making iron with power",
+                    "the player never reached the place for the shot",
+                ][stage.min(5) as usize];
                 let waited = (gate.server_now - gate.machines_since, in_phase);
+                world.resource_mut::<LocalPlayer>().flying = false;
                 teardown(world);
                 fail(world, gate, "iron age", format!("{what} ({:.1} server s, {:.1} game s): holding coal {coal}, iron ore {ore}, coke {coke}; /machine said {said:?}", waited.0, waited.1));
             }
