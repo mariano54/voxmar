@@ -1,5 +1,7 @@
 // The bands biomes are placed by, shared with everything else that switches on climate
 // (terrain shapes, later): moving an edge here moves every biome and shape along it.
+// A later package's climate.ron names only what it changes (`(scales: (aether: 3000.0))`),
+// laid over this one field by field; the load log says what it replaced.
 // Each axis has one more band name than edges; `names[i]` lies below `edges[i]`.
 //
 // - temperature: °C at the land's regional elevation (hills and terrain features left out);

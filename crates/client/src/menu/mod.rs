@@ -4,7 +4,7 @@
 
 mod background;
 mod create;
-mod join;
+pub(crate) mod join;
 pub mod loading;
 mod title;
 mod worlds;

@@ -232,7 +232,7 @@
             light_filter: 2,
             hardness: -1.0,
             color: (63, 118, 228),
-            fluid: (tick: 5, drop: 1, slope: 4, infinite: true, pools: true, currents: true),
+            fluid: (tick: 5, drop: 1, slope: 4, infinite: true, pools: true, currents: true, swim: true),
         ),
         // Glowing and slow. Its flows crust over with basalt where they stop, and water
         // quenches it: a source to obsidian, flowing lava to basalt, and the water it pours
