@@ -31,7 +31,7 @@ pub(super) static PLACE_FAILS: [std::sync::atomic::AtomicU32; 8] = [const { std:
 #[cfg(test)]
 thread_local! {
     static PROFILE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static LANE_COUNTS: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+    static LANE_COUNTS: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };
 }
 
 /// Optional coarse CPU measurements, only while the release budget replans a known cell.
@@ -246,6 +246,11 @@ const LANE_CHUNK: usize = 16;
 const LANE_SAMPLE_LIMIT: usize = 16_384;
 
 impl Lane {
+    /// Drawing-only paths do not need rectangle-clearance samples.
+    fn bare(points: Vec<Vec2>, half: f32, paved: bool, main: bool) -> Self {
+        Self { points, half, paved, main, samples: None }
+    }
+
     fn new(points: Vec<Vec2>, half: f32, paved: bool, main: bool) -> Self {
         let count = points.windows(2).try_fold(0usize, |total, w| {
             let n = (w[0].distance(w[1]).ceil() as i32).max(1) as usize;
@@ -293,6 +298,8 @@ impl Lane {
         let mut evaluations = 0;
         #[cfg(test)]
         let mut skips = 0;
+        #[cfg(test)]
+        let mut bounds_tested = 0;
         let mut point = |p| {
             #[cfg(test)]
             if profiling { evaluations += 1; }
@@ -302,6 +309,8 @@ impl Lane {
             let lo = rect.min.as_vec2() - 0.5;
             let hi = rect.max.as_vec2() + 0.5;
             samples.points.chunks(LANE_CHUNK).zip(&samples.bounds).any(|(chunk, &(min, max))| {
+                #[cfg(test)]
+                if profiling { bounds_tested += 1; }
                 let lower = (lo - max).max(min - hi).max(Vec2::ZERO).length();
                 if !test(lower) {
                     #[cfg(test)]
@@ -318,7 +327,7 @@ impl Lane {
         };
         #[cfg(test)]
         if profiling {
-            let counts = [1, evaluations, skips];
+            let counts = [1, evaluations, skips, bounds_tested];
             LANE_COUNTS.with(|c| c.set(std::array::from_fn(|i| c.get()[i] + counts[i])));
         }
         found
@@ -808,11 +817,11 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
     #[cfg(test)]
     if time.is_some() {
         let lane = LANE_COUNTS.with(|c| c.get());
-        eprintln!("  layout {}: ground queries {}, hits {}, misses {}, clears {}, level calls {}; lane checks {}, point distances {}, chunks skipped {}",
+        eprintln!("  layout {}: ground queries {}, hits {}, misses {}, clears {}, level calls {}; lane checks {}, point distances {}, bound distances {}, chunks skipped {}",
             if result.is_some() { "accepted" } else { "rejected" }, ground.queries - before.0,
             (ground.queries - before.0) - (ground.misses - before.1), ground.misses - before.1,
             ground.clears - before.2, ground.levels - before.3,
-            lane[0] - before.4[0], lane[1] - before.4[1], lane[2] - before.4[2]);
+            lane[0] - before.4[0], lane[1] - before.4[1], lane[3] - before.4[3], lane[2] - before.4[2]);
         phase_end("layout total (including rejected attempts)", time);
     }
     result
@@ -1590,7 +1599,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     for lot in &lots {
         if let Some((door, to)) = lot.door {
             let from = door.as_vec2();
-            let path = Lane::new(vec![from, to], 0.5, false, false);
+            let path = Lane::bare(vec![from, to], 0.5, false, false);
             raster.lane(&path);
         }
     }
@@ -2446,7 +2455,11 @@ mod level_tests {
         }
         let oversized = make(vec![Vec2::splat(10.0), Vec2::new(20_000.0, 10.0)]);
         assert!(oversized.samples.is_none(), "oversized sequences must use exact on-demand sampling");
-        assert_eq!(oversized.rect_any(&rect, |d| d < 10.0), oversized.rect_distance(&rect) < 10.0);
+        let distance = oversized.rect_distance(&rect);
+        for reach in [10.0, 20.0, distance.next_down(), distance, distance.next_up()] {
+            assert_eq!(oversized.rect_any(&rect, |d| d < reach), distance < reach);
+            assert_eq!(oversized.rect_any(&rect, |d| d <= reach), distance <= reach);
+        }
         let near = make(vec![Vec2::ONE, Vec2::splat(1000.0)]);
         profile(true);
         let before = LANE_COUNTS.with(|c| c.get());
