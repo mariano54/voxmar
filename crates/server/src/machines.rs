@@ -248,7 +248,7 @@ impl Server {
                 let keeps = |wheel_owner: &Option<String>, animal_owner: &Option<String>| animal_owner.is_some() && (wheel_owner.is_none() || wheel_owner == animal_owner);
                 // Only one that would put work in (kept, grown and fed, by the condition rules
                 // in creatures.ron: `Server::working_share`).
-                let walker = self.creatures.live.iter().find(|(&id, c)| {
+                let walker = self.creatures.live.iter().find(|&(&id, c)| {
                     let at = c.body.position;
                     let Some(here) = reach(pos, at) else { return false };
                     // Nearer wheels it may walk, or as near and first in order, take the animal.
