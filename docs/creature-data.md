@@ -43,7 +43,8 @@ one's, and the load log names both packages and the numbers replaced, so a mod t
 without forking base (the project-wide rule for single-valued data, Design draft 91):
 
 ```ron
-limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 6, monsters_near: 6),
+limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 14, monsters_near: 8,
+         spawn_every: 1.5, empty_for_monsters: 1.5, empty_for_animals: 2.5),
 ```
 
 Wild creatures and kept animals have budgets of their own, so a big ranch never stops wild
@@ -62,6 +63,11 @@ animals and monsters spawning for anyone:
   still waiting in the save, so those always have room to come back; past `keepers`
   players at their cap, wild ones get fewer.
 - `animals_near` and `monsters_near` cap each kind within 64 blocks of a player.
+- `spawn_every` is the seconds between spawn attempts around each player (one spot an
+  attempt, 20 to 56 blocks out), and `empty_for_animals` / `empty_for_monsters` how heavy
+  "nothing here" weighs against the species that suit the spot (a common one at home weighs
+  about 1), so a higher number leaves more spots empty. Together with the caps these set
+  how full the land feels.
 
 What no package sets keeps the defaults above.
 

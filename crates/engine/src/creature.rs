@@ -532,17 +532,28 @@ pub struct Limits {
     /// At most this many animals, and this many monsters, near each player.
     pub animals_near: usize,
     pub monsters_near: usize,
+    /// Seconds between spawn attempts around each player, one spot an attempt.
+    pub spawn_every: f32,
+    /// How heavy "nothing here" weighs against the species that suit a spot (each weighs
+    /// its biome, climate, rarity and the hour, about 1 for a common one at home): an
+    /// attempt where only monsters suit it (a dark place) or where animals do. Higher
+    /// leaves more spots empty.
+    pub empty_for_monsters: f32,
+    pub empty_for_animals: f32,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 6, monsters_near: 6 }
+        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 14, monsters_near: 8, spawn_every: 1.5, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
     }
 }
 
 crate::content::settable! {
     /// The limits one package sets: any of them.
-    SetLimits for Limits { most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize }
+    SetLimits for Limits {
+        most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize,
+        spawn_every: f32, empty_for_monsters: f32, empty_for_animals: f32,
+    }
 }
 
 impl Limits {
@@ -552,6 +563,12 @@ impl Limits {
         let error = |why: String| Err(RegistryError(format!("creature limits: {why}")));
         if self.wild_most == 0 {
             return error("`wild_most` must be at least 1".into());
+        }
+        if !(self.spawn_every.is_finite() && self.spawn_every >= 0.05) {
+            return error(format!("`spawn_every` ({}) must be at least 0.05 seconds", self.spawn_every));
+        }
+        if !(self.empty_for_monsters.is_finite() && self.empty_for_monsters >= 0.0 && self.empty_for_animals.is_finite() && self.empty_for_animals >= 0.0) {
+            return error("`empty_for_monsters` and `empty_for_animals` must be 0 or more".into());
         }
         if self.animals_near + self.monsters_near > self.wild_most {
             return error(format!(
@@ -982,6 +999,8 @@ mod tests {
             Limits { wild_most: 10, ..ok },
             Limits { most: ok.wild_most + ok.keepers * ok.kept_each - 1, ..ok },
             Limits { keepers: usize::MAX, ..ok },
+            Limits { spawn_every: 0.0, ..ok },
+            Limits { empty_for_animals: -1.0, ..ok },
         ] {
             let blocks = BlockRegistry::new(vec![]).unwrap();
             assert!(CreatureRegistry::new(Vec::new(), Rules { limits: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
