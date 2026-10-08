@@ -3,6 +3,7 @@
 
 mod actions;
 mod commands;
+mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
 pub use commands::{weather_name, weather_numbers};
 mod cooking;
@@ -292,10 +293,14 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
-    /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
+    /// Cells whose block a player placed: ores, which then teach nothing; plants, which
+    /// don't regrow by themselves; and furnishings, which give themselves back only from
+    /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
-    /// Picked wild plants waiting to grow back (see `regrow`).
+    /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
+    /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
+    planter_grown: FxHashSet<IVec3>,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
     /// Animals and monsters about.
@@ -387,6 +392,7 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let mut server = Self {
             config,
             tick,
@@ -402,6 +408,7 @@ impl Server {
             farm,
             placed,
             regrowing,
+            planter_grown,
             arrival: Instant::now(),
             creatures: creatures::Creatures::default(),
             fights: fight::Fights::default(),
@@ -576,6 +583,9 @@ impl Server {
         self.meta.time = self.tick;
         self.meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
         self.meta.regrowing = self.saved_regrowing();
+        let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
+        grown.sort();
+        self.meta.planter_grown = grown;
         self.meta.day = Some(self.day as u64);
         self.meta.day_speed = self.day_speed;
         self.meta.last_played = save::unix_time();
@@ -691,6 +701,7 @@ impl Server {
         for &(pos, block) in changes {
             if self.world.set_block(pos, block).is_some() {
                 self.dirty.insert(ColumnPos::of_block(pos));
+                self.forget_placed(pos);
                 done.push((pos, block));
             }
         }
@@ -712,10 +723,18 @@ impl Server {
 
     /// Changes a block, telling only the players who have its column (the others get the
     /// change with the column), and wakes any fluid it lets flow.
+    /// A block changed: whatever a player placed there, or a planter grew, is gone (those
+    /// who place and grow mark it again after setting it).
+    fn forget_placed(&mut self, pos: IVec3) {
+        self.placed.remove(&pos);
+        self.planter_grown.remove(&pos);
+    }
+
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {
         let column = ColumnPos::of_block(pos);
         if self.world.set_block(pos, block).is_some() {
             self.dirty.insert(column);
+            self.forget_placed(pos);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
@@ -762,6 +781,17 @@ fn ring_positions(center: ColumnPos, ring: i32) -> impl Iterator<Item = ColumnPo
     })
 }
 
+/// A server on the game's own content with a new world kept in memory, for unit tests.
+#[cfg(test)]
+pub(crate) fn test_server() -> Server {
+    let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+    let mut config = ServerConfig::default();
+    let (save, meta) = open_world(&mut config).expect("no save to open");
+    let (_, incoming) = crossbeam_channel::unbounded();
+    let (_, console) = crossbeam_channel::unbounded();
+    Server::new(config, meta, save, content, incoming, console)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -777,5 +807,38 @@ mod tests {
             }
         }
         assert_eq!(seen.len(), 81);
+    }
+
+    /// Village furnishings give nothing when broken (design draft 80), and nothing about
+    /// them lets them be picked for more: regrowth does not take them, and the journal does
+    /// not log them as wild plants. The props are read from settlements.ron's furnishings
+    /// (barrel, bell, hay, sacks, hanging things, nets), so a mod's own props are held to it
+    /// too.
+    #[test]
+    fn village_furnishings_drop_nothing() {
+        use voxmar_worldgen::Select;
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content");
+        let world = WorldContent::load(&content).expect("world content");
+        let f = &world.settlements.furnishings;
+        let blocks = &content.blocks;
+        let mut props: Vec<voxmar_engine::block::BlockId> = f.barrel.iter().chain(&f.bell).map(|name| blocks.expect(name)).collect();
+        // A list may pick by tag: every block with the tag is a prop.
+        for list in [&f.hay, &f.sacks, &f.hanging, &f.nets] {
+            for select in list {
+                match select {
+                    Select::Name(name, _) => props.push(blocks.expect(name)),
+                    Select::Tag(tag, _) => props.extend(blocks.tagged(tag)),
+                }
+            }
+        }
+        assert!(props.len() >= 6, "only {} props", props.len());
+        for id in props {
+            let name = blocks.def(id).name.clone();
+            let (def, info) = (blocks.def(id), blocks.info(id));
+            assert_eq!(info.drops, voxmar_engine::block::BlockId::AIR, "{name} drops something");
+            assert!(!content.regrowth.regrows(def, info.solid), "{name} regrows when picked");
+            let wild = ["plant", "flower", "herb", "fungus"].iter().any(|t| def.has_tag(t));
+            assert!(info.solid || !wild, "{name} would be logged as a wild plant");
+        }
     }
 }

@@ -197,6 +197,7 @@ struct Shown {
     /// standing (a stretched mesh shows there first).
     death_spread: f32,
     death_scale: f32,
+    death_samples: u32,
     /// Whether we have struck at it, so the target readout shows its health.
     struck: bool,
     /// Smoothed head pitch and turn, and body crouch.
@@ -250,6 +251,9 @@ pub struct Fall {
     /// joint's scale strayed from standing.
     pub spread: f32,
     pub scale: f32,
+    /// Joint samples taken while it tipped over, and how many joints it has.
+    pub samples: u32,
+    pub joints: u32,
 }
 
 /// A creature as the target readout shows it.
@@ -632,6 +636,7 @@ fn show(
                 death_around_eye: false,
                 death_spread: 0.0,
                 death_scale: 0.0,
+                death_samples: 0,
                 struck: false,
                 nod: 0.0,
                 look: 0.0,
@@ -744,6 +749,7 @@ fn show(
                     let (s, _, t) = global.to_scale_rotation_translation();
                     shown.death_spread = shown.death_spread.max(t.distance(middle) / height.max(0.1));
                     shown.death_scale = shown.death_scale.max((s / scale.max(1e-3) - Vec3::ONE).abs().max_element());
+                    shown.death_samples += 1;
                 }
             }
         }
@@ -858,7 +864,7 @@ fn show(
     }
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
-            creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale });
+            creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale, samples: shown.death_samples, joints: shown.joints.len() as u32 });
             despawn(&mut commands, &shown);
             if shown.painting.is_none() {
                 images.remove(&shown.skin);
@@ -920,7 +926,9 @@ pub fn aim(
         let accepts = held.is_some_and(|item| {
             let tags = &launch.content.blocks.def(item).tags;
             let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
-            (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool))
+            // One of yours takes its food as a meal or to breed (the server judges which).
+            let food = species.tame_food.contains(&item) || species.breed_food.contains(&item) || tags.iter().any(|t| t == "breeding_feed");
+            (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
         });
         let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
         let engaged = !view.kept && (view.pose == Pose::Attacking || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));

@@ -10,6 +10,7 @@ pub mod guide;
 pub mod inventory;
 pub mod journal;
 pub mod levels;
+pub mod quests;
 pub mod screens;
 pub mod recipes;
 pub mod skills;
@@ -41,12 +42,12 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
-            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin))
+            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
                 (
-                    update_slots.after(inventory::InventorySystems),
+                    (update_slots.after(inventory::InventorySystems), follow_counts).chain(),
                     update_vitals,
                     count_down,
                     update_status,
@@ -139,11 +140,40 @@ fn absolute(left: f32, top: f32, width: f32, height: f32) -> Node {
 pub fn slot_contents(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, slot: usize) {
     let inset = (SLOT - 16.0 * PX) / 2.0;
     parent.spawn((absolute(inset, inset, 16.0 * PX, 16.0 * PX), ImageNode::default(), Visibility::Hidden, SlotIcon(slot)));
-    parent.spawn((
-        Node { position_type: PositionType::Absolute, right: Val::Px(COUNT_INSET), bottom: Val::Px(COUNT_INSET), ..default() },
-        shadowed(font, "", BODY, TEXT),
-        SlotCount(slot),
-    ));
+    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(COUNT_INSET), bottom: Val::Px(COUNT_INSET), ..default() };
+    spawn_count(parent, font, corner, SlotCount(slot));
+}
+
+/// A stack count at `corner`, ringed by a dark pixel all round so it reads over any icon
+/// (pale coins too); `marker` goes on the count itself, whose words the ring follows.
+pub fn spawn_count(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, corner: Node, marker: impl Bundle) {
+    parent.spawn(corner).with_children(|corner| {
+        let count = corner.spawn((crate::ui::widgets::text(font, "", BODY, TEXT), ZIndex(1), marker)).id();
+        // One font pixel each way, and the corner below right, under the count.
+        let pixel = BODY / crate::ui::skin::font_size(1);
+        for (x, y) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (1.0, 1.0)] {
+            let at = Node { position_type: PositionType::Absolute, left: Val::Px(x * pixel), top: Val::Px(y * pixel), ..default() };
+            corner.spawn((at, crate::ui::widgets::text(font, "", BODY, OUTLINE), Ring(count), crate::ui::fit::Decoration));
+        }
+    });
+}
+
+/// The dark ring round a stack count.
+const OUTLINE: Color = Color::srgb(0.0, 0.0, 0.02);
+
+/// One of the copies ringing the count it names.
+#[derive(Component)]
+pub struct Ring(pub Entity);
+
+/// Each ring says what its count says.
+fn follow_counts(counts: Query<&Text, (Changed<Text>, Without<Ring>)>, mut rings: Query<(&Ring, &mut Text)>) {
+    for (ring, mut text) in &mut rings {
+        if let Ok(count) = counts.get(ring.0)
+            && text.0 != count.0
+        {
+            text.0 = count.0.clone();
+        }
+    }
 }
 
 fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) {

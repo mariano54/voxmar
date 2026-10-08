@@ -168,7 +168,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     let inset = (SLOT + 4.0 * PX - 16.0 * PX) / 2.0;
                     let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
                     cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
-                    cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() }, shadowed(font, "", BODY, TEXT), OutputCount));
+                    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() };
+                    super::spawn_count(cell, font, corner, OutputCount);
                 });
                 // What the grid makes and how to take it, or how to find a recipe.
                 let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
@@ -643,8 +644,14 @@ fn details(locale: &Locale, def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
         lines.push((uses.join(locale.get("language.dot")), SOFT));
     }
     let package = def.name.split(':').next().unwrap_or("");
-    lines.push((if ids { def.name.clone() } else { package.to_owned() }, MUTED));
+    lines.push((if ids { def.name.clone() } else { package_name(locale, package) }, MUTED));
     lines
+}
+
+/// What a package is called, in the player's language (`package.<id>`); a mod that names
+/// itself nowhere goes by its id.
+pub fn package_name(locale: &Locale, package: &str) -> String {
+    locale.get_or(&format!("package.{package}"), package).to_owned()
 }
 
 /// Names joined as the language lists them, at most `most` of them and how many more.
@@ -910,6 +917,27 @@ mod tests {
 
     use super::*;
 
+    /// No item's tooltip, in any language, has a line that is only a package's id: every
+    /// word on it is the language's (the package by its name, Voxmar).
+    #[test]
+    fn tooltips_name_packages_not_their_ids() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let blocks = &content.blocks;
+        let packages: std::collections::BTreeSet<&str> = (0..blocks.len()).filter_map(|i| blocks.def(BlockId(i as u16)).name.split(':').next()).collect();
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&assets.join("content"), code);
+            for id in (0..blocks.len()).map(|i| BlockId(i as u16)) {
+                let def = blocks.def(id);
+                for (line, _) in details(&locale, def, false) {
+                    assert!(!packages.contains(line.as_str()), "{code}: {}'s tooltip has a line reading only {line:?}", def.name);
+                }
+            }
+            assert_ne!(package_name(&locale, "base"), "base");
+            assert_eq!(package_name(&locale, "some_mod"), "some_mod", "{code}: a mod that names itself nowhere goes by its id");
+        }
+    }
+
     fn held(count: u8) -> Inventory {
         let mut inventory = Inventory::default();
         inventory.cursor = Some(ItemStack { item: BlockId(1), count });
@@ -946,5 +974,18 @@ mod tests {
         }
         assert_eq!(inventory.cursor.map(|s| s.count), Some(64));
         assert_eq!(inventory.get(3).map(|s| s.count), Some(25));
+    }
+
+    /// English spells the button one way, as the key chip does ("Right-click"), in every
+    /// package's words.
+    #[test]
+    fn english_spells_right_click_one_way() {
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        for package in std::fs::read_dir(&content).unwrap().flatten() {
+            let Ok(words) = std::fs::read_to_string(package.path().join("lang/en.ron")) else { continue };
+            for line in words.lines().filter(|line| !line.trim_start().starts_with("//")) {
+                assert!(!line.to_lowercase().contains("right click"), "{}: {line}", package.path().display());
+            }
+        }
     }
 }

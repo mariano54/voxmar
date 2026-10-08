@@ -48,8 +48,6 @@ struct Fighter {
     /// perfect dodge).
     counter_until: f64,
     riposte_until: f64,
-    /// When the player's blows last reached each creature, for Defence experience.
-    fought: FxHashMap<u32, f64>,
 }
 
 #[derive(Clone, Copy)]
@@ -110,12 +108,6 @@ impl Default for Fights {
 impl Fights {
     fn secs(&self, at: Instant) -> f64 {
         at.saturating_duration_since(self.epoch).as_secs_f64()
-    }
-
-    /// Whether `player`'s blows reached `creature` within `seconds`.
-    pub(crate) fn fought(&self, player: PlayerId, creature: u32, seconds: f32) -> bool {
-        let now = self.now();
-        self.fighters.get(&player).and_then(|f| f.fought.get(&creature)).is_some_and(|&at| now - at <= seconds as f64)
     }
 
     fn now(&self) -> f64 {
@@ -356,10 +348,6 @@ impl Server {
             self.struck(player, aim.creature, 0, false, Blow::Plain);
             return;
         }
-        let now = self.fights.now();
-        let fighter = self.fights.fighters.entry(player).or_default();
-        fighter.fought.retain(|_, at| now - *at < feel.defence_xp_window as f64);
-        fighter.fought.insert(aim.creature, now);
         let stroke = Stroke::of(kind, strength, on_beat, aim.counter, aim.riposte, falling, &feel);
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
         if kind == Blow::Flourish && damage > 0 {

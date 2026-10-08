@@ -164,7 +164,7 @@
         (
             name: "defence", title: "Defence", description: "Turning blows aside, and wearing armour.",
             guide: [
-                (level: 1, text: "Hide armour; blows you turn aside train it", icon: "hide"),
+                (level: 1, text: "Hide armour; blows you turn aside while you fight back train it", icon: "hide"),
                 (level: 5, text: "Hard leather", icon: "hide"),
                 (level: 10, text: "Copper armour; wolf-pelt cloaks for the cold", icon: "fur"),
                 (level: 15, text: "Bronze armour"),

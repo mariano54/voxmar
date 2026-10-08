@@ -17,7 +17,7 @@ use crate::save::GameMode;
 use crate::{Server, load_column, wear};
 
 /// What players call a species: its name in their language, or its own title.
-fn creature_name(def: &voxmar_engine::creature::CreatureDef) -> Words {
+pub(crate) fn creature_name(def: &voxmar_engine::creature::CreatureDef) -> Words {
     Words::Own(voxmar_engine::lang::def_key("creature", &def.name), def.title.clone())
 }
 
@@ -491,6 +491,10 @@ impl Server {
         };
         let mut placed = 0;
         for i in 0..count {
+            // Summoned ones are wild: they leave room for kept animals waiting in the save.
+            if self.wild_room() == 0 {
+                break;
+            }
             let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
             let cell = (at + offset).floor().as_ivec3();
             // Commands may run before the land around a player has loaded (a capture's,
@@ -531,12 +535,23 @@ impl Server {
             }
             return Ok(Words::key("command.creatures.done").with("count", Words::text(near.len())));
         }
-        for creature in self.creatures.live.values_mut().filter(|c| c.body.position.distance(at) <= 8.0) {
+        // Taming here keeps to the keeper's cap as feeding does.
+        let kept_each = self.content.creatures.limits().kept_each;
+        let mut kept_room = kept_each.saturating_sub(self.kept_by(&name));
+        if what == "tame" && kept_room == 0 {
+            return Err(Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
+        }
+        let (day, tamed_at) = (self.day, self.content.creatures.condition().tamed);
+        let mut tamed = Vec::new();
+        for (&id, creature) in self.creatures.live.iter_mut().filter(|(_, c)| c.body.position.distance(at) <= 8.0) {
             match what {
-                "tame" if creature.owner.is_none() => {
+                // Taken in as feeding takes one in: newly tamed, just fed, at home here.
+                "tame" if creature.owner.is_none() && kept_room > 0 => {
+                    kept_room -= 1;
                     creature.owner = Some(name.clone());
                     creature.owner_id = Some(player);
-                    creature.home = creature.body.position;
+                    (creature.condition, creature.reckoned, creature.fed) = (tamed_at, day, day);
+                    tamed.push(id);
                 }
                 "ready" if creature.owner.is_some() && creature.grows_up.is_none() => {
                     creature.ready_until = tick + 30 * voxmar_protocol::TICKS_PER_SECOND as u64;
@@ -564,6 +579,9 @@ impl Server {
             }
             creature.changed = true;
             count += 1;
+        }
+        for id in tamed {
+            self.settle(id);
         }
         Ok(Words::key("command.creatures.done").with("count", Words::text(count)))
     }
@@ -900,7 +918,7 @@ impl Server {
 
     /// Loads the columns under a box, so commands can build anywhere, not only where
     /// players have been.
-    fn load_area(&mut self, min: IVec3, max: IVec3) {
+    pub(crate) fn load_area(&mut self, min: IVec3, max: IVec3) {
         let (from, to) = (ColumnPos::of_block(min), ColumnPos::of_block(max));
         for z in from.0.y..=to.0.y {
             for x in from.0.x..=to.0.x {

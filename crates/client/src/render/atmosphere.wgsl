@@ -478,12 +478,28 @@ fn cloud_across(a: Atmosphere, eye: vec3<f32>, origin: vec3<f32>, direction: vec
     return vec2(smoothstep(0.0, 0.35, density) * smoothstep(0.01, 0.08, direction.y), along);
 }
 
+// The share of a cloud's core over which its mirror image thickens, and how opaque that
+// gets at most: waves smear what the sea mirrors.
+const MIRRORED_EDGE: f32 = 0.6;
+const MIRRORED_CLOUD: f32 = 0.7;
+
 // The low cloud along `direction` (upwards) from `origin` (see `cloud_across`), for the sky
 // in reflections: its base, lit by `sun` from above and by `sky`, seen through the air on
 // the way, in premultiplied colour and opacity.
 fn cloud_seen(a: Atmosphere, eye: vec3<f32>, origin: vec3<f32>, direction: vec3<f32>, to_sun: vec3<f32>, sun: vec3<f32>, sky: vec3<f32>) -> vec4<f32> {
     let across = cloud_across(a, eye, origin, direction);
-    let alpha = across.x;
+    if across.x <= 0.0 {
+        return vec4(0.0);
+    }
+    // A mirrored cloud is the whole layer's depth seen through its base, so its edge
+    // thickens slowly rather than at the base's sharp outline (which mirrored as hard pale
+    // stains across the sea), and it fades out well before the farthest cloud: far off,
+    // where the mirrored ray grazes the layer, every gap closes and the sea filled with
+    // flat white patches unlike any cloud overhead.
+    // The core before `cloud_edge` sharpens it into the sky's outline, 0..1.
+    let core = cloud_middle(a, origin.xz + direction.xz * across.y - eye.xz) / cloud_edge(a);
+    let alpha = smoothstep(0.0, MIRRORED_EDGE, core) * smoothstep(0.01, 0.08, direction.y)
+        * (1.0 - smoothstep(0.1, 0.5, across.y / max(a.cloud_look.w, 1.0))) * MIRRORED_CLOUD;
     if alpha <= 0.0 {
         return vec4(0.0);
     }

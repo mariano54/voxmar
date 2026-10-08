@@ -76,13 +76,16 @@ pub struct WorldMeta {
     /// How fast the time of day runs, 0 when frozen.
     #[serde(default = "normal_speed")]
     pub day_speed: f32,
-    /// Where players put blocks that teach a skill when broken (ores), which then teach
-    /// nothing: experience comes from what the world holds, not from placing and breaking.
+    /// Cells whose block a player placed: ores, which then teach nothing (experience comes
+    /// from what the world holds, not from placing and breaking); plants, which don't regrow
+    /// by themselves; and furnishings, which give themselves back only from these cells.
     #[serde(default)]
     pub placed: Vec<[i32; 3]>,
-    /// Picked wild plants waiting to grow back.
+    /// Picked wild plants waiting to grow back, and plants herb planters grew back.
     #[serde(default)]
     pub regrowing: Vec<SavedRegrowing>,
+    #[serde(default)]
+    pub planter_grown: Vec<[i32; 3]>,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -114,6 +117,7 @@ impl WorldMeta {
             day_speed: 1.0,
             placed: Vec::new(),
             regrowing: Vec::new(),
+            planter_grown: Vec::new(),
         }
     }
 }
@@ -378,6 +382,13 @@ pub struct SavedCrop {
     pub stage: u8,
     /// World tick its next stage is due (`u64::MAX` once ripe).
     pub due: u64,
+    /// A player sowed it. Saves from before the flag held only sown crops.
+    #[serde(default = "sown_before")]
+    pub sown: bool,
+}
+
+fn sown_before() -> bool {
+    true
 }
 
 impl WorldSave {

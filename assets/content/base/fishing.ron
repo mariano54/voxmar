@@ -4,22 +4,33 @@
 // ponds; Any), the biome tags it wants (any of them; anywhere when none), and `when` it
 // bites (Day, Night, Rain; all must hold). Rare fish come a little more often with a
 // better rod. Nothing here asks for more than level 80.
+//
+// A fish's xp doubles every 10.5 levels: 10 × 2^((level − 1) ÷ 10.5) (design draft 63; a
+// content test holds every catch here to it). Each fish bites twice as often, against
+// those below it, for every `outlevelled` levels it asks, so the water's best fish are
+// what a high level mostly lands (a later package may set it, design draft 91).
 (
+    outlevelled: 15.0,
     catches: [
         (item: "raw_shrimp", level: 1, xp: 10.0, weight: 6.0),
-        (item: "raw_minnow", level: 1, xp: 8.0, weight: 6.0, water: Fresh),
-        (item: "raw_sardine", level: 5, xp: 20.0, weight: 5.0, water: Salt),
-        (item: "raw_perch", level: 10, xp: 30.0, weight: 4.0, water: Fresh),
-        (item: "raw_trout", level: 15, xp: 50.0, weight: 4.0, water: Fresh, biomes: ["cold", "cool", "frozen", "mountain", "conifer"]),
-        (item: "raw_cod", level: 20, xp: 55.0, weight: 4.0, water: Salt, biomes: ["cold", "cool", "frozen"]),
-        (item: "raw_salmon", level: 25, xp: 70.0, weight: 3.0, water: Fresh, biomes: ["cold", "cool", "conifer", "river"]),
-        (item: "raw_carp", level: 30, xp: 75.0, weight: 3.0, water: Fresh, biomes: ["warm", "temperate", "wetland"]),
-        (item: "raw_bass", level: 35, xp: 90.0, weight: 3.0, water: Salt),
-        (item: "raw_pike", level: 40, xp: 100.0, weight: 2.0, water: Fresh, biomes: ["temperate", "cool", "wetland", "forest"]),
-        (item: "raw_eel", level: 45, xp: 110.0, weight: 2.0, water: Fresh, when: [Night], rarity: Uncommon),
-        (item: "raw_tuna", level: 50, xp: 120.0, weight: 2.0, water: Salt, biomes: ["warm", "hot", "tropical"]),
-        (item: "raw_swordfish", level: 65, xp: 160.0, weight: 1.0, water: Salt, biomes: ["warm", "hot", "tropical"], rarity: Rare),
+        (item: "raw_minnow", level: 1, xp: 10.0, weight: 6.0, water: Fresh),
+        (item: "raw_sardine", level: 5, xp: 13.0, weight: 5.0, water: Salt),
+        (item: "raw_perch", level: 10, xp: 18.0, weight: 4.0, water: Fresh),
+        (item: "raw_trout", level: 15, xp: 25.0, weight: 4.0, water: Fresh, biomes: ["cold", "cool", "frozen", "mountain", "conifer"]),
+        (item: "raw_cod", level: 20, xp: 35.0, weight: 4.0, water: Salt, biomes: ["cold", "cool", "frozen"]),
+        (item: "raw_salmon", level: 25, xp: 49.0, weight: 3.0, water: Fresh, biomes: ["cold", "cool", "conifer", "river"]),
+        (item: "raw_carp", level: 30, xp: 68.0, weight: 3.0, water: Fresh, biomes: ["warm", "temperate", "wetland"]),
+        (item: "raw_bass", level: 35, xp: 94.0, weight: 3.0, water: Salt),
+        (item: "raw_pike", level: 40, xp: 131.0, weight: 2.0, water: Fresh, biomes: ["temperate", "cool", "wetland", "forest"]),
+        (item: "raw_eel", level: 45, xp: 183.0, weight: 2.0, water: Fresh, when: [Night], rarity: Uncommon),
+        (item: "raw_tuna", level: 50, xp: 254.0, weight: 2.0, water: Salt, biomes: ["warm", "hot", "tropical"]),
+        // A big river fish, and the deep ocean's by day, at the top of the line.
+        (item: "raw_sturgeon", level: 55, xp: 353.0, weight: 1.5, water: Fresh, biomes: ["river", "temperate", "cool", "cold"], rarity: Uncommon),
+        (item: "raw_marlin", level: 60, xp: 491.0, weight: 1.0, water: Salt, biomes: ["deep"], when: [Day], rarity: Rare),
+        (item: "raw_swordfish", level: 65, xp: 684.0, weight: 1.0, water: Salt, biomes: ["warm", "hot", "tropical"], rarity: Rare),
+        // A deep-sea fish that rises at night, in deep ocean.
+        (item: "raw_deepwater_lanternfish", level: 70, xp: 951.0, weight: 0.8, water: Salt, biomes: ["deep"], when: [Night], rarity: Rare),
         // Supernatural: a koi that glows, in fantastical waters on rainy nights.
-        (item: "raw_glimmer_koi", level: 75, xp: 220.0, weight: 0.5, water: Fresh, biomes: ["fantastical"], when: [Night, Rain], rarity: VeryRare),
+        (item: "raw_glimmer_koi", level: 75, xp: 1323.0, weight: 0.5, water: Fresh, biomes: ["fantastical"], when: [Night, Rain], rarity: VeryRare),
     ],
 )
