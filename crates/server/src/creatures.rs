@@ -52,11 +52,6 @@ const NEAR: f32 = 64.0;
 const DESPAWN: f32 = 128.0;
 /// Players are told about creatures within this many blocks.
 const SEEN_WITHIN: f32 = 96.0;
-/// Ticks between spawn attempts around each player.
-const SPAWN_EVERY: u64 = 2 * TICKS_PER_SECOND as u64;
-/// Spawn spots lie this far from the player, in blocks.
-const SPAWN_NEAR: f32 = 20.0;
-const SPAWN_FAR: f32 = 56.0;
 /// How far kin hear an alarm, and are counted as kin by herding.
 const KIN_RANGE: f32 = 14.0;
 /// The width of a `Neighbours` cell, in blocks: the widest search (kin) and a block more for
@@ -282,11 +277,16 @@ impl Server {
         creature::daylight(self.day as u64)
     }
 
+    /// Ticks between spawn attempts around each player (`limits.spawn_every` seconds).
+    fn spawn_every_ticks(&self) -> u64 {
+        ((self.content.creatures.limits().spawn_every * TICKS_PER_SECOND as f32).round() as u64).max(1)
+    }
+
     /// Moves, thinks for, spawns and despawns creatures, then tells players.
     pub(crate) fn tick_creatures(&mut self) {
         let _span = tracing::info_span!("creatures").entered();
         self.settle_players();
-        if self.tick.is_multiple_of(SPAWN_EVERY) {
+        if self.tick.is_multiple_of(self.spawn_every_ticks()) {
             let ids: Vec<PlayerId> = self.players.values().filter(|p| p.joined).map(|p| p.id).collect();
             for (i, id) in ids.into_iter().enumerate() {
                 self.spawn_near(id, i as u64);
@@ -846,9 +846,12 @@ impl Server {
                 .count()
         };
         let (animals, monsters) = (nearby(Kind::Animal), nearby(Kind::Monster));
+        if animals >= limits.animals_near && monsters >= limits.monsters_near {
+            return;
+        }
         let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x5ba7);
         let angle = unit_from(seed) * std::f32::consts::TAU;
-        let distance = SPAWN_NEAR + unit_from(mix(seed, 1)) * (SPAWN_FAR - SPAWN_NEAR);
+        let distance = limits.spawn_near + unit_from(mix(seed, 1)) * (limits.spawn_far - limits.spawn_near);
         let x = (at.x + angle.cos() * distance).floor() as i32;
         let z = (at.z + angle.sin() * distance).floor() as i32;
         if !self.world.contains(ColumnPos::of_block(IVec3::new(x, 0, z))) {
@@ -883,11 +886,9 @@ impl Server {
                 choices.push((id, weight));
             }
         }
-        // Often nothing: most spots stay empty, so the land feels rare, not crowded.
+        // Sometimes nothing: some spots stay empty, so there are gaps between herds.
         let total: f32 = choices.iter().map(|c| c.1).sum();
-        // Animals are drawn half as often as they were, so the land fills slowly and gaps
-        // stay; monsters as before.
-        let nothing = if choices.iter().all(|&(id, _)| self.content.creatures.get(id).def.kind == Kind::Monster) { 2.0 } else { 5.0 };
+        let nothing = if choices.iter().all(|&(id, _)| self.content.creatures.get(id).def.kind == Kind::Monster) { limits.empty_for_monsters } else { limits.empty_for_animals };
         let mut pick = unit_from(mix(seed, 2)) * (total + nothing);
         let Some(&(species, _)) = choices.iter().find(|c| {
             pick -= c.1;
@@ -1255,6 +1256,92 @@ mod combat_tests {
             let rate = landed as f32 / 400.0;
             assert!((rate - chance).abs() < 0.08, "creature {creature}: {rate} landed, the odds are {chance}");
             assert!(longest < 20, "creature {creature}: {longest} misses in a row");
+        }
+    }
+}
+
+/// How many wild creatures a player meets: `density` fills a world around a player, by day
+/// and by night, and counts them. `wild_density_probe` prints the table the numbers in
+/// `limits` were chosen from (`cargo test -p voxmar_server wild_density_probe -- --ignored --nocapture`).
+#[cfg(test)]
+mod density_tests {
+    use super::*;
+
+    /// The nearest place to the origin, spiralling out, whose biome is `biome`.
+    fn find_biome(server: &Server, biome: &str) -> Option<(i32, i32)> {
+        let biomes = server.overworld.biomes();
+        (0..60).find_map(|r| {
+            (0..(8 * r).max(1)).find_map(|i| {
+                let (dx, dz) = ring(r, i);
+                let (x, z) = (dx * 100, dz * 100);
+                (biomes.get(server.overworld.site(x, z).biome).name == format!("base:{biome}")).then_some((x, z))
+            })
+        })
+    }
+
+    /// Counts after `minutes` of server time with a player standing at `spot` at `time` of
+    /// day (ticks into the day): wild animals within 32, 64 and 128 blocks, then monsters
+    /// within 64 and 128.
+    pub(super) fn density(server: &mut Server, spot: (i32, i32), time: u64, minutes: u64) -> [usize; 5] {
+        let (client, connection) = voxmar_protocol::local_pair();
+        let _keep = client;
+        let height = server.overworld.site(spot.0, spot.1).height;
+        let at = Vec3::new(spot.0 as f32 + 0.5, height as f32 + 1.0, spot.1 as f32 + 0.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2);
+        (player.joined, player.admin, player.name) = (true, true, "probe".into());
+        server.players.clear();
+        server.players.insert(1, player);
+        server.creatures.live.clear();
+        let cell = at.floor().as_ivec3();
+        server.load_area(cell - IVec3::new(150, 0, 150), cell + IVec3::new(150, 0, 150));
+        server.day = time as f64;
+        for _ in 0..minutes * 60 * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.tick_creatures();
+        }
+        let mut counts = [0; 5];
+        for creature in server.creatures.live.values().filter(|c| c.owner.is_none()) {
+            let monster = server.content.creatures.get(creature.species).def.kind == Kind::Monster;
+            let distance = creature.body.position.distance(at);
+            let slots: &[(usize, f32)] = if monster { &[(3, 64.0), (4, 128.0)] } else { &[(0, 32.0), (1, 64.0), (2, 128.0)] };
+            slots.iter().filter(|(_, within)| distance < *within).for_each(|(i, _)| counts[*i] += 1);
+        }
+        counts
+    }
+
+    /// The world is not empty around a player (Mariano, 2026-10-08: "the world is feeling a
+    /// bit dead"): in a few minutes, standing still in the open by day there are a dozen
+    /// animals within 64 blocks and some within sight, and by night monsters too. With the
+    /// halved caps of 6 (and a draw that left a spot empty twice in three) it was 6 and 1.
+    #[test]
+    fn a_player_in_the_open_has_company_by_day_and_a_threat_by_night() {
+        let mut server = crate::test_server();
+        let spot = find_biome(&server, "plains").expect("plains");
+        let noon = (0..24_000u64).step_by(100).max_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
+        let midnight = (0..24_000u64).step_by(100).min_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
+        let [near, animals, ..] = density(&mut server, spot, noon, 3);
+        assert!(animals >= 10 && near >= 3, "{animals} animals within 64 blocks, {near} within 32, after three minutes by day");
+        let [_, _, _, monsters, _] = density(&mut server, spot, midnight, 3);
+        assert!(monsters >= 7, "{monsters} monsters within 64 blocks after three minutes of night");
+    }
+
+    #[test]
+    #[ignore = "prints a table; minutes of server time per row"]
+    fn wild_density_probe() {
+        let mut server = crate::test_server();
+        // Noon, and the middle of the night (when the sun is lowest).
+        let noon = (0..24_000u64).step_by(100).max_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
+        let midnight = (0..24_000u64).step_by(100).min_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
+        println!("{:>14} {:>6} | animals 32  64  128 | monsters 64  128", "biome", "time");
+        for biome in ["plains", "forest", "taiga", "jungle", "savanna", "mediterranean", "swamp"] {
+            let Some(spot) = find_biome(&server, biome) else {
+                println!("{biome:>14}: none found");
+                continue;
+            };
+            for (label, time) in [("day", noon), ("night", midnight)] {
+                let [a32, a64, a128, m64, m128] = density(&mut server, spot, time, 5);
+                println!("{biome:>14} {label:>6} | {a32:>10} {a64:>3} {a128:>4} | {m64:>10} {m128:>4}");
+            }
         }
     }
 }
