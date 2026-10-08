@@ -652,10 +652,11 @@ impl Rivers {
     pub(crate) fn remember_freshwater_grid(&self, origin: IVec2, step: i32, size: i32, samples: &[GeoSample], cache: &mut Freshwater) {
         assert!(size > 0 && step > 0 && samples.len() == (size as usize) * (size as usize));
         if cache.id != self.id { *cache = Freshwater { id: self.id, ..Freshwater::default() }; }
-        if cache.seen.len() + samples.len() > 16_384 { cache.seen.clear(); }
+        if cache.seen.len() + cache.dry.len() + samples.len() > 16_384 { cache.seen.clear(); cache.dry.clear(); }
         for (i, &sample) in samples.iter().take(16_384).enumerate() {
             let p = origin + IVec2::new(i as i32 % size, i as i32 / size) * step;
             cache.seen.insert(p, sample);
+            cache.dry.remove(&p);
         }
     }
 
@@ -686,21 +687,24 @@ impl Rivers {
                         if profiling { work[2] = i as usize + 1; record_query(work); }
                         return true;
                     }
+                } else if cache.dry.contains(&p) {
+                    #[cfg(test)]
+                    if profiling { work[6] += 1; }
                 } else {
                     points.push((p.x, p.y));
                 }
             }
             if points.len() == SAMPLE_BATCH {
-                let (found, cleared) = self.freshwater_batch(land, &points, cache);
+                let (found, cleared, sampled) = self.freshwater_batch(land, &points, cache);
                 #[cfg(test)]
                 if profiling {
                     work[2] = i as usize + 1;
-                    work[3] += points.len();
+                    work[3] += sampled;
                     work[4] += 1;
                     work[7] += usize::from(cleared);
                     if let Some(k) = found { work[5] += points.len() - k - 1; }
                 }
-                let _ = cleared;
+                let _ = (cleared, sampled);
                 if found.is_some() {
                     #[cfg(test)]
                     if profiling { record_query(work); }
@@ -709,27 +713,44 @@ impl Rivers {
                 points.clear();
             }
         }
-        let (found, cleared) = if points.is_empty() { (None, false) } else { self.freshwater_batch(land, &points, cache) };
+        let (found, cleared, sampled) = if points.is_empty() { (None, false, 0) } else { self.freshwater_batch(land, &points, cache) };
         #[cfg(test)]
         if profiling {
             work[2] = (size * size) as usize;
-            work[3] += points.len();
+            work[3] += sampled;
             work[4] += usize::from(!points.is_empty());
             work[7] += usize::from(cleared);
             if let Some(k) = found { work[5] += points.len() - k - 1; }
             record_query(work);
         }
-        let _ = cleared;
+        let _ = (cleared, sampled);
         found.is_some()
     }
 
-    fn freshwater_batch(&self, land: Stages, points: &[(i32, i32)], cache: &mut Freshwater) -> (Option<usize>, bool) {
-        let cleared = cache.seen.len() + points.len() > 16_384;
-        if cleared { cache.seen.clear(); }
-        let samples = self.samples_cached(land, points, &mut cache.scratch);
-        let found = samples.iter().position(freshwater);
-        cache.seen.extend(points.iter().zip(samples).map(|(&(x, z), g)| (IVec2::new(x, z), g)));
-        (found, cleared)
+    fn freshwater_batch(&self, land: Stages, points: &[(i32, i32)], cache: &mut Freshwater) -> (Option<usize>, bool, usize) {
+        let cleared = cache.seen.len() + cache.dry.len() + points.len() > 16_384;
+        if cleared { cache.seen.clear(); cache.dry.clear(); }
+        cache.scratch.prepare(self.id, points.len());
+        let mut possible = Vec::new();
+        let mut indices = Vec::new();
+        for (i, &(x, z)) in points.iter().enumerate() {
+            if cache.scratch.tiers.len() >= 16 { cache.scratch.tiers.clear(); }
+            let p = IVec2::new(x, z);
+            let key = Samples::key(p - 1, p + 1);
+            let tiers = cache.scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, p - 1, p + 1));
+            if tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().expect("filled").may_have_water(x, z)) {
+                possible.push((x, z));
+                indices.push(i);
+            } else {
+                // Carving sets neither a body nor wetness; unsealed() assigns Sea
+                // and skips sealing. Freshwater is false at any geology height.
+                cache.dry.insert(p);
+            }
+        }
+        let samples = self.samples_cached(land, &possible, &mut cache.scratch);
+        let found = samples.iter().position(freshwater).map(|i| indices[i]);
+        cache.seen.extend(possible.iter().zip(samples).map(|(&(x, z), g)| (IVec2::new(x, z), g)));
+        (found, cleared, possible.len())
     }
 
     /// One column with both tiers carved in and sealed: the same whatever the columns
@@ -832,6 +853,9 @@ pub struct Samples {
 pub struct Freshwater {
     id: u64,
     seen: FxHashMap<IVec2, GeoSample>,
+    /// Exact false freshwater answers with no water-channel influence. These are
+    /// Boolean witnesses, never invented terrain samples. Shared 16,384-point cap.
+    dry: rustc_hash::FxHashSet<IVec2>,
     scratch: Samples,
 }
 
@@ -1203,6 +1227,50 @@ mod tests {
     }
 
     #[test]
+    fn freshwater_absent_channels_skip_geology_and_reset_false_answers() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let world = crate::Overworld::new(7, registry.clone());
+        let dry = (0..1024).map(|i| IVec2::new(-336 + 16 * (i % 32), 816 + 16 * (i / 32))).find(|p| {
+            let tiers = world.rivers.tiers(world.stages(), *p - 1, *p + 1);
+            !tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().unwrap().may_have_water(p.x, p.y))
+        }).expect("actual position with no channel influence");
+        assert!(!freshwater(&world.rivers.sample(world.stages(), dry.x, dry.y, false)));
+        let mut cache = Freshwater::default();
+        for _ in 0..2 {
+            profile_queries(true);
+            assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 1, &mut cache));
+            let work = query_work().unwrap();
+            profile_queries(false);
+            assert_eq!(work[3], 0, "channel absence needs no original geology");
+            assert!(cache.dry.contains(&dry));
+            assert!(cache.seen.is_empty() && cache.scratch.columns.is_empty() && cache.scratch.corners.len() == 0, "false answers never masquerade as GeoSamples");
+        }
+        let wet = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
+            .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual wet control");
+        let expected = world.rivers.sample(world.stages(), wet.x, wet.y, false);
+        assert!(world.rivers.freshwater_near(world.stages(), wet, 0, 1, &mut cache));
+        assert_eq!(cache.seen[&wet], expected, "possible water still uses complete original terrain");
+        // Pressure false answers are never queried. Whole-batch headroom clears
+        // them before inserting the original wet sample and its Boolean answer.
+        let fill = 16_384 - cache.seen.len() - cache.dry.len();
+        cache.dry.extend((0..fill).map(|i| IVec2::new(200_000 + i as i32, 200_000)));
+        assert_eq!(cache.seen.len() + cache.dry.len(), 16_384);
+        assert_eq!(world.rivers.freshwater_batch(world.stages(), &[(wet.x, wet.y)], &mut cache), (Some(0), true, 1));
+        assert!(cache.dry.is_empty());
+        assert_eq!(cache.seen[&wet], expected);
+        // Poison a genuinely wet position from another world with a false answer.
+        // Requiring true makes the world reset observable without coincidences.
+        let another = crate::Overworld::new(42, registry);
+        let wet42 = (0..625).map(|i| IVec2::new(520 + 16 * (i % 25), -984 + 16 * (i / 25)))
+            .find(|p| freshwater(&another.rivers.sample(another.stages(), p.x, p.y, false))).expect("world42 wet reset control");
+        cache.dry.insert(wet42);
+        assert!(another.rivers.freshwater_near(another.stages(), wet42, 0, 1, &mut cache));
+        assert!(!cache.dry.contains(&wet42));
+        assert_eq!(cache.id, another.rivers.id);
+        assert_eq!(cache.seen[&wet42], another.rivers.sample(another.stages(), wet42.x, wet42.y, false));
+    }
+
+    #[test]
     fn freshwater_query_matches_full_grid_circle() {
         let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
         let mut wet = 0;
@@ -1226,7 +1294,7 @@ mod tests {
                     let actual = world.rivers.freshwater_near(world.stages(), centre, radius, step, &mut cache);
                     assert_eq!(actual, expected, "seed {seed} at {centre}, radius {radius}, step {step}");
                     assert_eq!(cache.id, world.rivers.id);
-                    assert!(cache.seen.len() <= 16_384);
+                    assert!(cache.seen.len() + cache.dry.len() <= 16_384);
                     if expected { wet += 1; } else { dry += 1; }
                 }
             }
@@ -1264,6 +1332,7 @@ mod tests {
         // The witness sits after fewer than 32 unknown eligible points. It proves
         // true without flushing the earlier pending positions or counting them as reads.
         cache.seen.clear();
+        cache.dry.clear();
         cache.seen.insert(centre, grid[i]);
         profile_queries(true);
         assert!(world.rivers.freshwater_near(world.stages(), centre, 16, 4, &mut cache));
@@ -1279,7 +1348,9 @@ mod tests {
         assert_eq!(another.rivers.freshwater_near(another.stages(), centre, 0, 4, &mut cache), expected);
         let work = query_work().unwrap();
         profile_queries(false);
-        assert_eq!(work[3], 1, "another world must recompute even if the Boolean happens to match");
+        let tiers = another.rivers.tiers(another.stages(), centre - 1, centre + 1);
+        let possible = tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().unwrap().may_have_water(centre.x, centre.y));
+        assert_eq!(work[3], usize::from(possible), "another world recomputes its possibility test and any needed original terrain");
         assert_eq!(cache.id, another.rivers.id);
         assert!(world.rivers.freshwater_near(world.stages(), centre, 0, 4, &mut cache));
         assert_eq!(cache.id, world.rivers.id);

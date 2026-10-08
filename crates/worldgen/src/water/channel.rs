@@ -161,6 +161,16 @@ pub struct Channels {
 }
 
 impl Channels {
+    /// A conservative possibility test before sampling land for a freshwater-only
+    /// query. With no indexed edge or home lake/shore/salt cell, carving cannot set
+    /// a body or wetness, regardless of the original terrain's height.
+    pub(super) fn may_have_water(&self, x: i32, z: i32) -> bool {
+        if self.near(x, z).next().is_some() { return true; }
+        if IVec2::new(x, z).div_euclid(IVec2::splat(super::REGION)) != self.region { return false; }
+        let lake = self.lake(x, z);
+        lake.water > 0 || lake.shore > 0 || lake.salt
+    }
+
     /// Places along the region's rivers that run deep in a slot gorge: a point near the
     /// deeper end of each such edge, the height of its top water block, and how much of a
     /// gorge it is there, 0 ..= 1.
