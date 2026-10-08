@@ -3064,7 +3064,8 @@ fn identity(world: &mut World, gate: &mut Gate, now: f32) {
                 && gate.observer.as_ref().is_some_and(|p| p.names.get(&id).is_some_and(|n| n == "Gate-Keeper"))
             {
                 gate.identity_id = Some(id);
-                gate.identity_peer.take().unwrap().connection.send(ClientMessage::Leave);
+                // Closing the channel uses the server's normal save-and-leave path.
+                gate.identity_peer = None;
                 gate.advance(now);
             }
         }
@@ -3084,7 +3085,7 @@ fn identity(world: &mut World, gate: &mut Gate, now: f32) {
                 } else {
                     Err(format!("GATE-KEEPER rejoined as {name}, losing the saved identity"))
                 });
-                gate.identity_peer.take().unwrap().connection.send(ClientMessage::Leave);
+                gate.identity_peer = None;
                 gate.next(Step::Effects, now);
                 return;
             }
