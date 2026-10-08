@@ -1438,10 +1438,11 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     assert!(flints > 0, "sixty gravel broke without a flint");
 }
 
-/// Goes to the nearest settlement (of `size`, if one is named) within 6000 blocks at
+/// Goes to the nearest settlement (of `size`, if one is named) within 10000 blocks (the
+/// most `/locate` looks, as the first village of a world can lie beyond 6000) at
 /// `time`, as a creative admin: the `/tp` coordinates of its middle.
 fn to_settlement(client: &mut Client, size: &str, time: &str) -> String {
-    let found = client.ok(&format!("/locate settlement {size} 6000"));
+    let found = client.ok(&format!("/locate settlement {size} 10000"));
     let tp = found.split("/tp ").nth(1).expect("a way there").split(" goes").next().unwrap().to_owned();
     client.ok(&format!("/time set {time}"));
     client.ok(&format!("/tp {tp}"));
@@ -1593,13 +1594,15 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     let housemates = near(&client);
     strike_until(&mut client, victim.id, 120, |c| !c.creatures.contains_key(&victim.id));
     assert!(!client.creatures.contains_key(&victim.id), "the {name} did not die");
+    // Waiting for any of the settlement's people, not for those at the bed: the dead one
+    // may have lived alone.
     let gone = |c: &Client| villagers(c).iter().all(|v| v.seed != victim.seed);
     // Past `forget` (2000 blocks): the server lets go of the settlement altogether.
     client.ok("/tp ~3000 ~");
     client.pump_until(|c| villagers(c).iter().all(|v| v.position.distance(bed) > 1000.0));
     client.pump_ticks(5 * TICKS_PER_SECOND as u64, |_| false);
     client.ok(&format!("/tp {} {} {}", bed.x + 1.0, bed.y + 1.0, bed.z));
-    client.pump_until(|c| !near(c).is_empty());
+    client.pump_until(|c| !villagers(c).is_empty());
     client.pump_ticks(4 * TICKS_PER_SECOND as u64, |_| false);
     assert!(gone(&client), "the {name} came back when the player did");
     // A restart (dropping the server saves the world).
@@ -1607,7 +1610,7 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     assert!(dir.join("villagers.ron").is_file());
     let mut client = Client::join_with(config());
     client.ok(&format!("/tp {} {} {}", bed.x + 1.0, bed.y + 1.0, bed.z));
-    client.pump_until(|c| !near(c).is_empty());
+    client.pump_until(|c| !villagers(c).is_empty());
     client.pump_ticks(4 * TICKS_PER_SECOND as u64, |_| false);
     assert!(gone(&client), "the {name} came back with a restart");
     // `newcomer` days on (the base game's five), someone new lives there.
