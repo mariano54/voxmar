@@ -24,6 +24,7 @@ mod items;
 mod player;
 mod process;
 mod rules;
+mod treasure;
 pub mod save;
 mod weather;
 mod wear;
@@ -262,6 +263,12 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
 /// lava that lost its tag, say) is only waded through.
 fn swum_or_burns(blocks: &voxmar_engine::block::BlockRegistry, fluid: &voxmar_engine::fluid::Fluid) -> bool {
     fluid.def.swim || blocks.def(fluid.source).has_tag("lava")
+}
+
+/// What tells players apart (for who keeps an animal or owns a wheel, and name comparisons):
+/// names that differ only in case are one player (`player::same_name`).
+pub(crate) fn player_key(name: &str) -> String {
+    name.to_lowercase()
 }
 
 /// A running server thread. Dropping it stops the server.
@@ -683,7 +690,10 @@ impl Server {
         // is handled below, except messages past a player's share for the tick (the
         // `messages_left` cap), which only that player pays for.
         let heard = Instant::now();
-        let ids: Vec<PlayerId> = self.players.keys().copied().collect();
+        // Oldest connection first, so a player's dropped connection is seen gone before a
+        // new one's hello under their name is answered (else a quick rejoin is turned away).
+        let mut ids: Vec<PlayerId> = self.players.keys().copied().collect();
+        ids.sort_unstable();
         for id in ids {
             // A player's messages beyond their share of this tick wait for the next.
             while let Some(player) = self.players.get_mut(&id)
@@ -1064,6 +1074,40 @@ pub(crate) fn test_server() -> Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A drop and its rejoin are queued together before one reading loop: the old
+    /// connection must leave before the new hello is answered, without scheduler luck.
+    #[test]
+    fn a_dropped_player_rejoining_in_the_same_loop_is_let_in() {
+        use voxmar_protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage, local_pair};
+        let mut server = test_server();
+        let (connections, incoming) = unbounded();
+        server.incoming = incoming;
+        let fingerprint = server.content.fingerprint();
+        let join = |server: &mut Server| {
+            let (client, server_side) = local_pair();
+            connections.send(server_side).unwrap();
+            client.send(ClientMessage::Hello { name: "bob".into(), protocol: PROTOCOL_VERSION, content: fingerprint, admin_token: None });
+            server.accept_connections();
+            server.handle_messages();
+            client
+        };
+        let answer = |client: &voxmar_protocol::ClientConnection| loop {
+            match client.try_recv() {
+                Ok(Some(ServerMessage::Welcome { .. })) => break Ok(()),
+                Ok(Some(ServerMessage::Rejected { reason })) => break Err(reason),
+                Ok(Some(_)) => {}
+                other => panic!("no answer to the hello: {other:?}"),
+            }
+        };
+        let mut bob = join(&mut server);
+        answer(&bob).expect("the first bob is let in");
+        for round in 0..8 {
+            drop(bob);
+            bob = join(&mut server);
+            answer(&bob).unwrap_or_else(|reason| panic!("round {round}: same-loop rejoin rejected: {reason:?}"));
+        }
+    }
 
     #[test]
     fn loot_waiting_for_a_body_to_fall_is_saved_where_it_will_drop() {

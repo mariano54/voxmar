@@ -323,11 +323,12 @@ impl Server {
         // A share of the kept animals each pass, each one every `RECKON_EVERY` ticks.
         let shares = RECKON_EVERY / EVERY;
         self.reckon_share(shares, tick / EVERY % shares);
-        // Owners' ids, for the players here now.
+        // Owners' ids, for the players here now (names that differ only in case are one
+        // player's).
         let ids: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.owner.is_some()).map(|(&id, _)| id).collect();
         for &id in &ids {
-            let owner = self.creatures.live[&id].owner.clone();
-            let present = self.players.values().find(|p| p.joined && Some(&p.name) == owner.as_ref()).map(|p| p.id);
+            let owner = self.creatures.live[&id].owner.as_deref().map(crate::player_key);
+            let present = self.players.values().find(|p| p.joined && Some(crate::player_key(&p.name)) == owner).map(|p| p.id);
             let creature = self.creatures.live.get_mut(&id).expect("listed");
             if creature.owner_id != present {
                 creature.owner_id = present;
