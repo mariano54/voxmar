@@ -696,6 +696,8 @@
         newcomers_per_day: 1.0,
         shrine: "shrine",
         live: (
+            // A people reserve independent of wild/kept animals; large places stay bounded.
+            most: 512, per_settlement: 48, nearby: 96.0,
             active: 112.0, release: 160.0, forget: 2000.0,
             margin: 12, scan_pad: 256, scan_every: 2.0, errand_every: 0.5,
             search: 8000, search_per_tick: 20000, failed_for: 10.0,

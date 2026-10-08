@@ -136,6 +136,9 @@ pub(super) struct PeopleFile {
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct LiveFile {
+    most: Option<usize>,
+    per_settlement: Option<usize>,
+    nearby: Option<f32>,
     active: Option<f32>,
     release: Option<f32>,
     forget: Option<f32>,
@@ -242,6 +245,8 @@ pub struct PeopleDef {
     /// The work or kind of building `Shrine` sends people to.
     pub shrine: String,
     pub live: LiveDef,
+    setters: BTreeMap<String, String>,
+    pub(crate) notes: Vec<String>,
 }
 
 impl Default for PeopleDef {
@@ -257,6 +262,8 @@ impl Default for PeopleDef {
             newcomers_per_day: 1.0,
             shrine: "shrine".into(),
             live: LiveDef::default(),
+            setters: BTreeMap::new(),
+            notes: Vec::new(),
         }
     }
 }
@@ -265,6 +272,11 @@ impl Default for PeopleDef {
 /// crates/server/src/villagers.rs). Distances in blocks, times in seconds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LiveDef {
+    /// People have their own reserve, independent of wild and kept animals.
+    pub most: usize,
+    /// At most this many residents of a settlement live, within `nearby` of a player.
+    pub per_settlement: usize,
+    pub nearby: f32,
     /// A settlement comes to life within `active` of a player, and goes when every player
     /// is past `release`; past `forget` the server lets go of it altogether (who died
     /// there is kept in the world's save).
@@ -295,8 +307,8 @@ pub struct LiveDef {
     /// Guards within `help` of a villager struck come, looked for every `call_every`.
     pub help: f32,
     pub call_every: f32,
-    /// A guard that comes no nearer its quarry for `give_up` breaks off, heals and goes
-    /// home for `calm`.
+    /// A guard that comes no nearer its quarry for `give_up` breaks off and goes home
+    /// for `calm`. Recovery waits another `give_up` seconds without a blow.
     pub give_up: f32,
     pub calm: f32,
     /// Within this of its quarry a guard goes straight at it rather than by the way.
@@ -309,6 +321,9 @@ pub struct LiveDef {
 impl Default for LiveDef {
     fn default() -> Self {
         Self {
+            most: 512,
+            per_settlement: 48,
+            nearby: 96.0,
             active: 112.0,
             release: 160.0,
             forget: 2000.0,
@@ -372,6 +387,7 @@ impl PeopleDef {
             self.guards.push(GuardDef { lean: lean(&g.lean)?, size: g.size, species: qualify(package, &g.species), count: g.count, routines: g.routines });
         }
         for r in file.routines {
+            self.note_setter(at, package, &format!("routines.{}", r.name));
             let slots = r
                 .slots
                 .into_iter()
@@ -387,30 +403,44 @@ impl PeopleDef {
             }
         }
         if let Some(jitter) = file.jitter {
+            self.note_setter(at, package, "jitter");
             self.jitter = jitter;
         }
         if let Some(linger) = file.linger {
+            self.note_setter(at, package, "linger");
             self.linger = linger;
         }
         if let Some(newcomer) = file.newcomer {
+            self.note_setter(at, package, "newcomer");
             self.newcomer = newcomer;
         }
         if let Some(n) = file.newcomers_per_day {
+            self.note_setter(at, package, "newcomers_per_day");
             self.newcomers_per_day = n;
         }
         if let Some(shrine) = file.shrine {
+            self.note_setter(at, package, "shrine");
             self.shrine = shrine;
         }
-        let (live, l) = (&mut self.live, file.live);
+        let l = file.live;
         macro_rules! take {
             ($($field:ident),*) => {
                 $(if let Some(v) = l.$field {
-                    live.$field = v;
+                    self.note_setter(at, package, concat!("live.", stringify!($field)));
+                    self.live.$field = v;
                 })*
             };
         }
-        take!(active, release, forget, margin, scan_pad, scan_every, errand_every, search, search_per_tick, failed_for, stuck, no_way_retry, patrol_pause, repath, help, call_every, give_up, calm, handoff, scale, spots);
+        take!(most, per_settlement, nearby, active, release, forget, margin, scan_pad, scan_every, errand_every, search, search_per_tick, failed_for, stuck, no_way_retry, patrol_pause, repath, help, call_every, give_up, calm, handoff, scale, spots);
         Ok(())
+    }
+
+    fn note_setter(&mut self, at: &str, package: &str, field: &str) {
+        if let Some(earlier) = self.setters.insert(field.into(), package.into())
+            && earlier != package
+        {
+            self.notes.push(format!("{at} replaces the settlements.ron {earlier} set (people.{field})"));
+        }
     }
 
     /// Checks that routines cover the day in order and that everything names a routine.
@@ -454,7 +484,8 @@ impl PeopleDef {
         let l = &self.live;
         let s = &l.spots;
         let times = [l.scan_every, l.errand_every, l.failed_for, l.stuck, l.no_way_retry, l.patrol_pause, l.repath, l.call_every, l.give_up, l.calm];
-        if !(0.0 < l.active && l.active < l.release && l.release < l.forget)
+        if l.most == 0 || l.per_settlement == 0 || l.per_settlement > 48 || !(0.0 < l.nearby && l.nearby <= 96.0)
+            || !(0.0 < l.active && l.active < l.release && l.release < l.forget)
             || l.margin < 0
             || l.scan_pad < 0
             || l.search == 0
@@ -465,7 +496,7 @@ impl PeopleDef {
             || !(0.0 < l.scale.0 && l.scale.0 <= l.scale.1)
             || [s.yard, s.square, s.gate, s.patrol_square, s.patrol_gate, s.wander, s.neighbour].iter().any(|&r| r < 0)
         {
-            return fail("live: active under release under forget, searches above nothing (a tick's at least one way's), times above nothing, a scale low to high and no distance below nothing".into());
+            return fail("live: a people reserve above nothing, at most 48 a settlement within 96 blocks, active under release under forget, searches above nothing (a tick's at least one way's), times above nothing, a scale low to high and no distance below nothing".into());
         }
         Ok(())
     }

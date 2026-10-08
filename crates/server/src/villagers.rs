@@ -2,8 +2,9 @@
 //! `settlements::people`), alive near players.
 //!
 //! A settlement comes to life when a player comes within `active` blocks of it (every
-//! number here is `people.live` in settlements.ron): each of its residents appears where
-//! their day has them now (asleep at home at night, at work by day), as a creature of
+//! number here is `people.live` in settlements.ron): at most `per_settlement` residents
+//! within `nearby` of a player appear where their day has them now (asleep at home at
+//! night, at work by day), as a creature of
 //! their species (`creatures_villagers.ron`, kind `Villager`) with the looks their seed
 //! gives, the same each visit. When every player is `release` blocks away they go again,
 //! and come back where their day has them by then.
@@ -20,7 +21,8 @@
 //! leaving, walking far or a restart brings no one back sooner. A villager struck by a
 //! player calls the guards near: they fight the one who did it (`Defend`), and one that
 //! comes no nearer them for `give_up` seconds (they stand where it cannot go) breaks off,
-//! heals and goes home a while.
+//! goes home a while, teaching that player nothing during the cooldown. It heals only
+//! after a further `give_up` seconds without being struck.
 
 use std::collections::BTreeMap;
 
@@ -58,6 +60,9 @@ pub struct Villagers {
     /// Who died, by settlement and resident: kept whether or not the settlement is near
     /// anyone, and saved with the world.
     dead: BTreeMap<(u64, usize), Dead>,
+    /// A short-lived guard cooldown outlives a forgotten town, so leaving/rejoining
+    /// cannot reset a safe-spot fight. Entries expire on the server's clock.
+    recovering: BTreeMap<(u64, usize), Recovery>,
 }
 
 /// One of a settlement's people who died.
@@ -69,7 +74,28 @@ struct Dead {
     away_until: f64,
 }
 
+#[derive(Clone)]
+struct Recovery {
+    calm_until: u64,
+    calm_player: Option<String>,
+    heal_after: Option<u64>,
+    health: Option<u16>,
+}
+
 impl Villagers {
+    fn remember_town(&mut self, info: SettlementInfo, margin: i32) {
+        let mut town = Town::new(info, margin);
+        for (i, person) in town.people.iter_mut().enumerate() {
+            if let Some(r) = self.recovering.get(&(town.info.id, i)) {
+                person.calm_until = r.calm_until;
+                person.calm_player = r.calm_player.clone();
+                person.heal_after = r.heal_after;
+                person.health = r.health;
+            }
+        }
+        self.towns.insert(town.info.id, town);
+    }
+
     /// From who died, as saved.
     pub(crate) fn restore(saved: Vec<SavedDead>) -> Self {
         let dead = saved.into_iter().map(|d| ((d.town, d.person), Dead { generation: d.generation, away_until: d.away_until })).collect();
@@ -122,6 +148,11 @@ struct Person {
     quarry: Option<(u32, f32, u64)>,
     /// A guard that broke off a chase stays home, heeding no call, until this tick.
     calm_until: u64,
+    calm_player: Option<String>,
+    /// Recovery is postponed by every blow while the guard walks home.
+    heal_after: Option<u64>,
+    /// Injuries survive releasing the body until its quiet recovery time.
+    health: Option<u16>,
 }
 
 /// What came of looking for a way.
@@ -208,6 +239,7 @@ impl Server {
     /// Brings settlements near players to life and lets them go, notes who died, and
     /// moves everyone along their day.
     pub(crate) fn tick_villagers(&mut self) {
+        let _span = tracing::info_span!("villagers").entered();
         self.villagers.searched = 0;
         let live = self.live();
         let tick = self.tick;
@@ -244,12 +276,12 @@ impl Server {
 
     fn scan_towns(&mut self, live: &LiveDef) {
         let players: Vec<Vec3> = self.players.values().filter(|p| p.joined).map(|p| p.position).collect();
+        self.villagers.recovering.retain(|_, r| r.calm_until > self.tick || r.heal_after.is_some_and(|due| due > self.tick));
         // Settlements coming into reach.
         for at in &players {
             for info in self.overworld.settlements_near(IVec2::new(at.x as i32, at.z as i32), live.active as i32 + live.scan_pad) {
                 if !self.villagers.towns.contains_key(&info.id) {
-                    let town = Town::new(info, live.margin);
-                    self.villagers.towns.insert(town.info.id, town);
+                    self.villagers.remember_town(info, live.margin);
                 }
             }
         }
@@ -275,18 +307,35 @@ impl Server {
                 continue;
             }
             self.villagers.towns.get_mut(&id).expect("listed").alive = true;
+            // Only nearby residents live, closest first, with an independent town cap.
+            let t = &self.villagers.towns[&id];
+            let mut nearby: Vec<(usize, f32)> = (0..t.people.len()).filter_map(|i| {
+                let at = match t.people[i].creature.and_then(|c| self.creatures.live.get(&c)) {
+                    Some(c) => c.body.position,
+                    None => self.spot_for(id, i, mix(t.info.people[i].seed, self.villagers.generation(id, i)))?.0.as_vec3(),
+                };
+                let distance = players.iter().map(|p| p.with_y(0.0).distance(at.with_y(0.0))).fold(f32::MAX, f32::min);
+                (distance <= live.nearby).then_some((i, distance))
+            }).collect();
+            nearby.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+            nearby.truncate(live.per_settlement);
             for i in 0..self.villagers.towns[&id].people.len() {
-                self.bring_out(id, i);
+                if nearby.iter().any(|&(j, _)| j == i) {
+                    self.bring_out(id, i);
+                } else {
+                    self.release_person(id, i);
+                }
             }
         }
     }
 
-    /// Notes who of settlement `id` died since the last look.
-    fn note_deaths(&mut self, id: u64, today: f64) {
+    /// A disappearance without `creature_dies` releases a resident, never starts the
+    /// newcomer clock (for example a body that fell out of the world).
+    fn note_deaths(&mut self, id: u64, _today: f64) {
         let Some(town) = self.villagers.towns.get(&id) else { return };
         let gone: Vec<usize> = town.people.iter().enumerate().filter(|(_, p)| p.creature.is_some_and(|c| !self.creatures.live.contains_key(&c))).map(|(i, _)| i).collect();
         for i in gone {
-            self.note_death(id, i, today);
+            self.release_person(id, i);
         }
     }
 
@@ -300,8 +349,13 @@ impl Server {
         let person = &mut t.people[i];
         let Some(c) = person.creature.take() else { return };
         self.villagers.by_creature.remove(&c);
+        self.villagers.recovering.remove(&(town, i));
         person.trip = None;
         person.quarry = None;
+        person.health = None;
+        person.heal_after = None;
+        person.calm_until = 0;
+        person.calm_player = None;
         let last = self.villagers.dead.range((town, 0)..=(town, usize::MAX)).map(|(_, d)| d.away_until).fold(f64::MIN, f64::max);
         let dead = self.villagers.dead.entry((town, i)).or_insert(Dead { generation: 0, away_until: 0.0 });
         dead.generation += 1;
@@ -309,18 +363,33 @@ impl Server {
         tracing::debug!(town = %t.info.name.0, person = i, back = dead.away_until, "a villager died");
     }
 
+    fn release_person(&mut self, town: u64, i: usize) {
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        person.trip = None;
+        person.quarry = None;
+        if let Some(c) = person.creature.take() {
+            person.health = self.creatures.live.get(&c).map(|c| c.health);
+            if person.calm_until > self.tick || person.heal_after.is_some_and(|due| due > self.tick) {
+                self.villagers.recovering.insert((town, i), Recovery {
+                    calm_until: person.calm_until, calm_player: person.calm_player.clone(),
+                    heal_after: person.heal_after, health: person.health,
+                });
+            } else {
+                self.villagers.recovering.remove(&(town, i));
+            }
+            self.villagers.by_creature.remove(&c);
+            if self.creatures.live.remove(&c).is_some() {
+                self.creatures.gone.push(CreatureGone { id: c, died: false });
+            }
+        }
+    }
+
     /// Everyone of settlement `id` goes.
     fn release_town(&mut self, id: u64) {
         let Some(town) = self.villagers.towns.get_mut(&id) else { return };
         town.alive = false;
-        for person in &mut town.people {
-            person.trip = None;
-            if let Some(c) = person.creature.take() {
-                self.villagers.by_creature.remove(&c);
-                if self.creatures.live.remove(&c).is_some() {
-                    self.creatures.gone.push(CreatureGone { id: c, died: false });
-                }
-            }
+        for i in 0..town.people.len() {
+            self.release_person(id, i);
         }
     }
 
@@ -357,6 +426,13 @@ impl Server {
         let traits = genes::express(&def.genes, &genome);
         let scale = self.overworld.settlement_people().live.scale;
         let creature = self.creatures.live.get_mut(&id).expect("just put");
+        // Releasing an injured guard must not instantly heal it on the next visit.
+        let p = &self.villagers.towns[&town].people[i];
+        if p.heal_after.is_none_or(|due| self.tick < due)
+            && let Some(health) = p.health
+        {
+            creature.health = health;
+        }
         creature.home = home;
         creature.scale = traits.scale * (scale.0 + (scale.1 - scale.0) * unit_from(mix(seed, 0x5ca1e)));
         creature.adult_scale = creature.scale;
@@ -402,7 +478,17 @@ impl Server {
         let at = creature.body.position;
         let seed = creature.seed;
         let tick = self.tick;
+        if let Some(due) = self.villagers.towns[&town].people[i].heal_after
+            && tick >= due
+        {
+            if let Some(c) = self.creatures.live.get_mut(&id) {
+                c.health = self.content.creatures.get(c.species).def.health;
+                c.changed = true;
+            }
+            self.villagers.towns.get_mut(&town).expect("listed").people[i].heal_after = None;
+        }
         // An angry guard goes after the one it is angry with, by the lanes.
+        let creature = &self.creatures.live[&id];
         let chasing = creature.mind.attacker().filter(|_| creature.mind.anger > 0.0 && self.villagers.towns[&town].info.people[i].guard);
         if let Some(player) = chasing {
             self.pursue(id, town, i, at, player, live);
@@ -461,17 +547,21 @@ impl Server {
     fn pursue(&mut self, id: u32, town: u64, i: usize, at: Vec3, player: u32, live: &LiveDef) {
         let Some(quarry) = self.players.get(&player).map(|p| p.position) else { return };
         let tick = self.tick;
-        // In reach of a blow counts as near enough, though it comes no nearer.
-        let reach = self.creatures.live.get(&id).and_then(|c| self.content.creatures.get(c.species).def.attack).map_or(1.5, |a| a.reach) + 1.0;
+        // Require both the brain's starting range and the body's scaled striking range:
+        // the old reach + 1 let a spear train a guard that could never strike back.
+        let c = &self.creatures.live[&id];
+        let def = &self.content.creatures.get(c.species).def;
+        let reach = def.attack.map_or(1.0, |a| a.reach) + def.body.size.0.min(c.body.size.0) * 0.5 + 0.3;
+        let in_reach = at.with_y(0.0).distance(quarry.with_y(0.0)) <= reach && (at.y - quarry.y).abs() < def.body.size.1.min(c.body.size.1) + 1.5;
         let d = at.distance(quarry);
         let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
         let (best, since) = match person.quarry {
-            Some((p, best, since)) if p == player && d + 0.5 >= best && d > reach => (best, since),
+            Some((p, best, since)) if p == player && d + 0.5 >= best && !in_reach => (best, since),
             _ => (d, tick),
         };
         person.quarry = Some((player, best, since));
         if tick - since > ticks(live.give_up) {
-            self.give_up(id, town, i, live);
+            self.give_up(id, town, i, player, live);
             return;
         }
         let target = quarry.floor().as_ivec3();
@@ -502,19 +592,40 @@ impl Server {
         self.villagers.towns.get_mut(&town).expect("listed").people[i].trip = Some(trip);
     }
 
-    /// Guard `id` (person `i`) breaks off its chase: it forgives, heals to full and goes
-    /// home for `calm`, heeding no call meanwhile.
-    fn give_up(&mut self, id: u32, town: u64, i: usize, live: &LiveDef) {
+    /// Guard `id` breaks off its chase, teaches its quarry nothing for `calm`, and
+    /// recovers only after another `give_up` seconds without a blow.
+    fn give_up(&mut self, id: u32, town: u64, i: usize, player: u32, live: &LiveDef) {
         if let Some(c) = self.creatures.live.get_mut(&id) {
             c.mind.forgive();
-            c.health = self.content.creatures.get(c.species).def.health;
-            c.changed = true;
+            c.fought = None;
         }
         let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
         person.quarry = None;
         person.trip = None;
         person.calm_until = self.tick + ticks(live.calm);
+        person.calm_player = self.players.get(&player).map(|p| p.name.clone());
+        person.heal_after = Some(self.tick + ticks(live.give_up));
         tracing::debug!(person = i, "a guard gave up the chase");
+    }
+
+    /// Whether a guard has given up on this player, so safe spots cannot train combat.
+    pub(crate) fn villager_calm_for(&self, id: u32, player: u32) -> bool {
+        self.villagers.by_creature.get(&id).is_some_and(|&(town, i)| {
+            let p = &self.villagers.towns[&town].people[i];
+            p.calm_until > self.tick && p.calm_player.as_ref().zip(self.players.get(&player)).is_some_and(|(name, player)| name.eq_ignore_ascii_case(&player.name))
+        })
+    }
+
+    /// Records a blow (including misses and bleeding) before anger or experience is given.
+    pub(crate) fn villager_struck(&mut self, id: u32, player: u32) -> bool {
+        let delay = ticks(self.live().give_up);
+        if let Some(&(town, i)) = self.villagers.by_creature.get(&id) {
+            let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+            if person.heal_after.is_some() {
+                person.heal_after = Some(self.tick + delay);
+            }
+        }
+        self.villager_calm_for(id, player)
     }
 
     /// The way from `from` to `to` through settlement `town`, within this tick's search.
@@ -647,7 +758,8 @@ impl Server {
         let b = &town.info.buildings[b];
         let cells: Vec<IVec3> = (b.min.x + 1..b.max.x)
             .flat_map(|x| (b.min.y + 1..b.max.y).map(move |z| (x, z)))
-            .filter_map(|(x, z)| (b.floor..=b.floor + 2).map(|y| IVec3::new(x, y, z)).find(|&c| self.stands(c)))
+            .map(|(x, z)| IVec3::new(x, b.floor, z))
+            .filter(|&c| self.stands(c))
             .collect();
         if cells.is_empty() {
             return b.door.filter(|&d| self.stands(d));
@@ -655,12 +767,15 @@ impl Server {
         Some(cells[(mix(seed, 0x1a5) % cells.len() as u64) as usize])
     }
 
-    /// A cell a body can stand in on or round building `b` (a field, a pen, a well).
+    /// A ground cell about a building. Wells, shrines and centrepieces use only the
+    /// ring outside their footprint; nobody stands on their walls or in the pool.
     fn about(&self, b: usize, town: &Town, seed: u64) -> Option<IVec3> {
         let b = &town.info.buildings[b];
+        let outside = matches!(b.kind, BuildingKind::Well | BuildingKind::Centrepiece | BuildingKind::Shrine);
         let cells: Vec<IVec3> = (b.min.x - 1..=b.max.x + 1)
             .flat_map(|x| (b.min.y - 1..=b.max.y + 1).map(move |z| (x, z)))
-            .filter_map(|(x, z)| self.standing_near(IVec3::new(x, b.floor + 1, z), 3))
+            .filter(|&(x, z)| !outside || x < b.min.x || x > b.max.x || z < b.min.y || z > b.max.y)
+            .filter_map(|(x, z)| (b.floor..=b.floor + 1).map(|y| IVec3::new(x, y, z)).find(|&c| self.stands(c)))
             .collect();
         if cells.is_empty() {
             return None;
@@ -815,6 +930,203 @@ impl Eq for Node {}
 impl PartialOrd for Node {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use voxmar_engine::block::BlockId;
+
+    /// Flat, loaded floor and a one-room settlement: lifecycle tests need no travel,
+    /// streaming, wall clock, or expensive settlement search.
+    fn fixture(species: &str, count: usize) -> Server {
+        use voxmar_engine::world::Column;
+        use voxmar_worldgen::{SettlementBuilding, SettlementFacing, people::Resident};
+        let mut server = crate::test_server();
+        server.world = Default::default();
+        let mut column = Column::default();
+        let stone = server.content.blocks.expect("base:stone");
+        for x in 0..32 {
+            for z in 0..32 {
+                column.set_block(IVec3::new(x, 199, z), stone);
+                column.set_block(IVec3::new(x, 200, z), BlockId::AIR);
+            }
+        }
+        server.world.insert(ColumnPos::of_block(IVec3::ZERO), std::sync::Arc::new(column));
+        server.day = TICKS_PER_DAY as f64 * 0.8;
+        let routine = server.overworld.settlement_people().routine("worker").unwrap();
+        let info = SettlementInfo {
+            id: 1, name: ("Test".into(), "テスト".into()), size: "village".into(), style: "timber".into(), layout: "test".into(),
+            centre: IVec3::new(8, 200, 8), levers: [0.5; 5], gates: vec![IVec2::new(8, 12)], lanes: Vec::new(),
+            buildings: vec![SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(4, 4), max: IVec2::new(12, 12), floor: 200, door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None }],
+            people: (0..count).map(|i| Resident { species: species.into(), home: 0, work: None, routine, guard: species == "base:guard", seed: 100 + i as u64 }).collect(),
+        };
+        server.villagers.remember_town(info, 12);
+        server
+    }
+
+    fn player(server: &mut Server) {
+        let (_, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, Vec3::new(8.0, 200.0, 8.0), 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        player.name = "Tester".into();
+        server.players.insert(1, player);
+    }
+
+    #[test]
+    fn dead_restore_skips_until_due_then_changes_seed() {
+        let mut server = fixture("base:farmer", 1);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.unwrap();
+        let original = server.creatures.live[&id].seed;
+        server.creature_dies(id);
+        let saved = server.villagers.saved();
+        assert_eq!(saved.len(), 1);
+        let due = saved[0].away_until;
+        let info = server.villagers.towns[&1].info.clone();
+        server.villagers = Villagers::restore(saved);
+        server.villagers.remember_town(info, 12);
+        server.day = (due - 0.001) * TICKS_PER_DAY as f64;
+        server.bring_out(1, 0);
+        assert!(server.villagers.towns[&1].people[0].creature.is_none());
+        server.day = due * TICKS_PER_DAY as f64;
+        server.bring_out(1, 0);
+        let next = server.villagers.towns[&1].people[0].creature.unwrap();
+        assert_ne!(server.creatures.live[&next].seed, original);
+        assert_eq!(server.villagers.generation(1, 0), 1);
+        let new_seed = server.creatures.live[&next].seed;
+        server.release_town(1);
+        server.bring_out(1, 0);
+        let returned = server.villagers.towns[&1].people[0].creature.unwrap();
+        assert_eq!(server.creatures.live[&returned].seed, new_seed);
+    }
+
+    #[test]
+    fn vanished_resident_is_released_without_a_newcomer() {
+        let mut server = fixture("base:farmer", 1);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.unwrap();
+        let seed = server.creatures.live[&id].seed;
+        server.creatures.take_away(id);
+        server.note_all_deaths();
+        assert!(server.villagers.saved().is_empty());
+        server.bring_out(1, 0);
+        let next = server.villagers.towns[&1].people[0].creature.unwrap();
+        assert_eq!(server.creatures.live[&next].seed, seed);
+    }
+
+    #[test]
+    fn a_guard_cooldown_stops_training_and_delays_recovery() {
+        use voxmar_engine::combat::Blow;
+        let mut server = fixture("base:guard", 1);
+        player(&mut server);
+        server.bring_out(1, 0);
+        let mut id = server.villagers.towns[&1].people[0].creature.unwrap();
+        let species = server.creatures.live[&id].species;
+        let skill = server.content.skills.id("core:attack").unwrap();
+        let defence = server.content.skills.id("core:defence").unwrap();
+        server.players.get_mut(&1).unwrap().skills.grant(defence, server.content.skills.xp_for(20));
+        server.hurt_creature(1, id, 1, Some(skill), Blow::Plain);
+        let before = server.players[&1].skills.xp(skill);
+        assert!(before > 0, "reachable guard teaches combat");
+        let before_defence = server.players[&1].skills.xp(defence);
+        server.defence_xp(1, id, species);
+        assert!(server.players[&1].skills.xp(defence) > before_defence, "reachable guard teaches Defence");
+        let live = server.live();
+        // Above a short guard's striking height but inside the unscaled brain range,
+        // it tries, makes no progress, and then breaks off.
+        let body = &mut server.creatures.live.get_mut(&id).unwrap().body;
+        body.size.1 *= 0.5;
+        let at = server.creatures.live[&id].body.position;
+        server.players.get_mut(&1).unwrap().position = at + Vec3::Y * 2.8;
+        server.pursue(id, 1, 0, at, 1, &live);
+        assert!(!server.villager_calm_for(id, 1), "gave up without trying");
+        server.tick += ticks(live.give_up) + 1;
+        server.pursue(id, 1, 0, at, 1, &live);
+        let full = server.content.creatures.get(species).def.health;
+        assert_eq!(server.creatures.live[&id].health, full - 1, "no instant heal");
+        assert!(server.villager_calm_for(id, 1));
+        assert!(!server.villager_calm_for(id, 2), "cooldown belongs to the quarry");
+        let info = server.villagers.towns[&1].info.clone();
+        server.release_town(1);
+        server.villagers.towns.remove(&1);
+        server.villagers.remember_town(info, 12);
+        server.bring_out(1, 0);
+        id = server.villagers.towns[&1].people[0].creature.unwrap();
+        assert!(server.villager_calm_for(id, 1), "release lost the cooldown");
+        assert_eq!(server.creatures.live[&id].health, full - 1, "forgetting healed it");
+        let (_, connection) = voxmar_protocol::local_pair();
+        let mut rejoined = crate::player::Player::new(2, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        rejoined.name = "tester".into();
+        server.players.insert(2, rejoined);
+        assert!(server.villager_calm_for(id, 2), "rejoining reset the cooldown");
+        server.tick += ticks(live.give_up) - 1;
+        server.hurt_creature(1, id, 1, Some(skill), Blow::Plain);
+        let defence_before = server.players[&1].skills.xp(defence);
+        server.defence_xp(1, id, species);
+        assert_eq!(server.players[&1].skills.xp(skill), before);
+        assert_eq!(server.players[&1].skills.xp(defence), defence_before);
+        assert!(server.creatures.live[&id].mind.attacker().is_none(), "hit restarted pursuit");
+        server.tick += 2;
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(server.creatures.live[&id].health, full - 2, "latest hit delayed recovery");
+        server.tick += ticks(live.give_up);
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(server.creatures.live[&id].health, full);
+        server.tick = server.villagers.towns[&1].people[0].calm_until;
+        server.hurt_creature(1, id, 1, Some(skill), Blow::Plain);
+        assert!(server.players[&1].skills.xp(skill) > before, "cooldown ends");
+        assert_eq!(server.creatures.live[&id].mind.attacker(), Some(1));
+    }
+
+    #[test]
+    fn people_have_a_reserve_and_settlements_have_an_active_cap() {
+        let mut server = fixture("base:farmer", 80);
+        player(&mut server);
+        // Fill the animal cap; people still fit, and don't reduce animal capacity.
+        let rabbit = server.content.creatures.id("base:rabbit").unwrap();
+        for i in 0..server.content.creatures.limits().most {
+            server.spawn_seeded(rabbit, Vec3::new(8.0, 200.0, 8.0), i as u64).unwrap();
+        }
+        assert_eq!(server.room_left(), 0);
+        let live = server.live();
+        server.scan_towns(&live);
+        assert_eq!(server.villagers.by_creature.len(), 48);
+        assert_eq!(server.room_left(), 0);
+        server.players.get_mut(&1).unwrap().position.x += 100.0;
+        server.scan_towns(&live);
+        assert!(server.villagers.by_creature.len() < 48, "far people still live");
+        assert!(server.villagers.saved().is_empty(), "releasing people marked them dead");
+    }
+
+    #[test]
+    fn well_spots_stay_outside_and_rooms_avoid_furnishings() {
+        let mut server = fixture("base:farmer", 1);
+        server.villagers.towns.get_mut(&1).unwrap().info.buildings[0].kind = BuildingKind::Well;
+        for x in 4..=12 {
+            for z in 4..=12 {
+                server.set_block(IVec3::new(x, 200, z), server.content.blocks.expect("base:stone"));
+            }
+        }
+        for seed in 0..100 {
+            let town = &server.villagers.towns[&1];
+            let cell = server.about(0, town, seed).unwrap();
+            assert!(cell.x < 4 || cell.x > 12 || cell.z < 4 || cell.z > 12);
+            assert!((200..=201).contains(&cell.y));
+        }
+        // A furnished room still has a usable floor. The old search could select the
+        // block above the table; an empty-room check would not catch that.
+        for x in 4..=12 {
+            for z in 4..=12 {
+                if (x, z) != (8, 8) { server.set_block(IVec3::new(x, 200, z), BlockId::AIR); }
+            }
+        }
+        for seed in 0..100 {
+            let cell = server.spot_inside(0, &server.villagers.towns[&1], seed).expect("room floor");
+            assert_eq!(cell.y, 200, "stood on furniture");
+            assert_ne!((cell.x, cell.z), (8, 8));
+        }
     }
 }
 

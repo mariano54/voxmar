@@ -169,7 +169,9 @@ higher for a child. Clothing by culture is for a later package.
 The server keeps them only near players (`crates/server/src/villagers.rs`, every number
 in `people.live`): a settlement comes to life within `active` blocks of a player, its
 people appearing where their day has them now with looks from their seed, and goes again
-past `release`. They walk their day by ways found over the cells a body can stand in,
+past `release`. Only residents within `nearby` (96 blocks) live, at most
+`per_settlement` (48) in each place. Their separate reserve (`most`, 512) never competes
+with wild or kept animals. They walk their day by ways found over the cells a body can stand in,
 within a search budget a tick. They are never wild-spawned, never saved, never tamed or
 summoned, drop nothing, teach no combat (`xp.combat` 0, guards aside) and go in no
 journal.
@@ -179,7 +181,18 @@ leaving, walking far nor a restart brings them back, and a newcomer with looks o
 own takes their place `newcomer` days on (five, never under a quarter), one a day at most
 (`newcomers_per_day`). A villager struck calls the guards within `help`: they fight the
 one who did it, and only them; a guard that comes no nearer them for `give_up` seconds
-(they stand where it cannot go) breaks off, heals and goes home for `calm`.
+(they stand where it cannot go) breaks off and goes home for `calm`. During this cooldown
+that player earns no combat or Defence XP from the guard, and their blows cannot restart
+the chase. Recovery waits a further `give_up` seconds without a blow; each new blow delays
+it. The cooldown follows the player's name and outlives forgetting a town, so
+leaving and rejoining cannot reset it. A disappearance without a death releases the resident without starting a newcomer
+clock. Wells and centrepieces use ground spots outside their footprint, and indoor
+spots stay at floor level to keep people off furnishings.
+
+Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
+unripe in P50b so a village is not a free food source. Settlement witnesses and hunter
+roles remain follow-ups. Single-valued people data and same-named routines follow the
+package layering rule, with load notes naming each replaced field and its earlier setter.
 
 ## What else knows about them
 

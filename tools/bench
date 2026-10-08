@@ -42,6 +42,7 @@
 #   dig        digging a shaft for 15 s, holding the button: breaking, particles, drops,
 #              remeshing, 2268x1473
 #   creatures  a herd of 40 creatures of nine kinds moving on a meadow, 2268x1473
+#   villagers  a real seed-3 village with its residents, square view at noon, 2268x1473
 # Scenes of the FPS benchmark: flight75 flightfast flighthigh forest mountains night_rain dig creatures.
 # On Linux they run on Vulkan on the NVIDIA GPU; a run on a software renderer fails.
 # The numbers, the power mode and the load go to target/bench/report.txt.
@@ -186,6 +187,7 @@ printf '(\n    view_distance: 32,\n    anti_aliasing: Msaa4,\n    vsync: false,\
 
 # The capture arguments of a view, into `view_args`.
 view_args() {
+  scene_seed=1
   case $1 in
     flight75) view_args=(--size 2268x1473 --weather clear --time 0.2 --flight 40) ;;
     flight100) view_args=(--size 3024x1964 --weather clear --time 0.2 --flight 40) ;;
@@ -204,6 +206,9 @@ view_args() {
       --command "/summon wild_boar 4 ~6 ~ ~-8" --command "/summon junglefowl 5 ~-8 ~ ~-6" --command "/summon wolf 3 ~0 ~ ~-25"
       --command "/summon fox 3 ~8 ~ ~-18" --command "/summon lumen_snail 4 ~-2 ~ ~-5" --command "/summon aurochs 2 ~-10 ~ ~-16"
       --pose 0,1.5,0,0,-12 --wait 10) ;;
+    villagers) scene_seed=3; view_args=(--size 2268x1473 --weather clear --time 0.3
+      --command "/time set noon" --command "/time freeze" --command "/tp 368 135 784"
+      --pose 0,4,0,45,-20 --wait 10) ;;
     *) return 1 ;;
   esac
 }
@@ -302,7 +307,7 @@ run() {
   game_running && { echo "bench: FAILED: Mariano started playing; no numbers taken now are trustworthy" >&2; exit 1; }
   local settings=$config
   [[ $view == flightfast || $view == flighthigh ]] && settings=$fast
-  log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG="$settings" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG="$settings" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed "$scene_seed" "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
   # Numbers from a software renderer (llvmpipe, SwiftShader) or the wrong GPU are worthless.
   local adapter
   adapter=$(grep -m1 -o 'AdapterInfo { name: "[^"]*".*device_type: [A-Za-z]*' <<<"$log")

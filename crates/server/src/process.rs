@@ -247,6 +247,7 @@ impl Server {
 
 impl Server {
     pub(crate) fn run_processes(&mut self) {
+        let _span = tracing::info_span!("processes").entered();
         let mut processes = std::mem::take(&mut self.processes);
         for process in &mut processes {
             if process.tier().due(self.tick) || process.urgent(self) {

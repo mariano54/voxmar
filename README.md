@@ -221,6 +221,9 @@ them says so.
   lying on the ground over a vein (of an ore or vein named so, such as `iron`; within 1000).
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
 
+`/locate settlement [hamlet|village] [RADIUS]` finds a settlement and gives its teleport
+coordinates; the default radius is 4000 blocks.
+
 Commands are data: each package's `commands.ron` names its commands, who may use them, their
 usage and help, and what they run: one of the engine's built-in commands, or other command
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
@@ -468,8 +471,10 @@ no two worlds share a rarity table. Everything else is a continuous field:
   falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
   summed region by region through records of where water crosses each 1 km region's border,
   so rivers can be any length and nothing depends on generation order.
+- **Settlements** have deterministic residents with homes, daily routines and guards.
+  Ordinary villagers give no loot or combat XP; deaths persist until a newcomer arrives.
 - **Trails** (`worldgen/src/trails/`, materials in `trails.ron`; laid only near settlements,
-  of which there are none yet, so `laid: NearSettlements` leaves them all out) join the places worth walking
+  with `laid: NearSettlements`) join the places worth walking
   to: summits that stand above the land around, lake shores, the banks of waterfalls, the edges
   of long drops and flat trailheads in the valleys, a few per 512-block region. Nearby places
   are joined into a sparse network (a Gabriel graph, with no two trails setting off side by
