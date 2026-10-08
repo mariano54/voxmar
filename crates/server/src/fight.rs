@@ -238,6 +238,8 @@ impl Server {
     pub(crate) fn wind_up(&mut self, creature: u32, player: PlayerId) {
         let Some(live) = self.creatures.live.get(&creature) else { return };
         let Some(attack) = self.content.creatures.get(live.species).def.attack else { return };
+        let Some(target) = self.players.get(&player) else { return };
+        let to = (target.position - live.body.position).with_y(0.0);
         if self.fights.windups.iter().any(|w| w.creature == creature) {
             return;
         }
@@ -246,6 +248,12 @@ impl Server {
         let lands = self.fights.now() + windup as f64;
         let tick = self.tick;
         let live = self.creatures.live.get_mut(&creature).expect("checked above");
+        // Begin facing the target, before the tracking window can lock the aim. A slow
+        // turn from an old wander goal otherwise spends the whole window facing away,
+        // especially on a delayed tick. This yaw travels with the first attacking pose.
+        if to.x.abs() + to.z.abs() > 1e-4 {
+            live.body.yaw = voxmar_engine::creature::motion::yaw_of(to);
+        }
         live.winding = true;
         live.held_until = live.held_until.max(tick + ticks(windup));
         live.tracking = Some((player, tick + ticks(windup * feel.creature_tracking.clamp(0.0, 1.0))));
@@ -523,6 +531,54 @@ mod tests {
     use voxmar_protocol::ClientMessage;
 
     use super::*;
+
+    /// Even a wind-up with no tracking ticks starts aimed at its target, whatever the
+    /// creature faced before it chose to attack. Its locked lunge follows that same yaw.
+    #[test]
+    fn a_wind_up_faces_its_target_before_tracking_can_lock() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let at = server.spawn + Vec3::Y * 32.0;
+        let joined = crate::player::Player::new(player, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        server.players.insert(player, joined);
+        let species = server.content.creatures.id("base:brown_bear").expect("a bear");
+        let bear = server.spawn_creature(species, at, 1).expect("room");
+        std::sync::Arc::get_mut(&mut server.content.combat).expect("the test server owns its combat data").feel.creature_tracking = 0.0;
+        for direction in [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z, Vec3::X + Vec3::Z, Vec3::X - Vec3::Z, -Vec3::X + Vec3::Z, -Vec3::X - Vec3::Z] {
+            let direction = direction.normalize();
+            let target = at + direction * 4.0;
+            server.players.get_mut(&player).unwrap().position = target;
+            server.fights.windups.clear();
+            let live = server.creatures.live.get_mut(&bear).unwrap();
+            live.body.position = at;
+            live.body.yaw = voxmar_engine::creature::motion::yaw_of(-direction);
+            server.wind_up(bear, player);
+            assert!(server.creatures.live[&bear].body.forward().dot(direction) > 0.999, "the wind-up faced away from {direction:?}");
+            assert!(server.tracking_drive(bear).is_none(), "the test allowed time to turn");
+            let landed = server.lunge(bear, target, 1.0);
+            assert!((landed - at).dot(direction) > 0.9, "the locked lunge did not go at the target");
+        }
+        // No horizontal direction: keep the previous yaw rather than inventing one.
+        server.fights.windups.clear();
+        server.players.get_mut(&player).unwrap().position = at + Vec3::Y * 2.0;
+        let live = server.creatures.live.get_mut(&bear).unwrap();
+        live.body.position = at;
+        live.body.yaw = 0.7;
+        server.wind_up(bear, player);
+        assert_eq!(server.creatures.live[&bear].body.yaw, 0.7);
+        // Asking again cannot retarget a wind-up already in progress.
+        server.players.get_mut(&player).unwrap().position = at + Vec3::X * 4.0;
+        server.wind_up(bear, player);
+        assert_eq!(server.creatures.live[&bear].body.yaw, 0.7);
+        assert_eq!(server.fights.windups.len(), 1);
+        // A player who left cannot start a new wind-up.
+        server.fights.windups.clear();
+        server.creatures.live.get_mut(&bear).unwrap().winding = false;
+        server.wind_up(bear, player + 1);
+        assert!(server.fights.windups.is_empty());
+        assert!(!server.creatures.live[&bear].winding);
+    }
 
     /// A guard raised just before a creature's blow lands counts, even when the server
     /// takes its message in only after the blow was due (a long tick, a stall): the blow
