@@ -25,7 +25,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 26;
+pub const PROTOCOL_VERSION: u32 = 30;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -120,6 +120,9 @@ pub enum ServerMessage {
     /// A line for the player's console: a reply to their command, or chat, in words the
     /// client puts into the player's language.
     Chat { kind: ChatKind, text: Words },
+    /// Something the player tried was refused, and why: shown where the interface shows
+    /// refusals (by the hotbar, as for a level the player lacks), not in the console.
+    Refused { why: Words },
     /// The weather where the player is, sent when it changes and every few seconds, with
     /// the names of the effects showing (`valley_fog`, `hail`), strongest first, and the
     /// rain around, to show storms coming. `quick` asks the client to change to it within
