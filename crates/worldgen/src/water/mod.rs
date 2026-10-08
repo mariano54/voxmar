@@ -595,55 +595,59 @@ impl Rivers {
         assert!(points.len() <= SAMPLE_BATCH);
         scratch.prepare(self.id, points.len());
         if points.is_empty() { return Vec::new(); }
-        let keys: Vec<_> = points.iter().map(|&(x, z)| Samples::key(IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1))).collect();
-        let column_keys: Vec<_> = keys.iter().map(|&key| scratch.column_key(key)).collect();
-        let needed: Vec<_> = points.iter().zip(&column_keys).map(|(&(x, z), &key)| !scratch.columns.contains_key(&(IVec2::new(x, z), key))).collect();
-        let missing: Vec<_> = points.iter().zip(&needed).filter_map(|(&p, &need)| need.then_some(p)).collect();
-        let mut grounds = land.geology.lands_with(&missing, &mut scratch.corners).into_iter();
+        let mut batch = std::mem::take(&mut scratch.batch);
+        batch.clear();
+        batch.keys.extend(points.iter().map(|&(x, z)| Samples::key(IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1))));
+        batch.column_keys.extend(batch.keys.iter().map(|&key| scratch.column_key(key)));
+        batch.needed.extend(points.iter().zip(&batch.column_keys).map(|(&(x, z), &key)| !scratch.columns.contains_key(&(IVec2::new(x, z), key))));
+        batch.coords.extend(points.iter().zip(&batch.needed).filter_map(|(&p, &need)| need.then_some(p)));
+        let mut grounds = land.geology.lands_with(&batch.coords, &mut scratch.corners).into_iter();
         for (i, &(x, z)) in points.iter().enumerate() {
-            if !needed[i] { continue; }
+            if !batch.needed[i] { continue; }
             // Consume the original miss mask even for duplicate centres. Cache
             // insertion order changes no pure value, but this keeps batch alignment.
             let ground = grounds.next().expect("batched missing landform");
             if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
             let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
-            let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, min, max));
-            scratch.columns.entry((IVec2::new(x, z), column_keys[i])).or_insert_with(|| self.unsealed(tiers, x, z, ground));
+            let tiers = scratch.tiers.entry(batch.keys[i]).or_insert_with(|| self.tiers(land, min, max));
+            scratch.columns.entry((IVec2::new(x, z), batch.column_keys[i])).or_insert_with(|| self.unsealed(tiers, x, z, ground));
         }
         // Batch only the raw neighbours that sealing these centres will request.
         // Keep first-use centre/cardinal order and full requesting-key identity.
         // The reserved five-column/twenty-corner headroom covers the same union.
-        let mut missing = Vec::new();
-        let mut queued = rustc_hash::FxHashSet::default();
         for (i, &(x, z)) in points.iter().enumerate() {
             let p = IVec2::new(x, z);
-            if !scratch.columns[&(p, column_keys[i])].near { continue; }
+            if !scratch.columns[&(p, batch.column_keys[i])].near { continue; }
             for at in [p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y] {
-                if !scratch.columns.contains_key(&(at, column_keys[i])) && queued.insert((at, column_keys[i])) {
-                    missing.push((at, i));
+                if !scratch.columns.contains_key(&(at, batch.column_keys[i])) && batch.queued.insert((at, batch.column_keys[i])) {
+                    batch.neighbours.push((at, i));
                 }
             }
         }
-        if !missing.is_empty() {
-            let coords: Vec<_> = missing.iter().map(|(p, _)| (p.x, p.y)).collect();
-            let grounds = land.geology.lands_with(&coords, &mut scratch.corners);
-            for ((p, i), ground) in missing.into_iter().zip(grounds) {
+        if !batch.neighbours.is_empty() {
+            batch.coords.clear();
+            batch.coords.extend(batch.neighbours.iter().map(|(p, _)| (p.x, p.y)));
+            let grounds = land.geology.lands_with(&batch.coords, &mut scratch.corners);
+            for (&(p, i), ground) in batch.neighbours.iter().zip(grounds) {
                 if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
                 let centre = IVec2::new(points[i].0, points[i].1);
-                let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, centre - 1, centre + 1));
-                scratch.columns.insert((p, column_keys[i]), self.unsealed(tiers, p.x, p.y, ground));
+                let tiers = scratch.tiers.entry(batch.keys[i]).or_insert_with(|| self.tiers(land, centre - 1, centre + 1));
+                scratch.columns.insert((p, batch.column_keys[i]), self.unsealed(tiers, p.x, p.y, ground));
             }
         }
-        points.iter().enumerate().map(|(i, &(x, z))| {
+        let samples = points.iter().enumerate().map(|(i, &(x, z))| {
             // Clear only channel groups here: the already computed centre landforms
             // remain valid, and the reserved corner headroom covers all neighbours.
             if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
             let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
-            let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, min, max));
+            let tiers = scratch.tiers.entry(batch.keys[i]).or_insert_with(|| self.tiers(land, min, max));
             // All centres now hold their original raw values; neighbours still use
             // the requesting centre's bounds, including when keys differ nearby.
-            self.sealed_cached(land, tiers, column_keys[i], IVec2::new(x, z), None, &mut scratch.corners, &mut scratch.columns)
-        }).collect()
+            self.sealed_cached(land, tiers, batch.column_keys[i], IVec2::new(x, z), None, &mut scratch.corners, &mut scratch.columns)
+        }).collect();
+        batch.clear();
+        scratch.batch = batch;
+        samples
     }
 
     /// Remember the exact sealed values from this river land's coarse site grid.
@@ -841,11 +845,35 @@ impl Rivers {
     }
 }
 
+/// Work buffers for at most 32 centres and their 128 cardinal neighbours. Only
+/// allocated capacity is reused; every batch clears all values before and after use.
+#[derive(Default)]
+struct SampleBatch {
+    keys: Vec<[IVec2; 4]>,
+    column_keys: Vec<u32>,
+    needed: Vec<bool>,
+    coords: Vec<(i32, i32)>,
+    neighbours: Vec<(IVec2, usize)>,
+    queued: rustc_hash::FxHashSet<(IVec2, u32)>,
+}
+
+impl SampleBatch {
+    fn clear(&mut self) {
+        self.keys.clear();
+        self.column_keys.clear();
+        self.needed.clear();
+        self.coords.clear();
+        self.neighbours.clear();
+        self.queued.clear();
+    }
+}
+
 /// Temporary terrain work reused within a planner, never retained by a world cache.
 /// Switching worlds resets it so corners and channels cannot leak between seeds.
 #[derive(Default)]
 pub struct Samples {
     id: u64,
+    batch: SampleBatch,
     corners: Corners,
     tiers: FxHashMap<[IVec2; 4], (Near, Near)>,
     /// Full exact keys are interned separately from the evictable tier memo. Raw
@@ -1122,6 +1150,58 @@ mod tests {
             }
         }
         assert!(wet > 0 && dry > 0, "fixture needs fresh water and dry ground: {wet}/{dry}");
+    }
+
+    #[test]
+    fn planning_batch_scratch_reuses_storage_without_values() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let world = crate::Overworld::new(7, registry.clone());
+        let p = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
+            .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual river fixture");
+        let offsets = [IVec2::ZERO, IVec2::X, -IVec2::X, IVec2::Y, -IVec2::Y];
+        let mut points: Vec<_> = (0..32).map(|i| { let q = p + offsets[i % 5]; (q.x, q.y) }).collect();
+        let mut scratch = Samples::default();
+        let expected = |world: &crate::Overworld, points: &[(i32, i32)]| points.iter()
+            .map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect::<Vec<_>>();
+        let clean = |b: &SampleBatch| {
+            assert!(b.keys.is_empty() && b.column_keys.is_empty() && b.needed.is_empty()
+                && b.coords.is_empty() && b.neighbours.is_empty() && b.queued.is_empty());
+            assert!(b.keys.capacity() <= SAMPLE_BATCH && b.column_keys.capacity() <= SAMPLE_BATCH
+                && b.needed.capacity() <= SAMPLE_BATCH && b.coords.capacity() <= 4 * SAMPLE_BATCH
+                && b.neighbours.capacity() <= 4 * SAMPLE_BATCH && b.queued.capacity() <= 224,
+                "all work storage stays within the largest original batch");
+        };
+        assert_eq!(world.rivers.samples_cached(world.stages(), &points, &mut scratch), expected(&world, &points));
+        clean(&scratch.batch);
+        assert!(scratch.batch.coords.capacity() >= 32 && scratch.batch.neighbours.capacity() > 0
+            && scratch.batch.queued.capacity() > 0, "the real wet fixture must allocate centre and sealing work");
+        let pointers = |b: &SampleBatch| [b.keys.as_ptr() as usize, b.column_keys.as_ptr() as usize,
+            b.needed.as_ptr() as usize, b.coords.as_ptr() as usize, b.neighbours.as_ptr() as usize];
+        let original_pointers = pointers(&scratch.batch);
+        // Poison every work buffer, including out-of-range centre indexes. Only
+        // their allocations may survive; a reused value would corrupt or panic.
+        let poison = |b: &mut SampleBatch| {
+            b.keys.extend([[IVec2::MAX; 4]; 32]);
+            b.column_keys.extend([u32::MAX; 32]);
+            b.needed.extend([false; 32]);
+            b.coords.extend([(i32::MAX, i32::MAX); 32]);
+            b.neighbours.extend((0..b.neighbours.capacity()).map(|_| (IVec2::MAX, usize::MAX)));
+            b.queued.insert((IVec2::MAX, u32::MAX));
+        };
+        poison(&mut scratch.batch);
+        scratch.columns.clear();
+        scratch.column_keys.clear();
+        points.reverse();
+        assert_eq!(world.rivers.samples_cached(world.stages(), &points, &mut scratch), expected(&world, &points));
+        clean(&scratch.batch);
+        assert_eq!(pointers(&scratch.batch), original_pointers, "reversed cold batches must reuse their actual work allocations");
+        assert!(world.rivers.samples_cached(world.stages(), &[], &mut scratch).is_empty());
+        clean(&scratch.batch);
+        poison(&mut scratch.batch);
+        let another = crate::Overworld::new(42, registry);
+        assert_eq!(another.rivers.samples_cached(another.stages(), &points, &mut scratch), expected(&another, &points));
+        assert_eq!(scratch.id, another.rivers.id, "world switching still resets all planner scratch");
+        clean(&scratch.batch);
     }
 
     #[test]

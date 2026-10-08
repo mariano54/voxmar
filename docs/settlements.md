@@ -177,7 +177,9 @@ false witnesses share the 32,768-point terrain memo bound and reset with it; a f
 sample always takes precedence and removes its former false witness. Possible water
 keeps the original terrain predicate and spoke short-circuit order.
 Batch sealing gathers the same missing cardinal neighbours in first-use order, under
-each requesting centre's exact key, and shares their original geology evaluation.
+each requesting centre's exact key, and shares their original geology evaluation. Its
+work vectors and membership set reuse only their allocated capacity within the planner;
+all values are cleared between batches, bounded to 32 centres and 128 neighbours.
 On ARM with NEON enabled, each immutable edge prepares the four segment origins,
 directions and original squared-length denominators once, counted in the existing
 channel cache byte budget. Its projections and distances then use four lanes with the
