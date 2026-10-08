@@ -29,7 +29,9 @@
     // Biome levels (P15, see `LevelsDef`). Up to a find's home level (by rarity: common,
     // uncommon, rare, very rare, legendary) each level of its biome makes it `step` times
     // commoner (the wiki's about 1.4×); above its home it keeps `earlier` of its home rate
-    // (about two thirds, Mariano 7 Oct). Level 1 is the data's own rates. Distance from the
+    // (about two thirds, Mariano 7 Oct). Level 1 is the data's own rates. Levels scale plants,
+    // and of the trees only those with a tag in `trees` (fruit, nut and berry trees): the
+    // canopy's own kinds keep their shares, so a biome keeps its look. Distance from the
     // origin leans the biome picker towards higher levels: at `reach` blocks and middling
     // wildness each level above 1 makes a biome `lean` times likelier (a level-4 biome about
     // 1.6 times, the old remoteness curve's +60%); a wildness field `wildness` blocks across
@@ -41,6 +43,7 @@
         lean: 1.17,
         reach: 15000.0,
         wildness: 3000.0,
+        trees: ["gathering"],
     ),
     frost: (
         snow: "snow_block",

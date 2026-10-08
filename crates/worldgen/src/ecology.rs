@@ -287,16 +287,19 @@ impl Ecology {
             .collect();
         let properties = content.plants.iter().map(|p| plant_properties(content, p, registry)).collect();
 
-        // Each biome's level makes its rarer trees and plants commoner (`crate::levels`).
-        let tree_class: Vec<Rarity> = content.trees.iter().map(|t| t.rarity).collect();
-        let plant_class: Vec<Rarity> = content.plants.iter().map(plant_rarity_of).collect();
+        // Each biome's level makes its rarer plants and gathering trees commoner
+        // (`crate::levels`); other trees, the canopy's own kinds, keep their shares (no class
+        // the levels scale).
+        let scaled = |t: &TreeDef| t.tags.iter().any(|tag| content.climate.levels.trees.contains(tag));
+        let tree_class: Vec<Option<Rarity>> = content.trees.iter().map(|t| scaled(t).then_some(t.rarity)).collect();
+        let plant_class: Vec<Option<Rarity>> = content.plants.iter().map(|p| Some(plant_rarity_of(p))).collect();
         let flora = content
             .biomes
             .iter()
             .map(|biome| {
                 let levels = &content.climate.levels;
-                let at_level = |classes: &[Rarity], rarity: &[f32]| -> Vec<f32> {
-                    classes.iter().zip(rarity).map(|(&class, &m)| capped(class, m * levels.finds(biome.level, class))).collect()
+                let at_level = |classes: &[Option<Rarity>], rarity: &[f32]| -> Vec<f32> {
+                    classes.iter().zip(rarity).map(|(class, &m)| class.map_or(m, |class| capped(class, m * levels.finds(biome.level, class)))).collect()
                 };
                 Flora::new(biome, content, registry, &at_level(&tree_class, &tree_rarity), &at_level(&plant_class, &plant_rarity), &plant_rarity)
             })
@@ -944,9 +947,10 @@ mod tests {
         assert_eq!(ecology.plant_properties("base:red_mushroom").unwrap().alchemy, vec!["poison".to_owned()]);
     }
 
-    /// A biome's level makes its rarer trees and plants commoner by the levels table and
-    /// keeps its commons at two thirds above level 1 (P15), within two tiers of their own
-    /// rarity; rare herbs keep the rates design set for their biome.
+    /// A biome's level makes its rarer plants and gathering trees commoner by the levels
+    /// table and keeps its common plants at two thirds above level 1 (P15), within two tiers
+    /// of their own rarity; other trees keep their shares, and rare herbs the rates design
+    /// set for their biome.
     #[test]
     fn a_biome_s_level_scales_its_finds() {
         let registry = registry();
@@ -979,11 +983,18 @@ mod tests {
         assert!(seen[0] > 0 && seen[1..].iter().sum::<i32>() > 0, "{seen:?}");
         let commons = flora_low.alone.iter().zip(&flora_high.alone).find(|((p, _), _)| plant_class(*p) == Rarity::Common);
         assert!(commons.is_some_and(|((_, w1), (_, w5))| (w5 / w1 - 0.67).abs() < 1e-3));
-        // The canopy too.
+        // Gathering trees too; the canopy's own kinds keep their shares.
+        let mut gathering = 0;
         for (&(tree, w1), &(_, w5)) in flora_low.canopy.iter().zip(&flora_high.canopy) {
-            let class = content.trees[tree.0 as usize].rarity;
-            assert!(w5 > 0.0 && (class == Rarity::Common) == (w5 < w1), "{} ({class:?}): {w1} to {w5}", content.trees[tree.0 as usize].name);
+            let def = &content.trees[tree.0 as usize];
+            if def.tags.iter().any(|t| t == "gathering") {
+                gathering += 1;
+                assert!(w5 > w1, "{} ({:?}): {w1} to {w5}", def.name, def.rarity);
+            } else {
+                assert_eq!(w5, w1, "{} keeps its share", def.name);
+            }
         }
+        assert!(gathering > 0 && gathering < flora_low.canopy.len(), "plains' forest has gathering trees and others");
         // A rare herb's biome may sit at any level; its rate stays as design set it.
         let herb = |p: &PlantId| content.plant_tags(&content.plants[p.0 as usize], &registry).any(|t| t == "rare_herb");
         let home = content.biomes.iter().position(|b| b.flora.plants.iter().any(|s| matches!(s, Select::Name(n, _) if n == "base:windroot"))).expect("windroot grows somewhere");

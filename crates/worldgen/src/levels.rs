@@ -7,7 +7,10 @@
 //! still turn up, less often, in a meadow. Above its home a find keeps `earlier` of its
 //! home rate (about two thirds, Mariano, 7 Oct), so a high-level biome still holds the
 //! gentle biomes' commons beside its own rarer finds and nobody walks back for basics.
-//! Level 1 is the data's own rates: the gentle land keeps the look it was tuned to.
+//! Level 1 is the data's own rates: the gentle land keeps the look it was tuned to. Levels
+//! scale a biome's plants and, of its trees, only those `trees` names by tag (the fruit, nut
+//! and berry trees, the forest's finds): the canopy's own kinds keep their shares, so a
+//! level-3 taiga stays spruce and pine rather than turning to larch.
 //!
 //! And distance from spawn makes higher-level biomes likelier, never certain. The biome
 //! picker weighs each claim by `lean` to the power of its level above 1 times the lean of
@@ -41,11 +44,13 @@ pub struct LevelsDef {
     pub reach: f32,
     /// The wavelength of the wildness field that scales the lean, in blocks.
     pub wildness: f32,
+    /// Tags of the trees levels scale (finds); other trees keep their shares.
+    pub trees: Vec<String>,
 }
 
 impl Default for LevelsDef {
     fn default() -> Self {
-        Self { step: 1.4, earlier: 0.67, homes: Homes { common: 1, uncommon: 3, rare: 5, very_rare: 7, legendary: 9 }, lean: 1.17, reach: 15000.0, wildness: 3000.0 }
+        Self { step: 1.4, earlier: 0.67, homes: Homes { common: 1, uncommon: 3, rare: 5, very_rare: 7, legendary: 9 }, lean: 1.17, reach: 15000.0, wildness: 3000.0, trees: vec!["gathering".into()] }
     }
 }
 

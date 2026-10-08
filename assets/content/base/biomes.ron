@@ -35,10 +35,11 @@
 //
 // `level` (1 ..= 10, the design wiki's first pass for P15) is how harsh, rare and
 // aether-touched a biome is. Up to a find's home level (by its rarity) each level makes the
-// biome's rarer trees and plants about 1.4 times commoner; above it a find keeps about two
-// thirds of its rate, so a high-level biome still has the commons of the gentle ones. Far
-// from spawn, higher-level biomes grow likelier. The numbers are `levels` in climate.ron
-// (see crates/worldgen/src/levels.rs). A variant sets its own; one left out inherits it.
+// biome's rarer plants and gathering trees about 1.4 times commoner; above it a find keeps
+// about two thirds of its rate, so a high-level biome still has the commons of the gentle
+// ones. Far from spawn, higher-level biomes grow likelier. The numbers are `levels` in
+// climate.ron (see crates/worldgen/src/levels.rs). A variant sets its own; one left out
+// inherits it.
 (
     biomes: [
         // --- Water ---------------------------------------------------------------------
