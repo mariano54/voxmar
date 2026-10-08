@@ -2241,6 +2241,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                             format!("summon aurochs 1 {}", at(IVec3::new(5, 0, 2))),
                             "creatures tame aurochs".to_owned(),
                             "creatures hold aurochs".to_owned(),
+                            // A known floor and pose, rather than wherever gathering the
+                            // death drops left the player below these raised machines.
+                            format!("setblock {} cobblestone", at(IVec3::new(-2, -1, 3))),
+                            format!("fill {} {} air", at(IVec3::new(-2, 0, 3)), at(IVec3::new(-2, 2, 3))),
+                            format!("tp {} {} {}", k.x as f32 - 1.5, k.y, k.z as f32 + 3.5),
                             "clear".to_owned(),
                             "give coal_ore 1".to_owned(),
                         ] {
@@ -2315,6 +2320,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         19 => {
             let k = gate.kiln;
             let (furnace, wheel, oven) = (k, k + IVec3::new(3, 0, 0), k + IVec3::new(-3, 1, 1));
+            let operating = k.as_vec3() + Vec3::new(-1.5, 0.0, 3.5);
             let vantage = k.as_vec3() + Vec3::new(0.0, 4.0, 11.0);
             // "at N% power" or "N% done" above nought in a /machine answer.
             let blown = |said: &str| {
@@ -2337,6 +2343,14 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
             let said: Vec<String> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
             let stage = gate.machines_stage;
+            if stage < 5 && world.resource::<LocalPlayer>().position.distance(operating) >= 1.0 {
+                if gate.server_now - gate.machines_since > 10.0 {
+                    let position = world.resource::<LocalPlayer>().position;
+                    teardown(world);
+                    fail(world, gate, "iron age", format!("the player never reached the operating floor: at {position:?}, wanted {operating:?}"));
+                }
+                return;
+            }
             // Flying until the teleport to the vantage lands (as the sky step does), then turned
             // to both works every frame, so the camera has turned by the time of the shot.
             let arrived = world.resource::<LocalPlayer>().position.distance(vantage) < 1.0;
