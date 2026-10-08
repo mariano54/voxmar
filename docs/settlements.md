@@ -148,6 +148,8 @@ house weights and extra chances are computed once per layout. Each request's ord
 wet and dry house choices are reused until a house is counted, which invalidates every
 choice list. Zero weights and all random draws retain their original order. Interiors
 are copied only after a lot passes placement checks, before stair/chimney adaptation.
+A rejected house gives its extras-vector allocation back to the layout. The next roll
+clears it before the same ordered extra draws; a placed house keeps its own allocation.
 Water is searched for a house request
 only when an otherwise eligible water-dependent house can serve it. Scratch caps
 corners at 8,192, and channel groups at 16; eviction repeats
