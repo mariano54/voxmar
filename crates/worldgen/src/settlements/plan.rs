@@ -187,17 +187,23 @@ impl Ground<'_> {
         assert!(count <= crate::water::SAMPLE_BATCH);
         let mut points = [IVec2::ZERO; crate::water::SAMPLE_BATCH];
         for (i, p) in points[..count].iter_mut().enumerate() { *p = first + IVec2::new(i as i32, 0); }
-        self.prefetch_points(&points[..count]);
+        self.prefetch_batch::<true>(&points[..count]);
     }
 
     /// A bounded set of original points, also used by wholly consumed water rings.
     fn prefetch_points(&mut self, points: &[IVec2]) {
+        self.prefetch_batch::<false>(points);
+    }
+
+    /// A horizontal row has distinct coordinates by construction. Arbitrary rings
+    /// and turns still deduplicate in original first-use order before any read.
+    fn prefetch_batch<const UNIQUE: bool>(&mut self, points: &[IVec2]) {
         assert!(points.len() <= crate::water::SAMPLE_BATCH);
         self.reserve(points.len());
         let mut missing = Vec::new();
         for p in points {
             let point = (p.x, p.y);
-            if !self.seen.contains_key(p) && !missing.contains(&point) {
+            if !self.seen.contains_key(p) && (UNIQUE || !missing.contains(&point)) {
                 if missing.is_empty() { missing.reserve_exact(points.len()); }
                 missing.push(point);
             }
@@ -3581,6 +3587,19 @@ mod level_tests {
         for x in 0..7 { assert_eq!(ground.at(first + IVec2::new(x, 0)), sample); }
         assert_eq!(ground.misses, 0, "clearing must not omit previously cached positions from the batch");
         assert_eq!(dry.reads.load(std::sync::atomic::Ordering::Relaxed), 7);
+        // A partly warm distinct row must read only its missing coordinates. The
+        // arbitrary-point path still removes repetitions in first-use order.
+        let mut ground = Ground::new(&dry);
+        let before = dry.reads.load(std::sync::atomic::Ordering::Relaxed);
+        for x in [0, 2, 6] { ground.at(first + IVec2::new(x, 0)); }
+        ground.prefetch(first, 7);
+        assert_eq!(dry.reads.load(std::sync::atomic::Ordering::Relaxed) - before, 7);
+        assert_eq!((ground.misses, ground.prefetched, ground.seen.len()), (3, 4, 7));
+        let next = first + IVec2::new(8, 0);
+        ground.prefetch_points(&[next, first, next, next + IVec2::X, next + IVec2::X]);
+        assert_eq!(dry.reads.load(std::sync::atomic::Ordering::Relaxed) - before, 9);
+        assert_eq!((ground.misses, ground.prefetched, ground.seen.len()), (3, 6, 9));
+        for x in [0, 1, 2, 3, 4, 5, 6, 8, 9] { assert_eq!(ground.at(first + IVec2::new(x, 0)), sample); }
     }
 
     /// A lot sampled every other block still sees a creek one block wide on any row or
