@@ -22,12 +22,16 @@
 // dark, with the odd pool of light, never lit wall to wall. Gatherable cave flora (pale
 // caps, rimecaps, ember caps, cavern moss, paleroot, lumenwort, echo bloom, prism lily)
 // grows in loose patches, each in the caves that suit it, rarer the stranger it is.
+//
+// `level` (1 ..= 10) is as in biomes.ron: far from spawn the higher-level caves grow
+// likelier, and creatures read it for their own levels.
 (
     biomes: [
         (
             // Bare rock, with gravel in hollows, sediment under water and the odd glow of
             // lichen.
             name: "cave",
+            level: 1,
             tags: ["cave"],
             layer: Underground,
             weight: 3.0,
@@ -52,6 +56,7 @@
         (
             // Dry limestone caves full of stalactites and stalagmites.
             name: "dripstone_caves",
+            level: 3,
             tags: ["cave", "dripstone", "dry"],
             layer: Underground,
             weight: 1.5,
@@ -77,6 +82,7 @@
             // Mossy, green and dripping with vines of glowing berries, over pools that glow
             // from below.
             name: "lush_caves",
+            level: 3,
             tags: ["cave", "lush", "wet"],
             layer: Underground,
             rarity: Uncommon,
@@ -103,6 +109,7 @@
         (
             // Damp, dark earth, mushrooms of every size and shelves of fungus overhead.
             name: "fungal_caves",
+            level: 4,
             tags: ["cave", "fungal"],
             layer: Underground,
             rarity: Uncommon,
@@ -127,6 +134,7 @@
         (
             // Under cold land: walls veined with ice, floors of snow, icicles, frozen pools.
             name: "frozen_caves",
+            level: 5,
             tags: ["cave", "frozen", "cold"],
             layer: Underground,
             weight: 2.0,
@@ -148,6 +156,7 @@
             // Near the lava at the bottom of the world, and higher under volcanic land: basalt
             // and glowing magma.
             name: "molten_caves",
+            level: 7,
             tags: ["cave", "molten", "hot", "deep"],
             layer: Underground,
             rarity: Uncommon,
@@ -168,6 +177,7 @@
         (
             // Bands of fired clay in every colour, under hot, dry land and in sedimentary rock.
             name: "painted_caves",
+            level: 4,
             tags: ["cave", "painted", "dry"],
             layer: Underground,
             rarity: Rare,
@@ -194,6 +204,7 @@
         (
             // Dark rock set with glowing crystal, in hard old rock.
             name: "crystal_caves",
+            level: 8,
             tags: ["cave", "crystal", "light"],
             layer: Underground,
             rarity: Rare,
@@ -216,6 +227,7 @@
             // Sea caves under the coast, flooded at sea level: sand and clay underfoot,
             // glowing stones under the water.
             name: "flooded_caves",
+            level: 5,
             tags: ["cave", "flooded", "water"],
             layer: Underground,
             weight: 2.0,
@@ -237,6 +249,7 @@
         (
             // The deepest caves: dark slate, still, lit only by threads of gloomvein.
             name: "deep_dark",
+            level: 9,
             tags: ["cave", "deep_dark", "deep"],
             layer: Underground,
             rarity: Uncommon,
@@ -258,6 +271,7 @@
             // Fantasy: hollows hung with roots that end in glowing berries, where the land is
             // strange.
             name: "glowroot_hollows",
+            level: 7,
             tags: ["cave", "fantasy", "wonder", "lush", "light"],
             layer: Underground,
             rarity: Rare,
@@ -280,6 +294,7 @@
         (
             // Fantasy: a white grotto under a ceiling of stars.
             name: "starlit_grotto",
+            level: 10,
             tags: ["cave", "fantasy", "wonder", "crystal", "light"],
             layer: Underground,
             rarity: VeryRare,
