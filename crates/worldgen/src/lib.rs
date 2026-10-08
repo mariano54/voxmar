@@ -2395,7 +2395,12 @@ mod tests {
         // the water does (tarns in tarn country), so a count needs many places as well as
         // many patches.
         let mut tally: Vec<(usize, u64, Vec<(usize, usize)>)> = vec![(0, 0, vec![(0, 0); herbs.len()]); biomes.len()];
-        let done = |tally: &[(usize, u64, Vec<(usize, usize)>)], b: usize| tally[b].0 >= 12 && pairs.iter().filter(|p| p.1 == biomes[b]).all(|p| tally[b].2[herb_index(&p.0)].1 >= 25);
+        // Larger acceptance censuses can require the same seed prefix in every biome;
+        // the normal gate retains twelve places and the existing sixteen-seed ceiling.
+        let min_places = std::env::var("HERB_MIN_PLACES").map(|s| s.parse::<usize>().expect("HERB_MIN_PLACES must be an integer")).unwrap_or(12);
+        assert!((12..=48).contains(&min_places), "HERB_MIN_PLACES must be in 12..=48");
+        println!("rare-herb coverage: at least {min_places} places and 25 clusters per pair, up to 16 seeds");
+        let done = |tally: &[(usize, u64, Vec<(usize, usize)>)], b: usize| tally[b].0 >= min_places && pairs.iter().filter(|p| p.1 == biomes[b]).all(|p| tally[b].2[herb_index(&p.0)].1 >= 25);
         let mut seeds = 0;
         while seeds < 16 && (0..biomes.len()).any(|b| !done(&tally, b)) {
             seeds += 1;
