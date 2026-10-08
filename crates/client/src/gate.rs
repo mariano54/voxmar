@@ -4956,10 +4956,13 @@ fn splats_missing(world: &mut World) -> Vec<String> {
 
 fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::combat::SplatsShown;
+    // The snail `end_wear` summoned beside the player: not a bear the fights left standing
+    // out of the view.
+    let snail = world.resource::<Launch>().content.creatures.find(CREATURE);
     let creature = {
         let (creatures, player) = (world.resource::<crate::creatures::Creatures>(), world.resource::<LocalPlayer>());
         let eye = player.eye();
-        creatures.living().filter(|(.., feet)| feet.distance(eye) < 14.0).min_by(|a, b| a.2.distance(eye).total_cmp(&b.2.distance(eye))).map(|(id, _, feet)| (id, feet))
+        creatures.living().filter(|(_, species, feet)| Some(*species) == snail && feet.distance(eye) < 14.0).min_by(|a, b| a.2.distance(eye).total_cmp(&b.2.distance(eye))).map(|(id, _, feet)| (id, feet))
     };
     match gate.phase {
         0 => {
