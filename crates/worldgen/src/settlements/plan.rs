@@ -171,6 +171,14 @@ impl Ground<'_> {
             #[cfg(test)]
             { self.clears += 1; }
         }
+        // Large retry sets will otherwise copy the terrain through an intermediate
+        // table. Small plans keep the original growth, and the final table remains
+        // below the entry bound; any further growth is the map's original policy.
+        let capacity = self.seen.capacity();
+        let large = GROUND_SAMPLE_LIMIT / 8 * 7;
+        if capacity >= 4096 && capacity < large && self.seen.len() + count > capacity {
+            self.seen.reserve(large - self.seen.len());
+        }
     }
 
     /// Group only missing original samples for the next bounded portion of a row.

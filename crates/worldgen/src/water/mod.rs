@@ -899,6 +899,14 @@ impl Samples {
             #[cfg(test)]
             { self.work[1] += 1; }
         }
+        // Skip one intermediate rehash only once actual column work fills a large
+        // table. Small callers retain ordinary growth; clearing and exact key
+        // identity still use the unchanged joint entry bound above.
+        let capacity = self.columns.capacity();
+        let large = RAW_COLUMN_LIMIT / 8 * 7;
+        if capacity >= 4096 && capacity < large && self.columns.len() + 5 * count > capacity {
+            self.columns.reserve(large - self.columns.len());
+        }
         if self.tiers.len() >= 16 { self.tiers.clear(); }
     }
 
