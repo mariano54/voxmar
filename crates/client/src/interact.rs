@@ -5,7 +5,7 @@
 
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
-use voxmar_engine::action::{ActionContext, ActionId, ActionTarget, Effect, Rejection, Requirement, placement_cell, supported_by};
+use voxmar_engine::action::{ActionContext, ActionId, ActionTarget, Effect, Rejection, Requirement, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::content::Content;
 use voxmar_engine::crop::CropRegistry;
@@ -57,6 +57,8 @@ pub struct Target {
     place_cooldown: f32,
     /// When (seconds of game time) the line cast last comes up, and another may be cast.
     fishing_until: f32,
+    /// When (seconds of game time) what is cooking comes off the fire, and more may go on.
+    cooking_until: f32,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
@@ -324,9 +326,13 @@ fn break_and_place(
             let context = ClientContext { world: &world, player: &player, content };
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             match actions.0.get(cook).map(|def| def.validate(&context, action_target)) {
+                // One thing at a time: a click while it cooks neither restarts it nor eats.
+                Some(Ok(())) if time.elapsed_secs() < target.cooking_until => return,
                 Some(Ok(())) => {
+                    let seconds = actions.0.get(cook).map_or(0.0, |def| def.seconds(&context, action_target));
                     net.propose_from(&player, cook, action_target);
                     target.place_cooldown = 0.4;
+                    target.cooking_until = time.elapsed_secs() + seconds + 0.2;
                     return;
                 }
                 Some(Err(Rejection::Unmet(Requirement::CookingLevel))) => {
@@ -422,9 +428,10 @@ fn break_and_place(
         let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
         if let Some(item) = held.filter(|_| allowed) {
             let cell = placement_cell(&context, hit.block, hit.face);
+            let placed = placed_block(&context, item, hit.block, hit.face);
             net.propose_from(&player, place, action_target);
             cues.write(SoundCue::for_block(&world, item, Cue::Place));
-            world.set_block(cell, item);
+            world.set_block(cell, placed);
             let selected = player.selected;
             player.inventory.take_one(selected);
         }

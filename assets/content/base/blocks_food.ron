@@ -4,9 +4,10 @@
 (
     blocks: [
         // A campfire: logs and embers that cook one thing at a time and keep the cold off.
+        // A `furnishing`: a village's gives nothing, one a player placed gives itself back.
         (
             name: "campfire", render: Plant, solid: false, sound: Wood, textures: All("campfire"),
-            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire"],
+            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "furnishing"],
             // Flames licking a block and more above the logs, a deep yellow core among them,
             // smoke thick over the fire and thinning as it rises a few blocks, embers
             // floating up as high, and now and then a crackle of sparks (`particles`:
@@ -24,11 +25,24 @@
         // the odd ember and wisp of smoke rise from it.
         (
             name: "torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
-            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"],
+            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"], wall: "wall_torch",
             particles: [
                 (style: Flame, rate: 26.0, at: (0.5, 0.78, 0.5), spread: 0.04, size: 1.6, height: 0.35, color: Some((240, 128, 20))),
                 (style: Ember, rate: 0.5, at: (0.5, 0.75, 0.5), spread: 0.04, size: 0.7, height: 2.0, color: Some((226, 84, 16))),
                 (style: Smoke, rate: 0.8, at: (0.5, 0.9, 0.5), spread: 0.02, size: 0.45, color: Some((112, 112, 112))),
+            ],
+        ),
+        // A torch placed against a wall's side: it leans out from the wall, its flame over
+        // its tip. The four facings are blocks of their own (`wall_torch` faces north, -z;
+        // `wall_torch_east`, `_south`, `_west`), so settlements can place them directly.
+        (
+            name: "wall_torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
+            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"], drops: "torch",
+            facing: true, support: Wall, model: Wall,
+            particles: [
+                (style: Flame, rate: 26.0, at: (0.5, 0.84, 0.67), spread: 0.04, size: 1.6, height: 0.35),
+                (style: Ember, rate: 0.5, at: (0.5, 0.81, 0.68), spread: 0.04, size: 0.7, height: 2.0),
+                (style: Smoke, rate: 0.8, at: (0.5, 0.96, 0.63), spread: 0.02, size: 0.45),
             ],
         ),
     ],
@@ -37,13 +51,13 @@
         (template: "drop", name: "cooked_chicken", tags: ["meat", "cooked", "edible", "food:5", "heal:4", "flavour:savoury"], all: (color: (200, 140, 70))),
         (template: "drop", name: "cooked_frog", tags: ["meat", "cooked", "edible", "food:3", "heal:2", "flavour:savoury"], all: (color: (200, 150, 100))),
         (template: "drop", name: "cooked_crab", tags: ["meat", "cooked", "edible", "food:5", "heal:4", "flavour:savoury", "seafood"], all: (color: (230, 110, 60))),
-        (template: "drop", name: "cooked_duck", tags: ["meat", "cooked", "edible", "food:5", "heal:5", "flavour:savoury"], all: (color: (150, 80, 40))),
+        (template: "drop", name: "cooked_duck", tags: ["meat", "cooked", "edible", "food:5", "heal:5", "flavour:savoury"], all: (color: (150, 80, 40), rarity: Uncommon)),
         (template: "drop", name: "cooked_mutton", tags: ["meat", "cooked", "edible", "food:6", "heal:5", "flavour:savoury"], all: (color: (140, 70, 40))),
         (template: "drop", name: "cooked_pork", tags: ["meat", "cooked", "edible", "food:7", "heal:6", "flavour:savoury"], all: (color: (190, 120, 70))),
         (template: "drop", name: "cooked_beef", tags: ["meat", "cooked", "edible", "food:8", "heal:6", "flavour:savoury"], all: (color: (120, 60, 30))),
         (template: "drop", name: "cooked_venison", tags: ["meat", "cooked", "edible", "food:8", "heal:7", "flavour:savoury", "game"], all: (color: (110, 50, 30))),
-        (template: "drop", name: "cooked_bear", tags: ["meat", "cooked", "edible", "food:9", "heal:8", "flavour:savoury", "game"], all: (color: (100, 45, 30))),
-        (template: "drop", name: "baked_potato", tags: ["root", "cooked", "edible", "food:5", "heal:3"], all: (color: (190, 140, 70))),
+        (template: "drop", name: "cooked_bear", tags: ["meat", "cooked", "edible", "food:9", "heal:8", "flavour:savoury", "game"], all: (color: (100, 45, 30), rarity: Uncommon)),
+        (template: "drop", name: "baked_potato", tags: ["root", "cooked", "edible", "food:5", "heal:3"], all: (color: (190, 140, 70), rarity: Uncommon)),
         (template: "drop", name: "roast_carrot", tags: ["root", "cooked", "edible", "food:4", "heal:2", "flavour:sweet"], all: (color: (220, 110, 30))),
         (template: "drop", name: "egg", tags: ["egg", "raw", "edible", "food:1"], all: (color: (240, 228, 200))),
         (template: "drop", name: "fried_egg", tags: ["egg", "cooked", "edible", "food:4", "heal:3"], all: (color: (250, 220, 120))),
@@ -69,14 +83,20 @@
         (template: "drop", name: "cooked_bass", tags: ["fish", "cooked", "edible", "food:8", "heal:7", "seafood", "flavour:savoury"], all: (color: (200, 150, 100))),
         (template: "drop", name: "raw_pike", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (150, 170, 190))),
         (template: "drop", name: "cooked_pike", tags: ["fish", "cooked", "edible", "food:9", "heal:8", "seafood", "flavour:savoury"], all: (color: (200, 150, 100))),
-        (template: "drop", name: "raw_eel", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (150, 170, 190))),
-        (template: "drop", name: "cooked_eel", tags: ["fish", "cooked", "edible", "food:10", "heal:9", "seafood", "flavour:savoury"], all: (color: (200, 150, 100))),
+        (template: "drop", name: "raw_eel", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (150, 170, 190), rarity: Uncommon)),
+        (template: "drop", name: "cooked_eel", tags: ["fish", "cooked", "edible", "food:10", "heal:9", "seafood", "flavour:savoury"], all: (color: (200, 150, 100), rarity: Uncommon)),
         (template: "drop", name: "raw_tuna", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (150, 170, 190))),
         (template: "drop", name: "cooked_tuna", tags: ["fish", "cooked", "edible", "food:11", "heal:10", "seafood", "flavour:savoury"], all: (color: (200, 150, 100))),
-        (template: "drop", name: "raw_swordfish", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (150, 170, 190))),
-        (template: "drop", name: "cooked_swordfish", tags: ["fish", "cooked", "edible", "food:13", "heal:12", "seafood", "flavour:savoury"], all: (color: (200, 150, 100))),
-        (template: "drop", name: "raw_glimmer_koi", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (150, 170, 190))),
-        (template: "drop", name: "cooked_glimmer_koi", tags: ["fish", "cooked", "edible", "food:16", "heal:14", "seafood", "flavour:savoury"], all: (color: (200, 150, 100))),
+        (template: "drop", name: "raw_sturgeon", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (130, 125, 115), rarity: Uncommon)),
+        (template: "drop", name: "cooked_sturgeon", tags: ["fish", "cooked", "edible", "food:12", "heal:10", "seafood", "flavour:savoury"], all: (color: (200, 150, 100), rarity: Uncommon)),
+        (template: "drop", name: "raw_marlin", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (60, 100, 160), rarity: Rare)),
+        (template: "drop", name: "cooked_marlin", tags: ["fish", "cooked", "edible", "food:12", "heal:11", "seafood", "flavour:savoury"], all: (color: (200, 150, 100), rarity: Rare)),
+        (template: "drop", name: "raw_swordfish", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (150, 170, 190), rarity: Rare)),
+        (template: "drop", name: "cooked_swordfish", tags: ["fish", "cooked", "edible", "food:13", "heal:12", "seafood", "flavour:savoury"], all: (color: (200, 150, 100), rarity: Rare)),
+        (template: "drop", name: "raw_deepwater_lanternfish", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (40, 60, 90), rarity: Rare)),
+        (template: "drop", name: "cooked_deepwater_lanternfish", tags: ["fish", "cooked", "edible", "food:14", "heal:13", "seafood", "flavour:savoury"], all: (color: (200, 150, 100), rarity: Rare)),
+        (template: "drop", name: "raw_glimmer_koi", tags: ["fish", "raw", "edible", "food:1", "seafood"], all: (color: (150, 170, 190), rarity: VeryRare)),
+        (template: "drop", name: "cooked_glimmer_koi", tags: ["fish", "cooked", "edible", "food:16", "heal:14", "seafood", "flavour:savoury"], all: (color: (200, 150, 100), rarity: VeryRare)),
         // Tools for what kept animals give.
         (template: "drop", name: "shears", tags: ["shears", "tool"], all: (color: (150, 150, 155))),
         (template: "drop", name: "pail", tags: ["pail", "tool"], all: (color: (150, 110, 70))),
