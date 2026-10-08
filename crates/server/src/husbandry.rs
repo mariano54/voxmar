@@ -1002,6 +1002,8 @@ mod tests {
         server.players.get_mut(&player).unwrap().inventory.add(wheat, 1);
         server.tend(player, hens[0]);
         assert_eq!(server.creatures.live[&hens[0]].ready_until, 0);
+    }
+
     #[test]
     fn a_hungry_kept_animal_eats_by_hand_and_a_fed_one_keeps_the_food() {
         let mut server = test_server();
