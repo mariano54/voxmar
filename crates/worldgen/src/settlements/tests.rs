@@ -2385,3 +2385,40 @@ fn culture_palette_checks_every_wood_and_trim_combination() {
     let error = def.cultures.check(&def, &registry).unwrap_err();
     assert!(error.0.contains("base:a_b_planks"), "{error}");
 }
+
+/// Planning budgets are measured in release with thread CPU time, after the surrounding
+/// land is known. Report cold region discovery separately in settlement_preview.
+#[test]
+#[ignore]
+fn culture_planning_budget() {
+    use crate::water::cache::Weigh;
+    assert!(!cfg!(debug_assertions), "run this budget with --release");
+    let mut count = 0;
+    let mut peak = 0usize;
+    let mut times: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+    for seed in 1..=20 {
+        let world = base_world(seed);
+        let spawn = world.spawn_point();
+        let found = world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2048);
+        for slot in found.iter().filter(|s| s.0.is_some()).take(2) {
+            let plan = slot.0.as_ref().unwrap();
+            let cell = world.settlements.cell_of(plan.centre.x, plan.centre.y);
+            let spawn_at = world.settlements.spawn.get().and_then(|s| s.square).filter(|s| s.1 == cell).map(|s| s.0);
+            let start = crate::perf::thread_time();
+            let again = world.settlements.plan(&world, world.settlements.fixed.as_ref().unwrap(), cell, spawn_at).unwrap();
+            let ms = (crate::perf::thread_time() - start).as_secs_f64() * 1000.0;
+            assert_eq!(again.culture, plan.culture);
+            let budget = match plan.size.as_str() { "hamlet" => 3.0, "village" => 6.0, other => panic!("unbudgeted size {other}") };
+            assert!(ms <= budget * 2.0, "seed {seed} {} at {}: {ms:.2} ms CPU, budget {budget} ms", plan.size, plan.centre);
+            times.entry(plan.size.clone()).or_default().push(ms);
+            peak = peak.max(slot.bytes());
+            count += 1;
+        }
+    }
+    for (size, mut ms) in times {
+        ms.sort_by(f64::total_cmp);
+        println!("culture budget: {size}, {} plans, median {:.2} ms CPU, p99/max {:.2} ms CPU", ms.len(), ms[ms.len()/2], ms[ms.len()-1]);
+    }
+    assert!(count >= 20, "only {count} plans");
+    println!("culture budget: {count} plans over 20 seeds, peak {peak} bytes including culture");
+}
