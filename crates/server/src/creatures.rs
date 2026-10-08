@@ -1194,7 +1194,7 @@ mod density_tests {
         let _keep = client;
         let height = server.overworld.site(spot.0, spot.1).height;
         let at = Vec3::new(spot.0 as f32 + 0.5, height as f32 + 1.0, spot.1 as f32 + 0.5);
-        let mut player = crate::player::Player::new(1, connection, at, 2);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
         (player.joined, player.admin, player.name) = (true, true, "probe".into());
         server.players.clear();
         server.players.insert(1, player);

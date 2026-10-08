@@ -455,7 +455,9 @@ pub(crate) struct Server {
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
     /// The moment before which every player message has been handled: the last time all
-    /// were taken in. A creature's blow is judged once it has landed by then (`fight`).
+    /// were taken in, except messages past a player's share for the tick (the
+    /// `messages_left` cap), which only that player pays for. A creature's blow is judged
+    /// once it has landed by then (`fight`).
     /// None until messages are first taken in (unit tests tick without them).
     heard: Option<Instant>,
     /// Animals and monsters about.
@@ -678,7 +680,8 @@ impl Server {
 
     fn handle_messages(&mut self) {
         // A message is stamped as it goes into its channel, so every one stamped before now
-        // is handled below.
+        // is handled below, except messages past a player's share for the tick (the
+        // `messages_left` cap), which only that player pays for.
         let heard = Instant::now();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for id in ids {
