@@ -1099,7 +1099,7 @@ mod neighbour_tests {
     #[test]
     fn neighbours_find_what_looking_at_every_creature_finds() {
         let mut server = crate::test_server();
-        // Three hundred of three kinds over 120 blocks square, a third of them ready to breed,
+        // Three hundred of three kinds over 120 blocks square, a third of them ready to breed (two in three of those kept),
         // some on cell edges and some in negative cells.
         let kinds: Vec<CreatureId> = ["base:rabbit", "base:junglefowl", "base:mouflon"].map(|name| server.content.creatures.id(name).expect("species")).into();
         for i in 0..300u64 {
@@ -1107,7 +1107,10 @@ mod neighbour_tests {
             let (x, z) = if i % 25 == 0 { ((x / CELL).round() * CELL, z) } else { (x, z) };
             let id = server.spawn_creature(kinds[i as usize % 3], server.spawn + Vec3::new(x, 0.0, z), i).expect("room");
             if i % 3 == 0 {
-                server.creatures.live.get_mut(&id).unwrap().ready_until = 1;
+                // Two in three kept (only kept animals are mates), the rest let go and wild.
+                let creature = server.creatures.live.get_mut(&id).unwrap();
+                creature.ready_until = 1;
+                creature.owner = (i % 9 != 0).then(|| "test".to_string());
             }
         }
         let neighbours = Neighbours::of(&server.creatures.live);
@@ -1120,7 +1123,7 @@ mod neighbour_tests {
                     .creatures
                     .live
                     .iter()
-                    .filter(|&(&other, c)| other != id && c.species == me.species && (!ready || c.ready_until > 0) && c.body.position.distance(me.body.position) < range)
+                    .filter(|&(&other, c)| other != id && c.species == me.species && (!ready || (c.ready_until > 0 && c.owner.is_some())) && c.body.position.distance(me.body.position) < range)
                     .map(|(_, c)| c.body.position)
                     .collect()
             };
