@@ -4852,18 +4852,18 @@ const MARKS_TELLS: u32 = 3;
 
 fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::combat::SplatsShown;
-    // The creature `end_wear` summoned, the nearest of its kind: not just any creature
-    // about, which may be out of sight, or leave, before its splats are read. Once the
-    // blows are told at one, that one.
+    // The snail `end_wear` summoned beside the player: not a bear the fights left standing
+    // out of the view.
+    let snail = world.resource::<Launch>().content.creatures.find(CREATURE);
     let creature = {
-        let (creatures, player, launch) = (world.resource::<crate::creatures::Creatures>(), world.resource::<LocalPlayer>(), world.resource::<Launch>());
+        let (creatures, player) = (world.resource::<crate::creatures::Creatures>(), world.resource::<LocalPlayer>());
         let eye = player.eye();
-        let kind = launch.content.creatures.find(CREATURE);
-        match gate.marked {
-            Some(id) => creatures.living().find(|&(at, ..)| at == id),
-            None => creatures.living().filter(|&(_, species, feet)| Some(species) == kind && feet.distance(eye) < 14.0).min_by(|a, b| a.2.distance(eye).total_cmp(&b.2.distance(eye))),
-        }
-        .map(|(id, _, feet)| (id, feet))
+        creatures.living().filter(|(_, species, feet)| Some(*species) == snail && feet.distance(eye) < 14.0).min_by(|a, b| a.2.distance(eye).total_cmp(&b.2.distance(eye))).map(|(id, _, feet)| (id, feet))
+    };
+    // Once the blows are told at one, that one, wherever another stands.
+    let creature = match gate.marked {
+        Some(id) => world.resource::<crate::creatures::Creatures>().living().find(|&(at, ..)| at == id).map(|(id, _, feet)| (id, feet)),
+        None => creature,
     };
     match gate.phase {
         0 => {
