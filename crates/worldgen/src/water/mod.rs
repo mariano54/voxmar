@@ -845,16 +845,16 @@ mod tests {
         assert_eq!(lake_component(IVec2::new(4, 0), 32, wet).len(), 21);
     }
 
-    /// The game gate's seed has a real, visible pool near its nearest mountains. The
+    /// The game gate's seed has a real, visible pool near its alpine highlands. The
     /// query must return the tarn rule's water, and disappear when that rule is absent.
     #[test]
     fn tarn_query_finds_visible_rule_pools() {
         let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
         let mut world = crate::Overworld::new(0x5eed, registry);
         let spawn = crate::Generator::spawn_point(&world);
-        let mountain = world.locate_biome("mountains", spawn.xz(), 6000).expect("mountains near the gate's spawn");
-        println!("gate seed spawn {spawn}, mountain {mountain}");
-        let at = world.locate_tarn(mountain, 4096).expect("a visible tarn near those mountains");
+        let mountain = world.locate_biome("alpine_meadow", spawn.xz(), 60000).expect("alpine highlands in the gate's world");
+        println!("gate seed spawn {spawn}, alpine highland {mountain}, site {:?}", world.site(mountain.x, mountain.y));
+        let at = world.locate_tarn(mountain, 4096).expect("a visible tarn near those alpine highlands");
         println!("gate seed tarn {at}");
         let wet = lake_component(at.xz(), 16, |p| {
             let g = world.geo(p.x, p.y);
