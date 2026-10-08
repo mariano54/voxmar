@@ -256,6 +256,12 @@ impl Client {
         self.connection.send(ClientMessage::Input(PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }));
     }
 
+    /// The server's own clock, read as it runs: the ticks it has simulated (finer than the
+    /// `Time` it tells once a second). Only the client holding the server has it.
+    fn ticks(&self) -> u64 {
+        self._server.as_ref().expect("the first player holds the server").ticks()
+    }
+
     /// Waits until the server's clock has run at least `seconds` on (it tells the time every
     /// second, so a little more).
     fn wait_server(&mut self, seconds: u64) {
@@ -1617,19 +1623,23 @@ fn armour_goes_on_from_the_hand_a_shield_guards_and_death_counts_what_is_worn() 
     client.ok("/summon brown_bear 1 ~ ~ ~");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
     let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
-    // Struck once so it fights back, then the guard goes up while it is not winding up.
-    let mut struck = Instant::now() - Duration::from_secs(5);
+    // Struck once so it fights back (again every three server seconds until a blow of ours
+    // is heard), then the guard goes up while it is not winding up.
+    let mut struck: Option<u64> = None;
     let mut guarded: Option<usize> = None;
+    client.pump_until(|c| c.server_tick > 0);
+    let started = client.server_tick;
     loop {
+        assert!(client.server_tick < started + 30 * TICKS_PER_SECOND as u64, "no guarded blow came (guard up: {}, our blows {})", guarded.is_some(), client.kinds.len());
         let at = client.creatures[&id].position;
         if client.position.distance(at) > 2.0 {
             client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
         }
         let yaw = yaw_toward(client.position, at);
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: sword_slot as u8, flying: false }));
-        if guarded.is_none() && struck.elapsed() > Duration::from_secs(3) {
+        if guarded.is_none() && struck.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64) {
             client.propose("core:attack", ActionTarget::Creature(id));
-            struck = Instant::now();
+            struck = Some(client.server_tick);
         }
         let winding = client.creatures[&id].pose == voxmar_engine::creature::brain::Pose::Attacking;
         if guarded.is_none() && !client.kinds.is_empty() && !winding {
@@ -1639,8 +1649,8 @@ fn armour_goes_on_from_the_hand_a_shield_guards_and_death_counts_what_is_worn() 
         if guarded.is_some_and(|n| client.hurt.len() > n) {
             break;
         }
-        let asked = Instant::now();
-        client.pump_until(|c| asked.elapsed() > Duration::from_millis(100) || guarded.is_some_and(|n| c.hurt.len() > n));
+        // One round trip: the server has handled all of the above, a tick at most.
+        client.settle();
     }
     // Raised long before the blow: no perfect block, the shield stops 55% of it.
     let (damage, defended) = client.hurt[guarded.unwrap()];
@@ -1681,17 +1691,19 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
             let before = provoke_until_it_winds_up(&mut client, id, slot, name);
             // Straight back from it, facing it, until the blow lands: a walk's worth each
             // server tick, as the creature moves by them (a server running behind moves
-            // both slower).
+            // both slower). Ticks are read off the server as it runs: the `Time` it tells
+            // once a second would move us in jumps of a whole second's walk.
             let away = (client.position - client.creatures[&id].position).with_y(0.0).normalize_or_zero();
-            let started = client.server_tick;
-            let mut last = client.server_tick;
+            let started = client.ticks();
+            let mut last = started;
             while client.hurt.len() == before {
-                assert!(client.server_tick < started + 5 * TICKS_PER_SECOND as u64, "the {name}'s blow never came: {:?}", client.creatures.get(&id).map(|v| v.pose));
-                client.position += away * walk * (client.server_tick - last) as f32 / TICKS_PER_SECOND as f32;
-                last = client.server_tick;
+                let now = client.ticks();
+                assert!(now < started + 5 * TICKS_PER_SECOND as u64, "the {name}'s blow never came: {:?}", client.creatures.get(&id).map(|v| v.pose));
+                client.position += away * walk * (now - last) as f32 / TICKS_PER_SECOND as f32;
+                last = now;
                 let yaw = yaw_toward(client.position, client.creatures[&id].position);
                 client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-                client.pump_until(|c| c.hurt.len() > before || c.server_tick > last);
+                client.pump_until(|c| c.hurt.len() > before || c.ticks() > last);
             }
             outcomes.push(client.hurt[before].1);
             client.wait_server(1);
@@ -1705,8 +1717,9 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
 fn guarded_blow(client: &mut Client, id: u32, slot: usize, off: f32) -> voxmar_engine::combat::Defended {
     let before = client.hurt.len();
     let blows = client.kinds.len();
-    // Struck once so it fights back; then the guard goes up while it is not winding up.
-    let mut struck = Instant::now() - Duration::from_secs(5);
+    // Struck once so it fights back (again every one and a half server seconds until a blow
+    // of ours is heard); then the guard goes up while it is not winding up.
+    let mut struck: Option<u64> = None;
     let mut guarded = false;
     client.pump_until(|c| c.server_tick > 0);
     let started = client.server_tick;
@@ -1719,17 +1732,17 @@ fn guarded_blow(client: &mut Client, id: u32, slot: usize, off: f32) -> voxmar_e
         }
         let yaw = yaw_toward(client.position, at) + off;
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-        if client.kinds.len() == blows && struck.elapsed() > Duration::from_millis(1500) {
+        if client.kinds.len() == blows && struck.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64 / 2) {
             client.propose("core:attack", ActionTarget::Creature(id));
-            struck = Instant::now();
+            struck = Some(client.server_tick);
         }
         let winding = client.creatures[&id].pose == voxmar_engine::creature::brain::Pose::Attacking;
         if !guarded && client.kinds.len() > blows && !winding {
             let _ = client.connection.send(ClientMessage::Guard { up: true });
             guarded = true;
         }
-        let asked = Instant::now();
-        client.pump_until(|c| c.hurt.len() > before || asked.elapsed() > Duration::from_millis(50));
+        // One round trip: the server has handled all of the above, a tick at most.
+        client.settle();
     }
     let _ = client.connection.send(ClientMessage::Guard { up: false });
     let outcome = client.hurt[before].1;
