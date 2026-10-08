@@ -1160,19 +1160,49 @@ mod combat_tests {
         server.players.insert(player, joined);
         let species = server.content.creatures.id("base:brown_bear").expect("a bear");
         let bear = server.spawn_creature(species, server.spawn + Vec3::X * 1.5, 1).expect("room");
+        // Facing away at first: the attacking update must carry the server's turn too.
+        server.creatures.live.get_mut(&bear).unwrap().body.yaw = motion::yaw_of(Vec3::X);
         server.tick = 10;
         server.replicate_creatures();
         while let Ok(Some(_)) = client.try_recv() {}
         server.tick = 11;
         server.wind_up(bear, player);
         server.replicate_creatures();
-        let shown = std::iter::from_fn(|| client.try_recv().ok().flatten()).any(|message| match message {
-            ServerMessage::Creatures { changed, .. } => changed.iter().any(|v| v.id == bear && v.pose == brain::Pose::Attacking),
-            _ => false,
-        });
-        assert!(shown, "the wind-up waited a tick to be shown");
+        let shown = std::iter::from_fn(|| client.try_recv().ok().flatten()).find_map(|message| match message {
+            ServerMessage::Creatures { changed, .. } => changed.into_iter().find(|v| v.id == bear && v.pose == brain::Pose::Attacking),
+            _ => None,
+        }).expect("the wind-up waited a tick to be shown");
+        assert!((shown.yaw - motion::yaw_of(-Vec3::X)).abs() < 1e-4, "the first telegraph still faced away");
         // Sent once: the next tick sends it again only if it changed more.
         assert!(server.creatures.live[&bear].sent.is_some_and(|v| v.pose == brain::Pose::Attacking));
+    }
+
+    #[test]
+    fn a_wind_up_tracks_before_its_deadline_and_keeps_its_aim_after() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let at = server.spawn;
+        let joined = crate::player::Player::new(player, connection, at - Vec3::Z * 2.0, 2, server.tick, server.survival.max_health, &server.config.limits);
+        server.players.insert(player, joined);
+        let species = server.content.creatures.id("base:brown_bear").expect("a bear");
+        let bear = server.spawn_creature(species, at, 1).expect("room");
+        server.wind_up(bear, player);
+        let until = server.creatures.live[&bear].tracking.expect("tracking").1;
+        assert!(until > server.tick && until < server.creatures.live[&bear].held_until);
+        // The target moves during tracking: the bear still turns toward them.
+        server.players.get_mut(&player).unwrap().position = at + Vec3::X * 2.0;
+        server.tick = until - 1;
+        let before = server.creatures.live[&bear].body.yaw;
+        server.move_creature(bear, 1.0 / TICKS_PER_SECOND as f32);
+        let locked = server.creatures.live[&bear].body.yaw;
+        assert!(locked < before - 0.01, "the bear did not track the moving target");
+        // At the deadline, moving behind it no longer changes its aim.
+        server.tick = until;
+        server.players.get_mut(&player).unwrap().position = at - Vec3::X * 2.0;
+        assert!(server.tracking_drive(bear).is_none());
+        server.move_creature(bear, 1.0 / TICKS_PER_SECOND as f32);
+        assert_eq!(server.creatures.live[&bear].body.yaw, locked, "the locked wind-up followed a late side-step");
     }
 
     #[test]
