@@ -1987,7 +1987,7 @@ fn every_regional_family_can_win_its_climate() {
         let t = k % temperatures.len();
         let p = Point([temperatures[t], rng.unit() * 2.0, 0.05 + rng.unit() * 0.95,
             rng.unit(), rng.unit(), rng.unit(), rng.unit(), 1.0]);
-        let id = world.biomes().resolve(&p);
+        let id = world.biomes().resolve(&world.biomes().remap(p));
         if !def.avoid.iter().any(|tag| world.biomes().get(id).has_tag(tag)) {
             climates.insert((t, id));
         }
