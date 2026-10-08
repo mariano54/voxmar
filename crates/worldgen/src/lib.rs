@@ -1883,8 +1883,7 @@ mod tests {
         let id = world.biomes.id(&format!("base:{biome}"))?;
         let at = world.locate_biome(biome, from, 60000)?;
         let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-chunks / 2, -chunks / 2);
-        // One sampler a column of chunks: the same sites as `Overworld::site`, far quicker
-        // than sampling each alone.
+        // One sampler a column of chunks, caching its home-biome picks.
         let sampler = |pos: ColumnPos| {
             let corner = pos.origin();
             world.dense_sampler(IVec2::new(corner.x, corner.z), IVec2::new(corner.x + 31, corner.z + 31))
@@ -1895,7 +1894,7 @@ mod tests {
             .map(|i| first.offset(i % chunks, i / chunks))
             .filter(|&pos| {
                 let (sampler, corner) = (sampler(pos), pos.origin());
-                (0..64).any(|k| sampler.site(corner.x + k % 8 * 4 + 2, corner.z + k / 8 * 4 + 2).home == id)
+                (0..64).any(|k| sampler.pick(corner.x + k % 8 * 4 + 2, corner.z + k / 8 * 4 + 2).home == id)
             })
             .collect();
         let area = generate_columns(world, &positions);
@@ -1903,20 +1902,52 @@ mod tests {
         for (&pos, column) in positions.iter().zip(&area) {
             let corner = pos.origin();
             let sampler = sampler(pos);
+            // A census needs home, height and water only. Sample the full river area once,
+            // including crag tops, rather than 25 geology positions for every land column.
+            // Like Sampler::site, this excludes later trail/settlement height adjustments.
+            let geology = world.rivers.area(world.stages(), IVec2::new(corner.x, corner.z), 32);
             for z in 0..32 {
                 for x in 0..32 {
-                    let site = sampler.site(corner.x + x, corner.z + z);
-                    if site.home != id || site.height < site.water || site.height + 1 >= WORLD_HEIGHT_FOR_TESTS {
+                    let geo = &geology[(z * 32 + x) as usize];
+                    if sampler.pick(corner.x + x, corner.z + z).home != id || geo.height < geo.water || geo.height + 1 >= WORLD_HEIGHT_FOR_TESTS {
                         continue;
                     }
                     columns += 1;
-                    if let Some(&k) = looks.get(&column.block(IVec3::new(x, site.height + 1, z))) {
+                    if let Some(&k) = looks.get(&column.block(IVec3::new(x, geo.height + 1, z))) {
                         placed[k].push((corner.x + x, corner.z + z));
                     }
                 }
             }
         }
         Some((columns, placed))
+    }
+
+    /// Census batching must retain exactly the old site's home, height and water,
+    /// including wet banks and crag tops; these fields choose the denominator and block.
+    #[test]
+    fn biome_census_keeps_site_fields() {
+        let registry = registry();
+        let (mut wet, mut crags) = (0, 0);
+        for (seed, at) in [(2, IVec2::new(820, 124)), (2, IVec2::new(-2660, -564)), (42, IVec2::new(-306, -70)), (22, IVec2::new(319, 2061))] {
+            let world = Overworld::new(seed, registry.clone());
+            let crag = (0..160 * 160).map(|i| IVec2::new(i % 160 * 50 - 4000, i / 160 * 50 - 4000)).find(|p| world.ground(p.x, p.y).crag.amplitude > 6.0);
+            for at in std::iter::once(at).chain(crag) {
+                let corner = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).origin();
+                let sampler = world.dense_sampler(IVec2::new(corner.x, corner.z), IVec2::new(corner.x + 31, corner.z + 31));
+                let area = world.rivers.area(world.stages(), IVec2::new(corner.x, corner.z), 32);
+                for z in 0..32 {
+                    for x in 0..32 {
+                        let geo = &area[(z * 32 + x) as usize];
+                        let (wx, wz) = (corner.x + x, corner.z + z);
+                        let site = sampler.site(wx, wz);
+                        assert_eq!((sampler.pick(wx, wz).home, geo.height, geo.water), (site.home, site.height, site.water), "census fields differ on seed {seed} at ({wx}, {wz})");
+                        wet += (geo.height < geo.water) as usize;
+                        crags += (geo.crag.amplitude > 6.0) as usize;
+                    }
+                }
+            }
+        }
+        assert!(wet > 0 && crags > 0, "comparison missed wet or crag land: wet={wet}, crags={crags}");
     }
 
     /// Visible plant clusters: connected components with neighbouring plants within
