@@ -35,6 +35,17 @@ use super::def::{Lean, Levers, Material, SettlementsDef, fill};
 use crate::biome::Biome;
 use crate::content::{ContentError, Select, qualify};
 use crate::rng::{Rng, hash3};
+use crate::water::cache::{Cache, Weigh};
+
+/// A region's terrain fits, weighed by the storage its family scores own.
+#[derive(Clone)]
+pub(crate) struct Fits(pub (IVec2, Vec<f32>));
+
+impl Weigh for Fits {
+    fn bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.0.1.capacity() * std::mem::size_of::<f32>()
+    }
+}
 
 /// How many culture axes there are.
 pub const AXES: usize = 8;
@@ -268,6 +279,9 @@ pub struct Rules {
     pub second_quirk: f32,
     /// How much of a style's wall, trim and roof weight the palette colours add.
     pub palette: f32,
+    /// Axis shifts per unit of a site input (`age`, `wealth`, `order`, `forest`, `water`,
+    /// `green`, `martial`, `trade`). Martial and trade are read after the other shifts.
+    pub site_shift: BTreeMap<String, AxesFile>,
     /// What a size shifts each axis by, by the size's name (`town`, `city`; P57b and c).
     pub size_shift: BTreeMap<String, AxesFile>,
     /// Martial rises `.1` per level of the land above `.0`; piety by `.1` at level `.0`
@@ -292,6 +306,7 @@ impl Default for Rules {
             keep: (3, 5),
             second_quirk: 0.25,
             palette: 0.5,
+            site_shift: BTreeMap::new(),
             size_shift: BTreeMap::new(),
             level_martial: (3, 0.06),
             level_piety: (7, 0.1),
@@ -445,11 +460,44 @@ struct QuirkFile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CulturesFile {
-    rules: Option<Rules>,
+    rules: Option<RulesFile>,
     #[serde(default)]
     families: Vec<FamilyFile>,
     #[serde(default)]
     quirks: Vec<QuirkFile>,
+}
+
+/// Later packages replace only the rule fields they name.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+struct FieldFile {
+    cell: Option<i32>,
+    jitter: Option<f32>,
+    probes: Option<i32>,
+    border: Option<f32>,
+    share: Option<(f32, f32)>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+struct RulesFile {
+    field: Option<FieldFile>,
+    luck: Option<f32>,
+    luck_cell: Option<i32>,
+    smooth: Option<f32>,
+    claim: Option<(f32, f32)>,
+    drift: Option<(i32, f32)>,
+    local: Option<f32>,
+    drop: Option<(u32, u32)>,
+    borrow: Option<u32>,
+    borrow_scale: Option<f32>,
+    keep: Option<(u32, u32)>,
+    second_quirk: Option<f32>,
+    palette: Option<f32>,
+    site_shift: Option<BTreeMap<String, AxesFile>>,
+    size_shift: Option<BTreeMap<String, AxesFile>>,
+    level_martial: Option<(u32, f32)>,
+    level_piety: Option<(u32, f32)>,
 }
 
 /// Every package's `cultures.ron` together.
@@ -458,6 +506,9 @@ pub struct CulturesDef {
     pub rules: Rules,
     pub families: Vec<Family>,
     pub quirks: Vec<Quirk>,
+    /// Which package set each single-valued rule, for draft 91 load notes.
+    setters: BTreeMap<String, String>,
+    pub notes: Vec<String>,
 }
 
 /// A settlement's second family, mixed in near a border (or by a site claim).
@@ -503,6 +554,17 @@ impl Culture {
     }
 }
 
+impl Weigh for Culture {
+    fn bytes(&self) -> usize {
+        let entries = |all: &Vec<Entry>| all.capacity() * std::mem::size_of::<Entry>() + all.iter().map(|e| e.name.capacity()).sum::<usize>();
+        std::mem::size_of::<Self>() + entries(&self.entries) + entries(&self.dropped)
+            + entries(&self.quirk_entries) + self.second.as_ref().map_or(0, |s| entries(&s.entries))
+            + self.borrowed.capacity() * std::mem::size_of::<(usize, Entry)>() + self.borrowed.iter().map(|(_, e)| e.name.capacity()).sum::<usize>()
+            + self.quirks.capacity() * std::mem::size_of::<usize>()
+            + self.palette.materials().iter().map(|m| m.0.capacity() * std::mem::size_of::<(String, f32)>() + m.0.iter().map(|p| p.0.capacity()).sum::<usize>()).sum::<usize>()
+    }
+}
+
 /// The stream of a cell's jitter, of its luck, of an axis's drift, and of the roll.
 const CELL_JITTER: u64 = 0xce_11_0001;
 const CELL_LUCK: u64 = 0xce_11_1000;
@@ -541,15 +603,50 @@ fn noise(seed: u64, salt: u64, at: IVec2, cell: i32) -> f32 {
 }
 
 impl CulturesDef {
-    /// Adds a package's `cultures.ron`: its rules replace earlier ones, its families and
-    /// quirks add to theirs.
+    /// Adds a package's `cultures.ron`: named rules replace earlier values with a note;
+    /// families and quirks accumulate.
     pub fn extend(&mut self, at: &str, package: &str, source: &str) -> Result<(), ContentError> {
         let file: CulturesFile = ron::Options::default()
             .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
             .from_str(source)
             .map_err(|e| ContentError(format!("{at}: {e}")))?;
-        if let Some(rules) = file.rules {
-            self.rules = rules;
+        if let Some(set) = file.rules {
+            let mut changed = Vec::new();
+            macro_rules! lay {
+                ($set:ident, $target:expr, $prefix:literal, $($key:ident),+ $(,)?) => {
+                    $(if let Some(value) = $set.$key {
+                        $target.$key = value;
+                        changed.push(concat!($prefix, stringify!($key)).to_owned());
+                    })+
+                };
+            }
+            if let Some(field) = set.field {
+                lay!(field, self.rules.field, "rules.field.", cell, jitter, probes, border, share);
+            }
+            lay!(set, self.rules, "rules.", luck, luck_cell, smooth, claim, drift, local, drop,
+                borrow, borrow_scale, keep, second_quirk, palette, level_martial, level_piety);
+            for (label, shifts, targets) in [
+                ("size_shift", set.size_shift, &mut self.rules.size_shift),
+                ("site_shift", set.site_shift, &mut self.rules.site_shift),
+            ] {
+                for (size, shift) in shifts.into_iter().flatten() {
+                    let target = targets.entry(size.clone()).or_default();
+                    macro_rules! axis {
+                        ($($a:ident),+) => {
+                            $(if let Some(value) = shift.$a {
+                                target.$a = Some(value);
+                                changed.push(format!("rules.{label}.{size}.{}", stringify!($a)));
+                            })+
+                        };
+                    }
+                    axis!(piety, martial, trade, craft, festivity, outlook, hierarchy, lore);
+                }
+            }
+            for path in changed {
+                if let Some(earlier) = self.setters.insert(path.clone(), package.to_owned()) {
+                    self.notes.push(format!("{at} replaces the cultures.ron {earlier} set ({path})"));
+                }
+            }
         }
         for f in file.families {
             let m = |list: &[Select]| -> Result<Material, ContentError> {
@@ -610,10 +707,10 @@ impl CulturesDef {
         let fail = |what: String| Err(ContentError(format!("cultures.ron: {what}")));
         let r = &self.rules;
         let f = &r.field;
-        if f.cell < 1024 || !(0.0..=1.0).contains(&f.jitter) || !(1..=7).contains(&f.probes) || f.border <= 0.0 || f.share.0 < f.share.1 || f.share.1 < 0.0 || f.share.0 > 1.0 {
+        if !(1024..=1_048_576).contains(&f.cell) || !(0.0..=1.0).contains(&f.jitter) || !(1..=7).contains(&f.probes) || !f.border.is_finite() || f.border <= 0.0 || f.share.0 < f.share.1 || !(0.0..=1.0).contains(&f.share.1) || !(0.0..=1.0).contains(&f.share.0) {
             return fail(format!("rules.field: a cell of 1024 blocks or more, a jitter in [0, 1], 1 to 7 probes, a border above nothing and shares in [0, 1] falling from the edge in: {f:?}"));
         }
-        if r.drift.0 < 256 || r.drift.1 < 0.0 || r.local < 0.0 || !(0.0..=1.0).contains(&r.luck) || r.luck_cell < 1024 || !(0.0..=1.0).contains(&r.smooth) || r.drop.0 > r.drop.1 || r.keep.0 > r.keep.1 || r.keep.0 == 0 {
+        if r.drift.0 < 256 || !(0.0..=1.0).contains(&r.drift.1) || !(0.0..=1.0).contains(&r.local) || !(0.0..=1.0).contains(&r.luck) || r.luck_cell < 1024 || !(0.0..=1.0).contains(&r.smooth) || r.drop.0 > r.drop.1 || r.drop.1 > 32 || r.borrow > 32 || !(0.0..=32.0).contains(&r.borrow_scale) || r.keep.0 > r.keep.1 || r.keep.0 == 0 || r.keep.1 > 64 {
             return fail(format!("rules: a drift cell of 256 or more, drift and local at least nothing, luck in [0, 1], drop and keep as (least, most) with at least one colour kept: {r:?}"));
         }
         if !(0.0..=1.0).contains(&r.second_quirk) || !(0.0..=4.0).contains(&r.palette) || !(0.0..=1.0).contains(&r.claim.0) || !(0.0..=1.0).contains(&r.claim.1) {
@@ -621,6 +718,12 @@ impl CulturesDef {
         }
         if self.families.len() < 2 {
             return fail("needs two families or more".into());
+        }
+        if !(0.0..=1.0).contains(&r.level_martial.1) || !(0.0..=1.0).contains(&r.level_piety.1)
+            || r.size_shift.values().chain(r.site_shift.values()).any(|s| s.array(0.0).iter().any(|v| !(-1.0..=1.0).contains(v)))
+            || r.site_shift.keys().any(|s| !["age", "wealth", "order", "forest", "water", "green", "martial", "trade"].contains(&s.as_str()))
+        {
+            return fail("level and size shifts must be finite and in range".into());
         }
         let known = |listing: Listing| -> BTreeSet<String> {
             match listing {
@@ -656,7 +759,7 @@ impl CulturesDef {
             if !names.insert(f.name.as_str()) {
                 return fail(format!("two families are called `{}`", f.name));
             }
-            if f.weight < 0.0 || f.axes.iter().any(|a| !(0.0..=1.0).contains(a)) || f.temperature.0 > f.temperature.1 {
+            if !f.weight.is_finite() || f.weight < 0.0 || f.axes.iter().any(|a| !(0.0..=1.0).contains(a)) || !f.temperature.0.is_finite() || !f.temperature.1.is_finite() || f.temperature.0 > f.temperature.1 {
                 return fail(format!("family `{}` needs a weight of nothing or more, axes in [0, 1] and temperatures from low to high", f.name));
             }
             if f.title.0.is_empty() || f.title.1.is_empty() {
@@ -669,13 +772,18 @@ impl CulturesDef {
             if !(0.0..=1.0).contains(&n.small_chance) || !(0.0..=1.0).contains(&n.prefix_chance) {
                 return fail(format!("family `{}`: name chances are in [0, 1]", f.name));
             }
+            if n.prefixes.iter().any(|p| p.0.is_empty() || p.1.is_empty() || !p.2.is_finite() || p.2 < 0.0)
+                || f.quirks.values().any(|v| !v.is_finite() || *v < 0.0)
+            {
+                return fail(format!("family `{}`: prefixes and quirk weights need finite non-negative weights and both languages", f.name));
+            }
             entries_ok(&format!("family `{}`", f.name), &f.entries)?;
             if f.palette.len() < r.keep.1 as usize {
                 return fail(format!("family `{}` has {} palette colours, fewer than the {} a place may keep", f.name, f.palette.len(), r.keep.1));
             }
             for material in f.palette.materials() {
                 for (name, w) in &material.0 {
-                    if *w <= 0.0 {
+                    if !w.is_finite() || *w <= 0.0 {
                         return fail(format!("family `{}`: a palette weight of nothing or less", f.name));
                     }
                     for wood in &woods {
@@ -698,7 +806,7 @@ impl CulturesDef {
             if !quirks.insert(q.name.as_str()) {
                 return fail(format!("two quirks are called `{}`", q.name));
             }
-            if q.weight <= 0.0 || q.title.0.is_empty() || q.title.1.is_empty() {
+            if !q.weight.is_finite() || q.weight <= 0.0 || q.title.0.is_empty() || q.title.1.is_empty() || q.axes.iter().any(|v| !(-1.0..=1.0).contains(v)) {
                 return fail(format!("quirk `{}` needs a weight above nothing and a title in English and Japanese", q.name));
             }
             entries_ok(&format!("quirk `{}`", q.name), &q.entries)?;
@@ -782,6 +890,11 @@ impl CulturesDef {
         self.cell_pick(seed, middle, &sum)
     }
 
+    /// Reuses terrain probes under a byte budget, without depending on cache order.
+    pub(crate) fn cached_family<'b>(&self, seed: u64, g: IVec2, cache: &Cache<IVec2, Fits>, probe: &dyn Fn(IVec2) -> (&'b Biome, f32)) -> usize {
+        self.cell_family(seed, g, &|g| cache.get(g, || Fits(self.cell_fits(seed, g, probe))).0)
+    }
+
     /// The two nearest cells to `at` (their grid squares), and how far `at` is from the
     /// edge between them, in blocks.
     fn cells_near(&self, seed: u64, at: IVec2) -> ((IVec2, IVec2), f32) {
@@ -835,7 +948,8 @@ impl CulturesDef {
         }
         // River folk claim a place by its site: fresh water near and trade high.
         let mut claimed = false;
-        if site.fresh && axes[Axis::Trade as usize] + 0.15 >= r.claim.1 && rng.chance(r.claim.0)
+        let water_trade = r.site_shift.get("water").map_or(0.0, |s| s.array(0.0)[Axis::Trade as usize]);
+        if site.fresh && axes[Axis::Trade as usize] + water_trade >= r.claim.1 && rng.chance(r.claim.0)
             && let Some(river) = self.families.iter().position(|f| f.claim == Claim::Water)
             && river != region
         {
@@ -853,16 +967,30 @@ impl CulturesDef {
         }
         let l = site.levers;
         let a = |x: Axis| x as usize;
-        axes[a(Axis::Piety)] += l.get(super::def::Lever::Age) * 0.15 + if site.level >= r.level_piety.0 { r.level_piety.1 } else { 0.0 };
+        axes[a(Axis::Piety)] += if site.level >= r.level_piety.0 { r.level_piety.1 } else { 0.0 };
         axes[a(Axis::Martial)] += r.level_martial.1 * site.level.saturating_sub(r.level_martial.0) as f32;
-        axes[a(Axis::Trade)] += if site.fresh { 0.15 } else { 0.0 };
-        axes[a(Axis::Craft)] += site.forest * 0.05;
-        axes[a(Axis::Hierarchy)] += l.get(super::def::Lever::Wealth) * 0.15;
-        axes[a(Axis::Lore)] += l.get(super::def::Lever::Age) * 0.1 + l.get(super::def::Lever::Order) * 0.1;
+        let shifted = |axes: &mut [f32; AXES], source: &str, amount: f32| {
+            if let Some(shift) = r.site_shift.get(source) {
+                for (value, slope) in axes.iter_mut().zip(shift.array(0.0)) {
+                    *value += amount * slope;
+                }
+            }
+        };
+        for (source, amount) in [
+            ("age", l.get(super::def::Lever::Age)),
+            ("wealth", l.get(super::def::Lever::Wealth)),
+            ("order", l.get(super::def::Lever::Order)),
+            ("forest", site.forest),
+            ("water", if site.fresh { 1.0 } else { 0.0 }),
+        ] {
+            shifted(&mut axes, source, amount);
+        }
         axes[a(Axis::Martial)] = axes[a(Axis::Martial)].clamp(0.0, 1.0);
         axes[a(Axis::Trade)] = axes[a(Axis::Trade)].clamp(0.0, 1.0);
-        axes[a(Axis::Festivity)] += l.get(super::def::Lever::Green) * 0.1 - axes[a(Axis::Martial)] * 0.1;
-        axes[a(Axis::Outlook)] += axes[a(Axis::Trade)] * 0.3 - axes[a(Axis::Martial)] * 0.2 + if site.fresh { 0.1 } else { 0.0 };
+        let (martial, trade) = (axes[a(Axis::Martial)], axes[a(Axis::Trade)]);
+        shifted(&mut axes, "green", l.get(super::def::Lever::Green));
+        shifted(&mut axes, "martial", martial);
+        shifted(&mut axes, "trade", trade);
         for v in &mut axes {
             *v = v.clamp(0.0, 1.0);
         }
@@ -915,7 +1043,7 @@ impl CulturesDef {
             pool.extend(material.0.iter().enumerate().map(|(i, (_, w))| (kind, i, *w)));
         }
         let keep = (rng.range(r.keep.0 as i32, r.keep.1 as i32 + 1) as usize).min(pool.len());
-        let mut kept = vec![[false; 16]; 3];
+        let mut kept: Vec<Vec<bool>> = f.palette.materials().iter().map(|m| vec![false; m.0.len()]).collect();
         for _ in 0..keep {
             let total: f32 = pool.iter().map(|p| p.2).sum();
             let mut t = rng.unit() * total;
@@ -928,9 +1056,9 @@ impl CulturesDef {
                 t -= p.2;
             }
             let (kind, i, _) = pool.remove(at);
-            kept[kind][i.min(15)] = true;
+            kept[kind][i] = true;
         }
-        let pick = |kind: usize, material: &Material| Material(material.0.iter().enumerate().filter(|(i, _)| kept[kind][(*i).min(15)]).map(|(_, e)| e.clone()).collect());
+        let pick = |kind: usize, material: &Material| Material(material.0.iter().enumerate().filter(|(i, _)| kept[kind][*i]).map(|(_, e)| e.clone()).collect());
         let palette = PaletteDef { walls: pick(0, &f.palette.walls), trim: pick(1, &f.palette.trim), roof: pick(2, &f.palette.roof) };
         let second = second.map(|(s, share)| Second { family: s, share, entries: self.families[s].entries.clone() });
         Culture { family, second, claimed, axes, entries, dropped, borrowed, palette, quirks: Vec::new(), quirk_entries: Vec::new() }
@@ -957,7 +1085,7 @@ impl CulturesDef {
                 let need = match q.need {
                     Need::Nothing => 1.0,
                     Need::Relief => site.relief,
-                    Need::Water => if site.fresh { 1.0 } else { 0.05 },
+                    Need::Water => if site.fresh { 1.0 } else { 0.0 },
                 };
                 (i, q.lean.weigh(q.weight, &character) * family.quirks.get(&q.name).copied().unwrap_or(1.0) * need)
             })

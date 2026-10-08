@@ -1935,6 +1935,7 @@ impl WorldContent {
         let snow_cover = weather.snow_cover().to_vec();
         let tree_density = tree_density.map_or(1.0, |(d, _)| d);
         let plant_density = plant_density.map_or(1.0, |(d, _)| d);
+        notes.extend(settlements.cultures.notes.iter().cloned());
         for note in &notes {
             tracing::info!("{note}");
         }

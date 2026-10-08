@@ -89,7 +89,8 @@ skald, Sabari and Lani.
   trade × 0.3 − martial × 0.2 + 0.1 by water; hierarchy + wealth × 0.15; lore + age × 0.1 +
   order × 0.1; and towns and cities shift martial, trade and hierarchy (`rules.size_shift`,
   P57b and c). The wiki also draws trade from trail count and craft from ore veins near;
-  neither is read yet. Until biome levels (P15) land every place counts as level 1.
+  neither is read yet. Biome levels use the site's home biome (P15), so rivers and border
+  dithering do not change the level. Site shifts are data in `rules.site_shift`.
 - **Tilt.** A family multiplies the weights of styles, houses, roofs, props, centrepieces,
   layouts and extras by name (`houses: {"tower_house": 3.5}`; 0 removes an entry; an entry
   it does not name keeps its weight). The lists in settlements.ron still hold everything: a glen hamlet
@@ -112,8 +113,16 @@ skald, Sabari and Lani.
 `/locate settlement` names the culture ("a village in Highland country", ja「…の村…」), the
 settlement preview prints the family, second family, quirks, axes and the entries dropped and
 borrowed (`ONLY=glen` draws just that family), and `Overworld::settlements_near` carries it
-(`SettlementInfo::culture`). The culture is rolled on streams of its own, so adding a family
-moves no other roll.
+(`SettlementInfo::culture`). `SettlementInfo::levers` carries both the five levers and
+the eight axes, so people and shops can use the same lean keys as planning. Culture rolls
+use streams of their own; adding culture draws does not consume building draws.
+
+Region terrain fits share a 1 MiB cache weighed by owned bytes, including mod families;
+eviction changes only how often the terrain is sampled. Culture storage also counts in
+the settlement plan's 32 MiB cache. Later packages replace only culture rule fields they
+name, preserving the others and reporting which package and field they replaced. Loading
+refuses unknown catalogue names, missing palette blocks, non-finite weights and shifts,
+and unbounded mutation counts before a world can be created.
 
 ## The lists
 

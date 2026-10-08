@@ -302,6 +302,7 @@ impl Weigh for Slot {
             p.raster.cells.len() * std::mem::size_of::<Cell>()
                 + p.voxels.values().map(|v| v.len() * std::mem::size_of::<Voxel>() + 32).sum::<usize>()
                 + p.buildings.len() * std::mem::size_of::<Building>()
+                + p.culture.bytes()
                 + 256
         })
     }
@@ -333,10 +334,8 @@ pub struct Settlements {
     /// for them (`spawn_square`).
     promised: std::sync::OnceLock<Vec<IVec2>>,
     id: u64,
-    /// How well each family suits each region cell (a pure function of the seed and the
-    /// land, asked by every settlement near; under a hundred bytes each, cleared past
-    /// `CELLS_KEPT`).
-    cells: std::sync::Mutex<FxHashMap<IVec2, (IVec2, Vec<f32>)>>,
+    /// Terrain fits by region, shared by nearby settlements, bounded by owned bytes.
+    cells: Cache<IVec2, culture::Fits>,
     /// How many squares were planned, for tests that no square is planned twice.
     #[cfg(test)]
     pub(crate) planned: std::sync::atomic::AtomicUsize,
@@ -369,7 +368,7 @@ impl Settlements {
             spawn: std::sync::OnceLock::new(),
             promised: std::sync::OnceLock::new(),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            cells: std::sync::Mutex::new(FxHashMap::default()),
+            cells: Cache::new(MB),
             #[cfg(test)]
             planned: std::sync::atomic::AtomicUsize::new(0),
         }

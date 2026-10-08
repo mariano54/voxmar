@@ -57,11 +57,11 @@ pub struct Ctx<'a> {
     /// in reach of where they spawn), whose names their neighbours keep off too.
     pub promised: &'a [IVec2],
     /// How well the families suit region cells, remembered (see `Settlements::cells`).
-    pub cells: &'a std::sync::Mutex<FxHashMap<IVec2, (IVec2, Vec<f32>)>>,
+    pub cells: &'a crate::water::cache::Cache<IVec2, super::culture::Fits>,
 }
 
 /// Picks from `items` by weight; `None` when every weight is nothing.
-fn pick<T: Copy>(rng: &mut Rng, items: &[(T, f32)]) -> Option<T> {
+pub(super) fn pick<T: Copy>(rng: &mut Rng, items: &[(T, f32)]) -> Option<T> {
     let total: f32 = items.iter().map(|(_, w)| w.max(0.0)).sum();
     if total <= 0.0 {
         return None;
@@ -541,16 +541,6 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
         .or_else(|| sites.iter().find_map(|&(centre, fresh)| (0..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), true))))
 }
 
-/// How many region cells' fits are remembered before the memory is cleared (each takes
-/// under a hundred bytes).
-const CELLS_KEPT: usize = 4096;
-
-/// The level of the land at `at` (P15, biome levels): 1 until that lands, which shifts a
-/// culture's axes ([`super::culture::Rules::level_martial`]).
-fn land_level(_ctx: &Ctx, _at: IVec2) -> u32 {
-    1
-}
-
 /// How many draws the spawn's square tries laying out each spot with.
 const SPAWN_SALTS: u64 = 8;
 
@@ -670,32 +660,20 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
 fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool) -> Option<Plan> {
     let def = ctx.def;
     let mut levers = levers(ctx, centre, fresh, &mut rng);
-    let biome = ctx.world.biome_at(centre.x, centre.y);
+    let ground_site = ctx.world.site(centre.x, centre.y);
+    let biome = ctx.world.biomes().get(ground_site.biome);
     // Whose it is: a family of the land round, its axes and its mutations, from streams
     // of their own so the rolls below are the ones they were.
-    let ground_site = ctx.world.site(centre.x, centre.y);
-    let fits_of = |g: IVec2| -> (IVec2, Vec<f32>) {
-        if let Some(f) = ctx.cells.lock().unwrap().get(&g) {
-            return f.clone();
-        }
-        let probe = |p: IVec2| {
-            let s = ctx.world.site(p.x, p.y);
-            (ctx.world.biomes().get(s.biome), s.temperature)
-        };
-        let fits = def.cultures.cell_fits(ctx.seed, g, &probe);
-        let mut cells = ctx.cells.lock().unwrap();
-        if cells.len() >= CELLS_KEPT {
-            cells.clear();
-        }
-        cells.insert(g, fits.clone());
-        fits
+    let probe = |p: IVec2| {
+        let s = ctx.world.site(p.x, p.y);
+        (ctx.world.biomes().get(s.biome), s.temperature)
     };
-    let cell_family = |g: IVec2| def.cultures.cell_family(ctx.seed, g, &fits_of);
+    let cell_family = |g: IVec2| def.cultures.cached_family(ctx.seed, g, ctx.cells, &probe);
     let site = Site {
         seed: ctx.seed,
         cell,
         at: centre,
-        level: land_level(ctx, centre),
+        level: ctx.world.biomes().get(ground_site.home).level as u32,
         fresh,
         relief: (ground_site.steepness / def.rules.levers.steep).min(1.0),
         forest: ground_site.forest,

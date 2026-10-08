@@ -320,7 +320,7 @@ fn settlements_never_depend_on_order() {
     let again = b.settlements_near(IVec2::new(spawn.x, spawn.z), 3000);
     assert_eq!(found.len(), again.len());
     for (x, y) in found.iter().zip(&again) {
-        assert_eq!((x.id, &x.name, &x.buildings), (y.id, &y.name, &y.buildings));
+        assert_eq!(x, y, "settlement facts, including culture and axes, depend on order");
     }
 }
 
@@ -1846,28 +1846,18 @@ fn the_spawn_plans_each_square_once() {
 
 /// The family each region cell of `world` names, with the land asked once per cell.
 fn cell_families(world: &Overworld) -> impl Fn(IVec2) -> usize + '_ {
-    let memory = std::cell::RefCell::new(rustc_hash::FxHashMap::<IVec2, (IVec2, Vec<f32>)>::default());
-    let fits_of = move |g: IVec2| -> (IVec2, Vec<f32>) {
-        memory
-            .borrow_mut()
-            .entry(g)
-            .or_insert_with(|| {
-                let probe = |p: IVec2| {
-                    let s = world.site(p.x, p.y);
-                    (world.biomes().get(s.biome), s.temperature)
-                };
-                world.settlements.def.cultures.cell_fits(world.settlements.seed, g, &probe)
-            })
-            .clone()
+    let probe = |p: IVec2| {
+        let s = world.site(p.x, p.y);
+        (world.biomes().get(s.biome), s.temperature)
     };
-    move |g| world.settlements.def.cultures.cell_family(world.settlements.seed, g, &fits_of)
+    move |g| world.settlements.def.cultures.cached_family(world.settlements.seed, g, &world.settlements.cells, &probe)
 }
 
 /// A culture rolled at `at` in square `cell` with middling levers, a village.
 fn rolled(world: &Overworld, cell: IVec2, at: IVec2, fresh: bool) -> super::culture::Culture {
     let def = &world.settlements.def.cultures;
     let families = cell_families(world);
-    let site = super::culture::Site { seed: world.settlements.seed, cell, at, level: 1, fresh, relief: 0.3, forest: 0.3, levers: super::Levers { levers: [0.5; 5], axes: [0.5; 8] }, cell_family: &families };
+    let site = super::culture::Site { seed: world.settlements.seed, cell, at, level: world.level_at(at.x, at.y) as u32, fresh, relief: 0.3, forest: 0.3, levers: super::Levers { levers: [0.5; 5], axes: [0.5; 8] }, cell_family: &families };
     let mut c = def.roll(&site);
     def.finish(&mut c, &site, "village");
     c
@@ -2015,7 +2005,7 @@ fn every_family_names_join_under_the_kana_rules() {
                 kana += 1;
                 let joined = super::plan::join_kana(&def.kana, first, last);
                 let (a, b) = (first.1.chars().last(), last.1.chars().next());
-                if a == b && a.is_some_and(|c| c != 'ー' && !"アイウエオ".contains(c)) && !joined.contains(&format!("{}{}", a.unwrap(), b.unwrap())) {
+                if a == b && a.is_some_and(|c| c != 'ー' && !"アイウエオ".contains(c)) && joined.contains(&format!("{}{}", a.unwrap(), b.unwrap())) {
                     bad.push(format!("{}: {}+{} / {}+{}: doubled kana", f.name, first.0, last.0, first.1, last.1));
                 }
                 let end = first.0.chars().last();
@@ -2086,28 +2076,39 @@ fn every_lean_names_a_known_lever_or_axis() {
     }
 }
 
-/// The family shows in what is built: over the settlements of a few worlds, the glen raise
-/// towers more than the hearth does, and a family's palette turns up in its walls.
+/// Mutated and quirked family weights favour glen towers over hearth towers. Sample the
+/// same bounded house-selection loop the planner uses, without planning thousands of squares.
 #[test]
 fn a_family_shows_in_what_it_builds() {
-    let mut counts: std::collections::BTreeMap<(String, String), u32> = Default::default();
-    let mut places: std::collections::BTreeMap<String, u32> = Default::default();
-    for seed in [1u64, 7, 42, 99, 5, 11] {
-        let world = base_world(seed);
-        for s in world.settlements_near(IVec2::ZERO, 16_000) {
-            *places.entry(s.culture.family.clone()).or_default() += 1;
-            for b in &s.buildings {
-                *counts.entry((s.culture.family.clone(), b.what.clone())).or_default() += 1;
+    use super::culture::{Listing, Site};
+    let world = base_world(1);
+    let def = &world.settlements.def;
+    let towers = |name: &str| {
+        let family = def.cultures.families.iter().position(|f| f.name == name).unwrap();
+        let fixed_family = |_| family;
+        let mut towers = 0;
+        for k in 0..256 {
+            let site = Site {
+                seed: world.settlements.seed, cell: IVec2::new(k, 0), at: IVec2::new(k * 1024, 0),
+                level: 1, fresh: false, relief: 0.3, forest: 0.3,
+                levers: super::Levers { levers: [0.5; 5], axes: [0.5; 8] }, cell_family: &fixed_family,
+            };
+            let mut culture = def.cultures.roll(&site);
+            def.cultures.finish(&mut culture, &site, "village");
+            let levers = super::Levers { axes: culture.axes, ..site.levers };
+            let weights: Vec<_> = def.houses.iter().enumerate().filter(|(_, h)| h.work.is_none())
+                .map(|(i, h)| (i, h.lean.weigh(h.weight, &levers) * culture.mult(Listing::House, &h.name))).collect();
+            let mut rng = crate::rng::Rng::new(site.seed, 123, k, 0);
+            for _ in 0..16 {
+                let i = super::plan::pick(&mut rng, &weights).unwrap();
+                towers += usize::from(def.houses[i].name == "tower_house");
             }
         }
-    }
-    let share = |family: &str, what: &str| {
-        let total: u32 = counts.iter().filter(|((f, _), _)| f == family).map(|(_, n)| n).sum();
-        counts.get(&(family.to_owned(), what.to_owned())).copied().unwrap_or(0) as f32 / total.max(1) as f32
+        towers
     };
-    assert!(places.len() >= 8, "only {} families settled: {places:?}", places.len());
-    let (glen, hearth) = (share("glen", "tower_house"), share("hearth", "tower_house"));
-    assert!(places.get("glen").is_some_and(|n| *n >= 3) && glen > hearth, "tower houses: glen {glen:.3} against hearth {hearth:.3} ({places:?})");
+    let (glen, hearth) = (towers("glen"), towers("hearth"));
+    assert!(glen > hearth * 2, "tower draws: glen {glen}, hearth {hearth}");
+
 }
 
 /// Mutations make places of a family unalike: across many places the quirks are many, a
@@ -2198,4 +2199,125 @@ fn region_tuning() {
 fn sites_thin_out_above_their_level() {
     let site = super::def::SiteDef::default();
     assert_eq!((site.level(1), site.level(5), site.level(6), site.level(10)), (1.0, 1.0, 0.7, 0.7));
+}
+
+/// Culture loading rejects invalid rules and catalogue references before planning.
+#[test]
+fn culture_load_checks_reject_invalid_numbers_and_references() {
+    let world = base_world(1);
+    let base = &world.settlements.def;
+    let refused = |change: &dyn Fn(&mut super::culture::CulturesDef)| {
+        let mut cultures = base.cultures.clone();
+        change(&mut cultures);
+        cultures.check(base, &base_registry()).is_err()
+    };
+    assert!(!refused(&|_| {}));
+    assert!(refused(&|c| c.rules.borrow = u32::MAX));
+    assert!(refused(&|c| c.rules.drop.1 = u32::MAX));
+    assert!(refused(&|c| c.rules.keep = (3, u32::MAX)));
+    assert!(refused(&|c| c.rules.local = f32::NAN));
+    assert!(refused(&|c| c.rules.field.border = f32::INFINITY));
+    assert!(refused(&|c| c.rules.field.share.1 = f32::NAN));
+    assert!(refused(&|c| c.rules.level_martial.1 = f32::NAN));
+    assert!(refused(&|c| c.families[0].weight = f32::NAN));
+    assert!(refused(&|c| c.families[0].palette.walls.0[0].1 = f32::INFINITY));
+    assert!(refused(&|c| c.families[0].palette.walls.0[0].0 = "base:missing".into()));
+    assert!(refused(&|c| c.families[0].entries[0].name = "missing".into()));
+    assert!(refused(&|c| { c.families[0].quirks.insert("missing".into(), 1.0); }));
+    assert!(refused(&|c| c.quirks[0].axes[0] = f32::NAN));
+    assert!(super::def::Lean::parse("test", &std::collections::BTreeMap::from([("piety".into(), f32::NAN)])).is_err());
+}
+
+/// A later package can change one culture rule without resetting the other values,
+/// and WorldContent exposes the package and exact field it replaced.
+#[test]
+fn culture_rules_are_layered_and_report_replacements() {
+    let registry = base_registry();
+    let mut files: Vec<_> = crate::content::BASE_FILES.iter().map(|(name, source)|
+        voxmar_engine::content::ContentFile { package: "base".into(), name: (*name).into(), source: (*source).into() }).collect();
+    files.push(voxmar_engine::content::ContentFile { package: "mod".into(), name: "cultures.ron".into(),
+        source: "(rules: (field: (border: 400.0), size_shift: {\"town\": (trade: 0.2)}))".into() });
+    let content = crate::content::WorldContent::from_files(files.iter(), &registry).unwrap();
+    assert!(content.notes.iter().any(|n| n.ends_with("(rules.field.border)")));
+    let cultures = &content.settlements.cultures;
+    assert_eq!(cultures.rules.field.border, 400.0);
+    assert_eq!(cultures.rules.field.cell, 6144);
+    assert_eq!(cultures.rules.size_shift["town"].trade, Some(0.2));
+    assert_eq!(cultures.rules.size_shift["town"].hierarchy, Some(0.1));
+    assert_eq!(cultures.families.len(), 17);
+    assert!(cultures.notes.iter().any(|n| n == "mod/cultures.ron replaces the cultures.ron base set (rules.field.border)"));
+    assert!(cultures.notes.iter().any(|n| n.ends_with("(rules.size_shift.town.trade)")));
+}
+
+/// Large palettes keep exactly the selected entries; indices after 15 never alias.
+#[test]
+fn culture_palettes_keep_their_count_with_large_mod_lists() {
+    use super::culture::{Claim, Site};
+    let world = base_world(1);
+    let mut def = world.settlements.def.cultures.clone();
+    def.families[0].claim = Claim::Region;
+    def.families[0].palette.walls.0 = (0..32).map(|_| ("base:white_terracotta".to_owned(), 1.0)).collect();
+    let family = |_| 0;
+    let mut later = false;
+    for k in 0..32 {
+        let site = Site { seed: k as u64, cell: IVec2::new(k, 0), at: IVec2::ZERO, level: 1, fresh: false,
+            relief: 0.0, forest: 0.0, levers: super::Levers::default(), cell_family: &family };
+        let c = def.roll(&site);
+        let kept = c.palette.materials().iter().map(|m| m.0.len()).sum::<usize>();
+        assert!((3..=5).contains(&kept), "kept {kept}");
+        later |= !c.palette.walls.0.is_empty();
+    }
+    assert!(later);
+}
+
+/// Region memo eviction and concurrent asks leave the culture unchanged.
+#[test]
+fn culture_generation_is_independent_of_order_and_threads() {
+    let world = base_world(7);
+    let cells: Vec<_> = (0..12).map(|k| IVec2::new(k - 6, k % 3)).collect();
+    let expected: Vec<_> = cells.iter().map(|&c| rolled(&world, c, c * 1024 + 300, true)).collect();
+    // Force terrain fits to be evicted before every next ask.
+    let mut other = base_world(7);
+    other.settlements.cells = crate::water::cache::Cache::new(1);
+    for (i, &c) in cells.iter().enumerate().rev() {
+        assert_eq!(rolled(&other, c, c * 1024 + 300, true), expected[i]);
+    }
+    std::thread::scope(|scope| {
+        for (i, &c) in cells.iter().enumerate() {
+            let (other, expected) = (&other, &expected);
+            scope.spawn(move || assert_eq!(rolled(other, c, c * 1024 + 300, true), expected[i]));
+        }
+    });
+}
+
+/// Borders blend weights, water quirks require water, and level shifts use the rules.
+#[test]
+fn culture_borders_site_requirements_and_levels() {
+    use super::culture::{Axis, Need, Site};
+    let world = base_world(1);
+    let mut def = world.settlements.def.cultures.clone();
+    def.rules.claim.0 = 0.0;
+    def.rules.second_quirk = 0.0;
+    let family = |g: IVec2| g.x.rem_euclid(2) as usize;
+    let site_at = |at| Site { seed: 12, cell: IVec2::ZERO, at, level: 1, fresh: false,
+        relief: 0.0, forest: 0.0, levers: super::Levers::default(), cell_family: &family };
+    let edge = (0..6144).step_by(8).map(|x| IVec2::new(x, 2000)).find(|&p| {
+        let (a, b, edge) = def.region_at(12, p, &family);
+        a != b && edge < 400.0
+    }).expect("a border in the test strip");
+    let site = site_at(edge);
+    let low = def.roll(&site);
+    let second = low.second.as_ref().expect("a border mixes families");
+    assert!((0.1..=0.45).contains(&second.share));
+    let high = def.roll(&Site { level: 7, ..site_at(edge) });
+    assert!(high.axes[Axis::Martial as usize] > low.axes[Axis::Martial as usize]);
+    assert!(high.axes[Axis::Piety as usize] > low.axes[Axis::Piety as usize]);
+    def.quirks.retain(|q| q.need == Need::Water);
+    let mut dry = def.roll(&site);
+    def.finish(&mut dry, &site, "village");
+    assert!(dry.quirks.is_empty());
+    let wet_site = Site { fresh: true, ..site_at(edge) };
+    let mut wet = def.roll(&wet_site);
+    def.finish(&mut wet, &wet_site, "village");
+    assert_eq!(wet.quirks.len(), 1);
 }

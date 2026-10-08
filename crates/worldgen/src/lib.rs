@@ -534,7 +534,7 @@ impl Overworld {
                 buildings: p.buildings.clone(),
                 gates: p.gates.clone(),
                 lanes: p.lanes.clone(),
-                levers: p.levers.levers,
+                levers: p.levers,
                 culture: self.settlements.culture_info(p),
             })
             .collect()
@@ -685,8 +685,8 @@ pub struct SettlementInfo {
     /// Where its lanes leading out end.
     pub gates: Vec<IVec2>,
     pub lanes: Vec<Vec<voxmar_engine::glam::Vec2>>,
-    /// Wealth, age, order, crowding and green, each 0 ..= 1.
-    pub levers: [f32; 5],
+    /// The five settlement levers and eight culture axes, each 0 ..= 1.
+    pub levers: settlements::Levers,
     pub culture: CultureInfo,
 }
 

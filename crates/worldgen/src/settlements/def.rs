@@ -87,6 +87,9 @@ impl Lean {
     pub(super) fn parse(at: &str, map: &BTreeMap<String, f32>) -> Result<Self, ContentError> {
         map.iter()
             .map(|(name, &lean)| {
+                if !lean.is_finite() || !(-1.0..=1.0).contains(&lean) {
+                    return Err(ContentError(format!("{at}: lean `{name}` must be finite and in [-1, 1]")));
+                }
                 Key::parse(name).map(|key| (key, lean)).ok_or_else(|| {
                     ContentError(format!("{at}: no lever or axis is called `{name}` (wealth, age, order, crowding, green; piety, martial, trade, craft, festivity, outlook, hierarchy, lore)"))
                 })
