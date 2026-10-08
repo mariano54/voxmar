@@ -539,12 +539,12 @@ mod tests {
         let mut server = crate::test_server();
         let (_client, connection) = voxmar_protocol::local_pair();
         let player = 1;
-        let at = server.spawn;
+        let at = server.spawn + Vec3::Y * 32.0;
         let joined = crate::player::Player::new(player, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
         server.players.insert(player, joined);
         let species = server.content.creatures.id("base:brown_bear").expect("a bear");
         let bear = server.spawn_creature(species, at, 1).expect("room");
-        server.content.combat.feel.creature_tracking = 0.0;
+        std::sync::Arc::get_mut(&mut server.content.combat).expect("the test server owns its combat data").feel.creature_tracking = 0.0;
         for direction in [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z, Vec3::X + Vec3::Z, Vec3::X - Vec3::Z, -Vec3::X + Vec3::Z, -Vec3::X - Vec3::Z] {
             let direction = direction.normalize();
             let target = at + direction * 4.0;

@@ -1182,7 +1182,7 @@ mod combat_tests {
         let mut server = crate::test_server();
         let (_client, connection) = voxmar_protocol::local_pair();
         let player = 1;
-        let at = server.spawn;
+        let at = server.spawn + Vec3::Y * 32.0;
         let joined = crate::player::Player::new(player, connection, at - Vec3::Z * 2.0, 2, server.tick, server.survival.max_health, &server.config.limits);
         server.players.insert(player, joined);
         let species = server.content.creatures.id("base:brown_bear").expect("a bear");
