@@ -816,6 +816,26 @@ mod tests {
     use super::*;
     use crate::dials::WorldDials;
 
+    /// The game gate's seed has a real, visible pool near its nearest mountains. The
+    /// query must return the tarn rule's water, and disappear when that rule is absent.
+    #[test]
+    fn tarn_query_finds_visible_rule_pools() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let mut world = crate::Overworld::new(0x5eed, registry);
+        let spawn = crate::Generator::spawn_point(&world);
+        let mountain = world.locate_biome("mountains", spawn.xz(), 6000).expect("mountains near the gate's spawn");
+        let at = world.locate_tarn(mountain, 1536).expect("a visible tarn near those mountains");
+        let wet = (at.z - 16..=at.z + 16).flat_map(|z| (at.x - 16..=at.x + 16).map(move |x| (x, z))).filter(|&(x, z)| {
+            let g = world.geo(x, z);
+            g.body == Body::Lake && g.submerged() && g.water == at.y
+        }).count();
+        assert!(wet >= 20, "only {wet} visible water columns at {at}");
+        assert!(world.rivers.tarns_near(world.stages(), mountain, 1536).iter().any(|pit| pit.y == at.y && (pit.xz() - at.xz()).abs().max_element() <= 8));
+        assert!(world.locate_tarn(mountain, -1).is_none());
+        world.rivers.tarns = None;
+        assert!(world.locate_tarn(mountain, 1536).is_none(), "an ordinary high lake stood in for a disabled tarn rule");
+    }
+
     /// The country's faded noise is a classification, not a chance multiplier. In the
     /// fading band outside its halfway edge even a fully suitable climate stays dry.
     #[test]
