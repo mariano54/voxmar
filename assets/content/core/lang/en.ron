@@ -708,7 +708,7 @@
     "husbandry.no_room_to_breed.one": "No room for young: a keeper keeps at most {count} animal.",
     "husbandry.no_room_to_breed.other": "No room for young: a keeper keeps at most {count} animals.",
     "husbandry.world_full": "No room for young: the world holds all the creatures it can.",
-    "husbandry.release_ask": "Shift and right click {creature} again to let it go wild.",
+    "husbandry.release_ask": "Shift and right-click {creature} again to let it go wild.",
     "husbandry.released": "{creature} wanders off, wild again.",
     "husbandry.too_poorly_kept": "{creature} is in {state} condition and won't breed yet.",
     "husbandry.too_poorly_kept_wants": "{creature} is in {state} condition and won't breed yet: it wants {needs}.",
