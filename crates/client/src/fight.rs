@@ -33,6 +33,9 @@ pub struct Fighting {
     /// A right press this frame already did something (opened a table, ate), so it raises
     /// no guard until it is let go.
     pub right_used: bool,
+    /// With the guard on a toggle (`Settings::toggle_guard`): whether a right click put it
+    /// up, until the next.
+    pub guard_toggled: bool,
     /// The player's blows the server answered lately: at which creature, for how much, what
     /// kind, and when (app seconds).
     pub struck: Vec<(u32, u16, Blow, f64)>,
@@ -100,9 +103,11 @@ impl Fighting {
     }
 }
 
-/// Holding the right button with a weapon that guards raises the guard, unless the press
-/// already did something else (a station, food). The server is told when it goes up and
+/// Holding the right button with a weapon that guards raises the guard (or, with the guard
+/// on a toggle, a right click raises it and the next lowers it), unless the press already
+/// did something else (a station, food). The server is told when it goes up and
 /// down; raising it cancels the player's own wind-up.
+#[allow(clippy::too_many_arguments)]
 pub fn guard(
     time: Res<Time>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -111,6 +116,7 @@ pub fn guard(
     net: Res<Net>,
     player: Res<LocalPlayer>,
     target: Res<Target>,
+    settings: Res<crate::settings::Settings>,
     mut fighting: ResMut<Fighting>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -124,8 +130,16 @@ pub fn guard(
     let can = combat.guard_of(held, &player.inventory.worn, level).is_some() && ui.cursor_locked && !player.dead && player.joined;
     if mouse.just_pressed(MouseButton::Right) {
         fighting.right_used = target.used_right;
+        // On a toggle, each right click that did nothing else puts the guard up or down.
+        if settings.toggle_guard && can && !fighting.right_used {
+            fighting.guard_toggled = !fighting.guard_toggled;
+        }
     }
-    let up = can && mouse.pressed(MouseButton::Right) && !fighting.right_used && fighting.dash.is_none();
+    if !can || !settings.toggle_guard {
+        fighting.guard_toggled = false;
+    }
+    let held_up = if settings.toggle_guard { fighting.guard_toggled } else { mouse.pressed(MouseButton::Right) && !fighting.right_used };
+    let up = can && held_up && fighting.dash.is_none();
     if up != fighting.guard.is_some() {
         fighting.guard = up.then_some(now);
         if up {
