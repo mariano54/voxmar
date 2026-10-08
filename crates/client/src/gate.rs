@@ -2564,9 +2564,9 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             let language = if i % 2 == 0 { "en" } else { "ja" };
             let (name, position, target, pick) = match i / 2 {
                 0 => (if language == "en" { "hv-hall-en" } else { "hv-hall-ja" }, rel(-5, 5, -3), core, "base:bone_lockpick"),
-                1 => (if language == "en" { "hv-array-en" } else { "hv-array-ja" }, rel(-5, 4, 8), array, "base:copper_lockpick"),
+                1 => (if language == "en" { "hv-array-en" } else { "hv-array-ja" }, rel(-5, 4, 1), array, "base:copper_lockpick"),
                 2 => (if language == "en" { "hv-smelter-en" } else { "hv-smelter-ja" }, rel(-5, 5, -1), smelter, "base:bronze_lockpick"),
-                3 => (if language == "en" { "hv-power-en" } else { "hv-power-ja" }, rel(-5, 3, 1), rel(-1, 2, 1), "base:iron_lockpick"),
+                3 => (if language == "en" { "hv-power-en" } else { "hv-power-ja" }, rel(-5, 2, -2), rel(-1, 2, 1), "base:iron_lockpick"),
                 _ => (if language == "en" { "treasure-row-en" } else { "treasure-row-ja" }, rel(-1, 2, 12), chest, "base:copper_lockpick"),
             };
             if gate.phase % 2 == 0 {
