@@ -100,15 +100,19 @@ fn every_recipe_for_decor_can_be_crafted_as_written() {
     let content = content();
     let decor: BTreeSet<BlockId> = content.blocks.ids().filter(|&id| content.blocks.def(id).has_tag("decor")).collect();
     let mut crafted = 0;
+    let mut shadowed = Vec::new();
     for recipe in content.recipes.iter().filter(|r| decor.contains(&r.output)) {
         // The recipe's own ingredients, laid out as it asks, are matched by a recipe with the
         // same output: none is shadowed by another that takes the same things.
         let grid = recipe.cells();
         let found = content.recipes.find(&grid).unwrap_or_else(|| panic!("{} cannot be crafted", content.blocks.def(recipe.output).name));
-        assert_eq!(found.output, recipe.output, "{} is shadowed by {}", content.blocks.def(recipe.output).name, content.blocks.def(found.output).name);
+        if found.output != recipe.output {
+            shadowed.push(format!("{} is shadowed by {}", content.blocks.def(recipe.output).name, content.blocks.def(found.output).name));
+        }
         crafted += 1;
     }
     assert!(crafted >= 172, "{crafted} recipes");
+    assert!(shadowed.is_empty(), "{}", shadowed.join("\n"));
 }
 
 /// The singles and the lanterns and columns of metal and stone: each a block with a way to

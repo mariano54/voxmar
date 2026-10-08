@@ -1,8 +1,8 @@
 // Recipes for the decor blocks (blocks_furnishings.ron; design draft 108, P58a), at a crafting
 // table. Furniture is Construction's, the first fixtures a home has (the wiki: the bed at
 // Construction 5 with the hearth's second tier) and costs at most a few planks and sticks
-// for a third of an xp a plank, so furnishing is no Construction grind (draft 106's rule for
-// shapes). One line makes a piece in every wood that has it. Cloth, rugs and the rest are
+// with modest experience per piece. One line makes a piece in every wood that has it.
+// Cloth, rugs and the rest are
 // Crafting's. There is no loom yet (the Farm age's machine), so a dyed cloth is a wool and
 // a flower of its dye's colour; they drop nothing when broken, and furniture only half its
 // planks, so no recipe here can be run backwards for profit.
@@ -60,7 +60,7 @@
 
         // Singles. Tallow lights a candle until bees give wax; a lantern holds a torch in
         // metal, a stone one in four blocks of stone.
-        (pattern: [["twine"], ["hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
+        (pattern: [["twine", ""], ["hide", "hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
         (pattern: [["copper_ingot"], ["torch"], ["copper_ingot"]], output: "copper_hanging_lantern", skill: "core:engineering", level: 5, xp: 12.0),
         (pattern: [["iron_ingot"], ["torch"], ["iron_ingot"]], output: "iron_hanging_lantern", skill: "core:engineering", level: 15, xp: 24.0),
         (pattern: [["", "{name}", ""], ["{name}", "torch", "{name}"], ["", "{name}", ""]], output: "{name}_lantern", skill: "core:construction", level: 9, xp: 6.0),
@@ -75,8 +75,8 @@
         (ingredients: ["indigo_cloth", "white_cloth", "red_cloth", "green_cloth", "amber_cloth", "twine"], output: "wind_flags", skill: "core:crafting", level: 9, xp: 8.0),
         // Graves, in stone and in mossy stone.
         (pattern: [["stone", "stone", "stone"]], output: "stone_grave_slab", count: 2, skill: "core:construction", level: 6, xp: 3.0),
-        (pattern: [["stone", "stone"], ["stone", "stone"]], output: "stone_headstone", count: 2, skill: "core:construction", level: 6, xp: 3.0),
+        (pattern: [["", "stone", ""], ["stone", "stone", "stone"]], output: "stone_headstone", count: 2, skill: "core:construction", level: 6, xp: 3.0),
         (pattern: [["mossy_cobblestone", "mossy_cobblestone", "mossy_cobblestone"]], output: "mossy_grave_slab", count: 2, skill: "core:construction", level: 6, xp: 3.0),
-        (pattern: [["mossy_cobblestone", "mossy_cobblestone"], ["mossy_cobblestone", "mossy_cobblestone"]], output: "mossy_headstone", count: 2, skill: "core:construction", level: 6, xp: 3.0),
+        (pattern: [["", "mossy_cobblestone", ""], ["mossy_cobblestone", "mossy_cobblestone", "mossy_cobblestone"]], output: "mossy_headstone", count: 2, skill: "core:construction", level: 6, xp: 3.0),
     ],
 )
