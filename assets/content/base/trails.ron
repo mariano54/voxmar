@@ -11,6 +11,8 @@
 //   summits. waymarker: the stones of the old, half-fallen markers at trailheads.
 // laid: NearSettlements (trails only within reach of a settlement, leading out of its
 //   gates) or Everywhere. Either way trails route round settlements' buildings.
+// A later package's trails.ron names only what it changes, laid over this one field by
+// field; the load log says what it replaced.
 (
     laid: NearSettlements,
     tread: [
