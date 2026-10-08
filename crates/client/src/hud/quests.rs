@@ -389,7 +389,7 @@ struct WayStep {
 const WIDTH: f32 = 540.0 * PX;
 const CHAPTERS: f32 = 80.0 * PX;
 const WEB_HEIGHT: f32 = 170.0 * PX;
-const DETAIL_HEIGHT: f32 = 120.0 * PX;
+const DETAIL_HEIGHT: f32 = 160.0 * PX;
 /// The web's room across and down (inside its well), and its quests' least and most step.
 const WEB_ROOM: Vec2 = Vec2::new(WIDTH - CHAPTERS - 4.0 * space::OUTER, WEB_HEIGHT - 2.0 * space::GAP);
 const STEP_LEAST: Vec2 = Vec2::new(SLOT + 10.0 * PX, SLOT + 5.0 * PX);
@@ -699,7 +699,7 @@ fn draw(
                     };
                     detail.spawn(Node { flex_shrink: 0.0, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
                         super::recipes::item_cell(row, font, &images, Some(item), None);
-                        row.spawn((Node { flex_shrink: 1.0, min_width: Val::ZERO, ..default() }, line));
+                        row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, line));
                     });
                     // How to make it, the way the recipe viewer draws it, for what a goal
                     // makes.
@@ -745,7 +745,7 @@ fn draw(
 /// arrow, what comes out, and, where there are several ways, arrows to turn to the next
 /// with "1/3" between them.
 fn way_card(detail: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &Content, locale: &Locale, entry: &voxmar_engine::recipe_book::Entry, (key, shown, of): (String, usize, usize)) {
-    let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, ..default() };
+    let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, ..default() };
     detail.spawn((card, Piece::Well.image())).with_children(|card| {
         super::recipes::way_inputs(card, font, images, content, &entry.method, None, 0);
         card.spawn(shadowed(font, "→", BODY, GOLD));
