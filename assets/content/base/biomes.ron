@@ -297,7 +297,7 @@
                 trees: [Name("big_oak", 1.5), Name("oak", 1.0), Name("ancient_oak", 15.0), Name("maple", 0.3), Name("dark_oak", 0.3), Name("chestnut", 1.0), Name("walnut", 0.6), Name("hazel", 0.2)],
                 exclude: ["blossom"],
                 cover: 0.65, flowers: 0.007,
-                plants: [Tag("forest_floor", 1.0), Tag("fern", 1.0), Name("short_grass", 0.6), Name("ginseng", 3.37), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
+                plants: [Tag("forest_floor", 1.0), Tag("fern", 1.0), Name("short_grass", 0.6), Name("ginseng", 4.4), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
                 // Its signature: great fallen trunks, hollow and mossy.
                 decorations: [Tag("forest", 1.0), Tag("dense", 1.0), Name("fallen_log", 2.5), Name("rotting_log", 2.0)],
             ),
@@ -1157,7 +1157,7 @@
                 forest: 0.95,
                 trees: [Tag("tropical", 1.0), Name("jungle_bush", 1.2), Name("banana", 1.0), Name("mango", 1.0), Name("avocado", 1.0), Name("cacao", 3.0), Name("orange_tree", 0.4)],
                 cover: 0.8, flowers: 0.014,
-                plants: [Name("wild_taro", 1.65), Tag("grass", 1.0), Tag("fern", 1.2), Name("tall_grass", 0.22), Tag("tropical", 1.0), Name("sugar_cane", 6.0), Tag("forage", 0.02)],
+                plants: [Name("wild_taro", 2.2), Tag("grass", 1.0), Tag("fern", 1.2), Name("tall_grass", 0.22), Tag("tropical", 1.0), Name("sugar_cane", 6.0), Tag("forage", 0.02)],
             ),
             surface: (
                 include: ["soil_slopes"],
@@ -1224,7 +1224,7 @@
                 trees: [Name("silverwood", 14.0), Name("birch", 0.6), Name("spruce", 0.4)],
                 cover: 0.7, flowers: 0.017,
                 palette: (canopy: (150, 200, 220)),
-                plants: [Name("short_grass", 1.0), Tag("fern", 0.6), Name("frostpetal", 20.0), Name("whisperfern", 15.0), Name("snowdrop", 1.0), Name("moonbloom", 4.0), Name("silvermint", 1.2)],
+                plants: [Name("short_grass", 1.0), Tag("fern", 0.6), Name("frostpetal", 20.0), Name("whisperfern", 15.0), Name("snowdrop", 1.0), Name("moonbloom", 4.0), Name("silvermint", 1.85)],
                 wonders: [Name("heartbloom", 0.9), Name("crystal_bloom", 1.0)],
             ),
             surface: (
@@ -1279,7 +1279,7 @@
                 trees: [Name("emberwood", 14.0), Name("dead_tree", 0.3)],
                 cover: 0.15, flowers: 0.007,
                 palette: (canopy: (230, 100, 30)),
-                plants: [Name("emberbloom", 8.0), Name("dead_bush", 0.6), Name("bunchgrass", 0.5), Name("ember_pepper", 1.68), Name("cinder_moss", 0.8)],
+                plants: [Name("emberbloom", 8.0), Name("dead_bush", 0.6), Name("bunchgrass", 0.5), Name("ember_pepper", 1.2), Name("cinder_moss", 0.8)],
                 wonders: [Name("sunspire", 1.0)],
             ),
             surface: (
