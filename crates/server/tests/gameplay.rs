@@ -1026,19 +1026,20 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
     client.ok("/summon brown_bear 1 ~ ~ ~");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
     let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
-    // Struck a full charge (650 ms) apart, beside it wherever it goes, until `landed` blows
-    // land. The clicks are stamped apart rather than waited for.
-    let mut click = Instant::now();
-    let mut strike = |client: &mut Client, landed: usize| {
+    // Struck a full charge apart, beside it wherever it goes, until `landed` blows land.
+    // Waited for in real time: the server judges swings and creatures' blows by when the
+    // messages arrive (`fight`), so stamping the clicks ahead of the wall would put them
+    // in the future of the blows they answer.
+    let strike = |client: &mut Client, landed: usize| {
         let start = client.damage.len();
         while client.damage[start..].iter().filter(|&&d| d > 0).count() < landed && client.creatures.contains_key(&id) {
             assert!(client.damage.len() - start < 80, "{} blows landed {landed}", client.damage.len() - start);
             let at = client.creatures[&id].position;
             client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
             client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-            click += Duration::from_millis(650);
+            std::thread::sleep(Duration::from_millis(650));
             let blows = client.blows;
-            client.propose_at("core:attack", ActionTarget::Creature(id), click);
+            client.propose("core:attack", ActionTarget::Creature(id));
             let asked = client.ticks();
             client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || c.ticks() >= asked + 8);
         }
