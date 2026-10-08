@@ -76,7 +76,7 @@
                 (level: 1, text: "Campfire: roast meat, fish, eggs, roots and mushrooms; herb tea", icon: "campfire"),
                 (level: 3, text: "Pot: boiled eggs and porridge", icon: "egg"),
                 (level: 5, text: "Quern: flour and flatbread", icon: "wheat"),
-                (level: 8, text: "Animal feed: mash and seed mix", icon: "wild_oats"),
+                (level: 8, text: "Animal feed: mash and seed mix", icon: "wild_grain"),
                 (level: 10, text: "Oven: bread", icon: "bread"),
                 (level: 12, text: "Pan: omelettes and fried eggs", icon: "fried_egg"),
                 (level: 14, text: "Vegetable stew", icon: "carrot"),

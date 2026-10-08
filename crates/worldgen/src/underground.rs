@@ -640,7 +640,7 @@ mod tests {
         for _ in 0..200_000 {
             let mut unit = || rng.unit();
             let (t, m, a) = (-25.0 + 60.0 * unit(), 2.0 * unit(), unit());
-            let p = Point([t, m, -1.0 + 2.0 * unit(), unit(), unit(), a, unit()]);
+            let p = Point([t, m, -1.0 + 2.0 * unit(), unit(), unit(), a, unit(), 0.0]);
             let (depth, height) = (200.0 * unit(), -124.0 + 250.0 * unit());
             let province = ProvinceId((unit() * rocks.len() as f32) as u8);
             let biome = biomes.underground(&p, depth, height, province).expect("plain caves claim everywhere");

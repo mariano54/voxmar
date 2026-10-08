@@ -542,7 +542,7 @@ impl Server {
         let spawn = find_ground(&world, &content.blocks, spawn_block);
         let (generated_tx, generated_rx) = unbounded();
         tracing::info!("world seed {:#x}, spawn at {spawn}", meta.seed);
-        let items = items::Items::restore(state.items, |name| content.blocks.id(name));
+        let items = items::Items::restore(state.items, |name| content.blocks.item_named(name));
         let crops = &content.crops;
         let farm = farm::Farm::restore(state.crops, |name| {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
