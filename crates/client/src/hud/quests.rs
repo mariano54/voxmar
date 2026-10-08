@@ -177,7 +177,7 @@ fn qualified(package: &str, name: &str) -> [String; 2] {
 }
 
 fn item_id(content: &Content, package: &str, name: &str) -> Option<BlockId> {
-    qualified(package, name).iter().find_map(|name| content.blocks.id(name))
+    qualified(package, name).iter().find_map(|name| content.blocks.item_named(name))
 }
 
 /// An item by a quest's name for it: `any`, `tag:TAG` or an item's name.

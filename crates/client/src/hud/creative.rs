@@ -95,7 +95,7 @@ struct Entry {
     in_book: bool,
 }
 
-/// A search to open the catalogue on (`--catalogue`), in creative mode.
+/// A search to open the inventory's catalogue or recipe search on (`--catalogue`).
 #[derive(Resource)]
 pub struct StartSearch(pub String);
 
@@ -122,6 +122,11 @@ pub struct Catalogue {
 }
 
 impl Catalogue {
+    /// Whether the catalogue lists `item`, or none while it has not read the content yet.
+    pub(crate) fn lists(&self, item: BlockId) -> Option<bool> {
+        (!self.entries.is_empty()).then(|| self.entries.iter().any(|entry| entry.item == item))
+    }
+
     fn per_page(&self) -> usize {
         (self.columns * self.rows).max(1)
     }
@@ -246,15 +251,6 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     });
 }
 
-/// Whether an item is one a player would hold, and so is searched for: not air, a
-/// variant's other looks, nor a fluid's other states.
-fn listed(blocks: &voxmar_engine::block::BlockRegistry, id: BlockId) -> bool {
-    !id.is_air()
-        && blocks.def(id).render != RenderKind::Invisible
-        && !blocks.placement_form(id)
-        && blocks.fluid(id).is_none_or(|state| blocks.fluids()[state.fluid.0 as usize].source == id)
-}
-
 /// Reads every item's names once the game's content is there.
 fn index(launch: Res<Launch>, viewer: Res<super::recipes::RecipeViewer>, mut catalogue: ResMut<Catalogue>) {
     if !catalogue.entries.is_empty() {
@@ -266,7 +262,7 @@ fn index(launch: Res<Launch>, viewer: Res<super::recipes::RecipeViewer>, mut cat
     let blocks = &launch.content.blocks;
     catalogue.entries = blocks
         .ids()
-        .filter(|&id| listed(blocks, id))
+        .filter(|&id| blocks.holdable(id))
         .map(|item| {
             let def = blocks.def(item);
             let mut words = vec![def.name.rsplit(':').next().unwrap_or(&def.name).replace('_', " ")];
@@ -280,7 +276,7 @@ fn index(launch: Res<Launch>, viewer: Res<super::recipes::RecipeViewer>, mut cat
     catalogue.found_for = None;
 }
 
-/// `--catalogue`'s search, once the player is in creative mode.
+/// `--catalogue`'s search, once the player's game mode is known.
 fn start_search(
     mut commands: Commands,
     start: Option<Res<StartSearch>>,
