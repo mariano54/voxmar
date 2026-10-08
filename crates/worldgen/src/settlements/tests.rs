@@ -2399,6 +2399,10 @@ fn culture_plan_weight_counts_spare_allocations() {
     let spawn_at = world.settlements.spawn.get().and_then(|s| s.square).filter(|s| s.1 == cell).map(|s| s.0);
     let again = world.settlements.plan(&world, world.settlements.fixed.as_ref().unwrap(), cell, spawn_at).unwrap();
     let mut slot = super::Slot(Some(again));
+    let plan = slot.0.as_mut().unwrap();
+    plan.name.0.shrink_to_fit();
+    plan.gates.shrink_to_fit();
+    plan.lanes[0].shrink_to_fit();
     let before = slot.bytes();
     let plan = slot.0.as_mut().unwrap();
     plan.name.0.reserve_exact(4096);
