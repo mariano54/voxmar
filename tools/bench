@@ -296,13 +296,18 @@ fi
 # One run of `view` by the binary in `dir`: its numbers, as "median p99 max" (flights) or
 # "frame-ms" (static views). Stops everything if Mariano starts playing.
 run() {
-  local dir=$1 view=$2 log
+  local dir=$1 view=$2 log record
   view_args "$view"
   ((use_quiet)) && touch "$quiet"
   game_running && { echo "bench: FAILED: Mariano started playing; no numbers taken now are trustworthy" >&2; exit 1; }
   local settings=$config
   [[ $view == flightfast || $view == flighthigh ]] && settings=$fast
   log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG="$settings" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  # Keep the complete capture output after timing has finished, including failures.
+  # Unique names preserve every base/candidate round and subsequent benchmark attempt.
+  record=$(mktemp "$out/capture-$view.XXXXXX") || return 1
+  printf 'bench capture %s: revision %s, settings %s\n%s\n' "$(date -u +%FT%TZ)" "$(git -C "$dir" rev-parse HEAD)" "$settings" "$log" >"$record" || return 1
+  echo "bench: raw $view capture retained at $record" >&2
   # Numbers from a software renderer (llvmpipe, SwiftShader) or the wrong GPU are worthless.
   local adapter
   adapter=$(grep -m1 -o 'AdapterInfo { name: "[^"]*".*device_type: [A-Za-z]*' <<<"$log")
