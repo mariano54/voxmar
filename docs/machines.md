@@ -28,9 +28,11 @@ Everything a mod might want to change is in that data, not in code.
 - **What it holds is never made twice (P60).** A save is one generation: machines,
   players, dropped items and land are staged and count together once `world.ron` takes the
   generation, so a save cut short leaves the last whole one and nothing a player put in a
-  machine is both in hand and in the machine (see `crates/server/src/save.rs`). A machines
-  file that cannot be read is copied to `machines.unreadable.<seconds>.ron` and the server
-  goes on without it; machine blocks standing in saved land join the factory again, empty.
+  machine is both in hand and in the machine (see `crates/server/src/save.rs`). A save with
+  any part that fails to write never counts. A player leaving brings a save of the whole world (`Server::leave`: buried
+  first, then saved as one generation). A machines file that cannot be read is set aside
+  as `machines.ron.corrupt-<seconds>` like the other world files (the server will not open
+  if it cannot move it) and the server goes on without it; machine blocks standing in saved land join the factory again, empty.
   A machine whose block is gone when its land loads drops what it held, as breaking it
   would. Work half done is saved with it and goes on.
 
@@ -42,6 +44,7 @@ Everything a mod might want to change is in that data, not in code.
 | Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore); the Coke Oven (a multiblock of kiln bricks three on a side round a hollow middle: coal into coke by its own heat, 30 s); the Blast Furnace (the bloomery's ring four high, on rotation: two iron ore and a coke into four ingots, two an ore, ore only); sawmill (on rotation: a log into six planks of its wood on average, half again an axe's) |
 | LV | Dynamo (rotation to LV), LV cable, battery bank | Electric furnace, macerator (2 dust, twice as fast), ore washer (3 dust, half as fast, needs water beside it) |
 | MV | Steam turbine (steam to MV), MV cable, MV battery bank, LV transformer (MV in on top, LV out of the other faces) | LV machines through a transformer |
+| HV | The Turbine Hall (a multiblock of HV casing five long, three wide and three high, hollow in the middle, its core in the front face: steam to HV, 128 a step from 128 steam: six boilers run it at full, five at 94%), HV cable, HV battery bank, MV transformer (HV in on top, MV out of the other faces) | Processing Array (a multiblock: a cube of HV casing three on a side, hollow in the middle, the array in the middle of one face; sixteen macerators in one, at sixteen times their speed and draw), induction smelter (eight electric furnaces in one); MV and LV machines through transformers |
 
 ## How power moves
 
@@ -72,9 +75,20 @@ Each factory step (every 4 server ticks) every network shares out its power:
 4. Every consumer gets the same share of what it asked. A weak network slows its machines
    rather than stopping one of them.
 
+Every machine carries what is left of a step's progress into its next work, and one fast
+enough to finish its work more than once a step does, while it has the inputs and the room,
+so a recipe costs the same power at any speed. (Before, a recipe ended its step: an
+electric furnace on iron is 4% faster for 4% less power an ingot since, and a weak network
+no longer loses part of a step on every item.) HV processors trade
+space for speed, never power or yield: a dust costs a processing array what it costs a
+macerator. The array crushes about five copper ore a second, more than one conveyor carries.
+Arrays built side by side may share a face of casing, as turbine halls may.
+
 Fuel burns only as fast as its power is used. A boiler nobody draws on keeps its coal.
 Converters give on the next step what they were given on this one, so a chain of them
 lags by a step each.
+A converter that is a multiblock's core (the Turbine Hall) neither takes nor gives while its
+structure is unfinished or broken; it says its structure is unfinished.
 
 ## How items move
 
@@ -120,6 +134,13 @@ watches it).
 3. A recipe in `recipes_machines.ron` with an Engineering level.
 4. Its textures in `assets/packs/default/recipes/machines.ron`, and its Japanese name in
    `base/lang/ja.ron` (with a reading in `readings/ja.ron` if it has kanji).
+
+A multiblock machine's core block must be tagged `multiblock_core` (the registry refuses one
+that is not), or it would run whether or not its structure stands.
+
+Every number in `machines.ron` and `processing.ron` is checked as it loads: speeds, power,
+rates, capacities and seconds above 0 and finite, yields 0 or more, electricity at a tier of
+1 or more. A package with one that is not is refused, with the machine named.
 
 Machines are saved in the world folder's `machines.ron`, by block and item names, so a
 pack that renames or drops a machine loses only that machine. A machine remembers who

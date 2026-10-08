@@ -134,7 +134,7 @@ The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loa
   (15 min) of it in all, with frames longer than 10 s (memcap stopping the run while
   Mariano plays) counted as 10 s. In the full gate the session's limits (`TIME_LIMIT`,
   `WALL_LIMIT`) grow by the seconds its full-only workshop phases take
-  (`FULL_ONLY_PHASES` in gate.rs, 420 s for the three machine phases now).
+  (`FULL_ONLY_PHASES` in gate.rs, 600 s for the four machine phases now).
 - Propose actions (clicks that ask the server for something) at most every few server
   seconds while waiting, or once and then wait: `SERVER_LAG` stalls 600 ms on every other
   proposal, so a step proposing every 30 frames starves the server of ticks and the
@@ -247,3 +247,18 @@ It also fails when it cannot compute a ratio, and reports INCONCLUSIVE (exit 3) 
 base's own rounds disagree by more than 1.5× (flights) or 15% (static views). A thread
 timing something by hand does the same: write `QUIET`, run its own commands with
 `VOXMAR_TIMING=1`, and delete the flag when done.
+
+### HV and treasure evidence
+
+The full gate also builds a standing Turbine Hall with its boiler above, HV cable, MV
+transformer and HV bank, a cased Processing Array, and an Induction Smelter. It supplies
+fuel and ore through player actions and requires the hall's generating reply and both
+processors' making replies with power or progress above zero. Each reply names the
+machine being checked. A copper pick opens a Bronze treasure chest, consumes exactly
+one pick, and reveals a non-empty saved chest whose finds are then taken into inventory.
+
+`hv-hall`, `hv-array`, `hv-smelter`, `hv-power`, `treasure-row` and `treasure-open` shots
+are captured in matching poses with `-en` and `-ja` suffixes. All four picks appear in
+the hotbar and their translated selected-item names appear across the factory shots.
+The default pack is the baseline; Voxmar HD falls back to its HV machine textures
+until that pack provides them. The later reviewed art phases update these same shots.

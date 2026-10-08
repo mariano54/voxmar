@@ -193,10 +193,12 @@ impl Server {
         let crowded = || sites.water_wheels.iter().any(|&other| other != pos && (other - pos).abs().max_element() <= rules.water_spacing);
         // What it looks at around it must be loaded too, or it stays as it was last seen
         // (a windmill takes the mean wind, an animal walks no wheel).
+        let core_reach = self.content.multiblocks.with_core(block).map(|m| m.reach()).max();
         let reach = match machine.role {
             // Animals are not about where the land is not loaded, so none walk it there.
             Role::Generator { source: Source::Walked, .. } => 0,
-            Role::Processor { water: false, .. } => self.content.multiblocks.with_core(block).map(|m| m.reach()).max().unwrap_or(0),
+            _ if core_reach.is_some() => core_reach.unwrap_or_default(),
+            Role::Processor { water: false, .. } => 0,
             _ => 1,
         };
         let loaded = (-reach..=reach).all(|x| (-reach..=reach).all(|z| self.world.contains(ColumnPos::of_block(pos + IVec3::new(x, 0, z)))));
@@ -245,7 +247,10 @@ impl Server {
                     let across = Vec2::new(at.x - centre.x, at.z - centre.z).length();
                     (across <= rules.walk_reach && (at.y - centre.y).abs() <= rules.walk_height).then(|| at.distance(centre))
                 };
-                let keeps = |wheel_owner: &Option<String>, animal_owner: &Option<String>| animal_owner.is_some() && (wheel_owner.is_none() || wheel_owner == animal_owner);
+                let keeps = |wheel_owner: &Option<String>, animal_owner: &Option<String>| {
+                    let key = |owner: &Option<String>| owner.as_deref().map(crate::player_key);
+                    animal_owner.is_some() && (wheel_owner.is_none() || key(wheel_owner) == key(animal_owner))
+                };
                 // Only one that would put work in (kept, grown and fed, by the condition rules
                 // in creatures.ron: `Server::working_share`).
                 let walker = self.creatures.live.iter().find(|&(&id, c)| {
@@ -274,7 +279,8 @@ impl Server {
                     .any(|d| self.block(pos + d).is_some_and(|b| !blocks.def(b).has_tag(&rules.hot_tag) && blocks.fluid(b).is_some()));
                 if wet { 1.0 } else { 0.0 }
             }
-            Role::Processor { .. } if self.content.multiblocks.with_core(block).next().is_some() => {
+            // A multiblock's core, whatever it does, works while its structure stands.
+            _ if core_reach.is_some() => {
                 let stands = self.station_stands(pos);
                 // Fallen, it counts again for quests once rebuilt.
                 if !stands && let Some(state) = self.factory.state_mut(pos) {
@@ -282,6 +288,7 @@ impl Server {
                 }
                 if stands { 1.0 } else { 0.0 }
             }
+            _ if machine.converts() => 1.0,
             _ => return,
         };
         self.factory.set_condition(pos, condition);
@@ -492,6 +499,11 @@ impl Server {
                 counted: machine.counted,
                 ..MachineState::default()
             };
+            // A converter needs nothing of the world but a standing structure, if it is a
+            // multiblock's core (saves before converters had a condition held none).
+            if machines.get(block).is_some_and(|m| m.converts()) && self.content.multiblocks.with_core(block).next().is_none() {
+                state.condition = 1.0;
+            }
             // Slots as the machine has them now (insert_state sizes them).
             state.inputs = machine.inputs.iter().map(stack).collect();
             state.outputs = machine.outputs.iter().map(stack).collect();
