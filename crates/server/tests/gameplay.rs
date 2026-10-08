@@ -2570,16 +2570,14 @@ fn blows_on_the_beat_build_to_a_flourish() {
     // A sword's beat is 0.6 s after each swing starts: the first click starts the meter, and
     // each next one comes a little before the beat, in the buffer, so it is held for it.
     // Each is stamped exactly when it is due (`propose_at`, the clock the server times
-    // swings by), however late a busy machine lets this thread send it; it is sent no
-    // sooner, as the swing before must land first.
+    // swings by), however late a busy machine lets this thread send it. Wait for each
+    // answered blow before the next click: the server holds only one pending swing.
     let start = Instant::now();
     for k in 0..5u32 {
         let due = start + Duration::from_secs_f32(if k == 0 { 0.0 } else { 0.6 * k as f32 - 0.06 });
-        while Instant::now() < due {
-            client.pump_until(|_| true);
-            std::thread::sleep(Duration::from_millis(1));
-        }
         client.propose_at("core:attack", ActionTarget::Creature(id), due);
+        client.pump_until(|c| c.kinds.len() > k as usize || !c.creatures.contains_key(&id));
+        assert!(client.creatures.contains_key(&id), "the bear died before the flourish");
     }
     client.pump_until(|c| c.kinds.len() >= 5 || !c.creatures.contains_key(&id));
     assert_eq!(client.kinds, [Blow::Plain, Blow::Beat, Blow::Beat, Blow::Beat, Blow::Flourish], "damage {:?}", client.damage);
@@ -2950,9 +2948,8 @@ fn a_dodge_waits_longer_in_heavier_armour() {
     // by the first's cooldown, and puts us back. Unarmoured (light, 1.0 s less the 0.1 a
     // client's clock may run ahead) the second pair's first is taken; in chainmail (medium,
     // 1.2 s less 0.1) it is refused too. Returns whether it was.
-    let twice = |client: &mut Client| {
+    let twice = |client: &mut Client, first: Instant| {
         let before = client.teleports;
-        let first = Instant::now();
         let second = first + Duration::from_millis(1000);
         for at in [first, second] {
             client.propose_at("core:dodge", ActionTarget::None, at);
@@ -2962,15 +2959,15 @@ fn a_dodge_waits_longer_in_heavier_armour() {
         client.settle();
         let refused = client.teleports - before;
         assert!(matches!(refused, 2 | 3), "of four dodges, {refused} were refused (the first was refused, or a second at once was not)");
-        // Past any cooldown before the next pairs: the next are stamped after now.
-        client.pump_until(|_| Instant::now() > second + Duration::from_secs(2));
         refused == 3
     };
-    assert!(!twice(&mut client), "unarmoured, a dodge 1.0 s after the last was refused");
+    let first = Instant::now();
+    assert!(!twice(&mut client, first), "unarmoured, a dodge 1.0 s after the last was refused");
     let from = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == shirt)).unwrap();
     client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + 1) as u8, count: 1 });
     client.pump_until(|c| c.inventory.worn[1].is_some_and(|s| s.item == shirt));
-    assert!(twice(&mut client), "in chainmail, a dodge 1.0 s after the last was taken");
+    // Three seconds after the first pair, by the same clock, clears either cooldown.
+    assert!(twice(&mut client, first + Duration::from_secs(3)), "in chainmail, a dodge 1.0 s after the last was taken");
 }
 
 #[test]
