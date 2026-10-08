@@ -108,6 +108,17 @@ impl Rgba {
         }
         Rgba { width: size, height: size, pixels }
     }
+
+    /// Every texel's colour multiplied by `tint` (a block's [`voxmar_engine::block::BlockTint::Fixed`]),
+    /// its transparency kept.
+    fn multiplied(mut self, tint: [u8; 3]) -> Rgba {
+        for texel in self.pixels.chunks_exact_mut(4) {
+            for (channel, &by) in texel.iter_mut().zip(&tint) {
+                *channel = (*channel as u32 * by as u32 / 255) as u8;
+            }
+        }
+        self
+    }
 }
 
 /// Where a pack's files live.
@@ -374,11 +385,17 @@ impl Source {
             .into_iter()
             .zip(unders)
             .zip(refs)
-            .map(|((texture, under), r)| match (texture, under) {
-                (Some(t), Some(under)) => t.square(size).over(&under.square(size)),
-                (Some(t), None) => t.square(size),
-                (None, _) if r.render == RenderKind::Plant => plant_placeholder(size, r.color, &r.name),
-                (None, _) => placeholder(size, r.color, &r.name),
+            .map(|((texture, under), r)| {
+                let drawn = match (texture, under) {
+                    (Some(t), Some(under)) => t.square(size).over(&under.square(size)),
+                    (Some(t), None) => t.square(size),
+                    (None, _) if r.render == RenderKind::Plant => plant_placeholder(size, r.color, &r.name),
+                    (None, _) => placeholder(size, r.color, &r.name),
+                };
+                match r.tint {
+                    Some(tint) => drawn.multiplied(tint),
+                    None => drawn,
+                }
             })
             .collect();
         (size, textures, animations)
@@ -401,7 +418,13 @@ impl Source {
                 let mut alternates = Vec::new();
                 for name in names {
                     match pack.read(&name) {
-                        Some(image) if image.frames().len() == 1 => alternates.push(image.square(size)),
+                        Some(image) if image.frames().len() == 1 => {
+                            let drawn = image.square(size);
+                            alternates.push(match r.tint {
+                                Some(tint) => drawn.multiplied(tint),
+                                None => drawn,
+                            });
+                        }
                         Some(_) => bevy::log::warn!("texture pack {}: variant {name} of {path} is an animation strip; leaving it out", pack.name),
                         None => bevy::log::warn!("texture pack {}: variant {name} of {path} not found", pack.name),
                     }
@@ -651,12 +674,23 @@ mod tests {
         assert!(refused.is_empty(), "{}", refused.join("\n"));
     }
 
+    /// A block's fixed tint multiplies its texels' colours by the colour (white leaves them,
+    /// black blackens them) and never touches their transparency.
+    #[test]
+    fn a_fixed_tint_multiplies_the_colour_and_keeps_the_alpha() {
+        let mut texture = Rgba::solid(2, 1, [200, 100, 50, 255]);
+        texture.pixels[7] = 90;
+        let tinted = texture.clone().multiplied([255, 128, 0]);
+        assert_eq!(tinted.pixels, [200, 50, 0, 255, 200, 50, 0, 90]);
+        assert_eq!(texture.clone().multiplied([255, 255, 255]).pixels, texture.pixels);
+    }
+
     /// A pack we don't ship hears once of its opaque faces more than half see-through,
     /// with the colour they are filled with; a face with clear margins, or a pack we ship,
     /// hears nothing.
     #[test]
     fn a_pack_hears_once_of_see_through_opaque_faces() {
-        let texture = |name: &str| TextureRef { name: name.into(), under: None, color: [0; 3], render: RenderKind::Opaque };
+        let texture = |name: &str| TextureRef { name: name.into(), under: None, color: [0; 3], render: RenderKind::Opaque, tint: None };
         let refs = [texture("lv_cable_side"), texture("mv_cable_side"), texture("cactus_side")];
         let mut cactus = Rgba::solid(16, 16, [80, 140, 60, 255]);
         cactus.pixels[..16 * 4].fill(0);

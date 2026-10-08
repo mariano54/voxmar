@@ -7,9 +7,9 @@
 //! with more than four ingredients, needs a table. A name with `{name}` in it makes a
 //! family of recipes, one for every name that fits all of the recipe's blocks: one line
 //! turns every wood's log into its planks. A cell or ingredient may also accept several
-//! items: `tag:TAG` takes anything with that tag, and `a|b` either of two. A recipe trains a
-//! skill (Crafting unless it says), may need a level in it, and gives experience for every
-//! one made.
+//! items: `tag:TAG` takes anything with that tag (a family's own, with `{name}` in it, as
+//! `tag:dye:{name}`), and `a|b` either of two. A recipe trains a skill (Crafting unless it
+//! says), may need a level in it, and gives experience for every one made.
 
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -211,8 +211,12 @@ impl RecipeRegistry {
         let mut recipes = Vec::new();
         let crafting = skills.id("core:crafting");
         for def in defs {
-            // The single item names, for families (`tag:` and `a|b` cells stand apart).
-            let names: Vec<&String> = def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.starts_with("tag:") && !n.contains('|')).collect();
+            // The single item names, for families (`tag:` and `a|b` cells stand apart, and an
+            // empty cell is no item).
+            let names: Vec<&String> =
+                def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.is_empty() && !n.starts_with("tag:") && !n.contains('|')).collect();
+            // The tags a family fills in (`tag:dye:{name}`).
+            let tags: Vec<&str> = def.pattern.iter().flatten().chain(&def.ingredients).filter_map(|n| n.strip_prefix("tag:")).filter(|t| t.contains("{name}")).collect();
             let bad = |what: &str| RegistryError(format!("recipe for {}: {what}", def.output));
             if def.pattern.len() > SIDE || def.pattern.iter().any(|row| row.len() > SIDE || row.len() != def.pattern[0].len()) {
                 return Err(bad("a pattern is up to three rows of three"));
@@ -233,6 +237,8 @@ impl RecipeRegistry {
                         .map(|i| blocks.def(BlockId(i as u16)).name.as_str())
                         .filter_map(|name| name.strip_prefix(prefix)?.strip_suffix(suffix).map(str::to_owned))
                         .filter(|fill| names.iter().all(|n| blocks.id(&n.replace("{name}", fill)).is_some()))
+                        // A fill whose own tag nothing has is no family member, not an error.
+                        .filter(|fill| tags.iter().all(|tag| blocks.ids().any(|id| blocks.def(id).has_tag(&tag.replace("{name}", fill)))))
                         .map(Some)
                         .collect()
                 }
@@ -247,7 +253,11 @@ impl RecipeRegistry {
                         return Ok(None);
                     }
                     let mut accepts: Accepts = match name.strip_prefix("tag:") {
-                        Some(tag) => (0..blocks.len() as u16).map(BlockId).filter(|&id| blocks.def(id).has_tag(tag)).collect(),
+                        Some(tag) => {
+                            // A family's recipe may take its own tag (`tag:dye:{name}`).
+                            let tag = fill.as_ref().map_or_else(|| tag.to_owned(), |fill| tag.replace("{name}", fill));
+                            (0..blocks.len() as u16).map(BlockId).filter(|&id| blocks.def(id).has_tag(&tag)).collect()
+                        }
                         None => name.split('|').map(item).collect::<Result<_, _>>()?,
                     };
                     if accepts.is_empty() {
@@ -377,6 +387,35 @@ mod tests {
         let wheat = id("wheat");
         assert!(registry.find(&grid(&[&[], &[None, wheat], &[None, None, wheat]])).is_some());
         assert!(registry.find(&grid(&[&[wheat], &[None, None, wheat]])).is_none(), "a wider gap is another shape");
+    }
+
+    #[test]
+    fn a_family_pattern_may_have_empty_cells() {
+        let item = |name: &str| BlockDef { name: name.into(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![item("test:oak_planks"), item("test:birch_planks"), item("test:stick"), item("test:oak_axe"), item("test:birch_axe")]).unwrap();
+        let registry = registry(&blocks, r#"(recipes: [(pattern: [["{name}_planks", "{name}_planks"], ["", "stick"]], output: "{name}_axe")])"#);
+        assert_eq!(registry.len(), 2, "an empty cell is no name to fit");
+    }
+
+    #[test]
+    fn a_family_may_take_the_tag_of_its_own_name() {
+        let tagged = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![
+            tagged("test:wool", &[]),
+            tagged("test:poppy", &["dye:red"]),
+            tagged("test:cornflower", &["dye:blue"]),
+            tagged("test:red_cloth", &[]),
+            tagged("test:blue_cloth", &[]),
+            // Nothing is dyed wraith: not a member of the family, and no error.
+            tagged("test:wraith_cloth", &[]),
+        ])
+        .unwrap();
+        let registry = registry(&blocks, r#"(recipes: [(ingredients: ["wool", "tag:dye:{name}"], output: "{name}_cloth")])"#);
+        let id = |name: &str| Some(blocks.id(&format!("test:{name}")).unwrap());
+        assert_eq!(registry.len(), 2);
+        let made = |flower: &str| registry.find(&grid(&[&[id("wool"), id(flower)]])).map(|r| r.output);
+        assert_eq!(made("poppy"), id("red_cloth"));
+        assert_eq!(made("cornflower"), id("blue_cloth"));
     }
 
     #[test]

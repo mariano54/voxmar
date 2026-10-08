@@ -348,6 +348,20 @@ their own blocks and drop the plant, as many as their size. Blocks carry tags (`
 `wetland`, `edible`, `alchemy:calming`, `dye:blue`; the vocabulary is at the top of
 `blocks.ron`) and a rarity, so biomes, food and alchemy select them without naming them.
 
+Colour variants cost no extra art. A block may say `tint: Fixed(r, g, b)`: its textures are
+multiplied by that colour when the texture array is built (one layer per texture and colour),
+so a greyscale drawing makes a family of woods or dyes and the renderer sees an untinted
+block. A `blocks*.ron` file may list `dyes: [(name: "indigo", rgb: (52, 64, 150)), ...]`
+(one palette across packages, each dye named by `family.<package>.<name>` in the language
+files), and a family line `(template: "dyed", dyes: true)` makes the template once for every
+dye, with the dye's name for `{name}` and its colour as the tint. A family recipe may take the
+tag of its own name (`tag:dye:{name}`), and a fill whose tag nothing has is skipped. The decor
+blocks (`blocks_furnishings.ron`: furniture in three woods, cloth things in twelve dyes,
+crockery in three glazes, lights, graves, columns; their boxes are in `shapes.ron`, their
+greyscale drawings in the default pack's `decor.ron`, written by `tools/art/decor.py`) are
+the first users; Voxmar HD shows the default drawings at twice the fineness until the pack
+thread redraws them.
+
 How the design primitives map to the code today:
 
 - **Definition**: blocks (`content/base/blocks.ron`), actions (`content/core/actions.ron`,

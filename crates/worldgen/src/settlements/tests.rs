@@ -46,7 +46,7 @@ impl Look for Area {
         let def = registry.def(self.block(p));
         let colors = self.column(p.x, p.z).map_or([[0; 3]; 3], |c| c.colors_at(p.x & 31, p.z & 31));
         let v = |c: [u8; 3]| Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32);
-        match def.tint {
+        match def.tint.drawn() {
             Tint::Foliage => v(colors[1]) * 0.75,
             Tint::Grass => v(colors[0]) * 0.8,
             Tint::Water => v(colors[2]),
@@ -489,7 +489,7 @@ impl Look for Model {
 
     fn color(&self, registry: &BlockRegistry, p: IVec3) -> Vec3 {
         let def = registry.def(self.block(p));
-        match def.tint {
+        match def.tint.drawn() {
             Tint::Foliage => Vec3::new(70.0, 120.0, 45.0),
             Tint::Grass => Vec3::new(105.0, 150.0, 70.0),
             Tint::Water => Vec3::new(60.0, 100.0, 200.0),

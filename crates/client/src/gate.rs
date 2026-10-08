@@ -3860,7 +3860,11 @@ fn tree(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// of whatever the earlier steps built and seen against the sky: they must reach the
 /// client and change the view.
 fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    let blocks = ["oak_slab", "oak_stairs", "oak_stairs_top_east", "oak_slab_top", "barrel", "crate", "sack"];
+    // The last four are decor (P58a): furniture and cloth in a colour baked into their
+    // textures, in a facing, and a piece of crockery.
+    let blocks = [
+        "oak_slab", "oak_stairs", "oak_stairs_top_east", "oak_slab_top", "barrel", "crate", "sack", "oak_table", "birch_chair_east", "indigo_banner", "ivory_jug",
+    ];
     if gate.phase == 0 {
         gate.shapes_row = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(-3, 3, 4);
     }
@@ -3868,12 +3872,12 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let cells: Vec<IVec3> = (0..blocks.len() as i32).map(|i| row + IVec3::X * i).collect();
     match gate.phase {
         0 => {
-            aim(world, row + IVec3::new(3, 0, 0));
+            aim(world, row + IVec3::X * (blocks.len() as i32 / 2));
             gate.advance(now);
         }
         // The view turned to the row first, so only the blocks change it.
         1 if in_phase > 0.5 => {
-            aim(world, row + IVec3::new(3, 0, 0));
+            aim(world, row + IVec3::X * (blocks.len() as i32 / 2));
             if gate.shot(world, "shapes-before").is_some() {
                 for (cell, block) in cells.iter().zip(blocks) {
                     world.resource::<Net>().command(&format!("setblock {} {} {} {block}", cell.x, cell.y, cell.z));

@@ -1529,7 +1529,7 @@ mod tests {
                         let def = registry.def(b);
                         let colors = column(p).colors_at(p.x & 31, p.z & 31);
                         let tint = |c: [u8; 3]| Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32);
-                        let base = match def.tint {
+                        let base = match def.tint.drawn() {
                             Tint::Foliage => tint(colors[1]) * 0.75,
                             Tint::Grass => tint(colors[0]) * 0.8,
                             Tint::Water => tint(colors[2]),

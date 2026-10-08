@@ -113,6 +113,43 @@ pub enum Tint {
     Water,
 }
 
+/// What a block definition says about tint: a biome colour the renderer multiplies in (a
+/// [`Tint`]), or one fixed colour baked into the block's textures when the texture array is
+/// built (`TextureRef::tint`). A greyscale drawing then makes any number of colour variants
+/// (dyed cloth, stained wood) from data alone, and the renderer sees an untinted block: no
+/// vertex bit, and no pass of its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlockTint {
+    #[default]
+    None,
+    Grass,
+    Foliage,
+    Water,
+    /// This colour: red, green and blue.
+    Fixed(u8, u8, u8),
+}
+
+impl BlockTint {
+    /// The colour baked into the textures, for [`BlockTint::Fixed`].
+    pub fn baked(self) -> Option<[u8; 3]> {
+        match self {
+            BlockTint::Fixed(r, g, b) => Some([r, g, b]),
+            _ => None,
+        }
+    }
+
+    /// The tint the renderer draws the block's faces with: a biome colour, or none for a
+    /// baked one.
+    pub fn drawn(self) -> Tint {
+        match self {
+            BlockTint::None | BlockTint::Fixed(..) => Tint::None,
+            BlockTint::Grass => Tint::Grass,
+            BlockTint::Foliage => Tint::Foliage,
+            BlockTint::Water => Tint::Water,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Textures {
     None,
@@ -155,7 +192,7 @@ pub struct BlockDef {
     /// Whether entities collide with the block.
     pub solid: bool,
     pub textures: Textures,
-    pub tint: Tint,
+    pub tint: BlockTint,
     /// Only tint the top face (grass blocks).
     pub tint_top_only: bool,
     /// Light level emitted, 0..=15.
@@ -450,7 +487,7 @@ impl Default for BlockDef {
             render: RenderKind::Opaque,
             solid: true,
             textures: Textures::None,
-            tint: Tint::None,
+            tint: BlockTint::None,
             tint_top_only: false,
             light: 0,
             light_filter: 0,
@@ -589,7 +626,7 @@ pub struct BlockPatch {
     pub render: Option<RenderKind>,
     pub solid: Option<bool>,
     pub textures: Option<Textures>,
-    pub tint: Option<Tint>,
+    pub tint: Option<BlockTint>,
     pub tint_top_only: Option<bool>,
     pub light: Option<u8>,
     pub light_filter: Option<u8>,
@@ -675,6 +712,20 @@ pub struct FamilyDef {
     pub members: BTreeMap<String, BlockPatch>,
     /// Members to leave out, by name.
     pub without: Vec<String>,
+    /// Makes the family once for every dye (see [`DyeDef`]) instead of once for `name`:
+    /// each takes the dye's name for `{name}`, and its colour as every member's
+    /// `tint: Fixed(..)` and `color` (a member may still say otherwise). `members` and
+    /// `without` are not allowed, since every dye's members have other names.
+    pub dyes: bool,
+}
+
+/// One dye of the palette dyed families are made over: a name (its language names are
+/// `family.<package>.<name>`) and the colour it multiplies greyscale textures by.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DyeDef {
+    pub name: String,
+    pub rgb: [u8; 3],
 }
 
 /// A package's `blocks.ron`.
@@ -686,6 +737,9 @@ pub struct BlockFile {
     pub blocks: Vec<BlockDef>,
     /// Made after `blocks`, in order.
     pub families: Vec<FamilyDef>,
+    /// The dyes families with `dyes: true` are made over. Any package may add some; every
+    /// package's dyes are one palette.
+    pub dyes: Vec<DyeDef>,
 }
 
 /// One look of a block, for generators choosing what to place.
@@ -748,6 +802,9 @@ pub struct TextureRef {
     pub color: [u8; 3],
     /// How the first block using the texture is drawn, so placeholders can match its shape.
     pub render: RenderKind,
+    /// A colour its texels are multiplied by (the block's [`BlockTint::Fixed`]); the same texture
+    /// in two colours is two layers.
+    pub tint: Option<[u8; 3]>,
 }
 
 #[derive(Debug)]
@@ -811,6 +868,13 @@ impl BlockRegistry {
             .iter()
             .flat_map(|(namespace, file)| file.templates.iter().map(move |(name, members)| (format!("{namespace}:{name}"), members.clone())))
             .collect();
+        let mut dyes: Vec<DyeDef> = Vec::new();
+        for dye in packages.iter().flat_map(|(_, file)| &file.dyes) {
+            if dyes.iter().any(|d| d.name == dye.name) {
+                return Err(RegistryError(format!("dye `{}` is made twice", dye.name)));
+            }
+            dyes.push(dye.clone());
+        }
         let mut defs = Vec::new();
         for (namespace, file) in packages {
             for mut def in file.blocks {
@@ -821,25 +885,40 @@ impl BlockRegistry {
                 let error = |message: String| RegistryError(format!("{namespace}/blocks.ron: family `{}`: {message}", family.name));
                 let key = if family.template.contains(':') { family.template.clone() } else { format!("{namespace}:{}", family.template) };
                 let template = templates.get(&key).ok_or_else(|| error(format!("no template `{key}`")))?;
-                let mut names = Vec::new();
-                for member in template {
-                    let mut def = member.clone();
-                    def.substitute(&family.name);
-                    names.push(def.name.clone());
-                    if family.without.contains(&def.name) {
-                        continue;
-                    }
-                    def.tags.extend(family.tags.iter().cloned());
-                    family.all.apply(&mut def);
-                    if let Some(patch) = family.members.get(&def.name) {
-                        patch.apply(&mut def);
-                    }
-                    def.family = Some(family.name.clone());
-                    def.qualify(&namespace);
-                    defs.push(def);
+                if family.dyes && (!family.members.is_empty() || !family.without.is_empty()) {
+                    return Err(error("a family over the dyes has no `members` or `without`: its members have a name for every dye".into()));
                 }
-                if let Some(unknown) = family.members.keys().chain(&family.without).find(|n| !names.contains(n)) {
-                    return Err(error(format!("`{unknown}` is not one of its members ({})", names.join(", "))));
+                // One family, or one for every dye.
+                let fills: Vec<(&str, Option<[u8; 3]>)> =
+                    if family.dyes { dyes.iter().map(|dye| (dye.name.as_str(), Some(dye.rgb))).collect() } else { vec![(family.name.as_str(), None)] };
+                if family.dyes && fills.is_empty() {
+                    return Err(error("it is made over the dyes, and no package has any".into()));
+                }
+                for (fill, rgb) in fills {
+                    let mut names = Vec::new();
+                    for member in template {
+                        let mut def = member.clone();
+                        def.substitute(fill);
+                        names.push(def.name.clone());
+                        if family.without.contains(&def.name) {
+                            continue;
+                        }
+                        if let Some([r, g, b]) = rgb {
+                            def.tint = BlockTint::Fixed(r, g, b);
+                            def.color = [r, g, b];
+                        }
+                        def.tags.extend(family.tags.iter().cloned());
+                        family.all.apply(&mut def);
+                        if let Some(patch) = family.members.get(&def.name) {
+                            patch.apply(&mut def);
+                        }
+                        def.family = Some(fill.to_owned());
+                        def.qualify(&namespace);
+                        defs.push(def);
+                    }
+                    if let Some(unknown) = family.members.keys().chain(&family.without).find(|n| !names.contains(n)) {
+                        return Err(error(format!("`{unknown}` is not one of its members ({})", names.join(", "))));
+                    }
                 }
             }
         }
@@ -954,7 +1033,7 @@ impl BlockRegistry {
         }
 
         let mut textures: Vec<TextureRef> = Vec::new();
-        let mut texture_index = FxHashMap::<(String, Option<String>), u16>::default();
+        let mut texture_index = FxHashMap::<(String, Option<String>, Option<[u8; 3]>), u16>::default();
         let mut info = Vec::with_capacity(defs.len());
         let mut shapes: Vec<crate::shape::Shape> = Vec::new();
         let mut shape_starts = Vec::new();
@@ -981,8 +1060,8 @@ impl BlockRegistry {
                     shape_layers[index] = names
                         .into_iter()
                         .map(|name| {
-                            *texture_index.entry((name.clone(), None)).or_insert_with(|| {
-                                textures.push(TextureRef { name, under: None, color: def.color, render: def.render });
+                            *texture_index.entry((name.clone(), None, def.tint.baked())).or_insert_with(|| {
+                                textures.push(TextureRef { name, under: None, color: def.color, render: def.render, tint: def.tint.baked() });
                                 (textures.len() - 1) as u16
                             })
                         })
@@ -1022,13 +1101,13 @@ impl BlockRegistry {
             for face in Face::ALL {
                 if let Some(name) = def.textures.face(face) {
                     let under = host.and_then(|host| host.textures.face(face)).map(str::to_owned);
-                    layers[face as usize] = *texture_index.entry((name.to_owned(), under.clone())).or_insert_with(|| {
-                        textures.push(TextureRef { name: name.to_owned(), under, color: def.color, render: def.render });
+                    layers[face as usize] = *texture_index.entry((name.to_owned(), under.clone(), def.tint.baked())).or_insert_with(|| {
+                        textures.push(TextureRef { name: name.to_owned(), under, color: def.color, render: def.render, tint: def.tint.baked() });
                         (textures.len() - 1) as u16
                     });
                 }
                 if !def.tint_top_only || face == Face::PosY {
-                    tints[face as usize] = def.tint;
+                    tints[face as usize] = def.tint.drawn();
                 }
             }
             let drops = match &def.drops {
@@ -1291,14 +1370,59 @@ mod tests {
         );
         let registry = BlockRegistry::new(defs).unwrap();
         let oak_leaves = registry.def(registry.expect("base:oak_leaves"));
-        assert_eq!(oak_leaves.tint, Tint::Foliage);
+        assert_eq!(oak_leaves.tint, BlockTint::Foliage);
         assert_eq!(oak_leaves.family.as_deref(), Some("base:oak"));
         assert_eq!(oak_leaves.tags, ["leaves", "broadleaf"]);
         assert_eq!(registry.info(registry.expect("base:oak_leaves")).drops, registry.expect("base:oak_sapling"));
         let cherry_leaves = registry.def(registry.expect("base:cherry_leaves"));
-        assert_eq!((cherry_leaves.tint, cherry_leaves.light), (Tint::None, 3));
+        assert_eq!((cherry_leaves.tint, cherry_leaves.light), (BlockTint::None, 3));
         assert_eq!(cherry_leaves.tags, ["leaves", "broadleaf", "blossom"]);
         assert!(matches!(&registry.def(registry.expect("base:cherry_log")).textures, Textures::Column { end, .. } if end == "cherry_log_top"));
+    }
+
+    #[test]
+    fn a_fixed_tint_is_baked_into_its_own_layers() {
+        let source = r#"(
+            templates: {"cloth": [(name: "{name}_cloth", textures: All("cloth"))]},
+            blocks: [(name: "plain_cloth", textures: All("cloth"))],
+            families: [
+                (template: "cloth", name: "red", all: (tint: Some(Fixed(200, 40, 30)))),
+                (template: "cloth", name: "blue", all: (tint: Some(Fixed(30, 60, 190)))),
+                (template: "cloth", name: "red_again", all: (tint: Some(Fixed(200, 40, 30)))),
+            ],
+        )"#;
+        let registry = BlockRegistry::from_ron("base", source).unwrap();
+        let layer = |name: &str| registry.info(registry.expect(name)).layers[0];
+        // One drawing, three colours: a layer each for the two colours, shared by the two
+        // blocks that take one, and a plain one.
+        assert_ne!(layer("base:red_cloth"), layer("base:blue_cloth"));
+        assert_ne!(layer("base:red_cloth"), layer("base:plain_cloth"));
+        assert_eq!(layer("base:red_cloth"), layer("base:red_again_cloth"));
+        let tinted = |name: &str| registry.textures()[layer(name) as usize].tint;
+        assert_eq!(tinted("base:red_cloth"), Some([200, 40, 30]));
+        assert_eq!(tinted("base:blue_cloth"), Some([30, 60, 190]));
+        assert_eq!(tinted("base:plain_cloth"), None);
+        // The renderer is told of no tint at all.
+        assert_eq!(registry.info(registry.expect("base:red_cloth")).tints, [Tint::None; 6]);
+    }
+
+    #[test]
+    fn a_family_over_the_dyes_is_made_once_for_each() {
+        let source = r#"(
+            dyes: [(name: "red", rgb: (200, 40, 30)), (name: "blue", rgb: (30, 60, 190))],
+            templates: {"cloth": [(name: "{name}_cloth", textures: All("cloth")), (name: "{name}_rug", textures: All("cloth"), tags: ["rug"])]},
+            families: [(template: "cloth", dyes: true, tags: ["decor"])],
+        )"#;
+        let registry = BlockRegistry::from_ron("base", source).unwrap();
+        let blue = registry.def(registry.expect("base:blue_rug"));
+        assert_eq!((blue.tint, blue.color, blue.family.as_deref()), (BlockTint::Fixed(30, 60, 190), [30, 60, 190], Some("base:blue")));
+        assert_eq!(blue.tags, ["rug", "decor"]);
+        assert_eq!(registry.def(registry.expect("base:red_cloth")).tint, BlockTint::Fixed(200, 40, 30));
+        assert_eq!(registry.len(), 5, "air and two members for each of two dyes");
+        let twice = r#"(dyes: [(name: "red", rgb: (1, 2, 3)), (name: "red", rgb: (4, 5, 6))])"#;
+        assert!(BlockRegistry::from_ron("base", twice).is_err());
+        let none = r#"(templates: {"t": [(name: "{name}_t")]}, families: [(template: "t", dyes: true)])"#;
+        assert!(BlockRegistry::from_ron("base", none).is_err());
     }
 
     #[test]
