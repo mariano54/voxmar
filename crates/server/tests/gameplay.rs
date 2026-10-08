@@ -860,8 +860,9 @@ fn strike_a_snail(mut client: Client) {
         let blows = client.blows;
         client.propose("core:attack", ActionTarget::Creature(id));
         // The answer, or a later swing if the server was still cooling down.
-        let asked = Instant::now();
-        client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || asked.elapsed() > Duration::from_millis(400));
+        // (Asked again after 8 server ticks, 400 ms at speed: a busy server is waited for.)
+        let asked = client.ticks();
+        client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || c.ticks() >= asked + 8);
     }
     assert_eq!(client.deaths, 1);
     // Walk onto where it died, as a player goes for the loot.
@@ -897,8 +898,8 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
             std::thread::sleep(Duration::from_millis(650));
             let blows = client.blows;
             client.propose("core:attack", ActionTarget::Creature(id));
-            let asked = Instant::now();
-            client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || asked.elapsed() > Duration::from_millis(400));
+            let asked = client.ticks();
+            client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || c.ticks() >= asked + 8);
         }
         client.damage[start..].iter().copied().filter(|&d| d > 0).collect::<Vec<u16>>()
     };

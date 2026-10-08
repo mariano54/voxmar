@@ -901,13 +901,16 @@ pub fn aim(
     let held = player.inventory.get(player.selected).map(|s| s.item);
     let combat = &launch.content.combat;
     let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    // Aimed at as far as it can be touched (tended, looked at) or struck, whichever is
+    // further; struck only within the weapon's reach.
     let nearest = creatures
         .shown
         .keys()
         .filter_map(|&id| Some((id, ray_box(eye, look, &creatures.aabb(&launch, id)?)?)))
-        .filter(|&(_, d)| d <= weapon.reach && d < block)
+        .filter(|&(_, d)| d <= weapon.reach.max(combat.feel.touch) && d < block)
         .min_by(|a, b| a.1.total_cmp(&b.1));
     target.creature = nearest.map(|(id, _)| id);
+    let in_reach = nearest.is_some_and(|(_, d)| d <= weapon.reach);
     if target.creature.is_some() {
         target.hit = None;
     }
@@ -952,6 +955,7 @@ pub fn aim(
     // A left click swings: at once, or held for the beat (the server keeps the same
     // rhythm and says what lands).
     if let Some(id) = target.creature
+        && in_reach
         && ui.cursor_locked
         && !player.dead
         && mouse.just_pressed(MouseButton::Left)

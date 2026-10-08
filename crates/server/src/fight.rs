@@ -314,8 +314,11 @@ impl Server {
             self.land_swing(player, aim, strength, on_beat, kind, in_reach);
         }
         // Creatures' blows, each judged at the moment it lands, once every guard and dodge
-        // sent before that moment has been heard: one that arrived after the last messages
-        // were taken in, and before the blow landed, still counts.
+        // that arrived before that moment has been handled: one that arrived after the last
+        // messages were taken in, and before the blow landed, still counts. (Arrived, not
+        // sent: the trip from the client is not made up for; `reach_slack` absorbs it.) A
+        // blow so held is judged up to a tick later, so where the player and the creature
+        // stand, for its lunge and reach, is up to a tick later too.
         let heard = self.heard.map_or(now, |at| self.fights.secs(at));
         let (due, waiting): (Vec<Windup>, Vec<Windup>) = std::mem::take(&mut self.fights.windups).into_iter().partition(|w| w.lands <= heard);
         self.fights.windups = waiting;

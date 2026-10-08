@@ -79,6 +79,9 @@
         reach: 2.8,
         reach_slack: 0.6,
         reach_lag: 0.15,
+        // Touching a creature (tending, looking closely, letting it go) reaches 3.6 blocks
+        // whatever is in hand, and `reach_slack` more.
+        touch: 3.6,
         cleave_cone: 0.5,
         // The wiki's "No walking away" (drafts 58 and 65): an attack lunges as it lands (1.2
         // blocks unless the creature says: quick animals 1.5, big ones 1.0), and a wind-up

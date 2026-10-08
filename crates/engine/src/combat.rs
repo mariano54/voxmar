@@ -317,6 +317,9 @@ feel! {
     /// may still land, for the time a view of the fight lags.
     reach: f32 = 2.8,
     reach_slack: f32 = 0.6,
+    /// How far a player reaches to touch a creature (tend, look closely at or let go of
+    /// it), whatever is in hand: Minecraft's 3 with some slack, and `reach_slack` on top.
+    touch: f32 = 3.6,
     /// Seconds a player's view of a moving creature may run behind the server's: a blow at
     /// one moving also reaches as far as it goes in that time (counted once, on top of
     /// `reach_slack`).
