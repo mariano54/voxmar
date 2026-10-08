@@ -53,5 +53,15 @@
         (pattern: [["iron_plate", "steam_pipe", "iron_plate"], ["copper_wire", "dynamo", "copper_wire"], ["iron_plate", "steam_pipe", "iron_plate"]], output: "steam_turbine", skill: "core:engineering", level: 52, xp: 220.0),
         (pattern: [["iron_plate", "mv_cable", "iron_plate"], ["copper_wire", "lodestone", "copper_wire"], ["iron_plate", "lv_cable", "iron_plate"]], output: "lv_transformer", skill: "core:engineering", level: 52, xp: 200.0),
         (pattern: [["iron_plate", "mv_cable", "iron_plate"], ["battery_bank", "battery_bank", "battery_bank"], ["iron_plate", "iron_plate", "iron_plate"]], output: "mv_battery_bank", skill: "core:engineering", level: 54, xp: 240.0),
+        // The HV age: thicker cable again, HV casing for its multiblocks, the hall's core (two
+        // turbines round a diamond bearing), a transformer down to MV, and a bank of MV banks.
+        (pattern: [["wool", "wool", "wool"], ["mv_cable", "mv_cable", "mv_cable"], ["wool", "wool", "wool"]], output: "hv_cable", count: 3, skill: "core:engineering", level: 55, xp: 20.0),
+        (pattern: [["iron_plate", "iron_plate", "iron_plate"], ["iron_plate", "steam_pipe", "iron_plate"], ["iron_plate", "iron_plate", "iron_plate"]], output: "hv_casing", count: 8, skill: "core:engineering", level: 56, xp: 30.0),
+        (pattern: [["iron_plate", "steam_turbine", "iron_plate"], ["hv_cable", "diamond_ore", "hv_cable"], ["iron_plate", "steam_turbine", "iron_plate"]], output: "turbine_hall", skill: "core:engineering", level: 58, xp: 400.0),
+        (pattern: [["iron_plate", "hv_cable", "iron_plate"], ["copper_wire", "lodestone", "copper_wire"], ["iron_plate", "mv_cable", "iron_plate"]], output: "mv_transformer", skill: "core:engineering", level: 57, xp: 260.0),
+        (pattern: [["iron_plate", "hv_cable", "iron_plate"], ["mv_battery_bank", "mv_battery_bank", "mv_battery_bank"], ["iron_plate", "iron_plate", "iron_plate"]], output: "hv_battery_bank", skill: "core:engineering", level: 60, xp: 320.0),
+        // HV processors: furnaces round a lodestone coil, and macerators round a diamond.
+        (pattern: [["iron_plate", "hv_cable", "iron_plate"], ["electric_furnace", "lodestone", "electric_furnace"], ["hv_casing", "hv_casing", "hv_casing"]], output: "induction_smelter", skill: "core:engineering", level: 59, xp: 300.0),
+        (pattern: [["macerator", "hv_cable", "macerator"], ["macerator", "diamond_ore", "macerator"], ["macerator", "hv_cable", "macerator"]], output: "processing_array", skill: "core:engineering", level: 62, xp: 450.0),
     ],
 )

@@ -8,6 +8,7 @@ use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, Face};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::ItemStack;
+use voxmar_engine::machine::Role;
 use voxmar_engine::world::VoxelWorld;
 use voxmar_protocol::{
     ChatKind, ClientConnection, ClientMessage, ItemView, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND,
@@ -202,6 +203,7 @@ impl Client {
 
     fn apply(&mut self, message: ServerMessage) {
         match message {
+            ServerMessage::Rejected { reason } => panic!("turned away: {reason:?}"),
             ServerMessage::Welcome { player, position, admin, allow_flight, .. } => {
                 self.id = player;
                 self.position = position;
@@ -945,6 +947,13 @@ fn only_admins_run_admin_commands_and_everyone_chats() {
     assert!(guest.ok("/list").starts_with("1 online: guest"));
     guest.connection.send(ClientMessage::Chat { text: "hello there".into() });
     guest.pump_until(|c| c.chat.iter().any(|(kind, text)| *kind == ChatKind::Chat && text == "<guest> hello there"));
+}
+
+#[test]
+fn a_listed_admin_is_one_under_their_name_in_any_case() {
+    // A name is one player in any case, so the admin list folds case too.
+    let mut boss = Client::join_remote("BOSS", &["boss"]);
+    boss.ok("/time set noon");
 }
 
 #[test]
@@ -3281,8 +3290,196 @@ fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> Stri
             return said;
         }
         assert!(server_seconds(client, started) < seconds, "/machine {at} never said `{want}`: {said}");
-        std::thread::sleep(Duration::from_millis(300));
+        wait_server(client, 1);
     }
+}
+
+/// Tries the lock of the chest at `at` with the item in slot 0, and returns what the
+/// server says.
+fn pick_lock(client: &mut Client, at: IVec3) -> String {
+    client.chat.clear();
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:pick_lock", ActionTarget::Block { block: at, face: Face::NegX });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("lock") || t.contains("pick")));
+    client.chat.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn a_treasure_chest_opens_to_a_pick_of_its_age_or_the_one_before_and_holds_its_tables_finds() {
+    let mut client = Client::join();
+    let p = client.position.floor().as_ivec3();
+    let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
+    let (bronze, iron) = (p + IVec3::new(2, 0, 0), p + IVec3::new(2, 0, 2));
+    for line in ["/clear".to_owned(), format!("/setblock {} bronze_treasure_chest", at(bronze)), format!("/setblock {} iron_treasure_chest", at(iron))] {
+        client.ok(&line);
+    }
+    let blocks = client.content.blocks.clone();
+    let picks = |c: &Client, name: &str| c.inventory.slots.iter().flatten().filter(|s| s.item == c.content.blocks.expect(name)).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(iron) == blocks.id("base:iron_treasure_chest") && c.inventory.slots.iter().all(Option::is_none));
+    // Nothing in hand: it is locked, and stays so.
+    assert!(pick_lock(&mut client, bronze).contains("It is locked"));
+    // A bone pick (Nomad) on an Iron chest, three ages short: too crude, and kept.
+    client.ok("/give bone_lockpick 2");
+    client.pump_until(|c| picks(c, "base:bone_lockpick") == 2);
+    assert!(pick_lock(&mut client, iron).contains("too crude"));
+    client.ok("/seed");
+    assert_eq!(picks(&client, "base:bone_lockpick"), 2, "a pick too crude to try is kept");
+    // On a Bronze chest, two ages short: a lucky try, the pick broken either way.
+    let said = pick_lock(&mut client, bronze);
+    assert!(said.contains("pick broke") || said.contains("lucky try"), "{said}");
+    client.pump_until(|c| picks(c, "base:bone_lockpick") == 1);
+    // A copper pick (Farm), the age before Bronze's: it opens, and is used up.
+    client.ok("/clear");
+    client.ok(&format!("/setblock {} bronze_treasure_chest", at(bronze)));
+    client.ok("/give copper_lockpick 1");
+    client.pump_until(|c| picks(c, "base:copper_lockpick") == 1 && c.world.block(bronze) == blocks.id("base:bronze_treasure_chest"));
+    assert!(pick_lock(&mut client, bronze).contains("The lock gives"));
+    client.pump_until(|c| c.world.block(bronze) == blocks.id("base:chest") && picks(c, "base:copper_lockpick") == 0);
+    // A plain chest now, holding the Bronze table's finds: always its gold, as much as a
+    // Common thing of the chest's level is worth, times a share (treasure.ron).
+    let (low, high) = client.content.treasure.chest(blocks.expect("base:bronze_treasure_chest")).unwrap().gold;
+    assert!(low >= 1 && low < high, "{low}..={high}");
+    let said = client.ok(&format!("/machine {}", at(bronze)));
+    assert!(items_held(&said) >= low, "{said}");
+    use_machine(&mut client, bronze);
+    client.pump_until(|c| picks(c, "base:gold_coin") > 0);
+    assert!((low..=high).contains(&picks(&client, "base:gold_coin")), "{} gold, not {low}..={high}", picks(&client, "base:gold_coin"));
+    // Nothing mines the Iron chest's lock away: three seconds at it, and it stands.
+    client.propose("core:mine", ActionTarget::Block { block: iron, face: Face::NegX });
+    wait_server(&mut client, 3);
+    assert_eq!(client.world.block(iron), blocks.id("base:iron_treasure_chest"), "the locked chest was mined");
+}
+
+#[test]
+fn a_processing_array_works_only_inside_its_cube_of_hv_casing() {
+    let mut client = Client::join();
+    let p = client.position.floor().as_ivec3();
+    let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
+    // The cube's corner; the array in the middle of its near face.
+    let cube = p + IVec3::new(3, 0, 2);
+    let core = cube + IVec3::new(0, 1, 1);
+    for line in [
+        "/clear".to_owned(),
+        format!("/fill {} {} air", at(cube - IVec3::ONE), at(cube + IVec3::splat(3))),
+        format!("/setblock {} processing_array", at(core)),
+    ] {
+        client.ok(&line);
+    }
+    let ore = client.content.blocks.expect("base:copper_ore");
+    let count = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(core) == c.content.blocks.id("base:processing_array") && c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give copper_ore 8");
+    client.pump_until(|c| count(c) == 8);
+    use_machine(&mut client, core);
+    client.pump_until(|c| count(c) == 0);
+    // Alone, it says its structure is unfinished.
+    machine_says(&mut client, &at(core), "not complete", 10);
+    // The cube round it, hollow in the middle: it stands, and wants only power.
+    for line in [
+        format!("/fill {} {} hv_casing", at(cube + IVec3::X), at(cube + IVec3::new(2, 2, 2))),
+        format!("/fill {} {} hv_casing", at(cube), at(cube + IVec3::new(0, 0, 2))),
+        format!("/fill {} {} hv_casing", at(cube + IVec3::new(0, 2, 0)), at(cube + IVec3::new(0, 2, 2))),
+        format!("/setblock {} hv_casing", at(core - IVec3::Z)),
+        format!("/setblock {} hv_casing", at(core + IVec3::Z)),
+        format!("/setblock {} air", at(cube + IVec3::ONE)),
+    ] {
+        client.ok(&line);
+    }
+    machine_says(&mut client, &at(core), "no power", 10);
+    // Filled in, it is no cube of HV casing.
+    client.ok(&format!("/setblock {} hv_casing", at(cube + IVec3::ONE)));
+    machine_says(&mut client, &at(core), "not complete", 10);
+}
+
+#[test]
+fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformers_bring_it_to_lv() {
+    let mut client = Client::join();
+    let p = client.position.floor().as_ivec3();
+    let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
+    // The hall's corner; its core at the top of its near end, steam from a boiler above it,
+    // HV out of its end into a cable on an MV transformer, on an LV transformer beside a
+    // macerator.
+    let hall = p + IVec3::new(4, 0, 2);
+    let core = hall + IVec3::new(0, 2, 1);
+    let boiler = core + IVec3::Y;
+    let cable = core - IVec3::X;
+    let mv = cable - IVec3::Y;
+    let lv = mv - IVec3::Y;
+    let macerator = lv - IVec3::X;
+    let far = hall + IVec3::new(4, 2, 2);
+    for line in [
+        "/clear".to_owned(),
+        format!("/fill {} {} air", at(hall - IVec3::new(3, 0, 1)), at(far + IVec3::new(1, 2, 1))),
+        format!("/setblock {} turbine_hall", at(core)),
+        format!("/setblock {} boiler", at(boiler)),
+        format!("/setblock {} hv_cable", at(cable)),
+        format!("/setblock {} mv_transformer", at(mv)),
+        format!("/setblock {} lv_transformer", at(lv)),
+        format!("/setblock {} macerator", at(macerator)),
+    ] {
+        client.ok(&line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(macerator) == c.content.blocks.id("base:macerator") && c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give coal_ore 4");
+    client.pump_until(|c| count(c, coal) == 4);
+    use_machine(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0);
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_machine(&mut client, macerator);
+    client.pump_until(|c| count(c, ore) == 0);
+    // The core alone is no turbine: it says so, and the macerator has no power.
+    machine_says(&mut client, &at(core), "not complete", 10);
+    machine_says(&mut client, &at(macerator), "no power", 10);
+    // The hall of casing round it, hollow along its middle.
+    for line in [
+        format!("/fill {} {} hv_casing", at(hall), at(far)),
+        format!("/fill {} {} air", at(hall + IVec3::new(1, 1, 1)), at(hall + IVec3::new(3, 1, 1))),
+        format!("/setblock {} turbine_hall", at(core)),
+    ] {
+        client.ok(&line);
+    }
+    machine_says(&mut client, &at(macerator), "making", 20);
+    let started = client.server_tick;
+    while count(&client, dust) < 2 {
+        assert!(server_seconds(&client, started) < 30, "the macerator made {} dust: {}", count(&client, dust), client.ok(&format!("/machine {}", at(macerator))));
+        wait_server(&mut client, 1);
+        use_machine(&mut client, macerator);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, dust), 2, "a macerator makes two dust an ore");
+    // A casing broken out of the hall: the turbine stops, and a player at the macerator
+    // sees it has no power within a survey (`survey_seconds`, 1) and the converters' lag.
+    client.ok(&format!("/setblock {} air", at(hall + IVec3::new(2, 0, 0))));
+    let broken = client.server_tick;
+    client.ok("/clear");
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_machine(&mut client, macerator);
+    client.pump_until(|c| count(c, ore) == 0);
+    machine_says(&mut client, &at(macerator), "no power", 2);
+    let after = client.server_tick - broken;
+    assert!(after <= 2 * TICKS_PER_SECOND as u64, "the macerator ran on for {after} ticks");
+    machine_says(&mut client, &at(core), "not complete", 1);
+    // Nor does it make any more: the ore is still there, with no dust, a second after a
+    // powered macerator would have finished it (its recipe's seconds over its speed).
+    let crush_seconds = {
+        let machines = &client.content.machines;
+        let machine = machines.get(client.content.blocks.expect("base:macerator")).expect("a macerator is a machine");
+        let Role::Processor { speed, .. } = &machine.role else { panic!("a macerator is a processor") };
+        let crush = machine.processes.iter().map(|&id| machines.process(id)).find(|p| p.inputs.iter().any(|(accepts, _)| accepts.contains(&ore))).expect("the macerator crushes copper ore");
+        crush.seconds / speed
+    };
+    wait_server(&mut client, crush_seconds.ceil() as u64 + 1);
+    let said = machine_says(&mut client, &at(macerator), "no power", 1);
+    use_machine(&mut client, macerator);
+    // What it gave reaches the client with the next tick's state, after the chat line.
+    wait_server(&mut client, 1);
+    assert_eq!(count(&client, dust), 0, "the macerator made dust with its hall broken: {said}");
 }
 
 #[test]
@@ -3376,6 +3573,27 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// How many items a machine's `/machine` answer says it holds: "… holds 64 items." (none
+/// said, none held).
+fn items_held(said: &str) -> u32 {
+    let words: Vec<_> = said.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric())).collect();
+    words.windows(2).find_map(|w| (w[1] == "items" || w[1] == "item").then(|| w[0].parse().ok()).flatten()).unwrap_or(0)
+}
+
+/// A player whose connection drops and who comes straight back is let in as themselves,
+/// even when the server reads their new hello in the loop that finds the old connection
+/// gone (connections are read oldest first).
+#[test]
+fn a_player_who_drops_and_comes_straight_back_is_let_in() {
+    let client = Client::join();
+    for _ in 0..16 {
+        let bob = client.another("bob");
+        drop(bob);
+        // No wait: the hello goes with the new connection, right behind the drop.
+        client.another("bob");
+    }
+}
+
 /// How often the server saves on its own (`SAVE_INTERVAL`), in ticks.
 const SAVE_EVERY: u64 = 30 * TICKS_PER_SECOND as u64;
 
@@ -3448,7 +3666,7 @@ fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() 
     let mut client = Client::join_with(config(false));
     client.pump_until(|c| held(c) > 0);
     let said = client.ok(&format!("/machine {at}"));
-    let in_chest = said.split(' ').zip(said.split(' ').skip(1)).find_map(|(n, word)| (word == "items").then(|| n.parse::<u32>().ok()).flatten()).unwrap_or(0);
+    let in_chest = items_held(&said);
     assert_eq!(held(&client) + in_chest, 64, "the player holds {}, the chest: {said}", held(&client));
     drop(client);
     assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new(), "the cut save was forgotten");
@@ -4231,6 +4449,39 @@ fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
     assert!(ticks(&client) >= asked + fall, "loot seen {} ticks after asking, before the {fall}-tick fall", ticks(&client) - asked);
 }
 
+/// `/creatures kill` spares another player's kept animals, judged by who keeps them, not
+/// by how a name is written: a rabbit Ann tamed is refused to the host while she is here,
+/// and is killed for ANN, who is Ann come back with her name in capitals.
+#[test]
+fn creatures_kill_spares_another_players_kept_animals_whatever_the_case_of_their_name() {
+    let mut host = Client::join_remote("host", &["host", "ann"]);
+    let mut ann = host.another("Ann");
+    let rabbit = ann.content.creatures.find("rabbit").expect("rabbits in the content");
+    let kept = |c: &Client| c.creatures.values().find(|v| v.species == rabbit && v.kept).map(|v| v.id);
+    // Held still beside the players while it is tamed and the host tries it.
+    ann.ok("/summon rabbit 1 ~ ~ ~-2");
+    ann.ok("/creatures hold rabbit");
+    ann.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
+    ann.ok("/creatures tame rabbit");
+    ann.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit && v.owner == Some(c.id)));
+    let id = kept(&ann).expect("the tamed rabbit");
+    // The host, an admin too, may not kill it.
+    host.pump_until(|c| c.creatures.contains_key(&id));
+    host.ok("/creatures kill rabbit");
+    wait_server(&mut host, 1);
+    assert!(host.creatures.get(&id).is_some_and(|v| v.kept), "the host killed Ann's rabbit");
+    // Ann leaves, and comes back as ANN: the rabbit is hers again, and hers to kill.
+    drop(ann);
+    let mut ann = host.another("ANN");
+    ann.pump_until(|c| c.creatures.get(&id).is_some_and(|v| v.owner == Some(c.id)));
+    // Beside it, wherever it has hopped to.
+    let to = ann.creatures[&id].position;
+    ann.ok(&format!("/tp {} {} {}", to.x, to.y, to.z));
+    let said = ann.ok("/creatures kill rabbit");
+    assert!(!said.contains("for 0 creatures"), "{said}");
+    ann.pump_until(|c| !c.creatures.contains_key(&id) && c.deaths >= 1);
+}
+
 #[test]
 fn a_kept_animal_whose_species_is_gone_waits_in_the_save() {
     // A mod turned off took its species away: the animal it gave stays in the save, and
@@ -4258,4 +4509,64 @@ fn a_kept_animal_whose_species_is_gone_waits_in_the_save() {
     // The rabbit came back into the world, so it is saved with the genes it was given there.
     assert_eq!(saved.replace(' ', "").matches("genome:Some").count(), 1, "only the rabbit came back with genes: {saved}");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The HV age as the gate shows it (`gate.rs`, "HV age"): a standing Turbine Hall under a
+/// boiler, its HV cable to a bank, an MV transformer, a processing array in its cube and an
+/// induction smelter; the hall says it is running, the array and the smelter that they are
+/// making, on the one HV network.
+#[test]
+fn an_hv_hall_runs_a_processing_array_and_an_induction_smelter_on_one_cable() {
+    let mut client = Client::join();
+    let p = client.position.floor().as_ivec3();
+    let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
+    let hall = p + IVec3::new(4, 0, -6);
+    let rel = |x: i32, y: i32, z: i32| hall + IVec3::new(x, y, z);
+    let (core, boiler, cable, smelter) = (rel(0, 2, 1), rel(0, 3, 1), rel(-1, 2, 1), rel(-1, 3, 1));
+    let (array, cube) = (rel(-1, 2, 4), rel(-2, 1, 4));
+    let mut lines = vec![
+        "/clear".to_owned(),
+        format!("/fill {} {} air", at(rel(-4, 0, -1)), at(rel(5, 5, 8))),
+        format!("/fill {} {} hv_casing", at(hall), at(rel(4, 2, 2))),
+        format!("/fill {} {} air", at(rel(1, 1, 1)), at(rel(3, 1, 1))),
+        format!("/setblock {} turbine_hall", at(core)),
+        format!("/setblock {} boiler", at(boiler)),
+        format!("/setblock {} hv_cable", at(cable)),
+        format!("/setblock {} mv_transformer", at(rel(-1, 1, 1))),
+        format!("/setblock {} hv_battery_bank", at(rel(-2, 2, 1))),
+        format!("/setblock {} induction_smelter", at(smelter)),
+        format!("/setblock {} hv_cable", at(rel(-1, 2, 2))),
+        format!("/setblock {} hv_cable", at(rel(-1, 2, 3))),
+        format!("/fill {} {} hv_casing", at(cube), at(cube + IVec3::new(2, 2, 2))),
+        format!("/setblock {} air", at(cube + IVec3::ONE)),
+        format!("/setblock {} processing_array", at(array)),
+    ];
+    for line in lines.drain(..) {
+        client.ok(&line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(array) == c.content.blocks.id("base:processing_array") && c.inventory.slots.iter().all(Option::is_none));
+    // Beside it all, within reach of the boiler, the array and the smelter.
+    client.tp(rel(-3, 0, 2).as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+    client.ok("/give coal_ore 4");
+    client.pump_until(|c| count(c, coal) == 4);
+    use_machine(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0);
+    for target in [array, smelter] {
+        client.ok("/give copper_ore 32");
+        client.pump_until(|c| count(c, ore) == 32);
+        use_machine(&mut client, target);
+        client.pump_until(|c| count(c, ore) == 0);
+    }
+    machine_says(&mut client, &at(core), "running", 20);
+    machine_says(&mut client, &at(array), "making", 20);
+    machine_says(&mut client, &at(smelter), "making", 20);
+    let powered = |said: &str| said.split(", ").any(|part| {
+        part.strip_prefix("at ").and_then(|p| p.strip_suffix("% power")).or_else(|| part.strip_suffix("% done"))
+            .and_then(|n| n.parse::<f32>().ok()).is_some_and(|n| n > 0.0)
+    });
+    assert!(powered(&machine_says(&mut client, &at(array), "making", 20)));
+    assert!(powered(&machine_says(&mut client, &at(smelter), "making", 20)));
 }

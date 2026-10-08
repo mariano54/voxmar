@@ -1,0 +1,9 @@
+// Lockpicks (treasure.ron): a pin of each age's material on a twine grip, two a craft.
+(
+    recipes: [
+        (pattern: [["bone"], ["twine"]], output: "bone_lockpick", count: 2, skill: "core:crafting", level: 5, xp: 6.0),
+        (pattern: [["copper_ingot"], ["twine"]], output: "copper_lockpick", count: 2, skill: "core:crafting", level: 18, xp: 14.0),
+        (pattern: [["bronze_ingot"], ["twine"]], output: "bronze_lockpick", count: 2, skill: "core:crafting", level: 24, xp: 16.0),
+        (pattern: [["iron_ingot"], ["twine"]], output: "iron_lockpick", count: 2, skill: "core:crafting", level: 30, xp: 24.0),
+    ],
+)
