@@ -131,7 +131,12 @@ their exact region bounds, including the neighbour halo used to seal water. Layo
 retries reuse those original land samples. Rectangle checks prefetch only missing
 centres in row chunks of at most 32, then retain every original row-major water,
 river, solid-ground and height check; unused lookahead still belongs to the full timer.
-Temporary caches cap samples at 16,384,
+The temporary terrain memo caps samples at 32,768 so spawn layout retries can reuse
+the same land without the observed 16,384-point eviction. Water-query samples remain
+bounded to 16,384. Relief evaluation allocates noise state only for missing corners;
+house weights and extra chances are computed once per layout, while availability and
+all random draws retain their original order. Water is searched for a house request
+only when an otherwise eligible water-dependent house can serve it. Scratch caps
 corners at 4,096, and channel groups at 16; eviction repeats
 the same pure computation. None of this scratch storage is retained in the plan cache.
 Site water checks walk the same ranked qualifying prefix lazily, stopping when enough

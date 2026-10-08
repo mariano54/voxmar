@@ -132,6 +132,8 @@ fn solid(g: &GeoSample) -> bool {
 }
 
 /// The ground, sampled once per position.
+const GROUND_SAMPLE_LIMIT: usize = 32_768;
+
 struct Ground<'a> {
     land: &'a dyn Land,
     seen: FxHashMap<IVec2, GeoSample>,
@@ -157,7 +159,7 @@ impl Ground<'_> {
     /// Lookahead may outlive an earlier rejected point; every read stays in the timer.
     fn prefetch(&mut self, first: IVec2, count: usize) {
         assert!(count <= crate::water::SAMPLE_BATCH);
-        if self.seen.len() + count > 16_384 {
+        if self.seen.len() + count > GROUND_SAMPLE_LIMIT {
             self.seen.clear();
             #[cfg(test)]
             { self.clears += 1; }
@@ -179,7 +181,7 @@ impl Ground<'_> {
         }
         // Even a spawn cell's many layout retries keep bounded temporary storage.
         // Clearing changes only how often the original land is recomputed.
-        if self.seen.len() >= 16_384 {
+        if self.seen.len() >= GROUND_SAMPLE_LIMIT {
             self.seen.clear();
             #[cfg(test)]
             { self.clears += 1; }
@@ -2484,6 +2486,8 @@ mod level_tests {
             assert!(!matters(&boat, &want, "village", "timber_frame", 0), "boathouse cannot serve {want:?}");
         }
         assert!(matters(&boat, &Want::Workshop, "village", "timber_frame", 0));
+        boat.weight = 0.0;
+        assert!(matters(&boat, &Want::Workshop, "village", "timber_frame", 0), "water dependencies conservatively retain zero-weight entries");
         assert!(matters(&boat, &Want::Work("boathouse".into()), "village", "timber_frame", 0));
         assert!(!matters(&boat, &Want::Workshop, "village", "timber_frame", 1), "built-count cap removes its water dependency");
         boat.sizes = vec!["village".into()];
@@ -2597,7 +2601,7 @@ mod level_tests {
         let mut ground = Ground::new(&dry);
         let first = IVec2::new(100, 100);
         let sample = dry.creek.sample(100, 100);
-        ground.seen.extend((0..16_382).map(|k| (IVec2::new(100_000 + k, 100_000), sample)));
+        ground.seen.extend((0..GROUND_SAMPLE_LIMIT as i32 - 2).map(|k| (IVec2::new(100_000 + k, 100_000), sample)));
         ground.seen.insert(first, sample);
         // A short final chunk straddles the cap. Clear before collecting misses so its
         // formerly cached first position is included in the same physical batch.

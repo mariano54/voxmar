@@ -278,9 +278,9 @@ impl Geology {
     /// Positions on the lattice (the rivers' and trails' grids) take its points as they are.
     pub fn reliefs(&self, points: &[(f32, f32)]) -> Vec<Relief> {
         let cell = RELIEF_CELL as f32;
-        let mut lanes = self.router.lanes();
         // Grids on the lattice, as rivers and trails ask for, need no corners worked out.
         if points.iter().all(|&(x, z)| x % cell == 0.0 && z % cell == 0.0) {
+            let mut lanes = self.router.lanes();
             let mut out = Vec::with_capacity(points.len());
             for four in points.chunks(4) {
                 out.extend_from_slice(&self.relief_lanes(&mut lanes, four)[..four.len()]);
@@ -317,14 +317,17 @@ impl Geology {
             let d = if tx > 0.0 && tz > 0.0 { corner(1, 1) } else if tx > 0.0 { b } else { c };
             refs.push(([a, b, c, d], tx, tz));
         }
-        let mut lanes = self.router.lanes();
-        values.reserve(fresh.len());
-        for four in fresh.chunks(4) {
-            let at: [(f32, f32); 4] = std::array::from_fn(|k| {
-                let (cx, cz) = four[k.min(four.len() - 1)];
-                (cx as f32 * cell, cz as f32 * cell)
-            });
-            values.extend_from_slice(&self.relief_lanes(&mut lanes, &at[..four.len()])[..four.len()]);
+        if !fresh.is_empty() {
+            // A warm corner lookup needs interpolation only, not fresh router state.
+            let mut lanes = self.router.lanes();
+            values.reserve(fresh.len());
+            for four in fresh.chunks(4) {
+                let at: [(f32, f32); 4] = std::array::from_fn(|k| {
+                    let (cx, cz) = four[k.min(four.len() - 1)];
+                    (cx as f32 * cell, cz as f32 * cell)
+                });
+                values.extend_from_slice(&self.relief_lanes(&mut lanes, &at[..four.len()])[..four.len()]);
+            }
         }
         refs.iter()
             .map(|&([a, b, c, d], tx, tz)| {
