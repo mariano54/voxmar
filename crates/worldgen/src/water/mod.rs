@@ -610,6 +610,30 @@ impl Rivers {
             let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, min, max));
             scratch.columns.entry((IVec2::new(x, z), column_keys[i])).or_insert_with(|| self.unsealed(tiers, x, z, ground));
         }
+        // Batch only the raw neighbours that sealing these centres will request.
+        // Keep first-use centre/cardinal order and full requesting-key identity.
+        // The reserved five-column/twenty-corner headroom covers the same union.
+        let mut missing = Vec::new();
+        let mut queued = rustc_hash::FxHashSet::default();
+        for (i, &(x, z)) in points.iter().enumerate() {
+            let p = IVec2::new(x, z);
+            if !scratch.columns[&(p, column_keys[i])].near { continue; }
+            for at in [p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y] {
+                if !scratch.columns.contains_key(&(at, column_keys[i])) && queued.insert((at, column_keys[i])) {
+                    missing.push((at, i));
+                }
+            }
+        }
+        if !missing.is_empty() {
+            let coords: Vec<_> = missing.iter().map(|(p, _)| (p.x, p.y)).collect();
+            let grounds = land.geology.lands_with(&coords, &mut scratch.corners);
+            for ((p, i), ground) in missing.into_iter().zip(grounds) {
+                if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
+                let centre = IVec2::new(points[i].0, points[i].1);
+                let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, centre - 1, centre + 1));
+                scratch.columns.insert((p, column_keys[i]), self.unsealed(tiers, p.x, p.y, ground));
+            }
+        }
         points.iter().enumerate().map(|(i, &(x, z))| {
             // Clear only channel groups here: the already computed centre landforms
             // remain valid, and the reserved corner headroom covers all neighbours.

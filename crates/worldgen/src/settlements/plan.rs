@@ -1971,8 +1971,9 @@ fn walk(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f
             let at = next.round().as_ivec2();
             // Never nearer than `clear` to what it avoids, nor nearer than it is already
             // when it sets out closer, as lanes off the square do.
-            let nears = |r: &Rect, clear: f32| (0..=6).map(|k| r.signed(here.lerp(next, k as f32 / 6.0))).fold(f32::MAX, f32::min) < clear.min(r.signed(here) - 0.01);
-            if !bounds.holds(at) || avoid.iter().any(|(r, clear)| nears(r, *clear)) {
+            if !bounds.holds(at) { continue; }
+            let clearance = StepClearance::new(here, next);
+            if avoid.iter().any(|(r, clear)| clearance.nears(r, *clear)) {
                 continue;
             }
             choices[i] = Some((turn, a, next, at));
@@ -2009,6 +2010,36 @@ fn walk(ground: &mut Ground, lanes: &[Lane], rng: &mut Rng, from: Vec2, angle: f
         walked += step;
     }
     points
+}
+
+/// The original seven rounded step samples, shared across every avoided rectangle.
+/// Their actual extrema give a conservative signed-distance lower bound: each axis
+/// is no greater than that of any sampled point, including inside a rectangle. A
+/// passing bound still uses all original point distances and the MAX fold sentinel.
+struct StepClearance {
+    from: Vec2,
+    points: [Vec2; 7],
+    bounds: Option<(Vec2, Vec2)>,
+}
+
+impl StepClearance {
+    fn new(from: Vec2, to: Vec2) -> Self {
+        let points = std::array::from_fn(|k| from.lerp(to, k as f32 / 6.0));
+        let bounds = points.iter().all(|p| p.is_finite()).then(|| {
+            points.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(min, max), &p| (min.min(p), max.max(p)))
+        });
+        Self { from, points, bounds }
+    }
+
+    fn nears(&self, rect: &Rect, clear: f32) -> bool {
+        let threshold = clear.min(rect.signed(self.from) - 0.01);
+        if let Some((min, max)) = self.bounds {
+            let d = (rect.min.as_vec2() - 0.5 - max).max(min - (rect.max.as_vec2() + 0.5));
+            let lower = if d.max_element() > 0.0 { d.max(Vec2::ZERO).length() } else { d.max_element() };
+            if lower.min(f32::MAX) >= threshold { return false; }
+        }
+        self.points.iter().map(|&p| rect.signed(p)).fold(f32::MAX, f32::min) < threshold
+    }
 }
 
 /// Rolls a special building's spec: `w` by `d`, or (when nothing) its size in `rules`.
@@ -2741,6 +2772,45 @@ mod level_tests {
     use crate::geology::GeoSample;
     use crate::trails::Land;
     use crate::water::Body;
+
+    #[test]
+    fn lane_step_bounds_keep_original_signed_clearance() {
+        let mut near = 0;
+        let mut far = 0;
+        for offset in [0.0, -8192.0, 1_048_576.0, 16_777_216.0, -16_777_216.0] {
+            let shift = Vec2::new(offset, -offset);
+            for (a, b) in [
+                (Vec2::new(-10.0, 0.0), Vec2::new(10.0, 0.0)),
+                (Vec2::new(0.0, -10.0), Vec2::new(0.0, 10.0)),
+                (Vec2::new(-0.25, 0.5), Vec2::new(0.75, -0.25)),
+                (Vec2::splat(50.0), Vec2::splat(100.0)),
+                (Vec2::ONE, Vec2::ONE),
+            ] {
+                for rect in [Rect::new(shift.as_ivec2(), IVec2::splat(3)), Rect::new(shift.as_ivec2() - 8, IVec2::new(12, 7))] {
+                    let (a, b) = (a + shift, b + shift);
+                    let minimum = (0..=6).map(|k| rect.signed(a.lerp(b, k as f32 / 6.0))).fold(f32::MAX, f32::min);
+                    let step = StepClearance::new(a, b);
+                    for clear in [0.0, 0.5, 1.0, 3.0, 10.0, minimum.next_down(), minimum, minimum.next_up(), f32::NEG_INFINITY, f32::INFINITY, f32::NAN] {
+                        let original = minimum < clear.min(rect.signed(a) - 0.01);
+                        assert_eq!(step.nears(&rect, clear), original, "{a:?}/{b:?}/{rect:?}/{clear}");
+                        near += usize::from(original);
+                        far += usize::from(!original);
+                    }
+                }
+            }
+        }
+        let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
+        // Finite points can have overflowing distances, capped by the original
+        // MAX minimum; non-finite interpolation must retain the full calculation.
+        for (a, b) in [(Vec2::splat(1e30), Vec2::splat(2e30)), (Vec2::splat(f32::MAX), Vec2::splat(-f32::MAX)), (Vec2::splat(f32::NAN), Vec2::ZERO)] {
+            let step = StepClearance::new(a, b);
+            for clear in [1.0, f32::MAX, f32::INFINITY, f32::NAN] {
+                let original = (0..=6).map(|k| rect.signed(a.lerp(b, k as f32 / 6.0))).fold(f32::MAX, f32::min) < clear.min(rect.signed(a) - 0.01);
+                assert_eq!(step.nears(&rect, clear), original);
+            }
+        }
+        assert!(near > 0 && far > 0, "actual matching and excluded steps must occur");
+    }
 
     #[test]
     fn house_choices_keep_original_order_weights_and_draws() {
