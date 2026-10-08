@@ -77,6 +77,9 @@ pub struct Style {
 /// One edge of a river, from a cell to the one it drains into.
 pub struct Edge {
     points: [Vec2; SUB + 1],
+    /// Immutable projection values, included in the channel cache's byte weight.
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    segments: Option<Segments>,
     /// River surface at each end, in eighths of a block.
     from: i32,
     to: i32,
@@ -100,12 +103,12 @@ impl Edge {
     /// lies, and the direction of flow there.
     fn nearest(&self, p: Vec2) -> (f32, f32, Vec2) {
         #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-        if p.abs().cmple(Vec2::splat(1e15)).all() && self.points.iter().all(|q| q.abs().cmple(Vec2::splat(1e15)).all()) {
+        if let Some(segments) = self.segments.as_ref().filter(|_| p.abs().cmple(Vec2::splat(1e15)).all()) {
             // This bound keeps subtraction, both dot products and division finite,
             // even at the minimum denominator. Other values keep the scalar path.
             // SAFETY: this path requires NEON at compile time; the helper reads
             // only its four-element arrays and performs the same unfused operations.
-            let (distances, fractions) = unsafe { nearest_four(&self.points, p) };
+            let (distances, fractions) = unsafe { nearest_four(segments, p) };
             let mut best = (f32::MAX, 0.0, Vec2::X);
             for k in 0..SUB {
                 if distances[k] < best.0 {
@@ -146,23 +149,45 @@ impl Edge {
     }
 }
 
-/// The four segments of one edge, one per lane. Projection and square root retain
-/// their original per-segment arithmetic; the caller still selects in segment order.
+/// The four immutable segments, one per lane. Preparing them at edge creation
+/// avoids transposing the same curve and recomputing its denominators per column.
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-unsafe fn nearest_four(points: &[Vec2; SUB + 1], p: Vec2) -> ([f32; SUB], [f32; SUB]) {
+struct Segments {
+    ax: [f32; SUB],
+    az: [f32; SUB],
+    dx: [f32; SUB],
+    dz: [f32; SUB],
+    length: [f32; SUB],
+}
+
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+impl Segments {
+    fn new(points: &[Vec2; SUB + 1]) -> Option<Self> {
+        if !points.iter().all(|p| p.abs().cmple(Vec2::splat(1e15)).all()) { return None; }
+        let ab: [Vec2; SUB] = std::array::from_fn(|k| points[k + 1] - points[k]);
+        Some(Self {
+            ax: std::array::from_fn(|k| points[k].x),
+            az: std::array::from_fn(|k| points[k].y),
+            dx: ab.map(|v| v.x),
+            dz: ab.map(|v| v.y),
+            length: ab.map(|v| v.length_squared().max(1e-6)),
+        })
+    }
+}
+
+/// Projection and square root retain their original per-segment arithmetic; the
+/// caller still selects in segment order.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+unsafe fn nearest_four(segments: &Segments, p: Vec2) -> ([f32; SUB], [f32; SUB]) {
     use std::arch::aarch64::*;
-    let ax: [f32; SUB] = std::array::from_fn(|k| points[k].x);
-    let az: [f32; SUB] = std::array::from_fn(|k| points[k].y);
-    let bx: [f32; SUB] = std::array::from_fn(|k| points[k + 1].x);
-    let bz: [f32; SUB] = std::array::from_fn(|k| points[k + 1].y);
     // SAFETY: all loads and stores address four initialized floats. Every vector
     // operation uses NEON, enabled by this helper's target-feature condition.
     unsafe {
-        let (ax, az, bx, bz) = (vld1q_f32(ax.as_ptr()), vld1q_f32(az.as_ptr()), vld1q_f32(bx.as_ptr()), vld1q_f32(bz.as_ptr()));
-        let (dx, dz) = (vsubq_f32(bx, ax), vsubq_f32(bz, az));
+        let (ax, az) = (vld1q_f32(segments.ax.as_ptr()), vld1q_f32(segments.az.as_ptr()));
+        let (dx, dz) = (vld1q_f32(segments.dx.as_ptr()), vld1q_f32(segments.dz.as_ptr()));
+        let length = vld1q_f32(segments.length.as_ptr());
         let (px, pz) = (vdupq_n_f32(p.x), vdupq_n_f32(p.y));
         let dot = vaddq_f32(vmulq_f32(vsubq_f32(px, ax), dx), vmulq_f32(vsubq_f32(pz, az), dz));
-        let length = vmaxnmq_f32(vaddq_f32(vmulq_f32(dx, dx), vmulq_f32(dz, dz)), vdupq_n_f32(1e-6));
         let mut s = vdivq_f32(dot, length);
         let (zero, one) = (vdupq_n_f32(0.0), vdupq_n_f32(1.0));
         // Strict comparisons also preserve the scalar clamp's signed zeros.
@@ -288,6 +313,8 @@ impl Channels {
                 };
                 let mut edge = Edge {
                     points,
+                    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+                    segments: Segments::new(&points),
                     from,
                     to,
                     fall,
@@ -671,9 +698,33 @@ mod tests {
             best
         }
         let bits = |(d, t, v): (f32, f32, Vec2)| [d.to_bits(), t.to_bits(), v.x.to_bits(), v.y.to_bits()];
-        let check = |edge: &Edge, p: Vec2| assert_eq!(bits(edge.nearest(p)), bits(original(edge, p)), "{:?} at {p:?}", edge.points);
-        let mut edge = Edge { points: [Vec2::ZERO; 5], from: 0, to: 0, fall: -1.0, half: 1.0,
+        let check = |edge: &Edge, p: Vec2| {
+            #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+            {
+                let bounded = edge.points.iter().all(|q| q.x.abs() <= 1e15 && q.y.abs() <= 1e15);
+                assert_eq!(edge.segments.is_some(), bounded, "real bounded curves must use prepared segments");
+                if let Some(segments) = &edge.segments {
+                    for k in 0..4 {
+                        let a = edge.points[k];
+                        let ab = edge.points[k + 1] - a;
+                        let actual = [segments.ax[k], segments.az[k], segments.dx[k], segments.dz[k], segments.length[k]];
+                        let expected = [a.x, a.y, ab.x, ab.y, ab.length_squared().max(1e-6)];
+                        assert_eq!(actual.map(f32::to_bits), expected.map(f32::to_bits));
+                    }
+                }
+            }
+            assert_eq!(bits(edge.nearest(p)), bits(original(edge, p)), "{:?} at {p:?}", edge.points);
+        };
+        let mut edge = Edge { points: [Vec2::ZERO; 5],
+            #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+            segments: Segments::new(&[Vec2::ZERO; 5]),
+            from: 0, to: 0, fall: -1.0, half: 1.0,
             depth: 1.0, reach: 2.0, tunnel: false, body: Body::Creek, slope: 0.0, gorge: [0.0; 2] };
+        let set_points = |edge: &mut Edge, points| {
+            edge.points = points;
+            #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+            { edge.segments = Segments::new(&points); }
+        };
         let curves = [
             [Vec2::ZERO; 5],
             [Vec2::new(-0.0, 0.0), Vec2::new(0.0, -0.0), Vec2::ZERO, Vec2::ONE, Vec2::ZERO],
@@ -686,7 +737,7 @@ mod tests {
         ];
         for curve in curves {
             for shift in [Vec2::ZERO, Vec2::new(-1031.0, 1019.0), Vec2::splat(16_777_216.0)] {
-                edge.points = curve.map(|p| p + shift);
+                set_points(&mut edge, curve.map(|p| p + shift));
                 for z in -8..=8 {
                     for x in -8..=8 {
                         let p = shift + Vec2::new(x as f32 * 0.5, z as f32 * 0.5);
@@ -701,7 +752,7 @@ mod tests {
             }
         }
         // At the centre of this square, all distances tie. The first segment wins.
-        edge.points = curves[2];
+        set_points(&mut edge, curves[2]);
         assert_eq!(edge.nearest(Vec2::ZERO), (2.0, 0.125, Vec2::new(4.0, 0.0)));
 
         let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
