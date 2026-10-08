@@ -34,7 +34,8 @@ thread_local! {
     static LANE_COUNTS: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };
 }
 
-/// Optional coarse CPU measurements, only while the release budget replans a known cell.
+/// Optional CPU measurements, only while the isolated, serial release budget replans
+/// a known cell. Failure deltas use the census's process-global counters.
 #[cfg(test)]
 pub(super) fn profile(enabled: bool) {
     PROFILE.with(|p| p.set(enabled));
@@ -1958,6 +1959,30 @@ impl Town<'_> {
             *self.built.entry(i).or_default() += 1;
         }
     }
+
+    fn fits_house(&self, i: usize, h: &super::def::HouseDef, want: &Want) -> bool {
+        house_fits(h, want, self.size, &self.style.name, self.built.get(&i).copied().unwrap_or(0), self.ctx.def.rules.houses.grand)
+    }
+
+    /// Water cannot affect a request whose otherwise eligible houses are all dry.
+    fn needs_water(&self, want: &Want) -> bool {
+        self.ctx.def.houses.iter().enumerate().any(|(i, h)| h.water && self.fits_house(i, h, want))
+    }
+}
+
+/// Availability before testing the water: identical for selection and deciding whether
+/// a water search can affect it. Built counts only grow while a layout is being placed.
+fn house_fits(h: &super::def::HouseDef, want: &Want, size: &str, style: &str, built: u32, grand: u32) -> bool {
+    (h.sizes.is_empty() || h.sizes.iter().any(|s| s == size))
+        && !h.not_in.iter().any(|s| s == style)
+        && h.most.is_none_or(|most| built < most)
+        && match want {
+            Want::Kind(Kind::Inn) => h.work.is_none() && h.form == Form::Box && h.width.1 >= grand,
+            Want::Kind(Kind::Trader) => h.work.is_none() && matches!(h.form, Form::Box | Form::ShopFront),
+            Want::Home | Want::Kind(_) => h.work.is_none(),
+            Want::Workshop => h.work.is_some(),
+            Want::Work(work) => h.work.as_deref() == Some(work.as_str()),
+        }
 }
 
 /// Rolls a house of the settlement's kinds for `want`, with its extras: one the place's
@@ -1967,19 +1992,7 @@ impl Town<'_> {
 fn house_spec(town: &Town, want: &Want, kind: Kind, rng: &mut Rng, near_water: bool) -> Option<(Spec, usize)> {
     let (def, kit, levers, style) = (town.ctx.def, town.kit, town.levers, town.style);
     let rules = &def.rules.houses;
-    let fits = |i: usize, h: &super::def::HouseDef| {
-        (h.sizes.is_empty() || h.sizes.iter().any(|s| s == town.size))
-            && !h.not_in.contains(&style.name)
-            && h.most.is_none_or(|most| town.built.get(&i).copied().unwrap_or(0) < most)
-            && (!h.water || near_water)
-            && match want {
-                Want::Kind(Kind::Inn) => h.work.is_none() && h.form == Form::Box && h.width.1 >= rules.grand,
-                Want::Kind(Kind::Trader) => h.work.is_none() && matches!(h.form, Form::Box | Form::ShopFront),
-                Want::Home | Want::Kind(_) => h.work.is_none(),
-                Want::Workshop => h.work.is_some(),
-                Want::Work(work) => h.work.as_deref() == Some(work.as_str()),
-            }
-    };
+    let fits = |i: usize, h: &super::def::HouseDef| town.fits_house(i, h, want) && (!h.water || near_water);
     let houses: Vec<(usize, f32)> = def.houses.iter().enumerate().filter(|(i, h)| fits(*i, h)).map(|(i, _)| (i, town.house_weights[i])).collect();
     let index = pick(rng, &houses)?;
     let h = &def.houses[index];
@@ -2132,7 +2145,7 @@ fn place(
     let spec = match (given, kind) {
         (Some(spec), _) => spec,
         (None, Kind::House | Kind::Trader | Kind::Inn) => {
-            let near_water = ctx.def.houses.iter().any(|h| h.water) && wet(ground, front);
+            let near_water = town.needs_water(want) && wet(ground, front);
             let Some((spec, index)) = house_spec(town, want, kind, rng, near_water) else { return miss(0) };
             house = Some(index);
             spec
@@ -2458,6 +2471,36 @@ mod level_tests {
     use crate::geology::GeoSample;
     use crate::trails::Land;
     use crate::water::Body;
+
+    #[test]
+    fn water_search_only_matters_for_eligible_houses() {
+        let mut def = SettlementsDef::default();
+        def.extend("base", "base", include_str!("../../../../assets/content/base/settlements.ron")).unwrap();
+        let mut boat = def.houses.iter().find(|h| h.name == "boathouse").unwrap().clone();
+        let matters = |h: &super::super::def::HouseDef, want: &Want, size: &str, style: &str, built| {
+            h.water && house_fits(h, want, size, style, built, def.rules.houses.grand)
+        };
+        for want in [Want::Home, Want::Kind(Kind::Inn), Want::Kind(Kind::Trader), Want::Work("shrine".into())] {
+            assert!(!matters(&boat, &want, "village", "timber_frame", 0), "boathouse cannot serve {want:?}");
+        }
+        assert!(matters(&boat, &Want::Workshop, "village", "timber_frame", 0));
+        assert!(matters(&boat, &Want::Work("boathouse".into()), "village", "timber_frame", 0));
+        assert!(!matters(&boat, &Want::Workshop, "village", "timber_frame", 1), "built-count cap removes its water dependency");
+        boat.sizes = vec!["village".into()];
+        assert!(!matters(&boat, &Want::Workshop, "hamlet", "timber_frame", 0));
+        boat.not_in = vec!["timber_frame".into()];
+        assert!(!matters(&boat, &Want::Workshop, "village", "timber_frame", 0));
+        boat.not_in.clear();
+        // A mod can add a water-only home: this is eligibility, not a boathouse-name
+        // exception or an assumption that all future homes are dry.
+        boat.work = None;
+        assert!(matters(&boat, &Want::Home, "village", "timber_frame", 0));
+        assert!(matters(&boat, &Want::Kind(Kind::Trader), "village", "timber_frame", 0));
+        boat.width.1 = def.rules.houses.grand;
+        assert!(matters(&boat, &Want::Kind(Kind::Inn), "village", "timber_frame", 0));
+        boat.water = false;
+        assert!(!matters(&boat, &Want::Home, "village", "timber_frame", 0));
+    }
 
     #[test]
     fn lane_rect_predicates_keep_boundaries_and_stop_at_a_match() {
