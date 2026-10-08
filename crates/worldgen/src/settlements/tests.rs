@@ -304,7 +304,7 @@ fn base_registry() -> std::sync::Arc<BlockRegistry> {
     std::sync::Arc::new(BlockRegistry::new(BlockRegistry::expand(packages).unwrap()).unwrap())
 }
 
-fn base_world(seed: u64) -> Overworld {
+pub(super) fn base_world(seed: u64) -> Overworld {
     Overworld::new(seed, base_registry())
 }
 

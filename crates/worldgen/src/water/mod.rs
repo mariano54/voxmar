@@ -580,10 +580,11 @@ impl Rivers {
         scratch.prepare(self.id, 1);
         let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
         let key = Samples::key(min, max);
+        let column_key = scratch.column_key(key);
         let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, min, max));
         let p = IVec2::new(x, z);
-        let ground = (!scratch.columns.contains_key(&(p, key))).then(|| land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0]);
-        self.sealed_cached(land, tiers, key, p, ground, &mut scratch.corners, &mut scratch.columns)
+        let ground = (!scratch.columns.contains_key(&(p, column_key))).then(|| land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0]);
+        self.sealed_cached(land, tiers, column_key, p, ground, &mut scratch.corners, &mut scratch.columns)
     }
 
     /// Exact standalone samples in a bounded batch. Every centre keeps its own
@@ -595,7 +596,8 @@ impl Rivers {
         scratch.prepare(self.id, points.len());
         if points.is_empty() { return Vec::new(); }
         let keys: Vec<_> = points.iter().map(|&(x, z)| Samples::key(IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1))).collect();
-        let needed: Vec<_> = points.iter().zip(&keys).map(|(&(x, z), &key)| !scratch.columns.contains_key(&(IVec2::new(x, z), key))).collect();
+        let column_keys: Vec<_> = keys.iter().map(|&key| scratch.column_key(key)).collect();
+        let needed: Vec<_> = points.iter().zip(&column_keys).map(|(&(x, z), &key)| !scratch.columns.contains_key(&(IVec2::new(x, z), key))).collect();
         let missing: Vec<_> = points.iter().zip(&needed).filter_map(|(&p, &need)| need.then_some(p)).collect();
         let mut grounds = land.geology.lands_with(&missing, &mut scratch.corners).into_iter();
         for (i, &(x, z)) in points.iter().enumerate() {
@@ -606,7 +608,7 @@ impl Rivers {
             if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
             let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
             let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, min, max));
-            scratch.columns.entry((IVec2::new(x, z), keys[i])).or_insert_with(|| self.unsealed(tiers, x, z, ground));
+            scratch.columns.entry((IVec2::new(x, z), column_keys[i])).or_insert_with(|| self.unsealed(tiers, x, z, ground));
         }
         points.iter().enumerate().map(|(i, &(x, z))| {
             // Clear only channel groups here: the already computed centre landforms
@@ -616,7 +618,7 @@ impl Rivers {
             let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, min, max));
             // All centres now hold their original raw values; neighbours still use
             // the requesting centre's bounds, including when keys differ nearby.
-            self.sealed_cached(land, tiers, keys[i], IVec2::new(x, z), None, &mut scratch.corners, &mut scratch.columns)
+            self.sealed_cached(land, tiers, column_keys[i], IVec2::new(x, z), None, &mut scratch.corners, &mut scratch.columns)
         }).collect()
     }
 
@@ -726,7 +728,7 @@ impl Rivers {
     /// Reuse only unsealed columns computed under these exact channel bounds. A
     /// neighbour keeps the requesting centre's key, not its own standalone halo key.
     #[allow(clippy::too_many_arguments)]
-    fn sealed_cached(&self, land: Stages, tiers: &(Near, Near), key: [IVec2; 4], p: IVec2, ground: Option<Landform>, corners: &mut Corners, columns: &mut FxHashMap<(IVec2, [IVec2; 4]), Column>) -> GeoSample {
+    fn sealed_cached(&self, land: Stages, tiers: &(Near, Near), key: u32, p: IVec2, ground: Option<Landform>, corners: &mut Corners, columns: &mut FxHashMap<(IVec2, u32), Column>) -> GeoSample {
         let column = *columns.entry((p, key)).or_insert_with(|| self.unsealed(tiers, p.x, p.y, ground.expect("uncached centre landform")));
         if !column.near { return column.sample; }
         let around = [p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y];
@@ -792,7 +794,10 @@ pub struct Samples {
     id: u64,
     corners: Corners,
     tiers: FxHashMap<[IVec2; 4], (Near, Near)>,
-    columns: FxHashMap<(IVec2, [IVec2; 4]), Column>,
+    /// Full exact keys are interned separately from the evictable tier memo. Raw
+    /// columns hash only position and ID; both maps reset together before a batch.
+    column_keys: FxHashMap<[IVec2; 4], u32>,
+    columns: FxHashMap<(IVec2, u32), Column>,
     #[cfg(test)]
     work: [usize; 4],
 }
@@ -831,8 +836,9 @@ impl Samples {
             { self.work[0] += 1; }
         }
         // A batch inserts at most its centres and four neighbours per centre.
-        if self.columns.len() + 5 * count > RAW_COLUMN_LIMIT {
+        if self.columns.len() + 5 * count > RAW_COLUMN_LIMIT || self.column_keys.len() + count > RAW_COLUMN_LIMIT {
             self.columns.clear();
+            self.column_keys.clear();
             #[cfg(test)]
             { self.work[1] += 1; }
         }
@@ -842,6 +848,11 @@ impl Samples {
     fn key(min: IVec2, max: IVec2) -> [IVec2; 4] {
         let region = |at: IVec2| at.div_euclid(IVec2::splat(REGION));
         [region(min - TRUNK_MARGIN), region(max + TRUNK_MARGIN), region(min - STREAM_MARGIN), region(max + STREAM_MARGIN)]
+    }
+
+    fn column_key(&mut self, key: [IVec2; 4]) -> u32 {
+        let next = self.column_keys.len() as u32;
+        *self.column_keys.entry(key).or_insert(next)
     }
 }
 
@@ -1010,7 +1021,8 @@ mod tests {
                     assert_eq!(actual, expected, "seed {seed} at {x},{z}, reverse {reverse}");
                     assert!(scratch.corners.len() <= CORNER_LIMIT);
                     assert!(scratch.tiers.len() <= 16);
-        assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
+                    assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
+                    assert!(scratch.column_keys.len() <= RAW_COLUMN_LIMIT);
                     if expected.submerged() && expected.body != Body::Sea { wet += 1; } else if !expected.submerged() { dry += 1; }
                 }
                 let ordered: Vec<_> = if reverse { points.iter().rev().copied().collect() } else { points.clone() };
@@ -1022,6 +1034,7 @@ mod tests {
                         assert!(scratch.corners.len() <= CORNER_LIMIT);
                         assert!(scratch.tiers.len() <= 16);
                         assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
+                        assert!(scratch.column_keys.len() <= RAW_COLUMN_LIMIT);
                     }
                 }
                 assert!(world.rivers.samples_cached(world.stages(), &[], &mut scratch).is_empty());
@@ -1058,14 +1071,26 @@ mod tests {
         let wrong_key = Samples::key(p - REGION, p + REGION);
         assert_ne!(key, wrong_key);
         let wrong = Column { sample: GeoSample { height: 9999, ..expected }, near: true };
-        scratch.columns.insert((p, wrong_key), wrong);
+        let wrong_id = scratch.column_key(wrong_key);
+        scratch.columns.insert((p, wrong_id), wrong);
         assert_eq!(world.rivers.sample_cached(world.stages(), p.x, p.y, &mut scratch), expected, "same position under different channel bounds cannot alias");
-        assert!(scratch.columns[&(p, key)].near);
+        let id = scratch.column_key(key);
+        assert_ne!(id, wrong_id);
+        assert!(scratch.columns[&(p, id)].near);
         assert_eq!(scratch.columns.len(), 6, "exact centre and all four raw neighbours are retained beside the unrelated key");
         let corners = scratch.corners.len();
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.columns.len(), 6);
         assert_eq!(scratch.corners.len(), corners, "all warm centres and neighbours need no new terrain");
+        // Evicting sixteen channel groups must not recycle raw-column identities.
+        // The wrong-key poison would alias the centre if its ID were reused here.
+        let identities = scratch.column_keys.clone();
+        scratch.tiers.clear();
+        scratch.tiers.extend((0..16).map(|k| ([IVec2::splat(100_000 + k); 4], (Near::new(), Near::new()))));
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.column_keys, identities);
+        assert_eq!(scratch.columns.len(), 6);
+        assert_eq!(scratch.corners.len(), corners);
         // Corner-only eviction must not discard pure raw columns or their keys.
         scratch.corners = Corners::default();
         let distant: Vec<_> = (0..(CORNER_LIMIT - 20 * SAMPLE_BATCH) / 4 + 1).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
@@ -1074,16 +1099,26 @@ mod tests {
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.corners.len(), 0, "retained raw values survive the corner reset without recomputation");
         // Pressure entries are never queried. Full-batch headroom clears them first.
-        scratch.columns.extend((0..RAW_COLUMN_LIMIT - 6).map(|k| ((IVec2::new(200_000 + k as i32, 200_000), key), wrong)));
+        scratch.columns.extend((0..RAW_COLUMN_LIMIT - 6).map(|k| ((IVec2::new(200_000 + k as i32, 200_000), id), wrong)));
         assert_eq!(scratch.columns.len(), RAW_COLUMN_LIMIT);
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.columns.len(), 5);
-        scratch.columns.insert((p, key), wrong);
-        scratch.columns.insert((p, wrong_key), wrong);
+        // Registry pressure independently resets IDs and their raw values together.
+        let fill = RAW_COLUMN_LIMIT - scratch.column_keys.len();
+        for k in 0..fill { scratch.column_key([IVec2::new(300_000 + k as i32, 300_000); 4]); }
+        assert_eq!(scratch.column_keys.len(), RAW_COLUMN_LIMIT);
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.column_keys.len(), 1);
+        assert_eq!(scratch.columns.len(), 5);
+        let id = scratch.column_key(key);
+        let wrong_id = scratch.column_key(wrong_key);
+        scratch.columns.insert((p, id), wrong);
+        scratch.columns.insert((p, wrong_id), wrong);
         let another = crate::Overworld::new(42, registry);
         assert_eq!(another.rivers.sample_cached(another.stages(), p.x, p.y, &mut scratch), another.rivers.sample(another.stages(), p.x, p.y, false));
         assert_eq!(scratch.id, another.rivers.id);
-        assert!(!scratch.columns.contains_key(&(p, wrong_key)));
+        assert!(!scratch.column_keys.contains_key(&wrong_key));
+        assert!(scratch.column_keys.len() <= 1);
         assert!(scratch.columns.len() <= 5);
     }
 
@@ -1111,7 +1146,7 @@ mod tests {
                     assert!(!cache.scratch.columns.is_empty() && !cache.scratch.tiers.is_empty());
                     world.rivers.remember_freshwater_grid(first, step, size, &samples, &mut cache);
                     assert!(!cache.seen.contains_key(&IVec2::splat(200_000)));
-                    assert!(cache.scratch.columns.is_empty() && cache.scratch.tiers.is_empty() && cache.scratch.corners.len() == 0);
+                    assert!(cache.scratch.columns.is_empty() && cache.scratch.column_keys.is_empty() && cache.scratch.tiers.is_empty() && cache.scratch.corners.len() == 0);
                 } else {
                     world.rivers.remember_freshwater_grid(first, step, size, &samples, &mut cache);
                 }

@@ -2756,10 +2756,12 @@ mod level_tests {
         let mut wet_only = 0;
         let mut empty = 0;
         let mut capped = 0;
+        let mut style_excluded = 0;
         for all_zero in [false, true] {
             let weights: Vec<_> = (0..def.houses.len()).map(|i| if all_zero || i % 3 == 0 || i + 1 == def.houses.len() { 0.0 } else { 0.25 + i as f32 * 0.125 }).collect();
             for size in ["hamlet", "village"] {
-                for style in ["timber_frame", "log_house", "sod"] {
+                for style in ["timber_frame", "log_cabin", "turf_house"] {
+                    assert!(def.styles.iter().any(|s| s.name == style));
                     for count in 0..=3 {
                         let built: FxHashMap<_, _> = (0..def.houses.len()).map(|i| (i, count)).collect();
                         for want in &wants {
@@ -2779,6 +2781,8 @@ mod level_tests {
                             assert_eq!(choices.needs_water, def.houses.iter().any(|h| h.water && eligible(h)));
                             wet_only += usize::from(choices.needs_water);
                             capped += def.houses.iter().filter(|h| h.most.is_some_and(|most| count >= most)).count();
+                            style_excluded += def.houses.iter().filter(|h| h.not_in.iter().any(|s| s == style)
+                                && house_fits(h, want, size, "unexcluded", count, def.rules.houses.grand)).count();
                             for near_water in [false, true] {
                                 let original: Vec<_> = def.houses.iter().enumerate().filter(|(_, h)| eligible(h) && (!h.water || near_water)).map(|(i, _)| (i, weights[i])).collect();
                                 let cached = if near_water { &choices.wet } else { &choices.dry };
@@ -2793,7 +2797,48 @@ mod level_tests {
                 }
             }
         }
-        assert!(wet_only > 0 && empty > 0 && capped > 0, "water, missing requests and exhausted caps are exercised");
+        assert!(wet_only > 0 && empty > 0 && capped > 0 && style_excluded > 0, "water, missing requests, exhausted caps and actual style exclusions are exercised");
+    }
+
+    #[test]
+    fn counted_house_invalidates_every_warm_choice() {
+        let world = super::super::tests::base_world(7);
+        let def = &world.settlements.def;
+        let land = Creek(None, None);
+        let ctx = Ctx { world: &world, land: &land, def, resolved: &world.settlements.resolved,
+            fixed: world.settlements.fixed.as_ref().unwrap(), seed: world.settlements.seed,
+            spawn: None, promised: &[], cells: &world.settlements.cells };
+        let style = def.styles.iter().find(|s| s.name == "timber_frame").unwrap();
+        let levers = Levers::default();
+        // Selection and counting need no painted materials for this fixture.
+        let kit = Kit { wood: String::new(), log: String::new(), foundation: Palette(Vec::new()),
+            floor: Vec::new(), walls: Vec::new(), frame: Vec::new(), roof: Vec::new(), trims: Vec::new(),
+            paving: Palette(Vec::new()), hedge: Palette(Vec::new()), weathered: Palette(Vec::new()),
+            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None };
+        let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
+        let mut town = Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
+            extra_chances: vec![0.0; def.extras.len()], style, size: "village", built: FxHashMap::default(), choices: Vec::new(), bounds: rect, square: rect, gap: 1 };
+        let want = Want::Work("boathouse".into());
+        let index = def.houses.iter().position(|h| h.name == "boathouse").unwrap();
+        assert_eq!(def.houses[index].most, Some(1));
+        for request in [&want, &Want::Workshop] {
+            assert!(town.choices(request).wet.iter().any(|&(i, _)| i == index));
+        }
+        assert_eq!(town.choices.len(), 2);
+        let mut rng = Rng::new(7, 71, -19, 23);
+        let (spec, chosen) = house_spec(&mut town, &want, Kind::House, &mut rng, true).unwrap();
+        assert_eq!(chosen, index);
+        assert_eq!(town.choices.len(), 2, "a selection attempt leaves both warm requests available");
+        let frame = Frame::fit(IVec2::ZERO, IVec2::ONE, Facing::North, IVec2::ZERO, 140);
+        let lot = Lot { spec, rect, frame, floor: 140, mats: kit.mats(&ctx, &mut rng), door: None, yard: 0, house: Some(index), centre: None };
+        town.count(&lot);
+        assert_eq!(town.built[&index], 1);
+        assert!(town.choices.is_empty(), "counting invalidates all requests, including those not used to pick this lot");
+        for request in [&want, &Want::Workshop] {
+            let choices = town.choices(request);
+            assert!(!choices.wet.iter().chain(&choices.dry).any(|&(i, _)| i == index));
+        }
+        assert!(!town.needs_water(&want), "the exhausted water-only request no longer asks for a water search");
     }
 
     #[test]
