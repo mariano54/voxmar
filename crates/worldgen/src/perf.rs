@@ -248,15 +248,18 @@ fn column_hash(column: &Column, registry: &BlockRegistry) -> u64 {
     h
 }
 
-/// Columns over rivers and lakes, caves, forests, mountains and coasts on three seeds.
-const GOLDEN: [(u64, [(i32, i32); 8]); 3] = [
+/// Columns over rivers and lakes, caves, forests, mountains and coasts on three seeds, and
+/// around a waterfall on a fourth.
+const GOLDEN: [(u64, [(i32, i32); 8]); 4] = [
     (1, [(0, 0), (1, 0), (0, 2), (60, -90), (-120, 40), (150, 150), (-40, -200), (-9, -6)]),
     (42, [(-10, -3), (-9, -2), (-1, 0), (0, 0), (-33, -2), (93, -63), (-10, -11), (4, 31)]),
     (0x5eed, [(0, 0), (60, -90), (-120, 40), (150, 150), (-40, -200), (-128, 28), (47, 162), (8, 8)]),
+    // Around a waterfall at (-894, 298): its curtain, pool and the water feeding its lip.
+    (0, [(-28, 9), (-29, 9), (-27, 9), (-28, 8), (-28, 10), (-29, 8), (-27, 10), (-29, 10)]),
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 3] = [0xc67ac4a79cdbb83d, 0xb5bb37f88d59f40c, 0xd76cdd47b30e4101];
+const EXPECTED: [u64; 4] = [0x10715f662b85b462, 0x5988af61184d596d, 0xcc9f1e64fa8c36b2, 0x1b609850583ec5e2];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
@@ -280,8 +283,8 @@ fn output_is_unchanged() {
     );
 }
 
-/// The hash of the light over three 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
-const LIGHT: u64 = 0x63979698b1894754;
+/// The hash of the light over four 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
+const LIGHT: u64 = 0x731fe2b7f3105521;
 
 /// Lighting stays exactly as it was too: the light of the centre column of a 3×3 area on
 /// each of `GOLDEN`'s seeds, with the border the mesher reads. When generation changes on

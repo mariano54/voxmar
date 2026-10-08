@@ -673,8 +673,11 @@ fn capture(
         || world.voxels.len() < 9
         || lod_tiles < lod_wanted;
     // Flying and digging keep the world busy streaming and remeshing; once started they
-    // run their course.
-    let flying = state.flight_started.is_some() || state.dig_started.is_some();
+    // run their course. While a flight's teleport up is unanswered, the world settling
+    // must not hold back the check on its deadline; once the player is up, the land there
+    // settles before the flight is timed, so its frame times are the flight's own.
+    let lift_pending = state.lift_asked.is_some() && state.flight_started.is_none() && player.position.y < FLIGHT_HEIGHT - 1.0;
+    let flying = state.flight_started.is_some() || state.dig_started.is_some() || lift_pending;
     // A mined block's pieces are caught in the air, while its column remeshes.
     let broken = state.broken_at.map(|at| now - at);
     let patience = if state.flicker.is_some() { 300.0 } else { 60.0 };
@@ -699,10 +702,23 @@ fn capture(
     // the flight's and not the teleport's. A teleport the server never answers fails it.
     if state.flight.is_some() && player.position.y < FLIGHT_HEIGHT - 1.0 {
         player.flying = true;
+        // Once flying, a drop below the height (a correction from the server) fails the
+        // flight rather than being taken for a teleport not yet answered.
+        if state.flight_started.is_some() {
+            error!("flight: fell to y {:.1}, below its height of {FLIGHT_HEIGHT}", player.position.y);
+            exit.write(AppExit::error());
+            return;
+        }
+        // The server's clock when the server is this process's own; for a remote join, the
+        // client's (whose frames count for at most 250 ms each).
         let server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
         match state.lift_asked {
             None => {
-                net.command(&format!("tp {} {FLIGHT_HEIGHT} {}", player.position.x, player.position.z));
+                // `VOXMAR_CAPTURE_DROP_LIFT` asks for nothing, as if the teleport were lost: to
+                // show that an unanswered one fails the capture.
+                if std::env::var_os("VOXMAR_CAPTURE_DROP_LIFT").is_none() {
+                    net.command(&format!("tp {} {FLIGHT_HEIGHT} {}", player.position.x, player.position.z));
+                }
                 state.lift_asked = Some(server_now);
             }
             Some(asked) if server_now - asked > LIFT_WAIT => {

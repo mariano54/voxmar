@@ -148,12 +148,15 @@ impl Lang {
     /// or, for a block made from a template, the template member's name with the family's
     /// filled in (`block.base.{name}_log` with `family.base.oak`), so a language names a
     /// whole family of woods or rocks in two lines; another look of a plant goes by the
-    /// plant's name. Without any of those, a name made from its id: "Oak Log".
+    /// plant's name, and a block turned to face another way goes by the block's (a wall
+    /// torch facing east is a wall torch). Without any of those, a name made from its id:
+    /// "Oak Log".
     pub fn block(&self, def: &BlockDef) -> String {
-        if let Some(name) = self.find(&def_key("block", &def.name)) {
+        let name = def.form_of().unwrap_or(&def.name);
+        if let Some(name) = self.find(&def_key("block", name)) {
             return name.to_owned();
         }
-        let (namespace, local) = def.name.split_once(':').unwrap_or(("", &def.name));
+        let (namespace, local) = name.split_once(':').unwrap_or(("", name));
         if let Some(family) = &def.family {
             let family_local = family.rsplit(':').next().unwrap_or(family);
             let pattern = local.replacen(family_local, "{name}", 1);
@@ -164,7 +167,7 @@ impl Lang {
         if let Some(plant) = def.variant_of.as_deref().and_then(|plant| self.find(&def_key("block", plant))) {
             return plant.to_owned();
         }
-        title_from_id(&def.name)
+        title_from_id(name)
     }
 
     /// How the name at `key` reads, for a name written with kanji (`lang/readings/<code>.ron`):
@@ -177,11 +180,12 @@ impl Lang {
     /// How a block or item's name reads (see [`Lang::reading`]), made as its name is (see
     /// [`Lang::block`]): a template's reading is its member's with the family's filled in.
     pub fn block_reading(&self, def: &BlockDef) -> Option<String> {
-        let key = def_key("block", &def.name);
+        let name = def.form_of().unwrap_or(&def.name);
+        let key = def_key("block", name);
         if self.find(&key).is_some() {
             return self.reading(&key);
         }
-        let (namespace, local) = def.name.split_once(':').unwrap_or(("", &def.name));
+        let (namespace, local) = name.split_once(':').unwrap_or(("", name));
         if let Some(family) = &def.family {
             let family_local = family.rsplit(':').next().unwrap_or(family);
             let (member, family) = (format!("block.{namespace}.{}", local.replacen(family_local, "{name}", 1)), def_key("family", family));
@@ -234,6 +238,91 @@ impl Lang {
     pub fn untranslated(&self) -> impl Iterator<Item = &str> {
         let own = if self.code == ENGLISH { &self.english } else { &self.strings };
         self.english.keys().filter(|key| !own.contains_key(*key)).map(String::as_str)
+    }
+}
+
+/// Where a language lets a line of wrapped text break, beyond what Unicode's line breaking
+/// already does: its own rules, from its language file, so a mod or another language
+/// replaces them. Japanese (kinsoku) keeps closing punctuation and small kana off the start
+/// of a line, opening brackets off its end, and katakana words whole; between any two other
+/// kanji or kana a line may break, and a Latin word stays whole as Unicode keeps it.
+///
+/// Text is laid out with a word joiner (U+2060) wherever a break is forbidden (see
+/// [`LineRules::join`]); everything else (what is stored, compared, searched or copied)
+/// sees the text as written.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LineRules {
+    /// Characters no line may start with (`language.line_start_forbidden`).
+    no_start: Vec<char>,
+    /// Characters no line may end with (`language.line_end_forbidden`).
+    no_end: Vec<char>,
+    /// Characters whose runs stay on one line (`language.unbroken`): a run longer than
+    /// `longest` (`language.unbroken_longest`) may still break, rather than spill out of
+    /// its box.
+    unbroken: Vec<char>,
+    longest: usize,
+}
+
+/// The character that keeps the two either side of it on one line.
+pub const WORD_JOINER: char = '\u{2060}';
+
+impl LineRules {
+    /// The rules language `lang` gives; none for a language that gives none (English).
+    pub fn of(lang: &Lang) -> Self {
+        let chars = |key: &str| -> Vec<char> { lang.find(key).map(|text| text.chars().filter(|c| !c.is_whitespace()).collect()).unwrap_or_default() };
+        let longest = lang.find("language.unbroken_longest").and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+        LineRules { no_start: chars("language.line_start_forbidden"), no_end: chars("language.line_end_forbidden"), unbroken: chars("language.unbroken"), longest }
+    }
+
+    /// Whether the rules forbid nothing, so text lays out as written.
+    pub fn is_empty(&self) -> bool {
+        self.no_start.is_empty() && self.no_end.is_empty() && self.unbroken.is_empty()
+    }
+
+    /// For each character of `chars`, whether a line may not break just before it (false
+    /// for the first). Whitespace and word joiners are left to Unicode.
+    pub fn held(&self, chars: &[char]) -> Vec<bool> {
+        let mut held = vec![false; chars.len()];
+        if self.is_empty() {
+            return held;
+        }
+        // The length of the unbroken run each character is in, 0 outside one.
+        let mut run = vec![0; chars.len()];
+        let mut start = 0;
+        for i in 0..=chars.len() {
+            if i == chars.len() || !self.unbroken.contains(&chars[i]) {
+                run[start..i].fill(i - start);
+                start = i + 1;
+            }
+        }
+        let apart = |c: char| c.is_whitespace() || c == WORD_JOINER;
+        for i in 1..chars.len() {
+            let (before, c) = (chars[i - 1], chars[i]);
+            let whole = run[i] > 1 && run[i] <= self.longest && run[i - 1] > 0;
+            held[i] = !apart(before) && !apart(c) && (self.no_start.contains(&c) || self.no_end.contains(&before) || whole);
+        }
+        held
+    }
+
+    /// `text` as it is laid out: a word joiner before each character a line may not break
+    /// before. None when it needs none.
+    pub fn join(&self, text: &str) -> Option<String> {
+        if self.is_empty() || text.is_ascii() {
+            return None;
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let held = self.held(&chars);
+        if !held.contains(&true) {
+            return None;
+        }
+        let mut out = String::with_capacity(text.len() + 3 * held.iter().filter(|&&h| h).count());
+        for (&c, &held) in chars.iter().zip(&held) {
+            if held {
+                out.push(WORD_JOINER);
+            }
+            out.push(c);
+        }
+        Some(out)
     }
 }
 
@@ -430,6 +519,21 @@ fn read_files(content_dir: &Path, sub: &str, wanted: impl Fn(&str) -> bool) -> V
 mod tests {
     use super::*;
 
+    /// Kinsoku: no line starts with 。 or a small kana or ends with 「, katakana words hold
+    /// together up to the longest, and anything else (spaces, Latin) is left to Unicode.
+    #[test]
+    fn line_rules_join_what_may_not_break() {
+        let rules = LineRules { no_start: "。」ょ".chars().collect(), no_end: "「".chars().collect(), unbroken: "クリッ".chars().collect(), longest: 4 };
+        let j = WORD_JOINER;
+        assert_eq!(rules.join("見た。「きょう」"), Some(format!("見た{j}。「{j}き{j}ょう{j}」")));
+        assert_eq!(rules.join("クリック"), Some(format!("ク{j}リ{j}ッ{j}ク")));
+        // Longer than the longest, a run may break (rather than spill out of its box).
+        assert_eq!(rules.join("クリッククリック"), None);
+        assert_eq!(rules.join("ク リ"), None);
+        assert_eq!(rules.join("Shift click"), None);
+        assert_eq!(LineRules::default().join("見た。"), None);
+    }
+
     const EN: &str = r#"{ "language.name": "English", "menu.play": "Play", "hud.plants": "Plants {crop} at level {level}", "only.en": "Only" }"#;
     const JA: &str = r#"{ "language.name": "日本語", "menu.play": "プレイ", "hud.plants": "{crop}を植える(レベル{level})" }"#;
 
@@ -484,6 +588,24 @@ mod tests {
         assert_eq!(problems.len(), 1);
         let (_, problems) = Lang::from_files("en", [("base", "en", "not ron")]);
         assert_eq!(problems.len(), 1);
+    }
+
+    /// A family's block placed in another form (stairs turned east, upside down) is named
+    /// and read as the block itself, through the family's template.
+    #[test]
+    fn a_family_block_in_another_form_goes_by_the_block() {
+        let ja = r#"{ "block.base.{name}_stairs": "{name}の階段", "family.base.oak": "オーク" }"#;
+        let (mut lang, _) = Lang::from_files("ja", [("base", "ja", ja)]);
+        lang.readings.insert("block.base.{name}_stairs".into(), "{name}のかいだん".into());
+        let stairs = |name: &str, faces, flipped| BlockDef { name: name.into(), family: Some("base:oak".into()), faces, flipped, ..Default::default() };
+        for def in [
+            stairs("base:oak_stairs", Some(crate::block::Facing::North), false),
+            stairs("base:oak_stairs_east", Some(crate::block::Facing::East), false),
+            stairs("base:oak_stairs_top_west", Some(crate::block::Facing::West), true),
+        ] {
+            assert_eq!(lang.block(&def), "オークの階段", "{}", def.name);
+            assert_eq!(lang.block_reading(&def).as_deref(), Some("オークのかいだん"), "{}", def.name);
+        }
     }
 
     #[test]

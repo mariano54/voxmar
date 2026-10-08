@@ -14,9 +14,13 @@
 // `sample` lies on the ground over the vein, `samples` of it at most (fewer where the
 // ground is not open), so a sample always has its vein below.
 //
-// The mix (design draft 63): about 67% of veins common, 17% uncommon, 13% rare and 3%
-// very rare, counted by rarity class over many squares (the rock provinces shift it
-// locally); `veins_come_in_the_designed_mix_of_rarities` checks it.
+// The mix (design draft 85): about 68% of veins common, 17% uncommon, 14% rare and 1%
+// very rare, counted by rarity class over the veins that generate. The rock provinces
+// favour some veins (the volcanic and granite ones, mostly uncommon), so the weights are
+// set to make the generated mix, not the weights' own (uncommon weights about ×0.75,
+// rare ×1.07, aetherite 95, about one block a square); and every very rare ore is rarer
+// per square than every rare one. `veins_come_in_the_designed_mix_of_rarities` and
+// `very_rare_ores_are_rarer_than_rare_ones` check both.
 (
     grid: (spacing: 112, slots: 2, chance: 0.7),
     veins: [
@@ -80,7 +84,7 @@
         // Silver over gold, as in the young volcanic rocks where such veins form.
         (
             name: "silver_gold",
-            weight: 20,
+            weight: 15,
             rarity: Uncommon,
             height: (-90, -35),
             radius: (12, 18),
@@ -96,7 +100,7 @@
         // A gold reef in quartz, deep and narrow, with a little iron in it.
         (
             name: "gold_reef",
-            weight: 12,
+            weight: 9,
             rarity: Uncommon,
             height: (-100, -50),
             radius: (10, 16),
@@ -112,7 +116,7 @@
         // Cobalt over silver, as in the old shield rocks where both are mined together.
         (
             name: "cobalt_silver",
-            weight: 15,
+            weight: 11.3,
             rarity: Uncommon,
             height: (-110, -60),
             radius: (10, 16),
@@ -145,7 +149,7 @@
         // surface.
         (
             name: "bauxite_blanket",
-            weight: 14,
+            weight: 10.5,
             rarity: Uncommon,
             height: (-15, 10),
             radius: (24, 34),
@@ -159,7 +163,7 @@
         // Flakes of graphite in old metamorphic rock, deep.
         (
             name: "graphite_seam",
-            weight: 10,
+            weight: 7.5,
             rarity: Uncommon,
             height: (-100, -60),
             radius: (12, 18),
@@ -172,7 +176,7 @@
         // Magnetite with a heart of lodestone, deep in igneous rock.
         (
             name: "magnetite",
-            weight: 18,
+            weight: 13.5,
             rarity: Uncommon,
             height: (-110, -70),
             radius: (12, 18),
@@ -188,7 +192,7 @@
         // Corundum in marble: ruby above, sapphire below.
         (
             name: "corundum",
-            weight: 57,
+            weight: 61,
             rarity: Rare,
             height: (-90, -40),
             radius: (8, 12),
@@ -205,7 +209,7 @@
         // Emeralds in a granite pegmatite, small and rich.
         (
             name: "emerald_pegmatite",
-            weight: 57,
+            weight: 61,
             rarity: Rare,
             height: (-80, -30),
             radius: (6, 10),
@@ -220,7 +224,7 @@
         // hours from one spot. More samples lie over them.
         (
             name: "iron_motherlode",
-            weight: 30.4,
+            weight: 32.5,
             rarity: Rare,
             height: (-112, -88),
             radius: (34, 44),
@@ -236,7 +240,7 @@
         ),
         (
             name: "copper_motherlode",
-            weight: 22.8,
+            weight: 24.4,
             rarity: Rare,
             height: (-112, -88),
             radius: (32, 42),
@@ -252,7 +256,7 @@
         ),
         (
             name: "coal_motherlode",
-            weight: 19,
+            weight: 20.3,
             rarity: Rare,
             height: (-100, -70),
             radius: (36, 46),
@@ -266,7 +270,7 @@
         // A kimberlite pipe rising from the depths, sparse with diamonds.
         (
             name: "kimberlite_pipe",
-            weight: 57,
+            weight: 61,
             rarity: Rare,
             height: (-100, -70),
             shape: Pipe,
@@ -281,7 +285,7 @@
         // A lode of aetherite near the bottom of the world, glowing in the dark.
         (
             name: "aetherite_lode",
-            weight: 300,
+            weight: 95,
             rarity: VeryRare,
             height: (-118, -100),
             radius: (6, 9),

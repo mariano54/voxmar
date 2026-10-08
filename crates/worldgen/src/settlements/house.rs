@@ -478,7 +478,10 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
             }
         }
     }
+    // A post on a cone's peak, unless a chimney rises through it (`blind` names the wall
+    // behind one), where the two stood side by side like a pair of horns.
     if shape == Roof::Conical
+        && blind.is_none()
         && let Some((x, z, y)) = heights.peak()
     {
         pen.set(x, y + 1, z, mats.frame);
@@ -1033,9 +1036,11 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 /// Each storey's stair but the top's: `wall + 1` cells in a run round the inside of the
 /// walls, the first in the floor of the storey above (stepped up onto), the rest steps
 /// down to the floor. Clear of the door, the hearth, the shop's counter and the top of the
-/// stair below; none where no run fits (only four-walled houses have them).
+/// stair below; for each storey, none where no run fits (only four-walled houses have
+/// them).
 /// A house too small for both its chimney and a stair up each storey goes without the
-/// chimney, and one too small for its stairwells with tall walls has walls of three.
+/// chimney, one too small for its stairwells with tall walls has walls of three, and one
+/// too small for a stair even so (a mod's narrow house) has fewer storeys, down to one.
 pub fn make_room_for_stairs(spec: &mut Spec) {
     let fits = |spec: &Spec| !stairs(spec, spec.door.clamp(1, spec.w - 2), spec.chimney().map(|c| c.0)).iter().any(Option::is_none);
     if spec.chimney().is_some() && !fits(spec) {
@@ -1043,6 +1048,9 @@ pub fn make_room_for_stairs(spec: &mut Spec) {
     }
     while spec.wall > 3 && !fits(spec) {
         spec.wall -= 1;
+    }
+    while spec.storeys > 1 && !fits(spec) {
+        spec.storeys -= 1;
     }
 }
 
@@ -1053,8 +1061,13 @@ const STAIRWELL: usize = 3;
 pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<Option<Vec<(i32, i32)>>> {
     let (w, d) = (spec.w, spec.d);
     let run = (spec.wall + 1) as usize;
-    if spec.storeys < 2 || !matches!(spec.form, Form::Box | Form::ShopFront) || w < 4 || d < 4 {
+    if spec.storeys < 2 || !matches!(spec.form, Form::Box | Form::ShopFront) {
         return Vec::new();
+    }
+    // Too narrow for a run round the inside: a storey above with no way up.
+    let none = vec![None; (spec.storeys - 1) as usize];
+    if w < 4 || d < 4 {
+        return none;
     }
     // The cells inside the walls, round in order: along the back, down the left, along the
     // front and up the right.
@@ -1066,7 +1079,7 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
     ring.extend((z0 + 1..z1).map(|z| (x1, z)));
     ring.dedup();
     if ring.len() < run + 1 {
-        return Vec::new();
+        return none;
     }
     let mut flights = Vec::new();
     let mut below: Vec<(i32, i32)> = Vec::new();

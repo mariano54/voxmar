@@ -26,6 +26,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::block::{BlockId, Rarity};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::brain::{self, Decision, Mind, Seen, Situation};
+use voxmar_engine::creature::condition::Needs;
 use voxmar_engine::creature::motion::{self, Body, Drive};
 use voxmar_engine::creature::{self, CreatureId, Kind, Water, mix, unit_from};
 use voxmar_engine::crop::level_bonus;
@@ -56,13 +57,6 @@ const SPAWN_EVERY: u64 = 2 * TICKS_PER_SECOND as u64;
 /// Spawn spots lie this far from the player, in blocks.
 const SPAWN_NEAR: f32 = 20.0;
 const SPAWN_FAR: f32 = 56.0;
-/// At most this many animals and monsters within `NEAR` of a player. Animals were 12:
-/// halved (Mariano, 2026-10-07: "too many animals, the world is too crowded"), so the
-/// land feels wild and an animal is something to come upon.
-const ANIMAL_CAP: usize = 6;
-const MONSTER_CAP: usize = 6;
-/// Most creatures alive at once, whatever the players.
-const MAX_CREATURES: usize = 512;
 /// How far kin hear an alarm, and are counted as kin by herding.
 const KIN_RANGE: f32 = 14.0;
 /// How far creatures look for food.
@@ -93,6 +87,10 @@ pub struct Live {
     pub seed: u64,
     /// The last player to hurt it, for the kill's loot and experience.
     pub hurt_by: Option<PlayerId>,
+    /// The last player to land a damaging blow on it and the tick they did: its blows that
+    /// miss train that player's Defence for a while (`DefenceTraining`). With two players
+    /// at it, only the last hitter's is kept. Not saved.
+    pub fought: Option<(PlayerId, u64)>,
     /// Seconds without getting nearer its goal, to notice being stuck.
     pub stuck: f32,
     /// The player who keeps it, by name (tamed or bred), and the id they have now.
@@ -114,6 +112,14 @@ pub struct Live {
     pub adult_scale: f32,
     /// Tick each of its species' products is next due.
     pub products_due: Vec<u64>,
+    /// How well it is kept, 0 to 1 (crate::condition): the day clock when it was last
+    /// reckoned and when it last ate, and its needs as last looked at.
+    pub condition: f32,
+    pub reckoned: f64,
+    pub fed: f64,
+    pub needs: Needs,
+    /// How well its home suits its kind's climate (`Server::settle`).
+    pub climate_fit: f32,
     /// The last view each player was sent, to send only changes.
     sent: Option<CreatureView>,
     pub(crate) changed: bool,
@@ -169,11 +175,22 @@ pub struct Creatures {
     struck: FxHashMap<PlayerId, std::time::Instant>,
     /// Where each player settled and since when (RuneScape's tolerance).
     settled: FxHashMap<PlayerId, (Vec3, u64)>,
+    /// Kept creatures from the save that could not be put back yet (their species is gone
+    /// from the content, or the world was full): kept in the save and tried again, never
+    /// lost.
+    pub unplaced: Vec<crate::husbandry::SavedCreature>,
     /// Loot waiting for its body to finish falling: the tick it drops, and what.
     falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
 }
 
 impl Creatures {
+    /// Takes a creature out of the world without a death (`/creatures remove`).
+    pub(crate) fn take_away(&mut self, id: u32) {
+        if self.live.remove(&id).is_some() {
+            self.gone.push(CreatureGone { id, died: false });
+        }
+    }
+
     /// The box a blow at a creature may land in: its own, widened by what the player's
     /// view of it may lag behind (`REACH_SLACK`, `REACH_LAG`).
     pub fn reach_box(&self, id: u32) -> Option<Aabb> {
@@ -236,6 +253,9 @@ impl Server {
         self.think_and_move();
         self.tick_husbandry();
         self.drop_fallen_loot();
+        if self.tick.is_multiple_of(10 * TICKS_PER_SECOND as u64) {
+            self.place_unplaced();
+        }
         self.replicate_creatures();
     }
 
@@ -454,9 +474,13 @@ impl Server {
         let species_id = creature.species;
         let position = creature.body.position;
         if let Some(player) = decision.attack {
-            self.creature_strikes(species_id, player);
+            self.creature_strikes(id, player);
         }
         if let Some(cell) = decision.eat {
+            let day = self.day;
+            if let Some(creature) = self.creatures.live.get_mut(&id) {
+                creature.fed = day;
+            }
             // Grazing wears the land: now and then a tuft goes for good.
             let roll = unit_from(mix(self.creatures.live[&id].seed, self.tick ^ 0x6a2e));
             let block = self.block(cell);
@@ -494,9 +518,13 @@ impl Server {
         }
     }
 
-    /// A creature attacks a player: a hit rolled from its level against the player's
-    /// Defence; a miss trains Defence.
-    fn creature_strikes(&mut self, species: CreatureId, player: PlayerId) {
+    /// Creature `id` attacks a player: a hit rolled from its level against the player's
+    /// Defence. A miss trains Defence only while the player fights this creature back: they
+    /// landed a damaging blow on it lately, and it is a match for them (`DefenceTraining`,
+    /// design wiki draft 63).
+    fn creature_strikes(&mut self, id: u32, player: PlayerId) {
+        let Some(creature) = self.creatures.live.get(&id) else { return };
+        let (species, fought) = (creature.species, creature.fought);
         let def = &self.content.creatures.get(species).def;
         let Some(attack) = def.attack else { return };
         let Some(target) = self.players.get(&player) else { return };
@@ -505,6 +533,10 @@ impl Server {
         }
         let defence_skill = self.skill("core:defence");
         let defence = self.level(player, defence_skill);
+        let rules = self.content.creatures.defence();
+        let window = (rules.fought_within * TICKS_PER_SECOND as f32) as u64;
+        let fighting = fought.is_some_and(|(by, at)| by == player && self.tick.saturating_sub(at) <= window);
+        let trains = fighting && rules.matches(def.level, defence);
         let [hit, amount] = combat_roll(self.tick, species.0 as u32, player as u64 ^ 0xa7);
         let (low, high) = attack.damage;
         let target = self.players.get_mut(&player).expect("checked above");
@@ -514,7 +546,7 @@ impl Server {
                 target.connection.send(ServerMessage::Died);
             }
             target.changed(traits::HEALTH);
-        } else if let Some(skill) = defence_skill {
+        } else if let Some(skill) = defence_skill.filter(|_| trains) {
             // Experience for the blow turned aside: four a point of the damage it would do,
             // by the species' share.
             let tenths = ((40 * (low as u32 + high as u32) / 2).max(10) as f32 * def.xp.combat).round() as u32;
@@ -564,6 +596,10 @@ impl Server {
         let damage = voxmar_engine::combat::scaled(full, strength, unit_from(mix(amount.to_bits() as u64, 0x5e1f))).min(creature.health);
         creature.health -= damage;
         creature.hurt_by = Some(player);
+        // A blow that hurt it keeps the fight on, for Defence (`creature_strikes`).
+        if damage > 0 {
+            creature.fought = Some((player, self.tick));
+        }
         creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
         // RuneScape: four experience a point of damage in the style's skill, a third of
         // that in Hitpoints; by the species' share.
@@ -651,7 +687,7 @@ impl Server {
     /// Puts a creature of `species` at `at` whose looks and mind come from `seed`, so the
     /// same seed makes the same individual (a settlement's people, each visit).
     pub(crate) fn spawn_seeded(&mut self, species: CreatureId, at: Vec3, seed: u64) -> Option<u32> {
-        if self.creatures.live.len() >= MAX_CREATURES {
+        if self.creatures.live.len() >= self.content.creatures.limits().most {
             return None;
         }
         let id = self.creatures.next;
@@ -680,6 +716,7 @@ impl Server {
             scale,
             seed,
             hurt_by: None,
+            fought: None,
             stuck: 0.0,
             owner: None,
             owner_id: None,
@@ -693,6 +730,11 @@ impl Server {
             grows_up: None,
             adult_scale: scale,
             products_due: def.products.iter().enumerate().map(|(i, p)| self.tick + product_ticks(p.every, seed, i)).collect(),
+            condition: self.content.creatures.condition().tamed,
+            reckoned: self.day,
+            fed: self.day,
+            needs: Needs::default(),
+            climate_fit: 1.0,
             sent: None,
             changed: true,
         };
@@ -717,8 +759,13 @@ impl Server {
 
     /// Tries a spot around a player, and puts there a group of whatever suits it best,
     /// if anything does and the player has room for more around them.
-    fn spawn_near(&mut self, player: PlayerId, salt: u64) {
+    pub(crate) fn spawn_near(&mut self, player: PlayerId, salt: u64) {
         let Some(at) = self.players.get(&player).map(|p| p.position) else { return };
+        let limits = self.content.creatures.limits();
+        let wild_room = self.wild_room();
+        if wild_room == 0 {
+            return;
+        }
         let nearby = |kind: Kind| {
             self.creatures
                 .live
@@ -751,7 +798,7 @@ impl Server {
                 continue;
             }
             let monster = def.kind == Kind::Monster;
-            if (monster && (monsters >= MONSTER_CAP || !dark)) || (!monster && animals >= ANIMAL_CAP) {
+            if (monster && (monsters >= limits.monsters_near || !dark)) || (!monster && animals >= limits.animals_near) {
                 continue;
             }
             if def.habitat.caves != underground && !monster {
@@ -792,13 +839,38 @@ impl Server {
             group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
         };
         // Never past the cap: a herd arriving near it comes smaller.
-        let room = if self.content.creatures.get(species).def.kind == Kind::Monster { MONSTER_CAP.saturating_sub(monsters) } else { ANIMAL_CAP.saturating_sub(animals) };
-        let count = count.min(room.max(1) as u8);
+        let room = if self.content.creatures.get(species).def.kind == Kind::Monster { limits.monsters_near.saturating_sub(monsters) } else { limits.animals_near.saturating_sub(animals) };
+        let count = count.min(room.max(1).min(wild_room).min(u8::MAX as usize) as u8);
         for i in 0..count.max(1) {
             let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
             let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
             self.spawn_creature(species, cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5), seed ^ i as u64);
         }
+    }
+
+    /// Room left under the world's total: what `most` leaves after the living and the kept
+    /// animals still waiting in the save, so those always fit back.
+    pub(crate) fn room_left(&self) -> usize {
+        self.content.creatures.limits().most.saturating_sub(self.creatures.live.len() + self.creatures.unplaced.len())
+    }
+
+    /// How many more wild creatures the world has room for: under the wild budget, which
+    /// kept animals and a settlement's people never touch, and under the total.
+    pub(crate) fn wild_room(&self) -> usize {
+        let wild = self.creatures.live.values().filter(|c| c.owner.is_none() && self.content.creatures.get(c.species).def.kind != Kind::Villager).count();
+        self.content.creatures.limits().wild_most.saturating_sub(wild).min(self.room_left())
+    }
+
+    /// How many animals a player keeps, alive or waiting in the save.
+    pub(crate) fn kept_by(&self, name: &str) -> usize {
+        let live = self.creatures.live.values().filter(|c| c.owner.as_deref() == Some(name)).count();
+        live + self.creatures.unplaced.iter().filter(|s| s.owner == name).count()
+    }
+
+    /// How many young a keeper's animals may have now: room under the keeper's own cap and
+    /// under the world's total.
+    pub(crate) fn birth_room(&self, keeper: &str) -> usize {
+        self.content.creatures.limits().kept_each.saturating_sub(self.kept_by(keeper)).min(self.room_left())
     }
 
     /// The cell nearest height `y` in a column where a body can stand: solid beneath, two
@@ -878,6 +950,13 @@ impl Ground<'_> {
     }
 }
 
+impl Server {
+    /// Whether `cell` holds water a creature could drink or swim in.
+    pub(crate) fn is_water(&self, cell: IVec3) -> bool {
+        Ground(self).water_at(cell)
+    }
+}
+
 /// Ticks until a product is next due: its period, jittered a little by the creature and
 /// product, so a flock does not lay all at once.
 pub(crate) fn product_ticks(minutes: f32, seed: u64, index: usize) -> u64 {
@@ -898,7 +977,7 @@ fn spawn_factor(rarity: Rarity) -> f32 {
 }
 
 /// The `i`th cell of the square ring `r` blocks out, as (dx, dz).
-fn ring(r: i32, i: i32) -> (i32, i32) {
+pub(crate) fn ring(r: i32, i: i32) -> (i32, i32) {
     if r == 0 {
         return (0, 0);
     }
@@ -943,6 +1022,69 @@ mod tests {
 #[cfg(test)]
 mod combat_tests {
     use super::*;
+
+    #[test]
+    fn defence_trains_only_from_a_creature_the_player_lately_hurt_and_a_match() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let (player, other) = (1, 2);
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2);
+        joined.joined = true;
+        server.players.insert(player, joined);
+        server.tick = 10_000;
+        // Defence 20: a wolf (level 12) is a match for it, a fox (level 4) is not.
+        let defence = server.content.skills.id("core:defence").expect("Defence");
+        let xp_for = server.content.skills.xp_for(20);
+        server.players.get_mut(&player).unwrap().skills.grant(defence, xp_for);
+        let (wolf, fox) = (server.content.creatures.id("base:wolf").unwrap(), server.content.creatures.id("base:fox").unwrap());
+        let at = server.spawn;
+        let [a, b] = [1, 2].map(|salt| server.spawn_creature(wolf, at + Vec3::X, salt).expect("room"));
+        let small = server.spawn_creature(fox, at + Vec3::X, 3).expect("room");
+        // A hundred blows from `attacker` at the player, whose fight with it is `fought`
+        // (who landed a blow, and how many ticks before each): the Defence xp they earn.
+        let earned = |server: &mut Server, attacker: u32, fought: Option<(PlayerId, u64)>| {
+            let before = server.players[&player].skills.xp(defence);
+            for _ in 0..100 {
+                server.tick += 7;
+                let tick = server.tick;
+                server.creatures.live.get_mut(&attacker).unwrap().fought = fought.map(|(by, ago)| (by, tick - ago));
+                server.players.get_mut(&player).unwrap().health = traits::Health::full(crate::player::MAX_HEALTH);
+                server.creature_strikes(attacker, player);
+            }
+            server.players[&player].skills.xp(defence) - before
+        };
+        let within = (server.content.creatures.defence().fought_within * TICKS_PER_SECOND as f32) as u64;
+        assert!(earned(&mut server, a, Some((player, within))) > 0, "fighting a wolf back trained nothing");
+        assert_eq!(earned(&mut server, a, None), 0, "standing among wolves trained Defence");
+        assert_eq!(earned(&mut server, a, Some((player, within + 1))), 0, "a fight over for more than 10 s still trained");
+        assert_eq!(earned(&mut server, a, Some((other, 0))), 0, "another player's fight trained this one");
+        assert_eq!(earned(&mut server, small, Some((player, 0))), 0, "a fox, under half the player's Defence, trained it");
+        // Hurting one wolf trains nothing against another.
+        server.creatures.live.get_mut(&b).unwrap().fought = Some((player, server.tick + 10_000));
+        assert_eq!(earned(&mut server, a, None), 0, "a blow at another wolf trained Defence");
+        // Real blows: one that misses starts no fight, one that lands does.
+        server.creatures.live.get_mut(&a).unwrap().fought = None;
+        let (mut missed, mut landed) = (false, false);
+        for _ in 0..200 {
+            server.tick += 1;
+            server.arrival += std::time::Duration::from_secs(2);
+            let health = server.creatures.live[&a].health;
+            server.player_strikes(player, a);
+            let wolf_now = &server.creatures.live[&a];
+            if wolf_now.health < health {
+                assert_eq!(wolf_now.fought, Some((player, server.tick)), "a landed blow started no fight");
+                landed = true;
+                server.creatures.live.get_mut(&a).unwrap().fought = None;
+            } else {
+                assert_eq!(wolf_now.fought, None, "a blow that missed started a fight");
+                missed = true;
+            }
+            if missed && landed {
+                break;
+            }
+        }
+        assert!(missed && landed, "200 blows at a wolf all missed or all landed");
+    }
 
     #[test]
     fn blows_at_a_steady_beat_land_as_often_as_the_odds_say() {

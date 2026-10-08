@@ -40,10 +40,12 @@ struct Client {
     quick: bool,
     /// Console lines received.
     chat: Vec<(ChatKind, String)>,
+    /// Refusals received, in English.
+    refused: Vec<String>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
-    /// The server's tick, as last told (each second).
-    tick: u64,
+    /// The server's tick, as it last told (once a second): the clock waits are judged by.
+    server_tick: u64,
     /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
@@ -115,8 +117,9 @@ impl Client {
             weather: None,
             quick: false,
             chat: Vec::new(),
+            refused: Vec::new(),
             day: None,
-            tick: 0,
+            server_tick: 0,
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
@@ -125,7 +128,8 @@ impl Client {
             quests: Vec::new(),
             _server: server,
         };
-        client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
+        // Joined once it stands in its land and has been told the time.
+        client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())) && c.day.is_some());
         client
     }
 
@@ -168,6 +172,9 @@ impl Client {
                 self.teleported = Some(position);
             }
             ServerMessage::Column { pos, column } => self.world.insert(pos, column),
+            ServerMessage::Unload { pos } => {
+                self.world.remove(pos);
+            }
             ServerMessage::BlockChanged { pos, block } => {
                 self.world.set_block(pos, block);
             }
@@ -189,9 +196,10 @@ impl Client {
                 self.quick = quick;
             }
             ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
+            ServerMessage::Refused { why } => self.refused.push(self.content.english.render(&why, &self.content.blocks)),
             ServerMessage::Time { tick, day, day_speed } => {
                 self.day = Some((day, day_speed));
-                self.tick = tick;
+                self.server_tick = tick;
             }
             ServerMessage::Abilities { allow_flight, admin } => {
                 self.allow_flight = allow_flight;
@@ -238,8 +246,8 @@ impl Client {
     /// last it told of, or `done`: a wait by the server's clock, which a busy machine
     /// slows with it.
     fn pump_ticks(&mut self, ticks: u64, done: impl Fn(&Self) -> bool) {
-        let until = self.tick + ticks;
-        self.pump_until(|c| c.tick >= until || done(c));
+        let until = self.server_tick + ticks;
+        self.pump_until(|c| c.server_tick >= until || done(c));
     }
 
     fn propose(&self, action: &str, target: ActionTarget) {
@@ -257,6 +265,36 @@ impl Client {
         self.connection.send(ClientMessage::Command { line: line.into() });
         self.pump_until(|c| !c.chat.is_empty());
         std::mem::take(&mut self.chat)
+    }
+
+    /// Waits until the server has handled everything sent before (refused or instant
+    /// actions included), by a command's answer coming back after them.
+    fn settle(&mut self) {
+        self.ok("/time");
+    }
+
+    /// Waits until at least `ticks` server ticks have passed from now, by the server's own
+    /// clock (it tells it once a second).
+    fn after_ticks(&mut self, ticks: u64) {
+        let told = self.server_tick;
+        self.pump_until(|c| c.server_tick > told);
+        let from = self.server_tick;
+        self.pump_until(|c| c.server_tick >= from + ticks);
+    }
+
+    /// Waits until `count` holds still across 20 server ticks after everything sent was
+    /// handled (drops still landing, pick-ups on the way), and returns it.
+    fn quiet(&mut self, count: impl Fn(&Self) -> usize) -> usize {
+        for _ in 0..30 {
+            self.settle();
+            let before = count(self);
+            self.after_ticks(20);
+            self.settle();
+            if count(self) == before {
+                return before;
+            }
+        }
+        panic!("a count never held still for 20 ticks");
     }
 
     /// Runs a command that should succeed, returning its answer.
@@ -386,7 +424,7 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     client.pump_until(|c| c.earned == [110] && c.items.values().any(|i| i.stack.item == wheat));
     client.pump_until(|c| c.skills.xp(voxmar_engine::skill::SkillId(0)) == 110);
 
-    // Ripe fruit on a tree is picked by hand, at any level: the fruit pops out and the
+    // Ripe fruit on a tree is picked by hand: the fruit pops out and the
     // leaves go back to bare, to fruit again.
     let leaves = feet + IVec3::new(-1, 1, 1);
     client.ok("/setblock ~-1 ~1 ~1 apple_leaves");
@@ -520,6 +558,40 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
     assert_eq!(client.position, moved);
     client.pump_until(|c| c.inventory == inventory);
     assert_eq!(client.world.block(below), Some(BlockId::AIR), "the mined block stays mined");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_world_placed_altar_drops_nothing_and_a_players_drops_itself_across_restarts() {
+    let dir = world_dir("altar");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let feet = client.position.floor().as_ivec3();
+    let (village, own) = (feet + IVec3::new(1, 0, 1), feet + IVec3::new(-1, 0, 1));
+    // One set by the world (a village chapel's, as /setblock sets it), one the player places.
+    for line in ["/clear", "/give stone_altar 1", "/setblock ~1 ~ ~1 stone_altar", "/fill ~-1 ~ ~1 ~-1 ~1 ~1 air", "/fill ~-1 ~-1 ~1 ~-1 ~-1 ~1 stone"] {
+        client.ok(line);
+    }
+    let altar = client.content.blocks.expect("base:stone_altar");
+    client.pump_until(|c| c.world.block(village) == Some(altar) && c.inventory.get(0).is_some_and(|s| s.item == altar));
+    client.propose("core:place", ActionTarget::Block { block: own - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(altar));
+    let altars = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == altar).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == altar).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    // The village's: nothing.
+    client.propose("core:mine", ActionTarget::Block { block: village, face: Face::PosY });
+    client.pump_until(|c| c.world.block(village) == Some(BlockId::AIR));
+    assert_eq!(client.quiet(altars), 0, "a village's altar dropped itself");
+    // Saved and loaded, the player's is still the player's: it gives itself back.
+    drop(client);
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(own) == Some(altar));
+    client.propose("core:mine", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(BlockId::AIR));
+    assert_eq!(client.quiet(altars), 1, "a player's altar did not give itself back");
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -888,16 +960,24 @@ fn looking_closely_shows_more_with_farming() {
         client.pump_until(|c| c.chat.iter().any(|(_, text)| text.contains("level 1")));
         client.chat.iter().map(|(_, text)| text.clone()).collect::<Vec<_>>().join("\n")
     };
-    // At Farming 1: what anyone sees, and that more comes with level.
+    // Kept, newly tamed and just fed, so its condition shows (0.6, good).
+    client.ok("/creatures tame");
+    // At Farming 1: what anyone sees, its condition in a word, and that more comes with level.
     let first = look(&mut client);
     assert!(first.contains("health") && first.contains("Farming 10 shows more"), "{first}");
     assert!(!first.contains("Shows:"), "{first}");
+    assert!(first.contains("In good condition") && !first.contains("(0.6"), "{first}");
     // At 40, everything: what shows, what it carries, the numbers and the odds.
     client.ok("/skill farming 40");
     let all = look(&mut client);
-    for words in ["Shows:", "Carries", "Exactly:", "mutates"] {
+    for words in ["Shows:", "Carries", "Exactly:", "mutates", "condition (0.60)"] {
         assert!(all.contains(words), "{words} missing from {all}");
     }
+    // A day and a half unfed, it says what it wants.
+    assert!(!all.contains("It wants food"), "{all}");
+    client.ok("/time add 1.5d");
+    let hungry = look(&mut client);
+    assert!(hungry.contains("It wants") && hungry.contains("food"), "{hungry}");
 }
 
 #[test]
@@ -952,8 +1032,7 @@ fn a_finished_break_the_server_refused_is_undone_on_the_client() {
     let stone = client.world.block(far).unwrap();
     let target = ActionTarget::Block { block: far, face: Face::PosY };
     client.propose("core:mine", target);
-    let refused = Instant::now() + Duration::from_millis(300);
-    client.pump_until(|_| Instant::now() > refused);
+    client.settle();
     client.world.set_block(far, BlockId::AIR);
     client.connection.send(ClientMessage::Finished { target });
     client.pump_until(|c| c.world.block(far) == Some(stone));
@@ -980,26 +1059,37 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     let hold = |client: &Client, slot: u8| {
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
+    // How long a break takes, in server ticks, with the pickaxe and by hand: a refusal
+    // waits that long and more before it says nothing broke.
+    let hardness = client.content.blocks.info(iron).hardness;
+    let pickaxe = client.content.blocks.expect("base:stone_pickaxe");
+    let ticks = |speed: f32| (hardness / speed * TICKS_PER_SECOND as f32).ceil() as u64;
+    let (with_pickaxe, by_hand) = (ticks(client.content.tools.speed(Some(pickaxe), iron)), ticks(client.content.tools.speed(None, iron)));
     // At Mining 1, even with the pickaxe: refused.
     hold(&client, 4);
     mine(&client);
-    let waited = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > waited);
+    client.settle();
+    client.after_ticks(with_pickaxe + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke at Mining 1");
     // At Mining 15 with a bare hand: refused too.
     client.ok("/skill mining 15");
     hold(&client, 5);
     mine(&client);
-    let waited = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > waited);
+    client.settle();
+    client.after_ticks(by_hand + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke without a pickaxe");
-    // At Mining 15 with the stone pickaxe: broken, quicker than by hand, teaching Mining (35).
+    // At Mining 15 with the stone pickaxe: broken, quicker than by hand (by the server's
+    // clock, told once a second), teaching Mining (35).
     hold(&client, 4);
-    let started = Instant::now();
+    let told = client.server_tick;
+    client.pump_until(|c| c.server_tick > told);
+    let started = client.server_tick;
     mine(&client);
     client.pump_until(|c| c.world.block(ore) == Some(BlockId::AIR) && c.earned.contains(&350));
-    let hardness = client.content.blocks.info(iron).hardness;
-    assert!(started.elapsed().as_secs_f32() < hardness * 0.5, "a stone pickaxe should mine iron ore at four times a hand's speed");
+    let seen = client.server_tick;
+    client.pump_until(|c| c.server_tick > seen);
+    let took = client.server_tick - started;
+    assert!(took < by_hand, "a stone pickaxe took {took} ticks to mine iron ore, a hand's {by_hand}");
 }
 
 #[test]
@@ -1009,7 +1099,7 @@ fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     for line in ["/clear", "/give cobblestone 3", "/give stick 2", "/fill ~1 ~ ~1 ~1 ~ ~1 crafting_table"] {
         client.ok(line);
     }
-    client.pump_until(|c| c.world.block(table) == c.content.blocks.id("base:crafting_table") && c.inventory.get(1).is_some());
+    client.pump_until(|c| c.world.block(table) == c.content.blocks.id("base:crafting_table"));
     let pickaxe = client.content.blocks.expect("base:stone_pickaxe");
     let lay = |client: &Client| {
         for (slot, cell) in [(0u8, 0u8), (0, 1), (0, 2), (1, 4), (1, 7)] {
@@ -1020,8 +1110,9 @@ fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     };
     // Away from a table the three-by-three pattern makes nothing.
     lay(&client);
-    let waited = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > waited);
+    // Handled, and the inventory told (it goes out as the tick ends).
+    client.settle();
+    client.after_ticks(2);
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == pickaxe), "a pickaxe was crafted without a table");
     // At the table it makes a stone pickaxe, teaching Engineering.
     client.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
@@ -1209,8 +1300,8 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     let crucible = client.content.blocks.expect("base:crucible");
     let (ore, ingot) = (client.content.blocks.expect("base:copper_ore"), client.content.blocks.expect("base:copper_ingot"));
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
-    // The ore given, in slot 0 once the clear has emptied the starting kit.
-    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.inventory.get(0).is_some_and(|s| s.item == ore && s.count == 2));
+    // Wait for the ore itself: the starting kit fills slot 0 before /clear and /give arrive.
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && count(c, ore) == 2);
     let smelt = |client: &mut Client| {
         client.chat.clear();
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
@@ -1248,6 +1339,73 @@ fn a_sleeping_bag_is_where_the_homeless_wake() {
     client.pump_until(|c| c.health == 0);
     client.propose("core:respawn", ActionTarget::None);
     client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(bag.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
+}
+
+#[test]
+fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
+    let mut client = Client::join();
+    let boiler = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let crusher = boiler + IVec3::X;
+    for line in ["/clear", "/fill ~3 ~ ~-1 ~4 ~1 ~1 air", "/setblock ~3 ~ ~ boiler", "/setblock ~4 ~ ~ steam_crusher"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    // A crusher with nothing to work says so; coal in hand goes into the boiler.
+    use_at(&mut client, crusher);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Steam Crusher: idle")));
+    client.ok("/give coal_ore 2");
+    client.pump_until(|c| count(c, coal) == 2);
+    use_at(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0 && c.chat.iter().any(|(_, t)| t.contains("Put in 2")));
+    // Ore in hand goes into the crusher, which works it on the boiler's steam.
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_at(&mut client, crusher);
+    client.pump_until(|c| count(c, ore) == 0 && c.chat.iter().any(|(_, t)| t.contains("making")));
+    // With an empty hand, what it made comes out: two dust from one ore.
+    let started = client.server_tick;
+    while count(&client, dust) == 0 {
+        assert!(server_seconds(&client, started) < 30, "the crusher made nothing: {:?}", client.chat);
+        wait_server(&mut client, 1);
+        use_at(&mut client, crusher);
+        client.pump_until(|c| !c.chat.is_empty());
+    }
+    assert_eq!(count(&client, dust), 2);
+}
+
+#[test]
+fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
+    let mut client = Client::join();
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in [
+        "/clear",
+        "/fill ~3 ~ ~-1 ~5 ~2 ~1 air",
+        "/fill ~3 ~ ~-1 ~5 ~ ~1 kiln_bricks",
+        "/setblock ~4 ~ ~ crucible",
+        "/setblock ~3 ~1 ~-1 kiln_bricks",
+        "/setblock ~5 ~1 ~-1 kiln_bricks",
+        "/setblock ~3 ~1 ~1 kiln_bricks",
+        "/setblock ~5 ~1 ~1 kiln_bricks",
+        "/give copper_dust 2",
+        "/skill engineering 20",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (crucible, dust, ingot) = (blocks.expect("base:crucible"), blocks.expect("base:copper_dust"), blocks.expect("base:copper_ingot"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks") && count(c, dust) == 2);
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    client.pump_until(|c| count(c, ingot) == 1 && count(c, dust) == 1);
 }
 
 #[test]
@@ -1302,8 +1460,8 @@ fn species_name(c: &Client, v: &voxmar_protocol::CreatureView) -> String {
 /// Strikes creature `id` until `done`, following it when it runs, for at most `seconds`
 /// of the server's clock.
 fn strike_until(client: &mut Client, id: u32, seconds: u64, done: impl Fn(&Client) -> bool) {
-    let until = client.tick + seconds * TICKS_PER_SECOND as u64;
-    while !done(client) && client.tick < until {
+    let until = client.server_tick + seconds * TICKS_PER_SECOND as u64;
+    while !done(client) && client.server_tick < until {
         if let Some(v) = client.creatures.get(&id) {
             if v.position.distance(client.position) > 2.5 {
                 // It ran: follow it, as a player chasing it would.
@@ -1490,8 +1648,8 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     // Struck by a guard: hurt with a guard in reach of us.
     let struck_by_a_guard = |c: &Client| c.health < full && guards(c).iter().any(|g| g.position.distance(c.position) < 3.0);
     let mut hit = false;
-    let until = client.tick + 60 * TICKS_PER_SECOND as u64;
-    while !hit && client.tick < until {
+    let until = client.server_tick + 60 * TICKS_PER_SECOND as u64;
+    while !hit && client.server_tick < until {
         strike_until(&mut client, villager.id, 1, |_| false);
         hit = struck_by_a_guard(&client);
         bystander.drain();
@@ -1526,13 +1684,827 @@ fn guards_give_up_on_a_player_they_cannot_reach() {
     client.ok("/fill ~ ~ ~ ~ ~3 ~ stone");
     client.ok("/tp ~ ~4 ~");
     let health = client.health;
-    let started = client.tick;
+    let started = client.server_tick;
     let give_up = 8; // people.live.give_up in settlements.ron
     client.pump_ticks((give_up + 6) * TICKS_PER_SECOND as u64, |c| c.creatures.get(&g.id).is_some_and(|v| v.health == max));
     let healed = client.creatures.get(&g.id).is_some_and(|v| v.health == max);
-    assert!(healed, "the guard kept after a player it cannot reach for {} ticks", client.tick - started);
-    assert!(client.tick - started >= (give_up - 1) * TICKS_PER_SECOND as u64, "the guard gave up before trying for {give_up} s");
+    assert!(healed, "the guard kept after a player it cannot reach for {} ticks", client.server_tick - started);
+    assert!(client.server_tick - started >= (give_up - 1) * TICKS_PER_SECOND as u64, "the guard gave up before trying for {give_up} s");
     assert_eq!(client.health, health, "struck up the pillar");
+}
+
+#[test]
+fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
+    let mut client = Client::join();
+    let transformer = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let washer = transformer + IVec3::X;
+    // Boiler and turbine above the transformer (MV in on top), the washer beside it (LV).
+    for line in [
+        "/clear",
+        "/fill ~3 ~ ~-1 ~6 ~1 ~1 air",
+        "/setblock ~3 ~ ~ lv_transformer",
+        "/setblock ~3 ~1 ~ steam_turbine",
+        "/setblock ~4 ~1 ~ boiler",
+        "/setblock ~4 ~ ~ ore_washer",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.world.block(washer) == c.content.blocks.id("base:ore_washer") && c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give coal_ore 4");
+    client.pump_until(|c| count(c, coal) == 4);
+    use_at(&mut client, washer + IVec3::new(0, 1, 0));
+    client.pump_until(|c| count(c, coal) == 0);
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_at(&mut client, washer);
+    client.pump_until(|c| count(c, ore) == 0);
+    // Dry, it waits and says what it needs.
+    let started = client.server_tick;
+    loop {
+        assert!(server_seconds(&client, started) < 20, "the washer never said it needs water: {:?}", client.chat);
+        wait_server(&mut client, 1);
+        use_at(&mut client, washer);
+        client.pump_until(|c| !c.chat.is_empty());
+        if client.chat.iter().any(|(_, t)| t.contains("needs water")) {
+            break;
+        }
+    }
+    // `/machine` tells the same.
+    assert!(client.ok("/machine ~4 ~ ~").contains("needs water"));
+    // Water beside it: three dust for the one ore.
+    client.ok("/setblock ~5 ~ ~ water");
+    let started = client.server_tick;
+    while count(&client, dust) < 3 {
+        assert!(server_seconds(&client, started) < 40, "the washer made {} dust: {:?}", count(&client, dust), client.chat);
+        wait_server(&mut client, 1);
+        use_at(&mut client, washer);
+        client.pump_until(|c| !c.chat.is_empty());
+    }
+    assert_eq!(count(&client, dust), 3);
+}
+
+#[test]
+fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom() {
+    let mut client = Client::join();
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~3 ~ ~-1 ~8 ~2 ~3 air", "/setblock ~4 ~ ~ bloomery"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (ore, coal, bloom) = (blocks.expect("base:iron_ore"), blocks.expect("base:coal_ore"), blocks.expect("base:iron_bloom"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.world.block(core) == c.content.blocks.id("base:bloomery") && c.inventory.slots.iter().all(Option::is_none));
+    // Alone, the bloomery says what its structure needs.
+    use_at(&mut client, core);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("needs kiln bricks")));
+    // The shaft round it, bellows in its ring, a shaft out to a treadwheel, and an aurochs,
+    // tamed and held, beside the wheel.
+    for line in [
+        "/fill ~3 ~ ~-1 ~5 ~2 ~1 kiln_bricks",
+        "/fill ~4 ~1 ~ ~4 ~2 ~ air",
+        "/setblock ~4 ~ ~ bloomery",
+        "/setblock ~5 ~ ~ bellows",
+        "/setblock ~6 ~ ~ shaft",
+        "/setblock ~7 ~ ~ treadwheel",
+        "/summon aurochs 1 ~7 ~ ~2",
+        "/creatures tame aurochs",
+        "/creatures hold aurochs",
+        "/give iron_ore 2",
+        "/give coal_ore 1",
+    ] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(core + IVec3::X) == c.content.blocks.id("base:bellows") && count(c, ore) == 2 && count(c, coal) == 1);
+    use_at(&mut client, core);
+    client.pump_until(|c| count(c, ore) == 0);
+    // The coal is in the next slot now selected... put it in from wherever it lies.
+    client.ok("/clear");
+    client.ok("/give coal_ore 1");
+    client.pump_until(|c| count(c, coal) == 1 && c.inventory.get(0).is_some_and(|s| s.item == coal));
+    use_at(&mut client, core);
+    client.pump_until(|c| count(c, coal) == 0 && c.chat.iter().any(|(_, t)| t.contains("making")));
+    client.ok("/clear");
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+    // Twenty seconds of work at the bellows: an empty hand takes the bloom.
+    let started = client.server_tick;
+    while count(&client, bloom) == 0 {
+        if server_seconds(&client, started) > 60 {
+            let wheel = client.ok("/machine ~7 ~ ~");
+            panic!("the bloomery made no bloom: {:?}; the wheel: {wheel}", client.chat);
+        }
+        wait_server(&mut client, 1);
+        use_at(&mut client, core);
+        client.pump_until(|c| !c.chat.is_empty());
+    }
+    assert_eq!(count(&client, bloom), 1);
+    // One animal walks one wheel: a second wheel beside it, farther from the aurochs, stays
+    // still while the first turns.
+    client.ok("/setblock ~8 ~ ~ treadwheel");
+    let started = client.server_tick;
+    while !client.ok("/machine ~8 ~ ~").contains("needs a kept animal") {
+        assert!(server_seconds(&client, started) < 10, "one aurochs walks two wheels");
+        wait_server(&mut client, 1);
+    }
+    assert!(!client.ok("/machine ~7 ~ ~").contains("needs a kept animal"), "the nearer wheel still turns");
+    // The aurochs, kept, can be taken away again; then the wheel stops.
+    assert!(client.ok("/creatures remove aurochs").contains("for 1 creature within"));
+    let started = client.server_tick;
+    while !client.ok("/machine ~7 ~ ~").contains("needs a kept animal") {
+        assert!(server_seconds(&client, started) < 10, "the wheel still turns without its aurochs");
+        wait_server(&mut client, 1);
+    }
+}
+
+#[test]
+fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two_ingots_an_ore() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    // The coke oven: a chamber of kiln bricks three on a side round a hollow middle, the
+    // oven in the middle of its south face.
+    let oven = start + IVec3::new(-3, 1, 3);
+    // The blast furnace: the bloomery's ring four high, bellows in it, blown by an aurochs
+    // on a treadwheel out east.
+    let furnace = start + IVec3::new(4, 0, 0);
+    for line in [
+        "/clear",
+        "/fill ~-5 ~ ~ ~8 ~4 ~5 air",
+        "/fill ~-4 ~ ~1 ~-2 ~2 ~3 kiln_bricks",
+        "/setblock ~-3 ~1 ~2 air",
+        "/setblock ~-3 ~1 ~3 coke_oven",
+        "/fill ~3 ~ ~-1 ~5 ~3 ~1 kiln_bricks",
+        "/fill ~4 ~1 ~ ~4 ~3 ~ air",
+        "/setblock ~4 ~ ~ blast_furnace",
+        "/setblock ~5 ~ ~ bellows",
+        "/setblock ~6 ~ ~ shaft",
+        "/setblock ~7 ~ ~ treadwheel",
+        "/summon aurochs 1 ~7 ~ ~2",
+        "/creatures tame aurochs",
+        "/creatures hold aurochs",
+        "/give coal_ore 1",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, coke, ore, ingot) = (blocks.expect("base:coal_ore"), blocks.expect("base:coke"), blocks.expect("base:iron_ore"), blocks.expect("base:iron_ingot"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| count(c, coal) == 1 && c.world.block(oven) == c.content.blocks.id("base:coke_oven") && c.world.block(furnace + IVec3::X) == c.content.blocks.id("base:bellows"));
+    // The coal goes in, and the oven bakes it by its own heat.
+    use_machine(&mut client, oven);
+    client.pump_until(|c| count(c, coal) == 0);
+    machine_says(&mut client, &format!("{} {} {}", oven.x, oven.y, oven.z), "making Coke", 10);
+    // Taken out once baked (each `/seed` answer comes after the server dealt with the take).
+    let started = client.server_tick;
+    while count(&client, coke) == 0 {
+        assert!(server_seconds(&client, started) < 60, "the coke oven baked no coke: {}", client.ok(&format!("/machine {} {} {}", oven.x, oven.y, oven.z)));
+        wait_server(&mut client, 1);
+        use_machine(&mut client, oven);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, coke), 1);
+    // Two ore and the coke into the blast furnace: four ingots.
+    client.ok("/give iron_ore 2");
+    client.pump_until(|c| count(c, ore) == 2);
+    for item in [ore, coke] {
+        let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == item)).expect("held") as u8;
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: furnace, face: Face::NegX });
+        client.pump_until(|c| count(c, item) == 0);
+    }
+    let started = client.server_tick;
+    while count(&client, ingot) == 0 {
+        assert!(server_seconds(&client, started) < 60, "the blast furnace made no iron: {}", client.ok(&format!("/machine {} {} {}", furnace.x, furnace.y, furnace.z)));
+        wait_server(&mut client, 1);
+        client.ok("/creatures hold aurochs");
+        use_machine(&mut client, furnace);
+        client.ok("/seed");
+    }
+    assert_eq!(count(&client, ingot), 4, "two ore and a coke, four ingots");
+}
+
+#[test]
+fn a_hopper_feeds_a_crusher_by_conveyor_and_a_chest_above_collects_its_dust() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    let (boiler, hopper) = (start + IVec3::new(4, 0, -1), start + IVec3::new(2, 0, 0));
+    for line in [
+        "/clear",
+        "/fill ~2 ~ ~-1 ~4 ~2 ~1 air",
+        "/setblock ~4 ~ ~-1 boiler",
+        "/setblock ~4 ~ ~ steam_crusher",
+        "/setblock ~3 ~ ~ conveyor",
+        "/setblock ~2 ~ ~ hopper",
+        "/setblock ~4 ~1 ~ chute",
+        "/setblock ~4 ~2 ~ chest",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(start + IVec3::new(4, 2, 0)) == c.content.blocks.id("base:chest"));
+    let conveyor_says = client.ok("/machine ~3 ~ ~");
+    assert!(conveyor_says.contains("moves up to 4 items a second"), "{conveyor_says}");
+    client.ok("/give coal_ore 2");
+    client.pump_until(|c| count(c, coal) == 2);
+    use_at(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0);
+    // Ore put into the hopper rides the conveyor into the crusher; the crusher's dust goes
+    // up the chute into the chest, not back into the hopper.
+    client.ok("/give copper_ore 2");
+    client.pump_until(|c| count(c, ore) == 2);
+    client.earned.clear();
+    use_at(&mut client, hopper);
+    client.pump_until(|c| count(c, ore) == 0 && c.chat.iter().any(|(_, t)| t.contains("Put in 2")));
+    let started = client.server_tick;
+    loop {
+        let chest_says = client.ok("/machine ~4 ~2 ~");
+        if chest_says.contains("holds 4 items") {
+            break;
+        }
+        assert!(server_seconds(&client, started) < 40, "the chest got no dust: {chest_says}; crusher: {}", client.ok("/machine ~4 ~ ~"));
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(client.ok("/machine ~2 ~ ~").contains("holds 0 items"));
+    // A running line earns nothing: Engineering xp is for making and placing its parts.
+    assert!(client.earned.is_empty(), "the running line paid xp: {:?}", client.earned);
+}
+
+/// Right clicks the machine at `at` with what is in the first slot (`base:use_machine`).
+fn use_machine(client: &mut Client, at: IVec3) {
+    client.chat.clear();
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+}
+
+/// Server seconds since `tick`, by the clock it last told.
+fn server_seconds(client: &Client, tick: u64) -> u64 {
+    client.server_tick.saturating_sub(tick) / TICKS_PER_SECOND as u64
+}
+
+/// Waits `seconds` of the server's clock, from the next time it tells it.
+fn wait_server(client: &mut Client, seconds: u64) {
+    client.after_ticks(seconds * TICKS_PER_SECOND as u64);
+}
+
+/// Asks `/machine` about a block until its answer contains `want`, or panics after `seconds`
+/// of the server's clock.
+fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> String {
+    let started = client.server_tick;
+    loop {
+        let said = client.ok(&format!("/machine {at}"));
+        if said.contains(want) {
+            return said;
+        }
+        assert!(server_seconds(client, started) < seconds, "/machine {at} never said `{want}`: {said}");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+#[test]
+fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is_kept_aside() {
+    let dir = world_dir("machines");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    for line in ["/clear", &format!("/setblock {at} chest"), "/give copper_ore 5"] {
+        client.ok(line);
+    }
+    let ore = client.content.blocks.expect("base:copper_ore");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == ore && s.count == 5) && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    use_machine(&mut client, chest);
+    machine_says(&mut client, &at, "holds 5 items", 10);
+    drop(client);
+    assert!(std::fs::read_to_string(dir.join("machines.ron")).unwrap().contains("chest"));
+
+    let mut client = Client::join_with(config());
+    machine_says(&mut client, &at, "holds 5 items", 10);
+
+    // Work half done is not done again after a restart.
+    let crusher = chest + IVec3::new(0, 0, 2);
+    let crusher_at = format!("{} {} {}", crusher.x, crusher.y, crusher.z);
+    for line in [
+        "/clear".to_string(),
+        format!("/setblock {} {} {} boiler", crusher.x + 1, crusher.y, crusher.z),
+        format!("/setblock {crusher_at} steam_crusher"),
+        "/give coal_ore 1".to_string(),
+    ] {
+        client.ok(&line);
+    }
+    let coal = client.content.blocks.expect("base:coal_ore");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == coal) && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    use_machine(&mut client, crusher + IVec3::X);
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give iron_ore 1");
+    client.pump_until(|c| c.inventory.slots.iter().any(Option::is_some));
+    use_machine(&mut client, crusher);
+    let progress = |said: &str| said.split(", ").find_map(|part| part.strip_suffix("% done")).and_then(|p| p.trim_end_matches('.').parse::<u32>().ok());
+    let started = client.server_tick;
+    let done = loop {
+        let said = client.ok(&format!("/machine {crusher_at}"));
+        if let Some(done) = progress(&said).filter(|&p| p >= 40) {
+            break done;
+        }
+        assert!(server_seconds(&client, started) < 20, "the crusher never got going: {said}");
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    drop(client);
+    let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
+    assert!(save.contains("base:iron_dust"), "the save keeps the work: {save}");
+    let mut client = Client::join_with(config());
+    // Until its first step it says it is idle; then it goes on from where it was.
+    let said = machine_says(&mut client, &crusher_at, "making", 20);
+    assert!(progress(&said).is_some_and(|p| p >= done), "the crusher began again: {said}, was {done}% done");
+    // Finished, the one ore made two dust: not two lots of it, nor none. The limit is the
+    // server's time with no progress: a crowded test machine runs the server slow.
+    let (mut moved, mut last) = (client.server_tick, progress(&said));
+    loop {
+        let said = client.ok(&format!("/machine {crusher_at}"));
+        if said.contains("idle") {
+            break;
+        }
+        if progress(&said) != last {
+            (moved, last) = (client.server_tick, progress(&said));
+        }
+        assert!(server_seconds(&client, moved) < 20, "the crusher stopped after the restart: {said}");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    let dust = client.content.blocks.expect("base:iron_dust");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == dust).map(|s| s.count as u32).sum::<u32>();
+    use_machine(&mut client, crusher);
+    client.pump_until(|c| held(c) > 0);
+    let made = held(&client);
+    assert_eq!(made, 2, "one iron ore crushed across a restart");
+    drop(client);
+
+    // A machines file that cannot be read is kept aside before the next save writes over it,
+    // the server goes on, and the machines standing in saved land join the factory again,
+    // empty.
+    std::fs::write(dir.join("machines.ron"), "not a machine").unwrap();
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
+    client.ok(&format!("/machine {at}"));
+    drop(client);
+    let aside: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().contains("machines.unreadable.")).collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "not a machine");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// How often the server saves on its own (`SAVE_INTERVAL`), in ticks.
+const SAVE_EVERY: u64 = 30 * TICKS_PER_SECOND as u64;
+
+/// The generation of the save in `dir`, from its `world.ron`.
+fn saved_generation(dir: &std::path::Path) -> u64 {
+    let meta = std::fs::read_to_string(dir.join("world.ron")).expect("world.ron");
+    let at = meta.find("generation:").expect("a generation") + "generation:".len();
+    meta[at..].trim_start().split(|c: char| !c.is_ascii_digit()).next().and_then(|n| n.parse().ok()).expect("a number")
+}
+
+/// Waits until the server has finished the loop that handled what was sent before now: a
+/// `/seed` answer, then the next time it tells, sent by a later step of that loop or after.
+fn after_this_loop(client: &mut Client) {
+    client.ok("/seed");
+    let told = client.server_tick;
+    client.pump_until(|c| c.server_tick > told);
+}
+
+#[test]
+fn only_a_joined_player_leaving_saves_the_world() {
+    let dir = world_dir("leavers");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let autosaves = |from: u64, to: u64| (to / SAVE_EVERY).saturating_sub(from.saturating_sub(TICKS_PER_SECOND as u64) / SAVE_EVERY);
+    after_this_loop(&mut client);
+    let (before, from) = (saved_generation(&dir), client.server_tick);
+    // Three connections that close without a hello: none of them is a player leaving.
+    for _ in 0..3 {
+        let (connection, server_side) = local_pair();
+        drop(connection);
+        client._server.as_ref().unwrap().connections().send(server_side).unwrap();
+    }
+    after_this_loop(&mut client);
+    let saves = saved_generation(&dir) - before;
+    assert!(saves <= autosaves(from, client.server_tick), "{saves} saves for connections that never joined");
+    // A player who joined does save the world as they leave.
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    let (before, from) = (saved_generation(&dir), client.server_tick);
+    drop(other);
+    after_this_loop(&mut client);
+    let saves = saved_generation(&dir) - before;
+    assert!(saves >= 1 && saves <= 1 + autosaves(from, client.server_tick), "{saves} saves for a player leaving");
+    drop(client);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() {
+    let dir = world_dir("cut");
+    let config = |cut_saves| ServerConfig { view_distance: 2, world: Some(dir.clone()), cut_saves, ..Default::default() };
+    let mut client = Client::join_with(config(false));
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    for line in ["/clear", &format!("/setblock {at} chest"), "/give iron_ore 64"] {
+        client.ok(line);
+    }
+    let ore = client.content.blocks.expect("base:iron_ore");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| held(c) == 64 && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    drop(client);
+    // The ore goes into the chest, and every save after is cut short once the machines
+    // are written: the chest holding it is saved, the player without it is not.
+    let mut client = Client::join_with(config(true));
+    client.pump_until(|c| held(c) == 64);
+    use_machine(&mut client, chest);
+    client.pump_until(|c| held(c) == 0);
+    machine_says(&mut client, &at, "holds 64 items", 10);
+    drop(client);
+    // The last whole save: the ore in hand, the chest empty. Sixty-four in all.
+    let mut client = Client::join_with(config(false));
+    client.pump_until(|c| held(c) > 0);
+    let said = client.ok(&format!("/machine {at}"));
+    let in_chest = said.split(' ').zip(said.split(' ').skip(1)).find_map(|(n, word)| (word == "items").then(|| n.parse::<u32>().ok()).flatten()).unwrap_or(0);
+    assert_eq!(held(&client) + in_chest, 64, "the player holds {}, the chest: {said}", held(&client));
+    drop(client);
+    assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new(), "the cut save was forgotten");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Files a save staged and left, in the world and its players and columns.
+fn staged_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    [dir.to_path_buf(), dir.join("players"), dir.join("columns")]
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|entries| entries.flatten().map(|e| e.path()))
+        .filter(|p| p.to_string_lossy().ends_with(".new"))
+        .collect()
+}
+
+#[test]
+fn a_save_whose_machines_cannot_be_written_does_not_count_and_leaves_nothing_staged() {
+    let dir = world_dir("failing");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    after_this_loop(&mut client);
+    let before = saved_generation(&dir);
+    // The machines can't be written for the next saves: a directory stands where they go.
+    let blocked: Vec<_> = (before + 1..before + 40).map(|g| dir.join(format!("machines.ron.{g}.new"))).collect();
+    for path in &blocked {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    // A player leaving saves the world, players and all; none of it counts.
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    drop(other);
+    after_this_loop(&mut client);
+    assert_eq!(saved_generation(&dir), before, "a save missing its machines counted");
+    let staged: Vec<_> = staged_files(&dir).into_iter().filter(|p| !blocked.contains(p)).collect();
+    assert!(staged.is_empty(), "the failed save left {staged:?}");
+    // With room again, the next save counts.
+    for path in &blocked {
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    let other = client.another("other");
+    after_this_loop(&mut client);
+    drop(other);
+    after_this_loop(&mut client);
+    assert!(saved_generation(&dir) > before, "the save after counted");
+    drop(client);
+    assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_multiblock_counts_as_built_for_whoever_placed_its_core_not_whoever_uses_it_first() {
+    let dir = world_dir("builder");
+    let mut owner = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let core = owner.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~1 ~ ~-1 ~6 ~2 ~1 air", "/fill ~1 ~-1 ~-1 ~6 ~-1 ~1 stone", "/give bloomery 1"] {
+        owner.ok(line);
+    }
+    let bloomery = owner.content.blocks.expect("base:bloomery");
+    owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == bloomery) && c.world.block(core - IVec3::Y) == c.content.blocks.id("base:stone"));
+    // The core placed by hand on open ground, then the shaft built round it.
+    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.propose("core:place", ActionTarget::Block { block: core - IVec3::Y, face: Face::PosY });
+    owner.pump_until(|c| c.world.block(core) == Some(bloomery));
+    for line in ["/fill ~3 ~ ~-1 ~5 ~2 ~-1 kiln_bricks", "/fill ~3 ~ ~1 ~5 ~2 ~1 kiln_bricks", "/fill ~3 ~ ~ ~3 ~2 ~ kiln_bricks", "/fill ~5 ~1 ~ ~5 ~2 ~ kiln_bricks", "/setblock ~5 ~ ~ bellows"] {
+        owner.ok(line);
+    }
+    owner.pump_until(|c| c.world.block(core + IVec3::X) == c.content.blocks.id("base:bellows"));
+    // Another player uses it first: the build is the owner's.
+    let mut other = owner.another("other");
+    other.pump_until(|c| c.world.block(core) == Some(bloomery));
+    // Empty-handed (its starting kit's first slot holds what a bloomery does not take).
+    let empty = other.inventory.slots.iter().take(9).position(Option::is_none).expect("an empty hotbar slot") as u8;
+    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: empty, flying: false }));
+    other.propose("base:use_machine", ActionTarget::Block { block: core, face: Face::NegX });
+    other.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Bloomery")));
+    drop(other);
+    drop(owner);
+    let read = |name: &str| std::fs::read_to_string(dir.join("players").join(format!("{name}.ron"))).unwrap();
+    assert!(read("test").contains("built:base:bellows_bloomery"), "the owner built it: {}", read("test"));
+    assert!(!read("other").contains("built:"), "the first to use it did not: {}", read("other"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
+    let dir = world_dir("spill");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    client.ok(&format!("/setblock {at} chest"));
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
+    drop(client);
+    // Thirty stacks saved in a chest of twenty-seven slots, as when a package gives it fewer.
+    let stacks = vec![r#"("base:cobblestone",64)"#; 30].join(",");
+    let saved = format!(r#"[(position:({},{},{}),block:"base:chest",inputs:[],outputs:[],fuel:None,burning:0.0,energy:0.0,condition:0.0,made:0,bin:[{stacks}])]"#, chest.x, chest.y, chest.z);
+    std::fs::write(dir.join("machines.ron"), saved).unwrap();
+    let mut client = Client::join_with(config());
+    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
+    let cobblestone = client.content.blocks.expect("base:cobblestone");
+    client.pump_until(|c| c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>() == 3 * 64);
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_broken_chest_drops_what_it_held_and_a_chute_in_hand_is_not_put_in() {
+    let mut client = Client::join();
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    for line in ["/clear", "/setblock ~2 ~ ~ chest", "/give copper_ore 7"] {
+        client.ok(line);
+    }
+    let (ore, chute) = (client.content.blocks.expect("base:copper_ore"), client.content.blocks.expect("base:chute"));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == ore && s.count == 7) && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    use_machine(&mut client, chest);
+    machine_says(&mut client, "~2 ~ ~", "holds 7 items", 10);
+    // A machine in hand is laid against a bin, not put in it.
+    client.ok("/give chute 1");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == chute));
+    use_machine(&mut client, chest);
+    client.ok("/seed");
+    machine_says(&mut client, "~2 ~ ~", "holds 7 items", 5);
+    assert!(client.inventory.slots.iter().flatten().any(|s| s.item == chute), "the chute stays in hand");
+    // Broken, it drops all it held.
+    client.ok("/setblock ~2 ~ ~ air");
+    client.pump_until(|c| c.items.values().filter(|i| i.stack.item == ore).map(|i| i.stack.count as u32).sum::<u32>() == 7);
+}
+
+#[test]
+fn a_water_wheel_turns_on_falling_water_but_not_on_water_poured_out_on_flat_ground() {
+    let mut client = Client::join();
+    for line in ["/clear", "/fill ~2 ~ ~-2 ~6 ~3 ~2 air", "/fill ~2 ~-1 ~-2 ~6 ~-1 ~2 stone", "/setblock ~4 ~ ~ water_wheel", "/setblock ~5 ~ ~ shaft"] {
+        client.ok(line);
+    }
+    // Poured beside it, water spreads but does not run: the wheel stays still.
+    client.ok("/setblock ~3 ~ ~ water");
+    machine_says(&mut client, "~4 ~ ~", "a fall of water", 10);
+    wait_server(&mut client, 2);
+    machine_says(&mut client, "~4 ~ ~", "a fall of water", 5);
+    // Falling past it, from a spring above, it turns.
+    for line in ["/fill ~2 ~ ~-2 ~3 ~2 ~2 air", "/setblock ~3 ~3 ~ water"] {
+        client.ok(line);
+    }
+    let started = client.server_tick;
+    while client.ok("/machine ~4 ~ ~").contains("a fall of water") {
+        assert!(server_seconds(&client, started) < 15, "falling water never turned the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+#[test]
+fn water_wheels_within_four_blocks_of_another_share_its_water_and_both_turn_once_it_moves_away() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    for line in ["/clear", "/fill ~2 ~ ~-2 ~10 ~4 ~2 air", "/fill ~2 ~-1 ~-2 ~10 ~-1 ~2 stone", "/setblock ~3 ~4 ~ water", "/setblock ~4 ~1 ~ water_wheel"] {
+        client.ok(line);
+    }
+    let at = |dx: i32, dz: i32| format!("{} {} {}", start.x + dx, start.y + 1, start.z + dz);
+    // Alone beside the fall it turns: idle, with nothing to drive.
+    machine_says(&mut client, &at(4, 0), "idle", 20);
+    // A second wheel on the same fall shares it, and neither turns.
+    client.ok("/setblock ~2 ~1 ~ water_wheel");
+    machine_says(&mut client, &at(4, 0), "a fall of water", 20);
+    machine_says(&mut client, &at(2, 0), "a fall of water", 20);
+    client.ok("/setblock ~2 ~1 ~ air");
+    machine_says(&mut client, &at(4, 0), "idle", 20);
+    // On a fall of its own four blocks off (the data's `water_spacing`, diagonals too),
+    // it stills the first all the same.
+    client.ok("/setblock ~8 ~4 ~ water");
+    client.ok("/setblock ~8 ~1 ~1 water_wheel");
+    machine_says(&mut client, &at(4, 0), "a fall of water", 20);
+    machine_says(&mut client, &at(8, 1), "a fall of water", 20);
+    // Five blocks off, both turn.
+    client.ok("/setblock ~8 ~1 ~1 air");
+    client.ok("/setblock ~9 ~1 ~ water_wheel");
+    machine_says(&mut client, &at(4, 0), "idle", 20);
+    machine_says(&mut client, &at(9, 0), "idle", 20);
+}
+
+#[test]
+fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_wheel_there() {
+    // A world folder, so edited land is saved and may unload (unsaved land never does).
+    let dir = world_dir("unloaded");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let start = client.position.floor().as_ivec3();
+    let (boiler, crusher) = (start + IVec3::new(3, 0, 0), start + IVec3::new(4, 0, 0));
+    for line in [
+        "/clear",
+        "/fill ~3 ~ ~-1 ~4 ~1 ~1 air",
+        "/setblock ~3 ~ ~ boiler",
+        "/setblock ~4 ~ ~ steam_crusher",
+        "/fill ~2 ~ ~3 ~4 ~1 ~5 air",
+        "/setblock ~3 ~ ~4 treadwheel",
+        "/summon aurochs 1 ~3 ~ ~5",
+        "/creatures tame aurochs",
+        "/creatures hold aurochs",
+        "/give coal_ore 2",
+        "/fill ~2 ~3 ~-6 ~4 ~5 ~-4 air",
+        "/setblock ~3 ~4 ~-5 windmill",
+        "/wind calm 600",
+    ] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    // In calm air the windmill does not turn.
+    let windmill = format!("{} {} {}", start.x + 3, start.y + 4, start.z - 5);
+    machine_says(&mut client, &windmill, "no wind", 20);
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| count(c, coal) == 2 && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    let wheel = format!("{} {} {}", start.x + 3, start.y, start.z + 4);
+    let started = client.server_tick;
+    while client.ok(&format!("/machine {wheel}")).contains("needs a kept animal") {
+        assert!(server_seconds(&client, started) < 10, "the aurochs never walked the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    use_machine(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0);
+    client.ok("/give copper_ore 3");
+    client.pump_until(|c| count(c, ore) == 3);
+    use_machine(&mut client, crusher);
+    client.pump_until(|c| count(c, ore) == 0);
+    // Far away, the land unloads once saved: the crusher works the ore all the same, and
+    // the wheel, its aurochs not about, stops.
+    let at = format!("{} {} {}", crusher.x, crusher.y, crusher.z);
+    client.ok(&format!("/tp {} {}", start.x + 3000, start.z));
+    machine_says(&mut client, &wheel, "needs a kept animal", 60);
+    machine_says(&mut client, &at, "idle", 60);
+    // Unloaded, the windmill is reckoned to catch an average wind (`wind_mean`), not the
+    // calm it was left in.
+    machine_says(&mut client, &windmill, "idle", 20);
+    client.ok(&format!("/tp {} {} {}", start.x, start.y, start.z));
+    client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    use_machine(&mut client, crusher);
+    client.pump_until(|c| count(c, dust) == 6);
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_windmill_within_four_blocks_of_another_is_becalmed_and_both_turn_once_it_moves_away() {
+    let mut client = Client::join();
+    let start = client.position.floor().as_ivec3();
+    for line in ["/clear", "/fill ~3 ~3 ~-2 ~12 ~6 ~5 air", "/wind gale w 30", "/setblock ~3 ~4 ~ windmill"] {
+        client.ok(line);
+    }
+    let at = |dx: i32| format!("{} {} {}", start.x + dx, start.y + 4, start.z);
+    // Alone in a gale it has wind: idle, with nothing to turn (becalmed, it says "no wind").
+    machine_says(&mut client, &at(3), "idle", 20);
+    // Sails four blocks off (the data's `wind_spacing`) steal its wind, and it theirs.
+    client.ok("/setblock ~7 ~4 ~ windmill");
+    machine_says(&mut client, &at(3), "no wind", 20);
+    machine_says(&mut client, &at(7), "no wind", 20);
+    // Four off on both ways (diagonals count), the same.
+    client.ok("/setblock ~7 ~4 ~ air");
+    client.ok("/setblock ~7 ~4 ~4 windmill");
+    machine_says(&mut client, &at(3), "no wind", 20);
+    // Five blocks off, both turn.
+    client.ok("/setblock ~7 ~4 ~4 air");
+    client.ok("/setblock ~8 ~4 ~ windmill");
+    machine_says(&mut client, &at(3), "idle", 20);
+    machine_says(&mut client, &at(8), "idle", 20);
+}
+
+#[test]
+fn a_treadwheel_a_player_placed_is_walked_only_by_their_own_animals() {
+    let config = ServerConfig { view_distance: 2, admins: vec!["other".into()], ..Default::default() };
+    let mut owner = Client::join_with(config);
+    let mut other = owner.another("other");
+    let wheel = owner.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let at = format!("{} {} {}", wheel.x, wheel.y, wheel.z);
+    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/fill ~2 ~-1 ~-1 ~4 ~-1 ~3 stone", "/give treadwheel 1"] {
+        owner.ok(line);
+    }
+    let treadwheel = owner.content.blocks.expect("base:treadwheel");
+    owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel - IVec3::Y) == c.content.blocks.id("base:stone"));
+    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
+    owner.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
+    // Another player's aurochs beside it does not walk it.
+    for line in ["/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+        other.ok(line);
+    }
+    machine_says(&mut owner, &at, "needs a kept animal", 10);
+    wait_server(&mut owner, 3);
+    machine_says(&mut owner, &at, "needs a kept animal", 1);
+    // Their own wheel in its place, it does.
+    owner.ok(&format!("/setblock {at} air"));
+    for line in ["/clear", "/give treadwheel 1"] {
+        other.ok(line);
+    }
+    other.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel).is_some_and(|b| b.is_air()));
+    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    other.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
+    other.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
+    let started = owner.server_tick;
+    while owner.ok(&format!("/machine {at}")).contains("needs a kept animal") {
+        assert!(server_seconds(&owner, started) < 10, "the other player's aurochs never walked their own wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+#[test]
+fn a_full_hopper_leaves_the_stack_in_hand_and_gives_nothing_back() {
+    let mut client = Client::join();
+    let hopper = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    for line in ["/clear", "/setblock ~2 ~ ~ hopper"] {
+        client.ok(line);
+    }
+    let ore = client.content.blocks.expect("base:copper_ore");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(hopper) == c.content.blocks.id("base:hopper"));
+    // Five stacks fill its five slots.
+    for filled in 1..=5 {
+        client.ok("/give copper_ore 64");
+        client.pump_until(|c| held(c) == 64);
+        use_machine(&mut client, hopper);
+        client.pump_until(|c| held(c) == 0);
+        machine_says(&mut client, "~2 ~ ~", &format!("holds {} items", filled * 64), 5);
+    }
+    // A sixth stays in hand, and the hopper keeps what it holds.
+    client.ok("/give copper_ore 64");
+    client.pump_until(|c| held(c) == 64);
+    use_machine(&mut client, hopper);
+    client.ok("/seed");
+    machine_says(&mut client, "~2 ~ ~", "holds 320 items", 5);
+    assert_eq!(held(&client), 64, "the full hopper emptied into the inventory");
+}
+
+#[test]
+fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_it_is_fed() {
+    let mut client = Client::join();
+    let aurochs = client.content.creatures.find("aurochs").expect("aurochs in the content");
+    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/setblock ~3 ~ ~ treadwheel", "/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+        client.ok(line);
+    }
+    let start = client.position.floor().as_ivec3();
+    let wheel = format!("{} {} {}", start.x + 3, start.y, start.z);
+    let turns = |client: &mut Client| !client.ok(&format!("/machine {wheel}")).contains("needs a kept animal");
+    let started = client.server_tick;
+    while !turns(&mut client) {
+        assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    // Three days on, unfed, it will not walk.
+    client.ok("/time add 3d");
+    let said = machine_says(&mut client, &wheel, "fed in the last 2 days", 10);
+    assert!(said.contains("needs a kept animal"), "{said}");
+    // Fed its wheat, it walks again.
+    client.ok("/give wheat 1");
+    let wheat = client.content.blocks.expect("base:wheat");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == wheat) && c.creatures.values().any(|v| v.species == aurochs));
+    let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == aurochs).unwrap();
+    let at = view.position;
+    client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:tend", ActionTarget::Creature(id));
+    client.pump_until(|c| c.inventory.get(0).is_none());
+    let started = client.server_tick;
+    while !turns(&mut client) {
+        assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel");
+        std::thread::sleep(Duration::from_millis(300));
+    }
 }
 
 #[test]
@@ -1548,10 +2520,15 @@ fn a_ripe_crop_above_the_farming_level_refuses_harvest() {
     let earned = client.earned.len();
     client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
     client.propose("base:pick", ActionTarget::Block { block: at, face: Face::PosY });
-    let wait = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > wait);
+    client.settle();
     assert_eq!(client.world.block(at), Some(ripe), "a level 1 farmer harvested Farming 30 tomatoes");
     assert_eq!(client.earned.len(), earned, "no experience for a refused harvest");
+    // Nor by breaking the ground under it, which would take the crop with it.
+    client.propose("core:mine", ActionTarget::Block { block: at - IVec3::Y, face: Face::PosY });
+    client.settle();
+    assert_eq!(client.world.block(at), Some(ripe), "breaking the ground harvested Farming 30 tomatoes");
+    assert_eq!(client.world.block(at - IVec3::Y), client.content.blocks.id("base:farmland"), "the ground under a refused crop broke");
+    assert_eq!(client.earned.len(), earned, "no experience for the ground under a refused harvest");
     // At Farming 30 it comes.
     client.ok("/skill farming 30");
     client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
@@ -1575,9 +2552,223 @@ fn breaking_a_sprout_teaches_nothing_and_sowing_pays_at_harvest() {
         client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
         client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
     }
-    let wait = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > wait);
+    // Each sprout gave its seed back: the four are all there, held or on the ground.
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == seeds).map(|s| s.count as usize).sum::<usize>();
+    client.pump_until(|c| held(c) + c.items.values().filter(|i| i.stack.item == seeds).map(|i| i.stack.count as usize).sum::<usize>() == 4);
+    client.settle();
     assert_eq!(client.earned.len(), earned, "sowing and breaking sprouts paid experience");
+}
+
+#[test]
+fn sowing_where_a_crop_cannot_grow_is_refused_with_why() {
+    let mut client = Client::join();
+    let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    // Rice grows only with water close by: none within reach of this plot.
+    for line in ["/clear", "/skill farming 10", "/give rice 2", "/fill ~-5 ~-3 ~-3 ~5 ~-1 ~7 dirt", "/fill ~ ~-1 ~2 ~ ~-1 ~2 farmland", "/fill ~ ~ ~2 ~ ~1 ~2 air"] {
+        client.ok(line);
+    }
+    let rice = client.content.blocks.expect("base:rice");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == rice) && c.world.block(ground) == c.content.blocks.id("base:farmland"));
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.chat.clear();
+    client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| !c.refused.is_empty());
+    // A refusal, for the interface to show as one, not a console line.
+    let text = client.refused[0].clone();
+    assert!(text.contains("water close by") || text.contains("here for"), "refused sowing said {text:?}");
+    client.settle();
+    assert!(client.chat.is_empty(), "a refused sowing also wrote to the console: {:?}", client.chat);
+    assert_eq!(client.world.block(ground + IVec3::Y), Some(BlockId::AIR), "rice was sown where it cannot grow");
+    assert_eq!(client.inventory.get(0).map(|s| s.count), Some(2), "a refused sowing took the seed");
+}
+
+#[test]
+fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
+    let mut client = Client::join();
+    let feet = client.position.floor().as_ivec3();
+    // A village's field, as the world grows it: unripe potatoes nobody sowed, 28 of them.
+    for line in ["/clear", "/skill farming 12", "/give potato 1", "/fill ~-3 ~-1 ~1 ~3 ~-1 ~4 farmland", "/fill ~-3 ~ ~1 ~3 ~1 ~4 air", "/fill ~-3 ~ ~1 ~3 ~ ~4 potato_crop_1"] {
+        client.ok(line);
+    }
+    let (potato, unripe) = (client.content.blocks.expect("base:potato"), client.content.blocks.expect("base:potato_crop_1"));
+    let field: Vec<IVec3> = (1..=4).flat_map(|dz| (-3..=3).map(move |dx| feet + IVec3::new(dx, 0, dz))).collect();
+    client.pump_until(|c| field.iter().all(|&p| c.world.block(p) == Some(unripe)) && c.inventory.get(0).is_some());
+    let potatoes = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == potato).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == potato).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    for &cell in &field {
+        client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
+        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+    }
+    // About one in seven (`unsown` 0.15): enough to start a field, not 28 potatoes. One
+    // potato a success, so 13 or more is a one-in-13,000 chance.
+    let found = client.quiet(potatoes) - 1;
+    assert!(found <= 12, "a field nobody sowed gave {found} potatoes of {}", field.len());
+    // Ripe, as villages grow them: now and then a harvest, and never its experience.
+    let earned = client.earned.len();
+    let ripe = client.content.blocks.expect("base:potato_crop");
+    client.ok("/fill ~-3 ~ ~1 ~3 ~ ~4 potato_crop");
+    client.pump_until(|c| field.iter().all(|&p| c.world.block(p) == Some(ripe)));
+    let before = client.quiet(potatoes);
+    for &cell in &field {
+        client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
+        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+    }
+    // A harvest (2 to 4 potatoes) a success: about 4 of 28 at 0.15, some 13 potatoes; 41 or
+    // more takes 11 successes or so, under one in 10,000. Every crop would give at least 56.
+    let found = client.quiet(potatoes) - before;
+    assert!(found <= 40, "a ripe field nobody sowed gave {found} potatoes from {} crops", field.len());
+    assert_eq!(client.earned.len(), earned, "harvesting a field nobody sowed paid experience");
+    // One the player sows gives its potato back, every time.
+    let before = client.quiet(potatoes);
+    let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == potato)).unwrap() as u8;
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+    let ground = feet + IVec3::new(0, -1, 1);
+    let sprout = client.content.blocks.expect("base:potato_crop_0");
+    client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    // Sown, and the potato seen gone: block changes go out at once but the inventory only
+    // as the tick ends, so a sprout seen (and broken) within one tick once left the sown
+    // potato showing in hand. When it was the only one (the field's drops not yet picked
+    // up, on a loaded machine), the second sowing then held nothing and was refused.
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && potatoes(c) == before - 1);
+    client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
+    // At least, so a count that overshoots fails on the exact check below, not a timeout.
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR) && potatoes(c) >= before);
+    assert_eq!(client.quiet(potatoes), before, "a sown sprout broken gave other than its potato back");
+    // Sown, grown ripe and harvested: the harvest's experience with the sowing's.
+    let earned = client.earned.len();
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == potato));
+    let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == potato)).unwrap() as u8;
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+    client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout));
+    client.ok("/grow ripe");
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
+    client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
+    let xp = client.content.crops.iter().find(|(_, c)| c.def.name == "base:potato").unwrap().1.def.xp;
+    let paid = ((xp.harvest + xp.plant) * 10.0).round() as u32;
+    client.pump_until(|c| c.earned.len() > earned);
+    assert_eq!(client.earned[earned..], [paid], "a sown potato's harvest paid other than its harvest and sowing");
+}
+
+#[test]
+fn a_wild_ripe_crop_forages_at_its_level_and_a_field_stage_rolls() {
+    let mut client = Client::join();
+    let feet = client.position.floor().as_ivec3();
+    let at = feet + IVec3::new(0, 0, 2);
+    // A ripe tomato nobody sowed, as plants.ron grows them wild: Farming 30.
+    for line in ["/clear", "/skill farming 29", "/fill ~-3 ~-1 ~1 ~3 ~-1 ~4 farmland", "/fill ~-3 ~ ~1 ~3 ~1 ~4 air", "/setblock ~ ~ ~2 tomato_crop"] {
+        client.ok(line);
+    }
+    let (ripe, regrowing, seeds) = {
+        let blocks = &client.content.blocks;
+        (blocks.expect("base:tomato_crop"), blocks.expect("base:tomato_crop_2"), blocks.expect("base:tomato_seeds"))
+    };
+    let tomato = client.content.crops.iter().find(|(_, c)| c.def.name == "base:tomato").unwrap().1.def.clone();
+    let forage_xp = (tomato.xp.forage * 10.0).round() as u32;
+    client.pump_until(|c| c.world.block(at) == Some(ripe));
+    let earned = client.earned.len();
+    // Below its level it is refused, picked or broken: nothing foraged, nothing taught.
+    client.propose("base:pick", ActionTarget::Block { block: at, face: Face::PosY });
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.settle();
+    assert_eq!(client.world.block(at), Some(ripe), "a wild tomato was taken below its level");
+    assert_eq!(client.earned.len(), earned, "a refused wild tomato taught something");
+    // At its level, picked: its forage and exactly the forage's experience, no harvest's
+    // or sowing's.
+    client.ok("/skill farming 30");
+    client.propose("base:pick", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(regrowing));
+    client.settle();
+    assert_eq!(client.earned[earned..], [forage_xp], "a wild tomato paid other than its forage experience");
+    // It grows back, still nobody's, and forages again.
+    client.ok("/grow ripe");
+    client.pump_until(|c| c.world.block(at) == Some(ripe));
+    client.propose("base:pick", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(regrowing));
+    client.settle();
+    assert_eq!(client.earned[earned..], [forage_xp, forage_xp], "a regrown wild tomato paid other than its forage experience");
+    // The last stage a village field grows (never ripe), broken: its seed now and then,
+    // and no experience.
+    client.ok("/fill ~-3 ~ ~1 ~3 ~ ~4 air");
+    let field_stage = &tomato.stages[tomato.stages.len() - 2];
+    client.ok(&format!("/fill ~-3 ~ ~1 ~3 ~ ~4 {}", field_stage.trim_start_matches("base:")));
+    let field: Vec<IVec3> = (1..=4).flat_map(|dz| (-3..=3).map(move |dx| feet + IVec3::new(dx, 0, dz))).collect();
+    client.pump_until(|c| field.iter().all(|&p| c.world.block(p) == Some(regrowing)));
+    let earned = client.earned.len();
+    // Held, in a pouch, or on the ground.
+    let seeds_had = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == seeds).map(|s| s.count as usize).sum::<usize>()
+            + c.inventory.pouched(seeds) as usize
+            + c.items.values().filter(|i| i.stack.item == seeds).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    let before = client.quiet(seeds_had);
+    for &cell in &field {
+        client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
+        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+    }
+    // One seed a success: about 4 of 28 at 0.15; 13 or more is a one-in-13,000 chance.
+    let found = client.quiet(seeds_had).saturating_sub(before);
+    assert!(found <= 12, "a field stage nobody sowed gave {found} seeds from {} crops", field.len());
+    assert_eq!(client.earned.len(), earned, "breaking a field stage nobody sowed paid experience");
+}
+
+#[test]
+fn a_flower_placed_and_broken_on_a_planter_teaches_nothing() {
+    let mut client = Client::join();
+    let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/clear", "/give poppy 3", "/fill ~ ~-1 ~2 ~ ~-1 ~2 herb_planter", "/fill ~ ~ ~2 ~ ~1 ~2 air"] {
+        client.ok(line);
+    }
+    let poppy = client.content.blocks.expect("base:poppy");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == poppy && s.count == 3) && c.world.block(ground) == c.content.blocks.id("base:herb_planter"));
+    let earned = client.earned.len();
+    // Only what the planter grows back pays: placing a flower there and breaking it, over
+    // and over, pays nothing. (Three flowers, as a broken one's drop can roll out of reach.)
+    for _ in 0..3 {
+        client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == poppy));
+        client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+        client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(poppy));
+        client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
+        client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
+    }
+    client.settle();
+    assert_eq!(client.earned.len(), earned, "placing and breaking a flower on a planter paid experience");
+}
+
+#[test]
+fn a_planter_pays_once_for_each_flower_it_grew_back() {
+    let mut client = Client::join();
+    let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/clear", "/give poppy 2", "/fill ~ ~-1 ~2 ~ ~-1 ~2 herb_planter", "/fill ~ ~ ~2 ~ ~1 ~2 air"] {
+        client.ok(line);
+    }
+    let poppy = client.content.blocks.expect("base:poppy");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == poppy && s.count == 2) && c.world.block(ground) == c.content.blocks.id("base:herb_planter"));
+    let earned = client.earned.len();
+    let at = ground + IVec3::Y;
+    // Placed and picked: nothing, but it will grow back in the planter.
+    client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(poppy));
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    client.settle();
+    assert_eq!(client.earned.len(), earned, "picking a placed flower paid experience");
+    // Grown back and picked: the planter's experience for a common flower, once.
+    client.ok("/grow");
+    client.pump_until(|c| c.world.block(at) == Some(poppy));
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR) && c.earned.len() > earned);
+    let planter_xp = (client.content.regrowth.rules.planter_xp.common * 10.0).round() as u32;
+    // Placed again and picked without growing back: nothing more.
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == poppy));
+    client.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(poppy));
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    client.settle();
+    assert_eq!(client.earned[earned..], [planter_xp], "the planter paid other than once for the flower it grew back");
 }
 
 #[test]
@@ -1597,8 +2788,7 @@ fn a_placed_wild_flower_gives_itself_back_and_no_forage() {
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
     // Its plain drop: the flower, and nothing foraged or taught.
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == moonbloom) || c.items.values().any(|i| i.stack.item == moonbloom));
-    let wait = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > wait);
+    client.settle();
     assert_eq!(client.earned.len(), earned, "foraging a placed flower paid experience");
     let seeds = client.content.blocks.expect("base:moonbloom_seeds");
     assert!(!client.items.values().any(|i| i.stack.item == seeds), "a placed flower was foraged for seeds");
@@ -1624,9 +2814,13 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     // The first table also finishes the Crafting Table quest, whose reward (18 Engineering)
     // comes at the next quest check: wait for it, so both grants are counted exactly.
     client.pump_until(|c| c.quests.iter().any(|q| q.name == "base:crafting_table" && q.done));
-    client.ok("/time");
+    client.settle();
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
-    assert_eq!(client.earned[earned..], [80, 180], "one table's Engineering, once, then the quest's reward");
+    let reward = client.content.quests.get("base:crafting_table").unwrap().rewards.iter().find_map(|r| match r {
+        voxmar_engine::quest::Reward::Xp(_, xp) => Some((xp * 10.0).round() as u32),
+        _ => None,
+    });
+    assert_eq!(client.earned[earned..], [80, reward.unwrap()], "one table's Engineering, once, then the quest's reward");
 }
 
 /// A server started on a world another server holds open answers its first player: the
@@ -1667,4 +2861,33 @@ fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
     // Then its meat is on the ground, and the server had run at least the fall by then.
     client.pump_until(|c| c.items.len() > before);
     assert!(ticks(&client) >= asked + fall, "loot seen {} ticks after asking, before the {fall}-tick fall", ticks(&client) - asked);
+}
+
+#[test]
+fn a_kept_animal_whose_species_is_gone_waits_in_the_save() {
+    // A mod turned off took its species away: the animal it gave stays in the save, and
+    // comes back once the species does, rather than being lost.
+    let dir = world_dir("unplaced");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let client = Client::join_with(config());
+    let spawn = client.position;
+    drop(client);
+    // Beside it, a rabbit whose species is here, at spawn: the control that the save was
+    // read and written again, not merely left alone.
+    let path = dir.join("creatures.ron");
+    let kept = |species: &str, seed: u32| {
+        let at = format!("({}, {}, {})", spawn.x, spawn.y, spawn.z);
+        format!("(species: \"{species}\", position: {at}, home: {at}, yaw: 0.0, health: 3, owner: \"test\", seed: {seed}, scale: 1.0, grows_in: None, products_in: [])")
+    };
+    let written = format!("[{}, {}]", kept("lostmod:ghost_cat", 7), kept("base:rabbit", 8));
+    std::fs::write(&path, &written).unwrap();
+    let client = Client::join_with(config());
+    drop(client);
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert_ne!(saved, written, "the save was not written again");
+    assert_eq!(saved.matches("lostmod:ghost_cat").count(), 1, "the waiting animal is in the save once: {saved}");
+    assert_eq!(saved.matches("base:rabbit").count(), 1, "the rabbit is in the save once: {saved}");
+    // The rabbit came back into the world, so it is saved with the genes it was given there.
+    assert_eq!(saved.replace(' ', "").matches("genome:Some").count(), 1, "only the rabbit came back with genes: {saved}");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

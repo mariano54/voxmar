@@ -33,6 +33,11 @@ reach that can hold one always does, its climate ruling no spot out and its next
 spot tried where one cannot be laid out. Where no spot in reach will do (a strip of coast
 under mountains), none is promised. A player never spawns inside a settlement.
 
+No two settlements within `rules.names_apart` (4096) blocks of each other share a name
+(design, draft 81). Names draw from a stream of their own: each square offers a few
+names, takes the first its neighbours in that reach don't also offer, and so needs no
+neighbour planned to know its own.
+
 ## The levers
 
 Every settlement draws five levers, each 0 to 1, and every list entry may lean on them:
@@ -178,7 +183,8 @@ one who did it, and only them; a guard that comes no nearer them for `give_up` s
   so each step is jumped with room overhead.
 - Servers on one world in one process share its generator (`Overworld::shared`), so the
   settlements, trails and rivers round spawn are planned once.
-- Trees and decorations keep out of buildings, lanes and a glade round the houses.
+- Trees and decorations keep out of buildings, lanes and a glade round the houses; a crown
+  that still reaches over a roof is cut back over it and `site.eaves` blocks round it.
 - `Overworld::settlements_near` lists them with their buildings (each with what it is
   in the lists and the work done in it), doors and gates, for gameplay (villagers,
   shops) and maps; `/locate settlement` finds the nearest.

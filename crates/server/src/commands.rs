@@ -17,7 +17,7 @@ use crate::save::GameMode;
 use crate::{Server, load_column, wear};
 
 /// What players call a species: its name in their language, or its own title.
-fn creature_name(def: &voxmar_engine::creature::CreatureDef) -> Words {
+pub(crate) fn creature_name(def: &voxmar_engine::creature::CreatureDef) -> Words {
     Words::Own(voxmar_engine::lang::def_key("creature", &def.name), def.title.clone())
 }
 
@@ -97,6 +97,14 @@ impl Server {
             }
             Source::Console if kind == ChatKind::Error => self.english(&text).lines().for_each(|line| tracing::warn!("{line}")),
             Source::Console => self.english(&text).lines().for_each(|line| tracing::info!("{line}")),
+        }
+    }
+
+    /// Tells `player` that what they tried was refused, and why: the interface shows it
+    /// with its other refusals rather than as a console line.
+    pub(crate) fn refuse(&self, player: PlayerId, why: Words) {
+        if let Some(player) = self.players.get(&player) {
+            player.connection.send(ServerMessage::Refused { why });
         }
     }
 
@@ -183,9 +191,10 @@ impl Server {
             Run::Creatures => match args.first().map(String::as_str) {
                 None => Ok(self.creatures_about(id)),
                 Some(_) if !self.is_admin(id) => Err(Words::key("command.creatures.admins_only")),
-                Some(what) => self.creatures_command(id, what),
+                Some(what) => self.creatures_command(id, what, args.get(1).map(String::as_str)),
             },
             Run::Skill => self.skill_command(id, args),
+            Run::Machine => self.machine_command(id, args),
         };
         let (Ok(text) | Err(text)) = &reply;
         tracing::debug!("/{}: {}", def.short_name(), self.english(text));
@@ -501,6 +510,10 @@ impl Server {
         };
         let mut placed = 0;
         for i in 0..count {
+            // Summoned ones are wild: they leave room for kept animals waiting in the save.
+            if self.wild_room() == 0 {
+                break;
+            }
             let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
             let cell = (at + offset).floor().as_ivec3();
             // Commands may run before the land around a player has loaded (a capture's,
@@ -520,36 +533,55 @@ impl Server {
 
     /// `/creatures tame|ready|hasten`: for admins, the creatures within 8 blocks are tamed
     /// by them, readied to breed, or hastened (products due and young grown now).
-    fn creatures_command(&mut self, id: Source, what: &str) -> Reply {
+    /// With a species named, only creatures of it.
+    fn creatures_command(&mut self, id: Source, what: &str, species: Option<&str>) -> Reply {
         let player = Self::me(id)?;
         let at = self.position_of(id);
         let name = self.players[&player].name.clone();
         let tick = self.tick;
         let mut count = 0;
+        let only = match species {
+            Some(species) => Some(self.content.creatures.find(species).ok_or_else(|| Words::key("command.summon.unknown").with("name", species))?),
+            None => None,
+        };
+        let near = |c: &crate::creatures::Live| c.body.position.distance(at) <= 8.0 && only.is_none_or(|s| c.species == s);
+        if what == "remove" {
+            // Only those the player keeps: a gate step tidies away the animals it summoned.
+            let kept: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.owner_id == Some(player) && near(c)).map(|(&id, _)| id).collect();
+            for &id in &kept {
+                self.creatures.take_away(id);
+            }
+            return Ok(Words::key("command.creatures.done").with("count", Words::text(kept.len())));
+        }
         // Killed outright, as a blow would kill them: their death, their drops.
         if what == "kill" {
             // Never another player's kept animals: only wild ones and the admin's own.
-            let near: Vec<u32> = self
-                .creatures
-                .live
-                .iter()
-                .filter(|(_, c)| c.body.position.distance(at) <= 8.0 && c.owner.as_ref().is_none_or(|owner| *owner == name))
-                .map(|(&id, _)| id)
-                .collect();
-            for &id in &near {
+            let killed: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| near(c) && c.owner.as_ref().is_none_or(|owner| *owner == name)).map(|(&id, _)| id).collect();
+            for &id in &killed {
                 self.creature_dies(id);
             }
-            return Ok(Words::key("command.creatures.done").with("count", Words::text(near.len())));
+            return Ok(Words::key("command.creatures.done").with("count", Words::text(killed.len())));
         }
+        // Taming here keeps to the keeper's cap as feeding does.
+        let kept_each = self.content.creatures.limits().kept_each;
+        let mut kept_room = kept_each.saturating_sub(self.kept_by(&name));
+        if what == "tame" && kept_room == 0 {
+            return Err(Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
+        }
+        let (day, tamed_at) = (self.day, self.content.creatures.condition().tamed);
         let content = &self.content;
-        for creature in self.creatures.live.values_mut().filter(|c| c.body.position.distance(at) <= 8.0) {
+        let mut tamed = Vec::new();
+        for (&id, creature) in self.creatures.live.iter_mut().filter(|(_, c)| near(c)) {
             match what {
+                // Taken in as feeding takes one in: newly tamed, just fed, at home here.
                 // Never a settlement's people: the settlement keeps them, and one tamed
                 // would be saved and come back beside the one it brings out.
-                "tame" if creature.owner.is_none() && content.creatures.get(creature.species).def.kind != voxmar_engine::creature::Kind::Villager => {
+                "tame" if creature.owner.is_none() && kept_room > 0 && content.creatures.get(creature.species).def.kind != voxmar_engine::creature::Kind::Villager => {
+                    kept_room -= 1;
                     creature.owner = Some(name.clone());
                     creature.owner_id = Some(player);
-                    creature.home = creature.body.position;
+                    (creature.condition, creature.reckoned, creature.fed) = (tamed_at, day, day);
+                    tamed.push(id);
                 }
                 "ready" if creature.owner.is_some() && creature.grows_up.is_none() => {
                     creature.ready_until = tick + 30 * voxmar_protocol::TICKS_PER_SECOND as u64;
@@ -577,6 +609,9 @@ impl Server {
             }
             creature.changed = true;
             count += 1;
+        }
+        for id in tamed {
+            self.settle(id);
         }
         Ok(Words::key("command.creatures.done").with("count", Words::text(count)))
     }
@@ -754,6 +789,13 @@ impl Server {
     }
 
     /// The online player called `name`, ignoring case if no name matches exactly.
+    /// `/machine <x> <y> <z>`: how the machine there is doing.
+    fn machine_command(&mut self, source: Source, args: &[String]) -> Reply {
+        let [x, y, z] = args else { return Err(Words::key("command.error.which_block_where")) };
+        let at = self.block_position(source, [x, y, z])?;
+        self.machine_status(at).ok_or_else(|| Words::key("command.machine.none").with("place", format!("{} {} {}", at.x, at.y, at.z)))
+    }
+
     fn set_block_command(&mut self, source: Source, args: &[String]) -> Reply {
         let [x, y, z, name] = args else { return Err(Words::key("command.error.which_block_where")) };
         let at = self.block_position(source, [x, y, z])?;
@@ -919,7 +961,7 @@ impl Server {
 
     /// Loads the columns under a box, so commands can build anywhere, not only where
     /// players have been.
-    fn load_area(&mut self, min: IVec3, max: IVec3) {
+    pub(crate) fn load_area(&mut self, min: IVec3, max: IVec3) {
         let (from, to) = (ColumnPos::of_block(min), ColumnPos::of_block(max));
         for z in from.0.y..=to.0.y {
             for x in from.0.x..=to.0.x {

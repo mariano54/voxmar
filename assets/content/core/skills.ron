@@ -164,7 +164,7 @@
         (
             name: "defence", title: "Defence", description: "Turning blows aside, and wearing armour.",
             guide: [
-                (level: 1, text: "Hide armour; blows you turn aside train it", icon: "hide"),
+                (level: 1, text: "Hide armour; blows you turn aside while you fight back train it", icon: "hide"),
                 (level: 5, text: "Hard leather", icon: "hide"),
                 (level: 10, text: "Copper armour; wolf-pelt cloaks for the cold", icon: "fur"),
                 (level: 15, text: "Bronze armour"),
@@ -254,7 +254,10 @@
             name: "construction", title: "Construction", description: "Your home: the hearth's tiers and the fixtures that give buffs; also dams, rails and bridges.",
             guide: [
                 (category: "hearth", level: 1, text: "Hearth tier 1: bedroll and fire ring", how: "Build the Homestead Hearth and sleep beside it."),
+                (category: "hearth", level: 1, text: "Hearthstone, chimney and pit kiln", how: "Dress cobbles into a hearthstone, cobbles and clay into a chimney, and ring a campfire with cobbles for a pit kiln.", icon: "hearthstone"),
+                (category: "fixtures", level: 3, text: "Herb planter", how: "Planks and dirt: herbs and flowers placed in it grow back.", icon: "herb_planter"),
                 (category: "hearth", level: 5, text: "Hearth tier 2: bed, stove, larder, workbench", how: "Upgrade the hearth; fixtures near it give their buffs."),
+                (category: "fixtures", level: 5, text: "Stone altar", how: "Stone bricks: it will restore prayer and take bones for Magic.", icon: "stone_altar"),
                 (category: "structures", level: 10, text: "Fences, wells and gates", how: "Fences keep animals in; a well waters crops anywhere."),
                 (category: "hearth", level: 15, text: "Hearth tier 3: better fixtures", how: "Better fixtures for a stronger home."),
                 (category: "fixtures", level: 20, text: "Kennel and stable", how: "Homes for your pets and mounts."),
