@@ -947,7 +947,7 @@
                 forest: 0.5,
                 trees: [Name("mangrove", 4.0), Name("palm", 0.5), Name("jungle_bush", 0.5), Name("banana", 0.15)],
                 cover: 0.7, flowers: 0.01,
-                plants: [Name("wild_taro", 1.5), Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("wetland", 1.0), Name("papyrus", 3.0), Tag("forage", 0.02)],
+                plants: [Name("wild_taro", 2.0), Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("wetland", 1.0), Name("papyrus", 3.0), Tag("forage", 0.02)],
             ),
             surface: (
                 rules: [
@@ -1157,7 +1157,7 @@
                 forest: 0.95,
                 trees: [Tag("tropical", 1.0), Name("jungle_bush", 1.2), Name("banana", 1.0), Name("mango", 1.0), Name("avocado", 1.0), Name("cacao", 3.0), Name("orange_tree", 0.4)],
                 cover: 0.8, flowers: 0.014,
-                plants: [Name("wild_taro", 2.2), Tag("grass", 1.0), Tag("fern", 1.2), Name("tall_grass", 0.22), Tag("tropical", 1.0), Name("sugar_cane", 6.0), Tag("forage", 0.02)],
+                plants: [Name("wild_taro", 1.65), Tag("grass", 1.0), Tag("fern", 1.2), Name("tall_grass", 0.22), Tag("tropical", 1.0), Name("sugar_cane", 6.0), Tag("forage", 0.02)],
             ),
             surface: (
                 include: ["soil_slopes"],
