@@ -63,7 +63,7 @@
         (template: "drop", name: "egg", tags: ["egg", "raw", "edible"], all: (color: (240, 228, 200))),
         (template: "drop", name: "fried_egg", tags: ["egg", "cooked", "edible", "heal:2"], all: (color: (250, 220, 120))),
         (template: "drop", name: "milk", tags: ["dairy", "drink", "edible"], all: (color: (245, 245, 240))),
-        // Fish (fishing.ron): raw ones barely fill, cooked ones heal well.
+        // Fish (fishing.ron): raw ones heal 1, cooked ones by the level that cooks them.
         (template: "drop", name: "raw_shrimp", tags: ["fish", "raw", "edible", "seafood"], all: (color: (150, 170, 190))),
         (template: "drop", name: "cooked_shrimp", tags: ["fish", "cooked", "edible", "heal:2", "seafood", "flavour:savoury"], all: (color: (200, 150, 100))),
         (template: "drop", name: "raw_minnow", tags: ["fish", "raw", "edible", "seafood"], all: (color: (150, 170, 190))),
