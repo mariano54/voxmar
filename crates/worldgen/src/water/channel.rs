@@ -99,11 +99,11 @@ impl Edge {
     /// Distance from `p` to the edge's line, where along it (0..1) the nearest point
     /// lies, and the direction of flow there.
     fn nearest(&self, p: Vec2) -> (f32, f32, Vec2) {
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
         if p.abs().cmple(Vec2::splat(1e15)).all() && self.points.iter().all(|q| q.abs().cmple(Vec2::splat(1e15)).all()) {
             // This bound keeps subtraction, both dot products and division finite,
             // even at the minimum denominator. Other values keep the scalar path.
-            // SAFETY: NEON is available on every aarch64 processor; the helper reads
+            // SAFETY: this path requires NEON at compile time; the helper reads
             // only its four-element arrays and performs the same unfused operations.
             let (distances, fractions) = unsafe { nearest_four(&self.points, p) };
             let mut best = (f32::MAX, 0.0, Vec2::X);
@@ -148,7 +148,7 @@ impl Edge {
 
 /// The four segments of one edge, one per lane. Projection and square root retain
 /// their original per-segment arithmetic; the caller still selects in segment order.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 unsafe fn nearest_four(points: &[Vec2; SUB + 1], p: Vec2) -> ([f32; SUB], [f32; SUB]) {
     use std::arch::aarch64::*;
     let ax: [f32; SUB] = std::array::from_fn(|k| points[k].x);
@@ -156,7 +156,7 @@ unsafe fn nearest_four(points: &[Vec2; SUB + 1], p: Vec2) -> ([f32; SUB], [f32; 
     let bx: [f32; SUB] = std::array::from_fn(|k| points[k + 1].x);
     let bz: [f32; SUB] = std::array::from_fn(|k| points[k + 1].y);
     // SAFETY: all loads and stores address four initialized floats. Every vector
-    // operation uses NEON, which is part of this target's architecture.
+    // operation uses NEON, enabled by this helper's target-feature condition.
     unsafe {
         let (ax, az, bx, bz) = (vld1q_f32(ax.as_ptr()), vld1q_f32(az.as_ptr()), vld1q_f32(bx.as_ptr()), vld1q_f32(bz.as_ptr()));
         let (dx, dz) = (vsubq_f32(bx, ax), vsubq_f32(bz, az));

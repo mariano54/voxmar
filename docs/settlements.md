@@ -178,7 +178,7 @@ sample always takes precedence and removes its former false witness. Possible wa
 keeps the original terrain predicate and spoke short-circuit order.
 Batch sealing gathers the same missing cardinal neighbours in first-use order, under
 each requesting centre's exact key, and shares their original geology evaluation.
-On ARM, an edge's four segment projections and distances use four lanes with the
+On ARM with NEON enabled, an edge's four segment projections and distances use four lanes with the
 same unfused arithmetic, followed by the original ordered strict minimum. Bounded
 finite coordinates keep every intermediate finite; unusual values and other
 architectures retain scalar evaluation. The original curve geometry is unchanged.
