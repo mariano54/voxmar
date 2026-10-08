@@ -1226,11 +1226,19 @@ mod tests {
         assert!(gathering > 0 && gathering < flora_low.canopy.len(), "plains' forest has gathering trees and others");
         // A rare herb's biome may sit at any level; its rate stays as design set it.
         let herb = |p: &PlantId| content.plant_tags(&content.plants[p.0 as usize], &registry).any(|t| t == "rare_herb");
-        let home = content.biomes.iter().position(|b| b.flora.plants.iter().any(|s| matches!(s, Select::Name(n, _) if n == "base:windroot"))).expect("windroot grows somewhere");
-        let mut wild = content.clone();
-        wild.biomes[home].level = 9;
-        let wild = Ecology::new(1, &dials, &wild, &registry);
-        let herbs = |e: &Ecology| [&e.flora[home].alone, &e.flora[home].carpet, &e.flora[home].drifts, &e.flora[home].wonder_plants].into_iter().flatten().filter(|(p, _)| herb(p)).copied().collect::<Vec<_>>();
-        assert!(!herbs(&low).is_empty() && herbs(&low) == herbs(&wild), "{:?} against {:?}", herbs(&low), herbs(&wild));
+        for name in ["base:windroot", "base:sky_lotus"] {
+            let home = content.biomes.iter().position(|b| b.flora.plants.iter().any(|s| matches!(s, Select::Name(n, _) if n == name))).expect("rare herb grows somewhere");
+            let mut wild = content.clone();
+            wild.biomes[home].level = 9;
+            let wild = Ecology::new(1, &dials, &wild, &registry);
+            let herbs = |e: &Ecology| {
+                let f = &e.flora[home];
+                [&f.alone, &f.carpet, &f.drifts, &f.wonder_plants, &f.patch_herbs, &f.edge_herbs]
+                    .into_iter().flatten().filter(|(p, _)| herb(p)).copied().collect::<Vec<_>>()
+            };
+            let (a, b) = (herbs(&low), herbs(&wild));
+            assert!(a.iter().any(|(p, _)| low.plant_names[p.0 as usize] == name), "{name} is in its biome's herb pool");
+            assert_eq!(a, b, "{name}'s biome level keeps rare-herb rates");
+        }
     }
 }
