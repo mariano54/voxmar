@@ -1556,6 +1556,19 @@ mod tests {
         }
     }
 
+    /// A trunk never stands over a hole the caves carved under its foot: `surface_open`
+    /// reads noise rather than the carved blocks and can miss the edge of a mouth by a
+    /// column, which left a tree's foot over a pit deeper than a trunk reaches down. Seed
+    /// 22's sinkhole near (319, 2061) had a dark oak standing over its rim.
+    #[test]
+    fn trees_keep_off_the_rims_of_cave_mouths() {
+        let registry = registry();
+        let world = Overworld::new(22, registry.clone());
+        let first = ColumnPos::of_block(IVec3::new(319, 0, 2061)).offset(-2, -2);
+        let floating = floating_wood(&world, &registry, first, 5);
+        assert!(floating.is_empty(), "wood floats at the sinkhole's rim: {floating:?}");
+    }
+
     /// Every trunk, root, stump, fallen log, cactus and mushroom stem rests on the ground,
     /// branches through their trunks: on several seeds, in forests, at cave mouths, ravines
     /// and sinkholes, by rivers and in the biomes of snags and cacti, where carving and

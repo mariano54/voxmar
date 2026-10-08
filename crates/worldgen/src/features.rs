@@ -39,6 +39,9 @@ pub struct Features {
     trees: Trees,
 }
 
+/// The columns around a candidate that must be clear of cave mouths as well.
+const RIM: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
+
 /// A candidate position, before deciding what grows there.
 struct Candidate {
     x: i32,
@@ -88,8 +91,10 @@ impl Features {
         }
         let site = area.sampler.site_on(&geo, x, z, 0, 0.0);
         let roll = rng.unit();
-        // Nothing grows over a cave mouth.
-        if area.caves.surface_open(x, z, &geo) {
+        // Nothing grows over a cave mouth, nor on the rim of one: `surface_open` reads noise
+        // rather than the carved blocks and can miss a mouth's edge by a column, which left a
+        // trunk standing over a pit deeper than its foot reaches down.
+        if area.caves.surface_open(x, z, &geo) || RIM.iter().any(|&(dx, dz)| area.caves.surface_open(x + dx, z + dz, &area.geology.get(x + dx, z + dz))) {
             return None;
         }
         // No tree in or by water near a fall: roots sunk through a river at a waterfall
