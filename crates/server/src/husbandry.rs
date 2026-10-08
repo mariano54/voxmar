@@ -295,18 +295,21 @@ impl Server {
         self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.released").with("creature", what));
     }
 
-    /// Where a ready creature's mate is: another of its kind, ready too, within range.
-    pub(crate) fn mate_for(&self, id: u32) -> Option<Vec3> {
+    /// Where a ready creature's mate is: the nearest other of its kind, ready too, within
+    /// range.
+    pub(crate) fn mate_for(&self, id: u32, neighbours: &crate::creatures::Neighbours) -> Option<Vec3> {
         let creature = self.creatures.live.get(&id)?;
         if creature.ready_until == 0 {
             return None;
         }
         let at = creature.body.position;
-        self.creatures
-            .live
-            .iter()
-            .filter(|(other, c)| **other != id && c.species == creature.species && c.owner.is_some() && c.ready_until > 0 && c.body.position.distance(at) < MATE_RANGE)
-            .map(|(_, c)| c.body.position)
+        neighbours
+            .around(at)
+            .into_iter()
+            .filter(|&other| other != id)
+            .filter_map(|other| self.creatures.live.get(&other))
+            .filter(|c| c.species == creature.species && c.owner.is_some() && c.ready_until > 0 && c.body.position.distance(at) < MATE_RANGE)
+            .map(|c| c.body.position)
             .min_by(|a, b| a.distance(at).total_cmp(&b.distance(at)))
     }
 
@@ -1054,7 +1057,7 @@ mod tests {
         pass(&mut server);
         assert_eq!(server.creatures.live.len(), born, "a let-go hen bred");
         assert!(server.creatures.live[&keeper_hen].ready_until > 0, "a let-go hen took the kept hen's readiness");
-        assert!(server.mate_for(keeper_hen).is_none(), "a let-go hen is a mate");
+        assert!(server.mate_for(keeper_hen, &crate::creatures::Neighbours::of(&server.creatures.live)).is_none(), "a let-go hen is a mate");
     }
 
     #[test]

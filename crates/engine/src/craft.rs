@@ -211,8 +211,10 @@ impl RecipeRegistry {
         let mut recipes = Vec::new();
         let crafting = skills.id("core:crafting");
         for def in defs {
-            // The single item names, for families (`tag:` and `a|b` cells stand apart).
-            let names: Vec<&String> = def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.starts_with("tag:") && !n.contains('|')).collect();
+            // The single item names, for families (`tag:` and `a|b` cells stand apart, and an
+            // empty cell is no item: with it in, no name fits and the family has no recipes).
+            let names: Vec<&String> =
+                def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.is_empty() && !n.starts_with("tag:") && !n.contains('|')).collect();
             let bad = |what: &str| RegistryError(format!("recipe for {}: {what}", def.output));
             if def.pattern.len() > SIDE || def.pattern.iter().any(|row| row.len() > SIDE || row.len() != def.pattern[0].len()) {
                 return Err(bad("a pattern is up to three rows of three"));
@@ -384,6 +386,14 @@ mod tests {
         let wheat = id("wheat");
         assert!(registry.find(&grid(&[&[], &[None, wheat], &[None, None, wheat]])).is_some());
         assert!(registry.find(&grid(&[&[wheat], &[None, None, wheat]])).is_none(), "a wider gap is another shape");
+    }
+
+    #[test]
+    fn a_family_pattern_may_have_empty_cells() {
+        let item = |name: &str| BlockDef { name: name.into(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![item("test:oak_planks"), item("test:birch_planks"), item("test:stick"), item("test:oak_axe"), item("test:birch_axe")]).unwrap();
+        let registry = registry(&blocks, r#"(recipes: [(pattern: [["{name}_planks", "{name}_planks"], ["", "stick"]], output: "{name}_axe")])"#);
+        assert_eq!(registry.len(), 2, "an empty cell is no name to fit");
     }
 
     #[test]

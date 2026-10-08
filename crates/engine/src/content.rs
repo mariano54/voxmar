@@ -74,7 +74,9 @@ pub struct Content {
 
 /// Single-valued data a package may set field by field (Design draft 91): a later
 /// package's fields replace an earlier one's, and the load log names both packages, so a
-/// mod tunes one number without forking base. [`settable!`] declares one.
+/// mod tunes one number without forking base. [`settable!`] declares one. Worldgen's
+/// `layered!` (crates/worldgen/src/content.rs) is the same rule for climate, land and trail
+/// data, with nested structs and named lists; the two should become one.
 pub trait Settable: Copy {
     /// Every field as an option: what one package sets.
     type Set;
