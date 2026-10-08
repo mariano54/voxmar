@@ -2422,6 +2422,7 @@ fn culture_plan_weight_counts_spare_allocations() {
 fn culture_planning_budget() {
     use crate::water::cache::Weigh;
     assert!(!cfg!(debug_assertions), "run this budget with --release");
+    crate::perf::prefer_fast_cores();
     let mut count = 0;
     let mut peak = 0usize;
     let mut times: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
