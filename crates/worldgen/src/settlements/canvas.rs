@@ -54,19 +54,20 @@ impl Canvas {
     /// Every block, sorted into the columns that hold them, in a fixed order.
     pub fn into_columns(self) -> FxHashMap<IVec2, Vec<Voxel>> {
         let mut columns: FxHashMap<IVec2, Vec<Voxel>> = FxHashMap::default();
-        let mut all: Vec<Voxel> = self
+        let all = self
             .absolute
             .into_iter()
             .map(|(pos, put)| Voxel { pos, ground: false, put })
-            .chain(self.grounded.into_iter().map(|(pos, put)| Voxel { pos, ground: true, put }))
-            .collect();
-        // Clearing goes first, then from the bottom up, so what is built is never cleared
-        // and posts fill down onto what is already there.
-        // Each map has one voxel per position, and `ground` distinguishes the maps,
-        // so no keys tie. An unstable sort gives the same order without merge storage.
-        all.sort_unstable_by_key(|v| (v.ground, !matches!(v.put, Put::Clear), v.pos.y, v.pos.x, v.pos.z));
+            .chain(self.grounded.into_iter().map(|(pos, put)| Voxel { pos, ground: true, put }));
         for v in all {
             columns.entry(IVec2::new(v.pos.x, v.pos.z).div_euclid(IVec2::splat(voxmar_engine::coords::CHUNK_SIZE))).or_default().push(v);
+        }
+        // Columns are painted independently, so sort within each without a whole-canvas
+        // vector. Clearing still goes first, then from the bottom up. Each map has one
+        // voxel per position, and `ground` separates the maps: no keys tie, so an unstable
+        // sort gives the original per-column order without merge storage.
+        for voxels in columns.values_mut() {
+            voxels.sort_unstable_by_key(|v| (v.ground, !matches!(v.put, Put::Clear), v.pos.y, v.pos.x, v.pos.z));
         }
         columns
     }
@@ -214,6 +215,10 @@ mod tests {
             }
             let actual = canvas.into_columns();
             assert_eq!(actual, original);
+            assert_eq!(actual.capacity(), original.capacity());
+            for (column, voxels) in &actual {
+                assert_eq!(voxels.capacity(), original[column].capacity(), "retained column capacity must match");
+            }
             assert!(actual.keys().any(|p| p.x < 0) && actual.keys().any(|p| p.x >= 0));
             assert_eq!(actual.values().map(Vec::len).sum::<usize>(), positions.len() * 2);
             if let Some(before) = &previous { assert_eq!(&actual, before, "insertion order must not affect painting"); }
