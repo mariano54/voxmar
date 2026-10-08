@@ -1,0 +1,50 @@
+// How a fight shows on screen (crates/client/src/hud/combat.rs), read and checked at
+// launch. Sizes are interface pixels, colours (red, green, blue) from 0 to 255, times
+// seconds. A later package changes what it gives: the meter or the pips whole, the splats'
+// timings whole, and each splat kind by its own name.
+(
+    // The swing meter under the crosshair, in a `frame` one pixel wide (its pips too): it
+    // fills over the weapon's cooldown, and lights while a blow would be on the beat. The
+    // end a click is held for the beat in is tinted. It shows while blows were traded
+    // within `linger`.
+    meter: (
+        width: 24, height: 3, below: 11,
+        frame: (10, 11, 18), empty: (34, 38, 54), fill: (226, 218, 196), beat: (242, 193, 78), buffer: (112, 94, 58),
+        linger: 3.0,
+    ),
+    // The rhythm pips under it: lit by blows on the beat, all lit (`ready`) when the next
+    // on the beat is a flourish.
+    pips: (size: 3, gap: 2, off: (58, 62, 80), on: (242, 193, 78), ready: (255, 138, 61)),
+    // Hitsplats, as the design wiki's combat feel has them: red for damage, blue for a miss
+    // or a block, green for bleeding, gold for flourishes and counters, a little larger on
+    // the beat. Each shows `seconds`, rising `rise` meanwhile, whole for the first `fade`
+    // of its time and then fading; those on one creature stack upward, newest lowest, `gap`
+    // apart, at most `most` (the oldest goes early); the player's own stand `hurt_above`
+    // over the bottom of the hotbar (which Raise HUD lifts).
+    // `scale` is screen pixels a font pixel, 2 to 6: 4 unless given. Every splat's words are
+    // ringed by two dark font pixels (set in the code, not here) so they read over fur and grass.
+    splats: (
+        seconds: 0.9, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 63,
+        // The player's blows, by kind.
+        blows: {
+            "plain": (color: (255, 90, 74)),
+            "beat": (color: (255, 90, 74), scale: 5),
+            "flourish": (color: (242, 193, 78), scale: 5),
+            "counter": (color: (242, 193, 78), scale: 5),
+            "bleed": (color: (110, 206, 98)),
+        },
+        // Blows at the player, by what came of them (and a blow of the player's that did
+        // nothing, or a hit on the player that did no harm, shows as `missed`).
+        defended: {
+            "hit": (color: (255, 90, 74)),
+            "missed": (color: (104, 168, 255)),
+            "blocked": (color: (104, 168, 255)),
+            "perfect": (color: (104, 168, 255), scale: 5),
+            "dodged": (color: (104, 168, 255)),
+            "evaded": (color: (104, 168, 255)),
+        },
+        // A blow that hurts the player, a block that let some through too, flashes what the
+        // health bar lost in this colour, fading back to the bar's own over `seconds`.
+        flash: (color: (236, 76, 64), seconds: 0.6),
+    ),
+)

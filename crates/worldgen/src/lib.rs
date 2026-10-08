@@ -29,6 +29,7 @@ mod geology;
 mod growth;
 mod hue;
 mod lattice;
+mod levels;
 mod noise;
 mod parallel;
 pub use parallel::set_helper_limit;
@@ -65,6 +66,7 @@ pub use content::{ContentError, Select, WorldContent};
 pub use dials::WorldDials;
 pub use ecology::PlantProperties;
 pub use water::{Body, Cavity, Current, WaterSight};
+pub use levels::{LevelsDef, MAX_LEVEL};
 pub use rarity::{Featured, Rarity, Tier};
 pub use geology::Form;
 pub use rocks::ProvinceId;
@@ -378,6 +380,13 @@ impl Overworld {
         self.biomes.get(self.site(x, z).biome)
     }
 
+    /// The level of the land at (x, z), 1 ..= 10 (`levels`): its home biome's, the biome
+    /// whose land it is, not a river's or the neighbour's dithered in near a border. A
+    /// cave's is `cave_biome_at(pos)`'s `level`.
+    pub fn level_at(&self, x: i32, z: i32) -> u8 {
+        self.biomes.get(self.site(x, z).home).level
+    }
+
     /// The cave biome at `pos`, if one claims it and `pos` is underground. Taken from the
     /// nearest point of the lattice generation picks on; near a border, generation dithers
     /// between it and its neighbours.
@@ -441,6 +450,7 @@ impl Overworld {
             regional.weirdness,
             regional.aether,
             regional.variant,
+            regional.lean,
         ]))
     }
 
@@ -2663,6 +2673,171 @@ mod tests {
                     println!("{p} (d {d}): {} blocks, {high} high, {kinds:?}", cells.len());
                 }
             }
+        }
+    }
+
+    /// The level of the land the picker gives a point, with the lean distance gives it
+    /// there or (`plain`) without, and whether that land is dry (not sea).
+    fn picked_level(world: &Overworld, x: i32, z: i32, plain: bool) -> (u8, bool) {
+        let mut regional = world.geology.climate().regional_at(&world.geology, IVec2::new(x, z));
+        if plain {
+            regional.lean = 0.0;
+        }
+        let biome = world.biomes.get(world.biomes.resolve(&world.point(&regional)));
+        (biome.level, !biome.has_tag("ocean"))
+    }
+
+    /// Far from spawn higher-level biomes are likelier, never certain (P15): on the same
+    /// land 10 to 20 km out, the lean raises the mean level and moves a share of the land
+    /// to a higher-level biome, but most keeps its biome, some far land stays level 1 and
+    /// next to none is pushed down; near the origin next to nothing changes.
+    #[test]
+    fn distance_makes_higher_levels_likelier() {
+        let registry = registry();
+        let (mut far, mut raised, mut lowered, mut sum, mut plain_sum, mut gentle, mut near_moved) = (0, 0, 0, 0u32, 0u32, 0, 0);
+        for seed in 1..=3 {
+            let world = Overworld::new(seed, registry.clone());
+            let mut rng = rng::Rng::new(seed, 0x1e7e1, 0, 0);
+            for _ in 0..1500 {
+                let (angle, distance) = (rng.unit() * std::f32::consts::TAU, 10_000.0 + 10_000.0 * rng.unit());
+                let (x, z) = ((angle.cos() * distance) as i32, (angle.sin() * distance) as i32);
+                let ((leaned, dry), (plain, _)) = (picked_level(&world, x, z, false), picked_level(&world, x, z, true));
+                if !dry {
+                    continue;
+                }
+                far += 1;
+                sum += u32::from(leaned);
+                plain_sum += u32::from(plain);
+                raised += i32::from(leaned > plain);
+                lowered += i32::from(leaned < plain);
+                gentle += i32::from(leaned == 1);
+            }
+            for _ in 0..500 {
+                let (x, z) = (rng.range(-350, 350), rng.range(-350, 350));
+                near_moved += i32::from(picked_level(&world, x, z, false) != picked_level(&world, x, z, true));
+            }
+        }
+        let (mean, plain_mean) = (sum as f32 / far as f32, plain_sum as f32 / far as f32);
+        println!("{far} far samples: mean level {mean:.2} (plain {plain_mean:.2}), {raised} raised, {lowered} lowered, {gentle} at level 1; {near_moved} of 1500 near spawn moved");
+        assert!(near_moved <= 15, "{near_moved} of 1500 points near spawn changed level");
+        assert!(far > 2000 && mean > plain_mean + 0.05, "mean level {mean} against {plain_mean}");
+        // A share of the land, not most of it: the climate still decides first.
+        let share = raised as f32 / far as f32;
+        assert!((0.03..0.4).contains(&share) && gentle > 0, "{share} of far land raised, {gentle} at level 1");
+        assert!(lowered < raised / 4, "{lowered} lowered against {raised} raised");
+    }
+
+    /// The world page's level tables (P15): `cargo test -p voxmar_worldgen level_census --
+    /// --ignored --nocapture` prints each level's multiplier for finds of each rarity, the
+    /// share of each rarity among finds a level-1 pool holds in equal parts by rarity
+    /// class, and over `SEEDS` (default 4) the share of dry land at each level by distance
+    /// from the origin, with the lean and (in brackets) without it.
+    #[test]
+    #[ignore]
+    fn level_census() {
+        use crate::rarity::Tier;
+        let content = WorldContent::base(&registry()).unwrap();
+        let table = &content.climate.levels;
+        let classes = [Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::VeryRare, Rarity::Legendary];
+        println!("level | multiplier: common, uncommon, rare, very rare, legendary | mix of a pool with one of each");
+        for level in 1..=levels::MAX_LEVEL {
+            let m: Vec<f32> = classes.iter().map(|&c| table.finds(level, c)).collect();
+            let rates: Vec<f32> = classes.iter().zip(&m).map(|(&c, m)| levels::capped(c, c.multiplier() * m)).collect();
+            let total: f32 = rates.iter().sum();
+            let mix: Vec<String> = rates.iter().map(|r| format!("{:.2}%", 100.0 * r / total)).collect();
+            println!("{level} | {} | {}", m.iter().map(|m| format!("{m:.2}")).collect::<Vec<_>>().join(", "), mix.join(", "));
+        }
+        let seeds: u64 = std::env::var("SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(4);
+        let rings = [(0.0, 2000.0), (2000.0, 5000.0), (5000.0, 10_000.0), (10_000.0, 15_000.0), (15_000.0, 25_000.0)];
+        let registry = registry();
+        let mut counts = vec![[[0u32; 11]; 2]; rings.len()];
+        for seed in 1..=seeds {
+            let world = Overworld::new(seed, registry.clone());
+            let mut rng = rng::Rng::new(seed, 0xce45, 0, 0);
+            for (r, &(inner, outer)) in rings.iter().enumerate() {
+                for _ in 0..4000 {
+                    let angle = rng.unit() * std::f32::consts::TAU;
+                    let distance = (inner * inner + (outer * outer - inner * inner) * rng.unit()).sqrt();
+                    let (x, z) = ((angle.cos() * distance) as i32, (angle.sin() * distance) as i32);
+                    for plain in [false, true] {
+                        let (level, dry) = picked_level(&world, x, z, plain);
+                        if dry {
+                            counts[r][plain as usize][level as usize] += 1;
+                        }
+                    }
+                }
+            }
+        }
+        println!("km | share of dry land at levels 1 ..= 10, with the lean (without) | mean");
+        for (r, &(inner, outer)) in rings.iter().enumerate() {
+            let [leaned, plain] = &counts[r];
+            let (n, m) = (leaned.iter().sum::<u32>() as f32, plain.iter().sum::<u32>() as f32);
+            let mean = |c: &[u32; 11], n: f32| c.iter().enumerate().map(|(l, &k)| l as f32 * k as f32).sum::<f32>() / n;
+            let cells: Vec<String> = (1..=10).map(|l| format!("{:.1} ({:.1})", 100.0 * leaned[l] as f32 / n, 100.0 * plain[l] as f32 / m)).collect();
+            println!("{}-{} | {} | {:.2} ({:.2})", inner / 1000.0, outer / 1000.0, cells.join(", "), mean(leaned, n), mean(plain, m));
+        }
+    }
+
+    /// The world page's measured finds by level (P15): `cargo test -p voxmar_worldgen
+    /// level_finds -- --ignored --nocapture` sets every biome to each of levels 1, 3, 5, 7
+    /// and 10 in turn (the biome map stays the same, as the lean weighs equal levels alike),
+    /// and counts the small plants the ecology grows on dry land within 256 blocks of
+    /// spawn on seeds 1 and 2, every other block, by rarity class: per 10,000 columns and
+    /// against level 1; and the trees' chances there, by class, as shares of the forest.
+    #[test]
+    #[ignore]
+    fn level_finds() {
+        let registry = registry();
+        let base = WorldContent::base(&registry).unwrap();
+        let mut class_of = rustc_hash::FxHashMap::default();
+        for plant in &base.plants {
+            let block = registry.expect(&plant.block);
+            let class = plant.rarity.unwrap_or_else(|| registry.def(block).rarity);
+            for look in registry.looks(block) {
+                class_of.entry(look.block).or_insert(class);
+            }
+            class_of.entry(block).or_insert(class);
+        }
+        let names = ["common", "uncommon", "rare", "very rare", "legendary"];
+        let mut first = [0f32; 5];
+        println!("level | per 10,000 dry columns: {} | against level 1", names.join(", "));
+        for level in [1u8, 3, 5, 7, 10] {
+            let mut content = base.clone();
+            for biome in &mut content.biomes {
+                biome.level = level;
+            }
+            let (mut counts, mut dry, mut trees) = ([0u32; 5], 0u32, [0f64; 5]);
+            let mut chances = Vec::new();
+            for seed in [1, 2] {
+                let world = Overworld::with_content(seed, registry.clone(), &content);
+                let spawn = world.spawn_estimate();
+                for z in (spawn.y - 256..spawn.y + 256).step_by(2) {
+                    for x in (spawn.x - 256..spawn.x + 256).step_by(2) {
+                        let site = world.site(x, z);
+                        if site.height < site.water {
+                            continue;
+                        }
+                        dry += 1;
+                        if let Some(ecology::Plant::One(b) | ecology::Plant::Tall(b, _) | ecology::Plant::Stack(b, _)) = world.ecology.plant(&site, crate::content::Ground::Soil, x, z) {
+                            counts[class_of.get(&b).map_or(0, |c| *c as usize)] += 1;
+                        }
+                        if (x | z) & 3 == 0 {
+                            world.ecology.tree_chances(&site, None, x, z, &mut chances);
+                            for &(tree, chance) in &chances {
+                                trees[content.trees[tree.0 as usize].rarity as usize] += chance as f64;
+                            }
+                        }
+                    }
+                }
+            }
+            let per: Vec<f32> = counts.iter().map(|&c| 10_000.0 * c as f32 / dry as f32).collect();
+            if level == 1 {
+                first.copy_from_slice(&per);
+            }
+            let against: Vec<String> = per.iter().zip(first).map(|(p, f)| if f > 0.0 { format!("×{:.2}", p / f) } else { "-".into() }).collect();
+            let forest: f64 = trees.iter().sum();
+            let shares: Vec<String> = trees.iter().map(|t| format!("{:.1}%", 100.0 * t / forest)).collect();
+            println!("{level} | {} | {} | trees {}", per.iter().map(|p| format!("{p:.1}")).collect::<Vec<_>>().join(", "), against.join(", "), shares.join(", "));
         }
     }
 

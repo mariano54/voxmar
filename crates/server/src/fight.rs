@@ -222,8 +222,9 @@ impl Server {
         let dodge = self.content.combat.dodge_of(&p.inventory.worn).clone();
         let fighter = self.fights.fighters.entry(player).or_default();
         if !(may && fighter.guarding.dodge(now, &dodge, &feel)) {
-            if let Some(p) = self.players.get(&player) {
-                p.connection.send(ServerMessage::Teleport { position: p.position });
+            // Numbered, as every teleport is, so inputs sent before the client saw it are dropped.
+            if let Some(p) = self.players.get_mut(&player) {
+                p.teleport(p.position);
             }
             return;
         }
@@ -531,7 +532,7 @@ mod tests {
         let mut server = crate::test_server();
         let (client, connection) = voxmar_protocol::local_pair();
         let player = 1;
-        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2);
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
         joined.joined = true;
         let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
         joined.inventory.add(sword, 1);
