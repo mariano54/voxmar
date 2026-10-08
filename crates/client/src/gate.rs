@@ -257,6 +257,9 @@ enum Step {
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
     Merged,
+    /// A player saved under one spelling rejoins with another case and keeps their
+    /// canonical identity in the server's replicated player list.
+    Identity,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
     /// An effect that comes on pops up with its name, and the first look at the inventory
@@ -311,6 +314,8 @@ struct Gate {
     /// Where the player stands on the test ground.
     feet: IVec3,
     observer: Option<Observer>,
+    identity_peer: Option<Observer>,
+    identity_id: Option<PlayerId>,
     /// Shots asked for, and those that arrived.
     requested: Vec<&'static str>,
     shots: Arc<Mutex<FxHashMap<&'static str, Image>>>,
@@ -419,7 +424,7 @@ struct Gate {
     ticks_changed: f32,
     server_stopped: bool,
     /// The step last frame, and the failures by then: a step that fails lets go of every key
-    /// and button (a step that passes may hand one on, as digging hands walking on).
+    /// and button (a step that passes may hand one on).
     last_step: Step,
     failures_then: usize,
     /// The player's health last frame, and whether a death was reported: the session must
@@ -456,6 +461,8 @@ impl Gate {
             settled: 0,
             feet: IVec3::ZERO,
             observer: None,
+            identity_peer: None,
+            identity_id: None,
             requested: Vec::new(),
             shots: default(),
             placed: Vec::new(),
@@ -618,6 +625,7 @@ struct Observer {
     moved: bool,
     /// Where the server says the other players are.
     others: FxHashMap<PlayerId, Vec3>,
+    names: FxHashMap<PlayerId, String>,
     /// The last teleport applied, which its inputs echo.
     teleports: u32,
     /// What the server answered the observer's commands.
@@ -626,11 +634,15 @@ struct Observer {
 
 impl Observer {
     fn join(net: &Net, content: u64) -> Option<Self> {
+        Self::join_named(net, content, "gate-observer")
+    }
+
+    fn join_named(net: &Net, content: u64, name: &str) -> Option<Self> {
         let (connection, server_side) = local_pair();
         net.server()?.connections().send(server_side).ok()?;
-        connection.send(ClientMessage::Hello { name: "gate-observer".into(), protocol: PROTOCOL_VERSION, content, admin_token: None });
+        connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content, admin_token: None });
         connection.send(ClientMessage::Settings { view_distance: 2, fly_speed: 1.0 });
-        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), teleports: 0, replies: Vec::new() })
+        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), names: default(), teleports: 0, replies: Vec::new() })
     }
 
     /// Applies what the server sent, and keeps the observer floating where it was put.
@@ -660,6 +672,7 @@ impl Observer {
                     }
                     ServerMessage::Chat { text, .. } => self.replies.push(text),
                     ServerMessage::Players { players } => {
+                        self.names = players.iter().map(|p| (p.id, p.name.clone())).collect();
                         self.others = players.iter().filter(|p| Some(p.id) != self.id).map(|p| (p.id, p.position)).collect();
                     }
                     _ => {}
@@ -1027,13 +1040,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             smooth(gate, "dig", Step::Dig, None);
             gate.count_before = dropped_count(world, gate);
             look(world, 0.0, 0.0);
-            key(world, KeyCode::KeyW, true);
             gate.next(Step::Collect, now);
         }
         Step::Collect => {
-            if since > 1.0 {
-                key(world, KeyCode::KeyW, false);
-            }
+            key(world, KeyCode::KeyW, since <= 1.0);
             let wanted = gate.count_before + gate.dug.len() as u32;
             let count = dropped_count(world, gate);
             // Breaking pops items out with a random kick, and one from the top block can
@@ -1096,6 +1106,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
+        Step::Identity => identity(world, gate, now),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
@@ -3206,7 +3217,7 @@ fn merged(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let blocks = world.resource::<ClientWorld>().registry.clone();
     let (Some(oregano), Some(herbs)) = (blocks.id("base:oregano"), blocks.id("base:kitchen_herbs")) else {
         gate.check("merged", Err("no oregano or kitchen herbs in the content".into()));
-        gate.next(Step::Effects, now);
+        gate.next(Step::Identity, now);
         return;
     };
     match gate.phase {
@@ -3234,8 +3245,62 @@ fn merged(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         }
         _ => {
             world.resource::<Net>().command("clear kitchen_herbs");
-            gate.next(Step::Effects, now);
+            gate.next(Step::Identity, now);
         }
+    }
+}
+
+fn identity(world: &mut World, gate: &mut Gate, now: f32) {
+    let net = world.resource::<Net>();
+    let content = world.resource::<Launch>().content.fingerprint();
+    let failed = if let Some(peer) = &mut gate.identity_peer { peer.pump().err() } else { None };
+    if let Some(reason) = failed {
+        gate.check("identity", Err(reason));
+        gate.identity_peer = None;
+        gate.next(Step::Effects, now);
+        return;
+    }
+    match gate.phase {
+        0 => {
+            gate.identity_peer = Observer::join_named(net, content, "Gate-Keeper");
+            gate.advance(now);
+        }
+        1 => {
+            if let Some(id) = gate.identity_peer.as_ref().and_then(|p| p.id)
+                && gate.observer.as_ref().is_some_and(|p| p.names.get(&id).is_some_and(|n| n == "Gate-Keeper"))
+            {
+                gate.identity_id = Some(id);
+                // Closing the channel uses the server's normal save-and-leave path.
+                gate.identity_peer = None;
+                gate.advance(now);
+            }
+        }
+        2 => {
+            // A player disappears only after leave saved their state and removed them.
+            if gate.identity_id.is_some_and(|id| gate.observer.as_ref().is_some_and(|p| !p.names.contains_key(&id))) {
+                gate.identity_peer = Observer::join_named(net, content, "GATE-KEEPER");
+                gate.advance(now);
+            }
+        }
+        _ => {
+            if let Some(id) = gate.identity_peer.as_ref().and_then(|p| p.id)
+                && let Some(name) = gate.observer.as_ref().and_then(|p| p.names.get(&id))
+            {
+                gate.check("identity", if name == "Gate-Keeper" {
+                    Ok("GATE-KEEPER rejoined with the saved Gate-Keeper server identity".into())
+                } else {
+                    Err(format!("GATE-KEEPER rejoined as {name}, losing the saved identity"))
+                });
+                gate.identity_peer = None;
+                gate.next(Step::Effects, now);
+                return;
+            }
+        }
+    }
+    if gate.server_in_phase() > UNANSWERED {
+        gate.check("identity", Err(format!("saved-name reconnect did not complete phase {}", gate.phase)));
+        gate.identity_peer = None;
+        gate.next(Step::Effects, now);
     }
 }
 
