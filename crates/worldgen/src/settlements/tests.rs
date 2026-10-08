@@ -2071,6 +2071,19 @@ fn name_ownership_checks_echoes_and_prefixes_in_both_languages() {
         names.first.push(extra);
         assert!(super::plan::check_name_ownership(&def).is_err_and(|e| e.0.contains("different owners")), "prefix alias language {japanese}");
     }
+    let mut def = world.settlements.def.clone();
+    let span = super::plan::name_span(&def);
+    let names = &mut def.cultures.families[0].names;
+    let first = names.first[0].clone();
+    let last = names.last[0].clone();
+    let owner = super::plan::name_owner(&format!("{}{}", first.1, last.1), span);
+    let different = (0..100_000).map(|i| format!("別{i}"))
+        .find(|s| super::plan::name_owner(&format!("{s}{}", last.1), span) != owner).expect("bounded zero-prefix alias");
+    names.first.push((format!("Earlier {}", first.0), different));
+    names.prefixes.push(("Earlier".into(), "前の".into(), 0.0, Default::default()));
+    assert_eq!(names.prefixes.last().unwrap().2, 0.0);
+    assert!(super::plan::check_name_ownership(&def).is_err_and(|e| e.0.contains("different owners")), "selectable last-zero prefix alias must be checked");
+
 }
 
 /// Settling the spawn plans each square in its reach once: the plans made finding the

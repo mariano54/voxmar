@@ -813,7 +813,7 @@ pub(super) fn name_span(def: &SettlementsDef) -> i32 {
 
 pub(super) fn name_owner(reading: &str, span: i32) -> usize {
     let hash = reading.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
-    (mix(hash) % (span as u64 * span as u64)) as usize
+    (mix(hash ^ (NAMING + 1)) % (span as u64 * span as u64)) as usize
 }
 
 /// Validate that every family can name every colour and that equal English names
@@ -846,7 +846,9 @@ pub(super) fn check_name_ownership(def: &SettlementsDef) -> Result<(), crate::co
                 alias((name.clone(), reading.clone()), owner)?;
                 if names.prefix_chance > 0.0 {
                     let joiner = if names.script == Script::Kanji { "" } else { "・" };
-                    for prefix in names.prefixes.iter().filter(|p| p.2 > 0.0) {
+                    // Floating-point subtraction in pick() may fall through to
+                    // the last entry even at zero weight. Validate every variant.
+                    for prefix in &names.prefixes {
                         alias((format!("{} {name}", prefix.0), format!("{}{joiner}{reading}", prefix.1)), owner)?;
                     }
                 }
