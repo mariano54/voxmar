@@ -2948,11 +2948,11 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     fail(world, gate, "recipe lookup: search", "the pickaxe has no visible search cell".into());
                     return;
                 };
-                world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap().normalized = Some(Vec2::splat(0.5));
+                *world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap() = bevy::ui::RelativeCursorPosition { cursor_over: true, normalized: Some(Vec2::ZERO) };
                 world.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
                 world.run_system_cached(crate::hud::creative::read_input).unwrap();
                 world.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
-                world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap().normalized = None;
+                *world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap() = default();
                 gate.advance(now);
             } else if in_phase > 3.0 {
                 fail(world, gate, "recipe lookup: search", format!("\"pick\" found {found:?} (recipe search {recipes_only})"));
@@ -3040,11 +3040,11 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let cell = world.query::<(Entity, &ViewerItem, &InheritedVisibility)>().iter(world)
                 .find(|(_, item, visible)| visible.get() && item.0.0 as u32 == gate.counted).map(|(entity, _, _)| entity);
             let Some(cell) = cell else { return };
-            world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap().normalized = Some(Vec2::splat(0.5));
+            *world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap() = bevy::ui::RelativeCursorPosition { cursor_over: true, normalized: Some(Vec2::ZERO) };
             world.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
             world.run_system_cached(crate::hud::recipes::click).unwrap();
             world.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Right);
-            world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap().normalized = None;
+            *world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap() = default();
             gate.advance(now);
         }
         _ => {
