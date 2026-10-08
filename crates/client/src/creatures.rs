@@ -339,6 +339,52 @@ impl Creatures {
         self.shown.values().filter(|s| s.dying.is_none()).map(|s| &s.view)
     }
 
+    /// The gate checks both eyes in the actual painted skin worn by a summoned shambler.
+    /// None means its body or asynchronous skin has not reached the client yet.
+    pub(crate) fn front_eyes(&self, launch: &Launch, images: &Assets<Image>) -> Option<Result<String, String>> {
+        let species = launch.content.creatures.find("base:shambler")?;
+        let shown = self.shown.values().find(|s| s.view.species == species && s.dying.is_none())?;
+        if shown.painting.is_some() {
+            return None;
+        }
+        let image = images.get(&shown.skin)?;
+        let pixels = image.data.as_ref()?;
+        let body = self.bodies.get(&species)?;
+        let head = shown.joints.iter().map(|(_, p)| p).find(|p| p.role == creature::Role::Head)?;
+        let def = &launch.content.creatures.get(species).def.body;
+        let Some(radius) = def.skin.eye.map(|r| r * def.scale) else {
+            return Some(Err("the front-eye fixture has no skin.eye radius".into()));
+        };
+        let [w, h, d] = body.dims.map(|n| n as usize);
+        let mut eyes = [[0usize; 3]; 2];
+        for (side, counts) in eyes.iter_mut().enumerate() {
+            let sign = if side == 0 { -1.0 } else { 1.0 };
+            let eye = Vec3::new(sign * head.size.x * 0.24, head.size.y * 0.1, -head.size.z * 0.5);
+            for z in 0..d {
+                for y in 0..h {
+                    for x in 0..w {
+                        let at = body.origin + (Vec3::new(x as f32, y as f32, z as f32) + 0.5) / skin::TEXELS;
+                        let local = head.rest.inverse() * (at - head.centre);
+                        let delta = (local - eye).abs();
+                        if delta.x > radius || delta.y > radius || delta.z > 1.0 / skin::TEXELS {
+                            continue;
+                        }
+                        let at = ((z * h + y) * w + x) * 4;
+                        let c = &pixels[at..at + 4];
+                        if c[3] == 0 {
+                            continue;
+                        }
+                        counts[0] += usize::from(c[..3].iter().all(|&v| v > 170) && c[0].abs_diff(c[2]) < 8);
+                        counts[1] += usize::from(c[1] > 140 && c[1] > c[0] && c[2] < 130);
+                        counts[2] += usize::from(c[..3].iter().all(|&v| v < 30));
+                    }
+                }
+            }
+        }
+        let detail = format!("sclera/catchlight, iris, pupil texels on each front eye: {eyes:?}");
+        Some(if eyes.iter().all(|counts| counts.iter().all(|&n| n > 0)) { Ok(detail) } else { Err(detail) })
+    }
+
     /// The box a creature is drawn in, by its species' size and its own scale.
     /// The living creature along a ray from `eye`, within `reach` and nearer than `block`.
     pub fn pointed(&self, launch: &Launch, eye: Vec3, look: Vec3, reach: f32, block: f32) -> Option<u32> {
