@@ -27,7 +27,7 @@ mod sights;
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use voxmar_engine::glam::{IVec2, IVec3, IVec3Swizzles};
+use voxmar_engine::glam::{IVec2, IVec3, Vec3Swizzles};
 
 use self::cache::Cache;
 use self::channel::{Carved, Channels, Span, Style, carve, top_block};

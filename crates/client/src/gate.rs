@@ -5775,6 +5775,7 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !(there && held && shown) {
                 if gate.server_in_phase() > SETTLEMENT_LOAD {
                     gate.check("tarns", Err(format!("the pool at {at} did not load on both peers (there {there}, server {held}, drawn {shown})")));
+                    world.resource_mut::<LocalPlayer>().flying = false;
                     gate.next(Step::Settlements, now);
                 }
                 return;

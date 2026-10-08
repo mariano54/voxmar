@@ -60,7 +60,7 @@ fn generated_water_does_not_move() {
 }
 
 /// Tarns, the small still lakes in high hollows, settle like any other lake: around the
-/// first two small lakes as high as tarns lie in the regions around the alpine meadow
+/// first two pits filled by the tarn rule in the regions around the alpine meadow
 /// nearest the origin, on a few seeds, found afresh.
 #[test]
 fn tarns_do_not_move() {

@@ -2010,7 +2010,8 @@ mod tests {
                     let site = world.site(pit.x, pit.y);
                     let Some(b) = ids.iter().position(|&id| id == site.home) else { continue };
                     let c = country(pit.x, pit.y);
-                    // A small lake this high is a tarn: other small pits are breached, not filled.
+                    // Include existing small high lakes in the bank count as well: snowy
+                    // peaks' own lakes also carry lotus. Only marked tarns enter `sizes`.
                     if cells >= TARN_CELLS || (water as f32) < SEA_LEVEL as f32 + floor {
                         continue;
                     }
@@ -2037,7 +2038,7 @@ mod tests {
                         sizes[b][c].push(wet);
                     }
                     if std::env::var("AT").is_ok() && b < 2 {
-                        println!("  seed {seed}: a tarn of {wet} water blocks across, at {}, {} ({}{})", pit.x, pit.y, names[b], if c == 1 { ", tarn country" } else { "" });
+                        println!("  seed {seed}: a {} of {wet} water blocks across, at {}, {} ({}{})", if is_tarn { "tarn" } else { "high lake" }, pit.x, pit.y, names[b], if c == 1 { ", tarn country" } else { "" });
                     }
                     for z in pit.y - reach..=pit.y + reach {
                         for x in pit.x - reach..=pit.x + reach {

@@ -3,7 +3,7 @@
 //! to look at them without knowing where a seed put them, and gameplay can use it to point
 //! players at them.
 
-use voxmar_engine::glam::{IVec2, IVec3, IVec3Swizzles};
+use voxmar_engine::glam::{IVec2, IVec3, Vec3Swizzles};
 
 use crate::geology::GeoSample;
 use crate::{Body, Overworld, SEA_LEVEL};

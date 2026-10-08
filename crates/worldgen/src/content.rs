@@ -1382,8 +1382,8 @@ pub struct ShapeDef {
 
 /// Tarns: small still lakes in hollows high in the hills, which the stream tier of the
 /// rivers fills where it would otherwise breach a small pit (see `crate::water`). Nothing is
-/// carved for them: the land's own hollows hold them. A later package's replace an earlier
-/// one's.
+/// carved for them: the land's own hollows hold them. A later package's tarn definitions
+/// replace the earlier set.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TarnsDef {

@@ -584,8 +584,10 @@ and routes that failed. `river_sights` prints
 `--pose` arguments for captures of the places water makes near spawn (highland lakes,
 tarns, waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
 `Overworld::water_sights` finds; `tarn_census` (with `SEEDS` and `REGIONS`) counts the tarns
-around mountains and alpine meadows in and out of tarn country, their size, and the share of
-the land that is lake bank; `rare_herb_census` (with `SEEDS`, `CHUNKS`, `PLACES` (up to three far places of each biome a
+around mountains and alpine meadows in and out of tarn country, their visible water area,
+and the share of the land that is lake bank. Existing high lakes and snowy peaks are counted
+separately; `Overworld::locate_tarn` finds a visible pool filled by the tarn rule.
+`rare_herb_census` (with `SEEDS`, `CHUNKS`, `PLACES` (up to three far places of each biome a
 world), or `WILD=a,b` or `WILDTAG=tag` with `WILDBIOMES=a,b` for other plants instead, `AT=1`
 for where the biggest patch of each is) counts the
 rare herbs as generation places them, per million columns of each biome naming them;
