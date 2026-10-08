@@ -3,7 +3,7 @@
 use voxmar_engine::block::{BlockId, Support};
 use voxmar_engine::glam::IVec3;
 use voxmar_engine::lang::Words;
-use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_protocol::{PlayerId, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::save::SavedRegrowing;
@@ -50,10 +50,7 @@ impl Server {
             let level = farming.map_or(1, |skill| self.check_level(agent, skill));
             let needs = regrowth.rules.planter_level.of(rarity) as u8;
             if level < needs {
-                let words = Words::key("farming.planter_needs").with("plant", Words::Block(self.content.blocks.def(plant).name.clone())).with("level", Words::text(needs));
-                if let Some(player) = self.players.get(&agent) {
-                    player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
-                }
+                self.refuse(agent, Words::key("farming.planter_needs").with("plant", Words::Block(self.content.blocks.def(plant).name.clone())).with("level", Words::text(needs)));
                 return;
             }
             // Paid only for what the planter grew back: placing and breaking a plant on

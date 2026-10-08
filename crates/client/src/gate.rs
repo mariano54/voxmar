@@ -204,6 +204,9 @@ enum Step {
     Sky,
     /// A small tree with an apple among its leaves, drawn with its leaf cards and fruit.
     Tree,
+    /// Blocks drawn as shapes (a slab, stairs both ways up, a barrel, a crate and a sack)
+    /// reach the client and draw.
+    Shapes,
     /// Creatures summoned on a pad beside the test ground reach the client and draw.
     Creatures,
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
@@ -229,6 +232,10 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// Rice sown on farmland with no water near is refused by the server, and the refusal
+    /// shows by the hotbar, as a level the player lacks does (the server sends it as a
+    /// refusal, not a console line).
+    Refusal,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
     /// An effect that comes on pops up with its name, and the first look at the inventory
@@ -303,6 +310,8 @@ struct Gate {
     /// it was first lit.
     kiln: IVec3,
     kiln_since: f32,
+    /// Where the shapes step sets its row of shaped blocks: in the air before the player.
+    shapes_row: IVec3,
     /// When (server seconds) the kiln was last asked to light.
     kiln_asked: f32,
     /// The highest the player's feet reached while climbing out of the pool.
@@ -413,6 +422,7 @@ impl Gate {
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
             kiln_since: 0.0,
+            shapes_row: IVec3::ZERO,
             kiln_asked: f32::MIN,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
@@ -967,6 +977,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Overlay => overlay(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
+        Step::Shapes => shapes(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
@@ -977,6 +988,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Settlements => settlements(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
@@ -2138,7 +2150,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::Effects, now);
+        gate.next(Step::Refusal, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -2163,7 +2175,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::Effects, now);
+                gate.next(Step::Refusal, now);
             }
         }
         2 => {
@@ -2198,6 +2210,105 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
+            gate.next(Step::Refusal, now);
+        }
+    }
+}
+
+/// The plot `refusal` sows, on the test ground's dirt within reach of the player and more
+/// than four blocks from its pool (x 3 to 5), so nothing waters it.
+const DRY_PLOT: IVec3 = IVec3::new(-2, -1, 2);
+/// Server seconds the refusal may take to come, inside the step's own limit.
+const REFUSAL_WAIT: f32 = 8.0;
+
+/// Rice (which grows only with water near) sown on a dry plot: the server refuses it and
+/// says why as a refusal, which shows by the hotbar with the others.
+fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    let plot = gate.feet + DRY_PLOT;
+    let rice = world.resource::<ClientWorld>().registry.id("base:rice");
+    let crop = world.resource::<Launch>().content.blocks.id("base:rice_crop");
+    let (Some(rice), Some(crop)) = (rice, crop) else {
+        gate.check("refusal", Err("no rice in the content".into()));
+        gate.next(Step::Effects, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            // Plain dirt round it, so no water the earlier steps left is near.
+            let (low, high) = (plot - IVec3::new(4, 2, 4), plot + IVec3::new(4, 0, 4));
+            for line in [
+                "skill farming 10".to_owned(),
+                "give rice 2".to_owned(),
+                format!("fill {} {} {} {} {} {} dirt", low.x, low.y, low.z, high.x, high.y, high.z),
+                format!("setblock {} {} {} farmland", plot.x, plot.y, plot.z),
+                // Nothing between the eye and the plot (earlier steps place blocks here).
+                format!("fill {} {} {} {} {} {} air", plot.x, plot.y + 1, gate.feet.z, gate.feet.x, plot.y + 3, plot.z),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let farmland = world.resource::<ClientWorld>().registry.id("base:farmland");
+            let tilled = farmland.is_some() && world.resource::<ClientWorld>().block(plot) == farmland;
+            // Rice takes Farming 10: below it the client refuses it itself, for the level.
+            let level = skill_level(world, "core:farming").0 >= 10;
+            match (tilled && level, in_hotbar(world, &mut gate.food_moved, rice)) {
+                (true, Some(slot)) => {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                    gate.advance(now);
+                }
+                _ if gate.server_in_phase() > UNANSWERED => {
+                    gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came")));
+                    gate.next(Step::Effects, now);
+                }
+                (ready, slot) => {
+                    if gate.frames % 120 == 0 {
+                        info!("gate: refusal: farmland {tilled}, Farming 10 {level} (ready {ready}), rice in the hotbar at {slot:?}");
+                    }
+                }
+            }
+        }
+        2 => {
+            // Just under the farmland's top, so the ray meets its top face.
+            aim_at(world, plot.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
+            let name = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                locale.block(launch.content.blocks.def(crop))
+            };
+            let said = world.resource::<crate::hud::skills::SkillToasts>().refusals().find(|why| why.contains(&name)).map(str::to_owned);
+            if let Some(said) = said {
+                mouse(world, MouseButton::Right, false);
+                gate.check("refusal", Ok(format!("sowing rice on a dry plot was refused: \"{said}\"")));
+                gate.advance(now);
+            } else if gate.server_in_phase() > REFUSAL_WAIT {
+                mouse(world, MouseButton::Right, false);
+                let (target, held) = {
+                    let (target, player) = (world.resource::<crate::interact::Target>(), world.resource::<LocalPlayer>());
+                    (target.hit.as_ref().map(|hit| (hit.block - gate.feet, hit.face)), player.inventory.get(player.selected).map(|s| s.item))
+                };
+                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name} (aimed at {target:?} from the feet, holding {held:?})")));
+                gate.advance(now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                if gate.frames % 120 == 0 {
+                    let (target, player, toasts, client) =
+                        (world.resource::<crate::interact::Target>(), world.resource::<LocalPlayer>(), world.resource::<crate::hud::skills::SkillToasts>(), world.resource::<ClientWorld>());
+                    let above = client.block(plot + IVec3::Y).map(|b| client.registry.def(b).name.clone());
+                    info!(
+                        "gate: refusal: aiming at {:?}, holding {:?}, above the plot {above:?}, refusals showing {:?}",
+                        target.hit.as_ref().map(|hit| (hit.block - gate.feet, hit.face)),
+                        player.inventory.get(player.selected).map(|s| s.item),
+                        toasts.refusals().collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+        _ => {
+            let net = world.resource::<Net>();
+            net.command("clear rice");
+            net.command(&format!("setblock {} {} {} dirt", plot.x, plot.y, plot.z));
             gate.next(Step::Effects, now);
         }
     }
@@ -3096,6 +3207,51 @@ fn tree(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the tree barely shows: the view changed by {change:.1} levels")),
             };
             gate.check("tree", result);
+            gate.next(Step::Shapes, now);
+        }
+        _ => {}
+    }
+}
+
+/// Blocks drawn as their shapes, set in a row in the air just in front of the player, clear
+/// of whatever the earlier steps built and seen against the sky: they must reach the
+/// client and change the view.
+fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let blocks = ["oak_slab", "oak_stairs", "oak_stairs_top_east", "oak_slab_top", "barrel", "crate", "sack"];
+    if gate.phase == 0 {
+        gate.shapes_row = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(-3, 3, 4);
+    }
+    let row = gate.shapes_row;
+    let cells: Vec<IVec3> = (0..blocks.len() as i32).map(|i| row + IVec3::X * i).collect();
+    match gate.phase {
+        0 => {
+            aim(world, row + IVec3::new(3, 0, 0));
+            gate.advance(now);
+        }
+        // The view turned to the row first, so only the blocks change it.
+        1 if in_phase > 0.5 => {
+            aim(world, row + IVec3::new(3, 0, 0));
+            if gate.shot(world, "shapes-before").is_some() {
+                for (cell, block) in cells.iter().zip(blocks) {
+                    world.resource::<Net>().command(&format!("setblock {} {} {} {block}", cell.x, cell.y, cell.z));
+                }
+                gate.advance(now);
+            }
+        }
+        2 => {
+            let client = world.resource::<ClientWorld>();
+            let arrived = cells.iter().all(|&cell| client.block(cell).is_some_and(|b| !b.is_air()));
+            if !(arrived && settled(world, row) && in_phase > SETTLE) && gate.server_in_step() < STEP_LIMIT - 1.0 {
+                return;
+            }
+            let Some(shot) = gate.shot(world, "shapes") else { return };
+            let change = gate.earlier_shot("shapes-before").map_or(0.0, |before| change(&before, &shot, 0.25));
+            let result = match (arrived, change >= SCREEN_CHANGE) {
+                (true, true) => Ok(format!("{} shaped blocks drawn, changing the view by {change:.1} levels", blocks.len())),
+                (false, _) => Err("the shaped blocks never reached the client".into()),
+                (true, false) => Err(format!("the shaped blocks barely show: the view changed by {change:.1} levels")),
+            };
+            gate.check("shapes", result);
             gate.next(Step::Creatures, now);
         }
         _ => {}

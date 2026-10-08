@@ -15,6 +15,13 @@ use crate::items::random3;
 /// Rain (or snow) at least this heavy counts as rain for what bites.
 const RAINING: f32 = 0.2;
 
+/// The tags a catch reads where a line is cast: its biome's, and the water's climate from
+/// its temperature, °C. The sea is one biome from pole to equator, and its fish want cold
+/// water or warm.
+fn spot_tags(biome: &[String], temperature: f32, rules: &voxmar_engine::fishing::FishingRules) -> Vec<String> {
+    biome.iter().cloned().chain([rules.water.tag(temperature).to_owned()]).collect()
+}
+
 impl Server {
     /// What the line `agent` cast into the water at `at` brings up.
     pub(crate) fn fish(&mut self, agent: PlayerId, at: IVec3) {
@@ -22,8 +29,8 @@ impl Server {
         let Some(player) = self.players.get(&agent) else { return };
         let level = fishing.skill.map_or(1, |skill| self.check_level(agent, skill));
         let rod = self.content.tools.tool(player.held());
-        let biome = self.overworld.biome_at(at.x, at.z);
-        let tags = biome.tags.clone();
+        let site = self.overworld.site(at.x, at.z);
+        let tags = spot_tags(&self.overworld.biomes().get(site.biome).tags, site.temperature, &fishing.rules);
         let (tick, day) = (self.tick, self.day);
         let raining = self.weather.local(&mut self.temperature, Vec2::new(at.x as f32, at.z as f32), tick, day).weather.precipitation >= RAINING;
         let spot = Spot {
@@ -54,5 +61,43 @@ impl Server {
             self.grant_xp(agent, skill, catch.def.xp);
         }
         self.discover(agent, voxmar_engine::journal::Page::Fish, &catch.def.item, 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use voxmar_engine::fishing::Water;
+
+    /// Every catch bites somewhere: in a biome with the water it wants (salt in the sea),
+    /// with one of its biome tags among those a cast there reads at some temperature from
+    /// −30 to 45 °C. Cod, tuna and swordfish once bit nowhere: the sea is one biome, tagged
+    /// neither cold nor warm, until the water's temperature gave it a climate.
+    #[test]
+    fn every_catch_bites_somewhere() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&dir).unwrap();
+        let world = voxmar_worldgen::WorldContent::load(&content).unwrap();
+        let nowhere: Vec<&str> = content
+            .fishing
+            .iter()
+            .filter(|catch| {
+                let def = &catch.def;
+                !world.biomes.iter().any(|biome| {
+                    let salt = biome.tags.iter().any(|t| t == "ocean");
+                    let water = match def.water {
+                        Water::Any => true,
+                        Water::Salt => salt,
+                        Water::Fresh => !salt,
+                    };
+                    let tagged = |temperature: i32| {
+                        let tags = super::spot_tags(&biome.tags, temperature as f32, &content.fishing.rules);
+                        def.biomes.is_empty() || def.biomes.iter().any(|t| tags.contains(t))
+                    };
+                    water && (-30..=45).any(tagged)
+                })
+            })
+            .map(|catch| catch.def.item.as_str())
+            .collect();
+        assert!(nowhere.is_empty(), "these never bite anywhere: {nowhere:?}");
     }
 }
