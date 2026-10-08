@@ -68,7 +68,7 @@ pub fn food_value(tags: &[String]) -> u8 {
 }
 
 /// What cooked food heals by the level that cooks it: 0.4 × that level, at least 4 (design
-/// drafts 55 and 107). Wonder fruit heals so by the Farming level that picks it.
+/// drafts 55 and 107). Wonder fruit heals 0.4 × the Farming level that picks it, at least 2.
 pub fn cooked_heal(level: u8) -> u8 {
     ((0.4 * level as f32).round() as u8).max(4)
 }

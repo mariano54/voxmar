@@ -1,6 +1,7 @@
-//! Every food heals by the rule (design drafts 55, 63 and 107): cooked food 0.4 × the lowest
-//! level that cooks it, at least 4; wonder fruit the same by the Farming level that picks
-//! it; other fruit and berries 2; anything else edible, raw produce and meat among it, 1.
+//! Every food heals by the rule (design drafts 55, 63 and 107): cooked food 0.4 × the
+//! lowest level that cooks it, at least 4; wonder fruit 0.4 × the Farming level that picks
+//! it, at least 2 (it is a fruit); other fruit and berries 2; anything else edible, raw
+//! produce and meat among it, 1.
 
 use voxmar_engine::block::BlockId;
 use voxmar_engine::content::Content;
@@ -36,7 +37,7 @@ fn every_food_heals_by_its_level() {
         let expected = if let Some(&(_, level)) = cooked.iter().find(|(i, _)| *i == id) {
             cooked_heal(level)
         } else if def.has_tag("wonder") && def.has_tag("fruit") {
-            cooked_heal(picked_at(id).unwrap_or(1))
+            ((0.4 * picked_at(id).unwrap_or(1) as f32).round() as u8).max(2)
         } else if def.has_tag("fruit") || def.has_tag("berry") {
             2
         } else {
