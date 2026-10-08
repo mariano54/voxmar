@@ -100,6 +100,10 @@ pub trait Land: Sync {
         })
     }
 
+    /// Reuse this land's already sampled grid in close-water queries where supported.
+    /// Synthetic implementations keep their original full-grid query behaviour.
+    fn remember_freshwater_grid(&self, _origin: IVec2, _step: i32, _size: i32, _samples: &[GeoSample], _cache: &mut crate::water::Freshwater) {}
+
     /// The `size`×`size` samples `step` blocks apart from `origin`, row by row: the same
     /// as sampling each, but free to share the work.
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {

@@ -654,6 +654,10 @@ impl trails::Land for RiverLand<'_> {
         self.rivers.freshwater_near(self.stages, centre, radius, step, cache)
     }
 
+    fn remember_freshwater_grid(&self, origin: IVec2, step: i32, size: i32, samples: &[GeoSample], cache: &mut water::Freshwater) {
+        self.rivers.remember_freshwater_grid(origin, step, size, samples, cache);
+    }
+
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
         self.rivers.grid(self.stages, origin, step, size)
     }

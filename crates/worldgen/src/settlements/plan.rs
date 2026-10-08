@@ -456,6 +456,7 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         return Vec::new();
     }
     let mut water = crate::water::Freshwater::default();
+    if site.water > 0 { ctx.land.remember_freshwater_grid(first, step, size, &samples, &mut water); }
     let candidates = candidates
         .into_iter()
         .take(if site.water > 0 { tries.saturating_mul(site.look) } else { tries })
@@ -726,11 +727,19 @@ pub(super) const NAME_OFFERS: u32 = 3;
 /// (never "Brookbrook"), or a hamlet's first part and a small word.
 pub(super) fn offered_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, k: u32, small: bool) -> (String, String) {
     let names = &def.cultures.families[list].names;
+    let (first, last) = offered_parts(def, seed, cell, list, k, small);
+    if small { return small_name(names.script, first, last); }
+    (format!("{}{}", first.0, last.0), join_parts(&def.kana, names.script, first, last))
+}
+
+/// Draw the same name parts without constructing an unused reading for a neighbour.
+fn offered_parts(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, k: u32, small: bool) -> (&(String, String), &(String, String)) {
+    let names = &def.cultures.families[list].names;
     let mut rng = Rng::new(seed, NAMING + 1 + (list as u64) * 1024 + k as u64, cell.x, cell.y);
     let first = &names.first[rng.below(names.first.len() as u32) as usize];
     if small {
         let word = &names.small[rng.below(names.small.len() as u32) as usize];
-        return small_name(names.script, first, word);
+        return (first, word);
     }
     let mut last = &names.last[rng.below(names.last.len() as u32) as usize];
     for _ in 0..4 {
@@ -739,7 +748,12 @@ pub(super) fn offered_name(def: &SettlementsDef, seed: u64, cell: IVec2, list: u
         }
         last = &names.last[rng.below(names.last.len() as u32) as usize];
     }
-    (format!("{}{}", first.0, last.0), join_parts(&def.kana, names.script, first, last))
+    (first, last)
+}
+
+fn offered_english(def: &SettlementsDef, seed: u64, cell: IVec2, list: usize, k: u32, small: bool) -> String {
+    let (first, last) = offered_parts(def, seed, cell, list, k, small);
+    if small { format!("{} {}", first.0, last.0) } else { format!("{}{}", first.0, last.0) }
 }
 
 /// A hamlet's name of a first part and a word: "Ash Well", アッシュ・ウェル.
@@ -797,7 +811,7 @@ pub(super) fn unique_name(def: &SettlementsDef, seed: u64, promised: &[IVec2], c
                         if small && def.cultures.families[l].names.small.is_empty() {
                             continue;
                         }
-                        taken.insert(offered_name(def, seed, other, l, k, small).0);
+                        taken.insert(offered_english(def, seed, other, l, k, small));
                     }
                 }
             }

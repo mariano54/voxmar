@@ -152,7 +152,9 @@ to twenty corners per centre before the batch begins. At most 31 later centres i
 matching batch are computed, all within the whole planning interval. Synthetic land
 retains its full-grid fallback. Overlapping close queries share a separate site-local
 memo of up to 16,384 exact centre samples; its own world identity resets it before any
-lookup in a different world. A known freshwater witness can finish the Boolean query
+lookup in a different world. The real river land seeds it with the already sampled
+coarse site grid's exact sealed values; synthetic land keeps its original fallback.
+A known freshwater witness can finish the Boolean query
 without reading earlier pending unknown points. Both memos store only original terrain,
 never grading or occupancy. Lot-clearance checks stop at the first lane point that
 rejects the lot, retaining the same strict and inclusive boundaries. Temporary lanes
@@ -162,6 +164,8 @@ actual rounded samples; their componentwise lower distance can exclude only chun
 whose every point fails the same comparison. Plans retain only the original polylines.
 Layout RNG draws
 for name prefixes stay in place; only the successful layout constructs its final name.
+Neighbour-name collisions compare English names, so those offers draw the same parts
+without constructing unused Japanese readings. Selected names still join both languages.
 Allocator metadata is outside this storage count. Later packages replace only culture rule fields they
 name, preserving the others and reporting which package and field they replaced. Loading
 refuses unknown catalogue names, missing palette blocks, non-finite weights and shifts,

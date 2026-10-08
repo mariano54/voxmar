@@ -606,6 +606,19 @@ impl Rivers {
         }).collect()
     }
 
+    /// Remember the exact sealed values from this river land's coarse site grid.
+    /// Channel bounds of a grid include each centre's halo, so the full GeoSample is
+    /// identical to standalone sampling. No raw column is given different tier keys.
+    pub(crate) fn remember_freshwater_grid(&self, origin: IVec2, step: i32, size: i32, samples: &[GeoSample], cache: &mut Freshwater) {
+        assert!(size > 0 && step > 0 && samples.len() == (size as usize) * (size as usize));
+        if cache.id != self.id { *cache = Freshwater { id: self.id, ..Freshwater::default() }; }
+        if cache.seen.len() + samples.len() > 16_384 { cache.seen.clear(); }
+        for (i, &sample) in samples.iter().take(16_384).enumerate() {
+            let p = origin + IVec2::new(i as i32 % size, i as i32 / size) * step;
+            cache.seen.insert(p, sample);
+        }
+    }
+
     /// The same sampled freshwater test as a full close-look grid. Consume its circle
     /// row by row and stop after a matching batch; no outside-circle centre is needed,
     /// but sealing still reads all four neighbours, including those outside the circle.
@@ -1036,6 +1049,56 @@ mod tests {
         assert_eq!(scratch.id, another.rivers.id);
         assert!(!scratch.columns.contains_key(&(p, wrong_key)));
         assert!(scratch.columns.len() <= 5);
+    }
+
+    #[test]
+    fn freshwater_grid_reuses_exact_samples() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let mut cache = Freshwater::default();
+        for seed in [7, 42, 7] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            for (first, step, size) in [
+                (IVec2::new(-1904, 528), 16, 25),
+                (IVec2::new(-1032, -1032), 4, 9),
+                (IVec2::new(1008, 1008), 4, 9),
+                // Forces grid's >4-region branch, including negative boundaries.
+                (IVec2::new(-1200, -1200), 80, 31),
+            ] {
+                let samples = world.rivers.grid(world.stages(), first, step, size);
+                // Poison a distant value and both scratch types as if an earlier
+                // world used this same cache, then seed it from the actual grid.
+                if cache.id != world.rivers.id {
+                    cache.seen.insert(IVec2::splat(200_000), samples[0]);
+                    world.rivers.sample_cached(world.stages(), first.x, first.y, &mut cache.scratch);
+                    assert!(!cache.scratch.columns.is_empty() && !cache.scratch.tiers.is_empty());
+                    world.rivers.remember_freshwater_grid(first, step, size, &samples, &mut cache);
+                    assert!(!cache.seen.contains_key(&IVec2::splat(200_000)));
+                    assert!(cache.scratch.columns.is_empty() && cache.scratch.tiers.is_empty() && cache.scratch.corners.len() == 0);
+                } else {
+                    world.rivers.remember_freshwater_grid(first, step, size, &samples, &mut cache);
+                }
+                assert_eq!(cache.id, world.rivers.id);
+                profile_queries(true);
+                for (i, &sample) in samples.iter().enumerate() {
+                    let p = first + IVec2::new(i as i32 % size, i as i32 / size) * step;
+                    assert_eq!(sample, world.rivers.sample(world.stages(), p.x, p.y, false), "seed {seed} point {p:?}");
+                    assert_eq!(cache.seen[&p], sample, "complete sealed sample is preserved");
+                    assert_eq!(world.rivers.freshwater_near(world.stages(), p, 0, 1, &mut cache), freshwater(&sample));
+                }
+                let work = query_work().unwrap();
+                profile_queries(false);
+                assert_eq!(work[3], 0, "every seeded wet and dry centre reuses original terrain");
+                assert_eq!(work[6], samples.len());
+            }
+            // An oversized grid retains only bounded storage and resets before
+            // inserting. The retained row prefix must keep the original coordinates.
+            let first = IVec2::splat(300_000);
+            let samples = vec![cache.seen.values().next().copied().unwrap(); 129 * 129];
+            world.rivers.remember_freshwater_grid(first, 1, 129, &samples, &mut cache);
+            assert_eq!(cache.seen.len(), 16_384);
+            assert_eq!(cache.seen[&(first + IVec2::new(16_383 % 129, 16_383 / 129))], samples[16_383]);
+            assert!(!cache.seen.contains_key(&(first + IVec2::new(16_384 % 129, 16_384 / 129))));
+        }
     }
 
     #[test]
