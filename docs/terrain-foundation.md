@@ -346,7 +346,9 @@ surface rules.
 A new content file, `land.ron`, holds the router: the parameter noises (wavelength, the
 weight of each octave, spread, warp) and the derived fields as small expressions, mostly
 nested cubic Hermite splines in the vanilla form (location, value or spline, derivative;
-linear beyond the ends). A later package's `land.ron` replaces an earlier one's. Knot
+linear beyond the ends). A later package's `land.ron` sets only what it names over an
+earlier one's (a noise, warp or field by its name; Design draft 91), and the load log says
+what it replaced. Knot
 locations can name the breakpoints in `climate.ron`, so moving a band edge moves the biome
 and its landform together. A sketch (the built file keeps Tectonic's units, 128 blocks per
 unit, so its values carry over):

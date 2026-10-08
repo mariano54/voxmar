@@ -56,6 +56,107 @@ impl Select {
     }
 }
 
+/// Single-valued data (one climate, one land, one set of trail materials) that a later
+/// package sets field by field (Design draft 91): its file names only what it changes,
+/// which is laid over what the packages before it set, and loading notes which package
+/// replaced which fields. So a mod tunes one number without restating the file.
+/// [`layered!`] declares one.
+trait Layered: Sized {
+    /// Every field as an option: what a later package's file sets.
+    type Set: DeserializeOwned;
+    /// These values as a set of every field, to qualify them as a later package's.
+    fn into_set(self) -> Self::Set;
+    /// Lays `set` over these values, naming each field it set (`scales.aether`, a named
+    /// list's entry as `noises.erosion`) after `path`.
+    fn lay(&mut self, set: Self::Set, path: &str, changed: &mut Vec<String>);
+}
+
+/// Declares `$set` for a [`Layered`] `$whole`: its fields as options, as a later package's
+/// file reads them. `replace` fields are replaced whole; `nested` ones are laid field by
+/// field through their own set; `named` lists of `(name, value)` replace the entries a
+/// package names, in place, and add the ones it adds at the end.
+macro_rules! layered {
+    ($set:ident for $whole:ident {
+        replace { $($field:ident: $ty:ty),* $(,)? }
+        $(nested { $($nfield:ident: $nset:ty),* $(,)? })?
+        $(named { $($lfield:ident: $lty:ty),* $(,)? })?
+    }) => {
+        #[doc = concat!("[`", stringify!($whole), "`] as a later package sets it: only the fields it changes.")]
+        #[derive(Clone, Debug, Default, Deserialize)]
+        #[serde(deny_unknown_fields, default)]
+        pub struct $set {
+            $(pub $field: Option<$ty>,)*
+            $($(pub $nfield: Option<$nset>,)*)?
+            $($(pub $lfield: Option<Vec<(String, $lty)>>,)*)?
+        }
+
+        impl Layered for $whole {
+            type Set = $set;
+
+            fn into_set(self) -> $set {
+                $set {
+                    $($field: Some(self.$field),)*
+                    $($($nfield: Some(self.$nfield.into_set()),)*)?
+                    $($($lfield: Some(self.$lfield),)*)?
+                }
+            }
+
+            fn lay(&mut self, set: $set, path: &str, changed: &mut Vec<String>) {
+                $(
+                    if let Some(value) = set.$field {
+                        self.$field = value;
+                        changed.push(format!("{path}{}", stringify!($field)));
+                    }
+                )*
+                $($(
+                    if let Some(nested) = set.$nfield {
+                        self.$nfield.lay(nested, &format!("{path}{}.", stringify!($nfield)), changed);
+                    }
+                )*)?
+                $($(
+                    for (name, value) in set.$lfield.into_iter().flatten() {
+                        changed.push(format!("{path}{}.{name}", stringify!($lfield)));
+                        match self.$lfield.iter_mut().find(|(n, _)| *n == name) {
+                            Some(entry) => entry.1 = value,
+                            None => self.$lfield.push((name, value)),
+                        }
+                    }
+                )*)?
+            }
+        }
+    };
+}
+
+/// One package's single-valued data, laid over the packages' before it (see [`Layered`]):
+/// the first file read whole (every field it must have), later ones field by field, each
+/// noted. `qualify` names the set's blocks in the package's namespace.
+fn lay_file<T: Layered + DeserializeOwned + Clone>(
+    value: &mut Option<(T, String)>,
+    file: &ContentFile,
+    qualify: impl Fn(&mut T::Set),
+    notes: &mut Vec<String>,
+) -> Result<(), ContentError> {
+    let at = format!("{}/{}", file.package, file.name);
+    match value {
+        None => {
+            let mut whole = parse::<T>(&at, &file.source)?;
+            let mut set = whole.clone().into_set();
+            qualify(&mut set);
+            whole.lay(set, "", &mut Vec::new());
+            *value = Some((whole, file.package.clone()));
+        }
+        Some((whole, by)) => {
+            let mut set = parse::<T::Set>(&at, &file.source)?;
+            qualify(&mut set);
+            let mut changed = Vec::new();
+            whole.lay(set, "", &mut changed);
+            notes.push(format!("{at} replaces the {} {by} set ({})", file.name, changed.join(", ")));
+            *by = file.package.clone();
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------------------
 // climate.ron
 
@@ -87,6 +188,16 @@ pub struct ClimateDef {
     pub humidity: HumidityDef,
     pub frost: FrostDef,
 }
+
+layered!(ClimateSet for ClimateDef {
+    replace { temperature: BandsDef, moisture: BandsDef, continentalness: BandsDef, erosion: BandsDef, remaps: Vec<RemapDef>, zones: f32 }
+    nested { scales: ScalesSet, humidity: HumiditySet, frost: FrostSet }
+});
+layered!(ScalesSet for ScalesDef { replace { anomaly: f32, wetness: f32, weirdness: f32, aether: f32, fertility: f32, variant: f32 } });
+layered!(HumiditySet for HumidityDef { replace { median: f32, spread: f32, wetness: f32, wind: f32, belts: f32 } });
+layered!(FrostSet for FrostDef {
+    replace { snow: String, powder: String, snowy_ground: String, ice: String, thick_ice: String, rare_ice: String, blanket: Vec<BlanketDef> }
+});
 
 /// Wavelengths of the regional climate's own noise fields, in blocks: how large the
 /// regions they shape are.
@@ -704,13 +815,13 @@ impl WoodsDef {
     /// members join a family's, and a wood the package classes the other way (common, or
     /// with a family) is classed its way instead, with a note. A package may not class one
     /// wood both ways.
-    fn add(&mut self, at: &str, package: &str, other: &WoodsDef) -> Result<(), ContentError> {
+    fn add(&mut self, at: &str, package: &str, other: &WoodsDef, notes: &mut Vec<String>) -> Result<(), ContentError> {
         if let Some(wood) = other.common.iter().find(|w| other.families.contains_key(*w)) {
             return Err(ContentError(format!("{at}: `{wood}` is listed both as a common wood and with a family")));
         }
         for wood in &other.common {
             if let Some(family) = self.families.remove(wood) {
-                tracing::info!("{package}/trees.ron makes {wood} a common wood, replacing its family {family:?}");
+                notes.push(format!("{package}/trees.ron makes {wood} a common wood, replacing its family {family:?}"));
             }
             if !self.common.contains(wood) {
                 self.common.push(wood.clone());
@@ -719,7 +830,7 @@ impl WoodsDef {
         for (wood, family) in &other.families {
             if let Some(i) = self.common.iter().position(|w| w == wood) {
                 self.common.remove(i);
-                tracing::info!("{package}/trees.ron gives {wood} a family, replacing it as a common wood");
+                notes.push(format!("{package}/trees.ron gives {wood} a family, replacing it as a common wood"));
             }
             let members = self.families.entry(wood.clone()).or_default();
             for tree in family {
@@ -1239,8 +1350,9 @@ impl ShapeKind {
 // land.ron
 
 /// The land: the large noise fields every position's parameters come from, and the fields
-/// derived from them, ending in the terrain's height (see `crate::router`). A later
-/// package's replaces an earlier one's, since there is only one land.
+/// derived from them, ending in the terrain's height (see `crate::router`). There is only
+/// one land: a later package sets it field by field ([`Layered`]), a noise, warp or field
+/// by its name.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LandDef {
@@ -1264,6 +1376,12 @@ pub struct LandDef {
     pub density: DensityDef,
 }
 
+layered!(LandSet for LandDef {
+    replace { vertical_scale: f32, elevation_boost: f32, ceiling: (f32, f32) }
+    nested { density: DensitySet }
+    named { warps: LandWarpDef, noises: LandNoiseDef, fields: ExprDef }
+});
+
 /// The 3D noise of the land's density.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -1278,6 +1396,8 @@ pub struct DensityDef {
     /// the further rock reaches out over air.
     pub above: f32,
 }
+
+layered!(DensitySet for DensityDef { replace { wavelength: f32, octaves: i32, squash: f32, above: f32 } });
 
 impl Default for DensityDef {
     fn default() -> Self {
@@ -1465,10 +1585,13 @@ pub struct WorldContent {
     pub ores: crate::ores::OresDef,
     /// Settlements (`settlements.ron`).
     pub settlements: crate::settlements::SettlementsDef,
+    /// What loading noticed and allowed, for the log: a later package replacing data an
+    /// earlier one set, and what it replaced.
+    pub notes: Vec<String>,
 }
 
-/// What hiking trails are made of (`trails.ron`); a later package's replaces an earlier
-/// one's.
+/// What hiking trails are made of (`trails.ron`); a later package sets it field by field
+/// ([`Layered`]).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TrailsDef {
@@ -1487,6 +1610,10 @@ pub struct TrailsDef {
     pub cairn: Vec<Select>,
     pub waymarker: Vec<Select>,
 }
+
+layered!(TrailsSet for TrailsDef {
+    replace { laid: TrailsWhere, tread: Vec<TreadDef>, edge: String, bridge: String, log: String, stepping_stone: String, cairn: Vec<Select>, waymarker: Vec<Select> }
+});
 
 /// Where hiking trails are laid.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -1544,15 +1671,17 @@ impl WorldContent {
         Self::from_files(files.iter(), registry)
     }
 
-    /// Parses definition files given in package order. A later package's `climate.ron`
-    /// replaces an earlier one's; other definitions accumulate.
+    /// Parses definition files given in package order. Single-valued data (`climate.ron`,
+    /// `land.ron`, `trails.ron`, the tree and plant densities) a later package sets over an
+    /// earlier one's, field by field, with a note; other definitions accumulate.
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
-        let mut climate = None;
-        let mut trails = None;
-        let mut land = None;
-        let mut tree_density = None;
+        let mut climate: Option<(ClimateDef, String)> = None;
+        let mut trails: Option<(TrailsDef, String)> = None;
+        let mut land: Option<(LandDef, String)> = None;
+        let mut tree_density: Option<(f32, String)> = None;
+        let mut notes = Vec::new();
         let mut woods = WoodsDef::default();
-        let mut plant_density = None;
+        let mut plant_density: Option<(f32, String)> = None;
         let mut plant_density_keeps = Vec::new();
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles, mut shapes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -1565,24 +1694,21 @@ impl WorldContent {
             let at = format!("{}/{}", file.package, file.name);
             let q = |name: &str| qualify(&file.package, name);
             match file.name.as_str() {
-                "climate.ron" => {
-                    let def = parse::<ClimateDef>(&at, &file.source)?;
-                    let f = &def.frost;
-                    let frost = FrostDef {
-                        snow: q(&f.snow),
-                        powder: q(&f.powder),
-                        snowy_ground: q(&f.snowy_ground),
-                        ice: q(&f.ice),
-                        thick_ice: q(&f.thick_ice),
-                        rare_ice: q(&f.rare_ice),
-                        blanket: f
-                            .blanket
-                            .iter()
-                            .map(|b| BlanketDef { covers: qualify_match(&file.package, &b.covers), to: q(&b.to), not: b.not.clone() })
-                            .collect(),
-                    };
-                    climate = Some(ClimateDef { frost, ..def });
-                }
+                "climate.ron" => lay_file(
+                    &mut climate,
+                    file,
+                    |set: &mut ClimateSet| {
+                        if let Some(f) = &mut set.frost {
+                            for name in [&mut f.snow, &mut f.powder, &mut f.snowy_ground, &mut f.ice, &mut f.thick_ice, &mut f.rare_ice].into_iter().flatten() {
+                                *name = q(name);
+                            }
+                            for b in f.blanket.iter_mut().flatten() {
+                                *b = BlanketDef { covers: qualify_match(&file.package, &b.covers), to: q(&b.to), not: b.not.clone() };
+                            }
+                        }
+                    },
+                    &mut notes,
+                )?,
                 "rocks.ron" => provinces.extend(parse::<ProvinceFile>(&at, &file.source)?.provinces.into_iter().map(|p| ProvinceDef {
                     name: q(&p.name),
                     stones: p.stones.iter().map(|s| qualify_select(&file.package, s)).collect(),
@@ -1599,13 +1725,15 @@ impl WorldContent {
                         if !(density > 0.0 && density <= 4.0) {
                             return Err(ContentError(format!("{at}: the tree density {density} is outside (0, 4]")));
                         }
-                        tree_density = Some(density);
+                        if let Some((earlier, by)) = tree_density.replace((density, file.package.clone())) {
+                            notes.push(format!("{at} replaces the tree density {by} set ({earlier} to {density})"));
+                        }
                     }
                     let q = |n: &str| qualify(&file.package, n);
                     woods.add(&at, &file.package, &WoodsDef {
                         common: def.woods.common.iter().map(|n| q(n)).collect(),
                         families: def.woods.families.iter().map(|(wood, family)| (q(wood), family.iter().map(|n| q(n)).collect())).collect(),
-                    })?;
+                    }, &mut notes)?;
                     trees.extend(def.trees.into_iter().map(|t| {
                         TreeDef {
                             name: q(&t.name),
@@ -1627,7 +1755,9 @@ impl WorldContent {
                         if !(density > 0.0 && density <= 4.0) {
                             return Err(ContentError(format!("{at}: the plant density {density} is outside (0, 4]")));
                         }
-                        plant_density = Some(density);
+                        if let Some((earlier, by)) = plant_density.replace((density, file.package.clone())) {
+                            notes.push(format!("{at} replaces the plant density {by} set ({earlier} to {density})"));
+                        }
                     }
                     plant_density_keeps.extend(def.density_keeps.iter().map(|s| match s {
                         Select::Name(n, w) => Select::Name(qualify(&file.package, n), *w),
@@ -1644,7 +1774,7 @@ impl WorldContent {
                     strata: s.strata.iter().map(|n| q(n)).collect(),
                     ..s
                 })),
-                "land.ron" => land = Some(parse::<LandDef>(&at, &file.source)?),
+                "land.ron" => lay_file(&mut land, file, |_: &mut LandSet| {}, &mut notes)?,
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
                 "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
                 // Each crop's level, rarity and stages, so settlements keep to everyday crops
@@ -1678,27 +1808,29 @@ impl WorldContent {
                     name: qualify(&file.package, &set.name),
                     rules: set.rules.into_iter().map(|r| RuleDef { when: r.when, place: qualify_layers(&file.package, r.place) }).collect(),
                 })),
-                "trails.ron" => {
-                    let def = parse::<TrailsDef>(&at, &file.source)?;
-                    let tread = def.tread.iter().map(|t| TreadDef { blocks: t.blocks.iter().map(|s| qualify_select(&file.package, s)).collect(), ..t.clone() }).collect();
-                    let stones = |s: &[Select]| s.iter().map(|s| qualify_select(&file.package, s)).collect();
-                    trails = Some(TrailsDef {
-                        laid: def.laid,
-                        tread,
-                        edge: q(&def.edge),
-                        bridge: q(&def.bridge),
-                        log: q(&def.log),
-                        stepping_stone: q(&def.stepping_stone),
-                        cairn: stones(&def.cairn),
-                        waymarker: stones(&def.waymarker),
-                    });
-                }
+                "trails.ron" => lay_file(
+                    &mut trails,
+                    file,
+                    |set: &mut TrailsSet| {
+                        let stones = |s: &[Select]| s.iter().map(|s| qualify_select(&file.package, s)).collect::<Vec<_>>();
+                        for tread in set.tread.iter_mut().flatten() {
+                            tread.blocks = stones(&tread.blocks);
+                        }
+                        for name in [&mut set.edge, &mut set.bridge, &mut set.log, &mut set.stepping_stone].into_iter().flatten() {
+                            *name = q(name);
+                        }
+                        for list in [&mut set.cairn, &mut set.waymarker].into_iter().flatten() {
+                            *list = stones(list);
+                        }
+                    },
+                    &mut notes,
+                )?,
                 _ => {}
             }
         }
-        let climate = climate.ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
-        let trails = trails.ok_or_else(|| ContentError("no content package defines trails.ron".into()))?;
-        let land = land.ok_or_else(|| ContentError("no content package defines land.ron".into()))?;
+        let climate = climate.map(|(c, _)| c).ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
+        let trails = trails.map(|(t, _)| t).ok_or_else(|| ContentError("no content package defines trails.ron".into()))?;
+        let land = land.map(|(l, _)| l).ok_or_else(|| ContentError("no content package defines land.ron".into()))?;
         let mut biomes = inherit(&raw)?;
         // Shared rule sets come before each biome's own rules.
         for biome in &mut biomes {
@@ -1727,9 +1859,32 @@ impl WorldContent {
             surface.rules = rules;
         }
         let snow_cover = weather.snow_cover().to_vec();
-        let tree_density = tree_density.unwrap_or(1.0);
-        let plant_density = plant_density.unwrap_or(1.0);
-        let content = Self { climate, provinces, biomes, trees, tree_density, woods, plant_density, plant_density_keeps, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements };
+        let tree_density = tree_density.map_or(1.0, |(d, _)| d);
+        let plant_density = plant_density.map_or(1.0, |(d, _)| d);
+        for note in &notes {
+            tracing::info!("{note}");
+        }
+        let content = Self {
+            climate,
+            provinces,
+            biomes,
+            trees,
+            tree_density,
+            woods,
+            plant_density,
+            plant_density_keeps,
+            plants,
+            particles,
+            shapes,
+            decorations,
+            rule_sets,
+            snow_cover,
+            trails,
+            land,
+            ores,
+            settlements,
+            notes,
+        };
         content.ores.check(registry, &content.provinces)?;
         if !content.settlements.styles.is_empty() {
             content.settlements.check(registry)?;
@@ -2889,11 +3044,63 @@ mod tests {
         let mut files = base_files();
         let source = "(woods: (common: [\"base:acacia_log\"], families: {\"base:oak_log\": [\"base:oak\"], \"base:cherry_log\": [\"base:wild_cherry\"]}), trees: [])";
         files.push(ContentFile { package: "mod".into(), name: "trees.ron".into(), source: source.into() });
-        let woods = WorldContent::from_files(files.iter(), &registry).unwrap().woods;
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        assert!(content.notes.iter().any(|n| n == "mod/trees.ron makes base:acacia_log a common wood, replacing its family [\"base:acacia\"]"), "{:?}", content.notes);
+        let woods = content.woods;
         assert!(woods.common.contains(&"base:acacia_log".to_string()) && !woods.families.contains_key("base:acacia_log"));
         assert!(!woods.common.contains(&"base:oak_log".to_string()) && woods.families["base:oak_log"] == ["base:oak"]);
         let cherry = &woods.families["base:cherry_log"];
         assert!(cherry.contains(&"base:cherry".to_string()) && cherry.iter().filter(|t| *t == "base:wild_cherry").count() == 1, "members join the family once: {cherry:?}");
+    }
+
+    /// A later package sets single-valued data field by field (Design draft 91): what its
+    /// file names replaces base's (a noise or field of the land by name, in place, new
+    /// ones after), everything else keeps base's values, and loading notes what it
+    /// replaced.
+    #[test]
+    fn a_later_package_sets_climate_land_and_trails_field_by_field() {
+        let registry = registry();
+        let base = WorldContent::base(&registry).unwrap();
+        let mut files = base_files();
+        for (name, source) in [
+            ("climate.ron", "(scales: (aether: 3000.0), frost: (ice: \"base:packed_ice\"))"),
+            ("land.ron", "(vertical_scale: 1.25, density: (squash: 2.0), noises: [(\"hills\", (wavelength: 700.0, octaves: [1.0])), (\"dunes\", (wavelength: 90.0, octaves: [1.0]))])"),
+            ("trails.ron", "(edge: \"base:coarse_dirt\")"),
+            ("trees.ron", "(density: 0.5, trees: [])"),
+        ] {
+            files.push(ContentFile { package: "mod".into(), name: name.into(), source: source.into() });
+        }
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        let same = |a: &dyn std::fmt::Debug, b: &dyn std::fmt::Debug| format!("{a:?}") == format!("{b:?}");
+        // What the mod set.
+        let (climate, land, trails) = (&content.climate, &content.land, &content.trails);
+        assert_eq!((climate.scales.aether, climate.frost.ice.as_str()), (3000.0, "base:packed_ice"));
+        assert_eq!((land.vertical_scale, land.density.squash, trails.edge.as_str()), (1.25, 2.0, "base:coarse_dirt"));
+        let hills = land.noises.iter().position(|(n, _)| n == "hills").unwrap();
+        assert_eq!(hills, base.land.noises.iter().position(|(n, _)| n == "hills").unwrap(), "a named entry is replaced in place");
+        assert_eq!(land.noises[hills].1.wavelength, 700.0);
+        assert_eq!(land.noises.last().unwrap().0, "dunes", "a new one comes after");
+        assert_eq!(content.tree_density, 0.5);
+        // Everything else is base's.
+        let base_scales = ScalesDef { aether: 3000.0, ..base.climate.scales.clone() };
+        assert!(same(&climate.scales, &base_scales) && same(&climate.humidity, &base.climate.humidity));
+        assert!(same(&climate.temperature, &base.climate.temperature) && same(&climate.remaps, &base.climate.remaps) && climate.zones == base.climate.zones);
+        assert!(same(&FrostDef { ice: base.climate.frost.ice.clone(), ..climate.frost.clone() }, &base.climate.frost));
+        assert!(same(&DensityDef { squash: base.land.density.squash, ..land.density.clone() }, &base.land.density));
+        assert!(same(&land.fields, &base.land.fields) && same(&land.warps, &base.land.warps) && land.ceiling == base.land.ceiling);
+        assert_eq!(land.noises.len(), base.land.noises.len() + 1);
+        assert!(same(&land.noises.iter().filter(|(n, _)| n != "hills" && n != "dunes").collect::<Vec<_>>(), &base.land.noises.iter().filter(|(n, _)| n != "hills").collect::<Vec<_>>()));
+        assert_eq!(*trails, TrailsDef { edge: "base:coarse_dirt".into(), ..base.trails.clone() });
+        // And the notes say so.
+        for note in [
+            "mod/climate.ron replaces the climate.ron base set (scales.aether, frost.ice)",
+            "mod/land.ron replaces the land.ron base set (vertical_scale, density.squash, noises.hills, noises.dunes)",
+            "mod/trails.ron replaces the trails.ron base set (edge)",
+            "mod/trees.ron replaces the tree density base set (0.87 to 0.5)",
+        ] {
+            assert!(content.notes.iter().any(|n| n == note), "no note `{note}` in {:?}", content.notes);
+        }
+        assert!(base.notes.is_empty(), "base alone replaces nothing: {:?}", base.notes);
     }
 
     #[test]
@@ -2911,6 +3118,8 @@ mod tests {
             ("trees.ron", tree("leaves: \"base:oak_leaves\", lean: 3.0, crown: Palm(fronds: (2, 3), length: (6.0, 7.0))"), "reaches 10"),
             ("trees.ron", tree("crown: Bare, comfort: (temperature: (20.0, 10.0))"), "comfort range"),
             ("trees.ron", tree("crown: Bare, colour: 1"), "colour"),
+            ("land.ron", "(vertical_scal: 1.0)".into(), "vertical_scal"),
+            ("climate.ron", "(scales: (aether: \"far\"))".into(), "climate.ron"),
             ("trees.ron", "(woods: (common: [\"base:oak_lgo\"]), trees: [])".into(), "unknown block `base:oak_lgo`"),
             ("trees.ron", "(woods: (families: {\"base:acacia_log\": [\"baobob\"]}), trees: [])".into(), "no tree is named `mod:baobob`"),
             ("trees.ron", "(woods: (common: [\"base:acacia_log\"], families: {\"base:acacia_log\": [\"base:acacia\"]}), trees: [])".into(), "both as a common wood and with a family"),
