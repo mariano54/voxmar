@@ -937,16 +937,24 @@ fn looking_closely_shows_more_with_farming() {
         client.pump_until(|c| c.chat.iter().any(|(_, text)| text.contains("level 1")));
         client.chat.iter().map(|(_, text)| text.clone()).collect::<Vec<_>>().join("\n")
     };
-    // At Farming 1: what anyone sees, and that more comes with level.
+    // Kept, newly tamed and just fed, so its condition shows (0.6, good).
+    client.ok("/creatures tame");
+    // At Farming 1: what anyone sees, its condition in a word, and that more comes with level.
     let first = look(&mut client);
     assert!(first.contains("health") && first.contains("Farming 10 shows more"), "{first}");
     assert!(!first.contains("Shows:"), "{first}");
+    assert!(first.contains("In good condition") && !first.contains("(0.6"), "{first}");
     // At 40, everything: what shows, what it carries, the numbers and the odds.
     client.ok("/skill farming 40");
     let all = look(&mut client);
-    for words in ["Shows:", "Carries", "Exactly:", "mutates"] {
+    for words in ["Shows:", "Carries", "Exactly:", "mutates", "condition (0.60)"] {
         assert!(all.contains(words), "{words} missing from {all}");
     }
+    // A day and a half unfed, it says what it wants.
+    assert!(!all.contains("It wants food"), "{all}");
+    client.ok("/time add 1.5d");
+    let hungry = look(&mut client);
+    assert!(hungry.contains("It wants") && hungry.contains("food"), "{hungry}");
 }
 
 #[test]
