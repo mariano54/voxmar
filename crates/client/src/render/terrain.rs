@@ -31,7 +31,8 @@ use bevy::render::render_phase::{
     RenderCommand, RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewBinnedRenderPhases,
 };
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
+    BindGroup, BindGroupEntries, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
+    BufferInitDescriptor,
     BufferUsages, CachedRenderPipelineId, CommandEncoderDescriptor, CompareFunction, DepthBiasState, DepthStencilState, Face, FragmentState,
     IndexFormat, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType,
     ShaderStages, ShaderType, SpecializedMeshPipeline, StencilState, TextureSampleType, VertexState, encase,
@@ -144,6 +145,34 @@ impl Plugin for TerrainPlugin {
 pub struct TerrainTextures {
     pub textures: Handle<Image>,
     pub layers: Handle<Image>,
+    /// Every shape quad (`shape_table`), for blocks drawn as their shapes.
+    pub shapes: std::sync::Arc<Vec<[f32; 4]>>,
+}
+
+/// Where voxel.wgsl finds the shape quads.
+const SHAPE_BINDING: u32 = 17;
+
+/// Vec4s a shape quad takes in the table voxel.wgsl reads (`ShapeQuad`): each corner's
+/// position and u, the corners' v, and the normal with the face it is lit as.
+const SHAPE_QUAD_VEC4S: usize = 6;
+
+/// All blocks' shape quads in order (`BlockRegistry::shapes`), as voxel.wgsl's `ShapeQuad`s;
+/// one empty quad when there are none, as a buffer cannot be empty.
+pub fn shape_table(registry: &voxmar_engine::block::BlockRegistry) -> Vec<[f32; 4]> {
+    let mut table = Vec::new();
+    for shape in registry.shapes() {
+        for quad in &shape.quads {
+            for (corner, uv) in quad.corners.iter().zip(&quad.uvs) {
+                table.push([corner.x, corner.y, corner.z, uv[0]]);
+            }
+            table.push(quad.uvs.map(|uv| uv[1]));
+            table.push([quad.normal.x, quad.normal.y, quad.normal.z, quad.face as u32 as f32]);
+        }
+    }
+    if table.is_empty() {
+        table = vec![[0.0; 4]; SHAPE_QUAD_VEC4S];
+    }
+    table
 }
 
 /// The main world's handle on terrain rendering.
@@ -491,15 +520,19 @@ fn facing(min: Vec3, max: Vec3, eye: Vec3, light: Option<Vec3>) -> [bool; 6] {
 }
 
 /// The quads of a pass's mesh that go to each of its streams. The mesher emits opaque
-/// faces grouped by face, in `Face` order, and plants after the other cut-out faces.
+/// faces grouped by face, in `Face` order, and plants after the other cut-out faces. The
+/// quads of blocks' shapes, though plant faces, go with the cut-out faces: drawn from one
+/// side, at every distance and into every shadow cascade, as the blocks they stand for.
 fn split(pass: TerrainPass, mesh: &MeshBuffers) -> Vec<Range<usize>> {
-    let face = |quad: &[Vertex]| ((quad[0][0] >> 18) & 7) as usize;
-    let group = |face: usize| match pass {
-        TerrainPass::Opaque => face,
-        TerrainPass::Cutout => (face >= FACE_PLANT) as usize,
-        _ => 0,
+    let group = |quad: &[Vertex]| {
+        let face = ((quad[0][0] >> 18) & 7) as usize;
+        match pass {
+            TerrainPass::Opaque => face,
+            TerrainPass::Cutout => (face >= FACE_PLANT && !voxmar_engine::mesh::is_shape_quad(quad[0][0])) as usize,
+            _ => 0,
+        }
     };
-    let groups: Vec<usize> = mesh.vertices.chunks(4).map(|quad| group(face(quad))).collect();
+    let groups: Vec<usize> = mesh.vertices.chunks(4).map(group).collect();
     debug_assert!(groups.is_sorted(), "a pass's faces come grouped by stream");
     streams(pass)
         .enumerate()
@@ -666,6 +699,7 @@ pub(super) struct TerrainGpu {
     /// Colours for chunks whose column sent none.
     default_colours: Option<Range<u32>>,
     wind: Option<Buffer>,
+    shapes: Option<Buffer>,
     bind_group: Option<BindGroup>,
     distant_bind_group: Option<BindGroup>,
     /// Whether the bind groups must be rebuilt (the origin buffer was replaced).
@@ -706,6 +740,7 @@ impl Default for TerrainGpu {
             column_colours: FxHashMap::default(),
             default_colours: None,
             wind: None,
+            shapes: None,
             bind_group: None,
             distant_bind_group: None,
             bind_group_dirty: false,
@@ -1117,6 +1152,16 @@ fn prepare_bind_group(
     if gpu.bind_group.is_some() && gpu.distant_bind_group.is_some() && !gpu.bind_group_dirty {
         return;
     }
+    // The shape table never changes once loaded.
+    if gpu.shapes.is_none()
+        && let Some(table) = textures.as_ref().map(|t| t.shapes.clone())
+    {
+        gpu.shapes = Some(device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("shape_quads"),
+            contents: bytemuck::cast_slice(table.as_slice()),
+            usage: BufferUsages::STORAGE,
+        }));
+    }
     let (Some(cloud_map), Some(water)) = (cloud_map, water) else { return };
     let (Some(origins), Some(view), Some(coverage)) = (&gpu.origins_buffer, &gpu.distant_view, &gpu.coverage) else { return };
     let distant = device.create_bind_group(
@@ -1137,8 +1182,8 @@ fn prepare_bind_group(
         .concat(),
     );
     let textures = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.layers)?)));
-    let (Some((blocks, layers)), Some(seeds), Some(wind), Some(colours)) =
-        (textures, &gpu.seeds.buffer, &gpu.wind, &gpu.colours.buffer)
+    let (Some((blocks, layers)), Some(seeds), Some(wind), Some(colours), Some(shapes)) =
+        (textures, &gpu.seeds.buffer, &gpu.wind, &gpu.colours.buffer, &gpu.shapes)
     else {
         gpu.distant_bind_group = Some(distant);
         return;
@@ -1158,6 +1203,7 @@ fn prepare_bind_group(
                 &layers.texture_view,
             ))[..],
             &cloud_map.entries(),
+            &[BindGroupEntry { binding: SHAPE_BINDING, resource: shapes.as_entire_binding() }],
         ]
         .concat(),
     );
@@ -1536,6 +1582,8 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
         ),
     );
     layout.entries.extend(cloud_map::layout_entries(ShaderStages::VERTEX_FRAGMENT));
+    // Shape quads, for blocks drawn as their shapes (voxel.wgsl `shape_quads`).
+    layout.entries.push(storage_buffer_read_only_sized(false, None).build(SHAPE_BINDING, ShaderStages::VERTEX));
     let chunks_layout = BindGroupLayoutDescriptor::new(
         "terrain_chunks_layout",
         &BindGroupLayoutEntries::single(ShaderStages::VERTEX, storage_buffer_read_only_sized(false, None)),
@@ -2000,6 +2048,22 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTerrain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A shape's quad goes with the cut-out faces, drawn one-sided at every distance; a
+    /// plant's with the plants.
+    #[test]
+    fn shape_quads_split_into_the_cutout_stream_and_plants_into_plants() {
+        use voxmar_engine::mesh::{PLANT_SHAPE, is_shape_quad};
+        // Word 0 of a plant face (face 6) of `model`: its low bits at 28, its high bit at 24.
+        let plant_face = |model: u32| 6 << 18 | (model & 3) << 28 | (model >> 2) << 24;
+        let (glass, shape, flower) = (2 << 18, plant_face(PLANT_SHAPE), plant_face(0));
+        assert!(is_shape_quad(shape) && !is_shape_quad(flower) && !is_shape_quad(glass));
+        let vertices = [glass, shape, shape, flower].into_iter().flat_map(|w0| [[w0, 0]; 4]).collect();
+        let ranges = split(TerrainPass::Cutout, &MeshBuffers { vertices, indices: Vec::new() });
+        assert_eq!(ranges, [0..3, 3..4]);
+        assert_eq!(streams(TerrainPass::Cutout).collect::<Vec<_>>(), [CUTOUT, PLANTS]);
+        assert_eq!((indices_per_quad(CUTOUT), indices_per_quad(PLANTS)), (6, 12));
+    }
 
     #[test]
     fn allocator_reuses_and_merges_freed_ranges() {

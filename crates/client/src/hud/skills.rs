@@ -79,18 +79,20 @@ impl SkillToasts {
         self.level = Some((skill, level, now));
     }
 
-    /// An action refused, with why, at `now`; the same reason again only refreshes it.
     /// Whether a refusal saying `why` is showing.
     pub fn shows_refusal(&self, why: &str) -> bool {
-        self.lines.iter().any(|l| matches!(&l.kind, LineKind::Refused(w) if w == why))
+        self.refusals().any(|w| w == why)
     }
 
-    /// The refusals showing, for tests.
-    #[cfg(test)]
-    pub fn refusals(&self) -> Vec<&str> {
-        self.lines.iter().filter_map(|l| if let LineKind::Refused(why) = &l.kind { Some(why.as_str()) } else { None }).collect()
+    /// The refusals showing, each saying why.
+    pub fn refusals(&self) -> impl Iterator<Item = &str> {
+        self.lines.iter().filter_map(|l| match &l.kind {
+            LineKind::Refused(why) => Some(why.as_str()),
+            LineKind::Gain { .. } => None,
+        })
     }
 
+    /// An action refused, with why, at `now`; the same reason again only refreshes it.
     pub fn refused(&mut self, why: String, now: f32) {
         if let Some(line) = self.lines.iter_mut().find(|l| l.kind == LineKind::Refused(why.clone())) {
             line.at = now;

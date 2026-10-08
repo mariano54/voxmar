@@ -62,6 +62,14 @@
             (name: "{name}_wood", sound: Wood, textures: All("{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["wood", "fuel", "building"]),
             (name: "{name}_planks", sound: Wood, textures: All("{name}_planks"), hardness: 2.0, color: (162, 130, 78), tags: ["planks", "wood", "fuel", "building"]),
             (
+                name: "{name}_slab", render: Model, shape: "slab", flips: true, sound: Wood, textures: All("{name}_planks"),
+                hardness: 2.0, color: (162, 130, 78), tags: ["slab", "wood", "fuel", "building"],
+            ),
+            (
+                name: "{name}_stairs", render: Model, shape: "stairs", facing: true, flips: true, sound: Wood, textures: All("{name}_planks"),
+                hardness: 2.0, color: (162, 130, 78), tags: ["stairs", "wood", "fuel", "building"],
+            ),
+            (
                 name: "{name}_leaves", sound: Leaves, textures: All("{name}_leaves"), render: Leaves, tint: Foliage,
                 light_filter: 1, hardness: 0.3, color: (60, 120, 40), tags: ["leaves", "natural"],
             ),

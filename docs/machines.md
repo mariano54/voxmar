@@ -61,6 +61,9 @@ Each factory step (every 4 server ticks) every network shares out its power:
    stand within `wind_spacing` blocks (4) any way, or both are becalmed. A treadwheel
    needs a kept walker (`walkers`, less any `not_walkers`) within `walk_reach`; its owner
    must own the wheel if the wheel has one, and an animal walks only its nearest wheel.
+   What it gives is its working share from the condition rules in creatures.ron
+   (`Server::working_share`: 0.5 + 0.7 × condition by default, so 0.5 to 1.2), and nothing
+   from a young one or one unfed past `fed.1` days; the condition rules are the only source.
    Fuel is 1 while burning.
 2. Consumers ask for what they need: a processor asks its full draw while it has work, a
    converter (beam engine, dynamo) asks for what was used of it a step before.
