@@ -503,6 +503,7 @@ fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed
 struct Drawn<'w, 's> {
     visible: Query<'w, 's, &'static mut Visibility>,
     globals: Query<'w, 's, &'static GlobalTransform>,
+    inspect: Option<Res<'w, InspectEyes>>,
 }
 
 /// The light creatures are lit by and the air they are fogged by, as the terrain's.
@@ -544,7 +545,6 @@ fn show(
     mut commands: Commands,
     time: Res<Time>,
     launch: Res<Launch>,
-    inspect: Option<Res<InspectEyes>>,
     world: Res<ClientWorld>,
     air: Air,
     player: Res<LocalPlayer>,
@@ -666,7 +666,7 @@ fn show(
         // Painted as its genes show: its coat colours and markings.
         let genes = &species.def.genes;
         let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));
-        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed, inspect.is_some() && species.def.name == "base:shambler"));
+        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed, drawn.inspect.is_some() && species.def.name == "base:shambler"));
         let skin = creatures.blank.get_or_insert_with(|| images.add(blank_skin())).clone();
         let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
         let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };
