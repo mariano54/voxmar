@@ -751,6 +751,9 @@ impl CreatureRegistry {
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
+            if def.body.skin.eye.is_some_and(|r| !r.is_finite() || r <= 0.0) {
+                return Err(error("skin.eye must be a finite positive radius".into()));
+            }
             if def.health == 0 || def.body.size.0 <= 0.0 || def.body.size.1 <= 0.0 || def.body.colours.is_empty() {
                 return Err(error("needs health, a size and at least one colour".into()));
             }
@@ -1000,6 +1003,22 @@ mod tests {
         .unwrap();
         let defs = CreatureRegistry::read("base", &source).unwrap().defs;
         assert!(CreatureRegistry::new(defs, Rules::default(), &blocks, &SkillRegistry::default()).is_err());
+    }
+
+    #[test]
+    fn eye_radius_loads_from_data_and_rejects_invalid_values() {
+        let mut defs = CreatureRegistry::read("base", &RABBIT.replace("colours:", "skin: (eyes: Front, eye: 0.065), colours:")).unwrap().defs;
+        assert_eq!(defs[0].body.skin.eye, Some(0.065));
+        // Leave unrelated item references out, so each rejection exercises skin.eye.
+        defs[0].diet = Default::default();
+        defs[0].loot.clear();
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        assert!(CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).is_ok());
+        for radius in [0.0, -0.065, f32::NAN, f32::INFINITY] {
+            defs[0].body.skin.eye = Some(radius);
+            let error = CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).unwrap_err();
+            assert!(error.0.contains("skin.eye"), "{error:?}");
+        }
     }
 
     #[test]

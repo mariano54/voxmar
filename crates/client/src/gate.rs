@@ -130,6 +130,7 @@ impl Plugin for GatePlugin {
     fn build(&self, app: &mut App) {
         let dir = self.dir.clone();
         app.insert_resource(Gate::new(dir))
+            .insert_resource(crate::creatures::InspectEyes)
             .add_systems(PostStartup, render_offscreen)
             .add_systems(Update, crate::capture::target_ui)
             .add_systems(Last, run);
@@ -4298,6 +4299,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command(&format!("summon {CREATURE} 1 {} {} {}", pad.x, pad.y, pad.z + 1));
             net.command(&format!("summon mouflon 2 {} {} {}", pad.x - 3, pad.y, pad.z - 4));
             net.command(&format!("summon rabbit 1 {} {} {}", pad.x + 3, pad.y, pad.z - 4));
+            net.command(&format!("summon shambler 1 {} {} {}", pad.x + 3, pad.y, pad.z));
             gate.advance(now);
         }
         2 => {
@@ -4312,7 +4314,19 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if in_phase < 1.0 {
                 return;
             }
+            let eyes = world.resource::<crate::creatures::Creatures>().front_eyes(world.resource::<Launch>(), world.resource::<Assets<Image>>());
+            let Some(eyes) = eyes else {
+                if gate.server_in_phase() <= 10.0 {
+                    return;
+                }
+                gate.check("creature front eyes", Err("the front-eyed creature's painted skin never arrived".into()));
+                world.resource::<Net>().command("creatures remove shambler");
+                gate.next(Step::Strike, now);
+                return;
+            };
             if gate.shot(world, "creatures").is_some() {
+                gate.check("creature front eyes", eyes);
+                world.resource::<Net>().command("creatures remove shambler");
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
