@@ -590,7 +590,9 @@ mod tests {
         let third = world();
         let spawn = third.spawn_point();
         let centre = IVec2::new(spawn.x, spawn.z);
-        let (lines, places) = third.trails_in(centre - 600, centre + 600);
+        // Culture layouts move the gates; include the settlements just beyond spawn's
+        // first square while still requiring a real shared gate, not merely any trail.
+        let (lines, places) = third.trails_in(centre - 1200, centre + 1200);
         let centre = centre.as_vec2();
         let ends: Vec<Vec2> = lines.iter().filter(|l| l.len() > 1).flat_map(|l| [l[0].0, l[l.len() - 1].0]).collect();
         let gate = |e: Vec2| places.iter().any(|p| p.kind == Kind::Settlement && p.at().as_vec2().distance(e) <= CELL as f32);
