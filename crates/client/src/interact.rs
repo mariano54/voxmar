@@ -583,7 +583,7 @@ mod tests {
         app.add_plugins(bevy::time::TimePlugin)
             .init_resource::<ButtonInput<MouseButton>>()
             .insert_resource(UiState { cursor_locked: true, ..default() })
-            .insert_resource(Net::new(connection, None, "tester".into(), content.fingerprint()))
+            .insert_resource(Net::new(connection, None, "tester".into(), content.fingerprint(), None))
             .insert_resource(Actions(actions))
             .insert_resource(world)
             .insert_resource(player)

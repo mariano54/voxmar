@@ -963,7 +963,7 @@ mod tests {
         let server = voxmar_server::spawn(voxmar_server::ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
         let (connection, server_side) = voxmar_protocol::local_pair();
         server.connections().send(server_side).unwrap();
-        let net = Net::new(connection, Some(server), "crafter".into(), content.fingerprint());
+        let net = Net::new(connection, Some(server), "crafter".into(), content.fingerprint(), None);
         let mut seen = Inventory::default();
         let mut wait_for = |done: &dyn Fn(&Inventory) -> bool| -> Inventory {
             let deadline = Instant::now() + Duration::from_secs(60);

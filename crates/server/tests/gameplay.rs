@@ -1615,7 +1615,7 @@ fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     let use_at = |client: &mut Client, at: IVec3| {
         client.chat.clear();
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
         client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
     };
     client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
@@ -1664,7 +1664,7 @@ fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
     let (crucible, dust, ingot) = (blocks.expect("base:crucible"), blocks.expect("base:copper_dust"), blocks.expect("base:copper_ingot"));
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks") && count(c, dust) == 2);
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
     client.pump_until(|c| count(c, ingot) == 1 && count(c, dust) == 1);
 }
@@ -2400,7 +2400,7 @@ fn a_turbine_powers_a_washer_through_a_transformer_once_water_lies_beside_it() {
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     let use_at = |client: &mut Client, at: IVec3| {
         client.chat.clear();
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
         client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
     };
     client.pump_until(|c| c.world.block(washer) == c.content.blocks.id("base:ore_washer") && c.inventory.slots.iter().all(Option::is_none));
@@ -2449,7 +2449,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     let use_at = |client: &mut Client, at: IVec3| {
         client.chat.clear();
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
         client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
     };
     client.pump_until(|c| c.world.block(core) == c.content.blocks.id("base:bloomery") && c.inventory.slots.iter().all(Option::is_none));
@@ -2565,7 +2565,7 @@ fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two
     client.pump_until(|c| count(c, ore) == 2);
     for item in [ore, coke] {
         let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == item)).expect("held") as u8;
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
         client.propose("base:use_machine", ActionTarget::Block { block: furnace, face: Face::NegX });
         client.pump_until(|c| count(c, item) == 0);
     }
@@ -2602,7 +2602,7 @@ fn a_hopper_feeds_a_crusher_by_conveyor_and_a_chest_above_collects_its_dust() {
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     let use_at = |client: &mut Client, at: IVec3| {
         client.chat.clear();
-        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
         client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
     };
     client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(start + IVec3::new(4, 2, 0)) == c.content.blocks.id("base:chest"));
@@ -2636,7 +2636,7 @@ fn a_hopper_feeds_a_crusher_by_conveyor_and_a_chest_above_collects_its_dust() {
 /// Right clicks the machine at `at` with what is in the first slot (`base:use_machine`).
 fn use_machine(client: &mut Client, at: IVec3) {
     client.chat.clear();
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
 }
 
@@ -2888,7 +2888,7 @@ fn a_multiblock_counts_as_built_for_whoever_placed_its_core_not_whoever_uses_it_
     let bloomery = owner.content.blocks.expect("base:bloomery");
     owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == bloomery) && c.world.block(core - IVec3::Y) == c.content.blocks.id("base:stone"));
     // The core placed by hand on open ground, then the shaft built round it.
-    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.connection.send(ClientMessage::Input(PlayerInput { teleport: owner.teleports, position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     owner.propose("core:place", ActionTarget::Block { block: core - IVec3::Y, face: Face::PosY });
     owner.pump_until(|c| c.world.block(core) == Some(bloomery));
     for line in ["/fill ~3 ~ ~-1 ~5 ~2 ~-1 kiln_bricks", "/fill ~3 ~ ~1 ~5 ~2 ~1 kiln_bricks", "/fill ~3 ~ ~ ~3 ~2 ~ kiln_bricks", "/fill ~5 ~1 ~ ~5 ~2 ~ kiln_bricks", "/setblock ~5 ~ ~ bellows"] {
@@ -2900,7 +2900,7 @@ fn a_multiblock_counts_as_built_for_whoever_placed_its_core_not_whoever_uses_it_
     other.pump_until(|c| c.world.block(core) == Some(bloomery));
     // Empty-handed (its starting kit's first slot holds what a bloomery does not take).
     let empty = other.inventory.slots.iter().take(9).position(Option::is_none).expect("an empty hotbar slot") as u8;
-    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: empty, flying: false }));
+    other.connection.send(ClientMessage::Input(PlayerInput { teleport: other.teleports, position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: empty, flying: false }));
     other.propose("base:use_machine", ActionTarget::Block { block: core, face: Face::NegX });
     other.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Bloomery")));
     drop(other);
@@ -3104,7 +3104,7 @@ fn a_treadwheel_a_player_placed_is_walked_only_by_their_own_animals() {
     }
     let treadwheel = owner.content.blocks.expect("base:treadwheel");
     owner.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel - IVec3::Y) == c.content.blocks.id("base:stone"));
-    owner.connection.send(ClientMessage::Input(PlayerInput { position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    owner.connection.send(ClientMessage::Input(PlayerInput { teleport: owner.teleports, position: owner.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     owner.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
     owner.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
     // Another player's aurochs beside it does not walk it.
@@ -3120,7 +3120,7 @@ fn a_treadwheel_a_player_placed_is_walked_only_by_their_own_animals() {
         other.ok(line);
     }
     other.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == treadwheel) && c.world.block(wheel).is_some_and(|b| b.is_air()));
-    other.connection.send(ClientMessage::Input(PlayerInput { position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    other.connection.send(ClientMessage::Input(PlayerInput { teleport: other.teleports, position: other.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     other.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
     other.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
     let started = owner.server_tick;
@@ -3183,7 +3183,7 @@ fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_i
     let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == aurochs).unwrap();
     let at = view.position;
     client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.propose("base:tend", ActionTarget::Creature(id));
     client.pump_until(|c| c.inventory.get(0).is_none());
     let started = client.server_tick;
@@ -3255,7 +3255,7 @@ fn sowing_where_a_crop_cannot_grow_is_refused_with_why() {
     }
     let rice = client.content.blocks.expect("base:rice");
     client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == rice) && c.world.block(ground) == c.content.blocks.id("base:farmland"));
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.chat.clear();
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
     client.pump_until(|c| !c.refused.is_empty());
@@ -3309,7 +3309,7 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
     // One the player sows gives its potato back, every time.
     let before = client.quiet(potatoes);
     let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == potato)).unwrap() as u8;
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     let ground = feet + IVec3::new(0, -1, 1);
     let sprout = client.content.blocks.expect("base:potato_crop_0");
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
@@ -3326,7 +3326,7 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
     let earned = client.earned.len();
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == potato));
     let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == potato)).unwrap() as u8;
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout));
     client.ok("/grow ripe");

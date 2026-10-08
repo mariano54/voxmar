@@ -1007,7 +1007,7 @@ mod combat_tests {
         let mut server = crate::test_server();
         let (_client, connection) = voxmar_protocol::local_pair();
         let (player, other) = (1, 2);
-        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2);
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
         joined.joined = true;
         server.players.insert(player, joined);
         server.tick = 10_000;
@@ -1027,7 +1027,7 @@ mod combat_tests {
                 server.tick += 7;
                 let tick = server.tick;
                 server.creatures.live.get_mut(&attacker).unwrap().fought = fought.map(|(by, ago)| (by, tick - ago));
-                server.players.get_mut(&player).unwrap().health = traits::Health::full(crate::player::MAX_HEALTH);
+                server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
                 server.creature_strikes(attacker, player);
             }
             server.players[&player].skills.xp(defence) - before
