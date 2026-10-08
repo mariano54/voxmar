@@ -48,8 +48,6 @@ struct Fighter {
     /// perfect dodge).
     counter_until: f64,
     riposte_until: f64,
-    /// When the player's blows last reached each creature, for Defence experience.
-    fought: FxHashMap<u32, f64>,
 }
 
 #[derive(Clone, Copy)]
@@ -110,12 +108,6 @@ impl Default for Fights {
 impl Fights {
     fn secs(&self, at: Instant) -> f64 {
         at.saturating_duration_since(self.epoch).as_secs_f64()
-    }
-
-    /// Whether `player`'s blows reached `creature` within `seconds`.
-    pub(crate) fn fought(&self, player: PlayerId, creature: u32, seconds: f32) -> bool {
-        let now = self.now();
-        self.fighters.get(&player).and_then(|f| f.fought.get(&creature)).is_some_and(|&at| now - at <= seconds as f64)
     }
 
     fn now(&self) -> f64 {
@@ -230,8 +222,9 @@ impl Server {
         let dodge = self.content.combat.dodge_of(&p.inventory.worn).clone();
         let fighter = self.fights.fighters.entry(player).or_default();
         if !(may && fighter.guarding.dodge(now, &dodge, &feel)) {
-            if let Some(p) = self.players.get(&player) {
-                p.connection.send(ServerMessage::Teleport { position: p.position });
+            // Numbered, as every teleport is, so inputs sent before the client saw it are dropped.
+            if let Some(p) = self.players.get_mut(&player) {
+                p.teleport(p.position);
             }
             return;
         }
@@ -321,8 +314,14 @@ impl Server {
         for (player, aim, strength, on_beat, kind, in_reach) in landing {
             self.land_swing(player, aim, strength, on_beat, kind, in_reach);
         }
-        // Creatures' blows, each judged at the moment it lands.
-        let (due, waiting): (Vec<Windup>, Vec<Windup>) = std::mem::take(&mut self.fights.windups).into_iter().partition(|w| w.lands <= now);
+        // Creatures' blows, each judged at the moment it lands, once every guard and dodge
+        // that arrived before that moment has been handled: one that arrived after the last
+        // messages were taken in, and before the blow landed, still counts. (Arrived, not
+        // sent: the trip from the client is not made up for; `reach_slack` absorbs it.) A
+        // blow so held is judged up to a tick later, so where the player and the creature
+        // stand, for its lunge and reach, is up to a tick later too.
+        let heard = self.heard.map_or(now, |at| self.fights.secs(at));
+        let (due, waiting): (Vec<Windup>, Vec<Windup>) = std::mem::take(&mut self.fights.windups).into_iter().partition(|w| w.lands <= heard);
         self.fights.windups = waiting;
         for windup in due {
             self.creature_blow(windup.creature, windup.player, windup.lands);
@@ -356,10 +355,6 @@ impl Server {
             self.struck(player, aim.creature, 0, false, Blow::Plain);
             return;
         }
-        let now = self.fights.now();
-        let fighter = self.fights.fighters.entry(player).or_default();
-        fighter.fought.retain(|_, at| now - *at < feel.defence_xp_window as f64);
-        fighter.fought.insert(aim.creature, now);
         let stroke = Stroke::of(kind, strength, on_beat, aim.counter, aim.riposte, falling, &feel);
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
         if kind == Blow::Flourish && damage > 0 {
@@ -517,5 +512,53 @@ impl Server {
             live.changed = true;
         }
         at
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use voxmar_engine::combat::Defended;
+    use voxmar_protocol::ClientMessage;
+
+    use super::*;
+
+    /// A guard raised just before a creature's blow lands counts, even when the server
+    /// takes its message in only after the blow was due (a long tick, a stall): the blow
+    /// waits to be judged until every message sent before it landed has been heard.
+    #[test]
+    fn a_guard_raised_before_a_blow_lands_counts_though_heard_after() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        joined.joined = true;
+        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
+        joined.inventory.add(sword, 1);
+        let attack = server.content.skills.id("core:attack").expect("Attack");
+        joined.skills.grant(attack, server.content.skills.xp_for(20));
+        let ahead = joined.position + joined.look().with_y(0.0).normalize() * 1.2;
+        server.players.insert(player, joined);
+        assert!(server.guard_of(player).is_some(), "the sword guards");
+        let species = server.content.creatures.id("base:brown_bear").expect("a bear");
+        let bear = server.spawn_creature(species, ahead, 1).expect("room");
+        server.handle_messages();
+        // The guard goes up, and the blow lands just after it, inside the perfect window...
+        client.send(ClientMessage::Guard { up: true });
+        let raised = server.fights.now();
+        server.fights.windups.push(Windup { creature: bear, player, lands: raised + 0.05 });
+        std::thread::sleep(Duration::from_millis(100));
+        // ...but the server ticks before it takes the raise in: the blow waits for it.
+        server.tick_fights();
+        assert_eq!(server.fights.windups.len(), 1, "the blow was judged before the guard raised ahead of it was heard");
+        server.handle_messages();
+        server.tick_fights();
+        assert!(server.fights.windups.is_empty(), "the blow was not judged once heard");
+        let defended = std::iter::from_fn(|| client.try_recv().ok().flatten()).find_map(|message| match message {
+            ServerMessage::Hurt { defended, .. } => Some(defended),
+            _ => None,
+        });
+        assert_eq!(defended, Some(Defended::Perfect));
     }
 }

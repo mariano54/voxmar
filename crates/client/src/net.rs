@@ -49,9 +49,19 @@ pub struct Net {
 }
 
 impl Net {
-    pub fn new(connection: ClientConnection, server: Option<ServerHandle>, name: String, content: u64) -> Self {
-        connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content });
+    /// Says hello over `connection`, giving the admin token kept for `address` (the
+    /// server's `host:port`, none in singleplayer) if there is one.
+    pub fn new(connection: ClientConnection, server: Option<ServerHandle>, name: String, content: u64, address: Option<&str>) -> Self {
+        let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
+        let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
+        connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
         Self { connection, server, input_timer: 0.0 }
+    }
+
+    /// The next message from the server, for tests that play without the app.
+    #[cfg(test)]
+    pub fn try_recv(&self) -> Result<Option<voxmar_protocol::ServerMessage>, voxmar_protocol::Disconnected> {
+        self.connection.try_recv()
     }
 
     /// Whether this is a remote server rather than singleplayer's own.
@@ -249,8 +259,9 @@ pub(crate) fn receive(
                     player.dead = false;
                 }
             }
-            ServerMessage::Teleport { position } => {
+            ServerMessage::Teleport { position, seq } => {
                 player.position = position;
+                player.teleports = seq;
                 player.velocity = Vec3::ZERO;
                 // Put somewhere, a dash under way stops: a dodge the server refused, whose
                 // cooldown never ran there either.
@@ -288,13 +299,21 @@ pub(crate) fn receive(
                 debug!("chat: {text}");
                 console.push(kind, &text, time.elapsed_secs())
             }
+            ServerMessage::Refused { why } => {
+                let why = locale.render(&why, &world.registry);
+                debug!("refused: {why}");
+                toasts.refused(why, time.elapsed_secs())
+            }
             ServerMessage::Weather { weather: report, effects, nearby, quick } => {
                 weather.receive(report, effects, nearby, quick, time.elapsed_secs())
             }
             ServerMessage::Lightning { at, seed, cloud } => weather.lightning(at, seed, at.distance(player.eye()), cloud),
             ServerMessage::Died => player.dead = true,
             ServerMessage::Journal { entries } => player.journal.merge(entries),
-            ServerMessage::Quests { states } => player.quests = states,
+            ServerMessage::Quests { states } => {
+                player.quests = states;
+                player.quests_rev = player.quests_rev.wrapping_add(1);
+            }
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
             ServerMessage::Struck { creature, damage, killed, blow, pips } => {
@@ -325,6 +344,19 @@ fn send_input(time: Res<Time>, mut net: ResMut<Net>, player: Res<LocalPlayer>) {
     net.connection.send(ClientMessage::Input(input(&player)));
 }
 
+/// The admin token `tokens` keeps for the server at `address`: `tokens` lists
+/// `host:port=token` entries, separated by spaces, commas or semicolons, so a server's token
+/// goes to that server only (a server's admin token is its owner's, given with
+/// `VOXMAR_ADMIN_TOKENS`; see the dedicated server's `--admin-token-file`).
+pub fn admin_token_for(address: &str, tokens: &str) -> Option<String> {
+    tokens
+        .split([' ', ',', ';', '\n'])
+        .filter_map(|entry| entry.split_once('='))
+        .find(|(server, _)| crate::menu::join::with_port(server.trim()).eq_ignore_ascii_case(&crate::menu::join::with_port(address.trim())))
+        .map(|(_, token)| token.trim().to_owned())
+        .filter(|token| !token.is_empty())
+}
+
 /// The player's state as the server is told it.
 fn input(player: &LocalPlayer) -> PlayerInput {
     PlayerInput {
@@ -333,6 +365,7 @@ fn input(player: &LocalPlayer) -> PlayerInput {
         pitch: player.pitch,
         selected_slot: player.selected as u8,
         flying: player.flying,
+        teleport: player.teleports,
     }
 }
 
@@ -369,5 +402,26 @@ fn sync_remote_players(
                 *entity = Some(commands.spawn(body).id());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_admin_token_goes_to_its_own_server_only() {
+        let tokens = "play.example.org:25665=open-sesame, 192.168.1.4:25665=lan;[::1]:4000=six";
+        assert_eq!(admin_token_for("play.example.org:25665", tokens).as_deref(), Some("open-sesame"));
+        assert_eq!(admin_token_for("PLAY.example.org:25665", tokens).as_deref(), Some("open-sesame"));
+        assert_eq!(admin_token_for("192.168.1.4:25665", tokens).as_deref(), Some("lan"));
+        assert_eq!(admin_token_for("[::1]:4000", tokens).as_deref(), Some("six"));
+        assert_eq!(admin_token_for("play.example.org:25666", tokens), None, "another port is another server");
+        assert_eq!(admin_token_for("evil.example.org:25665", tokens), None);
+        assert_eq!(admin_token_for("play.example.org:25665", ""), None);
+        // An address typed without its port is the default port, on either side.
+        assert_eq!(admin_token_for("play.example.org", tokens).as_deref(), Some("open-sesame"));
+        assert_eq!(admin_token_for("192.168.1.4:25665", "192.168.1.4=bare").as_deref(), Some("bare"));
+        assert_eq!(admin_token_for("::1", "[::1]:25665=six").as_deref(), Some("six"));
     }
 }

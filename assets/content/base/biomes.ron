@@ -32,11 +32,20 @@
 // berries, herbs, mushrooms) whose climate and habitat suit it, each a rare find.
 // `decorations` select from decorations.ron (rocks, logs, bushes, patches, litter); left
 // out, a biome takes every decoration carrying one of its tags.
+//
+// `level` (1 ..= 10, the design wiki's first pass for P15) is how harsh, rare and
+// aether-touched a biome is. Up to a find's home level (by its rarity) each level makes the
+// biome's rarer plants and gathering trees about 1.4 times commoner; above it a find keeps
+// about two thirds of its rate, so a high-level biome still has the commons of the gentle
+// ones. Far from spawn, higher-level biomes grow likelier. The numbers are `levels` in
+// climate.ron (see crates/worldgen/src/levels.rs). A variant sets its own; one left out
+// inherits it.
 (
     biomes: [
         // --- Water ---------------------------------------------------------------------
         (
             name: "ocean",
+            level: 2,
             tags: ["ocean", "water"],
             climate: [(continentalness: ("ocean", "ocean"))],
             flora: (trees: [Name("palm", 1.0)], cover: 0.3, plants: [Tag("grass", 1.0), Name("tall_grass", 0.35)]),
@@ -53,6 +62,7 @@
         ),
         (
             name: "deep_ocean",
+            level: 5,
             tags: ["ocean", "water", "deep"],
             climate: [(continentalness: ("deep_ocean", "deep_ocean"))],
             surface: (
@@ -66,6 +76,7 @@
             // gravel in the hills and sand, clay and mud in the lowlands; lakes have
             // sandy shores; hot springs build travertine. Rules are tried in order.
             name: "river",
+            level: 1,
             tags: ["river", "water", "fresh_water"],
             role: River,
             climate: [()],
@@ -108,7 +119,11 @@
         // --- Cool and temperate -------------------------------------------------------
         (
             name: "plains",
+            level: 1,
             tags: ["grassland", "temperate", "open"],
+            // Stones on gentle open ground: grey stone mottled with pale diorite, moss on their
+            // tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("diorite", 1.0)],
             climate: [(
                 temperature: ("cool", "temperate"),
                 moisture: ("moderate", "moderate"),
@@ -135,6 +150,7 @@
         (
             // A rare meadow in flower: one of the few places flowers grow thickly.
             name: "flower_meadow",
+            level: 1,
             inherit: "plains",
             tags: ["grassland", "temperate", "open", "flowers"],
             rarity: Uncommon,
@@ -148,8 +164,12 @@
         (
             // Where steppe meets plains: grassland with groves of oak and birch.
             name: "forest_steppe",
+            level: 2,
             inherit: "plains",
             tags: ["grassland", "temperate", "open", "groves"],
+            // Stones on gentle open ground: grey stone mottled with pale diorite, moss on their
+            // tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("diorite", 1.0)],
             flora: (
                 forest: 0.2,
                 trees: [Name("oak", 1.0), Name("birch", 1.0), Name("pine", 0.4), Name("shrub", 0.8), Name("pear_tree", 0.12), Name("wild_cherry", 0.12), Name("hazel", 0.3)],
@@ -161,7 +181,11 @@
         (
             // Lush lowland grass, tall and deep, with old oaks standing alone.
             name: "meadow",
+            level: 1,
             tags: ["grassland", "temperate", "open", "lush"],
+            // Stones on gentle open ground: grey stone mottled with pale diorite, moss on their
+            // tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("diorite", 1.0)],
             weight: 0.5,
             climate: [(temperature: ("temperate", "temperate"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (
@@ -180,6 +204,7 @@
         (
             // Oak and birch, a maple here and there.
             name: "forest",
+            level: 1,
             tags: ["forest", "temperate", "broadleaf"],
             climate: [
                 (temperature: ("cool", "temperate"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes")),
@@ -210,6 +235,7 @@
             // Evergreen laurel woods of warm, damp coasts and hills: dark glossy crowns over
             // ferns, the ground and stones furred with moss, mist in the hollows.
             name: "laurel_forest",
+            level: 2,
             tags: ["forest", "warm", "broadleaf", "wet", "mossy"],
             climate: [(temperature: ("warm", "warm"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
@@ -234,6 +260,7 @@
         ),
         (
             name: "birch_forest",
+            level: 1,
             inherit: "forest",
             tags: ["forest", "temperate", "broadleaf", "birch"],
             flora: (
@@ -245,6 +272,7 @@
         ),
         (
             name: "cherry_grove",
+            level: 2,
             inherit: "forest",
             tags: ["forest", "temperate", "broadleaf", "blossom"],
             flora: (
@@ -260,6 +288,7 @@
             // The oldest woods: giant oaks, an ancient one now and then, deep litter and
             // fallen trunks.
             name: "old_growth_forest",
+            level: 4,
             inherit: "forest",
             tags: ["forest", "temperate", "broadleaf", "dense", "ancient"],
             rarity: Rare,
@@ -276,6 +305,7 @@
         (
             // Maples in autumn colour among birch and the odd spruce, on hills and slopes.
             name: "maple_forest",
+            level: 2,
             tags: ["forest", "temperate", "broadleaf", "autumn"],
             weight: 0.6,
             climate: [(temperature: ("cool", "temperate"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
@@ -301,6 +331,7 @@
         (
             // Spruce, oak, birch and maple together, in cool hill country.
             name: "mixed_forest",
+            level: 1,
             tags: ["forest", "temperate", "broadleaf", "conifer", "cool"],
             weight: 0.6,
             climate: [(temperature: ("cool", "cool"), moisture: ("moderate", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
@@ -326,6 +357,7 @@
         (
             // Aspen woods in autumn gold: white trunks under yellow crowns, a few dark spruces.
             name: "golden_aspen_woods",
+            level: 2,
             inherit: "mixed_forest",
             tags: ["forest", "cool", "broadleaf", "autumn"],
             rarity: Rare,
@@ -342,6 +374,7 @@
         (
             // Heather and bracken over the hills, granite breaking through, a few junipers.
             name: "heath",
+            level: 3,
             tags: ["heath", "highland", "cool", "open", "rocky"],
             weight: 0.5,
             climate: [(temperature: ("cool", "cool"), moisture: ("moderate", "humid"), continentalness: ("coast", "inland"), erosion: ("hills", "slopes"))],
@@ -367,6 +400,7 @@
         ),
         (
             name: "dark_forest",
+            level: 5,
             tags: ["forest", "temperate", "broadleaf", "dense"],
             climate: [(temperature: ("temperate", "warm"), moisture: ("wet", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (
@@ -392,6 +426,7 @@
         (
             // Redwoods on wet coastal hills: giant trunks over ferns and moss, in the fog.
             name: "redwood_forest",
+            level: 4,
             tags: ["forest", "temperate", "conifer", "giant", "wet"],
             weight: 0.8,
             climate: [(temperature: ("temperate", "temperate"), moisture: ("wet", "wet"), continentalness: ("coast", "inland"), erosion: ("flat", "slopes"))],
@@ -415,6 +450,7 @@
         ),
         (
             name: "swamp",
+            level: 3,
             tags: ["wetland", "temperate"],
             weight: 3.0,
             climate: [(temperature: ("temperate", "temperate"), moisture: ("wet", "wet"), continentalness: ("coast", "inland"), erosion: ("flat", "flat"))],
@@ -439,7 +475,10 @@
             // Cool, dry grassland: wild wheat in drifts and stones in the grass; Scots pine
             // heath in places.
             name: "steppe",
+            level: 2,
             tags: ["grassland", "dry", "open"],
+            // Stones on gentle open ground: pale grey, moss on their tops, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("andesite", 1.5), Name("limestone", 0.5)],
             // Dry grass, straw-olive.
             colors: (grass: (164, 164, 100)),
             climate: [
@@ -468,6 +507,7 @@
         (
             // Scots pines in open stands on sandy heath, heather drifting between them.
             name: "pine_heath",
+            level: 3,
             inherit: "steppe",
             tags: ["grassland", "dry", "open", "heath", "conifer"],
             rarity: Uncommon,
@@ -492,6 +532,7 @@
             // Cold, dry basin country: silver sagebrush over pale, stony ground, bunchgrass
             // between the bushes.
             name: "sagebrush_steppe",
+            level: 3,
             tags: ["grassland", "dry", "open", "cool"],
             climate: [(temperature: ("cool", "cool"), moisture: ("arid", "arid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (
@@ -515,6 +556,7 @@
         // --- Cold ----------------------------------------------------------------------
         (
             name: "taiga",
+            level: 3,
             tags: ["forest", "cold", "conifer"],
             climate: [(temperature: ("cold", "cold"), moisture: ("moderate", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
@@ -537,6 +579,7 @@
         (
             // Spruce giants, deep moss and needle beds.
             name: "old_growth_taiga",
+            level: 4,
             inherit: "taiga",
             tags: ["forest", "cold", "conifer", "giant", "dense"],
             rarity: Uncommon,
@@ -550,6 +593,7 @@
         (
             // A burnt or blighted wood: pale dead snags, fireweed coming back in the open.
             name: "ghost_forest",
+            level: 6,
             inherit: "taiga",
             tags: ["forest", "cold", "snag", "burnt"],
             rarity: VeryRare,
@@ -574,6 +618,7 @@
         (
             // Between taiga and forest, birch among the spruce.
             name: "birch_taiga",
+            level: 3,
             inherit: "taiga",
             tags: ["forest", "cold", "conifer", "birch"],
             flora: (
@@ -589,6 +634,7 @@
             // Open, wind-scoured cold land: short grass, heather, cotton grass, junipers,
             // gravel.
             name: "tundra",
+            level: 5,
             tags: ["tundra", "cold", "open", "rocky"],
             climate: [(temperature: ("cold", "cold"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
@@ -613,6 +659,7 @@
         (
             // Boulders left by a glacier long gone, of rock from far away.
             name: "erratic_field",
+            level: 3,
             inherit: "tundra",
             tags: ["tundra", "cold", "open", "rocky", "erratics"],
             rarity: Rare,
@@ -628,6 +675,7 @@
         (
             // Wet cold flats: moss, peat and pools, sparse black spruce.
             name: "bog",
+            level: 4,
             tags: ["wetland", "cold", "open"],
             weight: 0.6,
             climate: [(temperature: ("cold", "cool"), moisture: ("wet", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "flat"))],
@@ -652,6 +700,7 @@
         ),
         (
             name: "snowy_taiga",
+            level: 5,
             inherit: "taiga",
             tags: ["forest", "frozen", "conifer", "snow"],
             climate: [(temperature: ("frozen", "frozen"), moisture: ("moderate", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
@@ -665,6 +714,7 @@
         ),
         (
             name: "snowy_tundra",
+            level: 6,
             tags: ["tundra", "frozen", "open"],
             climate: [(temperature: ("frozen", "frozen"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (
@@ -686,6 +736,7 @@
         (
             // Fields of bare ice where the cold is fiercest, in a few regions only.
             name: "glacier",
+            level: 6,
             tags: ["frozen", "ice", "open"],
             rarity: Rare,
             climate: [(temperature: ("frozen", "frozen"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
@@ -705,6 +756,7 @@
         (
             // The slopes of the ranges: grass giving way to scree and rock with height.
             name: "mountains",
+            level: 4,
             tags: ["mountain", "highland"],
             climate: [(temperature: ("frozen", "cool"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "slopes"))],
             flora: (
@@ -728,6 +780,7 @@
         (
             // High pasture between the rocks: gentian, crocus, edelweiss and junipers.
             name: "alpine_meadow",
+            level: 4,
             inherit: "mountains",
             tags: ["mountain", "highland", "alpine", "open"],
             flora: (
@@ -740,6 +793,7 @@
         (
             // Jagged peaks of rock and snow.
             name: "snowy_peaks",
+            level: 7,
             tags: ["mountain", "peaks", "frozen", "rocky"],
             climate: [(temperature: ("frozen", "cool"), continentalness: ("coast", "far_inland"), erosion: ("peaks", "peaks"))],
             flora: (
@@ -761,6 +815,7 @@
         (
             // Bare, sunbaked peaks of warmer ranges.
             name: "rocky_peaks",
+            level: 6,
             tags: ["mountain", "peaks", "rocky", "dry"],
             climate: [(temperature: ("temperate", "warm"), moisture: ("arid", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("peaks", "peaks"))],
             flora: (
@@ -782,6 +837,7 @@
         (
             // Mist-wrapped mountain forest, every branch and stone furred with moss.
             name: "cloud_forest",
+            level: 5,
             tags: ["forest", "mountain", "wet", "mossy"],
             climate: [(temperature: ("temperate", "warm"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("peaks", "peaks"))],
             flora: (
@@ -806,7 +862,10 @@
         (
             // Sunny scrub hills: cypress spires, sage, thyme and lavender, pale stone.
             name: "mediterranean",
+            level: 2,
             tags: ["scrubland", "warm", "dry", "open"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("limestone", 3.0), Name("calcite", 0.6)],
             weight: 0.7,
             climate: [(temperature: ("warm", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
@@ -831,6 +890,7 @@
         (
             // A hillside purple with lavender.
             name: "lavender_fields",
+            level: 2,
             inherit: "mediterranean",
             tags: ["scrubland", "warm", "dry", "open", "flowers"],
             rarity: Rare,
@@ -854,6 +914,7 @@
         ),
         (
             name: "bayou",
+            level: 4,
             tags: ["wetland", "warm"],
             weight: 3.0,
             climate: [(temperature: ("warm", "warm"), moisture: ("wet", "wet"), continentalness: ("coast", "inland"), erosion: ("flat", "flat"))],
@@ -878,12 +939,13 @@
         ),
         (
             name: "mangrove_swamp",
+            level: 4,
             tags: ["wetland", "hot", "tropical"],
             weight: 2.0,
             climate: [(temperature: ("hot", "hot"), moisture: ("humid", "wet"), continentalness: ("coast", "coast"), erosion: ("flat", "flat"))],
             flora: (
                 forest: 0.5,
-                trees: [Name("mangrove", 4.0), Name("palm", 0.5), Name("jungle_bush", 0.5), Name("banana", 0.15), Name("mango", 0.15)],
+                trees: [Name("mangrove", 4.0), Name("palm", 0.5), Name("jungle_bush", 0.5), Name("banana", 0.15)],
                 cover: 0.7, flowers: 0.01,
                 plants: [Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("wetland", 1.0), Name("papyrus", 3.0), Tag("forage", 0.02)],
             ),
@@ -898,6 +960,7 @@
         ),
         (
             name: "desert",
+            level: 4,
             tags: ["desert", "hot", "dry", "open"],
             climate: [(temperature: ("warm", "hot"), moisture: ("arid", "arid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (
@@ -925,6 +988,7 @@
         (
             // Nothing but sand, rippled by the wind.
             name: "dune_sea",
+            level: 6,
             inherit: "desert",
             tags: ["desert", "hot", "dry", "open", "dunes"],
             flora: (forest: 0.0, cover: 0.0, plants: [Name("dead_bush", 0.15), Tag("forage", 0.02), Name("prickly_pear", 0.2), Name("creosote_bush", 0.2)]),
@@ -942,6 +1006,7 @@
         (
             // Rust-red sand and rock.
             name: "red_desert",
+            level: 5,
             inherit: "desert",
             tags: ["desert", "hot", "dry", "open"],
             surface: (
@@ -958,6 +1023,7 @@
         (
             // Hot, dry uplands of red sand and banded clay.
             name: "badlands",
+            level: 5,
             tags: ["desert", "hot", "dry", "mesa"],
             climate: [(temperature: ("warm", "hot"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "peaks"))],
             strata: [
@@ -985,6 +1051,7 @@
         (
             // Badlands whose plateaus hold soil, grass and scrubby trees.
             name: "wooded_badlands",
+            level: 5,
             inherit: "badlands",
             tags: ["desert", "hot", "dry", "mesa", "groves"],
             // Dry grass: dull olive to straw, as dry grassland reads, not the climate's green.
@@ -1009,7 +1076,10 @@
         ),
         (
             name: "savanna",
+            level: 3,
             tags: ["grassland", "hot", "dry", "open", "savanna"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("limestone", 3.0), Name("granite", 1.0)],
             // Dry grass: dull olive to straw, as dry grassland reads, not the climate's green.
             colors: (grass: (184, 174, 92), foliage: (170, 160, 64)),
             climate: [
@@ -1037,6 +1107,7 @@
         ),
         (
             name: "baobab_savanna",
+            level: 4,
             inherit: "savanna",
             tags: ["grassland", "hot", "dry", "open", "savanna", "giant"],
             // Dry grass: dull olive to straw, as dry grassland reads, not the climate's green.
@@ -1053,6 +1124,7 @@
         (
             // Red earth and spinifex, far from the sea: a hot, dry outback.
             name: "outback",
+            level: 4,
             tags: ["grassland", "hot", "dry", "open", "savanna"],
             weight: 0.7,
             climate: [(temperature: ("hot", "hot"), moisture: ("arid", "dry"), continentalness: ("inland", "far_inland"), erosion: ("flat", "hills"))],
@@ -1078,6 +1150,7 @@
         ),
         (
             name: "jungle",
+            level: 5,
             tags: ["forest", "hot", "wet", "dense", "jungle"],
             climate: [(temperature: ("hot", "hot"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"))],
             flora: (
@@ -1103,7 +1176,10 @@
             // Where aether runs high in mild country: pale stone breaks through the turf in
             // patches and veins.
             name: "moonlit_meadow",
-            tags: ["grassland", "temperate", "open", "fantastical"],
+            level: 7,
+            tags: ["grassland", "temperate", "open", "fantastical", "no_settlement"],
+            // Stones on gentle open ground: pale grey, moss on their tops, not the dark rock.
+            field_stones: [Name("diorite", 2.0), Name("calcite", 1.0), Name("stone", 1.0)],
             rarity: Uncommon,
             climate: [(
                 temperature: ("cool", "temperate"),
@@ -1139,7 +1215,8 @@
         (
             // A cold wood of silver-barked trees whose leaves glow faintly at dusk.
             name: "silverwood_glade",
-            tags: ["forest", "cold", "fantastical"],
+            level: 8,
+            tags: ["forest", "cold", "fantastical", "no_settlement"],
             rarity: Rare,
             climate: [(temperature: ("frozen", "cool"), moisture: ("moderate", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.78, 1.0))],
             flora: (
@@ -1166,7 +1243,8 @@
         (
             // A damp wood of giant glowing mushrooms under a dark canopy.
             name: "glowcap_forest",
-            tags: ["forest", "fungal", "fantastical", "dense"],
+            level: 7,
+            tags: ["forest", "fungal", "fantastical", "no_settlement", "dense"],
             rarity: Rare,
             climate: [(temperature: ("cool", "warm"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.8, 1.0))],
             flora: (
@@ -1192,7 +1270,8 @@
         (
             // Hot barrens where emberwoods smoulder and the ground is ash and red earth.
             name: "ember_wastes",
-            tags: ["desert", "hot", "dry", "fantastical"],
+            level: 8,
+            tags: ["desert", "hot", "dry", "fantastical", "no_settlement"],
             rarity: Rare,
             climate: [(temperature: ("warm", "hot"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), aether: (0.78, 1.0))],
             flora: (
@@ -1220,7 +1299,8 @@
             // Frozen ground set with crystals of ice and pale stone, where blooms of crystal
             // grow.
             name: "crystal_expanse",
-            tags: ["frozen", "ice", "open", "fantastical"],
+            level: 9,
+            tags: ["frozen", "ice", "open", "fantastical", "no_settlement"],
             rarity: VeryRare,
             climate: [(temperature: ("frozen", "cold"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"), aether: (0.82, 1.0))],
             flora: (
@@ -1248,7 +1328,10 @@
             // Golden downs where the legendary sunspire grows: a place told of more often
             // than found.
             name: "sunspire_downs",
-            tags: ["grassland", "warm", "open", "fantastical"],
+            level: 8,
+            tags: ["grassland", "warm", "open", "fantastical", "no_settlement"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("chalk", 2.0), Name("limestone", 2.0)],
             rarity: Legendary,
             climate: [(temperature: ("temperate", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.85, 1.0))],
             flora: (

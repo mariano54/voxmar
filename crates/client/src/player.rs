@@ -3,7 +3,6 @@
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::skill::Skills;
@@ -85,6 +84,10 @@ pub struct LocalPlayer {
     pub journal: voxmar_engine::journal::Journal,
     /// Every quest's state, as the server tells it (the quest book's data).
     pub quests: Vec<voxmar_engine::quest::QuestState>,
+    /// The last teleport applied, which inputs echo (`PlayerInput::teleport`).
+    pub teleports: u32,
+    /// Counts the server's word on quests, for screens to redraw only on a change.
+    pub quests_rev: u32,
 }
 
 impl Default for LocalPlayer {
@@ -118,6 +121,8 @@ impl Default for LocalPlayer {
             seed: 0,
             journal: Default::default(),
             quests: Vec::new(),
+            teleports: 0,
+            quests_rev: 0,
         }
     }
 }
@@ -143,6 +148,8 @@ pub struct UiState {
     pub character_open: bool,
     /// The journal of what the player has found.
     pub journal_open: bool,
+    /// The quest book.
+    pub quests_open: bool,
     /// The settings menu.
     pub menu_open: bool,
     /// The chat and command line.
@@ -168,15 +175,16 @@ fn grab_cursor(
             ui.console_open = false;
         } else if ui.recipes_open {
             ui.recipes_open = false;
-        } else if ui.inventory_open || ui.character_open || ui.journal_open {
+        } else if ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open {
             ui.inventory_open = false;
             ui.character_open = false;
             ui.journal_open = false;
+            ui.quests_open = false;
         } else {
             ui.menu_open = !ui.menu_open;
         }
     }
-    let screen_open = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.console_open || ui.recipes_open || player.dead;
+    let screen_open = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.console_open || ui.recipes_open || player.dead;
     let want_locked = !screen_open && (ui.cursor_locked || *screen_was_open || mouse.just_pressed(MouseButton::Left));
     *screen_was_open = screen_open;
     let changed = want_locked != ui.cursor_locked;
@@ -458,12 +466,11 @@ fn movement(
         sprinting: player.sprinting,
         jump_delay: player.jump_delay,
     };
-    let water = world.registry.id("base:water").unwrap_or(BlockId::AIR);
     // Quicker or slower on foot as the player's effects say (fruit, a gale).
     let speed = launch.content.effects.modifiers(&player.vitals.effects).speed * guard_speed.unwrap_or(1.0);
     let tuning = launch.content.movement.on_foot(speed);
     let dt = time.delta_secs().min(0.25);
-    let around = Around { world: &world, water };
+    let around = Around { world: &world };
     match fighting.dash {
         Some(under_way) => fighting.dash = dash(&mut body, under_way, &around, &tuning, controls, dt),
         None => movement::advance(&mut body, &around, &tuning, controls, dt),
@@ -530,8 +537,6 @@ fn out_of(feet: Vec3, aabb: &Aabb, room: f32) -> Option<Vec3> {
 /// The client's world as movement sees it.
 struct Around<'a> {
     world: &'a ClientWorld,
-    /// The water block, the one fluid that is swum in.
-    water: BlockId,
 }
 
 impl Surroundings for Around<'_> {
@@ -540,7 +545,7 @@ impl Surroundings for Around<'_> {
     }
 
     fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
-        movement::water_around(&self.world.registry, self.water, |p| self.world.block(p), aabb)
+        movement::water_around(&self.world.registry, |p| self.world.block(p), aabb)
     }
 }
 
@@ -591,6 +596,9 @@ mod tests {
 
     #[test]
     fn a_dash_covers_its_distance_at_any_frame_rate() {
+        // The shipped movement numbers (which now hold more than a test names), with the ones
+        // this test fixes.
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
         let tuning = movement::Tuning {
             walk_speed: 4.7,
             sprint_speed: 6.0,
@@ -601,6 +609,7 @@ mod tests {
             water_speed: 0.4,
             fly_speed: 10.0,
             fly_sprint_speed: 20.0,
+            ..content.movement.on_foot(1.0)
         };
         // The light dodge: 3 blocks in 0.25 s.
         for fps in [20.0, 30.0, 60.0, 144.0, 240.0] {

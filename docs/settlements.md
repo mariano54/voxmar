@@ -20,6 +20,9 @@ best of the first `site.tries` (6) that:
   fantastical and giant biomes);
 - has a temperature between −10 and 36 °C: as likely as anywhere between 0 and 26, a
   quarter as likely at the edges (`site.taper`);
+- prefers gentler land: as likely as anywhere in biomes of level 1 to 5, 0.7 times as
+  likely in harsher ones (`site.levels`, biome levels P15, design draft 95; above level 5
+  rather than 3 so the level 4 and 5 villages that grow chickpea, rice and taro stay);
 - has no sinkhole or ravine within 150 blocks.
 
 Once planned, its buildings keep `site.bank` (3) blocks from water, and the ground under
@@ -32,6 +35,11 @@ spawn: where no square near is settled within that reach anyway, the nearest squ
 reach that can hold one always does, its climate ruling no spot out and its next best
 spot tried where one cannot be laid out. Where no spot in reach will do (a strip of coast
 under mountains), none is promised. A player never spawns inside a settlement.
+
+No two settlements within `rules.names_apart` (4096) blocks of each other share a name
+(design, draft 81). Names draw from a stream of their own: each square offers a few
+names, takes the first its neighbours in that reach don't also offer, and so needs no
+neighbour planned to know its own.
 
 ## The levers
 
@@ -151,7 +159,8 @@ section as earlier packages set it; each special size it names replaces that kin
   so each step is jumped with room overhead.
 - Servers on one world in one process share its generator (`Overworld::shared`), so the
   settlements, trails and rivers round spawn are planned once.
-- Trees and decorations keep out of buildings, lanes and a glade round the houses.
+- Trees and decorations keep out of buildings, lanes and a glade round the houses; a crown
+  that still reaches over a roof is cut back over it and `site.eaves` blocks round it.
 - `Overworld::settlements_near` lists them with their buildings (each with what it is
   in the lists and the work done in it), doors and gates, for gameplay (villagers,
   shops) and maps; `/locate settlement` finds the nearest.

@@ -28,6 +28,34 @@
     // How densely trees grow in forests: a factor on every biome's tree cover (1 is the
     // biomes' own). Thinner forests show more of the ground and the trees' own shapes.
     density: 0.87,
+    // Where each wood comes from, so a region's timber is its own trees': a wood named
+    // after a tree builds a tree of another family only in biomes where one of its own
+    // family grows too (a test holds the base game to it). The common woods are generic
+    // temperate woods that may build any tree. Every wood a tree is built of (its log and
+    // root block) is one or the other; each family's trees are built of its wood. A later
+    // package may class a wood the other way.
+    woods: (
+        common: ["oak_log", "birch_log", "spruce_log", "pine_log", "dark_oak_log"],
+        families: {
+            "acacia_log": ["acacia"],
+            "baobab_log": ["baobab"],
+            "cactus": ["cactus"],
+            // Plums and almonds are cherries' kin (Prunus).
+            "cherry_log": ["cherry", "wild_cherry", "plum_tree", "almond"],
+            "cypress_log": ["cypress", "bald_cypress"],
+            "dead_log": ["dead_tree"],
+            "emberwood_log": ["emberwood"],
+            "glowcap_stem": ["giant_glowcap"],
+            "jungle_log": ["jungle", "giant_jungle"],
+            "mangrove_log": ["mangrove"],
+            "mangrove_roots": ["mangrove"],
+            "maple_log": ["maple", "amber_maple", "green_maple"],
+            "palm_log": ["palm", "date_palm"],
+            "redwood_log": ["redwood"],
+            "silverwood_log": ["silverwood"],
+            "willow_log": ["willow"],
+        },
+    ),
     trees: [
         (
             name: "oak", tags: ["broadleaf", "temperate"],
@@ -98,7 +126,7 @@
         ),
         (
             name: "jungle_bush", tags: ["tropical", "shrub"], stand: (0.0, 0.7),
-            log: "jungle_log", leaves: "oak_leaves", height: (1, 2),
+            log: "oak_log", leaves: "oak_leaves", height: (1, 2),
             crown: Bush(radius: (1.2, 2.0)),
             comfort: (temperature: (19.0, 40.0), moisture: (0.9, 8.0)),
         ),
@@ -137,7 +165,7 @@
         ),
         (
             name: "dead_tree", tags: ["snag", "dry"],
-            log: "acacia_log", height: (6, 10), lean: 1.6,
+            log: "dead_log", height: (6, 10), lean: 1.6,
             crown: Dead(branches: (2, 4), reach: (2.0, 3.2), broken: 0.2, fork: 0.65),
             ground: [Soil, Snow, Sand],
         ),
@@ -305,28 +333,28 @@
         (
             // Gnarled and grey-green, of dry warm hills.
             name: "olive", tags: ["gathering", "fruit", "warm", "dry"], rarity: Uncommon,
-            log: "acacia_log", leaves: "olive_leaves", height: (3, 5), lean: 1.4,
+            log: "oak_log", leaves: "olive_leaves", height: (3, 5), lean: 1.4,
             fruit: (leaves: "olives_leaves", share: 0.1),
             crown: Umbrella(reach: (1.6, 2.6), radius: (1.6, 2.2), squash: 0.6, fork: 0.4),
             comfort: (temperature: (12.0, 30.0), moisture: (0.1, 1.0)),
         ),
         (
             name: "fig", tags: ["gathering", "fruit", "warm"], rarity: Rare,
-            log: "acacia_log", leaves: "oak_leaves", height: (3, 5), lean: 1.0,
+            log: "oak_log", leaves: "oak_leaves", height: (3, 5), lean: 1.0,
             fruit: (leaves: "fig_leaves", share: 0.07),
             crown: Round(reach: (2.2, 3.2), radius: (1.6, 2.2), squash: 0.6, start: 0.25),
             comfort: (temperature: (14.0, 32.0), moisture: (0.2, 1.4)),
         ),
         (
             name: "lemon_tree", tags: ["gathering", "fruit", "warm", "citrus"], rarity: Rare,
-            log: "jungle_log", leaves: "jungle_leaves", height: (3, 5), lean: 0.6,
+            log: "oak_log", leaves: "jungle_leaves", height: (3, 5), lean: 0.6,
             fruit: (leaves: "lemon_leaves", share: 0.1),
             crown: Round(reach: (1.2, 2.0), radius: (1.5, 2.0), squash: 0.95, start: 0.25),
             comfort: (temperature: (14.0, 32.0), moisture: (0.3, 8.0)),
         ),
         (
             name: "orange_tree", tags: ["gathering", "fruit", "warm", "citrus"], rarity: Rare,
-            log: "jungle_log", leaves: "jungle_leaves", height: (3, 5), lean: 0.6,
+            log: "oak_log", leaves: "jungle_leaves", height: (3, 5), lean: 0.6,
             fruit: (leaves: "orange_leaves", share: 0.1),
             crown: Round(reach: (1.2, 2.0), radius: (1.5, 2.0), squash: 0.95, start: 0.25),
             comfort: (temperature: (16.0, 34.0), moisture: (0.4, 8.0)),
@@ -356,7 +384,7 @@
         ),
         (
             name: "avocado", tags: ["gathering", "fruit", "hot"], rarity: Rare,
-            log: "jungle_log", leaves: "jungle_leaves", height: (6, 9), lean: 0.5,
+            log: "oak_log", leaves: "jungle_leaves", height: (6, 9), lean: 0.5,
             fruit: (leaves: "avocado_leaves", share: 0.06),
             crown: Round(reach: (1.8, 2.6), radius: (1.8, 2.4), squash: 1.05, start: 0.35),
             comfort: (temperature: (18.0, 36.0), moisture: (0.6, 8.0)),

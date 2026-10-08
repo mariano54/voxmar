@@ -148,12 +148,15 @@ impl Lang {
     /// or, for a block made from a template, the template member's name with the family's
     /// filled in (`block.base.{name}_log` with `family.base.oak`), so a language names a
     /// whole family of woods or rocks in two lines; another look of a plant goes by the
-    /// plant's name. Without any of those, a name made from its id: "Oak Log".
+    /// plant's name, and a block turned to face another way goes by the block's (a wall
+    /// torch facing east is a wall torch). Without any of those, a name made from its id:
+    /// "Oak Log".
     pub fn block(&self, def: &BlockDef) -> String {
-        if let Some(name) = self.find(&def_key("block", &def.name)) {
+        let name = def.form_of().unwrap_or(&def.name);
+        if let Some(name) = self.find(&def_key("block", name)) {
             return name.to_owned();
         }
-        let (namespace, local) = def.name.split_once(':').unwrap_or(("", &def.name));
+        let (namespace, local) = name.split_once(':').unwrap_or(("", name));
         if let Some(family) = &def.family {
             let family_local = family.rsplit(':').next().unwrap_or(family);
             let pattern = local.replacen(family_local, "{name}", 1);
@@ -164,7 +167,7 @@ impl Lang {
         if let Some(plant) = def.variant_of.as_deref().and_then(|plant| self.find(&def_key("block", plant))) {
             return plant.to_owned();
         }
-        title_from_id(&def.name)
+        title_from_id(name)
     }
 
     /// How the name at `key` reads, for a name written with kanji (`lang/readings/<code>.ron`):
@@ -177,11 +180,12 @@ impl Lang {
     /// How a block or item's name reads (see [`Lang::reading`]), made as its name is (see
     /// [`Lang::block`]): a template's reading is its member's with the family's filled in.
     pub fn block_reading(&self, def: &BlockDef) -> Option<String> {
-        let key = def_key("block", &def.name);
+        let name = def.form_of().unwrap_or(&def.name);
+        let key = def_key("block", name);
         if self.find(&key).is_some() {
             return self.reading(&key);
         }
-        let (namespace, local) = def.name.split_once(':').unwrap_or(("", &def.name));
+        let (namespace, local) = name.split_once(':').unwrap_or(("", name));
         if let Some(family) = &def.family {
             let family_local = family.rsplit(':').next().unwrap_or(family);
             let (member, family) = (format!("block.{namespace}.{}", local.replacen(family_local, "{name}", 1)), def_key("family", family));
@@ -584,6 +588,24 @@ mod tests {
         assert_eq!(problems.len(), 1);
         let (_, problems) = Lang::from_files("en", [("base", "en", "not ron")]);
         assert_eq!(problems.len(), 1);
+    }
+
+    /// A family's block placed in another form (stairs turned east, upside down) is named
+    /// and read as the block itself, through the family's template.
+    #[test]
+    fn a_family_block_in_another_form_goes_by_the_block() {
+        let ja = r#"{ "block.base.{name}_stairs": "{name}の階段", "family.base.oak": "オーク" }"#;
+        let (mut lang, _) = Lang::from_files("ja", [("base", "ja", ja)]);
+        lang.readings.insert("block.base.{name}_stairs".into(), "{name}のかいだん".into());
+        let stairs = |name: &str, faces, flipped| BlockDef { name: name.into(), family: Some("base:oak".into()), faces, flipped, ..Default::default() };
+        for def in [
+            stairs("base:oak_stairs", Some(crate::block::Facing::North), false),
+            stairs("base:oak_stairs_east", Some(crate::block::Facing::East), false),
+            stairs("base:oak_stairs_top_west", Some(crate::block::Facing::West), true),
+        ] {
+            assert_eq!(lang.block(&def), "オークの階段", "{}", def.name);
+            assert_eq!(lang.block_reading(&def).as_deref(), Some("オークのかいだん"), "{}", def.name);
+        }
     }
 
     #[test]

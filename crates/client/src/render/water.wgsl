@@ -92,7 +92,7 @@ const WAVE_SLOPE: f32 = 0.16;
 const BLOCK_TEXELS: f32 = 16.0;
 // Each wave layer's strength wanders between these over broad patches this many of the
 // layer's own sizes across, so no layer repeats evenly across open water.
-const PATCHES = vec2(0.45, 1.55);
+const PATCHES = vec2(0.7, 1.3);
 const PATCH_SIZE: f32 = 9.0;
 
 

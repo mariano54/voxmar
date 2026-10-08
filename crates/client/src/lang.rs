@@ -447,7 +447,9 @@ mod tests {
     /// `alchemy:<property>` tag is called (`alchemy.<property>`, in item tooltips), each
     /// biome tag (`biome.tag.<tag>`, in `/biome`), what creatures are doing
     /// (`creature.doing.<module>`), animals' genes and alleles (`gene.<species>.<gene>`, in
-    /// `/inspect`) and the weather's channels (`weather.channel.<name>`).
+    /// `/inspect`), the weather's channels (`weather.channel.<name>`), the quest book's
+    /// chapters (`quest.age.<age>`), and the fonts and shader packs in the settings
+    /// (`settings.font.<font>`, `shader_pack.<pack>`).
     fn built_keys(content: &voxmar_engine::content::Content) -> BTreeSet<String> {
         let blocks = &content.blocks;
         let mut keys = BTreeSet::new();
@@ -479,6 +481,20 @@ mod tests {
         // The weather's channels in `/weather` and the F3 screen, and what falls.
         let channels = voxmar_engine::weather::Weather::default().channels().map(|(name, _)| name);
         keys.extend(channels.chain(["rain", "snow"]).map(|name| format!("weather.channel.{name}")));
+        // Armour sets by name, and what each kind of pouch holds, in item tooltips.
+        for id in (0..blocks.len()).map(|i| BlockId(i as u16)).filter(|&id| first_party(&blocks.def(id).name)) {
+            if let Some(piece) = content.combat.piece(id) {
+                keys.insert(format!("armour_set.{}", content.combat.set(piece.set).name));
+            }
+            keys.extend(blocks.def(id).tags.iter().filter_map(|tag| tag.strip_prefix("holds:")).map(|kind| format!("pouch.fills.{kind}")));
+        }
+        // What each first-party package is called, at the foot of every item's tooltip.
+        keys.extend(FIRST_PARTY.iter().map(|package| format!("package.{package}")));
+        // The quest book's chapters, one per age the first-party quests name.
+        keys.extend(content.quests.iter().filter(|quest| first_party(&quest.name)).map(|quest| format!("quest.age.{}", quest.age)));
+        // The interface fonts and the shader packs the game ships, as the settings name them.
+        keys.extend(crate::ui::skin::InterfaceFont::ALL.map(|font| font.key().to_owned()));
+        keys.extend(crate::render::pack::ShaderPacks::load(&assets()).0.iter().filter(|pack| pack.shipped).map(crate::render::pack::ShaderPack::key));
         keys
     }
 

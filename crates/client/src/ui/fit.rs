@@ -45,6 +45,14 @@ pub struct LineBreaksChecked {
     pub looks: usize,
 }
 
+impl LineBreaksChecked {
+    /// Whether a look since `before` was in a language with line rules and checked no
+    /// text's line breaks.
+    pub fn none_since(&self, before: &Self) -> bool {
+        self.looks > before.looks && self.checked == before.checked
+    }
+}
+
 impl std::fmt::Display for Spill {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let sides = ["left", "right", "top", "bottom"];
@@ -98,6 +106,17 @@ fn clipped(world: &World, parents: &mut QueryState<&ChildOf>, boxes: &mut QueryS
     (seen.width() > 0.0 && seen.height() > 0.0).then_some(seen)
 }
 
+/// A text drawn only to set off another (the ring round a stack count), which stands where
+/// that one does: the check leaves it out.
+#[derive(Component)]
+pub struct Decoration;
+
+/// Whether a text is on screen to be checked: visible, saying something, and laid out (a
+/// node in a part of the screen not displayed has no size, and its layout is stale).
+fn shown(text: &Text, layout: &TextLayoutInfo, node: &ComputedNode, visible: &InheritedVisibility) -> bool {
+    visible.get() && !text.0.trim().is_empty() && layout.size != Vec2::ZERO && node.size().min_element() > 0.0
+}
+
 /// Every visible text that does not fit, each once (against the first box it spills from,
 /// its own node first).
 pub fn find(world: &mut World) -> Vec<Spill> {
@@ -105,14 +124,13 @@ pub fn find(world: &mut World) -> Vec<Spill> {
     // pixels can move an edge by more than a unit.
     let units_per_pixel = world.query::<&ComputedNode>().iter(world).map(ComputedNode::inverse_scale_factor).fold(1.0f32, f32::max);
     let slack = (SLACK * units_per_pixel).max(SLACK);
-    let mut texts = world.query::<(Entity, &Text, &TextLayoutInfo, &ComputedNode, &UiGlobalTransform, &InheritedVisibility)>();
+    let mut texts = world.query_filtered::<(Entity, &Text, &TextLayoutInfo, &ComputedNode, &UiGlobalTransform, &InheritedVisibility), Without<Decoration>>();
     let mut boxes = world.query::<Boxes>();
     let mut parents = world.query::<&ChildOf>();
     let mut found = Vec::new();
     let candidates: Vec<(Entity, String, Rect, Rect)> = texts
         .iter(world)
-        // A node not laid out (in a part of the screen not displayed) has no size.
-        .filter(|(_, text, layout, node, _, visible)| visible.get() && !text.0.trim().is_empty() && layout.size != Vec2::ZERO && node.size().min_element() > 0.0)
+        .filter(|(_, text, layout, node, _, visible)| shown(text, layout, node, visible))
         .filter_map(|(entity, text, layout, node, transform, _)| {
             let scale = node.inverse_scale_factor();
             let own = rect(node, transform);
@@ -132,11 +150,19 @@ pub fn find(world: &mut World) -> Vec<Spill> {
     // Lines break only where the language lets them (kinsoku: never before a closing
     // bracket or small kana, after an opening bracket, or inside a katakana word). Text is
     // laid out joined (see `crate::lang::Joined`); each glyph is matched to a character of
-    // that, with or without the spaces and word joiners, as the layout gives them.
+    // that, with or without the spaces and word joiners, as the layout gives them. A line's
+    // end draws nothing.
     let rules = world.get_resource::<crate::lang::Locale>().map(|locale| voxmar_engine::lang::LineRules::of(locale)).unwrap_or_default();
     let mut checked = 0;
-    for (_, text, layout, _, _, visible) in texts.iter(world) {
-        let Some(joined) = rules.join(&text.0).filter(|_| visible.get()) else { continue };
+    for (_, text, layout, node, _, visible) in texts.iter(world) {
+        if rules.is_empty() || text.0.is_ascii() || !shown(text, layout, node, visible) {
+            continue;
+        }
+        // Nothing in it held together: wherever its lines break, they may.
+        let Some(joined) = rules.join(&text.0) else {
+            checked += 1;
+            continue;
+        };
         let chars: Vec<char> = joined.chars().collect();
         let joiner = |c: char| c == voxmar_engine::lang::WORD_JOINER;
         // Where the rules hold the text as written together, by each joined character.
@@ -150,7 +176,8 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             |c| !c.is_whitespace() && c != voxmar_engine::lang::WORD_JOINER,
             |c| !c.is_whitespace(),
         ];
-        let Some(at) = mappings.iter().map(|keep| (0..chars.len()).filter(|&i| keep(chars[i])).collect::<Vec<usize>>()).find(|at| at.len() == layout.glyphs.len()) else {
+        let drawn = |c: char| !matches!(c, '\n' | '\r');
+        let Some(at) = mappings.iter().map(|keep| (0..chars.len()).filter(|&i| drawn(chars[i]) && keep(chars[i])).collect::<Vec<usize>>()).find(|at| at.len() == layout.glyphs.len()) else {
             found.push(Spill { text: text.0.clone(), past: [0.0; 4], own: true, size: Vec2::ZERO, lines: layout.size, over: None, broken: None, unmatched: Some((layout.glyphs.len(), chars.len())) });
             continue;
         };
@@ -262,23 +289,27 @@ pub fn find(world: &mut World) -> Vec<Spill> {
 mod tests {
     use super::*;
 
+    /// What [`find`] says of one Japanese text laid out with its glyphs on `lines`, in a node
+    /// of `size` with a layout of `laid_out`, and how many texts' line breaks it checked.
+    fn look_at_node(text: &str, lines: &[usize], size: Vec2, laid_out: Vec2, visibility: InheritedVisibility) -> (Vec<String>, usize) {
+        use bevy::text::{GlyphAtlasInfo, PositionedGlyph};
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let mut world = World::new();
+        world.insert_resource(crate::lang::Locale::load(&content, "ja"));
+        let atlas_info = GlyphAtlasInfo { texture: AssetId::default(), rect: Rect::default(), offset: Vec2::ZERO, is_alpha_mask: false };
+        let glyphs = lines.iter().map(|&line_index| PositionedGlyph { position: Vec2::ZERO, atlas_info: atlas_info.clone(), section_index: 0, line_index }).collect();
+        let layout = TextLayoutInfo { glyphs, size: laid_out, ..Default::default() };
+        world.spawn((Text::new(text), layout, ComputedNode { size, ..default() }, UiGlobalTransform::default(), visibility));
+        let found: Vec<String> = find(&mut world).iter().map(ToString::to_string).collect();
+        (found, world.resource::<LineBreaksChecked>().checked)
+    }
+
     /// A Japanese line broken inside a katakana word is found however the layout gives its
     /// glyphs (with word joiners or without), and a text whose glyphs can't be matched to
     /// its characters fails rather than passing unchecked.
     #[test]
     fn line_breaks_against_the_rules_are_found() {
-        use bevy::text::{GlyphAtlasInfo, PositionedGlyph};
-        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
-        let look_at = |text: &str, lines: &[usize]| {
-            let mut world = World::new();
-            world.insert_resource(crate::lang::Locale::load(&content, "ja"));
-            let atlas_info = GlyphAtlasInfo { texture: AssetId::default(), rect: Rect::default(), offset: Vec2::ZERO, is_alpha_mask: false };
-            let glyphs = lines.iter().map(|&line_index| PositionedGlyph { position: Vec2::ZERO, atlas_info: atlas_info.clone(), section_index: 0, line_index }).collect();
-            let layout = TextLayoutInfo { glyphs, size: Vec2::splat(10.0), ..Default::default() };
-            world.spawn((Text::new(text), layout, ComputedNode::default(), UiGlobalTransform::default(), InheritedVisibility::VISIBLE));
-            let found: Vec<String> = find(&mut world).iter().map(ToString::to_string).collect();
-            (found, world.resource::<LineBreaksChecked>().checked)
-        };
+        let look_at = |text: &str, lines: &[usize]| look_at_node(text, lines, Vec2::new(100.0, 20.0), Vec2::splat(10.0), InheritedVisibility::VISIBLE);
         let look = |lines: &[usize]| look_at("クリックする", lines);
         // Laid out as ク⁠リ⁠ッ⁠クする, a glyph each with the joiners (9) or without (6).
         let (found, checked) = look(&[0, 0, 1, 1, 1, 1, 1, 1, 1]);
@@ -299,8 +330,45 @@ mod tests {
         assert_eq!(look_at("アイ う", &[0, 0, 0, 1]), (vec![], 1));
         // A break at the space, misread as one inside アイ were the joiner taken as drawn.
         assert_eq!(look_at("アイ う", &[0, 0, 1, 1]), (vec![], 1));
+        // Lines of their own: ボ⁠タ⁠ン を押す\nク⁠リ⁠ッ⁠クする is drawn with no glyph for the line's
+        // end (13 glyphs, spaces kept), and breaks only where it may, or inside a word.
+        let two_lines = "ボタン を押す\nクリックする";
+        assert_eq!(look_at(two_lines, &[0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]), (vec![], 1));
+        let (found, checked) = look_at(two_lines, &[0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 2, 2, 2]);
+        assert!(checked == 1 && found.len() == 1 && found[0].contains("ク|リック"), "{found:?}");
         let (found, checked) = look(&[0, 0, 0]);
         assert!(checked == 0 && found.len() == 1 && found[0].contains("unchecked"), "{found:?}");
+    }
+
+    /// Only a text on screen has its line breaks checked, as only one is checked for fitting:
+    /// one hidden, or in a node or layout not laid out (its glyphs stale or none), is passed
+    /// over rather than failed as unchecked or judged by an old layout; laid out, the same
+    /// text's bad break is still found.
+    #[test]
+    fn line_breaks_are_checked_only_on_screen() {
+        let bad = [0, 0, 1, 1, 1, 1, 1, 1, 1];
+        let (size, laid_out) = (Vec2::new(100.0, 20.0), Vec2::splat(10.0));
+        let (found, checked) = look_at_node("クリックする", &bad, size, laid_out, InheritedVisibility::VISIBLE);
+        assert!(checked == 1 && found.len() == 1 && found[0].contains("ク|リック"), "{found:?}");
+        assert_eq!(look_at_node("クリックする", &bad, size, laid_out, InheritedVisibility::HIDDEN), (vec![], 0));
+        assert_eq!(look_at_node("クリックする", &bad, Vec2::ZERO, laid_out, InheritedVisibility::VISIBLE), (vec![], 0));
+        assert_eq!(look_at_node("クリックする", &bad, Vec2::new(100.0, 0.0), laid_out, InheritedVisibility::VISIBLE), (vec![], 0));
+        assert_eq!(look_at_node("クリックする", &bad, size, Vec2::ZERO, InheritedVisibility::VISIBLE), (vec![], 0));
+        // Nothing in it held together (kanji and hiragana only): checked, and fine however
+        // it breaks.
+        assert_eq!(look_at_node("木を切る", &[0, 1, 1, 2], size, laid_out, InheritedVisibility::VISIBLE), (vec![], 1));
+        // Not laid out yet, with no glyphs: passed over, not failed as unchecked.
+        assert_eq!(look_at_node("クリックする", &[], Vec2::ZERO, Vec2::ZERO, InheritedVisibility::VISIBLE), (vec![], 0));
+    }
+
+    /// A look in a language with line rules that checks nothing is told apart from one that
+    /// checks something and from one in a language without rules.
+    #[test]
+    fn a_look_that_checks_no_line_break_is_told() {
+        let before = LineBreaksChecked { checked: 5, looks: 2 };
+        assert!(LineBreaksChecked { checked: 5, looks: 3 }.none_since(&before));
+        assert!(!LineBreaksChecked { checked: 7, looks: 3 }.none_since(&before));
+        assert!(!before.none_since(&before));
     }
 
     #[test]

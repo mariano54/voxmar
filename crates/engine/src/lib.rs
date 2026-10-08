@@ -41,6 +41,7 @@ pub mod quest;
 pub mod recipe_book;
 pub mod regrowth;
 pub mod schedule;
+pub mod shape;
 pub mod skill;
 pub mod tool;
 pub mod traits;

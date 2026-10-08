@@ -8,7 +8,7 @@ and [creature-data.md](creature-data.md) for the data formats.
 
 | # | Question | Decision |
 | --- | --- | --- |
-| 1 | Curve | RuneScape's, levels 1 to 99 (13,034,431 experience at 99, level 92 is half way), shared by every skill. Already in `core/skills.ron`. |
+| 1 | Curve | RuneScape's, levels 1 to 99 (13,034,431 experience at 99, level 92 is half way), shared by every skill. Already in `core/skills.ron`; a later package's `curve` replaces it, and the load log names both packages (Design draft 91). |
 | 2 | Skills | Attack, Defence, Hitpoints, Mining, Farming, Cooking (Mariano's list), plus **Hunter**, which Mariano chose on 2026-10-05; Engineering and Crafting (2026-10-06), Fishing, and Ranged, Magic, Alchemy and Construction (the progression plan, P25), whose guides list what is to come. Content peaks at 80; only Engineering runs to 90. |
 | 3 | Breeding | Part of Farming, never its own skill (Mariano). Farming covers crops, trees, beekeeping, animal husbandry and breeding. |
 | 4 | What levels do | Gate what you may do, raise yields, rare finds and quality, lower failure (burning, misses). Levels never make the world run faster: crops and animals grow at the world's pace. |
@@ -145,10 +145,12 @@ level; foraging wild plants does not, though their seeds drop only near your lev
 | Level | Crops and trees | Animals |
 | --- | --- | --- |
 | 1 | Wheat | Keep and breed junglefowl and rabbits; collect eggs |
-| 3 | | Mallards |
+| 3 | Rye, in the cold | Mallards |
 | 5 | Carrot; compost (crop scraps and manure) | Mouflon (sheep); shearing |
+| 7 | Chickpea, in dry warmth | |
 | 8 | | Wild boar (pigs); truffle rooting |
-| 10 | | Ibex (goats); milking |
+| 10 | Rice, in wet heat with water near (wild rice) | Ibex (goats); milking |
+| 11 | Taro, in wet heat (wild taro) | |
 | 12 | Potato | Bees: wild hives moved into skeps; honey and wax |
 | 15 | | Aurochs (cattle); inspecting shows visible genes |
 | 18 | | Alpacas |

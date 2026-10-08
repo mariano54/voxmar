@@ -13,7 +13,10 @@
 //! - `machines.ron`: the machines players built, by block name, with what they hold.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
-//! never leaves a half-written file behind.
+//! never leaves a half-written file behind. A file that cannot be read is never silently
+//! replaced: it is moved aside to `<file>.corrupt-<unix time>` (`set_aside`) and the error
+//! logged, and if it cannot even be moved the server refuses to start (world files) or the
+//! player to join (player files).
 //!
 //! A save is one generation: everything but `world.ron` is first written beside its file as
 //! `<file>.<generation>.new`, then `world.ron` takes the new generation (the moment the save
@@ -47,8 +50,6 @@ const CREATURES_FILE: &str = "creatures.ron";
 const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
 const MACHINES_FILE: &str = "machines.ron";
-/// Where an unreadable machines file is kept aside, before the seconds since the epoch.
-const MACHINES_UNREADABLE_FILE: &str = "machines.unreadable";
 /// What a file being saved ends with, after its generation.
 const STAGED: &str = "new";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
@@ -89,16 +90,24 @@ pub struct WorldMeta {
     /// How fast the time of day runs, 0 when frozen.
     #[serde(default = "normal_speed")]
     pub day_speed: f32,
-    /// Where players put blocks that teach a skill when broken (ores), which then teach
-    /// nothing: experience comes from what the world holds, not from placing and breaking.
+    /// Cells whose block a player placed: ores, which then teach nothing (experience comes
+    /// from what the world holds, not from placing and breaking); plants, which don't regrow
+    /// by themselves; and furnishings, which give themselves back only from these cells.
     #[serde(default)]
     pub placed: Vec<[i32; 3]>,
-    /// Picked wild plants waiting to grow back.
+    /// Picked wild plants waiting to grow back, and plants herb planters grew back.
     #[serde(default)]
     pub regrowing: Vec<SavedRegrowing>,
+    #[serde(default)]
+    pub planter_grown: Vec<[i32; 3]>,
     /// The last whole save: files of a later one were cut short and are not used.
     #[serde(default)]
     pub generation: u64,
+    /// The fingerprint of the content land was last made from (`WorldContent::fingerprint`):
+    /// a world opened with different worldgen data warns that new land may not line up.
+    /// `None` until a world is first opened with it.
+    #[serde(default)]
+    pub worldgen_content: Option<u64>,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -130,7 +139,9 @@ impl WorldMeta {
             day_speed: 1.0,
             placed: Vec::new(),
             regrowing: Vec::new(),
+            planter_grown: Vec::new(),
             generation: 0,
+            worldgen_content: None,
         }
     }
 }
@@ -344,7 +355,7 @@ impl WorldSave {
             return Err(invalid(&path, "not a column file"));
         };
         let mut encoded = Vec::new();
-        ZlibDecoder::new(compressed).read_to_end(&mut encoded)?;
+        ZlibDecoder::new(compressed).read_to_end(&mut encoded).map_err(|e| invalid(&path, e))?;
         let file: ColumnFile<Column> = postcard::from_bytes(&encoded).map_err(|e| invalid(&path, e))?;
         let mut column = file.column;
         if column.colors.len() != COLUMN_AREA || !column.chunks.iter().all(Chunk::is_valid) {
@@ -429,18 +440,35 @@ impl WorldSave {
         for (slot, stack) in inventory.slots.iter_mut().zip(file.inventory) {
             *slot = stack
                 .filter(|&(_, count)| count > 0)
-                .and_then(|(item, count)| Some(ItemStack { item: registry.id(&item)?, count: count.min(MAX_STACK) }));
+                .and_then(|(item, count)| Some(ItemStack { item: registry.item_named(&item)?, count: count.min(MAX_STACK) }));
+        }
+        // Older saves' items that merged into one add up.
+        for (item, count) in file.pouched.iter().filter_map(|(item, count)| Some((registry.item_named(item)?, *count))).filter(|&(_, n)| n > 0) {
+            match inventory.pouched.iter_mut().find(|(have, _)| *have == item) {
+                Some((_, n)) => *n = n.saturating_add(count),
+                None => inventory.pouched.push((item, count)),
+            }
         }
         for (slot, item) in inventory.worn.iter_mut().zip(file.worn) {
-            *slot = item.and_then(|item| Some(ItemStack { item: registry.id(&item)?, count: 1 }));
+            *slot = item.and_then(|item| Some(ItemStack { item: registry.item_named(&item)?, count: 1 }));
         }
-        inventory.pouched = file.pouched.iter().filter_map(|(item, count)| Some((registry.id(item)?, *count))).filter(|&(_, n)| n > 0).collect();
         let position = Vec3::from(file.position);
         if !position.is_finite() {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+        let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+    }
+
+    /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
+    pub fn set_aside_player(&self, name: &str) -> io::Result<PathBuf> {
+        set_aside(&self.player_file(name))
+    }
+
+    /// Moves the column file at `pos` aside, as unreadable (`set_aside`).
+    pub fn set_aside_column(&self, pos: ColumnPos) -> io::Result<PathBuf> {
+        set_aside(&self.column_path(pos))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -501,6 +529,13 @@ pub struct SavedCrop {
     pub stage: u8,
     /// World tick its next stage is due (`u64::MAX` once ripe).
     pub due: u64,
+    /// A player sowed it. Saves from before the flag held only sown crops.
+    #[serde(default = "sown_before")]
+    pub sown: bool,
+}
+
+fn sown_before() -> bool {
+    true
 }
 
 impl WorldSave {
@@ -519,19 +554,11 @@ impl WorldSave {
         write_atomic(&self.target(self.dir.join(CROPS_FILE)), text.as_bytes())
     }
 
-    /// The machines, none if the world has no machines file. A file that cannot be read is
-    /// first kept aside (`machines.unreadable.<seconds since the epoch>.ron`), since the
-    /// next save writes over it: every machine and everything chests hold would be lost.
+    /// The machines, none if the world has no machines file.
     pub fn read_machines(&self) -> io::Result<Vec<crate::machines::SavedMachine>> {
         let path = self.dir.join(MACHINES_FILE);
         match std::fs::read_to_string(&path) {
-            Ok(source) => ron::from_str(&source).map_err(|e| {
-                let aside = self.dir.join(format!("{MACHINES_UNREADABLE_FILE}.{}.ron", unix_time()));
-                if let Err(copy) = std::fs::copy(&path, &aside) {
-                    tracing::error!("could not keep the unreadable machines file aside: {copy}");
-                }
-                invalid(&path, e)
-            }),
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(e) => Err(e),
         }
@@ -571,6 +598,64 @@ impl WorldSave {
         let text = ron::ser::to_string(items).map_err(io::Error::other)?;
         write_atomic(&self.target(self.dir.join(ITEMS_FILE)), text.as_bytes())
     }
+}
+
+/// What a world keeps besides its columns and players, as read when it opens.
+#[derive(Debug, Default)]
+pub(crate) struct WorldState {
+    pub items: Vec<SavedItem>,
+    pub crops: Vec<SavedCrop>,
+    pub creatures: Vec<crate::husbandry::SavedCreature>,
+    pub machines: Vec<crate::machines::SavedMachine>,
+}
+
+impl WorldSave {
+    /// The dropped items, crops, kept creatures and machines. A file that is not what it should be is
+    /// moved aside and logged, and the world opens without what it held; a file that could
+    /// not be read at all, or moved aside (and so would be overwritten at the next save), is
+    /// an error.
+    pub(crate) fn read_state(&self) -> io::Result<WorldState> {
+        Ok(WorldState {
+            items: self.read_or_set_aside(ITEMS_FILE, Self::read_items)?,
+            crops: self.read_or_set_aside(CROPS_FILE, Self::read_crops)?,
+            creatures: self.read_or_set_aside(CREATURES_FILE, Self::read_creatures)?,
+            machines: self.read_or_set_aside(MACHINES_FILE, Self::read_machines)?,
+        })
+    }
+
+    fn read_or_set_aside<T: Default>(&self, file: &str, read: fn(&Self) -> io::Result<T>) -> io::Result<T> {
+        let error = match read(self) {
+            Ok(value) => return Ok(value),
+            // Not read at all (no permission, a failing disk): the world does not open.
+            Err(error) if error.kind() != io::ErrorKind::InvalidData => return Err(error),
+            Err(error) => error,
+        };
+        let path = self.dir.join(file);
+        match set_aside(&path) {
+            Ok(aside) => {
+                tracing::error!("could not read {}: {error}; kept it as {} and opened the world without it", path.display(), aside.display());
+                Ok(T::default())
+            }
+            Err(moving) => Err(io::Error::new(error.kind(), format!("could not read {}: {error}; nor move it aside: {moving}", path.display()))),
+        }
+    }
+}
+
+/// Moves an unreadable save file aside, to `<file>.corrupt-<unix time>` beside it, so the
+/// next save does not replace it and it can be looked at or restored by hand. Returns
+/// where it went.
+pub fn set_aside(path: &Path) -> io::Result<PathBuf> {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let stamp = unix_time();
+    for n in 0..1000 {
+        let suffix = if n == 0 { String::new() } else { format!("-{n}") };
+        let aside = path.with_file_name(format!("{name}.corrupt-{stamp}{suffix}"));
+        if !aside.exists() {
+            std::fs::rename(path, &aside)?;
+            return Ok(aside);
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} has been set aside too often", path.display())))
 }
 
 /// Every world in `root`, most recently played first. Directories without a readable
@@ -703,7 +788,7 @@ mod tests {
         let save = WorldSave::new(&dir);
         let mut meta = WorldMeta::new("Test", 7, GameMode::Creative);
         save.create(&meta).unwrap();
-        let crops = |stage: u8| vec![SavedCrop { position: [1, 2, 3], crop: "base:wheat".into(), stage, due: 9 }];
+        let crops = |stage: u8| vec![SavedCrop { position: [1, 2, 3], crop: "base:wheat".into(), stage, due: 9, sown: true }];
         let machines = |count: u8| vec![crate::machines::SavedMachine { position: [0, 64, 0], block: "base:chest".into(), inputs: Vec::new(), outputs: Vec::new(), fuel: None, burning: 0.0, energy: 0.0, condition: 0.0, made: 0, bin: vec![("base:iron_ore".into(), count)], owner: None, counted: false, work: None }];
         // Generation 1, whole.
         save.begin(1);
@@ -742,7 +827,7 @@ mod tests {
         let save = WorldSave::new(&dir);
         let mut meta = WorldMeta::new("Test", 7, GameMode::Creative);
         save.create(&meta).unwrap();
-        let crops = |stage: u8| vec![SavedCrop { position: [1, 2, 3], crop: "base:wheat".into(), stage, due: 9 }];
+        let crops = |stage: u8| vec![SavedCrop { position: [1, 2, 3], crop: "base:wheat".into(), stage, due: 9, sown: true }];
         save.begin(1);
         save.write_crops(&crops(0)).unwrap();
         meta.generation = 1;
@@ -885,6 +970,42 @@ mod tests {
         assert_eq!(save.read_player("über", &registry).unwrap(), Some(old.clone()));
         assert_eq!(player_name("a~2f~b").as_deref(), Some("a/b"));
         assert_eq!(player_name("a~zz~b"), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Items an older save holds that have since merged into one come back as that item
+    /// (every kind of wild herb is kitchen herbs now), pouched ones added up.
+    #[test]
+    fn items_merged_since_a_save_come_back_as_the_merged_item() {
+        let dir = temp_dir("merged");
+        let save = WorldSave::new(&dir);
+        let registry = registry(false);
+        let mut inventory = Inventory::default();
+        inventory.add(registry.expect("base:oregano"), 7);
+        inventory.add(registry.expect("base:cobblestone"), 5);
+        inventory.pouched.push((registry.expect("base:parsley"), 4));
+        inventory.pouched.push((registry.expect("base:dill"), 6));
+        let player = SavedPlayer {
+            position: Vec3::new(0.5, 80.0, 0.5),
+            yaw: 0.0,
+            mode: None,
+            flying: false,
+            health: Health { current: 20, max: 20 },
+            inventory,
+            skills: Vec::new(),
+            effects: Vec::new(),
+            home: None,
+            bed: None,
+            journal: Vec::new(),
+            quests: Vec::new(),
+            tallies: Vec::new(),
+        };
+        save.write_player("herbalist", &player, &registry).unwrap();
+        let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();
+        let herbs = registry.expect("base:kitchen_herbs");
+        assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == herbs).map(|s| s.count), Some(7));
+        assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == registry.expect("base:cobblestone")).map(|s| s.count), Some(5));
+        assert_eq!(loaded.inventory.pouched, vec![(herbs, 10)]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

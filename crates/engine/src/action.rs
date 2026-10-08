@@ -9,7 +9,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::{BlockId, BlockInfo, BlockRegistry, RegistryError, Support};
+use crate::block::{BlockId, BlockInfo, BlockRegistry, Facing, RegistryError, Support};
 use crate::coords::Face;
 use crate::crop::CropRegistry;
 use crate::skill::SkillId;
@@ -73,11 +73,17 @@ pub enum Requirement {
     SkillLevel,
     /// The target is a ripe crop that fruits again when picked.
     Ripe,
-    /// The target creature is alive and within the actor's reach.
+    /// The target creature is alive and within the actor's reach with what they hold (to
+    /// strike it).
     CreatureInReach,
+    /// The target creature is alive and within the actor's touch, whatever they hold (to
+    /// tend, look closely at or let go of it: `Feel::touch`).
+    CreatureInTouch,
     /// The target creature takes what the actor holds: food that tames it or readies it
     /// to breed, or a tool that takes its product.
     CreatureAccepts,
+    /// The target creature is one the actor keeps.
+    CreatureIsMine,
     /// The target block is a station that cooks what the actor holds.
     Cookable,
     /// The actor's Cooking level is at least what the held item's recipe there needs.
@@ -146,6 +152,8 @@ pub enum Effect {
     Tend,
     /// Look closely at the target creature: what the actor learns grows with Farming.
     Inspect,
+    /// Let the target creature, one the actor keeps, go wild again (asked twice).
+    Release,
     /// Restore the actor's health and return it to spawn.
     Respawn,
     /// Sow one held seed on top of the target, and grant the crop's planting experience.
@@ -307,6 +315,10 @@ pub trait ActionContext {
     fn creature_accepts(&self, _id: u32, _item: BlockId) -> bool {
         false
     }
+    /// Whether the creature with that id is one the actor keeps.
+    fn creature_is_mine(&self, _id: u32) -> bool {
+        false
+    }
     /// The box of a living creature, if there is one with that id.
     fn creature_box(&self, _id: u32) -> Option<crate::physics::Aabb> {
         None
@@ -317,6 +329,14 @@ pub trait ActionContext {
     }
 }
 
+/// Whether creature `id` is alive and its box within `reach` of the actor's eye.
+fn creature_within(ctx: &impl ActionContext, id: u32, reach: f32) -> bool {
+    ctx.creature_box(id).is_some_and(|aabb| {
+        let nearest = ctx.actor_eye().clamp(aabb.min, aabb.max);
+        ctx.actor_eye().distance(nearest) <= reach
+    })
+}
+
 /// Where a block placed against `face` of `block` goes: into `block` itself when it can
 /// be replaced (aiming at grass puts the block on the ground beneath it), otherwise into
 /// the cell in front of the face.
@@ -324,14 +344,58 @@ pub fn placement_cell(ctx: &impl ActionContext, block: IVec3, face: Face) -> IVe
     if ctx.block(block).is_some_and(|b| ctx.info(b).replaceable) { block } else { block + face.normal() }
 }
 
+/// The block placing `held` against `face` of `block` puts there: against a side it does
+/// not go into, what it goes on walls as (a wall torch, facing out); otherwise itself,
+/// upside down against the underside of a block if it comes that way (a top slab), and
+/// facing the actor if it comes in facings (stairs climb away from whoever placed them).
+pub fn placed_block(ctx: &impl ActionContext, held: BlockId, block: IVec3, face: Face) -> BlockId {
+    let blocks = ctx.blocks();
+    let cell = placement_cell(ctx, block, face);
+    let against = cell != block;
+    if let (Some(wall), Some(facing)) = (ctx.info(held).wall, Facing::of_face(face))
+        && against
+    {
+        return blocks.facing(wall, facing);
+    }
+    let mut placed = held;
+    if against && face == Face::NegY {
+        placed = blocks.flipped(held).unwrap_or(held);
+    }
+    if ctx.info(placed).facing.is_some() && ctx.info(placed).support != Support::Wall {
+        let toward = ctx.actor_eye() - (cell.as_vec3() + Vec3::splat(0.5));
+        let facing = if toward.x.abs() > toward.z.abs() {
+            if toward.x > 0.0 { Facing::East } else { Facing::West }
+        } else if toward.z > 0.0 {
+            Facing::South
+        } else {
+            Facing::North
+        };
+        placed = blocks.facing(placed, facing);
+    }
+    placed
+}
+
+/// Whether the actor may harvest what is at `cell`: a ripe crop (or fruit) asks for its
+/// level; anything else is fine.
+pub fn crop_level_met(ctx: &impl ActionContext, cell: IVec3) -> bool {
+    let crops = ctx.crops();
+    ctx.block(cell).and_then(|b| crops.stage_of(b)).is_none_or(|(crop, stage)| {
+        let crop = crops.get(crop);
+        stage != crop.ripe_stage() || ctx.actor_level(crop.skill) >= crop.def.level
+    })
+}
+
 /// The blocks resting on `pos` that go when it is cleared: the plants standing on it (a
-/// flower, both halves of tall grass, a stalk of sugar cane) and the column hanging from
-/// it (vines, roots, a stalactite).
+/// flower, both halves of tall grass, a stalk of sugar cane), the column hanging from it
+/// (vines, roots, a stalactite) and what is fixed to its sides (wall torches).
 pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Vec<IVec3> {
     let column = |step: i32, support: Support| {
         (1..).map(move |d| pos + IVec3::Y * (d * step)).take_while(move |&p| ctx.block(p).is_some_and(|b| ctx.info(b).support == support))
     };
-    column(1, Support::Below).chain(column(-1, Support::Above)).collect()
+    let walls = Facing::ALL.into_iter().map(move |f| pos + f.normal()).filter(move |&p| {
+        ctx.block(p).is_some_and(|b| ctx.info(b).support == Support::Wall && ctx.info(b).facing.is_some_and(|f| p - f.normal() == pos))
+    });
+    column(1, Support::Below).chain(column(-1, Support::Above)).chain(walls).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -397,6 +461,10 @@ impl ActionDef {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
                 ctx.actor_held().is_some_and(|item| ctx.creature_accepts(id, item))
             }
+            Requirement::CreatureIsMine => {
+                let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
+                ctx.creature_is_mine(id)
+            }
             Requirement::Cookable | Requirement::CookingLevel => {
                 let (block, _) = block_target()?;
                 let station = ctx.block(block).map(|b| ctx.blocks().def(b).tags.as_slice()).unwrap_or(&[]);
@@ -416,11 +484,9 @@ impl ActionDef {
             }
             Requirement::CropLevel => {
                 let (block, _) = block_target()?;
-                let crops = ctx.crops();
-                ctx.block(block).and_then(|b| crops.stage_of(b)).is_none_or(|(crop, stage)| {
-                    let crop = crops.get(crop);
-                    stage != crop.ripe_stage() || ctx.actor_level(crop.skill) >= crop.def.level
-                })
+                // The target, and what stands on it: breaking the ground under a ripe crop
+                // harvests it too.
+                std::iter::once(block).chain(supported_by(ctx, block)).all(|cell| crop_level_met(ctx, cell))
             }
             Requirement::BlockLevel => {
                 let (block, _) = block_target()?;
@@ -484,10 +550,12 @@ impl ActionDef {
                 let reach = ctx.combat().map_or(feel.reach + feel.reach_slack, |combat| {
                     combat.wielded(ctx.actor_held(), |skill| ctx.actor_own_level(skill)).reach + combat.feel.reach_slack
                 });
-                ctx.creature_box(id).is_some_and(|aabb| {
-                    let nearest = ctx.actor_eye().clamp(aabb.min, aabb.max);
-                    ctx.actor_eye().distance(nearest) <= reach
-                })
+                creature_within(ctx, id, reach)
+            }
+            Requirement::CreatureInTouch => {
+                let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
+                let feel = ctx.combat().map_or_else(crate::combat::Feel::default, |combat| combat.feel);
+                creature_within(ctx, id, feel.touch + feel.reach_slack)
             }
             Requirement::Replaceable => {
                 let (block, face) = block_target()?;
@@ -502,10 +570,12 @@ impl ActionDef {
                 let (block, face) = block_target()?;
                 let cell = placement_cell(ctx, block, face);
                 let solid = |p: IVec3| ctx.block(p).is_some_and(|b| ctx.info(b).solid);
-                match ctx.actor_held().map_or(Support::None, |b| ctx.info(b).support) {
+                let Some(placed) = ctx.actor_held().map(|held| placed_block(ctx, held, block, face)) else { return Ok(true) };
+                match ctx.info(placed).support {
                     Support::None => true,
                     Support::Below => solid(cell - IVec3::Y),
                     Support::Above => solid(cell + IVec3::Y),
+                    Support::Wall => ctx.info(placed).facing.is_some_and(|f| solid(cell - f.normal())),
                 }
             }
         })
@@ -588,10 +658,80 @@ mod tests {
                 support: Some(Support::Above),
                 ..Default::default()
             },
+            BlockDef {
+                name: "test:torch".into(),
+                render: RenderKind::Plant,
+                solid: false,
+                wall: Some("test:wall_torch".into()),
+                ..Default::default()
+            },
+            BlockDef {
+                name: "test:wall_torch".into(),
+                render: RenderKind::Plant,
+                solid: false,
+                drops: Some("test:torch".into()),
+                facing: true,
+                support: Some(Support::Wall),
+                ..Default::default()
+            },
         ])
         .unwrap();
         let blocks = [(IVec3::ZERO, STONE), (IVec3::Y, FLOWER), (IVec3::Z, STONE)].into_iter().collect();
         World { registry, blocks, held, crops: CropRegistry::default() }
+    }
+
+    const TORCH: BlockId = BlockId(4);
+
+    #[test]
+    fn stairs_face_whoever_places_them_and_go_upside_down_under_a_ceiling() {
+        let file = crate::shape::ShapeFile::read("test", r#"(shapes: {"stairs": (boxes: [(to: (16, 8, 16)), (from: (0, 8, 8))])})"#);
+        let limits = crate::shape::ShapeLimits { boxes: 2, quads: 64 };
+        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file.unwrap())], limits).unwrap();
+        let stairs = BlockDef { name: "test:stairs".into(), render: RenderKind::Model, shape: Some("test:stairs".into()), facing: true, flips: true, ..Default::default() };
+        let registry = BlockRegistry::with_shapes(vec![BlockDef { name: "test:stone".into(), ..Default::default() }, stairs], &shapes).unwrap();
+        let held = registry.expect("test:stairs");
+        let blocks = [(IVec3::ZERO, STONE)].into_iter().collect();
+        let world = World { registry, blocks, held, crops: CropRegistry::default() };
+        let name = |block: BlockId| world.registry.def(block).name.clone();
+        // On top of the stone, with the actor's eye south of it (+z): they climb northwards,
+        // away from the actor.
+        assert_eq!(name(placed_block(&world, held, IVec3::ZERO, Face::PosY)), "test:stairs_south");
+        // Against the stone's west side, the actor still to the south.
+        assert_eq!(name(placed_block(&world, held, IVec3::ZERO, Face::NegX)), "test:stairs_south");
+        // Against its underside they hang upside down.
+        assert_eq!(name(placed_block(&world, held, IVec3::ZERO, Face::NegY)), "test:stairs_top_south");
+    }
+
+    #[test]
+    fn a_torch_against_a_wall_is_a_wall_torch_facing_out_and_goes_with_the_wall() {
+        let mut world = world(TORCH);
+        let (registry, east) = (&world.registry, Face::PosX);
+        let placed = placed_block(&world, TORCH, IVec3::ZERO, east);
+        assert_eq!(registry.def(placed).name, "test:wall_torch_east");
+        assert_eq!(registry.info(placed).facing, Some(Facing::East));
+        assert_eq!(registry.info(placed).drops, TORCH);
+        // On top of a block it is the torch itself.
+        assert_eq!(placed_block(&world, TORCH, IVec3::ZERO, Face::PosY), TORCH);
+        assert!(place().validate(&world, ActionTarget::Block { block: IVec3::ZERO, face: east }).is_ok());
+        world.blocks.insert(IVec3::X, placed);
+        assert!(supported_by(&world, IVec3::ZERO).contains(&IVec3::X));
+        // The stone beside it along +z holds nothing.
+        assert!(!supported_by(&world, IVec3::Z).contains(&IVec3::X));
+        assert_eq!(world.registry.facing(placed, Facing::West), world.registry.id("test:wall_torch_west").unwrap());
+        assert_eq!(world.registry.facing(placed, Facing::North), world.registry.id("test:wall_torch").unwrap());
+    }
+
+    #[test]
+    fn facings_turn_clockwise_from_north() {
+        let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-6);
+        assert!(near(Facing::East.turn([0.5, 0.8, 0.75]), [0.25, 0.8, 0.5]));
+        assert!(near(Facing::South.turn([0.5, 0.8, 0.75]), [0.5, 0.8, 0.25]));
+        assert!(near(Facing::West.turn([0.5, 0.8, 0.75]), [0.75, 0.8, 0.5]));
+        for facing in Facing::ALL {
+            // The wall a torch facing north rests on (+z) turns to the one behind it.
+            let wall = facing.turn([0.5, 0.5, 1.0]);
+            assert_eq!(IVec3::new((wall[0] * 2.0 - 1.0).round() as i32, 0, (wall[2] * 2.0 - 1.0).round() as i32), -facing.normal());
+        }
     }
 
     fn place() -> ActionDef {
@@ -606,6 +746,70 @@ mod tests {
 
     /// A click on a machine's core (a bloomery) with a block in hand it does not take lays
     /// the block against it, as on any machine, rather than lighting it; an empty hand or
+    /// A creature is touched (tended, looked at closely, let go) from `Feel::touch` away
+    /// whatever is in hand, but struck only within the held weapon's reach.
+    #[test]
+    fn a_creature_is_touched_further_than_a_fist_strikes() {
+        struct Near<'a> {
+            content: &'a crate::content::Content,
+            held: Option<BlockId>,
+            /// Blocks from the actor's eye to the creature's nearest face.
+            away: f32,
+        }
+        impl ActionContext for Near<'_> {
+            fn block(&self, _: IVec3) -> Option<BlockId> {
+                Some(BlockId::AIR)
+            }
+            fn info(&self, block: BlockId) -> &BlockInfo {
+                self.content.blocks.info(block)
+            }
+            fn blocks(&self) -> &BlockRegistry {
+                &self.content.blocks
+            }
+            fn crops(&self) -> &CropRegistry {
+                &self.content.crops
+            }
+            fn actor_level(&self, _: SkillId) -> u8 {
+                1
+            }
+            fn actor_eye(&self) -> Vec3 {
+                Vec3::ZERO
+            }
+            fn actor_alive(&self) -> bool {
+                true
+            }
+            fn actor_held(&self) -> Option<BlockId> {
+                self.held
+            }
+            fn occupied(&self, _: IVec3) -> bool {
+                false
+            }
+            fn creature_box(&self, _: u32) -> Option<crate::physics::Aabb> {
+                Some(crate::physics::Aabb { min: Vec3::new(self.away, -1.0, -0.5), max: Vec3::new(self.away + 1.0, 1.0, 0.5) })
+            }
+            fn combat(&self) -> Option<&crate::combat::CombatRegistry> {
+                Some(&self.content.combat)
+            }
+        }
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let action = |name: &str| content.actions.get(content.actions.id(name).unwrap()).unwrap();
+        let (inspect, attack) = (action("base:inspect"), action("core:attack"));
+        let feel = content.combat.feel;
+        let fist = content.combat.wielded(None, |_| 1).reach;
+        assert!(feel.touch > fist, "touch {} is no further than a fist's reach {fist}", feel.touch);
+        let at = |away: f32| Near { content: &content, held: None, away };
+        let target = ActionTarget::Creature(1);
+        // Within the fist's reach (and its slack): struck and touched.
+        assert_eq!(attack.validate(&at(fist + feel.reach_slack - 0.1), target), Ok(()));
+        assert_eq!(inspect.validate(&at(fist + feel.reach_slack - 0.1), target), Ok(()));
+        // Past it, within touch: touched, not struck.
+        let between = (fist + feel.touch) / 2.0 + feel.reach_slack;
+        assert_eq!(attack.validate(&at(between), target), Err(Rejection::Unmet(Requirement::CreatureInReach)));
+        assert_eq!(inspect.validate(&at(between), target), Ok(()));
+        // Past touch and its slack: neither.
+        assert_eq!(inspect.validate(&at(feel.touch + feel.reach_slack + 0.1), target), Err(Rejection::Unmet(Requirement::CreatureInTouch)));
+    }
+
     /// a tool lights it, and a hearth's core (no machine) lights whatever is in hand.
     #[test]
     fn a_block_in_hand_is_laid_against_a_machine_core_not_lit() {

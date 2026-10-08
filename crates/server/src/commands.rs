@@ -17,7 +17,7 @@ use crate::save::GameMode;
 use crate::{Server, load_column, wear};
 
 /// What players call a species: its name in their language, or its own title.
-fn creature_name(def: &voxmar_engine::creature::CreatureDef) -> Words {
+pub(crate) fn creature_name(def: &voxmar_engine::creature::CreatureDef) -> Words {
     Words::Own(voxmar_engine::lang::def_key("creature", &def.name), def.title.clone())
 }
 
@@ -100,6 +100,14 @@ impl Server {
         }
     }
 
+    /// Tells `player` that what they tried was refused, and why: the interface shows it
+    /// with its other refusals rather than as a console line.
+    pub(crate) fn refuse(&self, player: PlayerId, why: Words) {
+        if let Some(player) = self.players.get(&player) {
+            player.connection.send(ServerMessage::Refused { why });
+        }
+    }
+
     /// Words in English, for the server's own log and console.
     pub(crate) fn english(&self, words: &Words) -> String {
         self.content.english.render(words, &self.content.blocks)
@@ -175,6 +183,8 @@ impl Server {
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
             Run::Kill => self.kill_command(id),
+            Run::Op => self.op_command(args, true),
+            Run::Deop => self.op_command(args, false),
             Run::Drop => self.drop_command(id, args),
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
@@ -306,12 +316,9 @@ impl Server {
             let at = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
             return Err(Words::key("command.error.too_far").with("place", at));
         }
-        let tick = self.tick;
         let player = self.players.get_mut(&who).unwrap();
-        player.position = position;
         player.fall_start = None;
-        player.last_input_tick = tick;
-        player.connection.send(ServerMessage::Teleport { position });
+        player.teleport(position);
         let name = player.name.clone();
         let place = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
         if id == Source::Player(who) {
@@ -492,6 +499,10 @@ impl Server {
         };
         let mut placed = 0;
         for i in 0..count {
+            // Summoned ones are wild: they leave room for kept animals waiting in the save.
+            if self.wild_room() == 0 {
+                break;
+            }
             let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
             let cell = (at + offset).floor().as_ivec3();
             // Commands may run before the land around a player has loaded (a capture's,
@@ -541,12 +552,23 @@ impl Server {
             }
             return Ok(Words::key("command.creatures.done").with("count", Words::text(killed.len())));
         }
-        for creature in self.creatures.live.values_mut().filter(|c| near(c)) {
+        // Taming here keeps to the keeper's cap as feeding does.
+        let kept_each = self.content.creatures.limits().kept_each;
+        let mut kept_room = kept_each.saturating_sub(self.kept_by(&name));
+        if what == "tame" && kept_room == 0 {
+            return Err(Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
+        }
+        let (day, tamed_at) = (self.day, self.content.creatures.condition().tamed);
+        let mut tamed = Vec::new();
+        for (&id, creature) in self.creatures.live.iter_mut().filter(|(_, c)| near(c)) {
             match what {
-                "tame" if creature.owner.is_none() => {
+                // Taken in as feeding takes one in: newly tamed, just fed, at home here.
+                "tame" if creature.owner.is_none() && kept_room > 0 => {
+                    kept_room -= 1;
                     creature.owner = Some(name.clone());
                     creature.owner_id = Some(player);
-                    creature.home = creature.body.position;
+                    (creature.condition, creature.reckoned, creature.fed) = (tamed_at, day, day);
+                    tamed.push(id);
                 }
                 "ready" if creature.owner.is_some() && creature.grows_up.is_none() => {
                     creature.ready_until = tick + 30 * voxmar_protocol::TICKS_PER_SECOND as u64;
@@ -574,6 +596,9 @@ impl Server {
             }
             creature.changed = true;
             count += 1;
+        }
+        for id in tamed {
+            self.settle(id);
         }
         Ok(Words::key("command.creatures.done").with("count", Words::text(count)))
     }
@@ -861,6 +886,27 @@ impl Server {
         Ok(Words::key("command.effect").with("effect", Words::Own(voxmar_engine::lang::def_key("effect", &effects.get(id).name), effects.get(id).title.clone())).with("seconds", Words::text(seconds)))
     }
 
+    /// Makes a player an admin (`/op`), or no longer one (`/deop`), until they leave. One who
+    /// is an admin by right is one again when they come back.
+    fn op_command(&mut self, args: &[String], admin: bool) -> Reply {
+        let [name] = args else { return Err(Words::key(if admin { "command.error.op_whom" } else { "command.error.deop_whom" })) };
+        let who = self.find_player(name)?;
+        let player = self.players.get_mut(&who).unwrap();
+        player.admin = admin;
+        if !admin {
+            player.fly_speed = 1.0;
+        }
+        player.connection.send(ServerMessage::Abilities { allow_flight: player.allow_flight, admin });
+        let name = player.name.clone();
+        let (theirs, yours) = match (admin, player.admin_by_right) {
+            (true, _) => ("command.op", "command.op.you"),
+            (false, false) => ("command.deop", "command.deop.you"),
+            (false, true) => ("command.deop.until_rejoin", "command.deop.you.until_rejoin"),
+        };
+        self.tell(Source::Player(who), ChatKind::Info, Words::key(yours));
+        Ok(Words::key(theirs).with("name", name))
+    }
+
     fn kill_command(&mut self, source: Source) -> Reply {
         let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
         if player.health.damage(u8::MAX) {
@@ -917,7 +963,7 @@ impl Server {
 
     /// Loads the columns under a box, so commands can build anywhere, not only where
     /// players have been.
-    fn load_area(&mut self, min: IVec3, max: IVec3) {
+    pub(crate) fn load_area(&mut self, min: IVec3, max: IVec3) {
         let (from, to) = (ColumnPos::of_block(min), ColumnPos::of_block(max));
         for z in from.0.y..=to.0.y {
             for x in from.0.x..=to.0.x {

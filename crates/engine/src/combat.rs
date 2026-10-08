@@ -317,6 +317,9 @@ feel! {
     /// may still land, for the time a view of the fight lags.
     reach: f32 = 2.8,
     reach_slack: f32 = 0.6,
+    /// How far a player reaches to touch a creature (tend, look closely at or let go of
+    /// it), whatever is in hand: Minecraft's 3 with some slack, and `reach_slack` on top.
+    touch: f32 = 3.6,
     /// Seconds a player's view of a moving creature may run behind the server's: a blow at
     /// one moving also reaches as far as it goes in that time (counted once, on top of
     /// `reach_slack`).
@@ -343,11 +346,6 @@ feel! {
     /// Seconds after a creature and the player last traded blows that a right click at it
     /// still guards (with something that guards) rather than looks closely.
     engaged: f32 = 6.0,
-    /// Defence experience comes only while the player fights back, their blow at that
-    /// creature this many seconds ago or less, and only from a creature of this share of
-    /// their Defence level or more (the wiki, draft 63: no standing in a cave of bats).
-    defence_xp_window: f32 = 10.0,
-    defence_xp_level: f32 = 0.5,
 }
 
 /// How fast a creature goes: its species' walk or run.

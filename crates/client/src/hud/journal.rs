@@ -45,15 +45,18 @@ pub struct JournalView {
 #[derive(Resource, Default)]
 pub struct JournalDrawn(pub Option<(usize, String)>);
 
-/// A page to open at startup, by its name (`--journal plants`, for captures).
+/// A page to open at startup, by its name (`--journal plants`, for captures), and an
+/// entry to pick on it.
 #[derive(Resource)]
 pub struct StartPage(pub String);
 
+/// `--journal PAGE[/ENTRY]`: the page, and the entry picked on it (`animals/base:deer`).
 fn open_start_page(start: Option<Res<StartPage>>, mut view: ResMut<JournalView>, mut ui: ResMut<UiState>) {
-    if let Some(start) = start
-        && let Some(i) = Page::ALL.iter().position(|page| page_name(*page) == start.0)
-    {
+    let Some(start) = start else { return };
+    let (page, entry) = start.0.split_once('/').map_or((start.0.as_str(), None), |(page, entry)| (page, Some(entry)));
+    if let Some(i) = Page::ALL.iter().position(|p| page_name(*p) == page) {
         view.page = i;
+        view.picked = entry.map(str::to_owned);
         ui.journal_open = true;
     }
 }
@@ -129,7 +132,7 @@ pub fn findables(locale: &Locale, launch: &Launch, biomes: &[String], page: Page
             })
             .collect()
     };
-    let ids = || blocks.ids().filter(|&id| !id.is_air() && blocks.def(id).variant_of.is_none());
+    let ids = || blocks.ids().filter(|&id| !id.is_air() && !blocks.placement_form(id));
     match page {
         Page::Animals => creatures(&[Kind::Animal]),
         Page::Monsters => creatures(&[Kind::Monster, Kind::Spirit]),
@@ -368,7 +371,12 @@ fn draw(
                         Stage::Mastered => "journal.stage.mastered",
                     };
                     detail.spawn(shadowed(font, thing.title.clone(), BODY, GOLD));
-                    detail.spawn(text(font, format!("{}{}{}", locale.get(stage), locale.get("language.dot"), locale.format("journal.count", &[("count", &entry.count)])), BODY, SOFT));
+                    let words = if entry.count == 0 {
+                        locale.get(stage).to_owned()
+                    } else {
+                        format!("{}{}{}", locale.get(stage), locale.get("language.dot"), locale.format("journal.count", &[("count", &entry.count)]))
+                    };
+                    detail.spawn(text(font, words, BODY, SOFT));
                     if entry.stage >= Stage::Studied
                         && let Some(home) = &thing.studied
                     {

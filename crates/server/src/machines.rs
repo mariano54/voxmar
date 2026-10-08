@@ -23,10 +23,9 @@ use voxmar_engine::lang::{Words, def_key};
 use voxmar_engine::machine::{Machine, MachineRegistry, ProcessId, Role, Source};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits;
-use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::creatures::Live;
 use crate::items::random3;
 use crate::process::Process;
 
@@ -252,24 +251,23 @@ impl Server {
                     let key = |owner: &Option<String>| owner.as_deref().map(crate::player_key);
                     animal_owner.is_some() && (wheel_owner.is_none() || key(wheel_owner) == key(animal_owner))
                 };
-                // Fed by a player within the last few days, or it will not walk.
-                let fed = |c: &Live| self.day - c.fed <= (rules.walk_fed_days * TICKS_PER_DAY as f32) as f64;
-                let walker = self.creatures.live.iter().find(|(_, c)| {
+                // Only one that would put work in (kept, grown and fed, by the condition rules
+                // in creatures.ron: `Server::working_share`).
+                let walker = self.creatures.live.iter().find(|&(&id, c)| {
                     let at = c.body.position;
                     let Some(here) = reach(pos, at) else { return false };
                     // Nearer wheels it may walk, or as near and first in order, take the animal.
                     let taken = sites.wheels.iter().any(|(other, other_owner)| {
                         *other != pos && self.world.contains(ColumnPos::of_block(*other)) && keeps(other_owner, &c.owner) && reach(*other, at).is_some_and(|d| d < here || (d == here && (other.x, other.y, other.z) < (pos.x, pos.y, pos.z)))
                     });
-                    keeps(&owner, &c.owner) && fed(c) && !taken && machines.walks(&creatures.get(c.species).def.name)
+                    keeps(&owner, &c.owner) && self.working_share(id) > 0.0 && !taken && machines.walks(&creatures.get(c.species).def.name)
                 });
                 let walker = walker.map(|(&id, _)| id);
-                // Its time at work is kept for its keeping. Every animal walks at full power
-                // until kept creatures have a condition of their own.
+                // Its time at work is kept for its keeping, and it gives by its condition.
                 if let Some(id) = walker.filter(|_| giving && seconds > 0.0) {
                     self.factory.add_walked(id, seconds);
                 }
-                walker.map_or(0.0, |_| rules.walk_share(None))
+                walker.map_or(0.0, |id| self.working_share(id))
             }
             Role::Processor { water: true, .. } => {
                 let blocks = &self.content.blocks;
@@ -400,7 +398,7 @@ impl Server {
             (Status::NoFuel, _) => key("machine.no_fuel"),
             (Status::NoSource, _) if source == Some(Source::Wind) => key("machine.no_wind").with("spacing", Words::text(self.content.machines.sources.wind_spacing)),
             (Status::NoSource, _) if washer => key("machine.needs_water"),
-            (Status::NoSource, _) if source == Some(Source::Walked) => key("machine.no_walker").with("days", Words::text(self.content.machines.sources.walk_fed_days)),
+            (Status::NoSource, _) if source == Some(Source::Walked) => key("machine.no_walker").with("days", Words::text(self.content.creatures.condition().fed.1)),
             (Status::NoSource, _) => key("machine.no_water").with("spacing", Words::text(self.content.machines.sources.water_spacing)),
             (Status::Full, _) => key("machine.full"),
             (Status::TooHigh, _) => key("machine.too_high"),
@@ -489,7 +487,7 @@ impl Server {
     /// longer known are lost.
     pub(crate) fn restore_machines(&mut self, saved: Vec<SavedMachine>) {
         let (blocks, machines) = (self.content.blocks.clone(), self.content.machines.clone());
-        let stack = |(name, count): &(String, u8)| blocks.id(name).map(|item| ItemStack { item, count: *count });
+        let stack = |(name, count): &(String, u8)| blocks.item_named(name).map(|item| ItemStack { item, count: *count });
         for machine in saved {
             let Some(block) = blocks.id(&machine.block) else { continue };
             let mut state = MachineState {
@@ -563,6 +561,30 @@ mod tests {
             let process = resumed(furnace, machines, blocks, "base:iron_ingot", &inputs).map(|p| machines.process(p));
             assert!(process.is_some_and(|p| p.inputs[0].0.contains(&blocks.expect(input))), "an ingot from {input}");
         }
+    }
+
+    #[test]
+    fn a_kept_aurochs_walks_a_treadwheel_by_its_condition_and_a_young_one_not_at_all() {
+        let mut server = crate::test_server();
+        let wheel = server.spawn.floor().as_ivec3() + IVec3::new(3, 0, 0);
+        server.load_area(wheel - IVec3::new(4, 0, 4), wheel + IVec3::new(4, 0, 4));
+        let treadwheel = server.content.blocks.expect("base:treadwheel");
+        server.set_block(wheel, treadwheel);
+        let species = server.content.creatures.id("base:aurochs").expect("aurochs");
+        let id = server.spawn_creature(species, wheel.as_vec3() + Vec3::new(0.5, 0.0, 2.5), 1).expect("room");
+        let day = server.day;
+        // What the wheel gives, as a share of its power, with the aurochs kept, just fed, in
+        // `condition`, and young or grown.
+        let mut share = |condition: f32, young: bool| {
+            let c = server.creatures.live.get_mut(&id).unwrap();
+            (c.owner, c.fed, c.condition, c.grows_up) = (Some("test".into()), day, condition, young.then_some(u64::MAX));
+            let sites = server.machine_sites();
+            server.survey_machine(wheel, &sites, 0.0);
+            server.factory.get(wheel).expect("a machine").1.condition
+        };
+        assert!((share(0.0, false) - 0.5).abs() < 1e-3, "the poorest kept walker gives half");
+        assert!((share(1.0, false) - 1.2).abs() < 1e-3, "the best kept gives six fifths");
+        assert_eq!(share(1.0, true), 0.0, "a young one walks nothing");
     }
 
     #[test]
