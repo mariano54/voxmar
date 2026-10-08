@@ -162,11 +162,27 @@ impl Client {
     /// hangs, so they follow its progress rather than the clock: a fixed ten seconds failed
     /// four tests on a machine whose cores other builds had (generating the world around a
     /// joining player took longer), though the server was working all along.
+    ///
+    /// Time this thread was off its cores is not the server's silence: on a busy machine
+    /// (background QoS, load 50 and more) the whole test process can be held off for many
+    /// seconds, and the check then ran before the messages waiting for it were read, failing
+    /// random tests with "20 s since its last message". A pause between two looks at the
+    /// connection longer than `AWAY` moves both limits on by it.
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
-        let start = Instant::now();
+        const AWAY: Duration = Duration::from_millis(500);
+        let mut start = Instant::now();
         let mut heard = start;
+        let mut looked = start;
         while !done(self) {
             let now = Instant::now();
+            let away = now - looked;
+            looked = now;
+            if away > AWAY {
+                eprintln!("pump_until: this thread was away {:.1}s", away.as_secs_f32());
+                start += away;
+                heard += away;
+                continue;
+            }
             assert!(
                 now - heard < SERVER_SILENT && now - start < SERVER_WAIT,
                 "timed out waiting for server: {:.1}s in all, {:.1}s since its last message",
