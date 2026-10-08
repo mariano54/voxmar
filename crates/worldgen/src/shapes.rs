@@ -677,7 +677,7 @@ mod timing {
     #[test]
     #[ignore]
     fn shape_timing() {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
         let geology = &world.geology;
         let shapes = geology.shapes();

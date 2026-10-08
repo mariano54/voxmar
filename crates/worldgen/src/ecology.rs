@@ -966,7 +966,7 @@ mod tests {
     use voxmar_engine::content::ContentFile;
 
     fn registry() -> BlockRegistry {
-        BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap()
+        crate::test_registry()
     }
 
     fn content(extra: &[(&str, &str)], registry: &BlockRegistry) -> WorldContent {

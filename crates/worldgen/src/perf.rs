@@ -31,8 +31,7 @@ use crate::stage::{self, Stage, Times};
 use crate::{Generator, Overworld};
 
 fn registry() -> Arc<BlockRegistry> {
-    let source = include_str!("../../../assets/content/base/blocks.ron");
-    Arc::new(BlockRegistry::from_ron("base", source).unwrap())
+    Arc::new(crate::test_registry())
 }
 
 /// CPU time this thread has used: unlike wall-clock time, it is not inflated when other

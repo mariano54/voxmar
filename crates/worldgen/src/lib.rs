@@ -986,6 +986,24 @@ pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
     }
 }
 
+/// All base block files, in the same order as the game loader. Partial registries
+/// omit furnishings and tag members, which can change generation and census results.
+#[cfg(test)]
+pub(crate) fn test_registry() -> BlockRegistry {
+    let sources = [
+        include_str!("../../../assets/content/base/blocks.ron"),
+        include_str!("../../../assets/content/base/blocks_creatures.ron"),
+        include_str!("../../../assets/content/base/blocks_farm.ron"),
+        include_str!("../../../assets/content/base/blocks_food.ron"),
+        include_str!("../../../assets/content/base/blocks_furnishings.ron"),
+        include_str!("../../../assets/content/base/blocks_herbs.ron"),
+        include_str!("../../../assets/content/base/blocks_tools.ron"),
+        include_str!("../../../assets/content/base/blocks_weapons.ron"),
+    ];
+    let packages = sources.iter().map(|s| ("base".to_owned(), BlockRegistry::read("base", s).unwrap())).collect();
+    BlockRegistry::new(BlockRegistry::expand(packages).unwrap()).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -995,8 +1013,7 @@ mod tests {
     use voxmar_engine::mesh::mesh_chunk;
 
     fn registry() -> Arc<BlockRegistry> {
-        let source = include_str!("../../../assets/content/base/blocks.ron");
-        Arc::new(BlockRegistry::from_ron("base", source).unwrap())
+        Arc::new(crate::test_registry())
     }
 
     #[test]
@@ -4772,7 +4789,7 @@ mod land_spread {
     #[test]
     #[ignore]
     fn climate_bands() {
-        let registry = Arc::new(BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let seeds: Vec<u64> = std::env::var("SEED").ok().map_or(vec![7], |s| s.split(',').filter_map(|s| s.trim().parse().ok()).collect());
         for seed in seeds {
             let world = Overworld::new(seed, registry.clone());
@@ -4812,7 +4829,7 @@ mod land_spread {
     #[test]
     #[ignore]
     fn land_heights() {
-        let registry = Arc::new(BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let seeds: Vec<u64> = std::env::var("SEED").ok().map_or(vec![7], |s| s.split(',').filter_map(|s| s.trim().parse().ok()).collect());
         let (n, step) = (160, 128);
         let summary = |h: &mut Vec<f32>, cells: usize| {

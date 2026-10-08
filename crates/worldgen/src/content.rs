@@ -3138,7 +3138,7 @@ mod tests {
     use super::*;
 
     fn registry() -> BlockRegistry {
-        BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap()
+        crate::test_registry()
     }
 
     fn base_files() -> Vec<ContentFile> {

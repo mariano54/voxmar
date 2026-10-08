@@ -546,8 +546,7 @@ mod tests {
 
     /// A world with trails laid everywhere, as they will be near settlements.
     fn world(seed: u64) -> Overworld {
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let mut content = crate::content::WorldContent::base(&registry).unwrap();
         content.trails.laid = TrailsWhere::Everywhere;
         Overworld::with_content(seed, registry, &content)
@@ -581,8 +580,7 @@ mod tests {
     #[test]
     fn trails_near_settlements_never_depend_on_order() {
         use crate::Generator;
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = || Overworld::new(1, registry.clone());
         let (a, b) = (world(), world());
         // Round the gate nearest spawn that two trails leave (their ends within a block of
@@ -716,8 +714,7 @@ mod sights {
     #[ignore]
     fn trail_sights() {
         let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = Overworld::new(seed, registry);
         let spawn = world.spawn_point();
         let eye = spawn.as_vec3() + voxmar_engine::glam::Vec3::Y * 1.62;
@@ -788,8 +785,7 @@ mod patch {
     fn trail_patch() {
         let env = |name: &str, default: i32| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
         let seed = env("SEED", 7) as u64;
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = Overworld::new(seed, registry.clone());
         const SIZE: i32 = 160;
         const PIXEL: i32 = 4;

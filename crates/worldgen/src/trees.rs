@@ -1071,7 +1071,7 @@ mod tests {
     use super::*;
 
     fn registry() -> Arc<BlockRegistry> {
-        Arc::new(BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap())
+        Arc::new(crate::test_registry())
     }
 
     /// Grows `tree` from seed `seed` on flat grass at height 100 in an empty column, and

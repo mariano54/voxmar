@@ -635,7 +635,7 @@ mod tests {
     /// sea, coast, plains and ranges, in any grouping.
     #[test]
     fn lands_match_land_alone() {
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         for seed in [7, 42] {
             let world = crate::Overworld::new(seed, registry.clone());
             let geology = &world.geology;
@@ -660,7 +660,7 @@ mod tests {
     /// each alone.
     #[test]
     fn regionals_match_regional_alone() {
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = crate::Overworld::new(3, registry);
         let mut rng = crate::rng::Rng::new(3, 4, 5, 6);
         let points: Vec<(f32, f32)> = (0..2000).map(|i| if i % 2 == 0 { ((i % 40 * 64) as f32, (i / 40 * 64) as f32) } else { (rng.range(-30_000, 30_000) as f32, rng.range(-30_000, 30_000) as f32) }).collect();
@@ -678,7 +678,7 @@ mod tests {
     #[test]
     #[ignore]
     fn land_timing() {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
         let geology = &world.geology;
         let points: Vec<(i32, i32)> = (0..200_000).map(|i| (i % 400 * 3 - 600, i / 400 * 3 - 750)).collect();
@@ -779,7 +779,7 @@ mod profile {
     #[test]
     #[ignore]
     fn field_profile() {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
         let spawn = crate::Generator::spawn_point(&world);
         let points: Vec<(f32, f32)> = (0..200_000).map(|i| ((spawn.x + i % 500 * 8 - 2000) as f32, (spawn.z + i / 500 * 8 - 1600) as f32)).collect();
@@ -804,7 +804,7 @@ mod profile {
     #[test]
     #[ignore]
     fn relief_profile() {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
         // Rows of an 8-block grid on land around spawn, as rivers and trails ask for it.
         let spawn = crate::Generator::spawn_point(&world);

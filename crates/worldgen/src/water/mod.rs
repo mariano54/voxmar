@@ -849,7 +849,7 @@ mod tests {
     /// query must return the tarn rule's water, and disappear when that rule is absent.
     #[test]
     fn tarn_query_finds_visible_rule_pools() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let mut world = crate::Overworld::new(0x5eed, registry);
         let spawn = crate::Generator::spawn_point(&world);
         let offsets = [IVec2::ZERO, IVec2::new(24000, 8000), IVec2::new(-8000, 24000), IVec2::new(-24000, -8000), IVec2::new(8000, -24000)];
@@ -876,7 +876,7 @@ mod tests {
     /// fading band outside its halfway edge even a fully suitable climate stays dry.
     #[test]
     fn tarn_country_has_a_sharp_edge() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let content = crate::WorldContent::base(&registry).unwrap();
         let mut world = crate::Overworld::new(1, registry);
         let tarns = world.rivers.tarns.as_mut().unwrap();
@@ -907,7 +907,7 @@ mod tests {
         let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1u64);
         let stream = rng::stream_seed(seed, crate::Overworld::ID, crate::Overworld::VERSION);
         let dials = WorldDials::sample(stream);
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = crate::WorldContent::base(&registry).unwrap();
         let rocks = crate::rocks::Rocks::new(stream, &content, &registry, &dials.featured);
         let geology = Geology::new(stream, &dials, &content, &rocks);
