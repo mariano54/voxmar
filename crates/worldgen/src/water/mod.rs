@@ -1175,7 +1175,10 @@ mod tests {
         assert_eq!(scratch.work[1], before, "growth must not clear original raw entries");
         assert_eq!(scratch.column_keys, identities);
         assert_eq!(scratch.columns.len(), capacity + 5);
-        assert!((0..capacity).all(|k| scratch.columns[&(IVec2::new(200_000 + k as i32, 200_000), id)] == wrong));
+        assert!((0..capacity).all(|k| {
+            let column = scratch.columns[&(IVec2::new(200_000 + k as i32, 200_000), id)];
+            column.sample == wrong.sample && column.near == wrong.near
+        }));
         assert!(scratch.columns.capacity() >= RAW_COLUMN_LIMIT / 8 * 7, "the large growth path must actually run");
         let prior_full_capacity = FxHashMap::<(IVec2, u32), Column>::with_capacity_and_hasher(RAW_COLUMN_LIMIT, Default::default()).capacity();
         assert!(scratch.columns.capacity() <= prior_full_capacity, "allocation stays within ordinary growth at the original full limit");
