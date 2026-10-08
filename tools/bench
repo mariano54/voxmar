@@ -42,7 +42,7 @@
 #   dig        digging a shaft for 15 s, holding the button: breaking, particles, drops,
 #              remeshing, 2268x1473
 #   creatures  a herd of 40 creatures of nine kinds moving on a meadow, 2268x1473
-#   villagers  a real seed-3 village with its residents, square view at noon, 2268x1473
+#   villagers  a real seed-24301 village with its residents, square view at noon, 2268x1473
 # Scenes of the FPS benchmark: flight75 flightfast flighthigh forest mountains night_rain dig creatures.
 # On Linux they run on Vulkan on the NVIDIA GPU; a run on a software renderer fails.
 # The numbers, the power mode and the load go to target/bench/report.txt.
@@ -206,9 +206,9 @@ view_args() {
       --command "/summon wild_boar 4 ~6 ~ ~-8" --command "/summon junglefowl 5 ~-8 ~ ~-6" --command "/summon wolf 3 ~0 ~ ~-25"
       --command "/summon fox 3 ~8 ~ ~-18" --command "/summon lumen_snail 4 ~-2 ~ ~-5" --command "/summon aurochs 2 ~-10 ~ ~-16"
       --pose 0,1.5,0,0,-12 --wait 10) ;;
-    villagers) scene_seed=3; view_args=(--size 2268x1473 --weather clear --time 0.3
-      --command "/time set noon" --command "/time freeze" --command "/tp 368 135 784"
-      --pose 0,4,0,45,-20 --wait 10) ;;
+    villagers) scene_seed=24301; view_args=(--size 2268x1473 --weather clear --time 0.3
+      --command "/gamemode creative" --command "/time set noon" --command "/time freeze"
+      --command "/tp 4784 147 -3376" --pose 0,6,12,0,-18 --wait 10) ;;
     *) return 1 ;;
   esac
 }
@@ -301,13 +301,18 @@ fi
 # One run of `view` by the binary in `dir`: its numbers, as "median p99 max" (flights) or
 # "frame-ms" (static views). Stops everything if Mariano starts playing.
 run() {
-  local dir=$1 view=$2 log
+  local dir=$1 view=$2 log record
   view_args "$view"
   ((use_quiet)) && touch "$quiet"
   game_running && { echo "bench: FAILED: Mariano started playing; no numbers taken now are trustworthy" >&2; exit 1; }
   local settings=$config
   [[ $view == flightfast || $view == flighthigh ]] && settings=$fast
   log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG="$settings" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed "$scene_seed" "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  # Keep the complete capture output after timing has finished, including failures.
+  # Unique names preserve every base/candidate round and subsequent benchmark attempt.
+  record=$(mktemp "$out/capture-$view.XXXXXX") || return 1
+  printf 'bench capture %s: revision %s, settings %s\n%s\n' "$(date -u +%FT%TZ)" "$(git -C "$dir" rev-parse HEAD)" "$settings" "$log" >"$record" || return 1
+  echo "bench: raw $view capture retained at $record" >&2
   # Numbers from a software renderer (llvmpipe, SwiftShader) or the wrong GPU are worthless.
   local adapter
   adapter=$(grep -m1 -o 'AdapterInfo { name: "[^"]*".*device_type: [A-Za-z]*' <<<"$log")
