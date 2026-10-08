@@ -367,6 +367,9 @@ struct Gate {
     /// Whether the player has arrived there: the river's current may carry them off while
     /// the world around loads, which says nothing about the world.
     gorge_reached: bool,
+    /// The tarn visit and the two peers' positions before it, for returning to the gorge
+    /// before the settlement lookup uses the observer's position.
+    tarn: Option<TarnVisit>,
     /// Where `/locate ore` found a sample of ore.
     ore: IVec3,
     /// Where `/locate settlement` sent the player: the middle of its square.
@@ -490,6 +493,7 @@ impl Gate {
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
+            tarn: None,
             settlement: IVec3::ZERO,
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
@@ -6132,9 +6136,19 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
+/// Saved positions and flight state for the excursion from the gorge to a generated tarn.
+struct TarnVisit {
+    at: IVec3,
+    player: Vec3,
+    observer: Vec3,
+    was_flying: bool,
+    return_teleports: (u32, u32),
+}
+
 /// Visits a real pool filled by the tarn rule. Both peers must receive at least twenty
 /// matching source-water surface columns, then the loaded pool is captured from above.
-/// The generator chooses the place; no hand-built pool can satisfy this step.
+/// The generator chooses the place; no hand-built pool can satisfy this step. Both peers
+/// return to the gorge before the next lookup, including after a failed pool load.
 fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
@@ -6152,7 +6166,13 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.next(Step::Settlements, now);
                 return;
             };
-            gate.gorge = at;
+            let Some(observer) = gate.observer.as_ref().and_then(|o| o.position) else {
+                gate.check("tarns", Err("no observer position to return to after the visit".into()));
+                gate.next(Step::Settlements, now);
+                return;
+            };
+            let player = world.resource::<LocalPlayer>();
+            gate.tarn = Some(TarnVisit { at, player: player.position, observer, was_flying: player.flying, return_teleports: (0, 0) });
             world.resource_mut::<LocalPlayer>().flying = true;
             world.resource::<Net>().command(&format!("tp {} {} {}", at.x, at.y + 18, at.z + 10));
             if let Some(observer) = gate.observer.as_mut() {
@@ -6161,7 +6181,7 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         1 => {
-            let at = gate.gorge;
+            let at = gate.tarn.as_ref().expect("tarn visit").at;
             let there = world.resource::<LocalPlayer>().position.xz().distance((at.xz() + IVec2::new(0, 10)).as_vec2()) < 3.0;
             let held = gate.observer.as_ref().is_some_and(|o| columns_around(at).into_iter().all(|c| o.world.contains(c)));
             let client = world.resource::<ClientWorld>();
@@ -6169,8 +6189,10 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !(there && held && shown) {
                 if gate.server_in_phase() > SETTLEMENT_LOAD {
                     gate.check("tarns", Err(format!("the pool at {at} did not load on both peers (there {there}, server {held}, drawn {shown})")));
-                    world.resource_mut::<LocalPlayer>().flying = false;
-                    gate.next(Step::Settlements, now);
+                    // A failed visit must return too: the next lookup searches from the
+                    // observer, and letting go of flight here would drop the player.
+                    gate.phase = 2;
+                    gate.advance(now);
                 }
                 return;
             }
@@ -6178,7 +6200,7 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         2 if in_phase > SETTLE => {
-            let at = gate.gorge;
+            let at = gate.tarn.as_ref().expect("tarn visit").at;
             let client = world.resource::<ClientWorld>();
             let Some(observer) = gate.observer.as_ref() else { return };
             let source = |p: IVec3| observer.world.block(p).is_some_and(|b| client.registry.fluid(b).is_some_and(|f| f.source))
@@ -6210,8 +6232,44 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.check("tarns", result);
-            world.resource_mut::<LocalPlayer>().flying = false;
-            gate.next(Step::Settlements, now);
+            gate.advance(now);
+        }
+        3 => {
+            let visit = gate.tarn.as_mut().expect("tarn visit");
+            let player = world.resource::<LocalPlayer>();
+            visit.return_teleports.0 = player.teleports;
+            let at = visit.player;
+            world.resource::<Net>().command(&format!("tp {} {} {}", at.x, at.y, at.z));
+            if let Some(observer) = gate.observer.as_mut() {
+                visit.return_teleports.1 = observer.teleports;
+                let at = visit.observer;
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y, at.z) });
+            }
+            gate.advance(now);
+        }
+        4 => {
+            let visit = gate.tarn.as_ref().expect("tarn visit");
+            let player = world.resource::<LocalPlayer>();
+            let there = player.teleports != visit.return_teleports.0 && player.position.distance(visit.player) < 3.0;
+            let observer_there = gate.observer.as_ref().is_some_and(|o| {
+                o.teleports != visit.return_teleports.1 && o.position.is_some_and(|p| p.distance(visit.observer) < 3.0)
+            });
+            let held = gate.observer.as_ref().is_some_and(|o| columns_around(visit.observer.floor().as_ivec3()).into_iter().all(|c| o.world.contains(c)));
+            let at = visit.player.floor().as_ivec3();
+            let client = world.resource::<ClientWorld>();
+            let shown = columns_around(at).into_iter().all(|c| client.voxels.contains(c)) && settled(world, at);
+            if there && observer_there && held && shown {
+                let (player_at, observer_at, was_flying) = (visit.player, visit.observer, visit.was_flying);
+                gate.check("tarns: back", Ok(format!("both peers returned before the settlement search: player {player_at}, observer {observer_at}")));
+                world.resource_mut::<LocalPlayer>().flying = was_flying;
+                gate.tarn = None;
+                gate.next(Step::Settlements, now);
+            } else if gate.server_in_phase() > SETTLEMENT_LOAD {
+                gate.check("tarns: back", Err(format!("the peers never returned from the tarn (player {there}, observer {observer_there}, server {held}, drawn {shown})")));
+                // Do not run subsequent fixtures at the remote pool or drop an airborne
+                // player: the failed restoration ends this session.
+                gate.next(Step::Done, now);
+            }
         }
         _ => {}
     }
