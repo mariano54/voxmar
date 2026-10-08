@@ -4,7 +4,7 @@
 // A plant a player placed does not come back, except in a herb planter, for a player
 // whose Farming level reaches `planter_level`; picking it there teaches `planter_xp`.
 (
-    tags: ["flower", "herb", "fungus", "berry", "forage"],
+    tags: ["flower", "herb", "fungus", "berry", "forage", "garden"],
     minutes: (common: 20.0, uncommon: 60.0, rare: 720.0, very_rare: 2880.0, legendary: 5760.0),
     planter: "herb_planter",
     planter_level: (common: 1.0, uncommon: 15.0, rare: 40.0, very_rare: 60.0, legendary: 80.0),

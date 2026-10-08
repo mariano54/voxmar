@@ -83,10 +83,15 @@ fn merged_away_plants_drop_the_merged_item_and_are_named_nowhere_as_items() {
             continue;
         }
         for (n, line) in std::fs::read_to_string(&path).unwrap().lines().enumerate() {
-            // What a creature eats in the world is a plant block, not an item.
-            if line.contains("diet:") || line.trim_start().starts_with("//") {
+            if line.trim_start().starts_with("//") {
                 continue;
             }
+            // What a creature eats in the world (`eats`) is a plant block, not an item; what
+            // it is tamed or bred with (`favourite`, `food`) is an item held in hand.
+            let line = match line.find("eats: [") {
+                Some(at) => format!("{}{}", &line[..at], line[at..].split_once(']').map_or("", |(_, rest)| rest)),
+                None => line.to_owned(),
+            };
             for (_, plants) in MERGES {
                 for plant in *plants {
                     if line.contains(&format!("\"{plant}\"")) || line.contains(&format!("\"base:{plant}\"")) {

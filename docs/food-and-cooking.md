@@ -18,7 +18,7 @@ food and breeding design (see [creatures.md](creatures.md)).
 > (also leek and garlic, carrying garlic's antidote), `wild_grain` (barley, oats, millet,
 > quinoa; tagged grain), `mushroom` (porcini, shiitake, blewit, oyster, chanterelle, brown) and
 > `pumpkin` (pumpkin, squash). Each is a placeable plant block that looks like one of its
-> plants, so the herb planter takes it and the planted item regrows; picking a wild plant
+> plants and carries the `garden` tag (which `regrowth.ron` lists with flower, herb, fungus and berry), so the herb planter takes it and the planted item regrows at its rarity's Farming level; picking a wild plant
 > grows that same wild plant back. Kept apart for their own use: mint, sage and thyme (alchemy),
 > frost turnip (feeds the frost stag), red mushroom, elderberry, rowan, strawberry, dreamberry,
 > glow berries, whisper oats. Old saves' stacks of a merged plant load as the merged item

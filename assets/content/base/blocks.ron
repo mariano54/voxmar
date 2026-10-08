@@ -598,7 +598,7 @@
         ),
         // Foraging: wild vegetables, grains, pulses, berries, herbs, mushrooms, shrubs and
         // flowers (plants.ron says where each grows).
-        (template: "flower", name: "wild_onion", tags: ["herb", "root", "vegetable", "meadow", "temperate", "edible", "flavour:savoury", "spice", "alchemy:antidote", "forage"], all: (color: (220, 220, 200), rarity: Uncommon)),
+        (template: "flower", name: "wild_onion", tags: ["herb", "root", "vegetable", "meadow", "temperate", "edible", "flavour:savoury", "spice", "alchemy:antidote", "forage"], all: (color: (220, 220, 200))),
         (template: "flower", name: "wild_leek", tags: ["merged", "herb", "vegetable", "forest_edge", "cold", "edible", "flavour:savoury", "forage"], all: (drops: "wild_onion", color: (200, 220, 180), rarity: Rare)),
         (template: "flower", name: "wild_turnip", tags: ["merged", "root", "vegetable", "meadow", "cold", "edible", "flavour:sweet", "forage"], all: (drops: "wild_roots", color: (200, 150, 190), rarity: Rare)),
         (template: "flower", name: "wild_beet", tags: ["merged", "root", "vegetable", "shore", "temperate", "edible", "flavour:sweet", "dye:magenta", "forage"], all: (drops: "wild_roots", color: (140, 30, 60), rarity: Rare)),
@@ -670,13 +670,13 @@
         // above stay in the world and drop these when picked; a player plants and replants
         // these (the herb planter takes them), and they look like one of the plants they
         // stand for.
-        (template: "plant", name: "sweet_berry", tags: ["bush", "berry", "edible", "flavour:sweet", "dye:blue"], all: (model: Bush, sound: Leaves, textures: All("blueberry_bush"), color: (60, 90, 140))),
-        (template: "plant", name: "tart_berry", tags: ["bush", "berry", "edible", "flavour:sour", "dye:red", "alchemy:antidote"], all: (sound: Leaves, textures: All("cranberry_bush"), color: (150, 30, 50), rarity: Uncommon)),
-        (template: "plant", name: "kitchen_herbs", tags: ["herb", "edible", "spice", "flavour:aromatic"], all: (textures: All("parsley"), color: (80, 150, 50), rarity: Uncommon)),
-        (template: "plant", name: "wild_roots", tags: ["root", "vegetable", "edible", "flavour:sweet"], all: (textures: All("wild_radish"), color: (210, 60, 80), rarity: Rare)),
-        (template: "plant", name: "wild_grain", tags: ["grass", "grain", "edible", "fibre"], all: (model: Bush, textures: All("wild_barley"), color: (190, 150, 80), rarity: Uncommon)),
-        (template: "plant", name: "mushroom", tags: ["fungus", "edible", "flavour:savoury", "dye:orange"], all: (textures: All("oyster_mushroom"), color: (200, 200, 200))),
-        (template: "plant", name: "pumpkin", tags: ["vegetable", "fruit", "edible", "flavour:sweet", "dye:orange"], all: (textures: All("wild_pumpkin"), color: (230, 120, 30), rarity: Rare)),
+        (template: "plant", name: "sweet_berry", tags: ["garden", "bush", "berry", "edible", "flavour:sweet", "dye:blue"], all: (model: Bush, sound: Leaves, textures: All("blueberry_bush"), color: (60, 90, 140))),
+        (template: "plant", name: "tart_berry", tags: ["garden", "bush", "berry", "edible", "flavour:sour", "dye:red", "alchemy:antidote"], all: (sound: Leaves, textures: All("cranberry_bush"), color: (150, 30, 50), rarity: Uncommon)),
+        (template: "plant", name: "kitchen_herbs", tags: ["garden", "herb", "edible", "spice", "flavour:aromatic"], all: (textures: All("parsley"), color: (80, 150, 50), rarity: Uncommon)),
+        (template: "plant", name: "wild_roots", tags: ["garden", "root", "vegetable", "edible", "flavour:sweet"], all: (textures: All("wild_radish"), color: (210, 60, 80), rarity: Rare)),
+        (template: "plant", name: "wild_grain", tags: ["garden", "grass", "grain", "edible", "fibre"], all: (model: Bush, textures: All("wild_barley"), color: (190, 150, 80), rarity: Uncommon)),
+        (template: "plant", name: "mushroom", tags: ["garden", "fungus", "edible", "flavour:savoury", "dye:orange"], all: (textures: All("oyster_mushroom"), color: (200, 200, 200))),
+        (template: "plant", name: "pumpkin", tags: ["garden", "vegetable", "fruit", "edible", "flavour:sweet", "dye:orange"], all: (textures: All("wild_pumpkin"), color: (230, 120, 30), rarity: Rare)),
         // Gatherable cave flora.
         (template: "flower", name: "pale_cap", tags: ["fungus", "cave", "edible", "flavour:savoury", "forage"], all: (model: Cap, textures: Sides(top: "pale_cap_cap", bottom: "pale_cap_gills", side: "pale_cap_stem"), icon: "pale_cap", variants: [(name: "pair", textures: All("pale_cap_pair"), size: 2, rarity: Uncommon, model: Cross), (name: "clump", textures: All("pale_cap_clump"), size: 3, rarity: Rare, model: Cross)], color: (220, 216, 206), rarity: Uncommon)),
         (template: "plant", name: "ember_cap", tags: ["fungus", "cave", "hot", "glowing", "alchemy:fire_resistance", "alchemy:warming", "dye:orange", "forage"], all: (model: Cap, textures: Sides(top: "ember_cap_cap", bottom: "ember_cap_gills", side: "ember_cap_stem"), icon: "ember_cap", light: 5, color: (240, 120, 30), rarity: Rare)),

@@ -397,7 +397,7 @@ impl Server {
             tracing::error!("could not load dropped items: {e}");
             Vec::new()
         });
-        let items = items::Items::restore(saved_items, |name| content.blocks.id(name));
+        let items = items::Items::restore(saved_items, |name| content.blocks.item_named(name));
         let saved_crops = save.as_ref().map_or(Ok(Vec::new()), |save| save.read_crops()).unwrap_or_else(|e| {
             tracing::error!("could not load crops: {e}");
             Vec::new()
