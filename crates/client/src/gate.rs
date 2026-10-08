@@ -251,6 +251,9 @@ enum Step {
     /// shows by the hotbar, as a level the player lacks does (the server sends it as a
     /// refusal, not a console line).
     Refusal,
+    /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
+    /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
+    Merged,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
     /// An effect that comes on pops up with its name, and the first look at the inventory
@@ -1084,6 +1087,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
+        Step::Merged => merged(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
@@ -2901,7 +2905,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let rice = world.resource::<ClientWorld>().registry.id("base:rice");
     let Some(rice) = rice else {
         gate.check("refusal", Err("no rice in the content".into()));
-        gate.next(Step::Effects, now);
+        gate.next(Step::Merged, now);
         return;
     };
     match gate.phase {
@@ -2933,7 +2937,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 _ if gate.server_in_phase() > UNANSWERED => {
                     gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came")));
-                    gate.next(Step::Effects, now);
+                    gate.next(Step::Merged, now);
                 }
                 (ready, slot) => {
                     if gate.frames % 120 == 0 {
@@ -2981,6 +2985,46 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             let net = world.resource::<Net>();
             net.command("clear rice");
             net.command(&format!("setblock {} {} {} dirt", plot.x, plot.y, plot.z));
+            gate.next(Step::Merged, now);
+        }
+    }
+}
+
+/// `give oregano` hands out kitchen herbs (oregano is a wild plant now; its item merged
+/// with seven other herbs), and neither the creative catalogue's rule nor the journal lists
+/// the plant while both list the item.
+fn merged(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    let blocks = world.resource::<ClientWorld>().registry.clone();
+    let (Some(oregano), Some(herbs)) = (blocks.id("base:oregano"), blocks.id("base:kitchen_herbs")) else {
+        gate.check("merged", Err("no oregano or kitchen herbs in the content".into()));
+        gate.next(Step::Effects, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            world.resource::<Net>().command("give oregano 2");
+            gate.advance(now);
+        }
+        1 => {
+            let held = |item: BlockId| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == item);
+            let catalogue = world.resource::<crate::hud::creative::Catalogue>();
+            if held(herbs) && let (Some(has_herbs), Some(has_oregano)) = (catalogue.lists(herbs), catalogue.lists(oregano)) {
+                let verdict = if held(oregano) {
+                    Err("`give oregano` also gave the oregano plant".to_owned())
+                } else if has_oregano || !has_herbs || blocks.listed(oregano) || !blocks.listed(herbs) {
+                    Err(format!("the creative catalogue lists oregano ({has_oregano}) or not kitchen herbs ({has_herbs})"))
+                } else {
+                    Ok("`give oregano` gave kitchen herbs; the creative catalogue lists the herbs, not the plant".to_owned())
+                };
+                gate.check("merged", verdict);
+                gate.advance(now);
+            } else if gate.server_in_phase() > UNANSWERED {
+                gate.check("merged", Err("`give oregano` gave no kitchen herbs, or the catalogue never read the content".into()));
+                gate.advance(now);
+            }
+        }
+        _ => {
+            world.resource::<Net>().command("clear kitchen_herbs");
             gate.next(Step::Effects, now);
         }
     }
