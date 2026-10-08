@@ -1999,8 +1999,9 @@ fn every_regional_family_can_win_its_climate() {
             let cell = IVec2::new(seed as i32 - 64, 0);
             let fits = |g| def.cultures.cell_fits(seed, g, &probe);
             let family = def.cultures.cell_family(seed, cell, &fits);
-            if fits(cell).1[family] > 0.0 {
-                seen.insert(family);
+            if fits(cell).1[family] > 0.0 && seen.insert(family) {
+                println!("culture witness: {} in {} at {} C, seed {seed}, cell {cell}",
+                    def.cultures.families[family].name, world.biomes().get(id).name, temperatures[t]);
             }
             if seen == wanted { break 'seeds }
         }
