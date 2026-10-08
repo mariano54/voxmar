@@ -146,7 +146,8 @@ the same land without the observed 16,384-point eviction. Water-query samples re
 bounded to 16,384. Relief evaluation allocates noise state only for missing corners;
 house weights and extra chances are computed once per layout. Each request's ordered
 wet and dry house choices are reused until a house is counted, which invalidates every
-choice list. Zero weights and all random draws retain their original order. Interiors
+choice list. Their original ordered weight totals are reused with those same lists.
+Zero weights and all random draws retain their original order. Interiors
 are copied only after a lot passes placement checks, before stair/chimney adaptation.
 A rejected house gives its extras-vector allocation back to the layout. The next roll
 clears it before the same ordered extra draws; a placed house keeps its own allocation.
