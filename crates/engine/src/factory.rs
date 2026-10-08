@@ -186,11 +186,11 @@ pub struct MachineView {
 }
 
 impl Factory {
-    /// Adds a machine at `pos` if `block` is one; returns whether it was. A processor
-    /// starts able to work, a generator that needs the world (water, wind) unable until
-    /// told otherwise ([`Factory::set_condition`]).
+    /// Adds a machine at `pos` if `block` is one; returns whether it was. A processor or a
+    /// converter starts able to work, a generator that needs the world (water, wind) unable
+    /// until told otherwise ([`Factory::set_condition`]).
     pub fn insert(&mut self, pos: IVec3, block: BlockId, machines: &MachineRegistry) -> bool {
-        let condition = if machines.get(block).is_some_and(Machine::is_processor) { 1.0 } else { 0.0 };
+        let condition = if machines.get(block).is_some_and(|m| m.is_processor() || m.converts()) { 1.0 } else { 0.0 };
         self.insert_state(pos, block, MachineState { condition, ..MachineState::default() }, machines)
     }
 
@@ -756,6 +756,13 @@ fn work(
                 Some(Source::FlowingWater | Source::Wind | Source::Walked) => {
                     state.status = if state.condition <= 0.0 { Status::NoSource } else if used > 0.0 { Status::Generating } else { Status::Idle };
                 }
+                // A converter whose structure is not standing (a turbine hall's) neither takes
+                // nor gives.
+                _ if state.condition <= 0.0 => {
+                    state.status = Status::Incomplete;
+                    state.load = 0.0;
+                    state.supplied = 0.0;
+                }
                 // A converter or transformer: the share of its input it got, it gives next step.
                 _ => {
                     state.supplied = value(1).max(0.0);
@@ -809,8 +816,22 @@ fn work(
             }
             state.status = Status::Working;
             state.progress += seconds * speed * rate;
-            if state.progress >= process.seconds {
+            // A fast machine may finish the same work more than once a step: what is left
+            // over goes on to the next while it has the inputs, and waits, kept, while its
+            // outputs have no room for it.
+            let id = state.process;
+            while state.progress >= process.seconds {
+                let left = state.progress - process.seconds;
                 finish(pos, state, process, *extra);
+                if left <= 0.0 || !inputs_hold(&state.inputs, process) {
+                    break;
+                }
+                state.process = id;
+                state.progress = left;
+                if !outputs_fit(&state.outputs, process, *extra) {
+                    state.status = Status::Full;
+                    break;
+                }
             }
         }
     }
@@ -1127,6 +1148,27 @@ mod tests {
     }
 
     #[test]
+    fn a_converter_whose_structure_is_down_neither_takes_nor_gives() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["boiler", "pipe", "engine", "shaft", "mill"]);
+        factory.put(IVec3::ZERO, ItemStack { item: t.id("log"), count: 4 }, &t.machines);
+        feed(&t, &mut factory, 4, "ore", 1);
+        // An engine stands able, as a converter needs nothing of the world.
+        assert_eq!(factory.get(IVec3::new(2, 0, 0)).unwrap().1.condition, 1.0);
+        // Told its structure is down (a turbine hall's), it gives nothing and burns nothing.
+        factory.set_condition(IVec3::new(2, 0, 0), 0.0);
+        run(&t, &mut factory, 3.0);
+        assert_eq!(factory.get(IVec3::new(2, 0, 0)).unwrap().1.status, Status::Incomplete);
+        assert_eq!(made(&t, &factory, 4, "dust"), 0);
+        assert_eq!(factory.get(IVec3::ZERO).unwrap().1.fuel.map(|f| f.count), Some(3), "one log lit, none burnt for nothing");
+        // Standing again, it turns the mill.
+        factory.set_condition(IVec3::new(2, 0, 0), 1.0);
+        run(&t, &mut factory, 6.0);
+        assert_eq!(made(&t, &factory, 4, "dust"), 1);
+    }
+
+    #[test]
     fn high_voltage_needs_a_transformer_and_a_thick_cable() {
         let t = test();
         let mut factory = Factory::default();
@@ -1393,6 +1435,97 @@ mod tests {
         assert!((560..=640).contains(&planks), "a hundred logs made {planks} planks, not about 600");
         let birch = machines.processes().filter(|(_, p)| p.kind == "saw").any(|(_, p)| p.outputs[0].0 == id("base:birch_planks"));
         assert!(birch, "every wood has its sawing recipe");
+    }
+
+    /// The HV processors from the game's content: a processing array crushes as sixteen
+    /// macerators and an induction smelter smelts as eight electric furnaces, each for the
+    /// same power a dust or an ingot as those, and the array only while its hall stands.
+    #[test]
+    fn hv_processors_are_many_machines_in_one_at_their_power_and_yield() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let stack = |name: &str, count| ItemStack { item: id(name), count };
+        const FULL: f32 = 1_000_000.0;
+        // A bank and cable of the machine's tier feeding it; what it made after `seconds`,
+        // and the energy it took.
+        let run_on_bank = |machine: &str, condition: f32, input: &str, count: u8, seconds: f32| {
+            let (bank_block, cable_block) = match machines.get(id(machine)).map(|m| &m.role) {
+                Some(Role::Processor { tier: 3, .. }) => ("base:hv_battery_bank", "base:hv_cable"),
+                _ => ("base:battery_bank", "base:lv_cable"),
+            };
+            let mut factory = Factory::default();
+            let (bank, cable, at) = (IVec3::ZERO, IVec3::X, IVec3::new(2, 0, 0));
+            assert!(factory.insert(bank, id(bank_block), machines) && factory.insert(cable, id(cable_block), machines));
+            assert!(factory.insert(at, id(machine), machines));
+            factory.state_mut(bank).unwrap().energy = FULL;
+            factory.set_condition(at, condition);
+            assert_eq!(factory.put(at, stack(input, count), machines), None, "{machine} takes {count} {input}");
+            for _ in 0..(seconds * 5.0).round() as u32 {
+                factory.step(4, 20.0, machines);
+            }
+            let made: u32 = factory.take_outputs(at).iter().map(|s| s.count as u32).sum();
+            (made, FULL - factory.get(bank).unwrap().1.energy, factory.get(at).unwrap().1.progress)
+        };
+        // The energy a recipe took: what was spent over the recipes done, counting the one
+        // under way by how far it got.
+        let per = |(made, energy, progress): (u32, f32, f32), each: u32, seconds: f32| energy / (made as f32 / each as f32 + progress / seconds);
+        // Copper ore takes 6 s at speed 1: a macerator crushes one in 3 s, the array 32 in.
+        let array = run_on_bank("base:processing_array", 1.0, "base:copper_ore", 64, 13.0);
+        assert_eq!(array.0, 128, "64 ore in 12 s, two dust each");
+        let macerator = run_on_bank("base:macerator", 1.0, "base:copper_ore", 64, 13.0);
+        assert_eq!(macerator.0, 8, "a macerator crushes four ore in 13 s");
+        // Each ore costs the array what it costs a macerator (timed while it still has ore,
+        // since the step it runs out in is drawn in full).
+        let (array_ore, macerator_ore) = (per(run_on_bank("base:processing_array", 1.0, "base:copper_ore", 64, 6.0), 2, 6.0), per(macerator, 2, 6.0));
+        assert!((array_ore / macerator_ore - 1.0).abs() < 0.01, "an ore costs the array {array_ore}, a macerator {macerator_ore}");
+        // Its hall not standing, the array does nothing.
+        assert_eq!(run_on_bank("base:processing_array", 0.0, "base:copper_ore", 64, 13.0), (0, 0.0, 0.0));
+        // Copper dust takes 4 s at speed 1: an electric furnace smelts one in 2 s, the
+        // smelter 32 in 8 s.
+        let smelter = run_on_bank("base:induction_smelter", 1.0, "base:copper_dust", 32, 9.0);
+        assert_eq!(smelter.0, 32);
+        let furnace = run_on_bank("base:electric_furnace", 1.0, "base:copper_dust", 32, 9.0);
+        assert_eq!(furnace.0, 4, "an electric furnace smelts four in 9 s");
+        let (smelter_ingot, furnace_ingot) = (per(smelter, 1, 4.0), per(furnace, 1, 4.0));
+        assert!((smelter_ingot / furnace_ingot - 1.0).abs() < 0.01, "an ingot costs the smelter {smelter_ingot}, a furnace {furnace_ingot}");
+    }
+
+    /// Work done past a finished recipe in a step is kept while the outputs have no room
+    /// for the next, and goes on once they are taken: a processing array (copper ore 6 s
+    /// at speed 16, 3.2 s of work a fifth of a second) with room for one ore's dust.
+    #[test]
+    fn leftover_work_waits_while_the_outputs_are_full() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let mut factory = Factory::default();
+        let (bank, cable, at) = (IVec3::ZERO, IVec3::X, IVec3::new(2, 0, 0));
+        assert!(factory.insert(bank, id("base:hv_battery_bank"), machines) && factory.insert(cable, id("base:hv_cable"), machines));
+        assert!(factory.insert(at, id("base:processing_array"), machines));
+        factory.state_mut(bank).unwrap().energy = 1_000_000.0;
+        factory.set_condition(at, 1.0);
+        let dust = id("base:copper_dust");
+        let outputs = &mut factory.state_mut(at).unwrap().outputs;
+        outputs.fill(Some(ItemStack { item: dust, count: max_stack(dust) }));
+        outputs[0] = Some(ItemStack { item: dust, count: max_stack(dust) - 2 });
+        assert_eq!(factory.put(at, ItemStack { item: id("base:copper_ore"), count: 8 }, machines), None);
+        // 3.2 s, then 6.4: one ore crushed and 0.4 s on the next, which has no room.
+        factory.step(4, 20.0, machines);
+        factory.step(4, 20.0, machines);
+        let (_, array) = factory.get(at).unwrap();
+        assert_eq!((array.status, array.process.is_some()), (Status::Full, true));
+        assert!((array.progress - 0.4).abs() < 1e-3, "kept {}", array.progress);
+        // Full, it waits with what it kept and takes no power.
+        let energy = factory.get(bank).unwrap().1.energy;
+        factory.step(4, 20.0, machines);
+        assert!((factory.get(at).unwrap().1.progress - 0.4).abs() < 1e-3);
+        assert_eq!(factory.get(bank).unwrap().1.energy, energy);
+        // Its dust taken, it goes on from there (its network's power coming back up).
+        factory.take_outputs(at);
+        factory.step(4, 20.0, machines);
+        let (_, array) = factory.get(at).unwrap();
+        assert!(array.status == Status::Working && array.progress > 0.4 + 1e-3, "went on to {}", array.progress);
     }
 
     /// Coal and charcoal are one input of the bloomery's recipe: together they fill no more

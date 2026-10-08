@@ -59,6 +59,8 @@ pub struct Content {
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
+    /// Locked chests, the lockpicks that open them and what they hold.
+    pub treasure: Arc<crate::treasure::Treasure>,
     /// What things are worth (`value`).
     pub value: Arc<crate::value::Value>,
     /// Every other definition file, by package then file name.
@@ -75,7 +77,7 @@ pub struct Content {
 /// mod tunes one number without forking base. [`settable!`] declares one. Worldgen's
 /// `layered!` (crates/worldgen/src/content.rs) is the same rule for climate, land and trail
 /// data, with nested structs and named lists; the two should become one.
-pub trait Settable: Copy {
+pub trait Settable: Clone {
     /// Every field as an option: what one package sets.
     type Set;
     /// These values with `set` over them, and the names of the fields it set.
@@ -113,18 +115,18 @@ pub(crate) use settable;
 
 /// Single-valued data as the packages so far set it, and the last package that did.
 #[derive(Default)]
-struct Setting<T> {
-    value: T,
+pub(crate) struct Setting<T> {
+    pub(crate) value: T,
     by: Option<String>,
 }
 
 impl<T: Settable> Setting<T> {
     /// Lays what `package`'s `file` sets of `what` over the value, noting when that
     /// replaces an earlier package's.
-    fn set(&mut self, package: &str, file: &str, what: &str, set: Option<T::Set>, notes: &mut Vec<String>) {
+    pub(crate) fn set(&mut self, package: &str, file: &str, what: &str, set: Option<T::Set>, notes: &mut Vec<String>) {
         let Some(set) = set else { return };
         let changed;
-        (self.value, changed) = self.value.with(&set);
+        (self.value, changed) = self.value.clone().with(&set);
         if let Some(earlier) = self.by.replace(package.to_owned()) {
             let note = format!("{package}/{file} replaces the {what} {earlier} set ({})", changed.join(", "));
             tracing::info!("{note}");
@@ -177,6 +179,7 @@ impl Content {
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
+        let mut treasure = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
         let mut machines = Vec::new();
@@ -272,6 +275,10 @@ impl Content {
                         regrowth.push(crate::regrowth::Regrowth::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "treasure.ron" => {
+                        treasure.push((package.clone(), crate::treasure::Treasure::read(package, &source)?));
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "stacking.ron" => {
                         stacking.push(source.clone());
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -326,7 +333,18 @@ impl Content {
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
         }
-        crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
+        let value = crate::value::Value::merge(value);
+        let limits = stack_limits(&blocks, &stacking)?;
+        let treasure = crate::treasure::Treasure::new(treasure, &blocks, &value, &limits, &mut notes)?;
+        // An opened chest becomes a bin with room for all it can give.
+        for (block, chest) in treasure.chests() {
+            let room = machines.get(chest.opens_to).map_or(0, |m| m.bin_slots());
+            let most = treasure.most_stacks(chest);
+            if room < most {
+                return Err(RegistryError(format!("treasure.ron: `{}` opens to a bin of {room} stacks, but its table gives up to {most}", blocks.def(block).name)));
+            }
+        }
+        crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
         crate::inventory::set_worn_slots(combat.worn_slots());
         // A furnishing gives itself back only where a player placed it: one that drops
@@ -353,7 +371,8 @@ impl Content {
             combat: Arc::new(combat),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
-            value: Arc::new(crate::value::Value::merge(value)),
+            treasure: Arc::new(treasure),
+            value: Arc::new(value),
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
