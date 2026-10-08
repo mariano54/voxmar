@@ -8,6 +8,7 @@
 //! The book comes from the game's content (`voxmar_engine::recipe_book`), so a package's
 //! recipes show here as soon as it adds them.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use bevy::prelude::*;
@@ -40,6 +41,7 @@ impl Plugin for RecipesPlugin {
             .add_systems(Update, (look_up, click, report, draw).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
                 viewer.trail.clear();
+                viewer.reported.clear();
                 ui.recipes_open = false;
             });
     }
@@ -71,6 +73,8 @@ pub struct RecipeViewer {
     book: Option<Arc<RecipeBook>>,
     /// What was drawn last, to draw again only on a change.
     drawn: Option<(Lookup, String, u32)>,
+    /// Items reported in this game, bounded by the content registry, cleared on leaving.
+    reported: HashSet<BlockId>,
 }
 
 impl RecipeViewer {
@@ -96,6 +100,11 @@ impl RecipeViewer {
     fn pages(&self) -> usize {
         self.found().len().div_ceil(PER_PAGE).max(1)
     }
+
+    fn unreported_item(&mut self) -> Option<BlockId> {
+        let item = self.trail.last()?.item;
+        self.reported.insert(item).then_some(item)
+    }
 }
 
 #[derive(Component)]
@@ -107,7 +116,7 @@ struct ViewerBody;
 #[derive(Component)]
 struct ViewerPage;
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum ViewerButton {
+pub(crate) enum ViewerButton {
     Previous,
     Next,
     Back,
@@ -152,7 +161,7 @@ fn look_up(
     mut hovered: ResMut<HoveredItem>,
     mut viewer: ResMut<RecipeViewer>,
     mut ui: ResMut<UiState>,
-    items: Query<(&ViewerItem, &RelativeCursorPosition)>,
+    items: Query<(&ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
     start: Option<Res<StartLookup>>,
     mut commands: Commands,
 ) {
@@ -171,7 +180,7 @@ fn look_up(
     }
     // Over an item in the viewer, it is the one to look up.
     if ui.recipes_open || ui.quests_open {
-        hovered.0 = items.iter().find(|(_, cursor)| cursor.cursor_over()).map(|(item, _)| item.0);
+        hovered.0 = items.iter().find(|(_, cursor, visible)| visible.get() && cursor.cursor_over()).map(|(item, _, _)| item.0);
     }
     if ui.console_open {
         return;
@@ -190,11 +199,11 @@ fn look_up(
     ui.recipes_open = !viewer.trail.is_empty();
 }
 
-fn click(
-    buttons: Query<(&ViewerButton, &Interaction), Changed<Interaction>>,
-    items: Query<(&ViewerItem, &Interaction, &RelativeCursorPosition), Changed<Interaction>>,
+pub(crate) fn click(
+    buttons: Query<(&ViewerButton, &Interaction, &InheritedVisibility), Changed<Interaction>>,
+    items: Query<(&ViewerItem, &Interaction, &InheritedVisibility), Changed<Interaction>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    hovered_items: Query<(&ViewerItem, &RelativeCursorPosition)>,
+    hovered_items: Query<(&ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
     mut viewer: ResMut<RecipeViewer>,
     mut ui: ResMut<UiState>,
 ) {
@@ -203,8 +212,8 @@ fn click(
         return;
     }
     let pages = viewer.pages();
-    for (button, interaction) in &buttons {
-        if *interaction != Interaction::Pressed {
+    for (button, interaction, visible) in &buttons {
+        if !visible.get() || *interaction != Interaction::Pressed {
             continue;
         }
         match button {
@@ -224,15 +233,15 @@ fn click(
             }
         }
     }
-    for (item, interaction, _) in &items {
-        if *interaction == Interaction::Pressed {
+    for (item, interaction, visible) in &items {
+        if visible.get() && *interaction == Interaction::Pressed {
             viewer.open(item.0, false);
             ui.recipes_open = true;
         }
     }
     // A right click on an item looks up its uses (Interaction answers only the left).
     if mouse.just_pressed(MouseButton::Right)
-        && let Some((item, _)) = hovered_items.iter().find(|(_, cursor)| cursor.cursor_over())
+        && let Some((item, _, _)) = hovered_items.iter().find(|(_, cursor, visible)| visible.get() && cursor.cursor_over())
     {
         viewer.open(item.0, true);
         ui.recipes_open = true;
@@ -241,14 +250,32 @@ fn click(
 
 /// Tells the server of each item the viewer is opened on, once (for the quest book's
 /// look-up goals).
-fn report(viewer: Res<RecipeViewer>, net: Res<crate::net::Net>, mut told: Local<Option<BlockId>>) {
-    let Some(item) = viewer.trail.last().map(|look| look.item) else {
-        *told = None;
-        return;
-    };
-    if *told != Some(item) {
-        *told = Some(item);
+fn report(mut viewer: ResMut<RecipeViewer>, net: Res<crate::net::Net>) {
+    if let Some(item) = viewer.unreported_item() {
         net.looked_up(item);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reopening_or_turning_a_lookup_reports_each_item_once_per_game() {
+        let mut viewer = RecipeViewer::default();
+        assert_eq!(viewer.unreported_item(), None);
+        viewer.open(BlockId(1), false);
+        assert_eq!(viewer.unreported_item(), Some(BlockId(1)));
+        assert_eq!(viewer.unreported_item(), None, "redrawing reports nothing");
+        viewer.open(BlockId(2), false);
+        assert_eq!(viewer.unreported_item(), Some(BlockId(2)));
+        viewer.trail.pop();
+        assert_eq!(viewer.unreported_item(), None, "Back reports nothing");
+        viewer.trail.clear();
+        viewer.open(BlockId(1), true);
+        assert_eq!(viewer.unreported_item(), None, "reopening and switching to uses report nothing");
+        viewer.reported.clear();
+        assert_eq!(viewer.unreported_item(), Some(BlockId(1)), "a new game needs its own report");
     }
 }
 

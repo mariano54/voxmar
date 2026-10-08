@@ -303,8 +303,22 @@ pub struct HitSplat {
     size: f32,
     /// The middle of the creature's body, kept once the body is gone.
     anchor: Option<Vec3>,
-    /// Frames it was drawn over a body falling or gone.
-    over_fallen: u32,
+    /// When it was first drawn over a body falling or gone (game seconds).
+    fallen_since: Option<f64>,
+}
+
+impl HitSplat {
+    /// Continuous game time drawn over a fallen body. A hidden splat starts again when
+    /// it becomes visible, so a menu or an offscreen body cannot satisfy the gate.
+    fn over_fallen(&mut self, now: f64, drawn: bool) -> f32 {
+        if drawn {
+            let since = *self.fallen_since.get_or_insert(now);
+            (now - since) as f32
+        } else {
+            self.fallen_since = None;
+            0.0
+        }
+    }
 }
 
 /// A splat's words, in its kind's colour (whole, before it fades).
@@ -340,8 +354,9 @@ pub struct SplatsShown {
     pub pips: u8,
     /// How many blows that hurt the player have flashed the health bar.
     pub flashes: u32,
-    /// The most frames one splat was drawn over a body falling or gone: a killing blow's.
-    pub over_fallen: u32,
+    /// The longest, in game seconds, one splat was drawn over a body falling or gone: a
+    /// killing blow's. (Time, not frames: a frame may take a quarter second under load.)
+    pub over_fallen: f32,
     struck_seen: u32,
     hurt_seen: u32,
     /// When the blow that last flashed the health bar came (app seconds).
@@ -509,7 +524,7 @@ fn splats(
         let centred = UiTransform::from_translation(Val2::percent(-50.0, -100.0));
         let size = font_size(look.scale);
         let pixel = size / font_size(1);
-        let mark = HitSplat { creature, at, size, anchor: None, over_fallen: 0 };
+        let mark = HitSplat { creature, at, size, anchor: None, fallen_since: None };
         commands.entity(layer).with_children(|layer| {
             layer.spawn((node, centred, mark, Visibility::Hidden)).with_children(|splat| {
                 for (x, y) in ring() {
@@ -568,6 +583,7 @@ fn splats(
         };
         let Some(base) = base.filter(|_| !screen) else {
             visibility.set_if_neq(Visibility::Hidden);
+            mark.over_fallen(now, false);
             continue;
         };
         let at = base - Vec2::Y * (lift + age * splat.rise * PX);
@@ -582,10 +598,7 @@ fn splats(
             }
         }
         visibility.set_if_neq(Visibility::Inherited);
-        if fallen {
-            mark.over_fallen += 1;
-            shown.over_fallen = shown.over_fallen.max(mark.over_fallen);
-        }
+        shown.over_fallen = shown.over_fallen.max(mark.over_fallen(now, fallen));
     }
 }
 
@@ -672,6 +685,17 @@ fn hide(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn killing_splats_count_visible_game_seconds_even_with_slow_frames() {
+        let mut mark = HitSplat { creature: Some(1), at: 10.0, size: 24.0, anchor: None, fallen_since: None };
+        assert_eq!(mark.over_fallen(10.0, false), 0.0, "a living body does not count");
+        assert_eq!(mark.over_fallen(10.1, true), 0.0, "the first fallen frame starts the clock");
+        assert!((mark.over_fallen(10.35, true) - 0.25).abs() < 1e-5, "two slow frames suffice for 0.2 seconds");
+        assert_eq!(mark.over_fallen(10.4, false), 0.0, "hidden time never counts");
+        assert_eq!(mark.over_fallen(10.8, true), 0.0, "showing again starts afresh");
+        assert!((mark.over_fallen(10.85, true) - 0.05).abs() < 1e-5);
+    }
 
     fn file(package: &str, source: &str) -> ContentFile {
         ContentFile { package: package.into(), name: FILE.into(), source: source.into() }

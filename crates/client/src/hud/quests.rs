@@ -434,7 +434,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
 
 fn show(ui: Res<UiState>, mut root: Query<&mut Visibility, With<QuestScreen>>) {
     if let Ok(mut visibility) = root.single_mut() {
-        visibility.set_if_neq(if ui.quests_open { Visibility::Inherited } else { Visibility::Hidden });
+        visibility.set_if_neq(if ui.quests_open && !ui.recipes_open { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 

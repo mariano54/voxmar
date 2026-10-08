@@ -111,6 +111,14 @@ pages, clicking an item looks up its recipes (right-click, its uses) and Back re
 steps. Both keys can be changed in Settings, Keys. It reads the same content the game plays
 by, so a package's recipes show up in it on their own.
 
+In survival, the inventory has a recipe search beside it: type part of an item's English
+or Japanese name, then click it for recipes or right-click it for uses. The quest book
+shows recipes under crafting, cooking and carried-item goals; click any goal, ingredient
+or reward item to look it up, and Back returns to the book. The Nomad quest "Look It Up"
+teaches this with the stone pickaxe and awards 40 Crafting xp once. For captures,
+`--catalogue SEARCH` opens the search in either mode, and `--quests QUEST` opens that
+quest's page.
+
 The character screen (C) shows health, how warm you feel and the effects on you, and
 every skill with its icon, level and progress; click a skill for its guide, what each level
 opens up. There is no hunger: health comes back slowly by itself, and food heals (right-click

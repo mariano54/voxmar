@@ -1544,8 +1544,16 @@ fn looking_an_item_up_finishes_the_look_it_up_quest() {
     assert!(!done(&client), "other items' look-ups finished it");
     let pickaxe = client.content.blocks.expect("base:stone_pickaxe");
     client.chat.clear();
+    client.earned.clear();
     client.connection.send(ClientMessage::LookedUp { item: pickaxe });
     client.pump_until(|c| done(c) && c.chat.iter().any(|(_, t)| t.contains("Quest done: Look It Up")));
+    client.pump_until(|c| c.earned.contains(&400));
+    for _ in 0..20 {
+        client.connection.send(ClientMessage::LookedUp { item: pickaxe });
+    }
+    client.wait_server(2);
+    assert_eq!(client.earned.iter().filter(|&&xp| xp == 400).count(), 1, "repeated look-ups rewarded XP again");
+    assert_eq!(client.chat.iter().filter(|(_, text)| text.contains("Quest done: Look It Up")).count(), 1, "the quest completed again");
 }
 
 /// A content directory with one more package, `zz_test`, holding `files`: what a mod adds.

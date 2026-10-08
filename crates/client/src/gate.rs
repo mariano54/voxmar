@@ -2886,14 +2886,13 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// The recipe lookup as a survival player does it: type "pick" in the inventory's search,
-/// open the stone pickaxe's recipe (the pointer's click is told as the viewer opening, as
-/// the other recipe steps tell it), see "Look It Up" finish, then open the quest book on
+/// click the stone pickaxe's recipe, see "Look It Up" finish, then open the quest book on
 /// the stone tools quest, whose goal shows the pickaxe's recipe inline, look an input up
 /// from there and come Back to the book.
 fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    use crate::hud::creative::{Catalogue, SearchField};
+    use crate::hud::creative::{Catalogue, Cell, SearchField};
     use crate::hud::quests::QuestView;
-    use crate::hud::recipes::{RecipeViewer, ViewerItem};
+    use crate::hud::recipes::{RecipeViewer, ViewerButton, ViewerItem};
     use crate::ui::widgets::TextField;
     const QUEST: &str = "base:look_it_up";
     const BOOK_QUEST: &str = "base:stone_in_hand";
@@ -2932,8 +2931,20 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     return;
                 }
                 gate.check("recipe lookup: search", Ok(format!("\"pick\" in the inventory's search finds {} items, the stone pickaxe among them", found.len())));
-                world.resource_mut::<RecipeViewer>().open(pickaxe, false);
-                world.resource_mut::<UiState>().recipes_open = true;
+                // The headless target has no window cursor. Give the visible cell the
+                // pointer, then exercise the same input system as a real left click.
+                let cell = world.query::<(Entity, &Cell, &InheritedVisibility)>().iter(world)
+                    .find(|(_, cell, visible)| visible.get() && found.get(cell.0) == Some(&pickaxe))
+                    .map(|(entity, _, _)| entity);
+                let Some(cell) = cell else {
+                    fail(world, gate, "recipe lookup: search", "the pickaxe has no visible search cell".into());
+                    return;
+                };
+                world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap().normalized = Some(Vec2::splat(0.5));
+                world.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+                world.run_system_cached(crate::hud::creative::read_input).unwrap();
+                world.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
+                world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap().normalized = None;
                 gate.advance(now);
             } else if in_phase > 3.0 {
                 fail(world, gate, "recipe lookup: search", format!("\"pick\" found {found:?} (recipe search {recipes_only})"));
@@ -2980,30 +2991,61 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.check("recipe lookup: inline", Ok(format!("the quest page draws the pickaxe's recipe: {} inputs and the result, each a clickable icon", inputs.len())));
-            // An input clicked, as the pointer would.
+            // Press the drawn input's button through the viewer's actual click handler.
             let input = inputs[0];
-            world.resource_mut::<RecipeViewer>().open(input, false);
-            world.resource_mut::<UiState>().recipes_open = true;
+            let cell = world.query::<(Entity, &ViewerItem, &InheritedVisibility)>().iter(world)
+                .find(|(_, item, visible)| visible.get() && item.0 == input).map(|(entity, _, _)| entity).unwrap();
+            *world.get_mut::<Interaction>(cell).unwrap() = Interaction::Pressed;
+            world.run_system_cached(crate::hud::recipes::click).unwrap();
+            *world.get_mut::<Interaction>(cell).unwrap() = Interaction::None;
             gate.counted = input.0 as u32;
             gate.advance(now);
         }
-        _ => {
+        4 => {
             if in_phase < 0.3 {
                 return;
             }
             let shown = world.resource::<RecipeViewer>().trail.last().map(|look| look.item.0 as u32);
             let opened = shown == Some(gate.counted) && world.resource::<UiState>().recipes_open;
-            // Back, as its button does.
-            world.resource_mut::<RecipeViewer>().trail.pop();
-            let mut ui = world.resource_mut::<UiState>();
-            ui.recipes_open = false;
-            let back = ui.quests_open;
-            ui.quests_open = false;
-            world.resource_mut::<RecipeViewer>().trail.clear();
+            if !opened {
+                fail(world, gate, "recipe lookup: click", "the input's button did not open its recipe".into());
+                return;
+            }
+            let back = world.query::<(Entity, &ViewerButton, &InheritedVisibility)>().iter(world)
+                .find(|(_, button, visible)| visible.get() && **button == ViewerButton::Back).map(|(entity, _, _)| entity).unwrap();
+            *world.get_mut::<Interaction>(back).unwrap() = Interaction::Pressed;
+            world.run_system_cached(crate::hud::recipes::click).unwrap();
+            *world.get_mut::<Interaction>(back).unwrap() = Interaction::None;
+            gate.advance(now);
+        }
+        5 => {
+            let ui = world.resource::<UiState>();
+            let back = ui.quests_open && !ui.recipes_open && world.resource::<RecipeViewer>().trail.is_empty();
             gate.check(
                 "recipe lookup: back",
-                if opened && back { Ok("an input clicked in the quest book opens the viewer and Back returns to the book".into()) } else { Err(format!("viewer on the input {opened}, quest book still open after Back {back}")) },
+                if back { Ok("an input clicked in the quest book opens the viewer and its Back button returns to the book".into()) } else { Err("Back did not return to the quest book".into()) },
             );
+            if !back {
+                fail(world, gate, "recipe lookup: uses", "Back did not return to the quest book".into());
+                return;
+            }
+            let cell = world.query::<(Entity, &ViewerItem, &InheritedVisibility)>().iter(world)
+                .find(|(_, item, visible)| visible.get() && item.0.0 as u32 == gate.counted).map(|(entity, _, _)| entity);
+            let Some(cell) = cell else { return };
+            world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap().normalized = Some(Vec2::splat(0.5));
+            world.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+            world.run_system_cached(crate::hud::recipes::click).unwrap();
+            world.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Right);
+            world.get_mut::<bevy::ui::RelativeCursorPosition>(cell).unwrap().normalized = None;
+            gate.advance(now);
+        }
+        _ => {
+            let viewer = world.resource::<RecipeViewer>();
+            let uses = viewer.trail.last().is_some_and(|look| look.uses && look.item.0 as u32 == gate.counted);
+            gate.check("recipe lookup: uses", if uses { Ok("right-clicking a quest recipe's input opens its uses".into()) } else { Err("right-click did not open the input's uses".into()) });
+            world.resource_mut::<UiState>().quests_open = false;
+            world.resource_mut::<UiState>().recipes_open = false;
+            world.resource_mut::<RecipeViewer>().trail.clear();
             gate.next(Step::Refusal, now);
         }
     }
@@ -4994,18 +5036,19 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             let shown = world.resource::<SplatsShown>();
             // A killing blow's splat stays over the falling body (the fights killed a snail
-            // and bears), drawn for several frames, not dropped with the creature.
-            const FALLEN_FRAMES: u32 = 3;
+            // and bears), drawn for some time, not dropped with the creature: by the game's
+            // clock, as a frame may take a quarter second under load.
+            const FALLEN_SECONDS: f32 = 0.2;
             let result = if !shown.meter {
                 Err("the meter never showed through the fights".to_owned())
             } else if shown.struck != struck || shown.hurt != hurt {
                 Err(format!("{} splats drawn for the player's {struck} blows, {} for the {hurt} at the player", shown.struck, shown.hurt))
-            } else if shown.over_fallen < FALLEN_FRAMES {
-                Err(format!("no splat stayed over a creature killed in the fights for {FALLEN_FRAMES} frames (the most: {})", shown.over_fallen))
+            } else if shown.over_fallen < FALLEN_SECONDS {
+                Err(format!("no splat stayed over a creature killed in the fights for {FALLEN_SECONDS} s (the most: {:.2} s)", shown.over_fallen))
             } else {
                 let sample: Vec<&str> = shown.recent.iter().map(String::as_str).take(8).collect();
                 Ok(format!(
-                    "a splat drawn for each of the player's {struck} blows and the {hurt} at them ({}), the killing blows' over the falling bodies (up to {} frames), and the meter, up to {} pips",
+                    "a splat drawn for each of the player's {struck} blows and the {hurt} at them ({}), the killing blows' over the falling bodies (up to {:.2} s), and the meter, up to {} pips",
                     sample.join(", "),
                     shown.over_fallen,
                     shown.pips

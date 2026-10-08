@@ -185,7 +185,7 @@ struct GridArea;
 #[derive(Component)]
 struct Cells;
 #[derive(Component)]
-struct Cell(usize);
+pub(crate) struct Cell(pub usize);
 #[derive(Component)]
 struct CellIcon;
 #[derive(Component)]
@@ -386,7 +386,7 @@ fn lay_out(
 
 /// Typing, tabs, pages, the wheel, and clicks on items.
 #[allow(clippy::too_many_arguments)]
-fn read_input(
+pub(crate) fn read_input(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
