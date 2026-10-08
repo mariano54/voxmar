@@ -992,12 +992,15 @@ pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
 pub(crate) fn test_registry() -> BlockRegistry {
     let sources = [
         include_str!("../../../assets/content/base/blocks.ron"),
+        include_str!("../../../assets/content/base/blocks_armour.ron"),
         include_str!("../../../assets/content/base/blocks_creatures.ron"),
         include_str!("../../../assets/content/base/blocks_farm.ron"),
         include_str!("../../../assets/content/base/blocks_food.ron"),
         include_str!("../../../assets/content/base/blocks_furnishings.ron"),
         include_str!("../../../assets/content/base/blocks_herbs.ron"),
+        include_str!("../../../assets/content/base/blocks_machines.ron"),
         include_str!("../../../assets/content/base/blocks_tools.ron"),
+        include_str!("../../../assets/content/base/blocks_treasure.ron"),
         include_str!("../../../assets/content/base/blocks_weapons.ron"),
     ];
     let packages = sources.iter().map(|s| ("base".to_owned(), BlockRegistry::read("base", s).unwrap())).collect();
