@@ -892,7 +892,10 @@ fn plans_keep_to_their_squares_and_rules() {
                         *looked += 1;
                         let area = Area::new(&world, a.min, a.max);
                         let found = (a.min.y..=a.max.y).any(|z| (a.min.x..=a.max.x).any(|x| (a.floor..a.floor + 4).any(|y| area.block(IVec3::new(x, y, z)) == altar)));
-                        assert!(found, "{at}: the {} at {} has no altar", a.what, a.min);
+                        let planned: Vec<_> = plan.voxels.iter().flat_map(|(column, voxels)| voxels.iter().filter_map(move |v| {
+                            matches!(v.put, super::canvas::Put::Set(b) if b == altar).then_some((column, v.pos, v.ground))
+                        })).collect();
+                        assert!(found, "{at} ({}): the {} at {} floor {} has no altar; planned altars {planned:?}", plan.style, a.what, a.min, a.floor);
                     }
                 }
             }
@@ -1160,6 +1163,7 @@ fn numbers_that_would_hang_planning_are_refused() {
     let registry = base_registry();
     let mut def = super::SettlementsDef::default();
     def.extend("base", "base", include_str!("../../../../assets/content/base/settlements.ron")).unwrap();
+    def.cultures.extend("base", "base", include_str!("../../../../assets/content/base/cultures.ron")).unwrap();
     def.check(&registry).unwrap();
     let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
         let mut d = def.clone();
@@ -1180,6 +1184,7 @@ fn numbers_planning_cannot_use_are_refused() {
     let registry = base_registry();
     let mut def = super::SettlementsDef::default();
     def.extend("base", "base", include_str!("../../../../assets/content/base/settlements.ron")).unwrap();
+    def.cultures.extend("base", "base", include_str!("../../../../assets/content/base/cultures.ron")).unwrap();
     def.check(&registry).unwrap();
     let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
         let mut d = def.clone();
@@ -1818,7 +1823,7 @@ fn snowy_villages_keep_their_built_stone() {
             }
             println!("seed {seed}: snowy {} {} at {}", s.size, s.name.0, s.centre);
             villages += 1;
-            if villages >= 2 {
+            if villages >= 2 && kept > 50 && snowed_stone > 0 && snowed_sod > 0 {
                 break 'seeds;
             }
         }
