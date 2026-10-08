@@ -67,6 +67,7 @@ pub const SAMPLE_BATCH: usize = 32;
 const RAW_COLUMN_LIMIT: usize = 32_768;
 // Close site searches reached the old corner headroom and repeated relief work.
 const CORNER_LIMIT: usize = 8_192;
+const LAND_FORM_LIMIT: usize = 32_768;
 
 #[cfg(test)]
 thread_local! {
@@ -582,8 +583,8 @@ impl Rivers {
         let key = Samples::key(min, max);
         let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, min, max));
         let p = IVec2::new(x, z);
-        let ground = (!scratch.columns.contains_key(&(p, key))).then(|| land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0]);
-        self.sealed_cached(land, tiers, key, p, ground, &mut scratch.corners, &mut scratch.columns)
+        let ground = (!scratch.columns.contains_key(&(p, key))).then(|| planning_landforms(land, &[(x, z)], &mut scratch.corners, &mut scratch.landforms)[0]);
+        self.sealed_cached(land, tiers, key, p, ground, &mut scratch.corners, &mut scratch.columns, &mut scratch.landforms)
     }
 
     /// Exact standalone samples in a bounded batch. Every centre keeps its own
@@ -597,7 +598,7 @@ impl Rivers {
         let keys: Vec<_> = points.iter().map(|&(x, z)| Samples::key(IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1))).collect();
         let needed: Vec<_> = points.iter().zip(&keys).map(|(&(x, z), &key)| !scratch.columns.contains_key(&(IVec2::new(x, z), key))).collect();
         let missing: Vec<_> = points.iter().zip(&needed).filter_map(|(&p, &need)| need.then_some(p)).collect();
-        let mut grounds = land.geology.lands_with(&missing, &mut scratch.corners).into_iter();
+        let mut grounds = planning_landforms(land, &missing, &mut scratch.corners, &mut scratch.landforms).into_iter();
         for (i, &(x, z)) in points.iter().enumerate() {
             if !needed[i] { continue; }
             // Consume the original miss mask even for duplicate centres. Cache
@@ -616,7 +617,7 @@ impl Rivers {
             let tiers = scratch.tiers.entry(keys[i]).or_insert_with(|| self.tiers(land, min, max));
             // All centres now hold their original raw values; neighbours still use
             // the requesting centre's bounds, including when keys differ nearby.
-            self.sealed_cached(land, tiers, keys[i], IVec2::new(x, z), None, &mut scratch.corners, &mut scratch.columns)
+            self.sealed_cached(land, tiers, keys[i], IVec2::new(x, z), None, &mut scratch.corners, &mut scratch.columns, &mut scratch.landforms)
         }).collect()
     }
 
@@ -726,13 +727,13 @@ impl Rivers {
     /// Reuse only unsealed columns computed under these exact channel bounds. A
     /// neighbour keeps the requesting centre's key, not its own standalone halo key.
     #[allow(clippy::too_many_arguments)]
-    fn sealed_cached(&self, land: Stages, tiers: &(Near, Near), key: [IVec2; 4], p: IVec2, ground: Option<Landform>, corners: &mut Corners, columns: &mut FxHashMap<(IVec2, [IVec2; 4]), Column>) -> GeoSample {
+    fn sealed_cached(&self, land: Stages, tiers: &(Near, Near), key: [IVec2; 4], p: IVec2, ground: Option<Landform>, corners: &mut Corners, columns: &mut FxHashMap<(IVec2, [IVec2; 4]), Column>, landforms: &mut FxHashMap<IVec2, Landform>) -> GeoSample {
         let column = *columns.entry((p, key)).or_insert_with(|| self.unsealed(tiers, p.x, p.y, ground.expect("uncached centre landform")));
         if !column.near { return column.sample; }
         let around = [p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y];
         let missing: Vec<_> = around.iter().filter(|&&at| !columns.contains_key(&(at, key))).map(|at| (at.x, at.y)).collect();
         if !missing.is_empty() {
-            let grounds = land.geology.lands_with(&missing, corners);
+            let grounds = planning_landforms(land, &missing, corners, landforms);
             for ((x, z), ground) in missing.into_iter().zip(grounds) {
                 columns.insert((IVec2::new(x, z), key), self.unsealed(tiers, x, z, ground));
             }
@@ -793,6 +794,8 @@ pub struct Samples {
     corners: Corners,
     tiers: FxHashMap<[IVec2; 4], (Near, Near)>,
     columns: FxHashMap<(IVec2, [IVec2; 4]), Column>,
+    /// Geology is independent of the channel bounds used to carve a raw column.
+    landforms: FxHashMap<IVec2, Landform>,
     #[cfg(test)]
     work: [usize; 4],
 }
@@ -836,6 +839,7 @@ impl Samples {
             #[cfg(test)]
             { self.work[1] += 1; }
         }
+        if self.landforms.len() + 5 * count > LAND_FORM_LIMIT { self.landforms.clear(); }
         if self.tiers.len() >= 16 { self.tiers.clear(); }
     }
 
@@ -843,6 +847,16 @@ impl Samples {
         let region = |at: IVec2| at.div_euclid(IVec2::splat(REGION));
         [region(min - TRUNK_MARGIN), region(max + TRUNK_MARGIN), region(min - STREAM_MARGIN), region(max + STREAM_MARGIN)]
     }
+}
+
+/// Original geology, shared only within one world-scoped planning scratch. Keep
+/// every initial missing position (including duplicates) in batch order; then copy
+/// each result by position. Raw water columns retain their separate exact keys.
+fn planning_landforms(land: Stages, points: &[(i32, i32)], corners: &mut Corners, cached: &mut FxHashMap<IVec2, Landform>) -> Vec<Landform> {
+    let missing: Vec<_> = points.iter().copied().filter(|&(x, z)| !cached.contains_key(&IVec2::new(x, z))).collect();
+    let made = land.geology.lands_with(&missing, corners);
+    cached.extend(missing.into_iter().zip(made).map(|((x, z), ground)| (IVec2::new(x, z), ground)));
+    points.iter().map(|&(x, z)| cached[&IVec2::new(x, z)]).collect()
 }
 
 /// The regional climate over one region, sampled every `RAIN_CELL` blocks.
@@ -1010,7 +1024,8 @@ mod tests {
                     assert_eq!(actual, expected, "seed {seed} at {x},{z}, reverse {reverse}");
                     assert!(scratch.corners.len() <= CORNER_LIMIT);
                     assert!(scratch.tiers.len() <= 16);
-        assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
+                    assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
+                    assert!(scratch.landforms.len() <= LAND_FORM_LIMIT);
                     if expected.submerged() && expected.body != Body::Sea { wet += 1; } else if !expected.submerged() { dry += 1; }
                 }
                 let ordered: Vec<_> = if reverse { points.iter().rev().copied().collect() } else { points.clone() };
@@ -1022,6 +1037,7 @@ mod tests {
                         assert!(scratch.corners.len() <= CORNER_LIMIT);
                         assert!(scratch.tiers.len() <= 16);
                         assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
+                        assert!(scratch.landforms.len() <= LAND_FORM_LIMIT);
                     }
                 }
                 assert!(world.rivers.samples_cached(world.stages(), &[], &mut scratch).is_empty());
@@ -1066,6 +1082,15 @@ mod tests {
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.columns.len(), 6);
         assert_eq!(scratch.corners.len(), corners, "all warm centres and neighbours need no new terrain");
+        // Drop all raw values and relief corners: original geology is independent
+        // of channel keys, while water still rebuilds under the requesting key.
+        let saved = scratch.columns.clone();
+        scratch.columns.clear();
+        scratch.corners = Corners::default();
+        assert_eq!(world.rivers.sample_cached(world.stages(), p.x, p.y, &mut scratch), expected);
+        assert_eq!(scratch.corners.len(), 0, "centre and all four neighbours reuse original geology");
+        assert_eq!(scratch.columns.len(), 5, "water columns are rebuilt under the requesting exact key");
+        scratch.columns = saved;
         // Corner-only eviction must not discard pure raw columns or their keys.
         scratch.corners = Corners::default();
         let distant: Vec<_> = (0..(CORNER_LIMIT - 20 * SAMPLE_BATCH) / 4 + 1).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
@@ -1078,6 +1103,14 @@ mod tests {
         assert_eq!(scratch.columns.len(), RAW_COLUMN_LIMIT);
         assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
         assert_eq!(scratch.columns.len(), 5);
+        // Independent geology-cache pressure clears before the whole batch.
+        let filler = world.geology.land(p.x, p.y);
+        let fill = LAND_FORM_LIMIT - scratch.landforms.len();
+        scratch.landforms.extend((0..fill).map(|k| (IVec2::new(300_000 + k as i32, 300_000), filler)));
+        assert_eq!(scratch.landforms.len(), LAND_FORM_LIMIT);
+        scratch.columns.clear();
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert!(!scratch.landforms.is_empty() && scratch.landforms.len() <= 5 * SAMPLE_BATCH, "whole batch reserves geology headroom before any work");
         scratch.columns.insert((p, key), wrong);
         scratch.columns.insert((p, wrong_key), wrong);
         let another = crate::Overworld::new(42, registry);
@@ -1085,6 +1118,7 @@ mod tests {
         assert_eq!(scratch.id, another.rivers.id);
         assert!(!scratch.columns.contains_key(&(p, wrong_key)));
         assert!(scratch.columns.len() <= 5);
+        assert!(scratch.landforms.len() <= 5);
     }
 
     #[test]
@@ -1111,7 +1145,7 @@ mod tests {
                     assert!(!cache.scratch.columns.is_empty() && !cache.scratch.tiers.is_empty());
                     world.rivers.remember_freshwater_grid(first, step, size, &samples, &mut cache);
                     assert!(!cache.seen.contains_key(&IVec2::splat(200_000)));
-                    assert!(cache.scratch.columns.is_empty() && cache.scratch.tiers.is_empty() && cache.scratch.corners.len() == 0);
+                    assert!(cache.scratch.columns.is_empty() && cache.scratch.landforms.is_empty() && cache.scratch.tiers.is_empty() && cache.scratch.corners.len() == 0);
                 } else {
                     world.rivers.remember_freshwater_grid(first, step, size, &samples, &mut cache);
                 }
