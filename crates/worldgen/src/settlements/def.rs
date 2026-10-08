@@ -762,6 +762,8 @@ struct FurnishingsFile {
     hanging: Vec<Select>,
     nets: Vec<Select>,
     sacks: Vec<Select>,
+    #[serde(default)]
+    crates: Vec<Select>,
     cloth: Vec<Select>,
 }
 
@@ -790,6 +792,8 @@ pub struct FurnishingsDef {
     /// Nets hung to dry by water; `hanging` when left out.
     pub nets: Vec<Select>,
     pub sacks: Vec<Select>,
+    /// Crates stacked in yards; boards of the place's trim when left out.
+    pub crates: Vec<Select>,
     pub cloth: Vec<Select>,
 }
 
@@ -910,6 +914,14 @@ struct HouseFile {
     /// Only beside fresh water.
     #[serde(default)]
     water: bool,
+    /// How many live in it, fewest and most (fuller where it is crowded).
+    #[serde(default = "household")]
+    people: (u32, u32),
+}
+
+/// How many live in a house that does not say.
+pub(super) fn household() -> (u32, u32) {
+    (1, 2)
 }
 
 #[derive(Deserialize)]
@@ -1055,6 +1067,8 @@ struct SettlementFile {
     roofs: Vec<RoofFile>,
     #[serde(default)]
     centrepieces: Vec<CentreFile>,
+    #[serde(default)]
+    people: super::people::PeopleFile,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1111,6 +1125,7 @@ pub struct HouseDef {
     pub most: Option<u32>,
     pub stilts: Option<u32>,
     pub water: bool,
+    pub people: (u32, u32),
 }
 
 /// A roof shape every style may weigh, and the levers it leans on.
@@ -1229,6 +1244,7 @@ pub struct SettlementsDef {
     pub styles: Vec<StyleDef>,
     pub roofs: Vec<RoofDef>,
     pub centrepieces: Vec<CentreDef>,
+    pub people: super::people::PeopleDef,
     /// Every crop by its full name (from `crops.ron`), so settlements grow only everyday
     /// crops a newcomer may harvest, and never ripe.
     pub crops: BTreeMap<String, CropInfo>,
@@ -1345,6 +1361,7 @@ impl SettlementsDef {
             (&mut furnishings.hanging, f.hanging),
             (&mut furnishings.nets, f.nets),
             (&mut furnishings.sacks, f.sacks),
+            (&mut furnishings.crates, f.crates),
             (&mut furnishings.cloth, f.cloth),
         ] {
             if !theirs.is_empty() {
@@ -1399,6 +1416,7 @@ impl SettlementsDef {
                 most: h.most,
                 stilts: h.stilts,
                 water: h.water,
+                people: h.people,
             });
         }
         for r in file.roofs {
@@ -1459,6 +1477,7 @@ impl SettlementsDef {
                 window_chance: s.window_chance,
             });
         }
+        self.people.extend(at, package, file.people)?;
         Ok(())
     }
 
@@ -1776,6 +1795,7 @@ impl SettlementsDef {
             ("hanging", &f.hanging),
             ("nets", &f.nets),
             ("sacks", &f.sacks),
+            ("crates", &f.crates),
             ("cloth", &f.cloth),
         ] {
             for select in list {
@@ -1802,7 +1822,7 @@ impl SettlementsDef {
         let singles = singles.into_iter().filter_map(|(what, name)| Some((what, name.clone()?)));
         // A centrepiece's own bell hangs in its frame as the furnishings' does.
         let bells = self.centrepieces.iter().flat_map(|c| c.parts.iter()).filter(|(part, name)| part == "bell" && !name.contains('{')).map(|(_, name)| ("centrepiece's bell", name.clone()));
-        let lists = [("hay", &f.hay), ("hanging", &f.hanging), ("nets", &f.nets), ("sacks", &f.sacks)];
+        let lists = [("hay", &f.hay), ("hanging", &f.hanging), ("nets", &f.nets), ("sacks", &f.sacks), ("crates", &f.crates)];
         let lists = lists.into_iter().flat_map(|(what, list)| list.iter().flat_map(named).map(move |name| (what, name)));
         for (what, name) in singles.chain(bells).chain(lists) {
             let Some(id) = registry.id(&name) else { continue };
@@ -1811,7 +1831,21 @@ impl SettlementsDef {
                 return fail(format!("furnishings: the {what} `{name}` drops itself from every village: tag it `furnishing`, or have it drop nothing"));
             }
         }
-        Ok(())
+        for h in &self.houses {
+            if h.people.0 > h.people.1 {
+                return fail(format!("house `{}` needs people fewest to most", h.name));
+            }
+        }
+        self.people.check(&self.sizes.iter().map(|s| s.name.clone()).collect::<Vec<_>>())
+    }
+}
+
+impl SettlementsDef {
+    /// Every work a building can have and every kind of building, by name: what people's
+    /// jobs and works may name.
+    pub fn works(&self) -> Vec<String> {
+        let kinds = super::house::Kind::ALL.iter().map(|k| k.name().to_owned());
+        self.houses.iter().filter_map(|h| h.work.clone()).chain(kinds).collect()
     }
 }
 

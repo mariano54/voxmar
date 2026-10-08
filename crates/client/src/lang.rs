@@ -447,9 +447,9 @@ mod tests {
     /// `alchemy:<property>` tag is called (`alchemy.<property>`, in item tooltips), each
     /// biome tag (`biome.tag.<tag>`, in `/biome`), what creatures are doing
     /// (`creature.doing.<module>`), animals' genes and alleles (`gene.<species>.<gene>`, in
-    /// `/inspect`), the weather's channels (`weather.channel.<name>`), the quest book's
-    /// chapters (`quest.age.<age>`), and the fonts and shader packs in the settings
-    /// (`settings.font.<font>`, `shader_pack.<pack>`).
+    /// `/inspect`; people's are never read out), the weather's channels
+    /// (`weather.channel.<name>`), the quest book's chapters (`quest.age.<age>`), and the
+    /// fonts and shader packs in the settings (`settings.font.<font>`, `shader_pack.<pack>`).
     fn built_keys(content: &voxmar_engine::content::Content) -> BTreeSet<String> {
         let blocks = &content.blocks;
         let mut keys = BTreeSet::new();
@@ -468,8 +468,9 @@ mod tests {
         for (_, species) in content.creatures.iter().filter(|(_, species)| first_party(&species.def.name)) {
             keys.extend(species.modules.iter().map(|(module, _)| format!("creature.doing.{}", module.name())));
         }
-        // What inspecting an animal names: its genes and their alleles.
-        for (_, species) in content.creatures.iter().filter(|(_, species)| first_party(&species.def.name)) {
+        // What inspecting an animal names: its genes and their alleles (never a person's).
+        let animals = content.creatures.iter().filter(|(_, species)| species.def.kind != voxmar_engine::creature::Kind::Villager);
+        for (_, species) in animals.filter(|(_, species)| first_party(&species.def.name)) {
             let name = &species.def.name;
             for gene in &species.def.genes {
                 keys.insert(def_key("gene", &format!("{name}.{}", gene.name)));

@@ -107,6 +107,11 @@ const LIGHT_STEPS: f32 = 128.0;
 
 pub struct CreaturesPlugin;
 
+/// The gate retains its eye fixture's CPU pixels after their upload to the GPU. Other
+/// skins give up their pixels as usual, so normal play pays no memory cost for the check.
+#[derive(Resource)]
+pub(crate) struct InspectEyes;
+
 impl Plugin for CreaturesPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "creature_skin.wgsl");
@@ -339,6 +344,52 @@ impl Creatures {
         self.shown.values().filter(|s| s.dying.is_none()).map(|s| &s.view)
     }
 
+    /// The gate checks both eyes in the actual painted skin worn by a summoned shambler.
+    /// None means its body or asynchronous skin has not reached the client yet.
+    pub(crate) fn front_eyes(&self, launch: &Launch, images: &Assets<Image>) -> Option<Result<String, String>> {
+        let species = launch.content.creatures.find("base:shambler")?;
+        let shown = self.shown.values().find(|s| s.view.species == species && s.dying.is_none())?;
+        if shown.painting.is_some() {
+            return None;
+        }
+        let image = images.get(&shown.skin)?;
+        let pixels = image.data.as_ref()?;
+        let body = self.bodies.get(&species)?;
+        let head = shown.joints.iter().map(|(_, p)| p).find(|p| p.role == creature::Role::Head)?;
+        let def = &launch.content.creatures.get(species).def.body;
+        let Some(radius) = def.skin.eye.map(|r| r * def.scale) else {
+            return Some(Err("the front-eye fixture has no skin.eye radius".into()));
+        };
+        let [w, h, d] = body.dims.map(|n| n as usize);
+        let mut eyes = [[0usize; 3]; 2];
+        for (side, counts) in eyes.iter_mut().enumerate() {
+            let sign = if side == 0 { -1.0 } else { 1.0 };
+            let eye = Vec3::new(sign * head.size.x * 0.24, head.size.y * 0.1, -head.size.z * 0.5);
+            for z in 0..d {
+                for y in 0..h {
+                    for x in 0..w {
+                        let at = body.origin + (Vec3::new(x as f32, y as f32, z as f32) + 0.5) / skin::TEXELS;
+                        let local = head.rest.inverse() * (at - head.centre);
+                        let delta = (local - eye).abs();
+                        if delta.x > radius || delta.y > radius || delta.z > 1.0 / skin::TEXELS {
+                            continue;
+                        }
+                        let at = ((z * h + y) * w + x) * 4;
+                        let c = &pixels[at..at + 4];
+                        if c[3] == 0 {
+                            continue;
+                        }
+                        counts[0] += usize::from(c[..3].iter().all(|&v| v > 170) && c[0].abs_diff(c[2]) < 8);
+                        counts[1] += usize::from(c[1] > 140 && c[1] > c[0] && c[2] < 130);
+                        counts[2] += usize::from(c[..3].iter().all(|&v| v < 30));
+                    }
+                }
+            }
+        }
+        let detail = format!("sclera/catchlight, iris, pupil texels on each front eye: {eyes:?}");
+        Some(if eyes.iter().all(|counts| counts.iter().all(|&n| n > 0)) { Ok(detail) } else { Err(detail) })
+    }
+
     /// The box a creature is drawn in, by its species' size and its own scale.
     /// The living creature along a ray from `eye`, within `reach` and nearer than `block`.
     pub fn pointed(&self, launch: &Launch, eye: Vec3, look: Vec3, reach: f32, block: f32) -> Option<u32> {
@@ -432,7 +483,7 @@ fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mes
 
 /// Paints an individual's skin through its species' body volume, off the main thread, so
 /// a herd coming into view never holds a frame: the body shows once its skin is ready.
-fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32) -> Task<Image> {
+fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32, inspect: bool) -> Task<Image> {
     let (shape, origin, dims) = (body.shape.clone(), body.origin, body.dims);
     AsyncComputeTaskPool::get().spawn(async move {
         let shell = shape.cell * 0.75 + 1.5 / skin::TEXELS;
@@ -440,7 +491,8 @@ fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed
         let pixels = skin::paint_volume(&def, &parts, seed, origin, dims, shell, |p| shape.nearest(p).map(|(i, _)| (i, shape.distance(p))));
         let [w, h, d] = dims;
         let extent = Extent3d { width: w, height: h, depth_or_array_layers: d };
-        let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+        let usage = if inspect { RenderAssetUsages::all() } else { RenderAssetUsages::RENDER_WORLD };
+        let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, usage);
         image.sampler = nearest();
         image
     })
@@ -451,6 +503,7 @@ fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed
 struct Drawn<'w, 's> {
     visible: Query<'w, 's, &'static mut Visibility>,
     globals: Query<'w, 's, &'static GlobalTransform>,
+    inspect: Option<Res<'w, InspectEyes>>,
 }
 
 /// The light creatures are lit by and the air they are fogged by, as the terrain's.
@@ -613,7 +666,7 @@ fn show(
         // Painted as its genes show: its coat colours and markings.
         let genes = &species.def.genes;
         let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));
-        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed));
+        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed, drawn.inspect.is_some() && species.def.name == "base:shambler"));
         let skin = creatures.blank.get_or_insert_with(|| images.add(blank_skin())).clone();
         let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
         let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };

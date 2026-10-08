@@ -130,6 +130,7 @@ impl Plugin for GatePlugin {
     fn build(&self, app: &mut App) {
         let dir = self.dir.clone();
         app.insert_resource(Gate::new(dir))
+            .insert_resource(crate::creatures::InspectEyes)
             .add_systems(PostStartup, render_offscreen)
             .add_systems(Update, crate::capture::target_ui)
             .add_systems(Last, run);
@@ -862,7 +863,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Quests => 60.0,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
-        Step::Settlements => SETTLEMENT_LOAD + STEP_LIMIT,
+        Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
         _ => STEP_LIMIT,
     };
     // A step in the world is timed by the server's clock, as its own waits are: a server
@@ -4294,6 +4295,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command(&format!("summon {CREATURE} 1 {} {} {}", pad.x, pad.y, pad.z + 1));
             net.command(&format!("summon mouflon 2 {} {} {}", pad.x - 3, pad.y, pad.z - 4));
             net.command(&format!("summon rabbit 1 {} {} {}", pad.x + 3, pad.y, pad.z - 4));
+            net.command(&format!("summon shambler 1 {} {} {}", pad.x + 3, pad.y, pad.z));
             gate.advance(now);
         }
         2 => {
@@ -4308,7 +4310,19 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if in_phase < 1.0 {
                 return;
             }
+            let eyes = world.resource::<crate::creatures::Creatures>().front_eyes(world.resource::<Launch>(), world.resource::<Assets<Image>>());
+            let Some(eyes) = eyes else {
+                if gate.server_in_phase() <= 10.0 {
+                    return;
+                }
+                gate.check("creature front eyes", Err("the front-eyed creature's painted skin never arrived".into()));
+                world.resource::<Net>().command("creatures remove shambler");
+                gate.next(Step::Strike, now);
+                return;
+            };
             if gate.shot(world, "creatures").is_some() {
+                gate.check("creature front eyes", eyes);
+                world.resource::<Net>().command("creatures remove shambler");
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
@@ -5862,12 +5876,15 @@ const SETTLEMENT_RADIUS: i32 = 3000;
 const SETTLEMENT_REACH: i32 = 40;
 /// How long the server is given to send the world around the settlement, in its seconds.
 const SETTLEMENT_LOAD: f32 = 120.0;
+/// Server seconds a settlement's people have to reach a player standing in its square.
+const SETTLEMENT_PEOPLE: f32 = 20.0;
 
 /// `/locate settlement` names the nearest hamlet or village; the player and the observer go
 /// there, and once the server's world around it has loaded, its blocks are judged against
 /// the plan worldgen gives for it (`Overworld::settlements_near`): its well stands on the
 /// square, every door within reach is open with a floor under it and space behind it, and
-/// no house holds water. Then the player goes back to the test ground.
+/// no house holds water, and its people come to the player and draw. Then the player goes
+/// back to the test ground.
 fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     match gate.phase {
         0 => {
@@ -5921,6 +5938,17 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             let result = judge_settlement(world, gate, at);
             gate.check("settlements", result);
+            gate.advance(now);
+        }
+        // Its people: the server brings a settlement to life when a player is near, and they
+        // reach the client and draw. Then the player goes back to the test ground.
+        3 => {
+            let content = world.resource::<Launch>().content.clone();
+            let people = world.resource::<crate::creatures::Creatures>().views().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager).count();
+            if people == 0 && gate.server_in_phase() < SETTLEMENT_PEOPLE {
+                return;
+            }
+            gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
             let feet = gate.feet;
             world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
             gate.advance(now);

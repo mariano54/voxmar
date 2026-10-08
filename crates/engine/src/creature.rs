@@ -50,6 +50,9 @@ pub enum Kind {
     Fish,
     /// Only where aether is high; no body to butcher.
     Spirit,
+    /// People of settlements: placed by their settlement near players, never by the land,
+    /// never kept, and kept by the server only while a player is near their home.
+    Villager,
 }
 
 /// Where a species can be.
@@ -381,14 +384,27 @@ pub enum Behaviour {
     Curious { distance: f32 },
     /// Blinks a few blocks away when fleeing (supernatural).
     Blink,
+    /// Goes where its day's routine sends it (`Situation::errand`): villagers. There once
+    /// within `arrive` blocks of the spot; awake, it turns to a player within `look`.
+    Routine { arrive: f32, look: f32 },
 }
 
-/// Experience for killing one, in `skill`.
-#[derive(Clone, Debug, Default, Deserialize)]
+/// Experience for killing one, in `skill`, and how much its fights teach.
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CreatureXp {
     pub kill: f32,
     pub skill: Option<String>,
+    /// The share of the usual combat experience fighting it gives: for each point of
+    /// damage dealt it and each of its blows turned aside. 0 where a fight should teach
+    /// nothing (villagers who do not fight back).
+    pub combat: f32,
+}
+
+impl Default for CreatureXp {
+    fn default() -> Self {
+        Self { kill: 0.0, skill: None, combat: 1.0 }
+    }
 }
 
 /// A species as `creatures.ron` writes it.
@@ -751,6 +767,9 @@ impl CreatureRegistry {
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
+            if def.body.skin.eye.is_some_and(|r| !r.is_finite() || r <= 0.0) {
+                return Err(error("skin.eye must be a finite positive radius".into()));
+            }
             if def.health == 0 || def.body.size.0 <= 0.0 || def.body.size.1 <= 0.0 || def.body.colours.is_empty() {
                 return Err(error("needs health, a size and at least one colour".into()));
             }
@@ -1000,6 +1019,22 @@ mod tests {
         .unwrap();
         let defs = CreatureRegistry::read("base", &source).unwrap().defs;
         assert!(CreatureRegistry::new(defs, Rules::default(), &blocks, &SkillRegistry::default()).is_err());
+    }
+
+    #[test]
+    fn eye_radius_loads_from_data_and_rejects_invalid_values() {
+        let mut defs = CreatureRegistry::read("base", &RABBIT.replace("colours:", "skin: (eyes: Front, eye: 0.065), colours:")).unwrap().defs;
+        assert_eq!(defs[0].body.skin.eye, Some(0.065));
+        // Leave unrelated item references out, so each rejection exercises skin.eye.
+        defs[0].diet = Default::default();
+        defs[0].loot.clear();
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        assert!(CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).is_ok());
+        for radius in [0.0, -0.065, f32::NAN, f32::INFINITY] {
+            defs[0].body.skin.eye = Some(radius);
+            let error = CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).unwrap_err();
+            assert!(error.0.contains("skin.eye"), "{error:?}");
+        }
     }
 
     #[test]

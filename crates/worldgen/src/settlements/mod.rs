@@ -28,6 +28,7 @@ mod centre;
 pub mod culture;
 pub mod def;
 mod house;
+pub mod people;
 mod plan;
 #[cfg(test)]
 mod tests;
@@ -62,8 +63,11 @@ pub struct Building {
     /// The blocks it stands on, everything it puts down included.
     pub min: IVec2,
     pub max: IVec2,
-    /// The height of its floor.
+    /// The height of its solid floor block; feet stand one block above it indoors.
     pub floor: i32,
+    /// Ground-floor room columns in world (x, z), clear of walls and exterior extras.
+    /// Empty for buildings whose activity is outdoors.
+    pub room: Vec<IVec2>,
     /// Where its path leaves the door, two blocks out, at the height of a foot standing there.
     pub door: Option<IVec3>,
     pub facing: Facing,
@@ -113,6 +117,8 @@ pub struct Plan {
     pub gates: Vec<IVec2>,
     /// Lanes' centre lines, for maps.
     pub lanes: Vec<Vec<Vec2>>,
+    /// Who lives there (`people`).
+    pub people: Vec<people::Resident>,
     /// Each lane's half width, beside `lanes`.
     #[cfg_attr(not(test), allow(dead_code))]
     pub lane_halves: Vec<f32>,
@@ -308,7 +314,9 @@ impl Weigh for Slot {
                 + p.raster.sums.capacity() * std::mem::size_of::<(f32, f32, f32)>()
                 + table + p.voxels.values().map(|v| v.capacity() * std::mem::size_of::<Voxel>()).sum::<usize>()
                 + p.buildings.capacity() * std::mem::size_of::<Building>()
-                + p.buildings.iter().map(|b| b.what.capacity() + b.work.as_ref().map_or(0, String::capacity)).sum::<usize>()
+                + p.buildings.iter().map(|b| b.what.capacity() + b.work.as_ref().map_or(0, String::capacity) + b.room.capacity() * std::mem::size_of::<IVec2>()).sum::<usize>()
+                + p.people.capacity() * std::mem::size_of::<people::Resident>()
+                + p.people.iter().map(|r| r.species.capacity()).sum::<usize>()
                 + p.gates.capacity() * std::mem::size_of::<IVec2>()
                 + p.lanes.capacity() * std::mem::size_of::<Vec<Vec2>>()
                 + p.lanes.iter().map(|l| l.capacity() * std::mem::size_of::<Vec2>()).sum::<usize>()
@@ -383,6 +391,16 @@ impl Settlements {
             #[cfg(test)]
             planned: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    /// The lists and routines of the people who live in settlements.
+    pub fn people(&self) -> &people::PeopleDef {
+        &self.def.people
+    }
+
+    /// The names of the sizes settlements come in, as written.
+    pub fn sizes(&self) -> Vec<String> {
+        self.def.sizes.iter().map(|s| s.name.clone()).collect()
     }
 
     /// The square of the grid holding (x, z).
@@ -712,6 +730,7 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
         hanging: palette(&f.hanging, &any),
         nets: palette(if f.nets.is_empty() { &f.hanging } else { &f.nets }, &any),
         sacks: palette(&f.sacks, &any),
+        crates: palette(&f.crates, &any),
         cloth: palette(&f.cloth, &any),
         plinth: def.rules.houses.plinth,
         moss: def.rules.houses.moss,

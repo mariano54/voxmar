@@ -287,9 +287,21 @@ fn settlement_preview() {
 }
 
 
+/// The base game's blocks, from every file the game reads them from: furnishings (the
+/// crate, the barrel) and tools (the altar) as well as `blocks.ron`.
 fn base_registry() -> std::sync::Arc<BlockRegistry> {
-    let source = include_str!("../../../../assets/content/base/blocks.ron");
-    std::sync::Arc::new(BlockRegistry::from_ron("base", source).unwrap())
+    let sources = [
+        include_str!("../../../../assets/content/base/blocks.ron"),
+        include_str!("../../../../assets/content/base/blocks_creatures.ron"),
+        include_str!("../../../../assets/content/base/blocks_farm.ron"),
+        include_str!("../../../../assets/content/base/blocks_food.ron"),
+        include_str!("../../../../assets/content/base/blocks_furnishings.ron"),
+        include_str!("../../../../assets/content/base/blocks_herbs.ron"),
+        include_str!("../../../../assets/content/base/blocks_tools.ron"),
+        include_str!("../../../../assets/content/base/blocks_weapons.ron"),
+    ];
+    let packages = sources.iter().map(|s| ("base".to_owned(), BlockRegistry::read("base", s).unwrap())).collect();
+    std::sync::Arc::new(BlockRegistry::new(BlockRegistry::expand(packages).unwrap()).unwrap())
 }
 
 fn base_world(seed: u64) -> Overworld {
@@ -442,6 +454,11 @@ fn settlement_at() {
     let world = base_world(env("SEED").unwrap_or(1) as u64);
     for s in world.settlements_near(IVec2::new(env("X").unwrap(), env("Z").unwrap()), env("R").unwrap_or(300)) {
         println!("{} {} {} at {} min {:?}", s.name.0, s.size, s.style, s.centre, s.buildings.iter().map(|b| (b.kind.name(), b.min)).collect::<Vec<_>>());
+        let mut who: std::collections::BTreeMap<&str, u32> = Default::default();
+        for r in &s.people {
+            *who.entry(r.species.as_str()).or_default() += 1;
+        }
+        println!("  {} people: {who:?}", s.people.len());
     }
 }
 
@@ -830,12 +847,13 @@ fn japanese_names_join_as_they_are_said() {
 /// What every plan keeps to, over the squares round two seeds: about one square in seven
 /// settled, mostly hamlets; each plan inside its square, its buildings apart, enough
 /// homes for its size, none in a biome settlements avoid or on a river or lake; and every
-/// chapel with its altar (in snowy land too, where the snow blanket once covered it).
+/// chapel and wayside shrine with its altar (in snowy land too, where the snow blanket
+/// once covered it).
 #[test]
 fn plans_keep_to_their_squares_and_rules() {
     use crate::trails::Land;
     use super::house::Kind;
-    let (mut squares, mut hamlets, mut villages, mut chapels) = (0, 0, 0, 0);
+    let (mut squares, mut hamlets, mut villages, mut chapels, mut shrines) = (0, 0, 0, 0, 0);
     for seed in [1u64, 42] {
         let world = base_world(seed);
         let def = &world.settlements.def;
@@ -869,11 +887,12 @@ fn plans_keep_to_their_squares_and_rules() {
                             assert!(!g.submerged() && g.river < 0.5, "{at}: {} at {} stands in water ({p})", a.what, a.min);
                         }
                     }
-                    if a.what == "chapel" && chapels < 3 {
-                        chapels += 1;
+                    let looked = if a.what == "chapel" { &mut chapels } else { &mut shrines };
+                    if (a.what == "chapel" || a.what == "shrine") && *looked < 3 {
+                        *looked += 1;
                         let area = Area::new(&world, a.min, a.max);
                         let found = (a.min.y..=a.max.y).any(|z| (a.min.x..=a.max.x).any(|x| (a.floor..a.floor + 4).any(|y| area.block(IVec3::new(x, y, z)) == altar)));
-                        assert!(found, "{at}: the chapel at {} has no altar", a.min);
+                        assert!(found, "{at}: the {} at {} has no altar", a.what, a.min);
                     }
                 }
             }
@@ -883,7 +902,7 @@ fn plans_keep_to_their_squares_and_rules() {
     let share = settled as f32 / squares as f32;
     assert!((0.08..=0.25).contains(&share), "{settled} of {squares} squares settled");
     assert!(hamlets > villages && villages > 0, "{hamlets} hamlets, {villages} villages");
-    assert!(chapels > 0, "no chapel to look in");
+    assert!(chapels > 0 && shrines > 0, "{chapels} chapels and {shrines} shrines to look in");
 }
 
 /// The settlements of a few squares, held fixed: a change to planning that moves a single
@@ -1413,6 +1432,55 @@ fn no_snow_falls_indoors() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Room metadata follows the painted footprint after rotation, rather than the graded
+/// construction envelope. Connected wings include the opening through the back wall.
+#[test]
+fn room_columns_exclude_exterior_walls_and_courtyards() {
+    use super::canvas::{Facing, Frame};
+    use super::def::{Extra, Form, Roof};
+    use super::house::{Kind, Spec};
+    let mut spec = Spec {
+        kind: Kind::House, w: 13, d: 13, wall: 3, storeys: 1, roof: Roof::Gable,
+        pitch: 1, ridge_x: false, extras: vec![Extra::Porch], door: 6, shed: 3,
+        wing: None, stilts: 2, regular: true, window_chance: 0.0, form: Form::Box,
+        inside: Vec::new(), centre: None, seed: 3,
+    };
+    for facing in [Facing::North, Facing::South, Facing::West, Facing::East] {
+        let frame = Frame { origin: IVec3::new(100, 132, 200), facing };
+        for form in [Form::Box, Form::Round, Form::Courtyard] {
+            spec.form = form;
+            let room = spec.room(&frame);
+            let contains = |x, z| { let p = frame.at(x, 0, z); room.contains(&IVec2::new(p.x, p.z)) };
+            assert!(contains(2, 6), "no interior for {form:?} facing {facing:?}");
+            for (x, z) in [(6, -2), (14, 6), (6, 13), (0, 6), (12, 6)] {
+                assert!(!contains(x, z), "porch, shed or wall included for {form:?} facing {facing:?}");
+            }
+            if form == Form::Courtyard {
+                assert!(!contains(6, 6), "open courtyard included");
+                assert!(!contains(3, 6), "courtyard wall included");
+            } else {
+                assert!(contains(6, 6));
+            }
+            if form == Form::Round { assert!(!contains(1, 1), "round corner yard included"); }
+        }
+        spec.form = Form::Box;
+        spec.wing = Some((5, 3));
+        let room = spec.room(&frame);
+        assert_eq!(room.len(), 121 + 9);
+        for (x, z) in [(10, 12), (10, 13), (10, 14)] {
+            let p = frame.at(x, 0, z);
+            assert!(room.contains(&IVec2::new(p.x, p.z)), "connected wing floor omitted");
+        }
+        for (x, z) in [(8, 13), (12, 13), (10, 15)] {
+            let p = frame.at(x, 0, z);
+            assert!(!room.contains(&IVec2::new(p.x, p.z)), "wing wall included");
+        }
+        spec.wing = None;
+    }
+    spec.kind = Kind::Well;
+    assert!(spec.room(&Frame { origin: IVec3::ZERO, facing: Facing::North }).is_empty());
+}
+
 /// From the lane, through the door and up the stairs, every storey of every house of more
 /// than one can be walked to, at its least and greatest size, with a chimney and without,
 /// and as an inn: a step up at a time, with room overhead.
@@ -1545,6 +1613,98 @@ fn ripe_or_rare_fruit_is_refused() {
         d.centrepieces[0].parts = vec![("leaves".into(), "base:{wood}_leaves".into())];
         d.styles[0].woods.push(("apple".into(), 1.0));
     }));
+}
+
+/// People's numbers that would not play are refused at load: a newcomer sooner than a
+/// quarter day (a village to empty of experience again and again), chances past 1,
+/// weights below nothing, a settlement let go before it comes to life, a tick's search
+/// smaller than one way's.
+#[test]
+fn people_numbers_that_would_not_play_are_refused() {
+    let world = base_world(1);
+    let def = &world.settlements.def;
+    let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
+    assert!(def.people.check(&sizes).is_ok());
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 7] = [
+        ("newcomer in a fifth of a day", |p| p.newcomer = 0.2),
+        ("no newcomers a day", |p| p.newcomers_per_day = 0.0),
+        ("a job chance of 1.5", |p| p.jobs[0].chance = 1.5),
+        ("a folk weight below nothing", |p| p.folk[0].weight = -1.0),
+        ("release inside active", |p| p.live.release = p.live.active - 1.0),
+        ("a tick's search under a way's", |p| p.live.search_per_tick = p.live.search - 1),
+        ("linger from below nothing", |p| p.linger.0 = -1.0),
+    ];
+    for (what, spoil) in spoilt {
+        let mut people = def.people.clone();
+        spoil(&mut people);
+        assert!(people.check(&sizes).is_err(), "{what} was let through");
+    }
+}
+
+/// People name species that are villagers and works there are, or the content fails to
+/// load (rather than warn at every look once a player comes near).
+#[test]
+fn people_name_villagers_and_works_there_are() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world = crate::content::WorldContent::load(&content).unwrap();
+    let (people, works) = (&world.settlements.people, world.settlements.works());
+    assert!(people.check_against(&content.creatures, &works).is_ok());
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 5] = [
+        ("an animal for a folk", |p| p.folk[0].species = "base:rabbit".into()),
+        ("no such guard", |p| p.guards[0].species = "base:gaurd".into()),
+        ("a job at no such work", |p| p.jobs[0].at = "bakehouse".into()),
+        ("folk working at no such work", |p| p.folk.iter_mut().find(|f| f.work.is_some()).expect("a folk works").work = Some("mine".into())),
+        ("a shrine of no such kind", |p| p.shrine = "temple".into()),
+    ];
+    for (what, spoil) in spoilt {
+        let mut spoilt = people.clone();
+        spoil(&mut spoilt);
+        assert!(spoilt.check_against(&content.creatures, &works).is_err(), "{what} was let through");
+    }
+}
+
+/// Every settlement has people: each lives in a home and works at a building that takes
+/// workers, a village keeps guards and an innkeeper, every routine sends them somewhere
+/// each slot of the day, and no two people of a place keep quite the same day.
+#[test]
+fn settlements_are_peopled() {
+    use super::Kind;
+    use super::people::{Place, is, place_at};
+    let mut villages = 0;
+    for seed in [1u64, 42, 7] {
+        let world = base_world(seed);
+        let spawn = world.spawn_point();
+        let people = world.settlement_people();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000) {
+            let what = format!("seed {seed} {} ({})", s.name.0, s.size);
+            assert!(!s.people.is_empty(), "{what}: nobody lives there");
+            for r in &s.people {
+                assert!(matches!(s.buildings[r.home].kind, Kind::House | Kind::Trader | Kind::Inn), "{what}: {} lives in a {}", r.species, s.buildings[r.home].kind.name());
+                if let Some(w) = r.work {
+                    let b = &s.buildings[w];
+                    assert!(people.jobs.iter().any(|j| j.species == r.species && is(b, &j.at)) || people.folk.iter().any(|f| f.species == r.species && f.work.as_deref().is_some_and(|w| is(b, w))), "{what}: {} works at a {}", r.species, b.what);
+                }
+            }
+            let homes = s.buildings.iter().filter(|b| b.kind == Kind::House && b.work.is_none()).count();
+            assert!(s.people.len() >= homes, "{what}: {} people in {homes} homes", s.people.len());
+            if s.size == "village" {
+                villages += 1;
+                assert!(s.people.iter().any(|r| r.guard), "{what}: no guards");
+                assert!(s.people.iter().any(|r| r.species == "base:innkeeper"), "{what}: nobody keeps the inn");
+            }
+            let levers = s.levers;
+            let mut days = std::collections::BTreeSet::new();
+            for r in &s.people {
+                let day: Vec<Place> = (0..100).map(|i| place_at(people, r.routine, r.seed, &levers, 3, i as f32 / 100.0, |_| true).0).collect();
+                // Asleep at the dead of night, unless they keep the night watch.
+                assert!(day[90] == Place::Sleep || people.routines[r.routine].name == "watch_night", "{what}: {} up at night: {:?}", r.species, day[90]);
+                days.insert(day);
+            }
+            assert!(days.len() * 3 >= s.people.len(), "{what}: {} people keep only {} days", s.people.len(), days.len());
+        }
+    }
+    assert!(villages > 0, "no village to look at");
 }
 
 /// Loading refuses a furnishing slot whose block would drop itself from every village

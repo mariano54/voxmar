@@ -202,8 +202,14 @@ impl Server {
         tracing::debug!("/{}: {}", def.short_name(), self.english(text));
         match reply {
             Ok(text) => self.tell(id, ChatKind::Info, text),
-            Err(why) => self.tell(id, ChatKind::Error, Words::key("command.error.usage").with("why", why).with("usage", def.usage_line())),
+            Err(why) => self.tell(id, ChatKind::Error, Words::key("command.error.usage").with("why", why).with("usage", self.usage_line(&def))),
         }
+    }
+
+    /// `def`'s usage line, with the lists the content makes filled in: `{sizes}`, the
+    /// settlement sizes ("hamlet|village").
+    fn usage_line(&self, def: &CommandDef) -> String {
+        def.usage_line().replace("{sizes}", &self.overworld.settlement_sizes().join("|"))
     }
 
     fn help(&self, id: Source, args: &[String]) -> Reply {
@@ -212,8 +218,8 @@ impl Server {
         if let Some(name) = args.first() {
             let name = name.trim_start_matches('/');
             return match self.content.commands.find(name) {
-                Ok(def) if allowed(def) => Ok(Words::Lines(vec![Words::text(def.usage_line()), help(def)])),
-                Ok(def) => Ok(Words::Lines(vec![Words::text(def.usage_line()), Words::key("command.help.admins_only").with("help", help(def))])),
+                Ok(def) if allowed(def) => Ok(Words::Lines(vec![Words::text(self.usage_line(def)), help(def)])),
+                Ok(def) => Ok(Words::Lines(vec![Words::text(self.usage_line(def)), Words::key("command.help.admins_only").with("help", help(def))])),
                 Err(_) => Err(Words::key("command.error.no_such_command").with("command", name)),
             };
         }
@@ -484,6 +490,10 @@ impl Server {
         };
         let count = count.parse::<u32>().ok().filter(|c| (1..=16).contains(c)).ok_or_else(|| Words::key("command.summon.count"))?;
         let species = self.content.creatures.find(name).ok_or_else(|| Words::key("command.summon.unknown").with("name", name.as_str()))?;
+        // People come only with their settlement, which keeps them (`villagers`).
+        if self.content.creatures.get(species).def.kind == voxmar_engine::creature::Kind::Villager {
+            return Err(Words::key("command.summon.settled").with("creature", creature_name(&self.content.creatures.get(species).def)));
+        }
         let at = match at {
             Some(words) => self.block_position(id, words)?.as_vec3() + Vec3::new(0.5, 0.0, 0.5),
             None => {
@@ -559,11 +569,14 @@ impl Server {
             return Err(Words::key("husbandry.kept_full").with("count", Words::text(kept_each)));
         }
         let (day, tamed_at) = (self.day, self.content.creatures.condition().tamed);
+        let content = &self.content;
         let mut tamed = Vec::new();
         for (&id, creature) in self.creatures.live.iter_mut().filter(|(_, c)| near(c)) {
             match what {
                 // Taken in as feeding takes one in: newly tamed, just fed, at home here.
-                "tame" if creature.owner.is_none() && kept_room > 0 => {
+                // Never a settlement's people: the settlement keeps them, and one tamed
+                // would be saved and come back beside the one it brings out.
+                "tame" if creature.owner.is_none() && kept_room > 0 && content.creatures.get(creature.species).def.kind != voxmar_engine::creature::Kind::Villager => {
                     kept_room -= 1;
                     creature.owner = Some(name.clone());
                     creature.owner_id = Some(player);
@@ -686,8 +699,10 @@ impl Server {
             [kind, r] if kind == "ore" && r.parse::<i32>().is_ok() => return self.locate_ore(id, None, radius(r)?),
             [kind, name] if kind == "ore" => return self.locate_ore(id, Some(name), ORE_RADIUS),
             [kind, name, r] if kind == "ore" => return self.locate_ore(id, Some(name), radius(r)?),
-            [kind] if kind == "settlement" => return self.locate_settlement(id, LOCATE_RADIUS),
-            [kind, r] if kind == "settlement" => return self.locate_settlement(id, radius(r)?),
+            [kind] if kind == "settlement" => return self.locate_settlement(id, None, LOCATE_RADIUS),
+            [kind, r] if kind == "settlement" && r.parse::<i32>().is_ok() => return self.locate_settlement(id, None, radius(r)?),
+            [kind, size] if kind == "settlement" => return self.locate_settlement(id, Some(size), LOCATE_RADIUS),
+            [kind, size, r] if kind == "settlement" => return self.locate_settlement(id, Some(size), radius(r)?),
             [kind, name] if kind == "biome" => (name, LOCATE_RADIUS),
             [kind, name, r] if kind == "biome" => (name, radius(r)?),
             _ => return Err(Words::key("command.error.locate_what")),
@@ -730,7 +745,11 @@ impl Server {
         }
     }
 
-    fn locate_settlement(&self, id: Source, radius: i32) -> Reply {
+    fn locate_settlement(&self, id: Source, size: Option<&String>, radius: i32) -> Reply {
+        let sizes = self.overworld.settlement_sizes();
+        if let Some(size) = size.filter(|size| !sizes.contains(size)) {
+            return Err(Words::key("command.error.no_such_size").with("size", size.as_str()).with("sizes", Words::List(sizes.iter().map(|s| Words::key(&format!("settlement.size.{s}"))).collect())));
+        }
         let position = self.position_of(id);
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
         let nearest = self
@@ -738,7 +757,7 @@ impl Server {
             .settlements_near(from, radius)
             .into_iter()
             .map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s))
-            .filter(|(offset, _)| offset.as_vec2().length() <= radius as f32)
+            .filter(|(offset, s)| offset.as_vec2().length() <= radius as f32 && size.is_none_or(|size| *size == s.size))
             .min_by_key(|(offset, _)| offset.length_squared());
         match nearest {
             Some((offset, s)) => Ok(Words::key("command.locate.settlement")

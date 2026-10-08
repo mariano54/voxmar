@@ -72,7 +72,7 @@ pub use geology::Form;
 pub use rocks::ProvinceId;
 pub use shapes::ShapeId;
 pub use trails::{Kind as PlaceKind, Poi, TrailMark};
-pub use settlements::{Building as SettlementBuilding, Facing as SettlementFacing, Kind as BuildingKind};
+pub use settlements::{Building as SettlementBuilding, Facing as SettlementFacing, Kind as BuildingKind, Levers as SettlementLevers, people};
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
@@ -536,8 +536,19 @@ impl Overworld {
                 lanes: p.lanes.clone(),
                 levers: p.levers,
                 culture: self.settlements.culture_info(p),
+                people: p.people.clone(),
             })
             .collect()
+    }
+
+    /// The names of the sizes settlements come in, as written.
+    pub fn settlement_sizes(&self) -> Vec<String> {
+        self.settlements.sizes()
+    }
+
+    /// The routines and lists settlements' people live by.
+    pub fn settlement_people(&self) -> &people::PeopleDef {
+        self.settlements.people()
     }
 
     /// What is built beside trails within the blocks from `min` to `max`.
@@ -713,6 +724,8 @@ pub struct SettlementInfo {
     /// The five settlement levers and eight culture axes, each 0 ..= 1.
     pub levers: settlements::Levers,
     pub culture: CultureInfo,
+    /// Who lives there, each with their home and work as indices into `buildings`.
+    pub people: Vec<people::Resident>,
 }
 
 pub use settlements::CultureInfo;

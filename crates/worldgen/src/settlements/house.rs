@@ -40,6 +40,9 @@ pub enum Kind {
 }
 
 impl Kind {
+    pub const ALL: [Kind; 12] =
+        [Kind::House, Kind::Trader, Kind::Inn, Kind::Smithy, Kind::Stall, Kind::Well, Kind::Shrine, Kind::Field, Kind::Pen, Kind::Orchard, Kind::Woodyard, Kind::Centrepiece];
+
     pub fn name(self) -> &'static str {
         match self {
             Kind::House => "house",
@@ -115,6 +118,7 @@ pub struct Fixed {
     pub hanging: Palette,
     pub nets: Palette,
     pub sacks: Palette,
+    pub crates: Palette,
     pub cloth: Palette,
     pub dirt: BlockId,
     /// The chance of a stone lowest course, and old walls' share of weathered blocks.
@@ -156,6 +160,26 @@ pub struct Spec {
 impl Spec {
     pub fn has(&self, extra: Extra) -> bool {
         self.extras.contains(&extra)
+    }
+
+    /// Indoor ground-floor columns, using the same footprint as the painted floor.
+    /// Furniture and headroom are checked against the live blocks by gameplay.
+    pub fn room(&self, frame: &Frame) -> Vec<IVec2> {
+        if !self.kind.indoors() {
+            return Vec::new();
+        }
+        let foot = Foot { x0: 0, z0: 0, w: self.w, d: self.d, form: self.form };
+        let mut local: Vec<_> = (0..self.d).flat_map(|z| (0..self.w).map(move |x| (x, z)))
+            .filter(|&(x, z)| foot.room(x, z)).collect();
+        if let Some((ww, wd)) = self.wing {
+            // The back wall is opened into this wing, including its joining row.
+            local.extend((self.d - 1..self.d + wd - 1)
+                .flat_map(|z| (self.w - ww + 1..self.w - 1).map(move |x| (x, z))));
+        }
+        local.into_iter().map(|(x, z)| {
+            let p = frame.at(x, 0, z);
+            IVec2::new(p.x, p.z)
+        }).collect()
     }
 
     /// The building's own box, everything it puts down included: overhangs, porch,
@@ -1417,7 +1441,7 @@ fn well(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Can
     }
 }
 
-/// A wayside shrine: a stepped plinth, a pillar and a light.
+/// A wayside shrine: a stepped plinth, an altar, and a pillar and a light behind it.
 fn shrine(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Canvas) {
     let mut pen = Pen { frame, canvas, seed: spec.seed };
     let (w, d) = (spec.w, spec.d);
@@ -1429,9 +1453,18 @@ fn shrine(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut C
         }
     }
     let (cx, cz) = (w / 2, d / 2);
-    pen.ground(cx, 1, cz, Put::Set(mats.frame));
-    pen.ground(cx, 2, cz, Put::Set(mats.frame));
-    pen.ground(cx, 3, cz, Put::Set(fixed.torch));
+    // The altar in the middle and its lamp behind it; without one (or the room), the lamp
+    // alone.
+    let lamp = match fixed.altar {
+        Some(altar) if d - 1 > cz => {
+            pen.ground(cx, 1, cz, Put::Set(altar));
+            d - 1
+        }
+        _ => cz,
+    };
+    pen.ground(cx, 1, lamp, Put::Set(mats.frame));
+    pen.ground(cx, 2, lamp, Put::Set(mats.frame));
+    pen.ground(cx, 3, lamp, Put::Set(fixed.torch));
     for (x, z) in [(cx - 1, cz), (cx + 1, cz)] {
         if let Some(flower) = fixed.flowers.at(spec.seed ^ 0x5a, frame.at(x, 1, z)) {
             pen.ground(x, 1, z, Put::Soft(flower));

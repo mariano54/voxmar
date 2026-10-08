@@ -149,6 +149,9 @@ pub enum Marking {
 #[serde(default, deny_unknown_fields)]
 pub struct SkinDef {
     pub eyes: Eyes,
+    /// Eye radius in model blocks, scaled with the body; otherwise sized from the head.
+    /// Explicit front eyes have a pale sclera around their iris.
+    pub eye: Option<f32>,
     /// The eyes' colour; dark brown if not given.
     pub iris: Option<[u8; 3]>,
     /// How grainy the coat is, 0 (smooth, as a slime) to about 0.2 (shaggy).
@@ -162,7 +165,7 @@ pub struct SkinDef {
 
 impl Default for SkinDef {
     fn default() -> Self {
-        Self { eyes: Eyes::Side, iris: None, fur: 0.08, belly: 0.3, feet: None, markings: Vec::new() }
+        Self { eyes: Eyes::Side, eye: None, iris: None, fur: 0.08, belly: 0.3, feet: None, markings: Vec::new() }
     }
 }
 
@@ -208,7 +211,7 @@ fn body_of<'a>(def: &'a BodyDef, parts: &'a [Part], seed: u32) -> Body<'a> {
     let head = parts.iter().position(|p| p.role == Role::Head).or_else(|| (!parts.iter().any(|p| p.role == Role::Eye)).then_some(0));
     let (eyes, eye_size) = match head.map(|h| parts[h].size) {
         Some(size) if !parts.iter().any(|p| p.role == Role::Eye) => {
-            let r = (size.y * 0.1).max(1.1 / TEXELS);
+            let r = skin.eye.map_or_else(|| (size.y * 0.1).max(1.1 / TEXELS), |r| r * def.scale);
             let pairs: Vec<Vec3> = match skin.eyes {
                 Eyes::Side => vec![Vec3::new(size.x / 2.0, size.y * 0.12, -size.z * 0.18)],
                 Eyes::Front => vec![Vec3::new(size.x * 0.24, size.y * 0.1, -size.z / 2.0)],
@@ -426,8 +429,9 @@ fn paint_at(body: &Body, index: usize, part: &Part, f: usize, local: Vec3, rim: 
                     let outward = (local.x - eye.x) * eye.x.signum();
                     ((local.x - eye.x).abs() < body.eye_size * 0.45 && !high, outward > body.eye_size * 0.3 && high)
                 };
-                colour = if glint { Vec3::splat(0.95) } else if pupil { Vec3::splat(0.03) } else { eye_colour(body.def, colour) };
-                if body.eye_size * TEXELS < 1.6 {
+                let sclera = skin.eyes == Eyes::Front && skin.eye.is_some() && d.x > body.eye_size * 0.65;
+                colour = if glint { Vec3::splat(0.95) } else if sclera { Vec3::splat(0.88) } else if pupil { Vec3::splat(0.03) } else { eye_colour(body.def, colour) };
+                if body.eye_size * TEXELS < 1.6 && skin.eye.is_none() {
                     colour = Vec3::splat(0.04);
                 }
             }
@@ -623,6 +627,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn explicit_front_eyes_have_sclera_iris_and_pupils_on_a_small_human_head() {
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let mut def: BodyDef = options.from_str(
+            r#"(
+            size: (0.6, 1.8),
+            model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+            colours: [(180, 130, 100)],
+            skin: (eyes: Front, eye: 0.065, iris: (60, 100, 150), fur: 0.0, belly: 0.0),
+        )"#,
+        ).unwrap();
+        let parts = def.model.parts(def.scale);
+        let layout = layout(&parts);
+        let body = body_of(&def, &parts, 7);
+        let head = body.head.unwrap();
+        let part = &parts[head];
+        let rect = layout.faces[head][FRONT];
+        let pixels = paint(&def, &parts, &layout, 7);
+        assert_eq!(pixels, paint(&def, &parts, &layout, 7));
+        for eye in &body.eyes {
+            let mut colours = [0; 4];
+            for j in 0..rect.h {
+                for i in 0..rect.w {
+                    let local = Vec3::new(
+                        -((i as f32 + 0.5) / rect.w as f32 - 0.5) * part.size.x,
+                        -((j as f32 + 0.5) / rect.h as f32 - 0.5) * part.size.y,
+                        -part.size.z * 0.5,
+                    );
+                    if (local - *eye).abs().max_element() > body.eye_size {
+                        continue;
+                    }
+                    let at = (((rect.y + j) * layout.width + rect.x + i) * 4) as usize;
+                    let c = &pixels[at..at + 3];
+                    colours[0] += usize::from(c.iter().all(|&v| v > 200) && c[0] < 235);
+                    colours[1] += usize::from(c[2] > c[1] && c[1] > c[0]);
+                    colours[2] += usize::from(c.iter().all(|&v| v < 20));
+                    colours[3] += usize::from(c.iter().all(|&v| v >= 235));
+                }
+            }
+            assert!(colours.iter().all(|&n| n > 0), "missing sclera, iris, pupil or catchlight: {colours:?}");
+        }
+        def.skin.eye = None;
+        assert_ne!(pixels, paint(&def, &parts, &layout, 7), "the old black-eye painting should fail the comparison");
+        def.skin.eye = Some(0.065);
+        def.scale = 0.5;
+        let small = def.model.parts(def.scale);
+        assert_eq!(body_of(&def, &small, 7).eye_size, 0.065 * 0.5);
     }
 
     #[test]
