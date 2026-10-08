@@ -4242,7 +4242,11 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource::<Net>().command(&format!("tp {} {ABOVE_THE_WORLD} {}", feet.x as f32 + 0.5, feet.z as f32 + 0.5));
             gate.advance(now);
         }
-        3 if in_phase > 0.5 && world.resource::<LocalPlayer>().position.y > ABOVE_THE_WORLD - 1.0 => {
+        // Flying until the teleport lands: the player's own movement stops flying on a step
+        // that meets the ground, which a server running behind leaves time for before it
+        // moves them, and then they fall from the top of the world.
+        3 if world.resource::<LocalPlayer>().position.y <= ABOVE_THE_WORLD - 1.0 => world.resource_mut::<LocalPlayer>().flying = true,
+        3 if in_phase > 0.5 => {
             let Some(shot) = gate.shot(world, "above the world") else { return };
             gate.check("sky: above the world", sky_lit(&shot));
             let feet = gate.feet;
