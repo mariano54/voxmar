@@ -861,7 +861,7 @@ impl Server {
     fn clear(&mut self, source: Source, args: &[String]) -> Reply {
         let item = match args {
             [] => None,
-            [name] => Some(self.find_block(name)?),
+            [name] => Some(self.content.blocks.item_of(self.find_block(name)?)),
             _ => return Err(Words::key("command.error.clear_what")),
         };
         let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;

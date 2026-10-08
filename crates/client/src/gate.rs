@@ -2986,18 +2986,19 @@ fn merged(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         }
         1 => {
             let held = |item: BlockId| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == item);
-            if held(herbs) {
+            let catalogue = world.resource::<crate::hud::creative::Catalogue>();
+            if held(herbs) && let (Some(has_herbs), Some(has_oregano)) = (catalogue.lists(herbs), catalogue.lists(oregano)) {
                 let verdict = if held(oregano) {
                     Err("`give oregano` also gave the oregano plant".to_owned())
-                } else if blocks.listed(oregano) || !blocks.listed(herbs) {
-                    Err(format!("catalogues list oregano ({}) or not kitchen herbs ({})", blocks.listed(oregano), blocks.listed(herbs)))
+                } else if has_oregano || !has_herbs || blocks.listed(oregano) || !blocks.listed(herbs) {
+                    Err(format!("the creative catalogue lists oregano ({has_oregano}) or not kitchen herbs ({has_herbs})"))
                 } else {
-                    Ok("`give oregano` gave kitchen herbs; catalogues list the herbs, not the plant".to_owned())
+                    Ok("`give oregano` gave kitchen herbs; the creative catalogue lists the herbs, not the plant".to_owned())
                 };
                 gate.check("merged", verdict);
                 gate.advance(now);
             } else if gate.server_in_phase() > UNANSWERED {
-                gate.check("merged", Err("`give oregano` gave no kitchen herbs".into()));
+                gate.check("merged", Err("`give oregano` gave no kitchen herbs, or the catalogue never read the content".into()));
                 gate.advance(now);
             }
         }

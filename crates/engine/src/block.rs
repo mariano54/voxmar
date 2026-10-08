@@ -1100,6 +1100,15 @@ impl BlockRegistry {
         for wall in info.iter().filter_map(|info| info.wall) {
             placement_forms[wall.0 as usize] = true;
         }
+        // Nothing drops a plant whose item merged into another: that is never held, never
+        // stacks with its kind and shows in no catalogue. It drops what it merged into.
+        for (i, block) in info.iter().enumerate() {
+            let dropped = block.drops;
+            if defs[dropped.0 as usize].tags.iter().any(|t| t == "merged") {
+                let into = &defs[info[dropped.0 as usize].drops.0 as usize].name;
+                return Err(RegistryError(format!("`{}` drops merged-away `{}`; drop `{into}` (item_of) instead", defs[i].name, defs[dropped.0 as usize].name)));
+            }
+        }
         Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, placement_forms, looks, fluids })
     }
 
@@ -1172,6 +1181,16 @@ impl BlockRegistry {
     /// or facing of a block (`placement_form`), nor a plant whose item merged.
     pub fn listed(&self, id: BlockId) -> bool {
         !id.is_air() && !self.placement_form(id) && !self.merged_away(id)
+    }
+
+    /// Whether a player could hold `id` as an item, so the creative catalogue and the
+    /// inventory search list it: `listed`, and not a fluid's other state (its source stays),
+    /// nor invisible, nor a stage of a growing crop (its seeds stay).
+    pub fn holdable(&self, id: BlockId) -> bool {
+        self.listed(id)
+            && self.def(id).render != RenderKind::Invisible
+            && self.fluid(id).is_none_or(|state| self.fluids[state.fluid.0 as usize].source == id)
+            && !self.def(id).has_tag("crop")
     }
 
     /// Whether the block is only ever a form another takes when placed, never held: another

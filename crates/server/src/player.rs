@@ -220,7 +220,10 @@ impl Server {
     /// of it there) or into the inventory, where what does not fit is not given. A survival
     /// player gets nothing.
     fn take_from_catalogue(&mut self, id: PlayerId, item: BlockId, count: u8, held: bool) {
-        let known = (item.0 as usize) < self.content.blocks.len() && !item.is_air();
+        // Not trusting the client's list: only what a player could hold, a merged-away plant
+        // as the item it merged into.
+        let item = if (item.0 as usize) < self.content.blocks.len() { self.content.blocks.item_of(item) } else { BlockId::AIR };
+        let known = self.content.blocks.holdable(item);
         let Some(player) = self.players.get_mut(&id) else { return };
         if !known || count == 0 || player.mode() != GameMode::Creative {
             return;

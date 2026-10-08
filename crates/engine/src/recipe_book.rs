@@ -50,8 +50,9 @@ impl RecipeBook {
         let mut book = Self::default();
         let blocks = &content.blocks;
         for recipe in content.recipes.iter() {
-            let cells = recipe.cells();
-            let items: Vec<BlockId> = cells.iter().flatten().copied().filter(|&b| !blocks.merged_away(b)).collect();
+            // A merged-away plant in a cell is shown as the item it merged into.
+            let cells = recipe.cells().map(|cell| cell.map(|b| blocks.item_of(b)));
+            let items: Vec<BlockId> = cells.iter().flatten().copied().collect();
             // The same thing from the same shape: another variant of the entry before.
             if let Some(last) = book.entries.last_mut()
                 && last.output == recipe.output
@@ -76,6 +77,7 @@ impl RecipeBook {
         for (input, recipe) in content.cooking.iter() {
             let station = recipe.def.station.clone();
             let stations: Vec<BlockId> = content.blocks.tagged(&station).collect();
+            let input = blocks.item_of(input);
             let method = Method::Cook { input, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
             book.add(blocks, Entry { method, output: recipe.output, count: (1, 1) }, [input].into_iter().chain(stations).collect());
         }
@@ -93,13 +95,13 @@ impl RecipeBook {
         book
     }
 
-    /// Adds an entry, unless it makes a plant whose item merged into another (`merged`
-    /// blocks are never held, so the book never lists them as a thing or a use).
+    /// Adds an entry, unless it makes a plant whose item merged into another; one using such
+    /// a plant lists the item it merged into (`merged` blocks are never held).
     fn add(&mut self, blocks: &crate::block::BlockRegistry, entry: Entry, mut uses: Vec<BlockId>) {
         if blocks.merged_away(entry.output) {
             return;
         }
-        uses.retain(|&b| !blocks.merged_away(b));
+        uses.iter_mut().for_each(|b| *b = blocks.item_of(*b));
         let index = self.entries.len();
         self.makes.entry(entry.output).or_default().push(index);
         uses.sort();
@@ -159,7 +161,7 @@ mod tests {
         assert!(blocks.merged_away(oregano) && !blocks.merged_away(herbs) && !blocks.listed(oregano) && blocks.listed(herbs));
         assert_eq!(blocks.item_of(oregano), herbs);
         let mut book = RecipeBook::default();
-        // An entry making one is dropped, and one using it does not list it as a use.
+        // An entry making one is dropped, and one using it lists the item it merged into.
         book.add(blocks, Entry { method: Method::Drop { creature: CreatureId(0), chance: 1.0 }, output: oregano, count: (1, 1) }, Vec::new());
         book.add(blocks, Entry { method: Method::Drop { creature: CreatureId(0), chance: 1.0 }, output: stone, count: (1, 1) }, vec![oregano, herbs]);
         assert!(book.making(oregano).is_empty() && book.using(oregano).is_empty(), "a merged-away plant is in the book");

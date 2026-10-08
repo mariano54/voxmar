@@ -114,6 +114,11 @@ pub struct Catalogue {
 }
 
 impl Catalogue {
+    /// Whether the catalogue lists `item`, or none while it has not read the content yet.
+    pub(crate) fn lists(&self, item: BlockId) -> Option<bool> {
+        (!self.entries.is_empty()).then(|| self.entries.iter().any(|entry| entry.item == item))
+    }
+
     fn per_page(&self) -> usize {
         (self.columns * self.rows).max(1)
     }
@@ -240,8 +245,7 @@ fn index(launch: Res<Launch>, mut catalogue: ResMut<Catalogue>) {
     catalogue.entries = blocks
         .ids()
         // Not a variant's other looks, nor a fluid's other states: what a player would hold.
-        .filter(|&id| blocks.listed(id) && blocks.def(id).render != RenderKind::Invisible)
-        .filter(|&id| blocks.fluid(id).is_none_or(|state| blocks.fluids()[state.fluid.0 as usize].source == id))
+        .filter(|&id| blocks.holdable(id))
         .map(|item| {
             let def = blocks.def(item);
             let mut words = vec![def.name.rsplit(':').next().unwrap_or(&def.name).replace('_', " ")];
