@@ -1097,6 +1097,15 @@ pub struct Freshwater {
     scratch: Samples,
 }
 
+impl Freshwater {
+    /// Consume this site's exact samples and Boolean witnesses with their whole
+    /// sampler scratch. The receiving planner must use the same immutable land;
+    /// raw columns keep their original world identity and interned tier keys.
+    pub(crate) fn into_work(self) -> (FxHashMap<IVec2, GeoSample>, rustc_hash::FxHashSet<IVec2>, Samples) {
+        (self.seen, self.dry, self.scratch)
+    }
+}
+
 #[cfg(test)]
 impl Freshwater {
     pub(crate) fn work(&self) -> [usize; 4] { self.scratch.work() }
@@ -1509,6 +1518,47 @@ mod tests {
         assert!(!scratch.column_keys.contains_key(&wrong_key));
         assert!(scratch.column_keys.len() <= 1);
         assert!(scratch.columns.len() <= 5);
+    }
+
+    #[test]
+    fn site_work_preserves_exact_sampler_keys() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let world = crate::Overworld::new(7, registry.clone());
+        let p = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
+            .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual river fixture");
+        let mut water = Freshwater::default();
+        assert!(world.rivers.freshwater_near(world.stages(), p, 0, 1, &mut water));
+        let points: Vec<_> = (0..SAMPLE_BATCH).map(|i| (p.x + i as i32 % 8 - 4, p.y + i as i32 / 8 - 2)).collect();
+        world.rivers.samples_cached(world.stages(), &points, &mut water.scratch);
+        assert!(!water.scratch.columns.is_empty() && !water.scratch.column_keys.is_empty() && !water.scratch.tiers.is_empty());
+        let id = water.scratch.id;
+        let keys = water.scratch.column_keys.clone();
+        let raw: Vec<_> = water.scratch.columns.iter().map(|(key, column)| (*key, column as *const Column)).collect();
+        let tiers: Vec<_> = water.scratch.tiers.iter().map(|(key, near)| (*key, near as *const (Near, Near))).collect();
+        let work = water.scratch.work();
+        let capacities = |s: &Samples| [s.columns.capacity(), s.column_keys.capacity(), s.tiers.capacity(),
+            s.batch.keys.capacity(), s.batch.column_keys.capacity(), s.batch.needed.capacity(),
+            s.batch.coords.capacity(), s.batch.neighbours.capacity(), s.batch.queued.capacity()];
+        let capacity = capacities(&water.scratch);
+        let (seen, _, mut scratch) = water.into_work();
+        assert_eq!(seen[&p], world.rivers.sample(world.stages(), p.x, p.y, false));
+        assert_eq!(scratch.id, id);
+        assert_eq!(scratch.column_keys, keys, "raw columns keep their exact interned keys");
+        assert!(raw.iter().all(|(key, ptr)| scratch.columns.get(key).map(|c| c as *const Column) == Some(*ptr)));
+        assert!(tiers.iter().all(|(key, ptr)| scratch.tiers.get(key).map(|c| c as *const (Near, Near)) == Some(*ptr)));
+        assert_eq!(scratch.work(), work);
+        assert_eq!(capacities(&scratch), capacity, "move all bounded work buffers together");
+        let expected = |world: &crate::Overworld, points: &[(i32, i32)]| points.iter()
+            .map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect::<Vec<_>>();
+        assert_eq!(world.rivers.samples_cached(world.stages(), &points, &mut scratch), expected(&world, &points));
+        for first in [IVec2::new(-1032, -1032), IVec2::new(1008, 1008)] {
+            let boundary: Vec<_> = (0..SAMPLE_BATCH).map(|i| (first.x + i as i32 % 8, first.y + i as i32 / 8)).collect();
+            assert_eq!(world.rivers.samples_cached(world.stages(), &boundary, &mut scratch), expected(&world, &boundary));
+        }
+        // The whole scratch still obeys its original world reset at a later caller.
+        let another = crate::Overworld::new(42, registry);
+        assert_eq!(another.rivers.samples_cached(another.stages(), &points, &mut scratch), expected(&another, &points));
+        assert_eq!(scratch.id, another.rivers.id);
     }
 
     #[test]

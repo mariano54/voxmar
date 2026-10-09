@@ -2845,8 +2845,8 @@ fn culture_planning_hotspots() {
     }
 }
 
-/// Compare the complete direct planner with the original per-row terrain batches over
-/// the budget's original twenty seeds. This is an output oracle, not a timing result.
+/// Compare the complete planner with its original empty layout cache and per-row
+/// terrain batches over all twenty budget seeds. This is an output oracle, not timing.
 #[test]
 #[ignore]
 fn terrain_batches_preserve_all_twenty_seed_plans() {

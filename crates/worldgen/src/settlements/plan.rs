@@ -35,8 +35,8 @@ thread_local! {
     static ORIGINAL_ROWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Compare complete plans with the original per-row terrain batching. Restore the
-/// current thread's setting on normal return and during unwinding.
+/// Compare complete plans with the original empty layout cache and per-row terrain
+/// batches. Restore the thread's setting on normal return and during unwinding.
 #[cfg(test)]
 pub(super) fn with_original_rows<T>(f: impl FnOnce() -> T) -> T {
     struct Restore(bool);
@@ -175,6 +175,14 @@ struct Ground<'a> {
 impl Ground<'_> {
     fn new(land: &dyn Land) -> Ground<'_> {
         Ground { land, seen: FxHashMap::default(), dry_water: Default::default(), scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0, #[cfg(test)] prefetched: 0 }
+    }
+
+    /// Continue only the site search over this same land. Full sealed samples and
+    /// false water witnesses stay distinct; the sampler's exact keys move intact.
+    fn from_site(land: &dyn Land, water: crate::water::Freshwater) -> Ground<'_> {
+        let mut ground = Self::new(land);
+        (ground.seen, ground.dry_water, ground.scratch) = water.into_work();
+        ground
     }
 
     fn reserve(&mut self, count: usize) {
@@ -532,6 +540,11 @@ fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 /// In the square a new player spawns in (`spawn`), only spots within the promised reach of
 /// them are looked at, their climate rules none out, and several are kept, best first.
 pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, bool)> {
+    site_with_water(ctx, cell, spawn, &mut crate::water::Freshwater::default())
+}
+
+/// Keep this call's exact terrain and close-water work for its subsequent layouts.
+fn site_with_water(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>, water: &mut crate::water::Freshwater) -> Vec<(IVec2, bool)> {
     let (grid, site) = (&ctx.def.grid, &ctx.def.site);
     let step = site.step;
     let first = cell * grid.spacing + grid.margin;
@@ -596,14 +609,13 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         give_up::<()>(10);
         return Vec::new();
     }
-    let mut water = crate::water::Freshwater::default();
-    if site.water > 0 { ctx.land.remember_freshwater_grid(first, step, size, &samples, &mut water); }
+    if site.water > 0 { ctx.land.remember_freshwater_grid(first, step, size, &samples, water); }
     let candidates = candidates
         .into_iter()
         .take(if site.water > 0 { tries.saturating_mul(site.look) } else { tries })
         .filter_map(|(_, at, fresh)| {
             if site.water > 0 {
-                let near = fresh || ctx.land.freshwater_near(at, site.water, site.creek, &mut water);
+                let near = fresh || ctx.land.freshwater_near(at, site.water, site.creek, water);
                 near.then_some((at, true))
             } else {
                 Some((at, fresh))
@@ -632,7 +644,7 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         let climate = site.climate(ground_site.temperature) * site.level(ctx.world.biomes().get(ground_site.home).level);
         if spawn.is_none() {
             #[cfg(test)]
-            report_close_scratch(&water);
+            report_close_scratch(water);
             if unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
                 give_up::<()>(2);
                 return Vec::new();
@@ -648,7 +660,7 @@ pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, 
         give_up::<()>(if examined == 0 { 0 } else { 1 });
     }
     #[cfg(test)]
-    report_close_scratch(&water);
+    report_close_scratch(water);
     found
 }
 
@@ -833,7 +845,8 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     // the spawn's square tries its next; any other square has the one.
     #[cfg(test)]
     let time = phase_start();
-    let sites = site(ctx, cell, spawn);
+    let mut water = crate::water::Freshwater::default();
+    let sites = site_with_water(ctx, cell, spawn, &mut water);
     #[cfg(test)]
     {
         phase_end("site search total", time);
@@ -841,9 +854,13 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             eprintln!("  close water: {} queries, {} square-grid centres, {} coordinates visited, {} centres sampled, {} batches, {} unused lookahead samples, {} cached hits, {} cache resets", work[0], work[1], work[2], work[3], work[4], work[5], work[6], work[7]);
         }
     }
-    // Layout retries inspect overlapping land. Keep only this call's pure samples and
-    // relief/channel work, rather than recomputing them for every attempted layout.
-    let mut ground = Ground::new(ctx.land);
+    // Site search and layout retries inspect overlapping land. Keep this call's exact
+    // samples and relief/channel work, including the site's coarse and close looks.
+    #[cfg(test)]
+    let original = ORIGINAL_ROWS.with(|flag| flag.get());
+    #[cfg(not(test))]
+    let original = false;
+    let mut ground = if original { Ground::new(ctx.land) } else { Ground::from_site(ctx.land, water) };
     let first = sites.iter().find_map(|&(centre, fresh)| lay_out(ctx, cell, centre, fresh, rng.clone(), false, &mut ground));
     if spawn.is_none() || first.is_some() {
         return first;
@@ -3579,6 +3596,65 @@ mod level_tests {
             let (height, water) = if wet { (139, 140) } else { (140, 140) };
             GeoSample { height, mountain: 0.0, river: 0.0, water, top: 8, body: Body::Creek, current: None, cavity: None, crag: Default::default(), trail: None, form: Default::default() }
         }
+    }
+
+    #[test]
+    fn terrain_batches_reuse_site_work() {
+        let world = super::super::tests::base_world(7);
+        let land = world.land();
+        let first = IVec2::new(-1904, 528);
+        let (step, size) = (16, 25);
+        let samples = land.grid(first, step, size);
+        let point = |i: usize| first + IVec2::new(i as i32 % size, i as i32 / size) * step;
+        let wet = samples.iter().enumerate().find_map(|(i, g)| crate::water::freshwater(g).then(|| point(i))).expect("actual wet full sample");
+        let mut water = crate::water::Freshwater::default();
+        land.remember_freshwater_grid(first, step, size, &samples, &mut water);
+        // A non-grid wet centre builds real sealing scratch; a proven dry centre
+        // keeps only the separate Boolean witness, never an invented GeoSample.
+        let close = wet + IVec2::ONE;
+        land.freshwater_near(close, 0, 1, &mut water);
+        let mut absence = crate::water::Samples::default();
+        let dry = (0..samples.len()).map(|i| point(i) + IVec2::ONE)
+            .find(|&p| land.freshwater_absent_cached(p, &mut absence)).expect("actual absent-channel witness");
+        assert!(!land.freshwater_near(dry, 0, 1, &mut water));
+        let work = water.work();
+        assert!(work[2] > 0 && work[3] > 0, "real corners and raw columns must transfer");
+        let mut ground = Ground::from_site(&land, water);
+        assert!(ground.seen.len() >= samples.len() && ground.dry_water.contains(&dry));
+        assert_eq!((ground.queries, ground.misses, ground.prefetched, ground.clears), (0, 0, 0, 0));
+        let mut original = Ground::new(&land);
+        for (i, &sample) in samples.iter().enumerate() {
+            let p = point(i);
+            assert_eq!(ground.at(p), original.at(p));
+            assert_eq!(ground.at(p), sample, "every transferred full GeoSample agrees");
+        }
+        assert_eq!(ground.misses, 0, "warm site terrain performs no new reads");
+        assert_eq!(original.misses, samples.len(), "the original empty cache actually reads every point");
+        assert_eq!(ground.scratch.work(), work, "warm hits do not rebuild sampler scratch");
+        assert!(!ground.freshwater(dry));
+        assert_eq!(ground.misses, 0, "the Boolean absence witness avoids a terrain read");
+        assert_eq!(ground.at(dry), land.sample(dry.x, dry.y));
+        assert_eq!(ground.misses, 1, "a dry witness cannot answer a full terrain query");
+        assert!(!ground.dry_water.contains(&dry));
+        ground.dry_water.insert(wet);
+        assert!(ground.freshwater(wet), "a wet full sample takes precedence over a poisoned false witness");
+        ground.dry_water.remove(&wet);
+        // Continuing work retains the unchanged joint cap and recollects even a
+        // formerly cached first point after clearing, using full original terrain.
+        let keep = first;
+        ground.seen.get_mut(&keep).unwrap().height = 9999;
+        ground.dry_water.insert(keep);
+        let fill = GROUND_SAMPLE_LIMIT - ground.seen.len() - ground.dry_water.len();
+        ground.dry_water.extend((0..fill).map(|i| IVec2::new(200_000 + i as i32, 200_000)));
+        assert_eq!(ground.seen.len() + ground.dry_water.len(), GROUND_SAMPLE_LIMIT);
+        let points: Vec<_> = (0..crate::water::SAMPLE_BATCH).map(|i| keep + IVec2::new(i as i32, 0)).collect();
+        ground.prefetch_unique(&points);
+        assert_eq!(ground.clears, 1);
+        assert!(ground.dry_water.is_empty());
+        assert_eq!(ground.seen.len(), points.len());
+        for p in points { assert_eq!(ground.at(p), land.sample(p.x, p.y)); }
+        let empty = Ground::from_site(&land, crate::water::Freshwater::default());
+        assert!(empty.seen.is_empty() && empty.dry_water.is_empty());
     }
 
     #[test]
