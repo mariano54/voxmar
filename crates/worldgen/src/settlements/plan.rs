@@ -2916,6 +2916,39 @@ mod level_tests {
             }
         }
         assert!(accepted > 0 && rejected > 0 && reduced > 0);
+
+        let land = Batches { creek: Creek(Some(-3), None), calls: Default::default() };
+        let points: Vec<_> = (0..7).map(|x| IVec2::new(x - 3, -17)).collect();
+        let mut warm = Ground::new(&land);
+        for &i in &[1, 3] {
+            let p = points[i];
+            warm.seen.insert(p, land.sample(p.x, p.y));
+        }
+        warm.dry_water.insert(points[2]);
+        warm.prefetch_unique(&points);
+        let missing: Vec<_> = points.iter().enumerate().filter(|(i, _)| ![1, 3].contains(i))
+            .map(|(_, p)| (p.x, p.y)).collect();
+        assert_eq!(*land.calls.lock().unwrap(), vec![missing.clone()], "partially warm misses retain order");
+        assert_eq!(warm.prefetched, missing.len());
+        assert!(!warm.dry_water.contains(&points[2]), "a full sample replaces its dry witness");
+        for &p in &points { assert_eq!(warm.at(p), land.sample(p.x, p.y)); }
+        warm.prefetch_unique(&points);
+        assert_eq!(land.calls.lock().unwrap().len(), 1, "a fully warm batch reads no terrain");
+
+        land.calls.lock().unwrap().clear();
+        let mut pressured = Ground::new(&land);
+        let first = points[0];
+        pressured.seen.insert(first, GeoSample { height: 9999, ..land.sample(first.x, first.y) });
+        pressured.dry_water.extend((0..GROUND_SAMPLE_LIMIT - 1).map(|i| IVec2::new(100_000 + i as i32, 100_000)));
+        assert_eq!(pressured.seen.len() + pressured.dry_water.len(), GROUND_SAMPLE_LIMIT);
+        pressured.prefetch_unique(&points);
+        let all: Vec<_> = points.iter().map(|p| (p.x, p.y)).collect();
+        assert_eq!(*land.calls.lock().unwrap(), vec![all], "clear before collecting even the previously cached first point");
+        assert_eq!(pressured.clears, 1);
+        assert_eq!(pressured.prefetched, points.len());
+        assert_eq!(pressured.seen.len(), points.len());
+        assert!(pressured.dry_water.is_empty());
+        for &p in &points { assert_eq!(pressured.at(p), land.sample(p.x, p.y)); }
     }
 
     #[test]
