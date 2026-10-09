@@ -32,18 +32,18 @@ pub(super) static PLACE_FAILS: [std::sync::atomic::AtomicU32; 8] = [const { std:
 thread_local! {
     static PROFILE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static LANE_COUNTS: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };
-    static ORIGINAL_OCCUPIED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ORIGINAL_ROWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// The unchanged linear predicate, for comparing complete plans in the original
-/// budget's twenty seeds. Restores the calling thread's setting even after a panic.
+/// Compare complete plans with the original per-row terrain batching. Restore the
+/// current thread's setting on normal return and during unwinding.
 #[cfg(test)]
-pub(super) fn with_original_occupied<T>(f: impl FnOnce() -> T) -> T {
+pub(super) fn with_original_rows<T>(f: impl FnOnce() -> T) -> T {
     struct Restore(bool);
     impl Drop for Restore {
-        fn drop(&mut self) { ORIGINAL_OCCUPIED.with(|flag| flag.set(self.0)); }
+        fn drop(&mut self) { ORIGINAL_ROWS.with(|flag| flag.set(self.0)); }
     }
-    let _restore = Restore(ORIGINAL_OCCUPIED.with(|flag| flag.replace(true)));
+    let _restore = Restore(ORIGINAL_ROWS.with(|flag| flag.replace(true)));
     f()
 }
 
@@ -227,6 +227,30 @@ impl Ground<'_> {
         }
     }
 
+    /// Consecutive row-major positions are distinct. Collect only actual misses in
+    /// fixed scratch storage, without a duplicate scan or intermediate allocation.
+    fn prefetch_unique(&mut self, points: &[IVec2]) {
+        assert!(points.len() <= crate::water::SAMPLE_BATCH);
+        self.reserve(points.len());
+        let mut missing = [(0, 0); crate::water::SAMPLE_BATCH];
+        let mut count = 0;
+        for &p in points {
+            if !self.seen.contains_key(&p) {
+                missing[count] = (p.x, p.y);
+                count += 1;
+            }
+        }
+        if count == 0 { return; }
+        #[cfg(test)]
+        { self.prefetched += count; }
+        let samples = self.land.samples_cached(&missing[..count], &mut self.scratch);
+        for (&(x, z), g) in missing[..count].iter().zip(samples) {
+            let p = IVec2::new(x, z);
+            self.dry_water.remove(&p);
+            self.seen.insert(p, g);
+        }
+    }
+
     fn at(&mut self, p: IVec2) -> GeoSample {
         #[cfg(test)]
         { self.queries += 1; }
@@ -313,104 +337,6 @@ impl Rect {
     /// Whether `other` lies wholly inside.
     fn covers(&self, other: &Rect) -> bool {
         self.holds(other.min) && self.holds(other.max)
-    }
-}
-
-/// Occupied rectangles in their original order, with a bounded broad phase for the
-/// many rejected lots. Each bit names one rectangle; every surviving candidate still
-/// uses gap(). Large catalogues or unusual coordinates keep the original full scan.
-struct Occupied {
-    rects: Vec<Rect>,
-    grid: Option<OccupiedGrid>,
-}
-
-struct OccupiedGrid {
-    min: IVec2,
-    max: IVec2,
-    width: usize,
-    cells: Vec<u64>,
-}
-
-const OCCUPIED_CELL: i32 = 32;
-const OCCUPIED_CELLS: usize = 4096;
-// Keep all gap() subtractions within i32, even across opposite grid corners.
-const OCCUPIED_COORD: i32 = 1_000_000_000;
-
-impl OccupiedGrid {
-    fn new(bounds: Rect) -> Option<Self> {
-        if !Self::ordinary(bounds) { return None; }
-        let min = bounds.min.div_euclid(IVec2::splat(OCCUPIED_CELL));
-        let max = bounds.max.div_euclid(IVec2::splat(OCCUPIED_CELL));
-        let size = max - min + 1;
-        let count = (size.x as usize).checked_mul(size.y as usize)?;
-        (count <= OCCUPIED_CELLS).then(|| Self { min, max, width: size.x as usize, cells: vec![0; count] })
-    }
-
-    fn ordinary(rect: Rect) -> bool {
-        rect.min.cmple(rect.max).all() && rect.min.cmpge(IVec2::splat(-OCCUPIED_COORD)).all()
-            && rect.max.cmple(IVec2::splat(OCCUPIED_COORD)).all()
-    }
-
-    fn insert(&mut self, rect: Rect, index: usize) -> bool {
-        if index >= u64::BITS as usize || !Self::ordinary(rect) { return false; }
-        let min = rect.min.div_euclid(IVec2::splat(OCCUPIED_CELL));
-        let max = rect.max.div_euclid(IVec2::splat(OCCUPIED_CELL));
-        if !min.cmpge(self.min).all() || !max.cmple(self.max).all() { return false; }
-        for z in min.y..=max.y {
-            for x in min.x..=max.x {
-                self.cells[(z - self.min.y) as usize * self.width + (x - self.min.x) as usize] |= 1u64 << index;
-            }
-        }
-        true
-    }
-
-    /// For integer blocks, gap(other, rect) < gap implies intersection with rect
-    /// expanded by gap on each axis. Coarse cells can add candidates, never omit one.
-    fn candidates(&self, rect: Rect, gap: i32) -> Option<u64> {
-        if gap < 0 || !Self::ordinary(rect) { return None; }
-        let lo = IVec2::new(rect.min.x.checked_sub(gap)?, rect.min.y.checked_sub(gap)?);
-        let hi = IVec2::new(rect.max.x.checked_add(gap)?, rect.max.y.checked_add(gap)?);
-        let min = lo.div_euclid(IVec2::splat(OCCUPIED_CELL)).max(self.min);
-        let max = hi.div_euclid(IVec2::splat(OCCUPIED_CELL)).min(self.max);
-        let mut found = 0;
-        for z in min.y..=max.y {
-            for x in min.x..=max.x {
-                found |= self.cells[(z - self.min.y) as usize * self.width + (x - self.min.x) as usize];
-            }
-        }
-        Some(found)
-    }
-}
-
-impl Occupied {
-    fn new(bounds: Rect) -> Self {
-        #[cfg(test)]
-        if ORIGINAL_OCCUPIED.with(|flag| flag.get()) { return Self { rects: Vec::new(), grid: None }; }
-        Self { rects: Vec::new(), grid: OccupiedGrid::new(bounds) }
-    }
-
-    fn iter(&self) -> std::slice::Iter<'_, Rect> { self.rects.iter() }
-
-    fn push(&mut self, rect: Rect) {
-        if self.grid.as_mut().is_some_and(|grid| !grid.insert(rect, self.rects.len())) {
-            self.grid = None;
-        }
-        self.rects.push(rect);
-    }
-
-    fn extend(&mut self, rects: impl IntoIterator<Item = Rect>) {
-        for rect in rects { self.push(rect); }
-    }
-
-    fn any_gap(&self, rect: &Rect, gap: i32) -> bool {
-        let candidates = (self.rects.len() >= 8).then(|| self.grid.as_ref()?.candidates(*rect, gap)).flatten();
-        let Some(mut candidates) = candidates else { return self.rects.iter().any(|other| other.gap(rect) < gap) };
-        while candidates != 0 {
-            let i = candidates.trailing_zeros() as usize;
-            candidates &= candidates - 1;
-            if self.rects[i].gap(rect) < gap { return true; }
-        }
-        false
     }
 }
 
@@ -1479,7 +1405,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let homes = between(&mut rng, size.houses);
     let workshops = between(&mut rng, size.workshops);
     let mut lots: Vec<Lot> = Vec::new();
-    let mut occupied = Occupied::new(bounds);
+    let mut occupied: Vec<Rect> = Vec::new();
     // The well and centrepiece, which lanes keep a ring clear of.
     let mut kept: Vec<Rect> = Vec::new();
     let gap = rules.lots.gap.0 + ((1.0 - crowding) * rules.lots.gap.1).round() as i32;
@@ -1509,7 +1435,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         let mut placed = false;
         for at in spots {
             let rect = Rect::new(at - width / 2, extent);
-            if occupied.any_gap(&rect, 1) || lanes.iter().any(|l| l.rect_any(&rect.grow(RING), |d| d < l.half + 0.5)) {
+            if occupied.iter().any(|o| o.gap(&rect) < 1) || lanes.iter().any(|l| l.rect_any(&rect.grow(RING), |d| d < l.half + 0.5)) {
                 continue;
             }
             if level(&mut ground, &rect, def.site.bank, 1).is_none_or(|(low, high)| high - low > lanes_def.well.1 || (low - square_height).abs() > lanes_def.well.1) {
@@ -1537,7 +1463,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         let (low, high) = spec.envelope();
         let extent = Frame::extent(low, high, facing);
         let rect = Rect::new(p.round().as_ivec2() - extent / 2, extent);
-        if occupied.any_gap(&rect, 1) || lanes.iter().any(|l| l.rect_any(&rect, |d| d < l.half + 0.5)) {
+        if occupied.iter().any(|o| o.gap(&rect) < 1) || lanes.iter().any(|l| l.rect_any(&rect, |d| d < l.half + 0.5)) {
             continue;
         }
         let slope = rules.specials.get("stall").map_or(2, |s| s.slope);
@@ -1753,14 +1679,14 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let water_weights: Vec<(usize, f32)> = def.props.iter().enumerate().filter(|(_, p)| p.water).map(|(i, p)| (i, p.lean.weigh(p.weight, &levers) * culture.mult(Listing::Prop, &p.kind.label()))).collect();
     let lamp = def.props.iter().position(|p| p.kind == PropKind::Drawn(Prop::Lamp));
     // Where a prop would stand with its first block at `at`, if the ground there is free.
-    let fit = |ground: &mut Ground, occupied: &Occupied, prop: usize, at: IVec2, facing: Facing, clearance: f32| -> Option<Rect> {
+    let fit = |ground: &mut Ground, occupied: &[Rect], prop: usize, at: IVec2, facing: Facing, clearance: f32| -> Option<Rect> {
         let (low, high) = prop_box(&def.props[prop].kind);
         let rect = match &def.props[prop].kind {
             PropKind::Drawn(_) => Rect::new(at, Frame::extent(low, high, facing)),
             PropKind::Blocks(..) => Rect { min: at + low, max: at + high },
         };
         let free = bounds.covers(&rect)
-            && !occupied.any_gap(&rect, 0)
+            && occupied.iter().all(|o| o.gap(&rect) >= 0)
             && lanes.iter().all(|l| !l.rect_any(&rect, |d| d <= l.half + clearance))
             && [rect.min, rect.max, IVec2::new(rect.min.x, rect.max.y), IVec2::new(rect.max.x, rect.min.y)].iter().all(|&c| walkable(&ground.at(c)));
         free.then_some(rect)
@@ -2574,7 +2500,7 @@ fn place(
     given: Option<Spec>,
     front: Vec2,
     facing: Facing,
-    occupied: &Occupied,
+    occupied: &[Rect],
     lanes: &[Lane],
     lane: Option<Vec2>,
 ) -> Option<Lot> {
@@ -2610,7 +2536,7 @@ fn place(
     if !town.bounds.covers(&rect.grow(FALLOFF + 1)) {
         return town.reject(spec, 1);
     }
-    if occupied.any_gap(&rect, town.gap) || town.square.gap(&rect) < 1 {
+    if occupied.iter().any(|o| o.gap(&rect) < town.gap) || town.square.gap(&rect) < 1 {
         return town.reject(spec, 2);
     }
     let ring = if matches!(kind, Kind::Well | Kind::Centrepiece) { RING } else { 0 };
@@ -2666,10 +2592,31 @@ fn level(ground: &mut Ground, rect: &Rect, bank: i32, step: i32) -> Option<(i32,
     let (mut lowest, mut highest) = (i32::MAX, i32::MIN);
     let step = step.max(1);
     let sampled = |v: i32, lo: i32, hi: i32| (v - lo) % step == 0 || v == hi;
+    #[cfg(test)]
+    let original_rows = ORIGINAL_ROWS.with(|flag| flag.get());
+    #[cfg(not(test))]
+    let original_rows = false;
+    let mut left = 0;
     for z in outer.min.y..=outer.max.y {
         for x in outer.min.x..=outer.max.x {
-            if (x - outer.min.x) % crate::water::SAMPLE_BATCH as i32 == 0 {
-                ground.prefetch(IVec2::new(x, z), (outer.max.x - x + 1).min(crate::water::SAMPLE_BATCH as i32) as usize);
+            if original_rows {
+                if (x - outer.min.x) % crate::water::SAMPLE_BATCH as i32 == 0 {
+                    ground.prefetch(IVec2::new(x, z), (outer.max.x - x + 1).min(crate::water::SAMPLE_BATCH as i32) as usize);
+                }
+            } else {
+                if left == 0 {
+                    let mut points = [IVec2::ZERO; crate::water::SAMPLE_BATCH];
+                    let mut next = IVec2::new(x, z);
+                    for point in &mut points {
+                        *point = next;
+                        left += 1;
+                        if next.x < outer.max.x { next.x += 1; }
+                        else if next.y < outer.max.y { next = IVec2::new(outer.min.x, next.y + 1); }
+                        else { break; }
+                    }
+                    ground.prefetch_unique(&points[..left]);
+                }
+                left -= 1;
             }
             let p = IVec2::new(x, z);
             let g = ground.at(p);
@@ -2923,67 +2870,52 @@ mod level_tests {
     use crate::water::Body;
 
     #[test]
-    fn occupied_grid_keeps_the_original_integer_gap_predicate() {
-        let mut positive = 0;
-        let mut negative = 0;
-        for offset in [IVec2::ZERO, IVec2::new(-1007, -2049), IVec2::new(65_537, -65_535)] {
-            let bounds = Rect::new(offset - 256, IVec2::splat(512));
-            let mut occupied = Occupied::new(bounds);
-            let mut rng = Rng::new(91, 0x5e771e, offset.x, offset.y);
-            for count in 0..64 {
-                let min = offset + IVec2::new(rng.range(-220, 190), rng.range(-220, 190));
-                occupied.push(Rect::new(min, IVec2::new(rng.range(1, 31), rng.range(1, 31))));
-                for _ in 0..48 {
-                    let at = offset + IVec2::new(rng.range(-320, 320), rng.range(-320, 320));
-                    let rect = Rect::new(at, IVec2::new(rng.range(1, 97), rng.range(1, 97)));
-                    for gap in [-2, -1, 0, 1, 2, 7, 32, 511] {
-                        let expected = occupied.rects.iter().any(|other| other.gap(&rect) < gap);
-                        assert_eq!(occupied.any_gap(&rect, gap), expected, "{offset:?}, count {count}, {rect:?}, gap {gap}");
-                        positive += usize::from(expected);
-                        negative += usize::from(!expected);
+    fn terrain_batches_keep_original_leveling_and_reduce_calls() {
+        struct Batches {
+            creek: Creek,
+            calls: std::sync::Mutex<Vec<Vec<(i32, i32)>>>,
+        }
+        impl Land for Batches {
+            fn sample(&self, x: i32, z: i32) -> GeoSample { self.creek.sample(x, z) }
+            fn samples_cached(&self, points: &[(i32, i32)], _: &mut crate::water::Samples) -> Vec<GeoSample> {
+                self.calls.lock().unwrap().push(points.to_vec());
+                points.iter().map(|&(x, z)| self.sample(x, z)).collect()
+            }
+        }
+        let mut reduced = 0;
+        let mut accepted = 0;
+        let mut rejected = 0;
+        for offset in [IVec2::ZERO, IVec2::new(-113, -97), IVec2::new(65_537, -65_535)] {
+            for size in [IVec2::new(3, 4), IVec2::new(20, 17), IVec2::new(65, 5)] {
+                let rect = Rect::new(offset, size);
+                let outer = rect.grow(3);
+                for creek in [None, Some(outer.min.x), Some(rect.min.x + 1), Some(rect.max.x)] {
+                    let original_land = Batches { creek: Creek(creek, None), calls: Default::default() };
+                    let batched_land = Batches { creek: Creek(creek, None), calls: Default::default() };
+                    let (mut original, mut batched) = (Ground::new(&original_land), Ground::new(&batched_land));
+                    let expected = with_original_rows(|| level(&mut original, &rect, 3, 2));
+                    assert_eq!(level(&mut batched, &rect, 3, 2), expected);
+                    assert_eq!(batched.queries, original.queries, "original row-major rejection point");
+                    assert!(batched.seen.len() + batched.dry_water.len() <= GROUND_SAMPLE_LIMIT);
+                    let calls = batched_land.calls.lock().unwrap();
+                    assert!(calls.iter().all(|points| points.len() <= crate::water::SAMPLE_BATCH));
+                    let actual: Vec<_> = calls.iter().flatten().copied().collect();
+                    let ordered: Vec<_> = (outer.min.y..=outer.max.y).flat_map(|z|
+                        (outer.min.x..=outer.max.x).map(move |x| (x, z))).collect();
+                    assert_eq!(actual, ordered[..actual.len()], "bounded lookahead keeps exact original point order");
+                    assert_eq!(batched.prefetched, actual.len());
+                    if expected.is_some() {
+                        accepted += 1;
+                        assert_eq!(actual, ordered);
+                        assert_eq!(calls.len(), ordered.len().div_ceil(crate::water::SAMPLE_BATCH));
+                        reduced += usize::from(calls.len() < original_land.calls.lock().unwrap().len());
+                    } else {
+                        rejected += 1;
                     }
                 }
             }
-            assert!(occupied.grid.is_some(), "all 64 bits remain indexed");
-            assert!(occupied.grid.as_ref().unwrap().cells.len() <= OCCUPIED_CELLS);
         }
-        assert!(positive > 1000 && negative > 1000);
-    }
-
-    #[test]
-    fn occupied_grid_includes_touching_edges_and_reduces_candidates() {
-        let mut occupied = Occupied::new(Rect::new(IVec2::splat(-128), IVec2::splat(256)));
-        for x in 0..8 { occupied.push(Rect::new(IVec2::new(x * 12, 0), IVec2::splat(4))); }
-        let query = Rect::new(IVec2::new(4, 0), IVec2::splat(4));
-        assert!(!occupied.any_gap(&query, 0), "adjacent blocks have gap zero");
-        assert!(occupied.any_gap(&query, 1));
-        let grid = occupied.grid.as_ref().unwrap();
-        let candidates = grid.candidates(query, 1).unwrap();
-        assert!(candidates.count_ones() < occupied.rects.len() as u32);
-        assert_eq!(grid.candidates(Rect::new(IVec2::new(-120, 100), IVec2::splat(4)), 7), Some(0));
-        assert_eq!(grid.candidates(query, -1), None, "negative clearance keeps the original predicate");
-    }
-
-    #[test]
-    fn occupied_grid_falls_back_without_losing_rectangles() {
-        let bounds = Rect::new(IVec2::splat(-128), IVec2::splat(256));
-        let mut occupied = Occupied::new(bounds);
-        for i in 0..64 { occupied.push(Rect::new(IVec2::new(i - 32, 0), IVec2::ONE)); }
-        assert!(occupied.grid.is_some());
-        occupied.push(Rect::new(IVec2::new(96, 96), IVec2::ONE));
-        assert!(occupied.grid.is_none(), "the 65th rectangle keeps a full scan");
-        assert!(occupied.any_gap(&Rect::new(IVec2::new(96, 96), IVec2::ONE), 0));
-        let mut outside = Occupied::new(bounds);
-        outside.extend(occupied.rects.iter().copied().take(8));
-        outside.push(Rect::new(IVec2::new(512, 512), IVec2::ONE));
-        assert!(outside.grid.is_none());
-        assert!(outside.any_gap(&Rect::new(IVec2::new(512, 512), IVec2::ONE), 0));
-        assert!(OccupiedGrid::new(Rect::new(IVec2::splat(-100_000), IVec2::splat(200_000))).is_none());
-        assert!(OccupiedGrid::new(Rect::new(IVec2::splat(OCCUPIED_COORD + 1), IVec2::ONE)).is_none());
-        let grid = OccupiedGrid::new(bounds).unwrap();
-        assert_eq!(grid.candidates(Rect::new(IVec2::ZERO, IVec2::ONE), i32::MAX), Some(0));
-        assert_eq!(grid.candidates(Rect::new(IVec2::ONE, IVec2::ONE), i32::MAX), None);
-        assert_eq!(grid.candidates(Rect { min: IVec2::ONE, max: IVec2::ZERO }, 0), None);
+        assert!(accepted > 0 && rejected > 0 && reduced > 0);
     }
 
     #[test]
@@ -3130,7 +3062,7 @@ mod level_tests {
         let original = house_spec(&mut fresh, &Want::Home, Kind::House, &mut b, false).unwrap();
         let pointer = reused.spare_extras.as_ptr();
         assert!(place(&mut reused, &mut Ground::new(&land), &mut a, &Want::Home, None,
-            Vec2::splat(1000.0), Facing::North, &Occupied::new(rect), &[], None).is_none());
+            Vec2::splat(1000.0), Facing::North, &[], &[], None).is_none());
         assert_eq!(reused.spare_extras.as_ptr(), pointer);
         assert_eq!(a.next_u64(), b.next_u64());
         drop(original);

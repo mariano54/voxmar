@@ -2845,11 +2845,11 @@ fn culture_planning_hotspots() {
     }
 }
 
-/// Compare the complete direct planner with the original linear occupied scan over
+/// Compare the complete direct planner with the original per-row terrain batches over
 /// the budget's original twenty seeds. This is an output oracle, not a timing result.
 #[test]
 #[ignore]
-fn occupied_grid_preserves_all_twenty_seed_plans() {
+fn terrain_batches_preserve_all_twenty_seed_plans() {
     use crate::water::cache::Weigh;
     crate::parallel::set_enabled(false);
     struct Helpers;
@@ -2859,7 +2859,7 @@ fn occupied_grid_preserves_all_twenty_seed_plans() {
     let _helpers = Helpers;
     let mut counts = [0; 2];
     for seed in 1..=20 {
-        let (world, found) = super::plan::with_original_occupied(|| {
+        let (world, found) = super::plan::with_original_rows(|| {
             let world = base_world(seed);
             let spawn = world.spawn_point();
             let centre = IVec2::new(spawn.x, spawn.z);
@@ -2875,9 +2875,9 @@ fn occupied_grid_preserves_all_twenty_seed_plans() {
             let cell = world.settlements.cell_of(known.centre.x, known.centre.y);
             let spawn_at = world.settlements.spawn.get().and_then(|s| s.square).filter(|s| s.1 == cell).map(|s| s.0);
             let replan = || world.settlements.plan(&world, world.settlements.fixed.as_ref().unwrap(), cell, spawn_at).unwrap();
-            let original = super::Slot(Some(super::plan::with_original_occupied(replan)));
-            let indexed = super::Slot(Some(replan()));
-            let (a, b) = (original.0.as_ref().unwrap(), indexed.0.as_ref().unwrap());
+            let original = super::Slot(Some(super::plan::with_original_rows(replan)));
+            let batched = super::Slot(Some(replan()));
+            let (a, b) = (original.0.as_ref().unwrap(), batched.0.as_ref().unwrap());
             assert_eq!((a.id, &a.size, &a.layout, &a.style, &a.name, a.centre, a.height),
                 (b.id, &b.size, &b.layout, &b.style, &b.name, b.centre, b.height), "seed {seed} {size}");
             assert_eq!(a.levers, b.levers);
@@ -2893,13 +2893,13 @@ fn occupied_grid_preserves_all_twenty_seed_plans() {
             let sums = |p: &super::Plan| p.raster.sums.iter().map(|s| (s.0.to_bits(), s.1.to_bits(), s.2.to_bits())).collect::<Vec<_>>();
             assert_eq!(sums(a), sums(b));
             assert_eq!(a.voxels, b.voxels, "exact order of every column's voxels");
-            assert_eq!(original.bytes(), indexed.bytes(), "retained allocations");
+            assert_eq!(original.bytes(), batched.bytes(), "retained allocations");
             for (column, voxels) in &a.voxels { assert_eq!(voxels.capacity(), b.voxels[column].capacity()); }
             counts[i] += 1;
         }
     }
     assert_eq!(counts, [17, 20], "all original budget plans must be compared");
-    println!("occupied-grid original oracle: {} complete plans over all 20 seeds", counts.iter().sum::<usize>());
+    println!("terrain-batch original oracle: {} complete plans over all 20 seeds", counts.iter().sum::<usize>());
 }
 
 /// Planning budgets are measured in release with thread CPU time, after the surrounding
