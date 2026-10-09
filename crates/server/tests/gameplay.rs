@@ -19,6 +19,8 @@ use voxmar_server::{Limits, ServerConfig, ServerHandle, load_content, spawn};
 struct Client {
     connection: ClientConnection,
     id: PlayerId,
+    name: String,
+    phase: &'static str,
     /// Dropped items in sight, and the ones we picked up.
     items: std::collections::HashMap<u32, ItemView>,
     collected: Vec<u32>,
@@ -73,6 +75,13 @@ fn content() -> Content {
     load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")
 }
 
+/// Opens and registers a local connection only once its Hello is ready.
+fn local_connection(accepted: crossbeam_channel::Sender<voxmar_protocol::ServerConnection>) -> ClientConnection {
+    let (connection, server_side) = local_pair();
+    accepted.send(server_side).unwrap();
+    connection
+}
+
 impl Client {
     /// Joins a new server in-process, as singleplayer does.
     fn join() -> Self {
@@ -85,46 +94,53 @@ impl Client {
 
     /// Joins a new server on `config` as `name`.
     fn join_named(config: ServerConfig, name: &str) -> Self {
-        let server = spawn(config, content()).unwrap();
-        let (connection, server_side) = local_pair();
-        server.connections().send(server_side).unwrap();
-        Self::hello(connection, name, server)
+        let content = content();
+        let server = spawn(config, content.clone()).unwrap();
+        let accepted = server.connections();
+        Self::greet_content(|| local_connection(accepted), name, Some(server), None, || content)
     }
 
     /// Joins a new server over TCP as `name`.
     fn join_remote(name: &str, admins: &[&str]) -> Self {
         let admins = admins.iter().map(|&a| a.to_owned()).collect();
-        let server = spawn(ServerConfig { view_distance: 2, admins, ..Default::default() }, content()).unwrap();
+        let content = content();
+        let server = spawn(ServerConfig { view_distance: 2, admins, ..Default::default() }, content.clone()).unwrap();
         let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
-        Self::hello(tcp::connect(addr).unwrap(), name, server)
+        Self::greet_content(|| tcp::connect(addr).unwrap(), name, Some(server), None, || content)
     }
 
-    fn hello(connection: ClientConnection, name: &str, server: ServerHandle) -> Self {
-        Self::greet(connection, name, Some(server))
+    fn hello(open: impl FnOnce() -> ClientConnection, name: &str, server: ServerHandle) -> Self {
+        Self::greet(open, name, Some(server))
     }
 
     /// Joins this player's server too, as `name`.
     fn another(&self, name: &str) -> Self {
-        let (connection, server_side) = local_pair();
-        self._server.as_ref().expect("the first player holds the server").connections().send(server_side).unwrap();
-        Self::greet(connection, name, None)
+        let accepted = self._server.as_ref().expect("the first player holds the server").connections();
+        Self::greet_content(|| local_connection(accepted), name, None, None, || self.content.clone())
     }
 
-    fn greet(connection: ClientConnection, name: &str, server: Option<ServerHandle>) -> Self {
-        Self::greet_with(connection, name, server, None)
+    fn greet(open: impl FnOnce() -> ClientConnection, name: &str, server: Option<ServerHandle>) -> Self {
+        Self::greet_with(open, name, server, None)
     }
 
     /// Joins as `name`, giving the server `admin_token`.
-    fn greet_with(connection: ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>) -> Self {
-        Self::greet_content(connection, name, server, admin_token, content())
+    fn greet_with(open: impl FnOnce() -> ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>) -> Self {
+        Self::greet_content(open, name, server, admin_token, content)
     }
 
-    /// Joins as `name` with `content`, which must be the server's.
-    fn greet_content(connection: ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>, content: Content) -> Self {
-        connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: admin_token.map(str::to_owned) });
+    /// Prepares the content and Hello before opening a connection. Loading and hashing
+    /// the fixture must not spend the server's pending-login deadline, especially when
+    /// other tests keep this process off its cores. `prepare` can model that delay in ticks.
+    fn greet_content(open: impl FnOnce() -> ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>, prepare: impl FnOnce() -> Content) -> Self {
+        let content = prepare();
+        let hello = ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: admin_token.map(str::to_owned) };
+        let connection = open();
+        assert!(connection.send(hello), "{name:?}: connection closed before Hello was queued");
         let mut client = Self {
             connection,
             id: 0,
+            name: name.to_owned(),
+            phase: "welcome",
             items: Default::default(),
             collected: Vec::new(),
             skills: Default::default(),
@@ -161,6 +177,7 @@ impl Client {
         };
         // Joined once it stands in its land and has been told the time.
         client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())) && c.day.is_some());
+        client.phase = "playing";
         client
     }
 
@@ -191,9 +208,10 @@ impl Client {
             }
             assert!(
                 now - heard < SERVER_SILENT && now - start < SERVER_WAIT,
-                "timed out waiting for server: {:.1}s in all, {:.1}s since its last message",
+                "{name:?} (id {id}, {phase}, tick {tick}, local {local}): timed out waiting for server: {:.1}s in all, {:.1}s since its last message",
                 (now - start).as_secs_f32(),
-                (now - heard).as_secs_f32()
+                (now - heard).as_secs_f32(),
+                name = self.name, id = self.id, phase = self.phase, tick = self.server_tick, local = self.connection.is_local()
             );
             match self.connection.try_recv() {
                 Ok(Some(message)) => {
@@ -201,7 +219,7 @@ impl Client {
                     self.apply(message);
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(1)),
-                Err(_) => panic!("server disconnected"),
+                Err(_) => panic!("{:?} (id {}, {}, tick {}, local {}): server disconnected", self.name, self.id, self.phase, self.server_tick, self.connection.is_local()),
             }
         }
     }
@@ -211,6 +229,7 @@ impl Client {
             ServerMessage::Rejected { reason } => panic!("turned away: {reason:?}"),
             ServerMessage::Welcome { player, position, admin, allow_flight, .. } => {
                 self.id = player;
+                self.phase = "initial world";
                 self.position = position;
                 self.admin = admin;
                 self.allow_flight = allow_flight;
@@ -709,9 +728,8 @@ fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
     };
     let warned = |content: Content| {
         let server = spawn(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() }, content.clone()).unwrap();
-        let (connection, server_side) = local_pair();
-        server.connections().send(server_side).unwrap();
-        let client = Client::greet_content(connection, "test", Some(server), None, content);
+        let accepted = server.connections();
+        let client = Client::greet_content(|| local_connection(accepted), "test", Some(server), None, || content);
         let warning = client.content.english.render(&voxmar_engine::lang::Words::key("world.generation_changed"), &client.content.blocks);
         client.chat.iter().any(|(_, line)| *line == warning)
     };
@@ -962,7 +980,7 @@ fn teleporting() {
 fn only_admins_run_admin_commands_and_everyone_chats() {
     let server = spawn(ServerConfig { view_distance: 2, admins: vec!["boss".into()], ..Default::default() }, content()).unwrap();
     let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
-    let mut guest = Client::hello(tcp::connect(addr).unwrap(), "guest", server);
+    let mut guest = Client::hello(|| tcp::connect(addr).unwrap(), "guest", server);
     let errors = guest.command("/time set noon");
     assert_eq!(errors, [(ChatKind::Error, "Only admins may use /time.".into())]);
     assert!(guest.ok("/seed").starts_with("Seed: "));
@@ -1037,7 +1055,7 @@ fn water_flows_for_everyone_to_see() {
 fn the_server_console_runs_commands_as_an_admin() {
     let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
     let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
-    let mut guest = Client::hello(tcp::connect(addr).unwrap(), "guest", server);
+    let mut guest = Client::hello(|| tcp::connect(addr).unwrap(), "guest", server);
     guest.pump_until(|c| c.day.is_some());
     // The console speaks for the server, and needs no admin rights.
     guest._server.as_ref().unwrap().console("/time set midnight");
@@ -1710,9 +1728,8 @@ fn with_mod(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Content)
 /// Joins a new in-process server of `content`.
 fn join_content(content: Content) -> Client {
     let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
-    let (connection, server_side) = local_pair();
-    server.connections().send(server_side).unwrap();
-    Client::greet_content(connection, "test", Some(server), None, content)
+    let accepted = server.connections();
+    Client::greet_content(|| local_connection(accepted), "test", Some(server), None, || content)
 }
 
 const TEST_QUESTS: &str = r#"(quests: [
@@ -2660,7 +2677,7 @@ fn a_name_already_playing_is_turned_away_in_any_case() {
 fn serve(config: ServerConfig) -> (Client, std::net::SocketAddr) {
     let server = spawn(ServerConfig { view_distance: 2, admins: vec!["host".into()], idle_timeout: SERVER_WAIT, ..config }, content()).unwrap();
     let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
-    (Client::hello(tcp::connect(addr).unwrap(), "host", server), addr)
+    (Client::hello(|| tcp::connect(addr).unwrap(), "host", server), addr)
 }
 
 /// Reads a connection until the server closes it, or panics after `limit`.
@@ -2693,7 +2710,7 @@ fn malformed_and_oversized_frames_and_silence_close_the_connection() {
     stream.write_all(&4u32.to_le_bytes()).unwrap();
     stream.write_all(&[0xff, 0xff, 0xff, 0xff]).unwrap();
     closed_within(stream, Duration::from_secs(10));
-    // Connecting and never saying hello: closed after ten seconds of the server's clock.
+    // Connecting and never saying hello: closed after the configured three server seconds.
     let stream = std::net::TcpStream::connect(addr).unwrap();
     closed_within(stream, Duration::from_secs(60));
 }
@@ -2722,15 +2739,44 @@ fn a_player_who_falls_silent_is_let_go_and_may_join_again() {
     assert!(host._server.as_ref().unwrap().ticks() > 0);
 }
 
+/// Slow fixture preparation is not a silent peer: the server has no connection to
+/// expire yet. Preparation lasts past the actual deadline, by the server's own ticks.
+fn prepared_login(remote: bool) {
+    let mut host = Client::join();
+    let accepted = host._server.as_ref().unwrap().connections();
+    let addr = tcp::listen("127.0.0.1:0", accepted.clone()).unwrap();
+    let hello_ticks = (Limits::default().hello_seconds * TICKS_PER_SECOND as f32) as u64;
+    let guest = Client::greet_content(
+        || if remote { tcp::connect(addr).unwrap() } else { local_connection(accepted) },
+        "prepared", None, None,
+        || {
+            host.after_ticks(hello_ticks + 2);
+            host.content.clone()
+        },
+    );
+    assert!(guest.id != 0 && guest.health > 0, "prepared login was not welcomed (remote {remote})");
+}
+
+#[test]
+fn preparing_local_content_does_not_spend_the_hello_deadline() {
+    prepared_login(false);
+}
+
+#[test]
+fn preparing_tcp_content_does_not_spend_the_hello_deadline() {
+    prepared_login(true);
+}
+
 #[test]
 fn a_player_who_sends_nothing_but_keepalives_is_kept() {
     let host = Client::join();
     let addr = tcp::listen("127.0.0.1:0", host._server.as_ref().unwrap().connections()).unwrap();
-    let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
     // Twenty seconds of the server's clock with no input, as from a minimized game: only
     // the connection's keepalives. (Being let go would end the pump with a panic.)
     let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
     let until = ticks(&host) + 20 * TICKS_PER_SECOND as u64;
+    guest.phase = "keepalive wait";
     guest.pump_until(|_| ticks(&host) >= until);
     assert!(guest.ok("/seed").contains(char::is_numeric), "the guest was let go");
     drop(host);
@@ -2741,7 +2787,7 @@ fn chat_floods_slow_down_once_and_admins_make_admins_for_the_session() {
     let dir = world_dir("op");
     let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
     assert!(host.admin, "a name on the admin list is an admin from this machine");
-    let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
     assert!(!guest.admin);
     for i in 0..20 {
         guest.connection.send(ClientMessage::Chat { text: format!("spam {i}") });
@@ -2765,7 +2811,7 @@ fn chat_floods_slow_down_once_and_admins_make_admins_for_the_session() {
     // ...or they leave: it is never saved, so it lasts for the session only.
     drop(guest);
     gone(&mut host, "guest");
-    let guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    let guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
     assert!(!guest.admin, "a player made an admin was still one when they came back");
     // An admin by right (the admin list, from this machine) is told it lasts until they
     // join again.
@@ -2779,9 +2825,9 @@ fn chat_floods_slow_down_once_and_admins_make_admins_for_the_session() {
 #[test]
 fn the_admin_token_makes_an_admin_from_anywhere() {
     let (_host, addr) = serve(ServerConfig { admin_token: Some("open sesame".into()), ..Default::default() });
-    let wrong = Client::greet_with(tcp::connect(addr).unwrap(), "guest", None, Some("open sesame!"));
+    let wrong = Client::greet_with(|| tcp::connect(addr).unwrap(), "guest", None, Some("open sesame!"));
     assert!(!wrong.admin);
-    let owner = Client::greet_with(tcp::connect(addr).unwrap(), "owner", None, Some("open sesame"));
+    let owner = Client::greet_with(|| tcp::connect(addr).unwrap(), "owner", None, Some("open sesame"));
     assert!(owner.admin);
 }
 
@@ -2792,12 +2838,13 @@ fn players_on_this_machine_are_known_over_ipv4_to_a_dual_stack_listener() {
         eprintln!("skipped: no IPv6 here");
         return;
     };
-    let Ok(connection) = tcp::connect(std::net::SocketAddr::from(([127, 0, 0, 1], addr.port()))) else {
+    let v4 = std::net::SocketAddr::from(([127, 0, 0, 1], addr.port()));
+    if tcp::connect(v4).is_err() {
         eprintln!("skipped: this IPv6 listener takes no IPv4");
         return;
-    };
-    // Seen as ::ffff:127.0.0.1.
-    let host = Client::hello(connection, "host", server);
+    }
+    // Seen as ::ffff:127.0.0.1. The probe above is closed without saying hello.
+    let host = Client::hello(|| tcp::connect(v4).unwrap(), "host", server);
     assert!(host.admin, "a name on the admin list connecting from this machine over IPv4");
 }
 
@@ -2818,8 +2865,8 @@ fn silent_sockets_neither_count_as_players_nor_pile_up() {
     // addresses to come from.
     let v4 = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
     let v6 = tcp::listen("[::1]:0", server.connections()).ok();
-    let guest = Client::hello(tcp::connect(v4).unwrap(), "guest", server);
-    let second = Client::greet(tcp::connect(v4).unwrap(), "second", None);
+    let guest = Client::hello(|| tcp::connect(v4).unwrap(), "guest", server);
+    let second = Client::greet(|| tcp::connect(v4).unwrap(), "second", None);
     // Two connections from that address that never say hello: with them waiting, its next
     // connection is turned away at once...
     let silent: Vec<_> = (0..2).map(|_| std::net::TcpStream::connect(v4).unwrap()).collect();
@@ -2828,7 +2875,7 @@ fn silent_sockets_neither_count_as_players_nor_pile_up() {
     // ...while another address is not, and they are not players, so a third still fits
     // (in process, as from elsewhere, without IPv6).
     let third = match v6 {
-        Some(v6) => Client::greet(tcp::connect(v6).unwrap(), "third", None),
+        Some(v6) => Client::greet(|| tcp::connect(v6).unwrap(), "third", None),
         None => guest.another("third"),
     };
     assert!(third.health > 0);
@@ -2844,17 +2891,17 @@ fn an_address_gets_one_starting_kit_in_a_while() {
     content.files = std::sync::Arc::new(files);
     let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
     let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
-    let mut first = Client::greet_content(tcp::connect(addr).unwrap(), "first", Some(server), None, content.clone());
+    let mut first = Client::greet_content(|| tcp::connect(addr).unwrap(), "first", Some(server), None, || content.clone());
     let (bread, purse) = (content.blocks.expect("base:bread"), content.blocks.expect("base:coin_purse"));
     let has = |c: &Client, item| c.inventory.slots.iter().flatten().any(|s| s.item == item);
     first.pump_until(|c| has(c, bread));
     // A second fresh name from the same address, inside the window: the purse, no kit.
-    let mut second = Client::greet_content(tcp::connect(addr).unwrap(), "second", None, None, content.clone());
+    let mut second = Client::greet_content(|| tcp::connect(addr).unwrap(), "second", None, None, || content.clone());
     second.pump_until(|c| has(c, purse));
     assert_eq!(second.inventory.slots.iter().flatten().count(), 1, "{:?}", second.inventory);
     // Once the window has passed by the server's clock, the next one has the kit again.
     first.after_server_ticks(2 * TICKS_PER_SECOND as u64);
-    let mut third = Client::greet_content(tcp::connect(addr).unwrap(), "third", None, None, content);
+    let mut third = Client::greet_content(|| tcp::connect(addr).unwrap(), "third", None, None, || content);
     third.pump_until(|c| has(c, bread));
     drop((second, third, first));
 }
