@@ -1996,6 +1996,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // stretches: the wait is by its clock.
             let done = lit(world);
             let late = gate.server_now - gate.kiln_since > 20.0;
+            // Quest progress and the inventory travel as separate messages. Observe both
+            // before taking the kiln down; a late inventory still fails the same deadline.
+            if done && coal != 0 && !late {
+                return;
+            }
             if done || late {
                 // Taken down again either way, so the pool's bank is clear for the swim.
                 let (a, b) = (kiln - IVec3::new(1, 0, 1), kiln + IVec3::new(1, 1, 1));
@@ -5940,7 +5945,8 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         1 => {
             let (logs, log_slot) = holding(world, "base:oak_log");
             let (stone, stone_slot) = holding(world, "base:cobblestone");
-            if let (Some(log_slot), Some(stone_slot)) = (log_slot, stone_slot) && logs == 2 && stone == 2 {
+            let cleared = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().count() == 2;
+            if let (Some(log_slot), Some(stone_slot)) = (log_slot, stone_slot) && logs == 2 && stone == 2 && cleared {
                 let net = world.resource::<Net>();
                 let transfer = world.resource::<crate::Actions>().0.expect("core:transfer");
                 for (from, cells) in [(log_slot, &voxmar_engine::craft::SMALL[..2]), (stone_slot, &voxmar_engine::craft::SMALL[2..])] {
