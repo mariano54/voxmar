@@ -121,14 +121,18 @@ you wake after dying until a hearth gives you a home: right click it to sleep
 `pit_kiln` station; a station recipe may name its own `skill`, here Crafting), which pots,
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
-corner. A crucible smelts only in a standing kiln: copper ore into ingots,
-and a bronze blend (three copper ingots and a tin ore) into bronze, all Engineering,
-never burnt (`stop_burning: 0`). Right clicking the crucible with nothing it smelts
-lights the kiln, and quests count it (`Lit("crucible_kiln", 1)`).
+corner. A crucible smelts only in a standing kiln with an unexpired paid fire:
+copper ore into ingots, and a bronze blend (three copper ingots and a tin ore) into
+bronze, all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
+hold 32 charcoal or 24 coal and right-click the crucible. Lighting consumes the charge
+and quests count it (`Lit("crucible_kiln", 1)`). Its fire uses the fuel times in
+`machines.ron`, survives reload, and goes out when it expires or a required piece is
+removed. A cold kiln leaves smelting ingredients untouched.
 
 Multiblocks are lit generically (`base:light` on a block tagged `multiblock_core`): a
-multiblock with `home: true` becomes home, any other is just lit; one that does not
-stand yet says its `hint`. Wooden chests wait for a container screen.
+multiblock with `home: true` becomes home; a fuelled one must first receive a complete
+charge. One that does not stand yet says its `hint`. Wooden chests wait for a container
+screen.
 
 ## Fewer items, more ways (P27)
 
