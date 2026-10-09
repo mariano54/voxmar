@@ -12,8 +12,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy)]
-pub(super) enum Part { Wait, Receive, Compact, PageAllocate, NewPage, ArenaGrow, CompactWrite, ArenaWrite, ArenaSubmit, CompactBuffers }
-const PARTS: usize = 10;
+pub(super) enum Part { Wait, Receive, Compact, PageAllocate, NewPage, ArenaGrow, CompactWrite, ArenaWrite, ArenaSubmit, CompactBuffers, PageOwners }
+const PARTS: usize = 11;
 
 /// Only the fields named by the corresponding part's JSON are meaningful.
 #[derive(Clone, Copy, Default)]
@@ -73,7 +73,7 @@ impl Profile {
 
     pub(super) fn json(&self) -> Value {
         let mut parts = serde_json::Map::new();
-        for (i, name) in ["wait", "receive", "compact", "page_allocate", "new_page", "arena_grow", "compact_write", "arena_write", "arena_submit", "compact_buffers"].into_iter().enumerate() {
+        for (i, name) in ["wait", "receive", "compact", "page_allocate", "new_page", "arena_grow", "compact_write", "arena_write", "arena_submit", "compact_buffers", "page_owners"].into_iter().enumerate() {
             let value = self.parts[i].map_or(Value::Null, |sample| {
                 let c = sample.counts;
                 let counts = match i {

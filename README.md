@@ -29,14 +29,16 @@ it rebuilds in seconds rather than minutes after an edit and runs nearly as fast
 For a bounded renderer diagnosis, set `VOXMAR_PROFILE_FRAMES=1` together with
 `VOXMAR_RECORD_SLOW_FRAMES=1` for a capture. Slow-frame records then include wall and
 thread CPU time for streaming, compaction and buffer operations, with queue counts and
-bytes. Storage stays fixed at ten measurements per render frame in the existing
+bytes. Storage stays fixed at eleven measurements per render frame in the existing
 three-frame ring; only slow frames write JSON. `render_local_frame` identifies a render
 record; the shared process-local monotonic intervals join it to main-frame intervals.
 Parent measurements include their nested operations, so their times must not be added
 together. Thread CPU excludes sleep and descheduling, and neither clock measures GPU
-execution. Unsupported or failed CPU clocks are `null`. `input_bytes` counts incoming
-mesh payloads, `written_bytes` counts queue writes, and `buffer_bytes_created` counts
-allocated capacity; these are different quantities.
+execution. Unsupported or failed CPU clocks are `null`. `receive.input_bytes` counts
+payloads of applied messages. Child `written_bytes` counters cover the targeted page,
+arena and compaction queue writes; origins, wind, coverage and blade-index setup writes
+are outside these counters. `buffer_bytes_created` counts allocated capacity. These are
+different quantities.
 
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped

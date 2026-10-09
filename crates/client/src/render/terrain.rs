@@ -343,7 +343,34 @@ struct Page {
     indices: Option<(Buffer, RangeAllocator)>,
     /// Chunk pages only: the chunk slot of each block of `VERTEX_BLOCK` vertices, and the
     /// bind group (group 3) that holds it.
-    chunks: Option<(Buffer, BindGroup)>,
+    chunks: Option<ChunkPage>,
+}
+
+struct ChunkPage {
+    buffer: Buffer,
+    bind_group: BindGroup,
+    owners: ChunkOwners,
+}
+
+/// The page's ownership table on the CPU, with the span changed this frame. A burst of
+/// meshes used to allocate a GPU staging buffer for every little owner write (332 page
+/// writes for 166 allocations in a measured flight frame). Queue the changed span once
+/// before drawing, preserving the last assignment of ranges freed and reused this frame.
+struct ChunkOwners {
+    words: Vec<u32>,
+    dirty: Option<Range<usize>>,
+}
+
+impl ChunkOwners {
+    fn new(blocks: usize) -> Self { Self { words: vec![0; blocks], dirty: None } }
+
+    fn assign(&mut self, range: Range<usize>, slot: u32) {
+        if range.is_empty() { return; }
+        self.words[range.clone()].fill(slot);
+        self.dirty = Some(self.dirty.take().map_or(range.clone(), |dirty| dirty.start.min(range.start)..dirty.end.max(range.end)));
+    }
+
+    fn take_dirty(&mut self) -> Option<Range<usize>> { self.dirty.take() }
 }
 
 /// Pages of one vertex format.
@@ -406,17 +433,16 @@ impl PagePool {
             self.pages.push(page);
             (self.pages.len() - 1, ranges)
         });
-        let target = &self.pages[page];
+        let target = &mut self.pages[page];
         if let Some(profile) = &mut profile {
             profile.counts.payload_bytes += vertices.len() as u64 * self.vertex_size;
             profile.counts.buffers_grown += u64::from(added_page);
             profile.counts.dispatches += 1;
         }
         queue.write_buffer(&target.vertex_buffer, vertex_range.start as u64 * self.vertex_size, bytemuck::cast_slice(vertices));
-        if let (Some((chunks, _)), Some(owner)) = (&target.chunks, owner) {
-            let blocks = vec![owner.slot; (reserved / VERTEX_BLOCK) as usize];
-            if let Some(profile) = &mut profile { profile.counts.payload_bytes += blocks.len() as u64 * 4; profile.counts.dispatches += 1; }
-            queue.write_buffer(chunks, (vertex_range.start / VERTEX_BLOCK) as u64 * 4, bytemuck::cast_slice(&blocks));
+        if let (Some(chunks), Some(owner)) = (&mut target.chunks, owner) {
+            let first = (vertex_range.start / VERTEX_BLOCK) as usize;
+            chunks.owners.assign(first..first + (reserved / VERTEX_BLOCK) as usize, owner.slot);
         }
         if let Some((buffer, _)) = &target.indices {
             if let Some(profile) = &mut profile { profile.counts.payload_bytes += indices.len() as u64 * 4; profile.counts.dispatches += 1; }
@@ -432,6 +458,20 @@ impl PagePool {
             && !allocation.indices.is_empty()
         {
             free.release(allocation.indices);
+        }
+    }
+
+    /// All assignments are final before culling/compaction/drawing use the new meshes.
+    fn write_owners(&mut self, queue: &RenderQueue) {
+        let mut profile = super::work::measure(super::work::Part::PageOwners);
+        for page in &mut self.pages {
+            let Some(chunks) = &mut page.chunks else { continue };
+            let Some(range) = chunks.owners.take_dirty() else { continue };
+            if let Some(profile) = &mut profile {
+                profile.counts.payload_bytes += range.len() as u64 * 4;
+                profile.counts.dispatches += 1;
+            }
+            queue.write_buffer(&chunks.buffer, range.start as u64 * 4, bytemuck::cast_slice(&chunks.owners.words[range]));
         }
     }
 
@@ -459,7 +499,7 @@ impl PagePool {
                 layout,
                 &BindGroupEntries::single(chunks.as_entire_binding()),
             );
-            (chunks, bind_group)
+            ChunkPage { buffer: chunks, bind_group, owners: ChunkOwners::new((self.page_vertices / VERTEX_BLOCK) as usize) }
         });
         let page_indices = self.page_vertices / 2 * 3;
         let indices = (!self.chunk_pages)
@@ -1177,6 +1217,7 @@ fn receive(
         }
     }
     if let Some(profile) = &mut profile { profile.counts.pending_after = gpu.pending.len() as u64; }
+    for pool in &mut gpu.streams { pool.write_owners(&queue); }
     gpu.write_origins(&device, &queue);
     gpu.write_wind(&device, &queue, breeze.as_deref().copied().unwrap_or_default());
     if let Some(position) = camera {
@@ -2079,11 +2120,11 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTerrain {
         for draw in &draws.passes[*pass as usize] {
             if current != Some((draw.stream, draw.page)) {
                 let page = gpu.streams[draw.stream as usize].pages.get(draw.page as usize);
-                let Some((page, (_, chunks))) = page.and_then(|page| Some((page, page.chunks.as_ref()?))) else {
+                let Some((page, chunks)) = page.and_then(|page| Some((page, page.chunks.as_ref()?))) else {
                     return RenderCommandResult::Skip;
                 };
                 render_pass.set_vertex_buffer(0, page.vertex_buffer.slice(..));
-                render_pass.set_bind_group(3, chunks, &[]);
+                render_pass.set_bind_group(3, &chunks.bind_group, &[]);
                 current = Some((draw.stream, draw.page));
             }
             render_pass.draw_indexed(draw.indices.clone(), 0, 0..1);
@@ -2095,6 +2136,54 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTerrain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batched_page_owners_match_ordered_writes_across_reused_ranges() {
+        let mut table = ChunkOwners::new(16);
+        let mut direct = vec![0u32; 16];
+        let mut batched = direct.clone();
+        let mut free = RangeAllocator::new(16);
+        let left = free.allocate(4).unwrap();
+        let middle = free.allocate(4).unwrap();
+        let right = free.allocate(4).unwrap();
+        for (range, slot) in [(left.clone(), 11), (middle.clone(), 22), (right.clone(), 33)] {
+            let range = range.start as usize..range.end as usize;
+            direct[range.clone()].fill(slot); // The old queue writes, in their original order.
+            table.assign(range, slot);
+        }
+        let dirty = table.take_dirty().unwrap();
+        batched[dirty.clone()].copy_from_slice(&table.words[dirty]);
+        assert_eq!(batched, direct);
+        assert!(table.take_dirty().is_none(), "an idle frame queues no owner write");
+
+        // Reuse part of the same allocation twice before the next draw; a merged upload
+        // must keep its final owner and the unchanged owner in the gap between writes.
+        free.release(left);
+        let reused = free.allocate(2).unwrap();
+        assert_eq!(reused, 0..2);
+        for (range, slot) in [(8..10, 44), (reused.clone(), 55), (reused, 66)] {
+            let range = range.start as usize..range.end as usize;
+            direct[range.clone()].fill(slot);
+            table.assign(range, slot);
+        }
+        let dirty = table.take_dirty().unwrap();
+        assert_eq!(dirty, 0..10);
+        batched[dirty.clone()].copy_from_slice(&table.words[dirty]);
+        assert_eq!(batched, direct);
+        assert_eq!(&batched[4..8], &[22; 4], "the untouched gap keeps its earlier owner");
+        assert!(table.take_dirty().is_none());
+    }
+
+    #[test]
+    fn a_new_page_has_no_previous_worlds_owner_assignments() {
+        let mut old = ChunkOwners::new(8);
+        old.assign(2..8, 91);
+        assert!(old.take_dirty().is_some());
+        let mut fresh = ChunkOwners::new(8);
+        fresh.assign(4..6, 7);
+        assert_eq!(fresh.words, [0, 0, 0, 0, 7, 7, 0, 0]);
+        assert_eq!(fresh.take_dirty(), Some(4..6));
+    }
 
     /// A shape's quad goes with the cut-out faces, drawn one-sided at every distance; a
     /// plant's with the plants.
