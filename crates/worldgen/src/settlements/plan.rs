@@ -3130,7 +3130,7 @@ mod level_tests {
         let original = house_spec(&mut fresh, &Want::Home, Kind::House, &mut b, false).unwrap();
         let pointer = reused.spare_extras.as_ptr();
         assert!(place(&mut reused, &mut Ground::new(&land), &mut a, &Want::Home, None,
-            Vec2::splat(1000.0), Facing::North, &[], &Occupied::new(rect), None).is_none());
+            Vec2::splat(1000.0), Facing::North, &Occupied::new(rect), &[], None).is_none());
         assert_eq!(reused.spare_extras.as_ptr(), pointer);
         assert_eq!(a.next_u64(), b.next_u64());
         drop(original);
