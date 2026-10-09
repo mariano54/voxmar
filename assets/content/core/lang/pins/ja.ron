@@ -368,4 +368,6 @@
     "skill.core.ranged.guide.9.how": ("Batteries power the crossbow; silver bolts for supernatural foes.", "電池でクロスボウを動かす。超自然の敵には銀のボルト。"),
     "command.core.machine.help": ("Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.", "ブロックにある機械の様子を伝えます (~ は今いる場所): 何を作っているか、動力、足りないもの。"),
     "command.core.machine.help.summary": ("Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.", "ブロックにある機械の様子を伝えます。"),
+    "recipes.cook.use": ("Select the ingredient in your hotbar, then right-click the station. Each item takes two seconds.", "材料をホットバーで選び、調理台を右クリック。1個につき2秒。"),
+    "item.stripped": ("A log with its bark removed. Ordinary logs also work for campfires.", "樹皮を剥いだ原木。焚き火には普通の原木も使える。"),
 }

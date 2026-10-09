@@ -133,7 +133,7 @@
     "quest.base.first_bronze": ("First Bronze", "初めての青銅"),
     "quest.base.first_bronze.why": ("Three copper to one tin, smelted in the kiln: the metal of the next age.", "銅三に錫一、窯で溶かす：次の時代の金属。"),
     "quest.base.first_night": ("First Night", "最初の夜"),
-    "quest.base.first_night.why": ("Night comes fast. Cooked food heals far more than raw, and a fire keeps the cold off.", "夜はすぐに来る。焼いた食べ物は生よりずっと回復し、火は寒さを防ぐ。"),
+    "quest.base.first_night.why": ("Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.", "2×2の製作枠で、原木か木材を2個並べ、その下に丸石を2個置いて焚き火を作ろう。樹皮を剥ぐ必要はない。焚き火を設置し、生のウサギ肉・生の鶏肉・卵のどれかをホットバーで選び、焚き火を右クリック。2秒待つと、調理済みの食べ物が持ち物に入る。焦げたらもう一度。調理すると生よりよく回復する。"),
     "quest.base.first_ore": ("Red Metal Underfoot", "足元の赤い金属"),
     "quest.base.first_ore.why": ("Copper is the first ore your stone pickaxe can take, and the start of every metal.", "銅は石のつるはしで掘れる最初の鉱石で、あらゆる金属の始まり。"),
     "quest.base.homestead_hearth": ("Homestead Hearth", "開拓の炉"),

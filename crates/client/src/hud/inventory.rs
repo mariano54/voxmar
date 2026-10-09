@@ -52,7 +52,12 @@ impl Plugin for InventoryPlugin {
                 ((toggle, fit_grid, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
-            .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
+            .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>, mut tips: Query<&mut Visibility, With<Tooltip>>| {
+                *gesture = Gesture::default();
+                for mut tip in &mut tips {
+                    *tip = Visibility::Hidden;
+                }
+            });
     }
 }
 
@@ -158,7 +163,7 @@ struct PointerStack;
 #[derive(Component)]
 struct Tooltip;
 #[derive(Component)]
-struct TooltipLines;
+pub(crate) struct TooltipLines;
 /// What the crafting grid makes: click to craft one onto the pointer, shift-click to craft
 /// as many as fit into the inventory.
 #[derive(Component)]
@@ -256,18 +261,20 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             spawn_legend(card, font);
         });
         super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);
-        // The held stack and the tooltip float above everything, at the pointer.
+        // The held stack belongs to the inventory; the tooltip also serves recipe and
+        // quest icons, so it must live outside this screen's visibility hierarchy.
         let pointer = Node { position_type: PositionType::Absolute, width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
         root.spawn((PointerStack, pointer, GlobalZIndex(3))).with_children(|cell| slot_contents(cell, font, CURSOR));
-        let tip = Node {
-            position_type: PositionType::Absolute,
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(PX),
-            padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
-            ..default()
-        };
-        root.spawn((Tooltip, TooltipLines, tip, Piece::Tooltip.image(), Visibility::Hidden, GlobalZIndex(4)));
     });
+    let tip = Node {
+        position_type: PositionType::Absolute,
+        flex_direction: FlexDirection::Column,
+        row_gap: Val::Px(PX),
+        max_width: Val::Px(180.0 * PX),
+        padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
+        ..default()
+    };
+    commands.spawn((Tooltip, TooltipLines, tip, Piece::Tooltip.image(), Visibility::Hidden, GlobalZIndex(10)));
 }
 
 /// A gesture's effect on the inventory.
@@ -728,6 +735,9 @@ fn details(locale: &Locale, def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
     if !uses.is_empty() {
         lines.push((uses.join(locale.get("language.dot")), SOFT));
     }
+    if def.has_tag("stripped") {
+        lines.push((locale.get("item.stripped").to_owned(), SOFT));
+    }
     let package = def.name.split(':').next().unwrap_or("");
     lines.push((if ids { def.name.clone() } else { package_name(locale, package) }, MUTED));
     lines
@@ -959,16 +969,23 @@ fn tooltip(
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
     mut japanese: Local<Option<Locale>>,
-    (viewer, forced, places): (Res<super::recipes::RecipeViewer>, Option<Res<HoverSlot>>, Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>),
+    (viewer, forced, places, viewer_items): (
+        Res<super::recipes::RecipeViewer>,
+        Option<Res<HoverSlot>>,
+        Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>,
+        Query<(&super::recipes::ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
+    ),
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
-    let pointed = hovered(&slots).or(forced.as_ref().map(|f| f.0)).filter(|_| ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none());
+    let browsing = ui.recipes_open || ui.quests_open;
+    let pointed = hovered(&slots).or(forced.as_ref().map(|f| f.0)).filter(|_| !browsing && ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none());
     // An empty worn slot says what goes in it.
     let empty_worn = pointed.filter(|slot| (WORN..=LAST).contains(slot) && player.inventory.get(*slot).is_none());
-    let item = pointed
+    let viewer_item = browsing.then(|| viewer_items.iter().find(|(_, cursor, visible)| visible.get() && cursor.cursor_over()).map(|(item, ..)| item.0)).flatten();
+    let item = viewer_item.or_else(|| pointed
         .and_then(|slot| player.inventory.get(slot))
         .map(|stack| stack.item)
-        .or(catalogue.hovered.filter(|_| ui.inventory_open && player.inventory.cursor.is_none()));
+        .or(catalogue.hovered.filter(|_| !browsing && ui.inventory_open && player.inventory.cursor.is_none())));
     let Some(item) = item else {
         *shown = None;
         let Some(slot) = empty_worn else {

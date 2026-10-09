@@ -34,3 +34,25 @@ fn every_recipe_in_the_base_content_expands_to_at_least_one() {
         assert!(content.recipes.iter().any(|r| r.output == id), "{tool} cannot be crafted");
     }
 }
+
+#[test]
+fn campfire_accepts_the_barked_wood_grid_from_survival_inventory() {
+    let content = Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap();
+    let id = |name: &str| content.blocks.id(&format!("base:{name}")).unwrap();
+    let grid = |wood: &str, stone: &str| {
+        let mut cells = [None; voxmar_engine::craft::GRID];
+        for (cell, item) in voxmar_engine::craft::SMALL.into_iter().zip([wood, wood, stone, stone]) {
+            cells[cell] = Some(id(item));
+        }
+        cells
+    };
+    for wood in ["oak_wood", "oak_log", "stripped_oak_log", "birch_wood", "spruce_log"] {
+        let recipe = content.recipes.find(&grid(wood, "cobblestone")).unwrap_or_else(|| panic!("{wood} cannot make a campfire"));
+        assert_eq!((recipe.output, recipe.count), (id("campfire"), 1));
+        assert!(!recipe.needs_table(), "a first-night fire needs no crafting table");
+    }
+    assert!(content.recipes.find(&grid("oak_planks", "cobblestone")).is_none(), "planks are not raw timber");
+    assert!(content.recipes.find(&grid("oak_wood", "stone")).is_none(), "the recipe still requires cobblestone");
+    let book = voxmar_engine::recipe_book::RecipeBook::new(&content);
+    assert!(book.using(id("oak_wood")).iter().any(|entry| entry.output == id("campfire")), "the recipe search must describe the same accepted wood as crafting");
+}

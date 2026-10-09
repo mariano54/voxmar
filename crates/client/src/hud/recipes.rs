@@ -394,6 +394,7 @@ fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, C
         Method::Cook { station, skill, level, burnt, .. } => {
             let station = content.blocks.tagged(station).next().map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
             let mut lines = vec![(locale.format("recipes.cook", &[("station", &station)]), MUTED)];
+            lines.push((locale.get("recipes.cook.use").to_owned(), SOFT));
             let skill = skill.map(|id| locale.skill(content.skills.get(id)));
             if let Some(skill) = skill {
                 lines.push((locale.format("recipes.level", &[("skill", &skill), ("level", level)]), SOFT));

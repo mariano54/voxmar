@@ -152,6 +152,7 @@ impl Plugin for GatePlugin {
 #[derive(Resource, Default)]
 struct UiClicks {
     next: Option<(Entity, MouseButton)>,
+    hover: Option<Entity>,
     active: Vec<Entity>,
     button: Option<MouseButton>,
 }
@@ -169,9 +170,11 @@ fn ui_clicks(world: &mut World) {
                 *interaction = Interaction::None;
             }
         }
-        let Some((entity, button)) = clicks.next.take() else { return };
-        world.resource_mut::<ButtonInput<MouseButton>>().press(button);
-        if button == MouseButton::Left
+        let Some((entity, button)) = clicks.next.take().map(|(entity, button)| (entity, Some(button))).or_else(|| clicks.hover.take().map(|entity| (entity, None))) else { return };
+        if let Some(button) = button {
+            world.resource_mut::<ButtonInput<MouseButton>>().press(button);
+        }
+        if button == Some(MouseButton::Left)
             && let Some(mut interaction) = world.get_mut::<Interaction>(entity)
         {
             *interaction = Interaction::Pressed;
@@ -186,7 +189,7 @@ fn ui_clicks(world: &mut World) {
             clicks.active.push(entity);
             over = world.get::<ChildOf>(entity).map(ChildOf::parent);
         }
-        clicks.button = Some(button);
+        clicks.button = button;
     });
 }
 
@@ -3179,6 +3182,40 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let crafted = made.iter().any(|m| m.starts_with("Craft") && m.contains(&format!("{log:?}")));
             if crafted || in_phase > 2.0 {
                 gate.check("recipes: click", if crafted { Ok(format!("planks show {} recipes, the log in the grid ({title} texts drawn)", made.len())) } else { Err(format!("planks show {made:?}")) });
+                if let Some(cell) = world.query::<(Entity, &crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).find(|(_, item, visible)| item.0 == log && visible.get()).map(|(entity, ..)| entity) {
+                    world.resource_mut::<UiState>().inventory_open = false;
+                    world.resource_mut::<UiClicks>().hover = Some(cell);
+                    gate.advance(now);
+                } else if in_phase > 2.0 {
+                    gate.check("recipes: ingredient tooltip", Err("the log has no visible recipe cell to hover".into()));
+                    gate.next(Step::LookUp, now);
+                }
+            }
+        }
+        3 => {
+            let name = world.resource::<Locale>().block(blocks.def(log));
+            let tooltip = world.query_filtered::<(Entity, &InheritedVisibility), With<crate::hud::inventory::TooltipLines>>().iter(world).find(|(_, visible)| visible.get()).map(|(entity, ..)| entity);
+            let named = tooltip.is_some_and(|tip| world.query::<(&Text, &ChildOf)>().iter(world).any(|(text, parent)| parent.parent() == tip && text.0 == name));
+            if named {
+                if gate.shot(world, "recipe-ingredient-tooltip").is_none() {
+                    if let Some(cell) = world.query::<(Entity, &crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).find(|(_, item, visible)| item.0 == log && visible.get()).map(|(entity, ..)| entity) {
+                        world.resource_mut::<UiClicks>().hover = Some(cell);
+                    }
+                    return;
+                }
+                gate.check("recipes: ingredient tooltip", Ok(format!("hovering the recipe ingredient draws {name} above the viewer with the inventory closed")));
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                gate.check("recipes: ingredient tooltip", Err(format!("hovering the recipe ingredient drew no visible {name} tooltip")));
+                gate.next(Step::LookUp, now);
+            } else if let Some(cell) = world.query::<(Entity, &crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).find(|(_, item, visible)| item.0 == log && visible.get()).map(|(entity, ..)| entity) {
+                world.resource_mut::<UiClicks>().hover = Some(cell);
+            }
+        }
+        4 => {
+            let hidden = world.query_filtered::<&Visibility, With<crate::hud::inventory::TooltipLines>>().iter(world).all(|visibility| *visibility == Visibility::Hidden);
+            if hidden || in_phase > 2.0 {
+                gate.check("recipes: tooltip leave", if hidden { Ok("the ingredient tooltip disappears when the pointer leaves".into()) } else { Err("the ingredient tooltip remains after leaving its cell".into()) });
                 world.resource_mut::<RecipeViewer>().trail.pop();
                 gate.advance(now);
             }
@@ -4112,6 +4149,8 @@ enum View {
     Journal(usize),
     /// The quest book on its first chapter, a quest still waiting picked.
     Quests,
+    /// First Night's full cooking instructions, in both languages.
+    FirstNight,
     /// The menu on one settings tab.
     Menu(usize),
     /// Dead, waiting to respawn.
@@ -4131,7 +4170,7 @@ enum View {
 
 /// What the text-fit tour looks up in the recipe viewer, and whether its uses: a crafted
 /// item, an ingredient, and a creature's product with a range of amounts.
-const FIT_LOOKUPS: [(&str, bool); 3] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false)];
+const FIT_LOOKUPS: [(&str, bool); 4] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false), ("base:cooked_rabbit", false)];
 
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
@@ -4146,10 +4185,10 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
+        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Recipes(3), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
-            .chain([View::Quests])
+            .chain([View::Quests, View::FirstNight])
             .chain((0..crate::settings::TABS).map(View::Menu))
             .collect()
     };
@@ -4229,7 +4268,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         Some(View::Character | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
         Some(View::Journal(_)) => ui.journal_open = true,
-        Some(View::Quests) => ui.quests_open = true,
+        Some(View::Quests | View::FirstNight) => ui.quests_open = true,
         Some(View::Console) => ui.console_open = true,
         Some(View::Recipes(_)) => (ui.inventory_open, ui.recipes_open) = (true, true),
         _ => {}
@@ -4248,6 +4287,9 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
             chapter.iter().find(|q| standing(content, player, q) == Standing::Waiting).or(chapter.first()).map(|q| q.name.clone())
         };
         *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked, ..default() };
+    }
+    if let Some(View::FirstNight) = view {
+        *world.resource_mut::<crate::hud::quests::QuestView>() = crate::hud::quests::QuestView { chapter: 0, picked: Some("base:first_night".into()), ..default() };
     }
     if let Some(View::Journal(page)) = view {
         world.resource_mut::<crate::hud::journal::JournalView>().page = page;

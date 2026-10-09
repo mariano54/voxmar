@@ -23,7 +23,7 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Night comes fast. Cooked food heals far more than raw, and a fire keeps the cold off.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Cook("any", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
