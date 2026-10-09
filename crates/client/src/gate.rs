@@ -5078,6 +5078,21 @@ struct FeelRun {
 }
 
 impl FeelRun {
+    /// Observe a pose edge only after a calm pose. Hurt can arrive before the server's
+    /// next Idle replication; consuming it invalidates the still-shown attack pose.
+    fn observe(&mut self, attacking: bool, received: bool) -> bool {
+        if !attacking {
+            self.calm = true;
+        } else if received {
+            self.calm = false;
+        } else if self.calm && self.seen.is_none() && !self.answered {
+            self.seen = Some(Instant::now());
+            self.calm = false;
+            return true;
+        }
+        false
+    }
+
     /// Queue a real input only while this observed wind-up remains unanswered by the
     /// server. A result already received cannot be defended by a next-frame input edge.
     fn answer(&mut self, world: &mut World, blocking: bool, dodge_key: KeyCode, received: bool) -> bool {
@@ -5203,11 +5218,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             // A wind-up is timed from its pose coming on: one still shown from the blow just
             // judged (its end not yet heard) is not a new one.
-            if view.pose != Pose::Attacking {
-                gate.feel.calm = true;
-            } else if ours.is_none() && gate.feel.calm && gate.feel.seen.is_none() && !gate.feel.answered {
-                gate.feel.seen = Some(Instant::now());
-                gate.feel.calm = false;
+            if gate.feel.observe(view.pose == Pose::Attacking, ours.is_some()) {
                 if !gate.feel.facing_checked {
                     let target = gate.observer.as_ref().and_then(|o| o.others.values().next().copied()).unwrap_or(world.resource::<LocalPlayer>().position);
                     let to = (target - view.position).with_y(0.0).normalize_or_zero();
@@ -7377,6 +7388,34 @@ mod tests {
                     assert!(!feel.answer(app.world_mut(), blocking, dodge, false), "an already queued response is sent once");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn a_consumed_attacks_stale_pose_cannot_rearm_a_native_response() {
+        for blocking in [false, true] {
+            let mut app = App::new();
+            app.add_plugins(bevy::input::InputPlugin);
+            let mut feel = FeelRun { calm: true, after: 0.0, ..default() };
+            let dodge = KeyCode::ShiftLeft;
+            // Hurt arrives while Attacking is still replicated, then that same pose
+            // survives two more input frames without another result.
+            for received in [true, false, false] {
+                let began = feel.observe(true, received);
+                let queued = feel.answer(app.world_mut(), blocking, dodge, received);
+                app.update();
+                assert!(!app.world().resource::<ButtonInput<KeyCode>>().just_pressed(dodge));
+                assert!(!app.world().resource::<ButtonInput<MouseButton>>().just_pressed(MouseButton::Right));
+                assert!(!began && !queued && feel.seen.is_none(), "a consumed attack cannot become a new wind-up");
+            }
+            assert!(!feel.observe(false, false), "Idle rearms the next pose edge");
+            app.update();
+            assert!(feel.seen.is_none());
+            assert!(feel.observe(true, false), "a fresh attack still begins a try");
+            assert!(feel.answer(app.world_mut(), blocking, dodge, false));
+            app.update();
+            assert_eq!(app.world().resource::<ButtonInput<KeyCode>>().just_pressed(dodge), !blocking);
+            assert_eq!(app.world().resource::<ButtonInput<MouseButton>>().just_pressed(MouseButton::Right), blocking);
         }
     }
 
