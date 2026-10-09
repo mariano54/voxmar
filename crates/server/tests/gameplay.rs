@@ -3029,34 +3029,94 @@ fn beside(client: &mut Client, name: &str) -> (u32, usize) {
     client.ok("/give iron_sword 1");
     client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == sword)));
     let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == sword)).unwrap();
+    client.drain();
+    let before: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
     client.ok(&format!("/summon {name} 1 ~ ~ ~"));
-    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
-    let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear && !before.contains(&v.id) && v.position.distance(c.position) <= 8.0));
+    let new: Vec<_> = client.creatures.values().filter(|v| v.species == bear && !before.contains(&v.id) && v.position.distance(client.position) <= 8.0).collect();
+    assert_eq!(new.len(), 1, "one newly summoned {name} beside us: {new:?}; prior ids {before:?}");
+    let id = new[0].id;
+    eprintln!("beside: summoned {name} id {id}, health {}, at {:?}, tick {}, prior ids {}", new[0].health, new[0].position, client.server_tick, before.len());
     (id, slot)
 }
 
+#[test]
+fn beside_selects_the_new_creature_when_one_is_already_in_view() {
+    let mut client = Client::join();
+    client.ok("/gamemode creative");
+    let (first, _) = beside_a_bear(&mut client);
+    client.ok("/creatures hold");
+    let (second, _) = beside_a_bear(&mut client);
+    assert_ne!(second, first, "the old bear must not stand in for the new summon");
+    assert!(client.creatures.contains_key(&first), "the collision was with a real prior bear");
+    assert!(client.creatures.contains_key(&second), "the new summoned bear was actually replicated");
+}
+
 /// Faces creature `id` holding `slot` and provokes it, a blow every three server seconds
-/// while it does not fight back, until it is seen to begin a wind-up: its attack pose
+/// only while it does not fight back, until it is seen to begin a wind-up: its attack pose
 /// coming on, not one still shown from the blow before (its end not yet heard). Returns
 /// how many of its blows had come before, for the next to be waited past.
 fn provoke_until_it_winds_up(client: &mut Client, id: u32, slot: usize, name: &str) -> usize {
+    provoke_until(client, id, slot, name, |c| c.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking))
+}
+
+/// `noticed` lets the regression below miss attack poses deliberately, as a delayed
+/// observer can, while still applying every real server reply.
+fn provoke_until(client: &mut Client, id: u32, slot: usize, name: &str, noticed: impl Fn(&Client) -> bool) -> usize {
     let attacking = |c: &Client| c.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking);
     client.pump_until(|c| !attacking(c));
     let before = client.hurt.len();
-    let mut poked = None;
+    // A bear that already answered us needs time to begin its next blow, not another
+    // sword hit on every call. A returned blow also renews that wait below: missing its
+    // short attacking pose must not turn an active fight into repeated damaging pokes.
+    let mut poked = client.hurt_by.iter().any(|&(by, _)| by == id).then_some(client.server_tick);
+    let mut heard = before;
+    let mut last_health = client.creatures.get(&id).map(|v| v.health);
+    eprintln!("provoke: {name} id {id}, health {last_health:?}, tick {}, player damage {:?}, creature blows {before}, deaths {}", client.server_tick, client.damage, client.deaths);
     loop {
-        assert!(client.creatures.contains_key(&id), "the {name} went");
+        assert!(client.creatures.contains_key(&id), "the {name} id {id} went (last health {last_health:?}, tick {}, {} player blows, damage {:?}, {} creature blows, {} deaths)", client.server_tick, client.blows, client.damage, client.hurt.len(), client.deaths);
+        last_health = Some(client.creatures[&id].health);
+        if client.hurt_by[heard..].iter().any(|&(by, _)| by == id) {
+            poked = Some(client.server_tick);
+        }
+        heard = client.hurt.len();
         face(client, id, slot, false);
         if poked.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64) {
+            eprintln!("provoke: strike {name} id {id}, health {last_health:?}, tick {}, damage {:?}, creature blows {}", client.server_tick, client.damage, client.hurt.len());
             client.propose("core:attack", ActionTarget::Creature(id));
             poked = Some(client.server_tick);
         }
         let asked = client.server_tick;
-        client.pump_until(|c| attacking(c) || !c.creatures.contains_key(&id) || c.server_tick >= asked + 4);
-        if attacking(client) {
-            return before;
+        client.pump_until(|c| noticed(c) || !c.creatures.contains_key(&id) || c.server_tick >= asked + 4);
+        if noticed(client) {
+            // Blows whose poses were missed belong to the wait, not this new wind-up.
+            return client.hurt.len();
         }
     }
+}
+
+#[test]
+fn a_windup_wait_does_not_strike_a_creature_that_is_already_fighting() {
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    client.ok("/skill hitpoints 60");
+    client.pump_until(|c| c.health >= 100);
+    let (id, slot) = beside_a_bear(&mut client);
+    let before = provoke_until_it_winds_up(&mut client, id, slot, "bear");
+    client.pump_until(|c| c.hurt.len() > before);
+    client.drain();
+    let (blows, health, heard) = (client.blows, client.creatures[&id].health, client.hurt.len());
+    // Deliberately ignore five complete wind-ups while their real Hurt replies arrive.
+    // They prove that the bear is still fighting, even without its short pose being seen.
+    let next = provoke_until(&mut client, id, slot, "bear", |c| {
+        c.hurt_by[heard..].iter().filter(|&&(by, _)| by == id).count() >= 5
+            && c.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking)
+    });
+    assert!(next >= heard + 5, "the missed blows really arrived");
+    assert_eq!(client.blows, blows, "an active fight needed no more provoking blows");
+    assert_eq!(client.creatures[&id].health, health, "waiting did not damage the bear");
+    client.pump_until(|c| c.hurt.len() > next);
+    assert_eq!(client.hurt_by[next].0, id, "the new wind-up really struck");
 }
 
 /// Stands `client` 1.2 blocks from creature `id`, facing it, holding `slot`.
