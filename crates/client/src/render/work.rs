@@ -37,6 +37,7 @@ pub(super) struct Counts {
     pub column_groups: u64,
     pub views: u64,
     pub reused: u64,
+    pub reused_after_unrelated_changes: u64,
     pub rebuilt: u64,
     pub copies: u64,
     pub batches: u64,
@@ -69,7 +70,7 @@ impl Profile {
             previous.calls += sample.calls;
             macro_rules! add { ($($field:ident),*) => { $(previous.counts.$field += sample.counts.$field;)* }; }
             add!(submitted,done_before,done_after,polls,pending_before,pending_after,received,scanned,applied,deferred,
-                behind,near_past_budget,finishing_past_budget,quads,blades,payload_bytes,column_groups,views,reused,
+                behind,near_past_budget,finishing_past_budget,quads,blades,payload_bytes,column_groups,views,reused,reused_after_unrelated_changes,
                 rebuilt,copies,batches,indices,buffers_grown,dispatches,original_writes,original_bytes,unique_dirty_words);
         } else { self.parts[part as usize] = Some(sample); }
     }
@@ -87,7 +88,7 @@ impl Profile {
                         "scanned":c.scanned,"applied":c.applied,"deferred":c.deferred,"behind":c.behind,
                         "near_past_budget":c.near_past_budget,"finishing_past_budget":c.finishing_past_budget,
                         "quads":c.quads,"blades":c.blades,"input_bytes":c.payload_bytes,"column_groups_begun":c.column_groups}),
-                    2 => json!({"views":c.views,"reused":c.reused,"rebuilt":c.rebuilt,"copies":c.copies,"batches":c.batches,
+                    2 => json!({"views":c.views,"reused":c.reused,"reused_after_unrelated_changes":c.reused_after_unrelated_changes,"rebuilt":c.rebuilt,"copies":c.copies,"batches":c.batches,
                         "indices":c.indices,"dispatches":c.dispatches,"written_bytes":c.payload_bytes}),
                     3 => json!({"written_bytes":c.payload_bytes,"pages_added":c.buffers_grown,"writes":c.dispatches}),
                     4 | 9 => json!({"buffer_bytes_created":c.payload_bytes,"buffers_created":c.buffers_grown}),
