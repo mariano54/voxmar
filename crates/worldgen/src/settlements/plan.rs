@@ -539,6 +539,7 @@ fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 /// they are placed.
 /// In the square a new player spawns in (`spawn`), only spots within the promised reach of
 /// them are looked at, their climate rules none out, and several are kept, best first.
+#[cfg(test)]
 pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, bool)> {
     site_with_water(ctx, cell, spawn, &mut crate::water::Freshwater::default())
 }
