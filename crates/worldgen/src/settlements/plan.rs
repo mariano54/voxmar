@@ -44,7 +44,7 @@ pub(super) fn with_original_rows<T>(f: impl FnOnce() -> T) -> T {
         fn drop(&mut self) { ORIGINAL_ROWS.with(|flag| flag.set(self.0)); }
     }
     let _restore = Restore(ORIGINAL_ROWS.with(|flag| flag.replace(true)));
-    f()
+    crate::water::with_original_batches(f)
 }
 
 /// Optional CPU measurements, only while the isolated, serial release budget replans
