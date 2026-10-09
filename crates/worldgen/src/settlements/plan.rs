@@ -154,6 +154,21 @@ fn solid(g: &GeoSample) -> bool {
 
 const GROUND_SAMPLE_LIMIT: usize = 32_768;
 
+/// The original terrain facts leveling reads; full samples stay in Ground's cache.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LevelSample {
+    height: i32,
+    river: f32,
+    submerged: bool,
+    solid: bool,
+}
+
+impl LevelSample {
+    fn of(g: &GeoSample) -> Self {
+        Self { height: g.height, river: g.river, submerged: g.submerged(), solid: solid(g) }
+    }
+}
+
 /// The ground, sampled once per position.
 struct Ground<'a> {
     land: &'a dyn Land,
@@ -207,6 +222,7 @@ impl Ground<'_> {
 
     /// Group only missing original samples for the next bounded portion of a row.
     /// Lookahead may outlive an earlier rejected point; every read stays in the timer.
+    #[cfg(test)]
     fn prefetch(&mut self, first: IVec2, count: usize) {
         assert!(count <= crate::water::SAMPLE_BATCH);
         let mut points = [IVec2::ZERO; crate::water::SAMPLE_BATCH];
@@ -242,7 +258,7 @@ impl Ground<'_> {
 
     /// Consecutive row-major positions are distinct. Keep their actual warm or new
     /// samples in order, so consuming this bounded batch needs no cache readback.
-    fn prefetch_unique(&mut self, points: &[IVec2]) -> [Option<GeoSample>; crate::water::SAMPLE_BATCH] {
+    fn prefetch_unique(&mut self, points: &[IVec2]) -> [Option<LevelSample>; crate::water::SAMPLE_BATCH] {
         assert!(points.len() <= crate::water::SAMPLE_BATCH);
         self.reserve(points.len());
         let mut values = [None; crate::water::SAMPLE_BATCH];
@@ -252,8 +268,8 @@ impl Ground<'_> {
         for (i, &p) in points.iter().enumerate() {
             #[cfg(test)]
             { self.cache_reads += 1; }
-            if let Some(g) = self.seen.get(&p).copied() {
-                values[i] = Some(g);
+            if let Some(g) = self.seen.get(&p) {
+                values[i] = Some(LevelSample::of(g));
             } else {
                 missing[count] = (p.x, p.y);
                 indices[count] = i;
@@ -268,7 +284,7 @@ impl Ground<'_> {
             let p = IVec2::new(x, z);
             self.dry_water.remove(&p);
             self.seen.insert(p, g);
-            values[i] = Some(g);
+            values[i] = Some(LevelSample::of(&g));
         }
         values
     }
@@ -2620,49 +2636,64 @@ fn place(
 fn level(ground: &mut Ground, rect: &Rect, bank: i32, step: i32) -> Option<(i32, i32)> {
     #[cfg(test)]
     { ground.levels += 1; }
+    #[cfg(test)]
+    if ORIGINAL_ROWS.with(|flag| flag.get()) { return level_original(ground, rect, bank, step); }
     let outer = rect.grow(bank);
     let (mut lowest, mut highest) = (i32::MAX, i32::MIN);
     let step = step.max(1);
     let sampled = |v: i32, lo: i32, hi: i32| (v - lo) % step == 0 || v == hi;
-    #[cfg(test)]
-    let original_rows = ORIGINAL_ROWS.with(|flag| flag.get());
-    #[cfg(not(test))]
-    let original_rows = false;
     let mut left = 0;
     let mut values = [None; crate::water::SAMPLE_BATCH];
     let mut consumed = 0;
     for z in outer.min.y..=outer.max.y {
         for x in outer.min.x..=outer.max.x {
-            if original_rows {
-                if (x - outer.min.x) % crate::water::SAMPLE_BATCH as i32 == 0 {
-                    ground.prefetch(IVec2::new(x, z), (outer.max.x - x + 1).min(crate::water::SAMPLE_BATCH as i32) as usize);
+            if left == 0 {
+                let mut points = [IVec2::ZERO; crate::water::SAMPLE_BATCH];
+                let mut next = IVec2::new(x, z);
+                for point in &mut points {
+                    *point = next;
+                    left += 1;
+                    if next.x < outer.max.x { next.x += 1; }
+                    else if next.y < outer.max.y { next = IVec2::new(outer.min.x, next.y + 1); }
+                    else { break; }
                 }
-            } else {
-                if left == 0 {
-                    let mut points = [IVec2::ZERO; crate::water::SAMPLE_BATCH];
-                    let mut next = IVec2::new(x, z);
-                    for point in &mut points {
-                        *point = next;
-                        left += 1;
-                        if next.x < outer.max.x { next.x += 1; }
-                        else if next.y < outer.max.y { next = IVec2::new(outer.min.x, next.y + 1); }
-                        else { break; }
-                    }
-                    values = ground.prefetch_unique(&points[..left]);
-                    consumed = 0;
+                values = ground.prefetch_unique(&points[..left]);
+                consumed = 0;
+            }
+            left -= 1;
+            let p = IVec2::new(x, z);
+            #[cfg(test)]
+            { ground.queries += 1; }
+            let g = values[consumed].expect("prefetched terrain facts");
+            consumed += 1;
+            if g.submerged { return None; }
+            if rect.holds(p) {
+                if g.river >= 0.5 { return None; }
+                if sampled(x, outer.min.x, outer.max.x) && sampled(z, outer.min.y, outer.max.y) {
+                    if !g.solid { return None; }
+                    lowest = lowest.min(g.height);
+                    highest = highest.max(g.height);
                 }
-                left -= 1;
+            }
+        }
+    }
+    (lowest <= highest).then_some((lowest, highest))
+}
+
+/// Literal original leveling loop, independent of the compact terrain projection.
+#[cfg(test)]
+fn level_original(ground: &mut Ground, rect: &Rect, bank: i32, step: i32) -> Option<(i32, i32)> {
+    let outer = rect.grow(bank);
+    let (mut lowest, mut highest) = (i32::MAX, i32::MIN);
+    let step = step.max(1);
+    let sampled = |v: i32, lo: i32, hi: i32| (v - lo) % step == 0 || v == hi;
+    for z in outer.min.y..=outer.max.y {
+        for x in outer.min.x..=outer.max.x {
+            if (x - outer.min.x) % crate::water::SAMPLE_BATCH as i32 == 0 {
+                ground.prefetch(IVec2::new(x, z), (outer.max.x - x + 1).min(crate::water::SAMPLE_BATCH as i32) as usize);
             }
             let p = IVec2::new(x, z);
-            let g = if original_rows {
-                ground.at(p)
-            } else {
-                #[cfg(test)]
-                { ground.queries += 1; }
-                let g = values[consumed].expect("prefetched terrain sample");
-                consumed += 1;
-                g
-            };
+            let g = ground.at(p);
             if g.submerged() {
                 return None;
             }
@@ -2913,7 +2944,82 @@ mod level_tests {
     use crate::water::Body;
 
     #[test]
+    fn terrain_batches_keep_mixed_level_facts_and_original_predicates() {
+        struct Mixed(Vec<(IVec2, GeoSample)>);
+        impl Land for Mixed {
+            fn sample(&self, x: i32, z: i32) -> GeoSample {
+                self.0.iter().find(|(p, _)| *p == IVec2::new(x, z))
+                    .map(|(_, g)| *g).unwrap_or_else(|| Creek(None, None).sample(x, z))
+            }
+        }
+        let dry = Creek(None, None).sample(0, 0);
+        let shape = GeoSample { form: crate::geology::Form { shape: Some(crate::ShapeId(0)), ..dry.form }, ..dry };
+        let cavity = GeoSample { cavity: Some(crate::water::Cavity { floor: 130, ceiling: 139 }), ..dry };
+        let below = GeoSample { river: 0.5f32.next_down(), ..dry };
+        let equal = GeoSample { river: 0.5, ..dry };
+        let above = GeoSample { river: 0.5f32.next_up(), ..dry };
+        let nan = GeoSample { river: f32::from_bits(0x7fc0_0123), ..dry };
+        let wet = GeoSample { water: dry.height + 1, ..dry };
+        let samples = [dry, shape, cavity, below, equal, above, nan, wet];
+        let points: Vec<_> = (0..samples.len()).map(|i| IVec2::new(i as i32, -17)).collect();
+        let land = Mixed(points.iter().copied().zip(samples).collect());
+        for warm in [0, 2, samples.len()] {
+            let mut ground = Ground::new(&land);
+            for (&p, &g) in points.iter().zip(&samples).take(warm) { ground.seen.insert(p, g); }
+            let values = ground.prefetch_unique(&points);
+            for (i, g) in samples.iter().enumerate() {
+                let v = values[i].expect("actual sample in every supplied slot");
+                assert_eq!((v.height, v.river.to_bits(), v.submerged, v.solid),
+                    (g.height, g.river.to_bits(), g.water > g.height, g.form.shape.is_none() && g.cavity.is_none()));
+            }
+            assert!(values[points.len()..].iter().all(Option::is_none));
+            assert_eq!(ground.prefetched, samples.len() - warm);
+        }
+
+        let rect = Rect::new(IVec2::ZERO, IVec2::splat(5));
+        let bank = IVec2::new(-1, 0);
+        let unsampled = IVec2::ZERO;
+        let sampled = IVec2::ONE;
+        for (p, g, accepted) in [
+            (bank, GeoSample { river: above.river, ..shape }, true),
+            (bank, GeoSample { river: above.river, ..cavity }, true),
+            (unsampled, GeoSample { height: 9999, water: 9999, ..shape }, true),
+            (unsampled, cavity, true),
+            (sampled, shape, false),
+            (sampled, cavity, false),
+            (sampled, below, true),
+            (unsampled, equal, false),
+            (unsampled, above, false),
+            (sampled, nan, true),
+            (bank, dry, true),
+            (bank, wet, false),
+            (unsampled, wet, false),
+        ] {
+            let land = Mixed(vec![(p, g)]);
+            let outer = rect.grow(1);
+            let points: Vec<_> = (outer.min.y..=outer.max.y).flat_map(|z|
+                (outer.min.x..=outer.max.x).map(move |x| IVec2::new(x, z))).collect();
+            for warm in [0, points.len() / 2, points.len()] {
+                let (mut original, mut compact) = (Ground::new(&land), Ground::new(&land));
+                for &p in points.iter().take(warm) {
+                    let g = land.sample(p.x, p.y);
+                    original.seen.insert(p, g);
+                    compact.seen.insert(p, g);
+                }
+                let expected = with_original_rows(|| level(&mut original, &rect, 1, 2));
+                assert_eq!(expected, accepted.then_some((140, 140)), "literal original fixture at {p:?}");
+                assert_eq!(level(&mut compact, &rect, 1, 2), expected);
+                assert_eq!(compact.queries, original.queries, "same first rejection at {p:?}");
+                assert_eq!((compact.levels, original.levels), (1, 1));
+            }
+        }
+    }
+
+    #[test]
     fn terrain_batches_keep_original_leveling_and_reduce_calls() {
+        let (compact, full) = (std::mem::size_of::<[Option<LevelSample>; 32]>(), std::mem::size_of::<[Option<GeoSample>; 32]>());
+        assert!(compact < full, "the returned batch holds only leveling's actual facts");
+        println!("level value buffers: {compact} compact bytes versus {full} full-sample bytes");
         struct Batches {
             creek: Creek,
             calls: std::sync::Mutex<Vec<Vec<(i32, i32)>>>,
@@ -2977,7 +3083,8 @@ mod level_tests {
         assert_eq!(warm.prefetched, missing.len());
         assert!(!warm.dry_water.contains(&points[2]), "a full sample replaces its dry witness");
         for (i, &p) in points.iter().enumerate() {
-            assert_eq!(values[i], Some(land.sample(p.x, p.y)), "scatter cold and warm values into original slots");
+            let g = land.sample(p.x, p.y);
+            assert_eq!(values[i], Some(LevelSample { height: g.height, river: g.river, submerged: g.submerged(), solid: g.form.shape.is_none() && g.cavity.is_none() }), "scatter cold and warm facts into original slots");
             assert_eq!(warm.at(p), land.sample(p.x, p.y));
         }
         assert!(values[points.len()..].iter().all(Option::is_none));
@@ -3000,7 +3107,8 @@ mod level_tests {
         assert_eq!(pressured.seen.len(), points.len());
         assert!(pressured.dry_water.is_empty());
         for (i, &p) in points.iter().enumerate() {
-            assert_eq!(values[i], Some(land.sample(p.x, p.y)), "clearing precedes copying any warm value");
+            let g = land.sample(p.x, p.y);
+            assert_eq!(values[i], Some(LevelSample { height: g.height, river: g.river, submerged: g.submerged(), solid: g.form.shape.is_none() && g.cavity.is_none() }), "clearing precedes copying any warm fact");
             assert_eq!(pressured.at(p), land.sample(p.x, p.y));
         }
         assert!(values[points.len()..].iter().all(Option::is_none));
@@ -3013,7 +3121,10 @@ mod level_tests {
         assert_eq!(all_warm.clears, 1, "even a fully warm batch reserves before any lookup");
         assert_eq!(all_warm.prefetched, points.len());
         assert_eq!(*land.calls.lock().unwrap(), vec![points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>()]);
-        for (i, &p) in points.iter().enumerate() { assert_eq!(values[i], Some(land.sample(p.x, p.y))); }
+        for (i, &p) in points.iter().enumerate() {
+            let g = land.sample(p.x, p.y);
+            assert_eq!(values[i], Some(LevelSample { height: g.height, river: g.river, submerged: g.submerged(), solid: g.form.shape.is_none() && g.cavity.is_none() }));
+        }
         assert!(values[points.len()..].iter().all(Option::is_none));
     }
 
