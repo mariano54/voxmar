@@ -58,18 +58,28 @@ pub(super) struct Compaction {
     buffers: Option<ViewBuffers>,
     /// Whether this frame's copies were dispatched, so the gathered indices can be drawn.
     pub ready: bool,
-    /// The copies last dispatched, and the terrain's revision then: when nothing changed,
-    /// last frame's gathered indices are still right and the copy is skipped.
-    last: (Vec<Copy>, Vec<Batch>, u64),
+    /// The copies and source pages last dispatched. Uploads to other pages cannot change
+    /// these indices; a write to any source page or a world clear still invalidates them.
+    last: LastDispatch,
+}
+
+#[derive(Default)]
+struct LastDispatch {
+    copies: Vec<Copy>,
+    batches: Vec<Batch>,
+    pages: Vec<Option<u64>>,
+    generation: u32,
+    /// Retained only to count reuse that the old whole-terrain check would reject.
+    revision: u64,
 }
 
 impl Compaction {
     pub fn clear(&mut self) {
         if self.ready {
-            self.last.0.clear();
-            self.last.1.clear();
-            std::mem::swap(&mut self.copies, &mut self.last.0);
-            std::mem::swap(&mut self.batches, &mut self.last.1);
+            self.last.copies.clear();
+            self.last.batches.clear();
+            std::mem::swap(&mut self.copies, &mut self.last.copies);
+            std::mem::swap(&mut self.batches, &mut self.last.batches);
         }
         self.copies.clear();
         self.batches.clear();
@@ -101,6 +111,23 @@ impl Compaction {
             self.batches.push(Batch { stream: stream as u8, page, copies });
         }
         start..self.len
+    }
+
+    fn unchanged(&self, generation: u32, page_revision: impl Fn(&Batch) -> Option<u64>) -> bool {
+        self.last.generation == generation
+            && self.last.batches == self.batches
+            && self.last.pages.len() == self.batches.len()
+            && self.batches.iter().zip(&self.last.pages).all(|(batch, previous)| {
+                page_revision(batch).is_some_and(|current| Some(current) == *previous)
+            })
+            && self.last.copies == self.copies
+    }
+
+    fn remember_pages(&mut self, generation: u32, revision: u64, page_revision: impl Fn(&Batch) -> Option<u64>) {
+        self.last.pages.clear();
+        self.last.pages.extend(self.batches.iter().map(page_revision));
+        self.last.generation = generation;
+        self.last.revision = revision;
     }
 
     /// The buffer the gathered indices are in.
@@ -174,16 +201,20 @@ pub(super) fn dispatch(
             if compaction.batches.is_empty() {
                 continue;
             }
-            let unchanged = compaction.buffers.is_some()
-                && compaction.last.2 == gpu.revision
-                && compaction.last.0 == compaction.copies
-                && compaction.last.1 == compaction.batches;
+            let page_revision = |batch: &Batch| {
+                gpu.streams.get(batch.stream as usize).and_then(|pool| pool.pages.get(batch.page as usize)).map(|page| page.revision)
+            };
+            let unchanged = compaction.buffers.is_some() && compaction.unchanged(gpu.generation, page_revision);
             if unchanged {
-                if let Some(profile) = &mut profile { profile.counts.reused += 1; }
+                if let Some(profile) = &mut profile {
+                    profile.counts.reused += 1;
+                    profile.counts.reused_after_unrelated_changes += u64::from(compaction.last.revision != gpu.revision);
+                }
+                compaction.last.revision = gpu.revision;
                 compaction.ready = true;
                 continue;
             }
-            compaction.last.2 = gpu.revision;
+            compaction.remember_pages(gpu.generation, gpu.revision, page_revision);
             if let Some(profile) = &mut profile {
                 profile.counts.rebuilt += 1;
                 profile.counts.copies += compaction.copies.len() as u64;
@@ -291,4 +322,64 @@ fn ensure_buffers<'a>(
         generation: old.map_or(0, |b| b.generation),
     });
     buffers.as_mut().expect("just made")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gather(compaction: &mut Compaction) {
+        compaction.gather(0, 1, [0..16], 6);
+        compaction.gather(6, 2, [32..64], 6);
+    }
+
+    fn dispatched(compaction: &mut Compaction, generation: u32, revisions: &FxHashMap<(u8, u32), u64>) {
+        compaction.remember_pages(generation, 10, |batch| revisions.get(&(batch.stream, batch.page)).copied());
+        compaction.ready = true;
+        compaction.clear();
+        gather(compaction);
+    }
+
+    #[test]
+    fn unrelated_page_writes_reuse_but_each_source_page_write_invalidates() {
+        let mut compaction = Compaction::default();
+        gather(&mut compaction);
+        let mut revisions = FxHashMap::from_iter([((0, 1), 3), ((6, 2), 7), ((0, 9), 11)]);
+        dispatched(&mut compaction, 4, &revisions);
+        let unchanged = |compaction: &Compaction, revisions: &FxHashMap<(u8, u32), u64>| {
+            compaction.unchanged(4, |batch| revisions.get(&(batch.stream, batch.page)).copied())
+        };
+        assert!(unchanged(&compaction, &revisions));
+        revisions.insert((0, 9), 12);
+        assert!(unchanged(&compaction, &revisions), "another page changes none of this view's indices");
+        for key in [(0, 1), (6, 2)] {
+            let previous = revisions[&key];
+            revisions.insert(key, previous + 1);
+            assert!(!unchanged(&compaction, &revisions), "same-sized vertex replacement can change quad diagonals");
+            revisions.insert(key, previous);
+            assert!(unchanged(&compaction, &revisions));
+        }
+        // A further reuse swaps the vectors again and must preserve the source stamps.
+        compaction.ready = true;
+        compaction.clear();
+        gather(&mut compaction);
+        assert!(unchanged(&compaction, &revisions));
+    }
+
+    #[test]
+    fn world_clear_missing_page_and_changed_copies_cannot_reuse_indices() {
+        let mut compaction = Compaction::default();
+        gather(&mut compaction);
+        let revisions = FxHashMap::from_iter([((0, 1), 3), ((6, 2), 7)]);
+        dispatched(&mut compaction, 4, &revisions);
+        let revision = |batch: &Batch| revisions.get(&(batch.stream, batch.page)).copied();
+        assert!(compaction.unchanged(4, revision));
+        assert!(!compaction.unchanged(5, revision), "new world pages may repeat old revision numbers");
+        assert!(!compaction.unchanged(4, |batch| if batch.stream == 6 { None } else { revision(batch) }));
+        compaction.copies[0].first_vertex += 4;
+        assert!(!compaction.unchanged(4, revision));
+        compaction.copies[0].first_vertex -= 4;
+        compaction.batches[0].stream = 1;
+        assert!(!compaction.unchanged(4, revision));
+    }
 }

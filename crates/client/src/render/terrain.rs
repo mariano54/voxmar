@@ -337,6 +337,8 @@ impl RangeAllocator {
 
 struct Page {
     vertex_buffer: Buffer,
+    /// Changes to vertex data, whose ambient occlusion decides the copied indices.
+    revision: u64,
     vertices: RangeAllocator,
     /// Distant tile pages only: the tiles' indices. Chunk pages keep none, since a
     /// chunk's quads say how to split themselves into triangles (see `compact`).
@@ -359,7 +361,7 @@ struct ChunkPage {
 /// this frame. Fixed 256-byte regions avoid copying a whole page between sparse updates.
 struct ChunkOwners {
     words: Vec<u32>,
-    /// One bit per word, grouped by upload region; also counts distinct changed words.
+    /// One bit per assigned word, including same-value writes, grouped by upload region.
     dirty: Vec<u64>,
     changed: bool,
     original_writes: u64,
@@ -475,6 +477,7 @@ impl PagePool {
             profile.counts.dispatches += 1;
         }
         queue.write_buffer(&target.vertex_buffer, vertex_range.start as u64 * self.vertex_size, bytemuck::cast_slice(vertices));
+        target.revision += 1;
         if let (Some(chunks), Some(owner)) = (&mut target.chunks, owner) {
             let first = (vertex_range.start / VERTEX_BLOCK) as usize;
             chunks.owners.assign(first..first + (reserved / VERTEX_BLOCK) as usize, owner.slot);
@@ -551,6 +554,7 @@ impl PagePool {
         let usage = if self.chunk_pages { BufferUsages::VERTEX | BufferUsages::STORAGE } else { BufferUsages::VERTEX };
         Page {
             vertex_buffer: buffer("vertices", self.page_vertices as u64 * self.vertex_size, usage),
+            revision: 0,
             vertices: RangeAllocator::new(self.page_vertices),
             indices,
             chunks,
