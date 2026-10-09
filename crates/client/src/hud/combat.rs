@@ -37,7 +37,12 @@ impl Plugin for CombatHudPlugin {
         app.init_resource::<SplatsShown>()
             .add_systems(PostStartup, spawn)
             .add_systems(Update, (meter, flash).run_if(in_state(Screen::InGame)))
-            .add_systems(PostUpdate, splats.after(TransformSystems::Propagate).run_if(in_state(Screen::InGame)))
+            .add_systems(PostUpdate, splats
+                .after(TransformSystems::Propagate)
+                .after(bevy::camera::CameraUpdateSystems)
+                .before(bevy::ui::UiSystems::Layout)
+                .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
+                .run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), hide);
     }
 }
@@ -122,6 +127,9 @@ pub struct FlashStyle {
 #[serde(deny_unknown_fields)]
 pub struct SplatStyle {
     pub seconds: f32,
+    /// Least continuous visible time over a fallen body; zero keeps the normal lifetime.
+    #[serde(default)]
+    pub fallen_seconds: f32,
     pub rise: f32,
     pub fade: f32,
     pub gap: f32,
@@ -196,7 +204,7 @@ impl CombatStyle {
                 return Err(format!("{FILE}: {name} must be more than 0 and finite, not {value}"));
             }
         }
-        let some = [("meter.below", meter.below), ("meter.linger", meter.linger), ("pips.gap", pips.gap), ("splats.rise", splats.rise), ("splats.gap", splats.gap), ("splats.hurt_above", splats.hurt_above)];
+        let some = [("meter.below", meter.below), ("meter.linger", meter.linger), ("pips.gap", pips.gap), ("splats.fallen_seconds", splats.fallen_seconds), ("splats.rise", splats.rise), ("splats.gap", splats.gap), ("splats.hurt_above", splats.hurt_above)];
         for (name, value) in some {
             if !(value >= 0.0 && value.is_finite()) {
                 return Err(format!("{FILE}: {name} may not be less than 0 or infinite ({value})"));
@@ -303,22 +311,60 @@ pub struct HitSplat {
     size: f32,
     /// The middle of the creature's body, kept once the body is gone.
     anchor: Option<Vec3>,
-    /// When it was first drawn over a body falling or gone (game seconds).
-    fallen_since: Option<f64>,
+    /// First and most recent continuous draws over a fallen body (game seconds).
+    fallen_draws: Option<(f64, f64)>,
+}
+
+#[derive(Debug, PartialEq)]
+enum SplatFrame {
+    Gone,
+    Hidden,
+    Draw { age: f32, over_fallen: f32 },
 }
 
 impl HitSplat {
-    /// Continuous game time drawn over a fallen body. A hidden splat starts again when
-    /// it becomes visible, so time hidden by a menu cannot satisfy the gate.
-    fn over_fallen(&mut self, now: f64, drawn: bool) -> f32 {
-        if drawn {
-            let since = *self.fallen_since.get_or_insert(now);
-            (now - since) as f32
+    fn age(&self, now: f64, style: &SplatStyle, fallen: bool) -> f32 {
+        let age = ((now - self.at) as f32 / style.seconds).max(0.0);
+        if fallen && style.fallen_seconds > 0.0
+            && self.fallen_draws.is_none_or(|(first, last)| last - first < style.fallen_seconds as f64)
+        {
+            // Keep a readable, bounded rise and positive opacity while the hold is open.
+            age.min(style.fade)
         } else {
-            self.fallen_since = None;
-            0.0
+            age
         }
     }
+
+    /// Decide lifetime after drawable eligibility. Hidden time resets continuity; a
+    /// slow frame that completes the hold is drawn before expiry on the next update.
+    fn frame(&mut self, now: f64, style: &SplatStyle, drawable: bool, fallen: bool) -> SplatFrame {
+        let expired = now - self.at >= style.seconds as f64;
+        let holding = drawable && fallen && self.fallen_draws.is_some_and(|(first, last)| last - first < style.fallen_seconds as f64);
+        if expired && !holding {
+            return SplatFrame::Gone;
+        }
+        if !drawable {
+            self.fallen_draws = None;
+            return SplatFrame::Hidden;
+        }
+        let age = self.age(now, style, fallen);
+        let over_fallen = if fallen {
+            let (first, last) = self.fallen_draws.get_or_insert((now, now));
+            *last = now;
+            (now - *first) as f32
+        } else {
+            self.fallen_draws = None;
+            0.0
+        };
+        SplatFrame::Draw { age, over_fallen }
+    }
+}
+
+/// The mark is centred horizontally and stands above its anchor by its laid-out height.
+fn splat_in_view(at: Vec2, laid: Vec2, viewport: Vec2) -> bool {
+    laid.x > 0.0 && laid.y > 0.0
+        && at.x + laid.x * 0.5 > 0.0 && at.x - laid.x * 0.5 < viewport.x
+        && at.y > 0.0 && at.y - laid.y < viewport.y
 }
 
 /// A splat's words, in its kind's colour (whole, before it fades).
@@ -524,7 +570,7 @@ fn splats(
         let centred = UiTransform::from_translation(Val2::percent(-50.0, -100.0));
         let size = font_size(look.scale);
         let pixel = size / font_size(1);
-        let mark = HitSplat { creature, at, size, anchor: None, fallen_since: None };
+        let mark = HitSplat { creature, at, size, anchor: None, fallen_draws: None };
         commands.entity(layer).with_children(|layer| {
             layer.spawn((node, centred, mark, Visibility::Hidden)).with_children(|splat| {
                 for (x, y) in ring() {
@@ -561,10 +607,9 @@ fn splats(
     }
     lifts(stack, splat.gap * PX, splat.most, order, lifted);
     for (&entity, &lift) in entities.iter().zip(lifted.iter()) {
-        let Ok((_, mut mark, _, mut node, mut visibility, children)) = marks.get_mut(entity) else { continue };
-        let age = (now - mark.at) as f32 / splat.seconds;
-        // Gone with its time, or pushed off the top of a full stack.
-        let Some(lift) = lift.filter(|_| age < 1.0) else {
+        let Ok((_, mut mark, laid, mut node, mut visibility, children)) = marks.get_mut(entity) else { continue };
+        // Stack eviction is unconditional, including a mark held over a fallen body.
+        let Some(lift) = lift else {
             commands.entity(entity).despawn();
             continue;
         };
@@ -581,12 +626,21 @@ fn splats(
             }
             None => (Some(hotbar), false),
         };
-        let Some(base) = base.filter(|_| !screen) else {
-            visibility.set_if_neq(Visibility::Hidden);
-            mark.over_fallen(now, false);
-            continue;
+        let age = mark.age(now, splat, fallen);
+        let at = base.map(|base| base - Vec2::Y * (lift + age * splat.rise * PX));
+        let drawable = !screen && at.is_some_and(|at| splat_in_view(at, laid.size() * laid.inverse_scale_factor(), size));
+        let (age, over_fallen) = match mark.frame(now, splat, drawable, fallen) {
+            SplatFrame::Gone => {
+                commands.entity(entity).despawn();
+                continue;
+            }
+            SplatFrame::Hidden => {
+                visibility.set_if_neq(Visibility::Hidden);
+                continue;
+            }
+            SplatFrame::Draw { age, over_fallen } => (age, over_fallen),
         };
-        let at = base - Vec2::Y * (lift + age * splat.rise * PX);
+        let at = at.expect("a drawable mark has an anchor");
         node.left = Val::Px(at.x);
         node.top = Val::Px(at.y);
         // Whole for the first part of its time, then fading out, its ring with it.
@@ -598,7 +652,7 @@ fn splats(
             }
         }
         visibility.set_if_neq(Visibility::Inherited);
-        shown.over_fallen = shown.over_fallen.max(mark.over_fallen(now, fallen));
+        shown.over_fallen = shown.over_fallen.max(over_fallen);
     }
 }
 
@@ -687,14 +741,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn killing_splats_count_visible_game_seconds_even_with_slow_frames() {
-        let mut mark = HitSplat { creature: Some(1), at: 10.0, size: 24.0, anchor: None, fallen_since: None };
-        assert_eq!(mark.over_fallen(10.0, false), 0.0, "a living body does not count");
-        assert_eq!(mark.over_fallen(10.1, true), 0.0, "the first fallen frame starts the clock");
-        assert!((mark.over_fallen(10.35, true) - 0.25).abs() < 1e-5, "two slow frames suffice for 0.2 seconds");
-        assert_eq!(mark.over_fallen(10.4, false), 0.0, "hidden time never counts");
-        assert_eq!(mark.over_fallen(10.8, true), 0.0, "showing again starts afresh");
-        assert!((mark.over_fallen(10.85, true) - 0.05).abs() < 1e-5);
+    fn killing_splats_draw_the_completion_frame_before_expiring() {
+        let style = CombatStyle::load(&assets()).unwrap().splats;
+        let mut mark = HitSplat { creature: Some(1), at: 10.0, size: 24.0, anchor: None, fallen_draws: None };
+        let draw = |frame| match frame {
+            SplatFrame::Draw { age, over_fallen } => {
+                assert!(age < 1.0, "the hold must have positive alpha");
+                over_fallen
+            }
+            other => panic!("a visible fallen mark disappeared: {other:?}"),
+        };
+        assert_eq!(draw(mark.frame(10.73, &style, true, true)), 0.0);
+        assert!((draw(mark.frame(10.95, &style, true, true)) - 0.22).abs() < 1e-5);
+        // One long frame crosses both normal expiry and the fallen hold. It must still
+        // draw and report its actual continuous interval before the next update removes it.
+        assert!((draw(mark.frame(11.20, &style, true, true)) - 0.47).abs() < 1e-5);
+        assert_eq!(mark.at, 10.0, "holding does not change stack order or the blow time");
+        assert_eq!(mark.frame(11.21, &style, true, true), SplatFrame::Gone);
+    }
+
+    #[test]
+    fn hidden_fallen_splats_reset_continuity_and_cannot_rearm_after_expiry() {
+        let style = CombatStyle::load(&assets()).unwrap().splats;
+        let mut mark = HitSplat { creature: Some(1), at: 10.0, size: 24.0, anchor: None, fallen_draws: None };
+        assert!(matches!(mark.frame(10.60, &style, true, true), SplatFrame::Draw { over_fallen: 0.0, .. }));
+        assert_eq!(mark.frame(10.80, &style, false, true), SplatFrame::Hidden);
+        assert!(matches!(mark.frame(10.85, &style, true, true), SplatFrame::Draw { over_fallen: 0.0, .. }));
+        assert!(matches!(mark.frame(10.95, &style, true, true), SplatFrame::Draw { over_fallen, .. } if (over_fallen - 0.10).abs() < 1e-5));
+        assert_eq!(mark.frame(11.0, &style, false, true), SplatFrame::Gone, "an expired hidden mark cannot wait indefinitely");
+        let mut unseen = HitSplat { fallen_draws: None, ..mark };
+        assert_eq!(unseen.frame(10.8, &style, false, true), SplatFrame::Hidden);
+        assert_eq!(unseen.frame(11.0, &style, true, true), SplatFrame::Gone, "no credit or revival before the first draw");
+    }
+
+    #[test]
+    fn ordinary_splats_expire_normally_and_offscreen_marks_do_not_count() {
+        let style = CombatStyle::load(&assets()).unwrap().splats;
+        for creature in [Some(1), None] {
+            let mut mark = HitSplat { creature, at: 10.0, size: 24.0, anchor: None, fallen_draws: None };
+            assert!(matches!(mark.frame(10.8, &style, true, false), SplatFrame::Draw { over_fallen: 0.0, .. }));
+            assert_eq!(mark.frame(10.95, &style, true, false), SplatFrame::Gone);
+        }
+        let viewport = Vec2::new(960.0, 540.0);
+        let laid = Vec2::new(40.0, 24.0);
+        assert!(splat_in_view(Vec2::new(480.0, 270.0), laid, viewport));
+        assert!(splat_in_view(Vec2::new(-10.0, 10.0), laid, viewport), "a partly visible mark counts");
+        for at in [Vec2::new(-21.0, 270.0), Vec2::new(981.0, 270.0), Vec2::new(480.0, -1.0), Vec2::new(480.0, 565.0)] {
+            assert!(!splat_in_view(at, laid, viewport), "off-screen mark at {at}");
+        }
+        assert!(!splat_in_view(Vec2::new(480.0, 270.0), Vec2::ZERO, viewport), "layout must exist before a draw counts");
     }
 
     fn file(package: &str, source: &str) -> ContentFile {
@@ -748,6 +843,8 @@ mod tests {
         let with = |numbers: &str, flash: f32| style_with(&format!("{numbers}, {KINDS}, flash: (color: (0,0,0), seconds: {flash})"));
         assert!(CombatStyle::load(&[file("core", &with(good, 0.6))]).is_ok());
         for (bad, says) in [
+            ("seconds: 0.9, fallen_seconds: -1, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 70", "splats.fallen_seconds"),
+            ("seconds: 0.9, fallen_seconds: inf, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 70", "splats.fallen_seconds"),
             ("seconds: 0.0, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 70", "splats.seconds"),
             ("seconds: 0.9, rise: -1, fade: 0.5, gap: 1, most: 6, hurt_above: 70", "splats.rise"),
             ("seconds: 0.9, rise: 14, fade: 1.0, gap: 1, most: 6, hurt_above: 70", "splats.fade"),

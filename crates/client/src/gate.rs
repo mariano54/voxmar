@@ -416,6 +416,8 @@ struct Gate {
     machines_held: f32,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
+    /// Teleport sequence before returning weather/sky views to the open test ground.
+    scene_teleport: u32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
     gorge: IVec3,
     /// Whether the player has arrived there: the river's current may carry them off while
@@ -549,6 +551,7 @@ impl Gate {
             machines_seen: false,
             machines_held: f32::MIN,
             highest: f32::MIN,
+            scene_teleport: 0,
             gorge: IVec3::ZERO,
             gorge_reached: false,
             tarn: None,
@@ -2783,7 +2786,7 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let feet = gate.feet;
     let step_top = (feet.y + 1) as f32;
     let player = world.resource::<LocalPlayer>();
-    let (position, in_water, on_ground) = (player.position, player.in_water, player.on_ground);
+    let (position, in_water, on_ground, velocity, flying, teleport) = (player.position, player.in_water, player.on_ground, player.velocity, player.flying, player.teleports);
     match gate.phase {
         // Teleported into the water (in `Collect`); wait until in it.
         0 if in_water && position.x > (feet.x + 3) as f32 && position.y < feet.y as f32 => {
@@ -2795,13 +2798,15 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         1 => {
             gate.highest = gate.highest.max(position.y);
-            // Out of the water at the step's height, jump is let go so the player lands on
-            // the step and stays: held, a frame on the ground is easy to miss on a loaded
-            // machine, and the player hopped on and off the test ground.
+            // Release jump when above the bank, then wait for a real dry landing.
+            let half = voxmar_engine::physics::player::WIDTH * 0.5;
+            let relative = position - feet.as_vec3();
+            let over_bank = relative.x > 6.0 - half && relative.x < 7.0 + half
+                && relative.z > -1.0 - half && relative.z < 2.0 + half;
             if !in_water && position.y >= step_top - 0.01 {
                 key(world, KeyCode::Space, false);
             }
-            if on_ground && position.y >= step_top - 0.01 {
+            if on_ground && !in_water && over_bank && (position.y - step_top).abs() <= 0.01 {
                 key(world, KeyCode::KeyW, false);
                 key(world, KeyCode::Space, false);
                 gate.check("swim", Ok(format!("climbed out of the water onto the step in {in_phase:.1}s")));
@@ -2810,7 +2815,10 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::KeyW, false);
                 key(world, KeyCode::Space, false);
                 let reached = gate.highest - feet.y as f32;
-                gate.check("swim", Err(format!("did not climb out onto the step: feet rose to {reached:+.2} against the step's +1")));
+                let cell = position.floor().as_ivec3();
+                let client = world.resource::<ClientWorld>();
+                let support = (client.block(cell), client.block(cell - IVec3::Y));
+                gate.check("swim", Err(format!("did not land on the step: highest {reached:+.2}, position {}, velocity {velocity}, grounded {on_ground}, water {in_water}, flying {flying}, over bank {over_bank}, support {support:?}, teleport {teleport}; {in_phase:.1} client s, {:.1} server s", position - feet.as_vec3(), gate.server_in_phase())));
                 gate.next(Step::Screens, now);
             }
         }
@@ -4314,6 +4322,27 @@ fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
     gate.weather_last = Some(values);
 }
 
+/// Returns each view test to the same open ground, including after a failed swim.
+/// Wait for a new server teleport and grounded client pose before asking for a shot;
+/// looking from inside the pool's walls cannot judge weather or the morning sky.
+fn open_scene_pose(world: &mut World, gate: &mut Gate) -> bool {
+    let position = gate.feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    if gate.settled == 0 {
+        gate.scene_teleport = world.resource::<LocalPlayer>().teleports;
+        key(world, KeyCode::KeyW, false);
+        key(world, KeyCode::Space, false);
+        world.resource_mut::<LocalPlayer>().flying = false;
+        world.resource::<Net>().command(&format!("tp {} {} {}", position.x, position.y, position.z));
+        gate.settled = 1;
+        return false;
+    }
+    let player = world.resource::<LocalPlayer>();
+    let ready = player.teleports != gate.scene_teleport && player.on_ground && !player.in_water
+        && player.position.distance(position) < 0.05;
+    gate.settled = if ready { gate.settled + 1 } else { 1 };
+    ready && gate.settled >= 3
+}
+
 /// A storm, then snow, each drawn (rain, snow and their particles change the view), then
 /// clear skies again.
 fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -4326,6 +4355,13 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // failing all of them: close them all (as Esc would, one by one).
             let mut ui = world.resource_mut::<UiState>();
             (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
+            if !open_scene_pose(world, gate) {
+                if gate.server_in_phase() > 15.0 {
+                    gate.check("weather: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.next(Step::Sky, now);
+                }
+                return;
+            }
             look(world, 0.0, 5.0);
             if gate.shot(world, "clear").is_some() {
                 world.resource::<Net>().command(&format!("weather {} 120", kinds[0].0));
@@ -4497,7 +4533,7 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
     let arrived = |world: &World, gate: &Gate| {
         let content = &world.resource::<Launch>().content;
         world.resource::<crate::creatures::Creatures>().views().filter(|v| {
-            content.creatures.get(v.species).def.kind != voxmar_engine::creature::Kind::Villager
+            !v.kept && content.creatures.get(v.species).def.kind != voxmar_engine::creature::Kind::Villager
                 && !gate.natural_before.contains(&v.id) && (v.position.y - y as f32).abs() < 2.0 && v.position.distance(pad.as_vec3()) < 64.0
         }).copied().collect::<Vec<_>>()
     };
@@ -4544,7 +4580,7 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
             });
             let cap = content.creatures.limits().monsters_near;
             let uncleared = world.resource::<crate::creatures::Creatures>().views().any(|v| {
-                content.creatures.get(v.species).def.kind != voxmar_engine::creature::Kind::Villager
+                !v.kept && content.creatures.get(v.species).def.kind != voxmar_engine::creature::Kind::Villager
                     && gate.natural_before.contains(&v.id) && v.position.distance(pad.as_vec3()) < 64.0
             });
             gate.check("natural births", if monsters > 0 && monsters <= cap && !visible && !uncleared {
@@ -5125,6 +5161,13 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             };
+            // Consume this bear's newly received result before considering an answer.
+            // Last can see both a crossed response threshold and Hurt in the same frame;
+            // queuing a press then release would dodge only after the judged blow.
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let new = (fighting.hurt_count - gate.feel.hurts) as usize;
+            gate.feel.hurts = fighting.hurt_count;
+            let ours = fighting.hurt.iter().rev().take(new).find(|h| h.0 == view.id).copied();
             let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
             let fixed_camera = gate.feel.facing_camera.filter(|_| !gate.shots.lock().expect("gate shots").contains_key("windup-facing"));
             key(world, KeyCode::KeyW, fixed_camera.is_none() && distance > 2.0 && gate.feel.seen.is_none());
@@ -5142,7 +5185,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // judged (its end not yet heard) is not a new one.
             if view.pose != Pose::Attacking {
                 gate.feel.calm = true;
-            } else if gate.feel.calm && gate.feel.seen.is_none() && !gate.feel.answered {
+            } else if ours.is_none() && gate.feel.calm && gate.feel.seen.is_none() && !gate.feel.answered {
                 gate.feel.seen = Some(Instant::now());
                 gate.feel.calm = false;
                 if !gate.feel.facing_checked {
@@ -5164,10 +5207,13 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.shot(world, "windup-facing");
             }
             if let Some(seen) = gate.feel.seen
+                && ours.is_none()
                 && !gate.feel.answered
                 && seen.elapsed().as_secs_f32() >= gate.feel.after
             {
                 gate.feel.answered = true;
+                let player = world.resource::<LocalPlayer>();
+                info!("gate: combat response phase {} try {} bear {}, requested {:.3}s, queued {:.3}s after wind-up, grounded {}, flying {}, frame {:.3}s", gate.phase, gate.feel.tries + 1, view.id, gate.feel.after, seen.elapsed().as_secs_f32(), player.on_ground, player.flying, world.resource::<Time>().delta_secs());
                 if blocking {
                     mouse(world, MouseButton::Right, true);
                 } else {
@@ -5200,15 +5246,8 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Left, true);
                 gate.feel.clicked = true;
             }
-            let fighting = world.resource::<crate::fight::Fighting>();
-            if fighting.hurt_count == gate.feel.hurts {
-                return;
-            }
             // Only this bear's blow, from a wind-up seen to begin, answers the try; any
             // other (another creature's, or one whose wind-up began unseen) is passed over.
-            let new = (fighting.hurt_count - gate.feel.hurts) as usize;
-            gate.feel.hurts = fighting.hurt_count;
-            let ours = fighting.hurt.iter().rev().take(new).find(|h| h.0 == view.id).copied();
             let Some((_, damage, defended, _)) = ours.filter(|_| gate.feel.seen.is_some()) else {
                 return;
             };
@@ -5217,11 +5256,12 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             key(world, dodge_key, false);
             key(world, KeyCode::KeyW, false);
             let answered = std::mem::take(&mut gate.feel.answered);
+            info!("gate: combat result phase {} try {} bear {}, {:?} damage {}, response queued {}, grounded {}", gate.phase, gate.feel.tries + 1, view.id, defended, damage, answered, world.resource::<LocalPlayer>().on_ground);
             gate.feel.seen = None;
             gate.feel.outcomes.push(defended);
             let passed = if blocking { defended == Defended::Perfect } else { defended == Defended::Dodged };
             if passed {
-                let detail = format!("{defended:?} for {damage} damage, answered {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
+                let detail = format!("{defended:?} for {damage} damage, requested {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
                 let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
                 gate.check(if blocking { "perfect block" } else { "dodge" }, result);
                 gate.feel.struck = world.resource::<crate::fight::Fighting>().struck_count;
@@ -6097,6 +6137,13 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let cloudless = world.resource::<crate::weather::ClientWeather>().current.cover <= 0.01;
     match gate.phase {
         0 => {
+            if !open_scene_pose(world, gate) {
+                if gate.server_in_phase() > 15.0 {
+                    gate.check("sky: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.next(Step::Tree, now);
+                }
+                return;
+            }
             world.resource::<Net>().command(&format!("time set {MORNING}"));
             gate.advance(now);
         }
@@ -7293,6 +7340,76 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn swim_controls_land_on_the_original_finite_bank_across_frame_intervals() {
+        use voxmar_engine::movement::{self, Body, Controls, Surroundings, Tuning};
+        use voxmar_engine::physics::Aabb;
+        use voxmar_engine::world::Column;
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let tuning = Tuning::from_ron(include_str!("../../../assets/content/core/movement.ron")).unwrap();
+        let feet = IVec3::new(0, 200, 0);
+        struct Pool<'a> { world: VoxelWorld, blocks: &'a voxmar_engine::block::BlockRegistry }
+        impl Surroundings for Pool<'_> {
+            fn solid(&self, cell: IVec3) -> bool { self.world.block(cell).is_some_and(|b| self.blocks.info(b).solid) }
+            fn water(&self, aabb: &Aabb) -> (f32, Vec2) { movement::water_around(self.blocks, |cell| self.world.block(cell), aabb) }
+        }
+        let fixture = || {
+            let mut world = VoxelWorld::default();
+            for z in -1..=0 {
+                for x in -1..=0 { world.insert(ColumnPos::new(x, z), Arc::new(Column::default())); }
+            }
+            let dirt = content.blocks.expect("base:dirt");
+            let water = content.blocks.expect("base:water");
+            for z in -7..=7 {
+                for x in -7..=7 {
+                    for y in -4..0 { world.set_block(feet + IVec3::new(x, y, z), dirt); }
+                }
+            }
+            for z in -1..=1 {
+                for x in 3..=5 {
+                    for y in -3..0 { world.set_block(feet + IVec3::new(x, y, z), water); }
+                }
+                world.set_block(feet + IVec3::new(6, 0, z), dirt);
+            }
+            Pool { world, blocks: &content.blocks }
+        };
+        let simulate = |pool: &Pool, intervals: &[f32], may_jump: bool| {
+            let mut body = Body { position: feet.as_vec3() + Vec3::new(4.5, -2.0, 0.5), ..Default::default() };
+            let mut controls = Controls { wish: Vec3::X, forward: true, jump: may_jump, ..Default::default() };
+            let (mut elapsed, mut highest) = (0.0, body.position.y);
+            for frame in 0..10_000 {
+                let dt = intervals[frame % intervals.len()].min(0.25);
+                elapsed += dt;
+                movement::advance(&mut body, pool, &tuning, controls, dt);
+                highest = highest.max(body.position.y);
+                assert!(!body.aabb().intersects(|cell| pool.solid(cell)), "inside a solid block: {}", body.position);
+                let high = body.position.y >= feet.y as f32 + 1.0 - 0.01;
+                if !body.in_water && high { controls.jump = false; }
+                if body.on_ground && !body.in_water && high {
+                    assert!((body.position.y - feet.y as f32 - 1.0).abs() <= 0.01);
+                    assert!(body.position.x > feet.x as f32 + 5.7 && body.position.x < feet.x as f32 + 7.3);
+                    return Some(body);
+                }
+                if elapsed >= 8.0 {
+                    eprintln!("finite swim failed: intervals {intervals:?}, jump {may_jump}, at {}, highest {}, velocity {}, grounded {}, water {}", body.position - feet.as_vec3(), highest - feet.y as f32, body.velocity, body.on_ground, body.in_water);
+                    return None;
+                }
+            }
+            panic!("unbounded frame trace");
+        };
+        let bank = fixture();
+        for dt in [0.25, 1.0 / 6.0, 1.0 / 12.0, 1.0 / 30.0, 1.0 / 60.0, 1.0 / 144.0, 1.0 / 500.0] {
+            assert!(simulate(&bank, &[dt], true).is_some(), "no landing at {dt} seconds per frame");
+        }
+        assert!(simulate(&bank, &[0.25, 1.0 / 60.0, 0.12, 0.25, 0.05], true).is_some(), "no landing with mixed frame intervals");
+        assert!(simulate(&bank, &[0.25], false).is_none(), "without swimming up, walking cannot pass the raised bank");
+        for phase in 1..=30 {
+            let intervals = [phase as f32 / 120.0, 0.25, 0.25, 0.25];
+            assert!(simulate(&bank, &intervals, true).is_some(), "no landing for phase {phase}");
+        }
+    }
 
     #[test]
     fn observer_heartbeats_leave_commands_and_teleports_prompt() {
