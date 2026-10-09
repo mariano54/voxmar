@@ -741,9 +741,27 @@ mod tests {
             real_boxes += 1;
             let spans = [Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion].map(|axis| content.span(axis, climate.bands(axis)));
             let gate = Gate::new(&content, climate);
+            let ramp = |axis: usize, edge: f32| if axis == 1 { RAMPS[1] * edge.abs().max(0.3) } else { RAMPS[axis] };
+            let middle = std::array::from_fn(|axis| {
+                let (lo, hi) = spans[axis];
+                match (lo.is_finite(), hi.is_finite()) {
+                    (true, true) => lo + (hi - lo) * 0.5,
+                    (true, false) => lo + 2.0 * ramp(axis, lo),
+                    (false, true) => hi - 2.0 * ramp(axis, hi),
+                    (false, false) => 0.0,
+                }
+            });
             for axis in 0..4 {
-                for &value in &values {
-                    let mut fields = [25.0, 0.1, 0.3, 0.2];
+                let (lo, hi) = spans[axis];
+                let mut probes = values.to_vec();
+                for edge in [lo, lo + ramp(axis, lo), hi - ramp(axis, hi), hi].into_iter().filter(|e| e.is_finite()) {
+                    probes.extend([edge, f32::from_bits(edge.to_bits().wrapping_sub(1)), f32::from_bits(edge.to_bits().wrapping_add(1))]);
+                }
+                probes.extend([0.25, 0.5, 0.75].into_iter().flat_map(|f| [lo + f * ramp(axis, lo), hi - f * ramp(axis, hi)]).filter(|v| v.is_finite()));
+                // Keep other axes inside this actual box so an early zero cannot mask
+                // its fade values, including ramps between adjacent float probes.
+                for value in probes {
+                    let mut fields = middle;
                     fields[axis] = value;
                     check(&gate, &spans, fields);
                 }
