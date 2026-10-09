@@ -809,16 +809,18 @@ fn capture(
     );
     // Count after taking the frame sample, so settlement comparisons record their
     // actual replicated population without adding census work to the timed frames.
-    let mut actors = [0usize; 3];
+    let mut actors = [0usize; 5];
     for view in creatures.views() {
         let i = match launch.content.creatures.get(view.species).def.kind {
             voxmar_engine::creature::Kind::Villager => 0,
             voxmar_engine::creature::Kind::Animal => 1,
             voxmar_engine::creature::Kind::Monster => 2,
+            voxmar_engine::creature::Kind::Fish => 3,
+            voxmar_engine::creature::Kind::Spirit => 4,
         };
         actors[i] += 1;
     }
-    info!("actors: {} villagers, {} animals, {} monsters replicated alive", actors[0], actors[1], actors[2]);
+    info!("actors: {} villagers, {} animals, {} monsters, {} fish, {} spirits replicated alive", actors[0], actors[1], actors[2], actors[3], actors[4]);
     // Per-pass GPU and CPU times with VOXMAR_GPU_TIMES (`RenderDiagnosticsPlugin`).
     let mut passes: Vec<(String, f64)> = diagnostics
         .iter()
