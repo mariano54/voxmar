@@ -64,6 +64,7 @@ struct Client {
     pips: Vec<u8>,
     /// Creatures' blows at us, what came of each, and when we heard.
     hurt: Vec<(u16, voxmar_engine::combat::Defended)>,
+    hurt_by: Vec<(u32, u16)>,
     hurt_at: Vec<Instant>,
     journal: voxmar_engine::journal::Journal,
     quests: Vec<voxmar_engine::quest::QuestState>,
@@ -170,6 +171,7 @@ impl Client {
             kinds: Vec::new(),
             pips: Vec::new(),
             hurt: Vec::new(),
+            hurt_by: Vec::new(),
             hurt_at: Vec::new(),
             journal: Default::default(),
             quests: Vec::new(),
@@ -289,8 +291,9 @@ impl Client {
                 self.kinds.push(blow);
                 self.pips.push(pips);
             }
-            ServerMessage::Hurt { damage, defended, .. } => {
+            ServerMessage::Hurt { creature, damage, defended } => {
                 self.hurt.push((damage, defended));
+                self.hurt_by.push((creature, damage));
                 self.hurt_at.push(Instant::now());
             }
             ServerMessage::Journal { entries } => self.journal.merge(entries),
@@ -2239,18 +2242,33 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
 fn guards_give_up_on_a_player_they_cannot_reach() {
     let mut client = settlement_client();
     to_settlement(&mut client, "village", "noon");
+    // This checks pursuit and recovery, which require a living, wounded guard and a
+    // living quarry. A novice can die to this level-25 guard before wounding it.
+    client.ok("/skill hitpoints 60");
+    client.pump_until(|c| c.health >= 100);
     client.ok("/gamemode survival");
-    let guard = |c: &Client| villagers(c).into_iter().find(|v| species_name(c, v) == "base:guard");
+    let guard = |c: &Client| villagers(c).into_iter().filter(|v| species_name(c, v) == "base:guard")
+        .min_by(|a, b| a.position.distance(c.position).total_cmp(&b.position.distance(c.position)).then(a.id.cmp(&b.id)));
     client.pump_until(|c| guard(c).is_some());
     let g = guard(&client).unwrap();
     let max = client.content.creatures.get(g.species).def.health;
+    // The guard's own standing cell is reachable; a cell one block to its side may
+    // be inside a wall. Once angry, it follows us rather than fleeing.
+    client.ok(&format!("/tp {} {} {}", g.position.x, g.position.y, g.position.z));
     // Within reach: struck back.
     let full = client.health;
-    strike_until(&mut client, g.id, 60, |c| c.health < full);
-    assert!(client.health < full, "the guard never struck a player beside it");
-    let hurt = |c: &Client| c.creatures.get(&g.id).is_some_and(|v| v.health < max);
-    strike_until(&mut client, g.id, 30, hurt);
-    assert!(hurt(&client), "the guard took no harm");
+    let hurt_by_before = client.hurt_by.len();
+    let damage_before = client.damage.len();
+    let struck = |c: &Client| c.health < full && c.hurt_by[hurt_by_before..].iter().any(|&(id, damage)| id == g.id && damage > 0);
+    strike_until(&mut client, g.id, 60, |c| struck(c) || c.health == 0);
+    assert!(struck(&client), "guard {} never struck a player beside it: health {}, deaths {}, incoming {:?}", g.id, client.health, client.died, &client.hurt_by[hurt_by_before..]);
+    // Improve only the injury setup after proving real retaliation. A fist at this
+    // level still cannot kill a full-health guard in one blow.
+    client.ok("/skill attack 60");
+    let hurt = |c: &Client| c.creatures.get(&g.id).is_some_and(|v| v.health > 0 && v.health < max);
+    strike_until(&mut client, g.id, 30, |c| hurt(c) || c.health == 0 || !c.creatures.contains_key(&g.id));
+    assert!(client.health > 0 && client.died == 0, "quarry died before the pillar: health {}, deaths {}, blows {:?}, incoming {:?}", client.health, client.died, &client.damage[damage_before..], &client.hurt_by[hurt_by_before..]);
+    assert!(hurt(&client), "guard {} was not left alive and wounded: target {:?}, health {}, blows {:?}", g.id, client.creatures.get(&g.id).map(|v| (v.position, v.health)), client.health, &client.damage[damage_before..]);
     // Up a pillar four blocks high, out of its reach.
     client.ok("/fill ~ ~ ~ ~ ~3 ~ stone");
     client.ok("/tp ~ ~4 ~");
