@@ -4409,7 +4409,11 @@ fn tree(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// of whatever the earlier steps built and seen against the sky: they must reach the
 /// client and change the view.
 fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    let blocks = ["oak_slab", "oak_stairs", "oak_stairs_top_east", "oak_slab_top", "barrel", "crate", "sack"];
+    // The last four are decor (P58a): furniture and cloth in a colour baked into their
+    // textures, in a facing, and a piece of crockery.
+    let blocks = [
+        "oak_slab", "oak_stairs", "oak_stairs_top_east", "oak_slab_top", "barrel", "crate", "sack", "oak_table", "birch_chair_east", "indigo_banner", "ivory_jug",
+    ];
     if gate.phase == 0 {
         gate.shapes_row = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(-3, 3, 4);
     }
@@ -4417,12 +4421,12 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let cells: Vec<IVec3> = (0..blocks.len() as i32).map(|i| row + IVec3::X * i).collect();
     match gate.phase {
         0 => {
-            aim(world, row + IVec3::new(3, 0, 0));
+            aim(world, row + IVec3::X * (blocks.len() as i32 / 2));
             gate.advance(now);
         }
         // The view turned to the row first, so only the blocks change it.
         1 if in_phase > 0.5 => {
-            aim(world, row + IVec3::new(3, 0, 0));
+            aim(world, row + IVec3::X * (blocks.len() as i32 / 2));
             if gate.shot(world, "shapes-before").is_some() {
                 for (cell, block) in cells.iter().zip(blocks) {
                     world.resource::<Net>().command(&format!("setblock {} {} {} {block}", cell.x, cell.y, cell.z));
@@ -4432,7 +4436,10 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         2 => {
             let client = world.resource::<ClientWorld>();
-            let arrived = cells.iter().all(|&cell| client.block(cell).is_some_and(|b| !b.is_air()));
+            let arrived = cells.iter().zip(blocks).all(|(&cell, name)| {
+                let wanted = client.registry.id(&format!("base:{name}"));
+                wanted.is_some() && client.block(cell) == wanted && gate.observer.as_ref().is_none_or(|o| o.world.block(cell) == wanted)
+            });
             if !(arrived && settled(world, row) && in_phase > SETTLE) && gate.server_in_step() < STEP_LIMIT - 1.0 {
                 return;
             }
@@ -4440,7 +4447,7 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let change = gate.earlier_shot("shapes-before").map_or(0.0, |before| change(&before, &shot, 0.25));
             let result = match (arrived, change >= SCREEN_CHANGE) {
                 (true, true) => Ok(format!("{} shaped blocks drawn, changing the view by {change:.1} levels", blocks.len())),
-                (false, _) => Err("the shaped blocks never reached the client".into()),
+                (false, _) => Err("the shaped blocks did not agree on client and server".into()),
                 (true, false) => Err(format!("the shaped blocks barely show: the view changed by {change:.1} levels")),
             };
             gate.check("shapes", result);

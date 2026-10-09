@@ -688,7 +688,7 @@ impl Flora {
         // biome's foliage, judged more loosely, rarer the further it strays.
         let canopy_fit = |tree: &TreeDef, named: bool| -> f32 {
             let crown = tree.leaves.as_deref().unwrap_or(&tree.log);
-            if !tree.crown.shades() || registry.def(registry.expect(crown)).tint != voxmar_engine::block::Tint::None {
+            if !tree.crown.shades() || registry.def(registry.expect(crown)).tint.drawn() != voxmar_engine::block::Tint::None {
                 return 1.0;
             }
             let fit = match def.palette.canopy {
