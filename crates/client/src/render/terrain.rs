@@ -352,25 +352,43 @@ struct ChunkPage {
     owners: ChunkOwners,
 }
 
-/// The page's ownership table on the CPU, with the span changed this frame. A burst of
+/// The page's ownership table on the CPU, with regions changed this frame. A burst of
 /// meshes used to allocate a GPU staging buffer for every little owner write (332 page
-/// writes for 166 allocations in a measured flight frame). Queue the changed span once
-/// before drawing, preserving the last assignment of ranges freed and reused this frame.
+/// writes for 166 allocations in a measured flight frame). Queue adjacent changed regions
+/// together before drawing, preserving the last assignment of ranges freed and reused
+/// this frame. Fixed 256-byte regions avoid copying a whole page between sparse updates.
 struct ChunkOwners {
     words: Vec<u32>,
-    dirty: Option<Range<usize>>,
+    dirty: Vec<bool>,
+    changed: bool,
 }
 
 impl ChunkOwners {
-    fn new(blocks: usize) -> Self { Self { words: vec![0; blocks], dirty: None } }
+    const REGION_WORDS: usize = 64;
+
+    fn new(blocks: usize) -> Self {
+        Self { words: vec![0; blocks], dirty: vec![false; blocks.div_ceil(Self::REGION_WORDS)], changed: false }
+    }
 
     fn assign(&mut self, range: Range<usize>, slot: u32) {
         if range.is_empty() { return; }
         self.words[range.clone()].fill(slot);
-        self.dirty = Some(self.dirty.take().map_or(range.clone(), |dirty| dirty.start.min(range.start)..dirty.end.max(range.end)));
+        self.dirty[range.start / Self::REGION_WORDS..range.end.div_ceil(Self::REGION_WORDS)].fill(true);
+        self.changed = true;
     }
 
-    fn take_dirty(&mut self) -> Option<Range<usize>> { self.dirty.take() }
+    fn dirty_ranges(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+        let mut next = 0;
+        std::iter::from_fn(move || {
+            while next < self.dirty.len() && !self.dirty[next] { next += 1; }
+            if next == self.dirty.len() { return None; }
+            let first = next;
+            while next < self.dirty.len() && self.dirty[next] { next += 1; }
+            Some(first * Self::REGION_WORDS..(next * Self::REGION_WORDS).min(self.words.len()))
+        })
+    }
+
+    fn uploaded(&mut self) { self.dirty.fill(false); self.changed = false; }
 }
 
 /// Pages of one vertex format.
@@ -466,12 +484,15 @@ impl PagePool {
         let mut profile = super::work::measure(super::work::Part::PageOwners);
         for page in &mut self.pages {
             let Some(chunks) = &mut page.chunks else { continue };
-            let Some(range) = chunks.owners.take_dirty() else { continue };
-            if let Some(profile) = &mut profile {
-                profile.counts.payload_bytes += range.len() as u64 * 4;
-                profile.counts.dispatches += 1;
+            if !chunks.owners.changed { continue; }
+            for range in chunks.owners.dirty_ranges() {
+                if let Some(profile) = &mut profile {
+                    profile.counts.payload_bytes += range.len() as u64 * 4;
+                    profile.counts.dispatches += 1;
+                }
+                queue.write_buffer(&chunks.buffer, range.start as u64 * 4, bytemuck::cast_slice(&chunks.owners.words[range]));
             }
-            queue.write_buffer(&chunks.buffer, range.start as u64 * 4, bytemuck::cast_slice(&chunks.owners.words[range]));
+            chunks.owners.uploaded();
         }
     }
 
@@ -2151,10 +2172,10 @@ mod tests {
             direct[range.clone()].fill(slot); // The old queue writes, in their original order.
             table.assign(range, slot);
         }
-        let dirty = table.take_dirty().unwrap();
-        batched[dirty.clone()].copy_from_slice(&table.words[dirty]);
+        for dirty in table.dirty_ranges() { batched[dirty.clone()].copy_from_slice(&table.words[dirty]); }
+        table.uploaded();
         assert_eq!(batched, direct);
-        assert!(table.take_dirty().is_none(), "an idle frame queues no owner write");
+        assert!(table.dirty_ranges().next().is_none(), "an idle frame queues no owner write");
 
         // Reuse part of the same allocation twice before the next draw; a merged upload
         // must keep its final owner and the unchanged owner in the gap between writes.
@@ -2166,23 +2187,37 @@ mod tests {
             direct[range.clone()].fill(slot);
             table.assign(range, slot);
         }
-        let dirty = table.take_dirty().unwrap();
-        assert_eq!(dirty, 0..10);
-        batched[dirty.clone()].copy_from_slice(&table.words[dirty]);
+        for dirty in table.dirty_ranges() { batched[dirty.clone()].copy_from_slice(&table.words[dirty]); }
+        table.uploaded();
         assert_eq!(batched, direct);
         assert_eq!(&batched[4..8], &[22; 4], "the untouched gap keeps its earlier owner");
-        assert!(table.take_dirty().is_none());
+        assert!(table.dirty_ranges().next().is_none());
     }
 
     #[test]
     fn a_new_page_has_no_previous_worlds_owner_assignments() {
         let mut old = ChunkOwners::new(8);
         old.assign(2..8, 91);
-        assert!(old.take_dirty().is_some());
+        assert!(old.dirty_ranges().next().is_some());
         let mut fresh = ChunkOwners::new(8);
         fresh.assign(4..6, 7);
         assert_eq!(fresh.words, [0, 0, 0, 0, 7, 7, 0, 0]);
-        assert_eq!(fresh.take_dirty(), Some(4..6));
+        assert_eq!(fresh.dirty_ranges().collect::<Vec<_>>(), [0..8]);
+    }
+
+    #[test]
+    fn sparse_owner_changes_do_not_upload_the_gap_between_them() {
+        let mut table = ChunkOwners::new(1 << 15); // The largest chunk page.
+        table.assign(1..2, 7);
+        table.assign((1 << 15) - 2..(1 << 15) - 1, 9);
+        let ranges = table.dirty_ranges().collect::<Vec<_>>();
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges.iter().map(|range| range.len() * 4).sum::<usize>(), 512);
+        assert_eq!(ranges[0], 0..64);
+        assert_eq!(ranges[1], (1 << 15) - 64..1 << 15);
+        table.uploaded();
+        assert!(!table.changed);
+        assert!(table.dirty_ranges().next().is_none());
     }
 
     /// A shape's quad goes with the cut-out faces, drawn one-sided at every distance; a
