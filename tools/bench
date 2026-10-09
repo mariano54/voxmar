@@ -80,7 +80,7 @@ static_verdict() {
 # Static comparisons use the whole steady sample, like FPS mode. The capture line is
 # only the last 120 frames and can turn a brief fluctuation into the entire verdict.
 static_frame_ms() {
-  sed -nE 's/.*steady: [0-9]+ frames, .* mean ([0-9.]+) ms .*/\1/p'
+  sed -nE 's/.*(steady|dig): [0-9]+ frames, .* mean ([0-9.]+) ms .*/\2/p'
 }
 
 # Checks the decisions that once failed silently (the idle count never rose, a ratio was
@@ -98,6 +98,9 @@ self_check() {
   sample=$(static_frame_ms <<<'capture: 100 fps (10.00 ms)
 steady: 2600 frames, median 4.50 ms, p99 6.00 ms, max 12.00 ms, 2 frames over twice the median, mean 5.00 ms (200 fps), 1% low 150 fps')
   [[ $sample == 5.00 ]] || { echo "bench self-check: static sample is '$sample', not the steady mean '5.00'" >&2; failed=1; }
+  sample=$(static_frame_ms <<<'capture: 100 fps (10.00 ms)
+dig: 3000 frames, median 4.00 ms, p99 7.00 ms, max 14.00 ms, 3 frames over twice the median, mean 4.25 ms (235 fps), 1% low 120 fps')
+  [[ $sample == 4.25 ]] || { echo "bench self-check: dig sample is '$sample', not the whole-run mean '4.25'" >&2; failed=1; }
   sample=$(static_frame_ms <<<'capture: 100 fps (10.00 ms)')
   [[ -z $sample ]] || { echo "bench self-check: missing steady sample incorrectly accepted '$sample'" >&2; failed=1; }
   return $failed
