@@ -614,9 +614,18 @@ generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `
 arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
 and routes that failed. `river_sights` prints
 `--pose` arguments for captures of the places water makes near spawn (highland lakes,
-waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
-`Overworld::water_sights` finds; `shape_sights` does the same for the best example of each
-terrain shape and the highest peak, with a `/tp` command and `--pose` for each.
+tarns, waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
+`Overworld::water_sights` finds; `tarn_census` (with `SEEDS` and `REGIONS`) counts the tarns
+around mountains and alpine meadows in and out of tarn country, their visible water area,
+and the share of the land that is lake bank. `LOTUS=n` also generates the connected shore
+of up to n visible pools per seed to count actual lotus plants and visible clusters. Existing high lakes and snowy peaks are counted
+separately; `Overworld::locate_tarn` finds a visible pool filled by the tarn rule.
+`rare_herb_census` (with `SEEDS`, `CHUNKS`, `PLACES` (up to three far places of each biome a
+world), or `WILD=a,b` or `WILDTAG=tag` with `WILDBIOMES=a,b` for other plants instead, `AT=1`
+for where the biggest patch of each is) counts the
+rare herbs as generation places them, per million columns of each biome naming them;
+`shape_sights` prints a `/tp` command and `--pose` for the best example of each
+terrain shape and the highest peak.
 `ore_preview` (with `SEED`, a centre `X`, `Z` and `COLUMNS`) writes an x-ray of the ore veins
 from above and a cut through the richest row to `target/ores_*.ppm`, with the surface samples
 in white, and prints each ore's blocks per column and the share lying alone.

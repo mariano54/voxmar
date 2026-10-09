@@ -29,7 +29,7 @@
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
 use crate::climate::{self, Regional};
-use crate::content::{Axis, ShapeKind, WorldContent};
+use crate::content::{Axis, ClimateBox, ShapeKind, WorldContent};
 use crate::dials::WorldDials;
 use crate::geology::{COAST, Relief, noise, smootherstep, smoothstep};
 use crate::rarity::{Rarity, Tier, name_hash};
@@ -80,12 +80,19 @@ pub struct Ground<'a> {
 }
 
 /// A box of the band table, as a span of each table axis.
-struct Gate {
+pub(crate) struct Gate {
     spans: [(f32, f32); 4],
 }
 
 impl Gate {
-    fn weight(&self, fields: &[f32; 4]) -> f32 {
+    /// The gate of a climate box written on the bands of `climate.ron`.
+    pub(crate) fn new(content: &WorldContent, climate: &ClimateBox) -> Self {
+        Gate { spans: [Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion].map(|axis| content.span(axis, climate.bands(axis))) }
+    }
+
+    /// How far inside the box a climate lies, 0 ..= 1, from its regional temperature,
+    /// moisture, continentalness and landform class, fading in just inside each edge.
+    pub(crate) fn weight(&self, fields: &[f32; 4]) -> f32 {
         let mut weight = 1.0;
         for (axis, (&(lo, hi), &v)) in self.spans.iter().zip(fields).enumerate() {
             let ramp = |edge: f32| if axis == 1 { RAMPS[1] * edge.abs().max(0.3) } else { RAMPS[axis] };
@@ -139,13 +146,7 @@ impl Shapes {
                 let seed = seed ^ name_hash(&def.name);
                 let share = (def.rarity.multiplier() * boost).min(1.0);
                 let alone = matches!(def.kind, ShapeKind::Volcanoes { .. } | ShapeKind::Arches { .. });
-                let gates = def
-                    .climate
-                    .iter()
-                    .map(|b| Gate {
-                        spans: [Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion].map(|axis| content.span(axis, b.bands(axis))),
-                    })
-                    .collect();
+                let gates = def.climate.iter().map(|b| Gate::new(content, b)).collect();
                 Shape {
                     kind: def.kind,
                     gates,
@@ -597,10 +598,17 @@ impl Shape {
     /// How much of the shape a region whose mask noise is `mask` takes, 0 ..= 1, for a
     /// shape that takes `share` of its climate's regions.
     fn region_share(&self, share: f32, mask: f32) -> f32 {
-        let u = climate::uniform(mask);
-        let fade = (share / 2.0).min(0.03);
-        smoothstep(1.0 - share, 1.0 - share + fade, u)
+        region_share(share, mask)
     }
+}
+
+/// How much of something that takes `share` of the regions of a slow mask noise a region
+/// whose mask is `mask` holds, 0 ..= 1: all of it in the top `share` of the noise's range,
+/// fading out over a short ramp, none below.
+pub(crate) fn region_share(share: f32, mask: f32) -> f32 {
+    let u = climate::uniform(mask);
+    let fade = (share / 2.0).min(0.03);
+    smoothstep(1.0 - share, 1.0 - share + fade, u)
 }
 
 /// Cells of the grid arch sites stand on, and the farthest an arch of a site reaches
@@ -669,7 +677,7 @@ mod timing {
     #[test]
     #[ignore]
     fn shape_timing() {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
         let geology = &world.geology;
         let shapes = geology.shapes();

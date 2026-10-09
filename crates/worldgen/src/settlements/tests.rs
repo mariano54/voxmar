@@ -287,21 +287,8 @@ fn settlement_preview() {
 }
 
 
-/// The base game's blocks, from every file the game reads them from: furnishings (the
-/// crate, the barrel) and tools (the altar) as well as `blocks.ron`.
 fn base_registry() -> std::sync::Arc<BlockRegistry> {
-    let sources = [
-        include_str!("../../../../assets/content/base/blocks.ron"),
-        include_str!("../../../../assets/content/base/blocks_creatures.ron"),
-        include_str!("../../../../assets/content/base/blocks_farm.ron"),
-        include_str!("../../../../assets/content/base/blocks_food.ron"),
-        include_str!("../../../../assets/content/base/blocks_furnishings.ron"),
-        include_str!("../../../../assets/content/base/blocks_herbs.ron"),
-        include_str!("../../../../assets/content/base/blocks_tools.ron"),
-        include_str!("../../../../assets/content/base/blocks_weapons.ron"),
-    ];
-    let packages = sources.iter().map(|s| ("base".to_owned(), BlockRegistry::read("base", s).unwrap())).collect();
-    std::sync::Arc::new(BlockRegistry::new(BlockRegistry::expand(packages).unwrap()).unwrap())
+    std::sync::Arc::new(crate::test_registry())
 }
 
 pub(super) fn base_world(seed: u64) -> Overworld {

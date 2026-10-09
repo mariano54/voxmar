@@ -28,17 +28,19 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
-use voxmar_engine::glam::{IVec2, IVec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec3Swizzles};
 
 use self::cache::Cache;
 use self::channel::{Carved, Channels, Span, Style, carve, top_block};
-use self::drainage::{Budget, DIRS, Drainage, Ground, Reader, Tier, Tile, TunnelRule};
+use self::drainage::{Budget, DIRS, Drainage, Ground, Reader, TarnRule, Tier, Tile, TunnelRule};
 use crate::climate::{self, Climate, LAPSE_RATE, Regional};
 use crate::dials::WorldDials;
-use fastnoise_lite::FractalType;
+use fastnoise_lite::{FastNoiseLite, FractalType};
 
 use crate::density::Crag;
 use crate::geology::{Corners, GeoSample, Geology, Landform, noise, smoothstep};
+use crate::content::WorldContent;
+use crate::shapes::{Gate, region_share};
 use crate::stage::{self, Stage};
 use crate::{SEA_LEVEL, rng};
 
@@ -94,6 +96,7 @@ pub(crate) fn freshwater(g: &GeoSample) -> bool {
 /// Spacing of the climate samples rivers read rainfall from, in blocks.
 const RAIN_CELL: i32 = 128;
 const MB: usize = 1 << 20;
+const MAX_RIVER_WIDTH: f32 = 28.0;
 /// Area that counts as one unit of flow, in square blocks, at a runoff of 1.
 const FLOW_AREA: f32 = 10_000.0;
 
@@ -113,6 +116,30 @@ pub struct Rivers {
     trunk: f32,
     /// Tells this world's entries apart in the per-thread cache of channels.
     id: u64,
+    /// Where tarns may lie, if the content has them.
+    tarns: Option<Tarns>,
+}
+
+/// Where tarns lie (`content::TarnsDef`): their climate, and the slow noise that gathers
+/// them into tarn country.
+struct Tarns {
+    gates: Vec<Gate>,
+    country: FastNoiseLite,
+    share: f32,
+}
+
+impl Tarns {
+    /// How fully tarns may lie at a position, 0 ..= 1: none outside tarn country (a sharp
+    /// edge, where `region_share` is half way up its ramp: design says none outside, not
+    /// fewer), and inside it as far inside their climate as the position lies.
+    fn weight(&self, land: Stages, at: IVec2) -> f32 {
+        if region_share(self.share, self.country.get_noise_2d(at.x as f32, at.y as f32)) < 0.5 {
+            return 0.0;
+        }
+        let r = land.climate.regional_at(land.geology, at);
+        let fields = [r.temperature(), r.moisture(), r.continentalness, r.erosion];
+        self.gates.iter().map(|g| g.weight(&fields)).fold(0.0, f32::max)
+    }
 }
 
 /// The stages rivers read: the land, and the climate for rain.
@@ -158,6 +185,86 @@ impl Ground for StreamGround<'_> {
     fn humidity(&self, cell: IVec2) -> f32 {
         self.rivers.humidity(self.land, self.rivers.streams.tier.centre(cell))
     }
+
+    fn tarns(&self, cell: IVec2) -> f32 {
+        let Some(tarns) = &self.rivers.tarns else { return 0.0 };
+        let weight = tarns.weight(self.land, self.rivers.streams.tier.centre(cell));
+        if weight > 0.0 { weight * self.humidity(cell) } else { 0.0 }
+    }
+
+    fn tarn_cells(&self, pit: IVec2, level: i32, size: (i32, i32)) -> Option<Vec<IVec2>> {
+        let pit = self.rivers.streams.tier.centre(pit);
+        let reach = size.1 + 2 * STREAM_CELL;
+        let (min, max) = (pit - reach, pit + reach);
+        // Read only the natural land and trunks. Asking for stream ground here would
+        // ask the drainage currently deciding this very lake. The window includes
+        // the whole permitted component, its dry boundary and the coarse cells it fills.
+        let width = 2 * reach + 1;
+        let points: Vec<(i32, i32)> = (min.y..=max.y).flat_map(|z| (min.x..=max.x).map(move |x| (x, z))).collect();
+        let trunks = self.rivers.near(self.land, Level::Trunk, TRUNK_MARGIN, min, max);
+        let grounds: Vec<Carved> = self.land.geology.lands(&points).into_iter().zip(&points).map(|(land, &(x, z))| {
+            carve(&self.rivers.trunk_style, trunks.list(), x, z, Carved::land(land.height))
+        }).collect();
+        let cells = natural_tarn(pit, STREAM_CELL, size, |p| {
+            let local = p - min;
+            (0..width).contains(&local.x) && (0..width).contains(&local.y) && (grounds[(local.y * width + local.x) as usize].ground.floor() as i32) < top_block(level)
+        })?;
+        // Trunk water or a tunnel must not masquerade as a dry boundary. Refuse the
+        // candidate if either reaches its painted cells or their cardinal boundary.
+        for &c in &cells {
+            for z in -1..=STREAM_CELL {
+                for x in -1..=STREAM_CELL {
+                    let p = c * STREAM_CELL + IVec2::new(x, z) - min;
+                    let ground = &grounds[(p.y * width + p.x) as usize];
+                    if ground.cavity.is_some() || ground.water.is_some() { return None; }
+                }
+            }
+        }
+        self.rivers.tarn_isolated(self, &cells).then_some(cells)
+    }
+}
+
+/// Find a complete natural hollow before choosing the stream cells that paint it. A
+/// bounded search refuses a larger basin whole, rather than cropping it at a cell edge.
+fn natural_tarn(pit: IVec2, cell: i32, size: (i32, i32), wet: impl Fn(IVec2) -> bool) -> Option<Vec<IVec2>> {
+    let first = (-cell..=cell).flat_map(|z| (-cell..=cell).map(move |x| pit + IVec2::new(x, z)))
+        .filter(|&p| wet(p)).min_by_key(|p| ((*p - pit).length_squared(), p.x, p.y))?;
+    let mut water = rustc_hash::FxHashSet::default();
+    let mut pending = vec![first];
+    water.insert(first);
+    let (mut low, mut high) = (first, first);
+    while let Some(p) = pending.pop() {
+        low = low.min(p);
+        high = high.max(p);
+        if (high - low + 1).max_element() > size.1 {
+            return None;
+        }
+        for d in [IVec2::X, -IVec2::X, IVec2::Y, -IVec2::Y] {
+            let next = p + d;
+            if wet(next) && water.insert(next) {
+                pending.push(next);
+            }
+        }
+    }
+    if (high - low + 1).max_element() < size.0 {
+        return None;
+    }
+    let mut cells: Vec<IVec2> = water.iter().map(|p| p.div_euclid(IVec2::splat(cell))).collect();
+    cells.sort_unstable_by_key(|p| (p.x, p.y));
+    cells.dedup();
+    // Painting uses complete coarse cells. Do not bring an unrelated low lobe into
+    // the pool merely because it shares one of those cells.
+    for &c in &cells {
+        for z in 0..cell {
+            for x in 0..cell {
+                let p = c * cell + IVec2::new(x, z);
+                if wet(p) && !water.contains(&p) {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(cells)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -176,7 +283,7 @@ thread_local! {
 }
 
 impl Rivers {
-    pub fn new(seed: u64, dials: &WorldDials) -> Self {
+    pub fn new(seed: u64, dials: &WorldDials, content: &WorldContent) -> Self {
         static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seed = rng::mix(seed ^ 0x51ee_4a7e);
         let trunks = Tier {
@@ -192,6 +299,7 @@ impl Rivers {
             incision: 3.0,
             lakes: false,
             springs: 0.0,
+            tarns: None,
             tunnel: Some(TunnelRule { depth: 14.0, chance: 0.35, length: 6 }),
             seed,
         };
@@ -209,6 +317,7 @@ impl Rivers {
             lakes: true,
             // Rare: a few in a volcanic world's kilometre, none in a quiet one.
             springs: 0.02 * smoothstep(0.35, 0.9, dials.volcanism),
+            tarns: content.tarns.as_ref().map(|t| TarnRule { floor: SEA_LEVEL as f32 + t.floor, depth: t.depth, size: t.size, chance: t.chance }),
             tunnel: None,
             seed: rng::mix(seed),
         };
@@ -247,13 +356,56 @@ impl Rivers {
             creek,
             trunk: creek * 6.0,
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            tarns: content.tarns.as_ref().map(|t| Tarns {
+                gates: t.climate.iter().map(|b| Gate::new(content, b)).collect(),
+                country: noise(seed, 0x17, 1.0 / t.country.scale, FractalType::FBm, 2),
+                share: t.country.share,
+            }),
         }
+    }
+
+    /// No stream may carve this hollow or its dry boundary into a larger connected
+    /// pool. Routing is published separately from tarn geometry, so upstream flow is
+    /// complete here without asking for the stream channels currently being built.
+    fn tarn_isolated(&self, ground: &StreamGround<'_>, cells: &[IVec2]) -> bool {
+        let tier = &self.streams.tier;
+        let first = cells[0];
+        let min = cells.iter().copied().fold(first, IVec2::min) * tier.cell - 1;
+        let max = (cells.iter().copied().fold(first, IVec2::max) + 1) * tier.cell;
+        // Even the widest edge, its valley, cell tangents and jitter fit in this halo.
+        let curve = 2.0 * tier.cell as f32 + 2.0 * self.stream_style.jitter;
+        let reach = (MAX_RIVER_WIDTH / 2.0 + self.stream_style.valley + curve).ceil() as i32;
+        let from = (min - reach - tier.cell).div_euclid(IVec2::splat(tier.cell));
+        let to = (max + reach + tier.cell).div_euclid(IVec2::splat(tier.cell));
+        let mut basins = rustc_hash::FxHashMap::default();
+        for z in from.y..=to.y {
+            for x in from.x..=to.x {
+                let cell = IVec2::new(x, z);
+                let region = self.streams.region_of(cell);
+                let basin = basins.entry(region).or_insert_with(|| self.streams.routing(ground, region));
+                let k = basin.next(cell);
+                if k >= 8 { continue; }
+                let local = cell - region * tier.side;
+                let q = self.streams.totals(ground, basin)[(local.y * tier.side + local.x) as usize];
+                if q < self.creek { continue; }
+                let end = cell + DIRS[k as usize];
+                // A conservative envelope of the actual jittered Catmull-Rom edge,
+                // including the valley that can lower dry banks outside its channel.
+                let margin = self.width(q) / 2.0 + self.stream_style.valley + curve;
+                let low = tier.centre(cell).min(tier.centre(end)).as_vec2() - margin;
+                let high = tier.centre(cell).max(tier.centre(end)).as_vec2() + margin;
+                if low.x <= max.x as f32 && low.y <= max.y as f32 && high.x >= min.x as f32 && high.y >= min.y as f32 {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Width of a river carrying `flow`, in blocks: two and a half at the smallest creek,
     /// seven and a half with twenty times its water, eleven and a half with fifty.
     fn width(&self, flow: f32) -> f32 {
-        (1.5 + (flow / self.creek).powf(0.6)).clamp(2.5, 28.0)
+        (1.5 + (flow / self.creek).powf(0.6)).clamp(2.5, MAX_RIVER_WIDTH)
     }
 
     /// The regional climate over the region holding (x, z), sampled every `RAIN_CELL`
@@ -279,6 +431,55 @@ impl Rivers {
     }
 
     /// Whether lakes stay full: 0 in deserts, 1 from moist grassland up.
+    /// The still lakes whose pits lie in a region of the stream tier, wet ones only: each
+    /// one's pit (the centre of its cell, in blocks), top water block and cells. For the
+    /// tarn census.
+    #[cfg(test)]
+    pub(crate) fn stream_lakes(&self, land: Stages, region: IVec2) -> Vec<(IVec2, i32, usize, bool)> {
+        let ground = StreamGround { rivers: self, land };
+        let basin = self.streams.basin(&ground, region);
+        let side = self.streams.tier.side;
+        basin
+            .lakes
+            .iter()
+            .filter(|l| l.wet() && !l.spring && l.pit.div_euclid(IVec2::splat(side)) == region)
+            .map(|l| (self.streams.tier.centre(l.pit), top_block(l.level), l.cells.len(), l.tarn))
+            .collect()
+    }
+
+    /// Pits filled by the tarn rule, in the regions within `radius` of `centre`.
+    fn tarns_near(&self, land: Stages, centre: IVec2, radius: i32) -> Vec<IVec3> {
+        let ground = StreamGround { rivers: self, land };
+        let low = (centre - radius).div_euclid(IVec2::splat(REGION));
+        let high = (centre + radius).div_euclid(IVec2::splat(REGION));
+        let mut found = Vec::new();
+        for z in low.y..=high.y {
+            for x in low.x..=high.x {
+                let region = IVec2::new(x, z);
+                for lake in &self.streams.basin(&ground, region).lakes {
+                    let pit = self.streams.tier.centre(lake.pit);
+                    if lake.tarn && lake.wet() && lake.pit.div_euclid(IVec2::splat(self.streams.tier.side)) == region && (pit - centre).abs().max_element() <= radius {
+                        found.push(IVec3::new(pit.x, top_block(lake.level), pit.y));
+                    }
+                }
+            }
+        }
+        found.sort_unstable_by_key(|p| ((p.xz() - centre).as_i64vec2().length_squared(), p.x, p.z));
+        found
+    }
+
+    /// The lowest a tarn lies, in blocks, if there are tarns.
+    pub(crate) fn tarn_floor(&self) -> Option<f32> {
+        self.streams.tier.tarns.as_ref().map(|t| t.floor)
+    }
+
+    /// How much of tarn country a position lies in, 0 ..= 1 (none without tarns), for the
+    /// tarn census.
+    #[cfg(test)]
+    pub(crate) fn tarn_country(&self, x: i32, z: i32) -> f32 {
+        self.tarns.as_ref().map_or(0.0, |t| region_share(t.share, t.country.get_noise_2d(x as f32, z as f32)))
+    }
+
     fn humidity(&self, land: Stages, at: IVec2) -> f32 {
         let height = land.geology.land(at.x, at.y).height;
         smoothstep(0.2, 0.5, self.moisture(land, at.x, at.y, height))
@@ -1069,6 +1270,27 @@ fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
     sample
 }
 
+/// The four-neighbour component of lake water nearest a pit. Dry banks cannot bridge
+/// pools. The bounded result is a lower bound when water reaches the sampling edge.
+pub(crate) fn lake_component(pit: IVec2, reach: i32, wet: impl Fn(IVec2) -> bool) -> Vec<IVec2> {
+    let near = reach.min(8);
+    let start = (pit.y - near..=pit.y + near).flat_map(|z| (pit.x - near..=pit.x + near).map(move |x| IVec2::new(x, z)))
+        .filter(|&p| wet(p)).min_by_key(|p| ((*p - pit).length_squared(), p.x, p.y));
+    let Some(start) = start else { return Vec::new() };
+    let mut seen = std::collections::HashSet::new();
+    let mut todo = vec![start];
+    let mut out = Vec::new();
+    while let Some(p) = todo.pop() {
+        if (p - pit).abs().max_element() > reach || !seen.insert(p) || !wet(p) {
+            continue;
+        }
+        out.push(p);
+        todo.extend([p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y]);
+    }
+    out.sort_unstable_by_key(|p| (p.x, p.y));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1496,6 +1718,125 @@ mod tests {
         assert_eq!(cache.seen[&dry], grid[dry_i]);
     }
 
+    /// Natural water may cross a sampled cell edge, but a larger basin must be
+    /// refused whole. Nearby low lobes must not be filled by sharing a painted cell.
+    #[test]
+    fn tarns_require_one_complete_natural_hollow() {
+        let pool = |p: IVec2| (2..=13).contains(&p.x) && (1..=6).contains(&p.y);
+        assert_eq!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), pool), Some(vec![IVec2::ZERO, IVec2::X]));
+        assert!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), |p| (2..=16).contains(&p.x) && (1..=6).contains(&p.y)).is_some(), "a complete hollow crossing the old cell edge");
+        assert!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), |p| (2..=29).contains(&p.x) && (1..=6).contains(&p.y)).is_none(), "a larger natural basin");
+        assert!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), |p| p.y == 2 && ((2..=10).contains(&p.x) || (12..=13).contains(&p.x))).is_none(), "a disconnected lobe sharing painted cells");
+        assert!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), |p| (2..=5).contains(&p.x) && (2..=5).contains(&p.y)).is_none(), "a tiny puddle");
+        assert_eq!(natural_tarn(IVec2::new(-12, -12), 8, (8, 25), |p| pool(p + 16)), Some(vec![IVec2::new(-2, -2), IVec2::new(-1, -2)]));
+    }
+
+    /// Tarn geometry cannot change routing or upstream totals: publishing ordinary
+    /// flow first must give exactly the flow used by the final channels. Exercise
+    /// accepted pools too, then force a stream through their isolation envelope.
+    #[test]
+    fn tarn_geometry_preserves_routing_and_uses_complete_flow() {
+        let registry = Arc::new(crate::test_registry());
+        let mut accepted = 0;
+        for seed in [1, 2, 3, 4] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            let meadow = world.locate_biome("alpine_meadow", IVec2::ZERO, 60000).unwrap();
+            let centre = meadow.div_euclid(IVec2::splat(REGION));
+            let ground = StreamGround { rivers: &world.rivers, land: world.stages() };
+            for r in 0..9 {
+                let region = centre + IVec2::new(r % 3 - 1, r / 3 - 1);
+                let ordinary = world.rivers.streams.routing(&ground, region);
+                let final_basin = world.rivers.streams.basin(&ground, region);
+                let side = world.rivers.streams.tier.side;
+                for z in -drainage::CORE..side + drainage::CORE {
+                    for x in -drainage::CORE..side + drainage::CORE {
+                        let cell = region * side + IVec2::new(x, z);
+                        assert_eq!(ordinary.next(cell), final_basin.next(cell), "seed {seed}, routing at {cell}");
+                    }
+                }
+                assert_eq!(world.rivers.streams.totals(&ground, &ordinary), world.rivers.streams.totals(&ground, &final_basin), "seed {seed}, totals in {region}");
+                for lake in final_basin.lakes.iter().filter(|l| l.tarn && l.pit.div_euclid(IVec2::splat(side)) == region) {
+                    accepted += 1;
+                    assert!(world.rivers.tarn_isolated(&ground, &lake.cells));
+                    let mut blocked = crate::Overworld::new(seed, registry.clone());
+                    blocked.rivers.creek = 0.000_001;
+                    let ground = StreamGround { rivers: &blocked.rivers, land: blocked.stages() };
+                    assert!(!blocked.rivers.tarn_isolated(&ground, &lake.cells), "an active stream failed to veto seed {seed}, pit {}", lake.pit);
+                    assert!(ground.tarn_cells(lake.pit, lake.level, world.rivers.streams.tier.tarns.as_ref().unwrap().size).is_none(), "production admitted a stream through seed {seed}, pit {}", lake.pit);
+                }
+            }
+        }
+        assert!(accepted > 0, "no accepted tarn exercised the flow invariant");
+    }
+
+    /// A dry saddle between same-level lakes does not join them into one visible pool.
+    #[test]
+    fn lake_components_do_not_cross_dry_banks() {
+        let wet = |p: IVec2| p.y == 0 && ((0..=2).contains(&p.x) || (4..=24).contains(&p.x));
+        assert_eq!(lake_component(IVec2::ZERO, 32, wet), vec![IVec2::new(0, 0), IVec2::new(1, 0), IVec2::new(2, 0)]);
+        assert_eq!(lake_component(IVec2::new(4, 0), 32, wet).len(), 21);
+    }
+
+    /// The game gate's seed has a real, visible pool near its alpine highlands. The
+    /// query must return the tarn rule's water, and disappear when that rule is absent.
+    #[test]
+    fn tarn_query_finds_visible_rule_pools() {
+        let registry = Arc::new(crate::test_registry());
+        let mut world = crate::Overworld::new(0x5eed, registry);
+        let spawn = crate::Generator::spawn_point(&world);
+        let offsets = [IVec2::ZERO, IVec2::new(24000, 8000), IVec2::new(-8000, 24000), IVec2::new(-24000, -8000), IVec2::new(8000, -24000)];
+        let (mountain, at) = offsets.into_iter().find_map(|offset| {
+            let alpine = world.locate_biome("alpine_meadow", spawn.xz() + offset, 60000)?;
+            let site = world.site(alpine.x, alpine.y);
+            let pools = world.rivers.tarns_near(world.stages(), alpine, 4096).len();
+            println!("gate seed spawn {spawn}, alpine {alpine}, height {}, continentalness {:.2}, {pools} marked pits", site.height, site.continentalness);
+            world.locate_tarn(alpine, 4096).map(|at| (alpine, at))
+        }).expect("a visible tarn in the gate's sampled alpine highlands");
+        println!("gate seed tarn {at}");
+        let pool = lake_component(at.xz(), 32, |p| {
+            let g = world.geo(p.x, p.y);
+            g.submerged() && g.cavity.is_none() && g.water == at.y
+        });
+        let wet = pool.len();
+        assert!(wet >= 20, "only {wet} visible water columns at {at}");
+        let low = pool.iter().copied().fold(at.xz(), IVec2::min);
+        let high = pool.iter().copied().fold(at.xz(), IVec2::max);
+        assert!((8..=25).contains(&(high - low + 1).max_element()), "connected physical water spans {} at {at}", high - low + 1);
+        assert!(pool.iter().all(|p| (*p - at.xz()).abs().max_element() < 32), "a clipped physical component at {at}");
+        assert!(world.rivers.tarns_near(world.stages(), mountain, 4096).iter().any(|pit| pit.y == at.y && (pit.xz() - at.xz()).abs().max_element() <= 8));
+        assert!(world.locate_tarn(mountain, -1).is_none());
+        world.rivers.tarns = None;
+        assert!(world.locate_tarn(mountain, 4096).is_none(), "an ordinary high lake stood in for a disabled tarn rule");
+    }
+
+    /// The country's faded noise is a classification, not a chance multiplier. In the
+    /// fading band outside its halfway edge even a fully suitable climate stays dry.
+    #[test]
+    fn tarn_country_has_a_sharp_edge() {
+        let registry = Arc::new(crate::test_registry());
+        let content = crate::WorldContent::base(&registry).unwrap();
+        let mut world = crate::Overworld::new(1, registry);
+        let tarns = world.rivers.tarns.as_mut().unwrap();
+        tarns.gates = vec![Gate::new(&content, &crate::content::ClimateBox::default())];
+        let (mut edge, mut inside) = (0, 0);
+        for z in (-2048..=2048).step_by(64) {
+            for x in (-2048..=2048).step_by(64) {
+                let at = IVec2::new(x, z);
+                let tarns = world.rivers.tarns.as_ref().unwrap();
+                let country = world.rivers.tarn_country(x, z);
+                let weight = tarns.weight(world.stages(), at);
+                if (0.0..0.5).contains(&country) && country > 0.0 {
+                    edge += 1;
+                    assert_eq!(weight, 0.0, "tarn chance fades beyond its country at {at}");
+                } else if country >= 0.5 {
+                    inside += 1;
+                    assert_eq!(weight, 1.0, "country weakens a fully suitable climate at {at}");
+                }
+            }
+        }
+        assert!(edge > 10 && inside > 10, "sample missed the edge or country: {edge}, {inside}");
+    }
+
     /// `cargo test --release -p voxmar_worldgen river_stats -- --ignored --nocapture`
     #[test]
     #[ignore]
@@ -1503,11 +1844,11 @@ mod tests {
         let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1u64);
         let stream = rng::stream_seed(seed, crate::Overworld::ID, crate::Overworld::VERSION);
         let dials = WorldDials::sample(stream);
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = crate::WorldContent::base(&registry).unwrap();
         let rocks = crate::rocks::Rocks::new(stream, &content, &registry, &dials.featured);
         let geology = Geology::new(stream, &dials, &content, &rocks);
-        let rivers = Rivers::new(stream, &dials);
+        let rivers = Rivers::new(stream, &dials, &content);
         let land = Stages { geology: &geology, climate: geology.climate() };
         let x = std::env::var("X").ok().and_then(|s| s.parse().ok()).unwrap_or(2544);
         let z = std::env::var("Z").ok().and_then(|s| s.parse().ok()).unwrap_or(384);
