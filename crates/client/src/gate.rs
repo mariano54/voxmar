@@ -4495,8 +4495,10 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
     let pad = gate.feet + IVec3::new(130, 12, 0);
     let (x, y, z) = (pad.x, pad.y, pad.z);
     let arrived = |world: &World, gate: &Gate| {
+        let content = &world.resource::<Launch>().content;
         world.resource::<crate::creatures::Creatures>().views().filter(|v| {
-            !gate.natural_before.contains(&v.id) && (v.position.y - y as f32).abs() < 2.0 && v.position.distance(pad.as_vec3()) < 64.0
+            content.creatures.get(v.species).def.kind != voxmar_engine::creature::Kind::Villager
+                && !gate.natural_before.contains(&v.id) && (v.position.y - y as f32).abs() < 2.0 && v.position.distance(pad.as_vec3()) < 64.0
         }).copied().collect::<Vec<_>>()
     };
     match gate.phase {
@@ -4529,7 +4531,7 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
             let content = &world.resource::<Launch>().content;
             let monsters = births.iter().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Monster).count();
             let angle = content.creatures.limits().spawn_unseen_angle;
-            let eye = pad.as_vec3() + Vec3::new(0.5, voxmar_engine::physics::dims::EYE_HEIGHT, 0.5);
+            let eye = pad.as_vec3() + Vec3::new(0.5, voxmar_engine::physics::player::EYE_HEIGHT, 0.5);
             let visible = births.iter().any(|v| {
                 let turn = Quat::from_rotation_y(v.yaw);
                 content.creatures.get(v.species).parts.iter().any(|part| (0..9).any(|i| {
@@ -4541,7 +4543,10 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
                 }))
             });
             let cap = content.creatures.limits().monsters_near;
-            let uncleared = world.resource::<crate::creatures::Creatures>().views().any(|v| gate.natural_before.contains(&v.id) && v.position.distance(pad.as_vec3()) < 64.0);
+            let uncleared = world.resource::<crate::creatures::Creatures>().views().any(|v| {
+                content.creatures.get(v.species).def.kind != voxmar_engine::creature::Kind::Villager
+                    && gate.natural_before.contains(&v.id) && v.position.distance(pad.as_vec3()) < 64.0
+            });
             gate.check("natural births", if monsters > 0 && monsters <= cap && !visible && !uncleared {
                 Ok(format!("{} births reached the client, including {monsters} dark monsters; no model part appeared in the forward {angle} degree cone", births.len()))
             } else {
