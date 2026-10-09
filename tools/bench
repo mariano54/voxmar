@@ -77,6 +77,12 @@ static_verdict() {
   awk -v b="$1" -v c="$2" 'BEGIN { r = c / b; printf "%.3f %d 0", r, (r > 1.08) }'
 }
 
+# Static comparisons use the whole steady sample, like FPS mode. The capture line is
+# only the last 120 frames and can turn a brief fluctuation into the entire verdict.
+static_frame_ms() {
+  sed -nE 's/.*steady: [0-9]+ frames, .* mean ([0-9.]+) ms .*/\1/p'
+}
+
 # Checks the decisions that once failed silently (the idle count never rose, a ratio was
 # never printed), so `tools/gate` can run this before every landing.
 self_check() {
@@ -88,6 +94,12 @@ self_check() {
   [[ $verdict == "1.58 1 1" ]] || { echo "bench self-check: flight verdict is '$verdict', not '1.58 1 1'" >&2; failed=1; }
   verdict=$(static_verdict 2.0 2.4)
   [[ $verdict == "1.200 1 0" ]] || { echo "bench self-check: static verdict is '$verdict', not '1.200 1 0'" >&2; failed=1; }
+  local sample
+  sample=$(static_frame_ms <<<'capture: 100 fps (10.00 ms)
+steady: 2600 frames, median 4.50 ms, p99 6.00 ms, max 12.00 ms, 2 frames over twice the median, mean 5.00 ms (200 fps), 1% low 150 fps')
+  [[ $sample == 5.00 ]] || { echo "bench self-check: static sample is '$sample', not the steady mean '5.00'" >&2; failed=1; }
+  sample=$(static_frame_ms <<<'capture: 100 fps (10.00 ms)')
+  [[ -z $sample ]] || { echo "bench self-check: missing steady sample incorrectly accepted '$sample'" >&2; failed=1; }
   return $failed
 }
 
@@ -330,7 +342,7 @@ run() {
     meshed=$(sed -nE 's/.*capture: .* ([0-9]+) columns, .* ([0-9]+) pending, .*/\1 \2/p' <<<"$log" | awk '{ print $1 - $2 }')
     sed -nE 's/.*flight: [0-9]+ frames, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms.*/\1 \2 \3/p' <<<"$log" | sed "s/$/ $meshed/"
   else
-    sed -nE 's/.*capture: [0-9]+ fps \(([0-9.]+) ms\).*/\1/p' <<<"$log"
+    static_frame_ms <<<"$log"
   fi
 }
 

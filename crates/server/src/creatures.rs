@@ -1007,7 +1007,8 @@ impl Server {
     fn nearby_room(&self, at: Vec3, monster: bool, cap: usize) -> bool {
         self.players.values().filter(|p| p.joined && p.position.distance(at) < NEAR).all(|player| {
             self.creatures.live.values().filter(|c| {
-                c.body.position.distance(player.position) < NEAR && (self.content.creatures.get(c.species).def.kind == Kind::Monster) == monster
+                let kind = self.content.creatures.get(c.species).def.kind;
+                kind != Kind::Villager && c.body.position.distance(player.position) < NEAR && (kind == Kind::Monster) == monster
             }).count() < cap
         })
     }
@@ -1448,6 +1449,29 @@ mod combat_tests {
 #[cfg(test)]
 mod density_tests {
     use super::*;
+
+    #[test]
+    fn residents_leave_the_nearby_animal_budget_available() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let at = server.spawn;
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let cap = server.content.creatures.limits().animals_near;
+        let farmer = server.content.creatures.id("base:farmer").unwrap();
+        let sheep = server.content.creatures.id("base:sheep").unwrap();
+        for seed in 0..cap + 1 {
+            server.spawn_seeded(farmer, at, seed as u64).expect("room for residents");
+        }
+        assert!(server.nearby_room(at, false, cap), "residents must not consume animal room");
+        for salt in 0..cap {
+            assert!(server.nearby_room(at, false, cap), "animal room vanished before the cap");
+            server.spawn_creature(sheep, at, salt as u64).expect("room for animals");
+        }
+        assert!(!server.nearby_room(at, false, cap), "true animals must still exhaust the nearby budget");
+        assert!(server.nearby_room(at, true, 1), "neither animals nor residents exhaust monster room");
+    }
 
     #[test]
     fn first_night_ends_at_dawn_even_when_darkness_crosses_the_day_boundary() {

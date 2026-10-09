@@ -546,7 +546,10 @@ impl Server {
             return Ok(Words::key("command.creatures.populated").with("count", Words::text(count)));
         }
         if what == "disperse" && species.is_none() {
-            let wild: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.owner.is_none() && c.body.position.distance(at) < 64.0).map(|(&id, _)| id).collect();
+            let wild: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| {
+                c.owner.is_none() && self.content.creatures.get(c.species).def.kind != voxmar_engine::creature::Kind::Villager
+                    && c.body.position.distance(at) < 64.0
+            }).map(|(&id, _)| id).collect();
             for &id in &wild {
                 self.creatures.take_away(id);
             }

@@ -1044,6 +1044,28 @@ mod tests {
     }
 
     #[test]
+    fn dispersing_wild_creatures_preserves_a_residents_body_and_mapping() {
+        let mut server = fixture("base:farmer", 1);
+        player(&mut server);
+        server.players.get_mut(&1).unwrap().admin = true;
+        server.bring_out(1, 0);
+        let resident = server.villagers.towns[&1].people[0].creature.unwrap();
+        server.creatures.live.get_mut(&resident).unwrap().health = 1;
+        let sheep = server.content.creatures.id("base:sheep").unwrap();
+        let wild = server.spawn_creature(sheep, Vec3::new(8.0, 200.0, 8.0), 7).unwrap();
+        server.command(1, "creatures disperse");
+        assert!(!server.creatures.live.contains_key(&wild), "the command must actually disperse wild creatures");
+        assert_eq!(server.creatures.live[&resident].health, 1, "dispersal must leave the resident's living body intact");
+        assert_eq!(server.villagers.by_creature.get(&resident), Some(&(1, 0)));
+        server.note_all_deaths();
+        server.bring_out(1, 0);
+        assert_eq!(server.villagers.towns[&1].people[0].creature, Some(resident), "the lifecycle scan must not replace the resident");
+        assert_eq!(server.creatures.live[&resident].health, 1);
+        assert_eq!(server.villagers.by_creature.get(&resident), Some(&(1, 0)));
+        assert!(server.villagers.saved().is_empty(), "dispersal must not mark a resident dead");
+    }
+
+    #[test]
     fn a_guard_cooldown_stops_training_and_delays_recovery() {
         use voxmar_engine::combat::Blow;
         let mut server = fixture("base:guard", 1);
