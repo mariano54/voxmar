@@ -159,6 +159,7 @@ pub(super) fn dispatch(
     queue: Res<RenderQueue>,
     mut pending: ResMut<PendingCommandBuffers>,
 ) {
+    let mut profile = crate::render::work::measure(crate::render::work::Part::Compact);
     let Some(pipeline) = cache.get_compute_pipeline(compact.pipeline) else { return };
     let layout = cache.get_bind_group_layout(&compact.layout);
     let stride = device.limits().min_uniform_buffer_offset_alignment as u64;
@@ -168,6 +169,7 @@ pub(super) fn dispatch(
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor { label: Some("terrain_compact"), ..default() });
         pass.set_pipeline(pipeline);
         for mut draws in &mut views {
+            if let Some(profile) = &mut profile { profile.counts.views += 1; }
             let compaction = &mut draws.compaction;
             if compaction.batches.is_empty() {
                 continue;
@@ -177,10 +179,17 @@ pub(super) fn dispatch(
                 && compaction.last.0 == compaction.copies
                 && compaction.last.1 == compaction.batches;
             if unchanged {
+                if let Some(profile) = &mut profile { profile.counts.reused += 1; }
                 compaction.ready = true;
                 continue;
             }
             compaction.last.2 = gpu.revision;
+            if let Some(profile) = &mut profile {
+                profile.counts.rebuilt += 1;
+                profile.counts.copies += compaction.copies.len() as u64;
+                profile.counts.batches += compaction.batches.len() as u64;
+                profile.counts.indices += compaction.len as u64;
+            }
             // Each dispatch reads its first copy from `params`, at a uniform offset; long
             // batches are split to stay within the dispatch size limit.
             let mut params = Vec::new();
@@ -201,8 +210,14 @@ pub(super) fn dispatch(
                 buffers.bind_groups.clear();
                 buffers.generation = gpu.generation;
             }
-            queue.write_buffer(&buffers.copies, 0, bytemuck::cast_slice(&compaction.copies));
-            queue.write_buffer(&buffers.params, 0, &params);
+            let written_bytes = (compaction.copies.len() * size_of::<Copy>() + params.len()) as u64;
+            if let Some(profile) = &mut profile { profile.counts.payload_bytes += written_bytes; }
+            {
+                let mut writes = crate::render::work::measure(crate::render::work::Part::CompactWrite);
+                if let Some(writes) = &mut writes { writes.counts.payload_bytes = written_bytes; writes.counts.dispatches = 2; }
+                queue.write_buffer(&buffers.copies, 0, bytemuck::cast_slice(&compaction.copies));
+                queue.write_buffer(&buffers.params, 0, &params);
+            }
             for (i, (stream, page, groups)) in dispatches.into_iter().enumerate() {
                 let Some(source) = gpu.streams.get(stream as usize).and_then(|pool| pool.pages.get(page as usize)) else {
                     continue;
@@ -221,6 +236,7 @@ pub(super) fn dispatch(
                 });
                 pass.set_bind_group(0, &*bind_group, &[(i as u64 * stride) as u32]);
                 pass.dispatch_workgroups(groups, 1, 1);
+                if let Some(profile) = &mut profile { profile.counts.dispatches += 1; }
                 dispatched = true;
             }
             compaction.ready = true;
@@ -243,6 +259,7 @@ fn ensure_buffers<'a>(
     copies: usize,
     params: usize,
 ) -> &'a mut ViewBuffers {
+    let mut profile = crate::render::work::measure(crate::render::work::Part::CompactBuffers);
     let fits = |buffer: &Buffer, bytes: u64| buffer.size() >= bytes;
     let (indices, copies, params) = (indices as u64 * 4, (copies * size_of::<Copy>()) as u64, params as u64);
     let all_fit = buffers
@@ -251,10 +268,12 @@ fn ensure_buffers<'a>(
     if all_fit {
         return buffers.as_mut().expect("checked above");
     }
-    let buffer = |label: &str, bytes: u64, usage: BufferUsages| {
+    let mut buffer = |label: &str, bytes: u64, usage: BufferUsages| {
+        let size = (bytes + bytes / 2).max(64 << 10).next_multiple_of(256);
+        if let Some(profile) = &mut profile { profile.counts.buffers_grown += 1; profile.counts.payload_bytes += size; }
         device.create_buffer(&BufferDescriptor {
             label: Some(label),
-            size: (bytes + bytes / 2).max(64 << 10).next_multiple_of(256),
+            size,
             usage,
             mapped_at_creation: false,
         })

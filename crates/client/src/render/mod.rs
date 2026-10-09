@@ -53,6 +53,7 @@ pub mod volumetric;
 pub mod warm;
 pub mod water;
 pub mod wind;
+pub(crate) mod work;
 
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
 pub const ATTRIBUTE_LOD: MeshVertexAttribute = MeshVertexAttribute::new("Lod", 0x6c6f_6433, VertexFormat::Uint32x4);

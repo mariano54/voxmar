@@ -383,6 +383,7 @@ impl PagePool {
         indices: &[u32],
         owner: Option<Owner>,
     ) -> Allocation {
+        let mut profile = super::work::measure(super::work::Part::PageAllocate);
         let len = vertices.len() as u32;
         let reserved = if self.chunk_pages { len.next_multiple_of(VERTEX_BLOCK) } else { len };
         let index_count = indices.len() as u32;
@@ -398,6 +399,7 @@ impl PagePool {
             }
         };
         let found = self.pages.iter_mut().enumerate().find_map(|(i, page)| fit(page).map(|ranges| (i, ranges)));
+        let added_page = found.is_none();
         let (page, (vertex_range, index_range)) = found.unwrap_or_else(|| {
             let mut page = self.new_page(device, owner.as_ref().map(|owner| owner.layout));
             let ranges = fit(&mut page).expect("a mesh fits a page");
@@ -405,12 +407,19 @@ impl PagePool {
             (self.pages.len() - 1, ranges)
         });
         let target = &self.pages[page];
+        if let Some(profile) = &mut profile {
+            profile.counts.payload_bytes += vertices.len() as u64 * self.vertex_size;
+            profile.counts.buffers_grown += u64::from(added_page);
+            profile.counts.dispatches += 1;
+        }
         queue.write_buffer(&target.vertex_buffer, vertex_range.start as u64 * self.vertex_size, bytemuck::cast_slice(vertices));
         if let (Some((chunks, _)), Some(owner)) = (&target.chunks, owner) {
             let blocks = vec![owner.slot; (reserved / VERTEX_BLOCK) as usize];
+            if let Some(profile) = &mut profile { profile.counts.payload_bytes += blocks.len() as u64 * 4; profile.counts.dispatches += 1; }
             queue.write_buffer(chunks, (vertex_range.start / VERTEX_BLOCK) as u64 * 4, bytemuck::cast_slice(&blocks));
         }
         if let Some((buffer, _)) = &target.indices {
+            if let Some(profile) = &mut profile { profile.counts.payload_bytes += indices.len() as u64 * 4; profile.counts.dispatches += 1; }
             queue.write_buffer(buffer, index_range.start as u64 * 4, bytemuck::cast_slice(indices));
         }
         Allocation { page: page as u32, vertices: vertex_range.start..vertex_range.start + len, reserved, indices: index_range }
@@ -427,6 +436,13 @@ impl PagePool {
     }
 
     fn new_page(&self, device: &RenderDevice, layout: Option<&BindGroupLayout>) -> Page {
+        let mut profile = super::work::measure(super::work::Part::NewPage);
+        if let Some(profile) = &mut profile {
+            profile.counts.buffers_grown = 1 + u64::from(self.chunk_pages && layout.is_some()) + u64::from(!self.chunk_pages);
+            profile.counts.payload_bytes = self.page_vertices as u64 * self.vertex_size;
+            if self.chunk_pages && layout.is_some() { profile.counts.payload_bytes += (self.page_vertices / VERTEX_BLOCK) as u64 * 4; }
+            if !self.chunk_pages { profile.counts.payload_bytes += (self.page_vertices / 2 * 3) as u64 * 4; }
+        }
         let index = self.pages.len();
         let buffer = |kind: &str, size: u64, usage: BufferUsages| {
             device.create_buffer(&BufferDescriptor {
@@ -586,6 +602,8 @@ impl Arena {
     }
 
     fn write(&self, queue: &RenderQueue, start: u32, words: &[u32]) {
+        let mut profile = super::work::measure(super::work::Part::ArenaWrite);
+        if let Some(profile) = &mut profile { profile.counts.payload_bytes = words.len() as u64 * 4; profile.counts.dispatches = 1; }
         let buffer = self.buffer.as_ref().expect("the arena exists once it has room");
         queue.write_buffer(buffer, start as u64 * 4, bytemuck::cast_slice(words));
     }
@@ -597,7 +615,9 @@ impl Arena {
 
     /// Replaces the buffer with one at least twice as large, holding the same words.
     fn grow(&mut self, device: &RenderDevice, queue: &RenderQueue, at_least: u32) {
+        let mut profile = super::work::measure(super::work::Part::ArenaGrow);
         let capacity = (self.capacity * 2).max(self.capacity + at_least).max(1 << 18);
+        if let Some(profile) = &mut profile { profile.counts.buffers_grown = 1; profile.counts.payload_bytes = capacity as u64 * 4; }
         let buffer = device.create_buffer(&BufferDescriptor {
             label: Some(self.label),
             size: capacity as u64 * 4,
@@ -608,7 +628,11 @@ impl Arena {
             // Words written to the old buffer this frame land before the copy.
             let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor { label: Some(self.label) });
             encoder.copy_buffer_to_buffer(old, 0, &buffer, 0, self.capacity as u64 * 4);
-            queue.submit([encoder.finish()]);
+            let commands = encoder.finish();
+            let mut submit = super::work::measure(super::work::Part::ArenaSubmit);
+            if let Some(profile) = &mut profile { profile.counts.copies = self.capacity as u64 * 4; profile.counts.dispatches = 1; }
+            if let Some(submit) = &mut submit { submit.counts.payload_bytes = self.capacity as u64 * 4; submit.counts.dispatches = 1; }
+            queue.submit([commands]);
         }
         self.buffer = Some(buffer);
         self.ranges.release(self.capacity..capacity);
@@ -1074,6 +1098,7 @@ fn receive(
     pipeline_cache: Res<PipelineCache>,
     water: Option<Res<WaterParams>>,
 ) {
+    let mut profile = super::work::measure(super::work::Part::Receive);
     let layout = pipeline_cache.get_bind_group_layout(&pipelines.chunks_layout);
     gpu.ensure_arenas(&device, &queue);
     let camera = cameras.iter().next().map(|camera| camera.world_from_view.translation());
@@ -1091,7 +1116,9 @@ fn receive(
     // grey strip of bare floor along the edge of the loaded world.
     let start = std::time::Instant::now();
     let mut messages = std::mem::take(&mut gpu.pending);
+    let before = messages.len();
     messages.extend(inbox.0.try_iter());
+    if let Some(profile) = &mut profile { profile.counts.pending_before = before as u64; profile.counts.received = (messages.len() - before) as u64; }
     let mut waiting: rustc_hash::FxHashSet<Subject> = rustc_hash::FxHashSet::default();
     let column_of = |message: &Message| match message.subject() {
         Some(Subject::Chunk(chunk)) => Some(chunk.0.xz()),
@@ -1099,6 +1126,7 @@ fn receive(
     };
     let mut begun: Option<IVec2> = None;
     for message in messages {
+        if let Some(profile) = &mut profile { profile.counts.scanned += 1; }
         if matches!(message, Message::Clear) {
             // Everything before it is gone anyway.
             gpu.pending.clear();
@@ -1108,12 +1136,30 @@ fn receive(
             let column = column_of(&message);
             let finishing = column.is_some() && column == begun;
             if behind || (message.heavy() && !near(&message) && !finishing && start.elapsed() >= UPLOAD_BUDGET) {
+                if let Some(profile) = &mut profile { profile.counts.deferred += 1; profile.counts.behind += u64::from(behind); }
                 waiting.extend(message.subject());
                 gpu.pending.push_back(message);
                 continue;
             }
             if message.heavy() {
+                if let Some(profile) = &mut profile {
+                    profile.counts.column_groups += u64::from(column.is_some() && column != begun);
+                    if start.elapsed() >= UPLOAD_BUDGET {
+                        profile.counts.near_past_budget += u64::from(near(&message));
+                        profile.counts.finishing_past_budget += u64::from(finishing);
+                    }
+                }
                 begun = column;
+            }
+        }
+        if let Some(profile) = &mut profile {
+            profile.counts.applied += 1;
+            match &message {
+                Message::Upload { mesh, .. } => { profile.counts.quads += (mesh.indices.len() / 6) as u64; profile.counts.payload_bytes += (mesh.vertices.len() * size_of::<voxmar_engine::mesh::Vertex>() + mesh.indices.len() * 4) as u64; }
+                Message::Blades { seeds, .. } => { profile.counts.blades += seeds.len() as u64; profile.counts.payload_bytes += seeds.len() as u64 * 4; }
+                Message::UploadTile(tile) => { profile.counts.payload_bytes += (tile.vertices.len() * size_of::<super::lod::LodVertex>() + tile.indices.len() * 4) as u64; }
+                Message::ColumnColours { colours, .. } => { profile.counts.payload_bytes += std::mem::size_of_val(colours.as_slice()) as u64; }
+                _ => {}
             }
         }
         match message {
@@ -1130,6 +1176,7 @@ fn receive(
             Message::Clear => gpu.clear(),
         }
     }
+    if let Some(profile) = &mut profile { profile.counts.pending_after = gpu.pending.len() as u64; }
     gpu.write_origins(&device, &queue);
     gpu.write_wind(&device, &queue, breeze.as_deref().copied().unwrap_or_default());
     if let Some(position) = camera {
