@@ -2981,7 +2981,8 @@ mod level_tests {
         assert!(OccupiedGrid::new(Rect::new(IVec2::splat(-100_000), IVec2::splat(200_000))).is_none());
         assert!(OccupiedGrid::new(Rect::new(IVec2::splat(OCCUPIED_COORD + 1), IVec2::ONE)).is_none());
         let grid = OccupiedGrid::new(bounds).unwrap();
-        assert_eq!(grid.candidates(Rect::new(IVec2::ZERO, IVec2::ONE), i32::MAX), None);
+        assert_eq!(grid.candidates(Rect::new(IVec2::ZERO, IVec2::ONE), i32::MAX), Some(0));
+        assert_eq!(grid.candidates(Rect::new(IVec2::ONE, IVec2::ONE), i32::MAX), None);
         assert_eq!(grid.candidates(Rect { min: IVec2::ONE, max: IVec2::ZERO }, 0), None);
     }
 
@@ -3129,7 +3130,7 @@ mod level_tests {
         let original = house_spec(&mut fresh, &Want::Home, Kind::House, &mut b, false).unwrap();
         let pointer = reused.spare_extras.as_ptr();
         assert!(place(&mut reused, &mut Ground::new(&land), &mut a, &Want::Home, None,
-            Vec2::splat(1000.0), Facing::North, &[], &[], None).is_none());
+            Vec2::splat(1000.0), Facing::North, &[], &Occupied::new(rect), None).is_none());
         assert_eq!(reused.spare_extras.as_ptr(), pointer);
         assert_eq!(a.next_u64(), b.next_u64());
         drop(original);

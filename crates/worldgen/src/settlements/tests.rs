@@ -2859,13 +2859,16 @@ fn occupied_grid_preserves_all_twenty_seed_plans() {
     let _helpers = Helpers;
     let mut counts = [0; 2];
     for seed in 1..=20 {
-        let world = base_world(seed);
-        let spawn = world.spawn_point();
-        let centre = IVec2::new(spawn.x, spawn.z);
-        let mut found = world.settlements.near(&world, centre, 2048);
-        if !found.iter().any(|s| s.0.as_ref().is_some_and(|p| p.size == "village")) {
-            found = world.settlements.near(&world, centre, 4096);
-        }
+        let (world, found) = super::plan::with_original_occupied(|| {
+            let world = base_world(seed);
+            let spawn = world.spawn_point();
+            let centre = IVec2::new(spawn.x, spawn.z);
+            let mut found = world.settlements.near(&world, centre, 2048);
+            if !found.iter().any(|s| s.0.as_ref().is_some_and(|p| p.size == "village")) {
+                found = world.settlements.near(&world, centre, 4096);
+            }
+            (world, found)
+        });
         for (i, size) in ["hamlet", "village"].into_iter().enumerate() {
             let Some(slot) = found.iter().find(|s| s.0.as_ref().is_some_and(|p| p.size == size)) else { continue };
             let known = slot.0.as_ref().unwrap();
