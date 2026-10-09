@@ -26,6 +26,9 @@
 # game's log and shots stay in target/gate/ for a look.
 
 set -uo pipefail
+# Check and SKIPPED diagnostics are part of the gate's evidence and retry decisions.
+# Keep them visible even when the calling shell filters ordinary game logs to warnings.
+export RUST_LOG="${RUST_LOG:+$RUST_LOG,}voxmar::gate=info"
 cd "$(git rev-parse --show-toplevel)" || exit 2
 memcap=~/Projects/voxmar-wt/memcap
 # Away from the Mac (a Linux machine, a fresh clone), the copy in this tree.
@@ -95,6 +98,7 @@ SLOW_TESTS=(
   voxmar_worldgen fluids_are_contained          # 177 s
   voxmar_worldgen decorations_rest_on_the_ground # 23 s
   voxmar_worldgen wood_never_floats             # 17 s
+  voxmar_server a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes # 62 s at load 74, 2026-10-08; direct lifecycle unit runs at every landing
 )
 
 started=$(date +%s)
@@ -264,6 +268,7 @@ fi
 fi
 
 checks=$(grep -c 'gate: ok' <<<"$log")
+((session == 0 || checks > 0)) || fail "the game recorded no gate checks ($out/game.txt)"
 ran=$(grep -h '^test result' "$out/tests.txt" 2>/dev/null | awk '{ p += $4 } END { print p + 0 }')
 summary="$level passed $(date -u +%FT%TZ) in $(($(date +%s) - started))s: $checks game checks, $ran tests"
 if ((clean)); then

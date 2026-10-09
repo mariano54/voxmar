@@ -37,6 +37,11 @@ From the design philosophy, applied here:
 
 Every file is optional in a package; any package can add to any of them.
 
+Under `body.skin`, `eye: 0.065` sets the eye radius in model blocks (scaled with
+`body.scale`). It must be finite and positive. Explicit `eyes: Front` eyes paint a pale
+sclera round the iris, pupil and catchlight, so small human heads do not paint as black
+slits. Omit `eye` to keep the existing head-derived sizing and animal painting.
+
 A package's `creatures.ron` may also set how many creatures the world holds, any of these
 numbers alone. A later package's numbers (packages load in name order) replace an earlier
 one's, and the load log names both packages and the numbers replaced, so a mod tunes one

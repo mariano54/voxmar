@@ -26,6 +26,7 @@ mod process;
 mod rules;
 mod treasure;
 pub mod save;
+mod villagers;
 mod weather;
 mod wear;
 
@@ -469,6 +470,8 @@ pub(crate) struct Server {
     heard: Option<Instant>,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
+    /// The people of settlements near players.
+    villagers: villagers::Villagers,
     /// A new player's health and kit, and what falls, lava, fires and water do.
     survival: Arc<rules::SurvivalRules>,
     /// Swings, guards, dodges and creatures' wind-ups (`fight`).
@@ -579,6 +582,7 @@ impl Server {
             arrival: Instant::now(),
             heard: None,
             creatures: creatures::Creatures::default(),
+            villagers: villagers::Villagers::restore(state.villagers),
             survival,
             fights: fight::Fights::default(),
             processes,
@@ -789,6 +793,7 @@ impl Server {
         if self.save.is_none() {
             return;
         }
+        self.note_all_deaths();
         // A player who died since the last tick (a command, say) is saved buried.
         self.bury_the_dead();
         let Some(save) = &self.save else { return };
@@ -844,6 +849,9 @@ impl Server {
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
             failed("creatures", e);
+        }
+        if let Err(e) = save.write_villagers(&self.villagers.saved()) {
+            failed("who of the villagers died", e);
         }
         let crops = &self.content.crops;
         if let Err(e) = save.write_crops(&self.farm.saved(|id| crops.get(id).def.name.clone())) {
@@ -1203,7 +1211,7 @@ mod tests {
     /// Village furnishings give nothing when broken (design draft 80), and nothing about
     /// them lets them be picked for more: regrowth does not take them, and the journal does
     /// not log them as wild plants. The props are read from settlements.ron's furnishings
-    /// (barrel, bell, hay, sacks, hanging things, nets), so a mod's own props are held to it
+    /// (barrel, bell, hay, sacks, crates, hanging things, nets), so a mod's own props are held to it
     /// too.
     #[test]
     fn village_furnishings_drop_nothing() {
@@ -1214,7 +1222,7 @@ mod tests {
         let blocks = &content.blocks;
         let mut props: Vec<voxmar_engine::block::BlockId> = f.barrel.iter().chain(&f.bell).map(|name| blocks.expect(name)).collect();
         // A list may pick by tag: every block with the tag is a prop.
-        for list in [&f.hay, &f.sacks, &f.hanging, &f.nets] {
+        for list in [&f.hay, &f.sacks, &f.crates, &f.hanging, &f.nets] {
             for select in list {
                 match select {
                     Select::Name(name, _) => props.push(blocks.expect(name)),

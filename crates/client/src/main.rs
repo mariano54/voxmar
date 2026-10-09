@@ -451,7 +451,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else if options.world.is_some() || headless {
         let world = match &options.world {
             Some(name) => Some(menu::worlds_dir().ok_or("no configuration directory to keep worlds in")?.join(name)),
-            None => None,
+            // Gates exercise saved reconnects too; their disposable world stays beside
+            // the gate's own logs and is cleared by the next run.
+            None => options.gate.as_ref().map(|dir| dir.join("world")),
         };
         let gate_lag = options.gate.as_ref().map(|_| gate::SERVER_LAG);
         let asked = options.server_lag.map(|ms| voxmar_server::Lag { per_tick: Duration::from_millis(ms), ..default() });

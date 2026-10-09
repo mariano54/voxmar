@@ -1706,6 +1706,7 @@ impl WorldContent {
     pub fn load(content: &Content) -> Result<Self, ContentError> {
         let world = Self::from_files(content.files.iter(), &content.blocks)?;
         world.settlements.check_furnishings(&content.blocks)?;
+        world.settlements.people.check_against(&content.creatures, &world.settlements.works())?;
         Ok(world)
     }
 
@@ -1933,6 +1934,7 @@ impl WorldContent {
         let snow_cover = weather.snow_cover().to_vec();
         let tree_density = tree_density.map_or(1.0, |(d, _)| d);
         let plant_density = plant_density.map_or(1.0, |(d, _)| d);
+        notes.extend(settlements.people.notes.iter().cloned());
         for note in &notes {
             tracing::info!("{note}");
         }
@@ -3214,6 +3216,32 @@ mod tests {
     /// With three packages a note names the package whose value each field replaces, field
     /// by field (so one note a package replaced), says what is new, and a later file that
     /// changes nothing leaves no note.
+    #[test]
+    fn people_load_notes_follow_each_field_and_routine() {
+        let registry = registry();
+        let mut files = base_files();
+        for (package, source) in [
+            ("first", "(people: (jitter: 0.02, live: (search: 4000), routines: [(name: \"worker\", slots: [(until: 1.0, go: [(place: Home)])])] ))"),
+            ("second", "(people: (jitter: 0.01, live: (search: 3000)))"),
+            ("empty", "()"),
+        ] {
+            files.push(ContentFile { package: package.into(), name: "settlements.ron".into(), source: source.into() });
+        }
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        assert_eq!(content.settlements.people.jitter, 0.01);
+        assert_eq!(content.settlements.people.live.search, 3000);
+        for note in [
+            "first/settlements.ron replaces the settlements.ron base set (people.jitter)",
+            "first/settlements.ron replaces the settlements.ron base set (people.live.search)",
+            "first/settlements.ron replaces the settlements.ron base set (people.routines.worker)",
+            "second/settlements.ron replaces the settlements.ron first set (people.jitter)",
+            "second/settlements.ron replaces the settlements.ron first set (people.live.search)",
+        ] {
+            assert!(content.notes.iter().any(|n| n == note), "missing {note}: {:?}", content.notes);
+        }
+        assert!(!content.notes.iter().any(|n| n.contains("empty/")));
+    }
+
     #[test]
     fn notes_name_the_package_each_field_replaces() {
         let registry = registry();

@@ -230,7 +230,9 @@ impl Content {
                         cooking.extend(CookingRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "creatures.ron" => {
+                    // `creatures.ron`, and `creatures_<topic>.ron` for the people a system
+                    // places (villagers).
+                    topic if topic == "creatures.ron" || topic.starts_with("creatures_") && topic.ends_with(".ron") => {
                         let read = CreatureRegistry::read(package, &source)?;
                         creatures.extend(read.defs);
                         creature_limits.set(package, &name, "creature limits", read.limits, &mut notes);

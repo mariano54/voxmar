@@ -10,6 +10,8 @@
 //! - `items.ron`: the dropped items lying about, by item name.
 //! - `crops.ron`: the crops players planted, by crop name, with their stage and the tick
 //!   their next is due.
+//! - `villagers.ron`: who of each settlement's people died: how many newcomers have taken
+//!   their place, and the day the next comes.
 //! - `machines.ron`: the machines players built, by block name, with what they hold.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
@@ -49,6 +51,7 @@ const META_FILE: &str = "world.ron";
 const CREATURES_FILE: &str = "creatures.ron";
 const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
+const VILLAGERS_FILE: &str = "villagers.ron";
 const MACHINES_FILE: &str = "machines.ron";
 /// What a file being saved ends with, after its generation.
 const STAGED: &str = "new";
@@ -179,6 +182,10 @@ pub struct SavedPlayer {
 /// A player file. Items are stored by name, like column blocks.
 #[derive(Serialize, Deserialize)]
 struct PlayerFile {
+    /// The name as the player first played it (the file is named in lower case), which they
+    /// keep playing under whatever case they type later.
+    #[serde(default)]
+    name: Option<String>,
     position: [f32; 3],
     yaw: f32,
     #[serde(default)]
@@ -427,6 +434,33 @@ impl WorldSave {
         older.unwrap_or(path)
     }
 
+    /// The name the player called `name` is saved under, in the case they first played it,
+    /// if they have been here and the file says (older files do not).
+    pub fn saved_name(&self, name: &str) -> Option<String> {
+        #[derive(Deserialize)]
+        struct Named {
+            #[serde(default)]
+            name: Option<String>,
+        }
+        let source = std::fs::read_to_string(self.player_file(name)).ok()?;
+        ron::from_str::<Named>(&source).ok()?.name.filter(|saved| saved.to_lowercase() == name.to_lowercase())
+    }
+
+    /// Spellings preserved by actual older file names, before player files were named in
+    /// lower case. Read directory entries: a synthesised path loses the case on macOS.
+    pub(crate) fn older_player_names(&self, name: &str) -> Vec<String> {
+        let mut names: Vec<_> = std::fs::read_dir(self.dir.join("players"))
+            .into_iter().flatten().flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "ron"))
+            .filter_map(|path| path.file_stem().and_then(|stem| player_name(&stem.to_string_lossy())))
+            .filter(|saved| crate::player::same_name(saved, name))
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
     /// The saved state of the player called `name`. Items that no longer exist are dropped.
     pub fn read_player(&self, name: &str, registry: &BlockRegistry) -> io::Result<Option<SavedPlayer>> {
         let path = self.player_file(name);
@@ -482,6 +516,7 @@ impl WorldSave {
             .map(|slot| slot.map(|stack| (registry.def(stack.item).name.clone(), stack.count)))
             .collect();
         let file = PlayerFile {
+            name: Some(name.to_owned()),
             position: player.position.to_array(),
             yaw: player.yaw,
             mode: player.mode,
@@ -561,6 +596,17 @@ fn sown_before() -> bool {
     true
 }
 
+/// One of a settlement's people who died, as saved: settlement `town`'s `person`th
+/// resident, `generation` newcomers on, the next due on day `away_until` (days since the
+/// world began).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedDead {
+    pub town: u64,
+    pub person: usize,
+    pub generation: u64,
+    pub away_until: f64,
+}
+
 impl WorldSave {
     /// The planted crops, none if the world has no crops file.
     pub fn read_crops(&self) -> io::Result<Vec<SavedCrop>> {
@@ -617,6 +663,21 @@ impl WorldSave {
         write_atomic(&self.target(self.dir.join(CREATURES_FILE)), text.as_bytes())
     }
 
+    /// Who of the settlements' people died, none if the world has no villagers file.
+    pub fn read_villagers(&self) -> io::Result<Vec<SavedDead>> {
+        let path = self.dir.join(VILLAGERS_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn write_villagers(&self, dead: &[SavedDead]) -> io::Result<()> {
+        let text = ron::ser::to_string(dead).map_err(io::Error::other)?;
+        write_atomic(&self.target(self.dir.join(VILLAGERS_FILE)), text.as_bytes())
+    }
+
     pub fn write_items(&self, items: &[SavedItem]) -> io::Result<()> {
         let text = ron::ser::to_string(items).map_err(io::Error::other)?;
         write_atomic(&self.target(self.dir.join(ITEMS_FILE)), text.as_bytes())
@@ -630,10 +691,11 @@ pub(crate) struct WorldState {
     pub crops: Vec<SavedCrop>,
     pub creatures: Vec<crate::husbandry::SavedCreature>,
     pub machines: Vec<crate::machines::SavedMachine>,
+    pub villagers: Vec<SavedDead>,
 }
 
 impl WorldSave {
-    /// The dropped items, crops, kept creatures and machines. A file that is not what it should be is
+    /// The dropped items, crops, kept creatures, machines and who of the villagers died. A file that is not what it should be is
     /// moved aside and logged, and the world opens without what it held; a file that could
     /// not be read at all, or moved aside (and so would be overwritten at the next save), is
     /// an error.
@@ -643,6 +705,7 @@ impl WorldSave {
             crops: self.read_or_set_aside(CROPS_FILE, Self::read_crops)?,
             creatures: self.read_or_set_aside(CREATURES_FILE, Self::read_creatures)?,
             machines: self.read_or_set_aside(MACHINES_FILE, Self::read_machines)?,
+            villagers: self.read_or_set_aside(VILLAGERS_FILE, Self::read_villagers)?,
         })
     }
 
@@ -978,6 +1041,7 @@ mod tests {
         assert!(files >= 4, "{files} player files");
         // Names differing only in case are one player, with one file, on any filesystem.
         assert_eq!(save.read_player("STEVE", &registry).unwrap(), Some(player.clone()));
+        assert_eq!(save.saved_name("STEVE").as_deref(), Some("Steve"));
         assert!(dir.join("players/steve.ron").exists() && !dir.join("players/Steve.ron").exists() || cfg!(not(target_os = "linux")));
         // A file saved under the name as typed, before names were kept in lower case, is
         // still found, and the next save goes to the lower-case one.
@@ -993,6 +1057,19 @@ mod tests {
         assert_eq!(save.read_player("über", &registry).unwrap(), Some(old.clone()));
         assert_eq!(player_name("a~2f~b").as_deref(), Some("a/b"));
         assert_eq!(player_name("a~zz~b"), None);
+        // Legacy files without a saved display name still load, and a mismatched name
+        // cannot turn the session into a different player.
+        let mut legacy: PlayerFile = ron::from_str(&text).unwrap();
+        legacy.name = None;
+        let legacy_text = ron::ser::to_string(&legacy).unwrap();
+        std::fs::write(dir.join("players/legacy.ron"), legacy_text).unwrap();
+        assert_eq!(save.saved_name("LEGACY"), None);
+        assert_eq!(save.older_player_names("LEGACY"), ["legacy"]);
+        assert_eq!(save.read_player("LEGACY", &registry).unwrap(), Some(player.clone()));
+        legacy.name = Some("someone-else".into());
+        std::fs::write(dir.join("players/legacy.ron"), ron::ser::to_string(&legacy).unwrap()).unwrap();
+        assert_eq!(save.saved_name("LEGACY"), None);
+        assert_eq!(save.older_player_names("über"), ["Über"], "decode the actual legacy file name");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

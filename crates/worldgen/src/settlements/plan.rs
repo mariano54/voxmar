@@ -1339,6 +1339,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
             min: lot.rect.min,
             max: lot.rect.max,
             floor: lot.floor + lot.spec.stilts,
+            room: lot.spec.room(&lot.frame),
             // Two blocks out from the door: on its porch, or on the step below the top
             // one when it stands on stilts.
             door: lot.door.map(|(d, _)| {
@@ -1401,6 +1402,8 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
     }
 
     let gates: Vec<IVec2> = lanes.iter().filter(|l| l.main).map(|l| l.points.last().unwrap().round().as_ivec2()).collect();
+    let size_name = &def.sizes[size_index].name;
+    let people = super::people::residents(&def.people, &def.houses, size_name, &levers, &buildings, &gates, hash3(ctx.seed, cell.x, 7, cell.y));
     Some(Plan {
         id: hash3(ctx.seed, cell.x, 0, cell.y),
         size: def.sizes[size_index].name.clone(),
@@ -1413,6 +1416,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, sma
         buildings,
         gates,
         lanes: lanes.iter().map(|l| l.points.clone()).collect(),
+        people,
         lane_halves: lanes.iter().map(|l| l.half).collect(),
         min: raster.min,
         max: raster.max,
@@ -1978,9 +1982,10 @@ pub(super) fn draw_prop(fixed: &Fixed, mats: &Mats, canvas: &mut Canvas, frame: 
             }
         }
         Prop::Crates => {
-            put(0, 1, 0, Put::Soft(mats.trim));
+            let block = fixed.crates.pick(u(0xc7)).unwrap_or(mats.trim);
+            put(0, 1, 0, Put::Soft(block));
             if u(3) < 0.4 {
-                put(0, 2, 0, Put::Soft(mats.trim));
+                put(0, 2, 0, Put::Soft(block));
             }
         }
         Prop::StonePile => {

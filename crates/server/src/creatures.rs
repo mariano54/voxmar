@@ -179,7 +179,7 @@ pub struct Creatures {
     next: u32,
     seen: FxHashMap<PlayerId, FxHashSet<u32>>,
     /// Those that died or went since players were last told.
-    gone: Vec<CreatureGone>,
+    pub(crate) gone: Vec<CreatureGone>,
     /// Where each player settled and since when (RuneScape's tolerance).
     settled: FxHashMap<PlayerId, (Vec3, u64)>,
     /// Kept creatures from the save that could not be put back yet (their species is gone
@@ -294,6 +294,7 @@ impl Server {
             }
             self.despawn_far();
         }
+        self.tick_villagers();
         self.think_and_move();
         self.tick_husbandry();
         self.drop_fallen_loot();
@@ -343,6 +344,7 @@ impl Server {
         let ids: Vec<u32> = self.creatures.live.keys().copied().collect();
         let neighbours = Neighbours::of(&self.creatures.live);
         let daylight = self.daylight();
+        let handoff = self.overworld.settlement_people().live.handoff;
         let mut actions: Vec<(u32, Decision)> = Vec::new();
         for &id in &ids {
             let creature = &self.creatures.live[&id];
@@ -370,6 +372,7 @@ impl Server {
                     food,
                     mate,
                     kept: creature.owner.is_some(),
+                    errand: self.villagers.errand(id, handoff),
                     dt: every as f32 * dt,
                     seed: mix(creature.seed, self.tick),
                 };
@@ -612,6 +615,9 @@ impl Server {
     /// player fights it back, having landed a damaging blow on it lately, and it is a match
     /// for them (`DefenceTraining`, design wiki draft 63).
     pub(crate) fn defence_xp(&mut self, player: PlayerId, id: u32, species: CreatureId) {
+        if self.villager_calm_for(id, player) {
+            return;
+        }
         let def = &self.content.creatures.get(species).def;
         let Some(attack) = def.attack else { return };
         let Some(skill) = self.skill("core:defence") else { return };
@@ -628,7 +634,11 @@ impl Server {
         if !(fighting && rules.matches(def.level, defence)) {
             return;
         }
-        let tenths = (40 * (low as u32 + high as u32) / 2).max(10);
+        // By the species' share: a villager teaches nothing, a guard does.
+        let tenths = ((40 * (low as u32 + high as u32) / 2).max(10) as f32 * def.xp.combat).round() as u32;
+        if tenths == 0 {
+            return;
+        }
         let Some(target) = self.players.get_mut(&player) else { return };
         target.skills.grant(skill, tenths);
         target.changed(traits::SKILLS);
@@ -646,6 +656,7 @@ impl Server {
     /// the style it is weak to), damage up to the weapon's max hit for their level, as the
     /// stroke raises them. Returns the damage, 0 for a miss, `None` if it is gone.
     pub(crate) fn land_blow(&mut self, player: PlayerId, id: u32, weapon: &voxmar_engine::combat::Weapon, stroke: voxmar_engine::combat::Stroke) -> Option<u16> {
+        let calm = self.villager_struck(id, player);
         let creature = self.creatures.live.get(&id)?;
         let species = self.content.creatures.get(creature.species);
         let attack = self.level(player, weapon.skill);
@@ -657,7 +668,9 @@ impl Server {
             .min(u8::MAX as u16) as u8;
         if !stroke.certain && hit >= voxmar_engine::combat::hit_chance_with(attack, weapon.accuracy, defence, 0, stroke.accuracy) {
             let creature = self.creatures.live.get_mut(&id).expect("checked above");
-            creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
+            if !calm {
+                creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
+            }
             self.struck(player, id, 0, false, stroke.blow);
             return Some(0);
         }
@@ -672,6 +685,7 @@ impl Server {
     /// gives: four a point in the weapon's skill, a third of that in Hitpoints
     /// (RuneScape). Returns the damage done, `None` if it is gone.
     pub(crate) fn hurt_creature(&mut self, player: PlayerId, id: u32, damage: u16, skill: Option<SkillId>, blow: voxmar_engine::combat::Blow) -> Option<u16> {
+        let calm = self.villager_struck(id, player);
         let creature = self.creatures.live.get_mut(&id)?;
         let species = self.content.creatures.get(creature.species);
         // No knockback: the creature stays where the blow found it (its model flinches).
@@ -683,8 +697,13 @@ impl Server {
         if damage > 0 {
             creature.fought = Some((player, self.tick));
         }
-        creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
-        let grants = [(skill, 40 * damage as u32), (self.skill("core:hitpoints"), 13 * damage as u32)];
+        if !calm {
+            creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
+        }
+        // RuneScape: four experience a point of damage in the style's skill, a third of
+        // that in Hitpoints; by the species' share.
+        let share = |tenths: u32| if calm { 0 } else { (tenths as f32 * species.def.xp.combat).round() as u32 };
+        let grants = [(skill, share(40 * damage as u32)), (self.skill("core:hitpoints"), share(13 * damage as u32))];
         if let Some(target) = self.players.get_mut(&player) {
             for (skill, tenths) in grants {
                 if let Some(skill) = skill.filter(|_| tenths > 0) {
@@ -706,6 +725,8 @@ impl Server {
     pub(crate) fn creature_dies(&mut self, id: u32) {
         let Some(creature) = self.creatures.live.remove(&id) else { return };
         self.creatures.gone.push(CreatureGone { id, died: true });
+        // One of a settlement's people: noted dead now, so no save misses it.
+        self.villager_died(id);
         let species = self.content.creatures.get(creature.species);
         let killer = creature.hurt_by.and_then(|p| self.players.get(&p));
         let tool: Vec<String> = killer.and_then(|p| p.held()).map_or_else(Vec::new, |item| self.content.blocks.def(item).tags.clone());
@@ -720,8 +741,9 @@ impl Server {
             unit_from(mix(creature.seed, draws as u64 ^ self.tick << 8))
         });
         let cell = creature.body.position.floor().as_ivec3();
-        // The killer's journal: one more of the species, and each drop for the collection log.
-        let mut journal = vec![(Self::page_of(species.def.kind), species.def.name.clone(), 1)];
+        // The killer's journal: one more of the species (people are not counted), and each
+        // drop for the collection log.
+        let mut journal: Vec<_> = Self::page_of(species.def.kind).map(|page| (page, species.def.name.clone(), 1)).into_iter().collect();
         journal.extend(found.iter().map(|&(item, count)| (voxmar_engine::journal::Page::Collection, self.content.blocks.def(item).name.clone(), count as u32)));
         // Its loot comes out once its body has fallen, never from an animal still standing.
         let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
@@ -756,12 +778,24 @@ impl Server {
 
     /// Puts a creature of `species` at `at`, with a home there.
     pub(crate) fn spawn_creature(&mut self, species: CreatureId, at: Vec3, salt: u64) -> Option<u32> {
-        if self.creatures.live.len() >= self.content.creatures.limits().most {
+        let seed = mix(mix(self.meta.seed, self.creatures.next as u64), salt);
+        self.spawn_seeded(species, at, seed)
+    }
+
+    /// Puts a creature of `species` at `at` whose looks and mind come from `seed`, so the
+    /// same seed makes the same individual (a settlement's people, each visit).
+    pub(crate) fn spawn_seeded(&mut self, species: CreatureId, at: Vec3, seed: u64) -> Option<u32> {
+        let people = self.creatures.live.values().filter(|c| self.content.creatures.get(c.species).def.kind == Kind::Villager).count();
+        let full = if self.content.creatures.get(species).def.kind == Kind::Villager {
+            people >= self.overworld.settlement_people().live.most
+        } else {
+            self.creatures.live.len() - people >= self.content.creatures.limits().most
+        };
+        if full {
             return None;
         }
         let id = self.creatures.next;
         self.creatures.next += 1;
-        let seed = mix(mix(self.meta.seed, id as u64), salt);
         let genome = self.wild_genome(species, at, seed);
         let def = &self.content.creatures.get(species).def;
         let traits = genes::express(&def.genes, &genome);
@@ -843,7 +877,8 @@ impl Server {
             self.creatures
                 .live
                 .values()
-                .filter(|c| c.body.position.distance(at) < NEAR && (self.content.creatures.get(c.species).def.kind == Kind::Monster) == (kind == Kind::Monster))
+                .filter(|c| c.body.position.distance(at) < NEAR && self.content.creatures.get(c.species).def.kind != Kind::Villager)
+                .filter(|c| (self.content.creatures.get(c.species).def.kind == Kind::Monster) == (kind == Kind::Monster))
                 .count()
         };
         let (animals, monsters) = (nearby(Kind::Animal), nearby(Kind::Monster));
@@ -868,6 +903,10 @@ impl Server {
         let mut choices: Vec<(CreatureId, f32)> = Vec::new();
         for (id, species) in self.content.creatures.iter() {
             let def = &species.def;
+            // People come with their settlements (`villagers`), never from the land.
+            if def.kind == Kind::Villager {
+                continue;
+            }
             let monster = def.kind == Kind::Monster;
             if (monster && (monsters >= limits.monsters_near || !dark)) || (!monster && animals >= limits.animals_near) {
                 continue;
@@ -920,13 +959,14 @@ impl Server {
     /// Room left under the world's total: what `most` leaves after the living and the kept
     /// animals still waiting in the save, so those always fit back.
     pub(crate) fn room_left(&self) -> usize {
-        self.content.creatures.limits().most.saturating_sub(self.creatures.live.len() + self.creatures.unplaced.len())
+        let animals = self.creatures.live.values().filter(|c| self.content.creatures.get(c.species).def.kind != Kind::Villager).count();
+        self.content.creatures.limits().most.saturating_sub(animals + self.creatures.unplaced.len())
     }
 
     /// How many more wild creatures the world has room for: under the wild budget, which
-    /// kept animals never touch, and under the total.
+    /// kept animals and a settlement's people never touch, and under the total.
     pub(crate) fn wild_room(&self) -> usize {
-        let wild = self.creatures.live.values().filter(|c| c.owner.is_none()).count();
+        let wild = self.creatures.live.values().filter(|c| c.owner.is_none() && self.content.creatures.get(c.species).def.kind != Kind::Villager).count();
         self.content.creatures.limits().wild_most.saturating_sub(wild).min(self.room_left())
     }
 
@@ -963,7 +1003,7 @@ impl Server {
             .creatures
             .live
             .iter()
-            .filter(|(_, c)| c.owner.is_none())
+            .filter(|(id, c)| c.owner.is_none() && !self.villagers.manages(**id))
             .filter(|(_, c)| {
                 let far = players.iter().all(|p| p.distance(c.body.position) > DESPAWN);
                 far || !self.world.contains(ColumnPos::of_block(c.body.position.floor().as_ivec3()))
