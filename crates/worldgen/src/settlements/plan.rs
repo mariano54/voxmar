@@ -170,11 +170,14 @@ struct Ground<'a> {
     levels: usize,
     #[cfg(test)]
     prefetched: usize,
+    /// Explicit full-sample contains/get reads in the prefetch and at controls.
+    #[cfg(test)]
+    cache_reads: usize,
 }
 
 impl Ground<'_> {
     fn new(land: &dyn Land) -> Ground<'_> {
-        Ground { land, seen: FxHashMap::default(), dry_water: Default::default(), scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0, #[cfg(test)] prefetched: 0 }
+        Ground { land, seen: FxHashMap::default(), dry_water: Default::default(), scratch: Default::default(), #[cfg(test)] queries: 0, #[cfg(test)] misses: 0, #[cfg(test)] clears: 0, #[cfg(test)] levels: 0, #[cfg(test)] prefetched: 0, #[cfg(test)] cache_reads: 0 }
     }
 
     /// Continue only the site search over this same land. Full sealed samples and
@@ -218,6 +221,8 @@ impl Ground<'_> {
         let mut missing = Vec::new();
         for p in points {
             let point = (p.x, p.y);
+            #[cfg(test)]
+            { self.cache_reads += 1; }
             if !self.seen.contains_key(p) && !missing.contains(&point) {
                 if missing.is_empty() { missing.reserve_exact(points.len()); }
                 missing.push(point);
@@ -235,33 +240,42 @@ impl Ground<'_> {
         }
     }
 
-    /// Consecutive row-major positions are distinct. Collect only actual misses in
-    /// fixed scratch storage, without a duplicate scan or intermediate allocation.
-    fn prefetch_unique(&mut self, points: &[IVec2]) {
+    /// Consecutive row-major positions are distinct. Keep their actual warm or new
+    /// samples in order, so consuming this bounded batch needs no cache readback.
+    fn prefetch_unique(&mut self, points: &[IVec2]) -> [Option<GeoSample>; crate::water::SAMPLE_BATCH] {
         assert!(points.len() <= crate::water::SAMPLE_BATCH);
         self.reserve(points.len());
+        let mut values = [None; crate::water::SAMPLE_BATCH];
         let mut missing = [(0, 0); crate::water::SAMPLE_BATCH];
+        let mut indices = [0; crate::water::SAMPLE_BATCH];
         let mut count = 0;
-        for &p in points {
-            if !self.seen.contains_key(&p) {
+        for (i, &p) in points.iter().enumerate() {
+            #[cfg(test)]
+            { self.cache_reads += 1; }
+            if let Some(g) = self.seen.get(&p).copied() {
+                values[i] = Some(g);
+            } else {
                 missing[count] = (p.x, p.y);
+                indices[count] = i;
                 count += 1;
             }
         }
-        if count == 0 { return; }
+        if count == 0 { return values; }
         #[cfg(test)]
         { self.prefetched += count; }
         let samples = self.land.samples_cached(&missing[..count], &mut self.scratch);
-        for (&(x, z), g) in missing[..count].iter().zip(samples) {
+        for ((&(x, z), &i), g) in missing[..count].iter().zip(&indices[..count]).zip(samples) {
             let p = IVec2::new(x, z);
             self.dry_water.remove(&p);
             self.seen.insert(p, g);
+            values[i] = Some(g);
         }
+        values
     }
 
     fn at(&mut self, p: IVec2) -> GeoSample {
         #[cfg(test)]
-        { self.queries += 1; }
+        { self.queries += 1; self.cache_reads += 1; }
         if let Some(g) = self.seen.get(&p) {
             return *g;
         }
@@ -2615,6 +2629,8 @@ fn level(ground: &mut Ground, rect: &Rect, bank: i32, step: i32) -> Option<(i32,
     #[cfg(not(test))]
     let original_rows = false;
     let mut left = 0;
+    let mut values = [None; crate::water::SAMPLE_BATCH];
+    let mut consumed = 0;
     for z in outer.min.y..=outer.max.y {
         for x in outer.min.x..=outer.max.x {
             if original_rows {
@@ -2632,12 +2648,21 @@ fn level(ground: &mut Ground, rect: &Rect, bank: i32, step: i32) -> Option<(i32,
                         else if next.y < outer.max.y { next = IVec2::new(outer.min.x, next.y + 1); }
                         else { break; }
                     }
-                    ground.prefetch_unique(&points[..left]);
+                    values = ground.prefetch_unique(&points[..left]);
+                    consumed = 0;
                 }
                 left -= 1;
             }
             let p = IVec2::new(x, z);
-            let g = ground.at(p);
+            let g = if original_rows {
+                ground.at(p)
+            } else {
+                #[cfg(test)]
+                { ground.queries += 1; }
+                let g = values[consumed].expect("prefetched terrain sample");
+                consumed += 1;
+                g
+            };
             if g.submerged() {
                 return None;
             }
@@ -2925,6 +2950,8 @@ mod level_tests {
                     if expected.is_some() {
                         accepted += 1;
                         assert_eq!(actual, ordered);
+                        assert_eq!(batched.cache_reads, ordered.len(), "consume each prefetched value without another lookup");
+                        assert_eq!(original.cache_reads, ordered.len() * 2, "original prefetch plus consumed readback");
                         assert_eq!(calls.len(), ordered.len().div_ceil(crate::water::SAMPLE_BATCH));
                         reduced += usize::from(calls.len() < original_land.calls.lock().unwrap().len());
                     } else {
@@ -2943,15 +2970,21 @@ mod level_tests {
             warm.seen.insert(p, land.sample(p.x, p.y));
         }
         warm.dry_water.insert(points[2]);
-        warm.prefetch_unique(&points);
+        let values = warm.prefetch_unique(&points);
         let missing: Vec<_> = points.iter().enumerate().filter(|(i, _)| ![1, 3].contains(i))
             .map(|(_, p)| (p.x, p.y)).collect();
         assert_eq!(*land.calls.lock().unwrap(), vec![missing.clone()], "partially warm misses retain order");
         assert_eq!(warm.prefetched, missing.len());
         assert!(!warm.dry_water.contains(&points[2]), "a full sample replaces its dry witness");
-        for &p in &points { assert_eq!(warm.at(p), land.sample(p.x, p.y)); }
-        warm.prefetch_unique(&points);
+        for (i, &p) in points.iter().enumerate() {
+            assert_eq!(values[i], Some(land.sample(p.x, p.y)), "scatter cold and warm values into original slots");
+            assert_eq!(warm.at(p), land.sample(p.x, p.y));
+        }
+        assert!(values[points.len()..].iter().all(Option::is_none));
+        assert_eq!(warm.prefetch_unique(&points), values);
         assert_eq!(land.calls.lock().unwrap().len(), 1, "a fully warm batch reads no terrain");
+        assert!(warm.prefetch_unique(&[]).iter().all(Option::is_none));
+        assert_eq!(land.calls.lock().unwrap().len(), 1, "an empty batch reads no terrain");
 
         land.calls.lock().unwrap().clear();
         let mut pressured = Ground::new(&land);
@@ -2959,14 +2992,29 @@ mod level_tests {
         pressured.seen.insert(first, GeoSample { height: 9999, ..land.sample(first.x, first.y) });
         pressured.dry_water.extend((0..GROUND_SAMPLE_LIMIT - 1).map(|i| IVec2::new(100_000 + i as i32, 100_000)));
         assert_eq!(pressured.seen.len() + pressured.dry_water.len(), GROUND_SAMPLE_LIMIT);
-        pressured.prefetch_unique(&points);
+        let values = pressured.prefetch_unique(&points);
         let all: Vec<_> = points.iter().map(|p| (p.x, p.y)).collect();
         assert_eq!(*land.calls.lock().unwrap(), vec![all], "clear before collecting even the previously cached first point");
         assert_eq!(pressured.clears, 1);
         assert_eq!(pressured.prefetched, points.len());
         assert_eq!(pressured.seen.len(), points.len());
         assert!(pressured.dry_water.is_empty());
-        for &p in &points { assert_eq!(pressured.at(p), land.sample(p.x, p.y)); }
+        for (i, &p) in points.iter().enumerate() {
+            assert_eq!(values[i], Some(land.sample(p.x, p.y)), "clearing precedes copying any warm value");
+            assert_eq!(pressured.at(p), land.sample(p.x, p.y));
+        }
+        assert!(values[points.len()..].iter().all(Option::is_none));
+
+        land.calls.lock().unwrap().clear();
+        let mut all_warm = Ground::new(&land);
+        for &p in &points { all_warm.seen.insert(p, GeoSample { height: 9999, ..land.sample(p.x, p.y) }); }
+        all_warm.dry_water.extend((0..GROUND_SAMPLE_LIMIT - points.len()).map(|i| IVec2::new(100_000 + i as i32, 100_000)));
+        let values = all_warm.prefetch_unique(&points);
+        assert_eq!(all_warm.clears, 1, "even a fully warm batch reserves before any lookup");
+        assert_eq!(all_warm.prefetched, points.len());
+        assert_eq!(*land.calls.lock().unwrap(), vec![points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>()]);
+        for (i, &p) in points.iter().enumerate() { assert_eq!(values[i], Some(land.sample(p.x, p.y))); }
+        assert!(values[points.len()..].iter().all(Option::is_none));
     }
 
     #[test]
