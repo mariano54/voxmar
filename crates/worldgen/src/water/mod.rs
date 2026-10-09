@@ -796,7 +796,11 @@ impl Rivers {
         let column_key = scratch.column_key(key);
         let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, min, max));
         let p = IVec2::new(x, z);
-        let ground = (!scratch.columns.contains_key(&(p, column_key))).then(|| land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0]);
+        let ground = (!scratch.columns.contains_key(&(p, column_key))).then(|| {
+            #[cfg(test)]
+            if ORIGINAL_BATCHES.with(|flag| flag.get()) { return land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0]; }
+            land.geology.land_with(x, z, &mut scratch.corners)
+        });
         self.sealed_cached(land, tiers, column_key, p, ground, &mut scratch.corners, &mut scratch.columns)
     }
 
