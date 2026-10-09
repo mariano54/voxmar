@@ -2944,6 +2944,78 @@ mod level_tests {
     use crate::water::Body;
 
     #[test]
+    fn terrain_batches_keep_mixed_level_facts_and_original_predicates() {
+        struct Mixed(Vec<(IVec2, GeoSample)>);
+        impl Land for Mixed {
+            fn sample(&self, x: i32, z: i32) -> GeoSample {
+                self.0.iter().find(|(p, _)| *p == IVec2::new(x, z))
+                    .map(|(_, g)| *g).unwrap_or_else(|| Creek(None, None).sample(x, z))
+            }
+        }
+        let dry = Creek(None, None).sample(0, 0);
+        let shape = GeoSample { form: crate::geology::Form { shape: Some(crate::ShapeId(0)), ..dry.form }, ..dry };
+        let cavity = GeoSample { cavity: Some(crate::water::Cavity { floor: 130, ceiling: 139 }), ..dry };
+        let below = GeoSample { river: 0.5f32.next_down(), ..dry };
+        let equal = GeoSample { river: 0.5, ..dry };
+        let above = GeoSample { river: 0.5f32.next_up(), ..dry };
+        let nan = GeoSample { river: f32::from_bits(0x7fc0_0123), ..dry };
+        let wet = GeoSample { water: dry.height + 1, ..dry };
+        let samples = [dry, shape, cavity, below, equal, above, nan, wet];
+        let points: Vec<_> = (0..samples.len()).map(|i| IVec2::new(i as i32, -17)).collect();
+        let land = Mixed(points.iter().copied().zip(samples).collect());
+        for warm in [0, 2, samples.len()] {
+            let mut ground = Ground::new(&land);
+            for (&p, &g) in points.iter().zip(&samples).take(warm) { ground.seen.insert(p, g); }
+            let values = ground.prefetch_unique(&points);
+            for (i, g) in samples.iter().enumerate() {
+                let v = values[i].expect("actual sample in every supplied slot");
+                assert_eq!((v.height, v.river.to_bits(), v.submerged, v.solid),
+                    (g.height, g.river.to_bits(), g.water > g.height, g.form.shape.is_none() && g.cavity.is_none()));
+            }
+            assert!(values[points.len()..].iter().all(Option::is_none));
+            assert_eq!(ground.prefetched, samples.len() - warm);
+        }
+
+        let rect = Rect::new(IVec2::ZERO, IVec2::splat(5));
+        let bank = IVec2::new(-1, 0);
+        let unsampled = IVec2::ZERO;
+        let sampled = IVec2::ONE;
+        for (p, g, accepted) in [
+            (bank, GeoSample { river: above.river, ..shape }, true),
+            (bank, GeoSample { river: above.river, ..cavity }, true),
+            (unsampled, GeoSample { height: 9999, water: 9999, ..shape }, true),
+            (unsampled, cavity, true),
+            (sampled, shape, false),
+            (sampled, cavity, false),
+            (sampled, below, true),
+            (unsampled, equal, false),
+            (unsampled, above, false),
+            (sampled, nan, true),
+            (bank, dry, true),
+            (bank, wet, false),
+            (unsampled, wet, false),
+        ] {
+            let land = Mixed(vec![(p, g)]);
+            let outer = rect.grow(1);
+            let points: Vec<_> = (outer.min.y..=outer.max.y).flat_map(|z|
+                (outer.min.x..=outer.max.x).map(move |x| IVec2::new(x, z))).collect();
+            for warm in [0, points.len() / 2, points.len()] {
+                let (mut original, mut compact) = (Ground::new(&land), Ground::new(&land));
+                for &p in points.iter().take(warm) {
+                    let g = land.sample(p.x, p.y);
+                    original.seen.insert(p, g);
+                    compact.seen.insert(p, g);
+                }
+                let expected = with_original_rows(|| level(&mut original, &rect, 1, 2));
+                assert_eq!(expected, accepted.then_some((140, 140)), "literal original fixture at {p:?}");
+                assert_eq!(level(&mut compact, &rect, 1, 2), expected);
+                assert_eq!(compact.queries, original.queries, "same first rejection at {p:?}");
+                assert_eq!((compact.levels, original.levels), (1, 1));
+            }
+        }
+    }
+
+    #[test]
     fn terrain_batches_keep_original_leveling_and_reduce_calls() {
         let (compact, full) = (std::mem::size_of::<[Option<LevelSample>; 32]>(), std::mem::size_of::<[Option<GeoSample>; 32]>());
         assert!(compact < full, "the returned batch holds only leveling's actual facts");
