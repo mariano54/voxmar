@@ -3075,12 +3075,14 @@ fn provoke_until(client: &mut Client, id: u32, slot: usize, name: &str, noticed:
     eprintln!("provoke: {name} id {id}, health {last_health:?}, tick {}, player damage {:?}, creature blows {before}, deaths {}", client.server_tick, client.damage, client.deaths);
     loop {
         assert!(client.creatures.contains_key(&id), "the {name} id {id} went (last health {last_health:?}, tick {}, {} player blows, damage {:?}, {} creature blows, {} deaths)", client.server_tick, client.blows, client.damage, client.hurt.len(), client.deaths);
+        face(client, id, slot, false);
+        // Repositioning can pump replies too; judge retaliation after that round trip.
+        assert!(client.creatures.contains_key(&id), "the {name} id {id} went while facing it (last health {last_health:?}, damage {:?}, deaths {})", client.damage, client.deaths);
         last_health = Some(client.creatures[&id].health);
         if client.hurt_by[heard..].iter().any(|&(by, _)| by == id) {
             poked = Some(client.server_tick);
         }
         heard = client.hurt.len();
-        face(client, id, slot, false);
         if poked.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64) {
             eprintln!("provoke: strike {name} id {id}, health {last_health:?}, tick {}, damage {:?}, creature blows {}", client.server_tick, client.damage, client.hurt.len());
             client.propose("core:attack", ActionTarget::Creature(id));
@@ -3095,6 +3097,26 @@ fn provoke_until(client: &mut Client, id: u32, slot: usize, name: &str, noticed:
     }
 }
 
+/// The selected creature's first answer from this wind-up onwards. Other creatures'
+/// replies and earlier blows cannot satisfy a defence or supply its damage/timestamp.
+fn blow_from(hurts: &[(u32, u16)], id: u32, after: usize) -> Option<usize> {
+    hurts.iter().enumerate().skip(after).find_map(|(index, &(by, _))| (by == id).then_some(index))
+}
+
+fn wait_for_blow(client: &mut Client, id: u32, after: usize) -> usize {
+    client.pump_until(|c| blow_from(&c.hurt_by, id, after).is_some());
+    blow_from(&client.hurt_by, id, after).expect("the selected creature answered")
+}
+
+#[test]
+fn a_blow_wait_keeps_other_creatures_and_earlier_blows_separate() {
+    let (bear, other) = (7, 8);
+    let hurts = [(bear, 0), (other, 0), (bear, 4)];
+    assert_eq!(blow_from(&hurts[..2], bear, 1), None, "neither an old bear blow nor another creature answers this wind-up");
+    assert_eq!(blow_from(&hurts, bear, 1), Some(2), "the selected bear's actual damage index");
+    assert_eq!(blow_from(&hurts, other, 2), None, "an earlier unrelated blow cannot be reused");
+}
+
 #[test]
 fn a_windup_wait_does_not_strike_a_creature_that_is_already_fighting() {
     let mut client = Client::join();
@@ -3103,20 +3125,27 @@ fn a_windup_wait_does_not_strike_a_creature_that_is_already_fighting() {
     client.pump_until(|c| c.health >= 100);
     let (id, slot) = beside_a_bear(&mut client);
     let before = provoke_until_it_winds_up(&mut client, id, slot, "bear");
-    client.pump_until(|c| c.hurt.len() > before);
+    wait_for_blow(&mut client, id, before);
     client.drain();
     let (blows, health, heard) = (client.blows, client.creatures[&id].health, client.hurt.len());
     // Deliberately ignore five complete wind-ups while their real Hurt replies arrive.
     // They prove that the bear is still fighting, even without its short pose being seen.
+    let settled = std::cell::Cell::new(false);
+    let deadline = client.ticks() + 30 * TICKS_PER_SECOND as u64;
     let next = provoke_until(&mut client, id, slot, "bear", |c| {
-        c.hurt_by[heard..].iter().filter(|&&(by, _)| by == id).count() >= 5
-            && c.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking)
+        assert!(c.ticks() < deadline, "no fresh wind-up after five missed blows");
+        let attacking = c.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking);
+        if c.hurt_by[heard..].iter().filter(|&&(by, _)| by == id).count() >= 5 && !attacking {
+            settled.set(true);
+        }
+        settled.get() && attacking
     });
     assert!(next >= heard + 5, "the missed blows really arrived");
+    assert!(settled.get(), "the fifth attack ended before the next wind-up was noticed");
     assert_eq!(client.blows, blows, "an active fight needed no more provoking blows");
     assert_eq!(client.creatures[&id].health, health, "waiting did not damage the bear");
-    client.pump_until(|c| c.hurt.len() > next);
-    assert_eq!(client.hurt_by[next].0, id, "the new wind-up really struck");
+    let struck = wait_for_blow(&mut client, id, next);
+    assert_eq!(client.hurt_by[struck].0, id, "the new wind-up really struck");
 }
 
 /// Stands `client` 1.2 blocks from creature `id`, facing it, holding `slot`.
@@ -3230,14 +3259,13 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     let feel = client.content.combat.feel;
     let (windup, recovery) = (attack.windup.unwrap_or(feel.creature_windup), attack.recovery.unwrap_or(feel.creature_recovery));
     // Waits for the bear to wind up at us (standing beside it, facing it, striking it every
-    // few seconds so it fights back), then answers `respond` `after` seconds later; returns
-    // what came of the blow.
-    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> Defended {
+    // few seconds only while it does not fight back), then answers `respond` `after`
+    // seconds later; returns the selected bear's answered blow index.
+    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> usize {
         let before = provoke_until_it_winds_up(client, id, slot, "bear");
         std::thread::sleep(Duration::from_secs_f32(after));
         respond(client);
-        client.pump_until(|c| c.hurt.len() > before);
-        client.hurt[before].1
+        wait_for_blow(client, id, before)
     };
     // Each answer's moment moves by what came of the last, so a slow machine is met where
     // its blows fall: a block not perfect was too soon, a hit too late.
@@ -3245,11 +3273,12 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
         let mut after = windup - 0.1;
         let mut outcomes = Vec::new();
         for _ in 0..8 {
-            let outcome = fight(client, after.max(0.0), respond);
+            let struck = fight(client, after.max(0.0), respond);
+            let outcome = client.hurt[struck].1;
             undo(client);
             outcomes.push(outcome);
             if outcome == want {
-                return;
+                return struck;
             }
             after += if outcome == Defended::Blocked { 0.05 } else { -0.05 };
             client.wait_server(1);
@@ -3264,8 +3293,7 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
         let _ = c.connection.send(ClientMessage::Guard { up: false });
     };
     let health = client.health;
-    answer(&mut client, Defended::Perfect, &raise, &lower);
-    let perfect = client.hurt.len() - 1;
+    let perfect = answer(&mut client, Defended::Perfect, &raise, &lower);
     assert_eq!(client.hurt[perfect].0, 0, "a perfect block takes nothing");
     assert!(client.health <= health);
     let blows = client.kinds.len();
@@ -3275,13 +3303,14 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     assert!(client.damage[blows] > 0, "a counter cannot miss");
     // Staggered after its recovery: its next blow comes no sooner than both, and a wind-up.
     face(&mut client, id, slot, false);
-    client.pump_until(|c| c.hurt.len() > perfect + 1);
-    let gap = client.hurt_at[perfect + 1] - client.hurt_at[perfect];
+    let next = wait_for_blow(&mut client, id, perfect + 1);
+    let gap = client.hurt_at[next] - client.hurt_at[perfect];
     let least = recovery + feel.stagger + windup;
     assert!(gap.as_secs_f32() > least - 0.1, "its next blow came {:.2}s after the perfect block: under {least:.2}s", gap.as_secs_f32());
     // A dodge just before the blow: it passes through.
     client.wait_server(1);
-    answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
+    let dodged = answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
+    assert_eq!(client.hurt[dodged].0, 0, "a dodged blow takes nothing");
 }
 
 #[test]
@@ -3386,7 +3415,7 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
             if to_us.dot(facing) < 45f32.to_radians().cos() {
                 askew += 1;
                 assert!(askew <= 6, "the {name} wound up facing away {askew} times");
-                client.pump_until(|c| c.hurt.len() > before);
+                wait_for_blow(&mut client, id, before);
                 client.wait_server(1);
                 continue;
             }
@@ -3397,16 +3426,17 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
             let away = (client.position - client.creatures[&id].position).with_y(0.0).normalize_or_zero();
             let started = client.ticks();
             let mut last = started;
-            while client.hurt.len() == before {
+            while blow_from(&client.hurt_by, id, before).is_none() {
                 let now = client.ticks();
                 assert!(now < started + 5 * TICKS_PER_SECOND as u64, "the {name}'s blow never came: {:?}", client.creatures.get(&id).map(|v| v.pose));
                 client.position += away * walk * (now - last) as f32 / TICKS_PER_SECOND as f32;
                 last = now;
                 let yaw = yaw_toward(client.position, client.creatures[&id].position);
                 client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-                client.pump_until(|c| c.hurt.len() > before || c.ticks() > last);
+                client.pump_until(|c| blow_from(&c.hurt_by, id, before).is_some() || c.ticks() > last);
             }
-            outcomes.push(client.hurt[before].1);
+            let struck = blow_from(&client.hurt_by, id, before).expect("the selected creature struck");
+            outcomes.push(client.hurt[struck].1);
             client.wait_server(1);
         }
         assert!(outcomes.iter().all(|&o| matches!(o, Defended::Hit | Defended::Missed)), "backing off a {name} at a walk came to {outcomes:?}");
