@@ -5077,6 +5077,26 @@ struct FeelRun {
     facing_frames: u8,
 }
 
+impl FeelRun {
+    /// Queue a real input only while this observed wind-up remains unanswered by the
+    /// server. A result already received cannot be defended by a next-frame input edge.
+    fn answer(&mut self, world: &mut World, blocking: bool, dodge_key: KeyCode, received: bool) -> bool {
+        let Some(seen) = self.seen else { return false };
+        if received || self.answered || seen.elapsed().as_secs_f32() < self.after {
+            return false;
+        }
+        self.answered = true;
+        if blocking {
+            mouse(world, MouseButton::Right, true);
+        } else {
+            // Forward, through the blow, rather than stepping outside its reach.
+            key(world, KeyCode::KeyW, true);
+            key(world, dodge_key, true);
+        }
+        true
+    }
+}
+
 /// The bear in survival: provoked with a click every few server seconds until it winds up,
 /// then the guard raised (phase 2) or a dodge (phase 4) a moment after the wind-up shows.
 /// A perfect block must take nothing, and the click after it (phase 3) be a counter. The
@@ -5206,22 +5226,10 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             {
                 gate.shot(world, "windup-facing");
             }
-            if let Some(seen) = gate.feel.seen
-                && ours.is_none()
-                && !gate.feel.answered
-                && seen.elapsed().as_secs_f32() >= gate.feel.after
-            {
-                gate.feel.answered = true;
+            if gate.feel.answer(world, blocking, dodge_key, ours.is_some()) {
+                let seen = gate.feel.seen.expect("answered an observed wind-up");
                 let player = world.resource::<LocalPlayer>();
                 info!("gate: combat response phase {} try {} bear {}, requested {:.3}s, queued {:.3}s after wind-up, grounded {}, flying {}, frame {:.3}s", gate.phase, gate.feel.tries + 1, view.id, gate.feel.after, seen.elapsed().as_secs_f32(), player.on_ground, player.flying, world.resource::<Time>().delta_secs());
-                if blocking {
-                    mouse(world, MouseButton::Right, true);
-                } else {
-                    // Forward, through the blow: a step back would take the player out of its
-                    // reach, which proves nothing of the dodge.
-                    key(world, KeyCode::KeyW, true);
-                    key(world, dodge_key, true);
-                }
             } else if !blocking {
                 key(world, dodge_key, false);
             }
@@ -7340,6 +7348,37 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_already_received_blow_never_queues_a_late_native_defence_edge() {
+        for blocking in [false, true] {
+            for received in [false, true] {
+                let mut app = App::new();
+                app.add_plugins(bevy::input::InputPlugin);
+                let mut feel = FeelRun { seen: Some(Instant::now()), after: 0.0, ..default() };
+                let dodge = KeyCode::ShiftLeft;
+                let queued = feel.answer(app.world_mut(), blocking, dodge, received);
+                if received {
+                    // Last releases the controls when judging Hurt. Press then release
+                    // in that same update must never leak just_pressed into the next input frame.
+                    key(app.world_mut(), KeyCode::KeyW, false);
+                    key(app.world_mut(), dodge, false);
+                    mouse(app.world_mut(), MouseButton::Right, false);
+                }
+                app.update();
+                let keys = app.world().resource::<ButtonInput<KeyCode>>();
+                let buttons = app.world().resource::<ButtonInput<MouseButton>>();
+                assert_eq!(keys.just_pressed(dodge), !received && !blocking);
+                assert_eq!(keys.pressed(KeyCode::KeyW), !received && !blocking);
+                assert_eq!(buttons.just_pressed(MouseButton::Right), !received && blocking);
+                assert_eq!(queued, !received);
+                assert_eq!(feel.answered, !received, "a crossed threshold is not an answer to an already received blow");
+                if !received {
+                    assert!(!feel.answer(app.world_mut(), blocking, dodge, false), "an already queued response is sent once");
+                }
+            }
+        }
+    }
 
     #[test]
     fn swim_controls_land_on_the_original_finite_bank_across_frame_intervals() {
