@@ -41,7 +41,7 @@ are outside these counters. `buffer_bytes_created` counts allocated capacity. Th
 different quantities. Owner `original_writes` and `original_bytes` describe assignments
 on pages that survive to the end-of-receive flush; `unique_dirty_words` counts distinct
 assigned positions, including same-value assignments. `compact.reused_after_unrelated_changes`
-counts views reused after terrain changed on pages those views do not reference.
+counts view reuse that the previous whole-terrain revision check would have invalidated.
 
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
