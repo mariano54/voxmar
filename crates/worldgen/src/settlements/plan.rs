@@ -44,7 +44,7 @@ pub(super) fn with_original_rows<T>(f: impl FnOnce() -> T) -> T {
         fn drop(&mut self) { ORIGINAL_ROWS.with(|flag| flag.set(self.0)); }
     }
     let _restore = Restore(ORIGINAL_ROWS.with(|flag| flag.replace(true)));
-    f()
+    crate::water::with_original_batches(f)
 }
 
 /// Optional CPU measurements, only while the isolated, serial release budget replans
@@ -539,6 +539,7 @@ fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 /// they are placed.
 /// In the square a new player spawns in (`spawn`), only spots within the promised reach of
 /// them are looked at, their climate rules none out, and several are kept, best first.
+#[cfg(test)]
 pub(super) fn site(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>) -> Vec<(IVec2, bool)> {
     site_with_water(ctx, cell, spawn, &mut crate::water::Freshwater::default())
 }

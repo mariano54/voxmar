@@ -4,7 +4,7 @@
 //! hold a settlement, placed well inside so it never reaches the next. Within its square
 //! a settlement takes the best of a few likely spots: firm, dry, gentle ground, away from
 //! the channels and banks of rivers and lakes but with fresh water near, never on crags or
-//! terrain shapes or in the biomes the file avoids ([`plan::site`]).
+//! terrain shapes or in the biomes the file avoids ([`plan::plan`]).
 //!
 //! Each then draws its character, five levers (wealth, age, order, crowding and green),
 //! partly from its site and partly from luck, and every list it rolls from leans on them

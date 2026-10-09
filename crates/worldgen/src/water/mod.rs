@@ -73,6 +73,18 @@ const CORNER_LIMIT: usize = 8_192;
 #[cfg(test)]
 thread_local! {
     static QUERY_WORK: std::cell::Cell<Option<[usize; 8]>> = const { std::cell::Cell::new(None) };
+    static ORIGINAL_BATCHES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Use the literal original batch finalizer for complete planner comparisons.
+#[cfg(test)]
+pub(crate) fn with_original_batches<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) { ORIGINAL_BATCHES.with(|flag| flag.set(self.0)); }
+    }
+    let _restore = Restore(ORIGINAL_BATCHES.with(|flag| flag.replace(true)));
+    f()
 }
 
 #[cfg(test)]
@@ -836,7 +848,33 @@ impl Rivers {
                 scratch.columns.insert((p, batch.column_keys[i]), self.unsealed(tiers, p.x, p.y, ground));
             }
         }
+        #[cfg(test)]
+        if ORIGINAL_BATCHES.with(|flag| flag.get()) {
+            let samples = self.finish_original_batch(land, points, scratch, &batch);
+            batch.clear();
+            scratch.batch = batch;
+            return samples;
+        }
+        // Both passes above materialized every raw centre and every required
+        // cardinal neighbour under this centre's exact key. Only the tier memo
+        // may clear in those passes; raw columns and interned IDs stay intact.
         let samples = points.iter().enumerate().map(|(i, &(x, z))| {
+            let (p, key) = (IVec2::new(x, z), batch.column_keys[i]);
+            let column = scratch.columns[&(p, key)];
+            if !column.near { return column.sample; }
+            let neighbours = [p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y]
+                .map(|at| scratch.columns[&(at, key)].sample);
+            settle(column.sample, &neighbours)
+        }).collect();
+        batch.clear();
+        scratch.batch = batch;
+        samples
+    }
+
+    /// Literal original final pass, independent of the materialized-column path.
+    #[cfg(test)]
+    fn finish_original_batch(&self, land: Stages, points: &[(i32, i32)], scratch: &mut Samples, batch: &SampleBatch) -> Vec<GeoSample> {
+        points.iter().enumerate().map(|(i, &(x, z))| {
             // Clear only channel groups here: the already computed centre landforms
             // remain valid, and the reserved corner headroom covers all neighbours.
             if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
@@ -845,10 +883,7 @@ impl Rivers {
             // All centres now hold their original raw values; neighbours still use
             // the requesting centre's bounds, including when keys differ nearby.
             self.sealed_cached(land, tiers, batch.column_keys[i], IVec2::new(x, z), None, &mut scratch.corners, &mut scratch.columns)
-        }).collect();
-        batch.clear();
-        scratch.batch = batch;
-        samples
+        }).collect()
     }
 
     /// Remember the exact sealed values from this river land's coarse site grid.
@@ -1333,8 +1368,10 @@ mod tests {
             }
         }
         let mut scratch = Samples::default();
+        let mut original = Samples::default();
         let mut wet = 0;
         let mut dry = 0;
+        let (mut near_centres, mut plain_centres) = (0, 0);
         for seed in [7, 42, 7] {
             let world = crate::Overworld::new(seed, registry.clone());
             for reverse in [false, true] {
@@ -1355,6 +1392,13 @@ mod tests {
                         let actual = world.rivers.samples_cached(world.stages(), batch, &mut scratch);
                         let expected: Vec<_> = batch.iter().map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect();
                         assert_eq!(actual, expected, "batch {batch_size}, seed {seed}, reverse {reverse}");
+                        let before = with_original_batches(|| world.rivers.samples_cached(world.stages(), batch, &mut original));
+                        assert_eq!(actual, before, "literal original finalizer, seed {seed}, reverse {reverse}");
+                        for &(x, z) in batch {
+                            let p = IVec2::new(x, z);
+                            let key = scratch.column_keys[&Samples::key(p - 1, p + 1)];
+                            if scratch.columns[&(p, key)].near { near_centres += 1; } else { plain_centres += 1; }
+                        }
                         assert!(scratch.corners.len() <= CORNER_LIMIT);
                         assert!(scratch.tiers.len() <= 16);
                         assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
@@ -1381,6 +1425,7 @@ mod tests {
             }
         }
         assert!(wet > 0 && dry > 0, "fixture needs fresh water and dry ground: {wet}/{dry}");
+        assert!(near_centres > 0 && plain_centres > 0, "both the four-neighbour and direct-sample finalization paths must run");
     }
 
     #[test]
