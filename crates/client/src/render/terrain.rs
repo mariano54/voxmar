@@ -359,36 +359,53 @@ struct ChunkPage {
 /// this frame. Fixed 256-byte regions avoid copying a whole page between sparse updates.
 struct ChunkOwners {
     words: Vec<u32>,
-    dirty: Vec<bool>,
+    /// One bit per word, grouped by upload region; also counts distinct changed words.
+    dirty: Vec<u64>,
     changed: bool,
+    original_writes: u64,
+    original_bytes: u64,
 }
 
 impl ChunkOwners {
     const REGION_WORDS: usize = 64;
 
     fn new(blocks: usize) -> Self {
-        Self { words: vec![0; blocks], dirty: vec![false; blocks.div_ceil(Self::REGION_WORDS)], changed: false }
+        Self { words: vec![0; blocks], dirty: vec![0; blocks.div_ceil(Self::REGION_WORDS)],
+            changed: false, original_writes: 0, original_bytes: 0 }
     }
 
     fn assign(&mut self, range: Range<usize>, slot: u32) {
         if range.is_empty() { return; }
         self.words[range.clone()].fill(slot);
-        self.dirty[range.start / Self::REGION_WORDS..range.end.div_ceil(Self::REGION_WORDS)].fill(true);
+        for region in range.start / Self::REGION_WORDS..range.end.div_ceil(Self::REGION_WORDS) {
+            let first = range.start.saturating_sub(region * Self::REGION_WORDS);
+            let end = (range.end - region * Self::REGION_WORDS).min(Self::REGION_WORDS);
+            self.dirty[region] |= (u64::MAX << first) & (u64::MAX >> (Self::REGION_WORDS - end));
+        }
         self.changed = true;
+        self.original_writes += 1;
+        self.original_bytes += range.len() as u64 * 4;
     }
 
     fn dirty_ranges(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         let mut next = 0;
         std::iter::from_fn(move || {
-            while next < self.dirty.len() && !self.dirty[next] { next += 1; }
+            while next < self.dirty.len() && self.dirty[next] == 0 { next += 1; }
             if next == self.dirty.len() { return None; }
             let first = next;
-            while next < self.dirty.len() && self.dirty[next] { next += 1; }
+            while next < self.dirty.len() && self.dirty[next] != 0 { next += 1; }
             Some(first * Self::REGION_WORDS..(next * Self::REGION_WORDS).min(self.words.len()))
         })
     }
 
-    fn uploaded(&mut self) { self.dirty.fill(false); self.changed = false; }
+    fn unique_dirty_words(&self) -> u64 { self.dirty.iter().map(|mask| mask.count_ones() as u64).sum() }
+
+    fn uploaded(&mut self) {
+        self.dirty.fill(0);
+        self.changed = false;
+        self.original_writes = 0;
+        self.original_bytes = 0;
+    }
 }
 
 /// Pages of one vertex format.
@@ -485,6 +502,11 @@ impl PagePool {
         for page in &mut self.pages {
             let Some(chunks) = &mut page.chunks else { continue };
             if !chunks.owners.changed { continue; }
+            if let Some(profile) = &mut profile {
+                profile.counts.original_writes += chunks.owners.original_writes;
+                profile.counts.original_bytes += chunks.owners.original_bytes;
+                profile.counts.unique_dirty_words += chunks.owners.unique_dirty_words();
+            }
             for range in chunks.owners.dirty_ranges() {
                 if let Some(profile) = &mut profile {
                     profile.counts.payload_bytes += range.len() as u64 * 4;
@@ -2215,9 +2237,30 @@ mod tests {
         assert_eq!(ranges.iter().map(|range| range.len() * 4).sum::<usize>(), 512);
         assert_eq!(ranges[0], 0..64);
         assert_eq!(ranges[1], (1 << 15) - 64..1 << 15);
+        assert_eq!(table.original_writes, 2);
+        assert_eq!(table.original_bytes, 8);
+        assert_eq!(table.unique_dirty_words(), 2);
         table.uploaded();
         assert!(!table.changed);
         assert!(table.dirty_ranges().next().is_none());
+    }
+
+    #[test]
+    fn owner_regions_join_across_boundaries_and_clamp_the_last_region() {
+        let mut table = ChunkOwners::new(150);
+        table.assign(63..66, 3);
+        table.assign(63..64, 9);
+        assert_eq!(table.dirty_ranges().collect::<Vec<_>>(), [0..128]);
+        assert_eq!(table.unique_dirty_words(), 3, "overwriting a word does not count it twice");
+        assert_eq!(table.original_writes, 2);
+        assert_eq!(table.original_bytes, 16);
+        assert_eq!(&table.words[63..66], &[9, 3, 3]);
+        table.uploaded();
+        table.assign(149..150, 4);
+        assert_eq!(table.dirty_ranges().collect::<Vec<_>>(), [128..150]);
+        assert_eq!(table.unique_dirty_words(), 1);
+        assert_eq!(table.original_writes, 1);
+        assert_eq!(table.original_bytes, 4);
     }
 
     /// A shape's quad goes with the cut-out faces, drawn one-sided at every distance; a

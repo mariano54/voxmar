@@ -43,6 +43,9 @@ pub(super) struct Counts {
     pub indices: u64,
     pub buffers_grown: u64,
     pub dispatches: u64,
+    pub original_writes: u64,
+    pub original_bytes: u64,
+    pub unique_dirty_words: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -67,7 +70,7 @@ impl Profile {
             macro_rules! add { ($($field:ident),*) => { $(previous.counts.$field += sample.counts.$field;)* }; }
             add!(submitted,done_before,done_after,polls,pending_before,pending_after,received,scanned,applied,deferred,
                 behind,near_past_budget,finishing_past_budget,quads,blades,payload_bytes,column_groups,views,reused,
-                rebuilt,copies,batches,indices,buffers_grown,dispatches);
+                rebuilt,copies,batches,indices,buffers_grown,dispatches,original_writes,original_bytes,unique_dirty_words);
         } else { self.parts[part as usize] = Some(sample); }
     }
 
@@ -90,6 +93,8 @@ impl Profile {
                     4 | 9 => json!({"buffer_bytes_created":c.payload_bytes,"buffers_created":c.buffers_grown}),
                     5 => json!({"buffer_bytes_created":c.payload_bytes,"copied_bytes":c.copies,"buffers_created":c.buffers_grown,"submissions":c.dispatches}),
                     8 => json!({"copied_bytes":c.payload_bytes,"submissions":c.dispatches}),
+                    10 => json!({"written_bytes":c.payload_bytes,"writes":c.dispatches,"original_writes":c.original_writes,
+                        "original_bytes":c.original_bytes,"unique_dirty_words":c.unique_dirty_words}),
                     _ => json!({"written_bytes":c.payload_bytes,"writes":c.dispatches}),
                 };
                 json!({"wall_ms":sample.wall_ms,"thread_cpu_ms":sample.cpu_ms,"calls":sample.calls,"counts":counts})
