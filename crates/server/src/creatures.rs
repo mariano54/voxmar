@@ -1450,6 +1450,26 @@ mod combat_tests {
 mod density_tests {
     use super::*;
 
+    /// A dry, level pad in otherwise empty columns: these admission tests must not
+    /// depend on the origin's generated seabed, water or vegetation.
+    fn dry_spawn_pad(server: &mut Server, min: IVec3, max: IVec3) {
+        let (from, to) = (ColumnPos::of_block(min), ColumnPos::of_block(max));
+        for z in from.0.y..=to.0.y {
+            for x in from.0.x..=to.0.x {
+                server.world.insert(ColumnPos::new(x, z), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+            }
+        }
+        let stone = server.content.blocks.expect("base:stone");
+        for z in min.z..=max.z {
+            for x in min.x..=max.x {
+                let cell = IVec3::new(x, min.y, z);
+                server.world.set_block(cell - IVec3::Y, stone);
+                assert_eq!(server.standing_spot(x, z, min.y), Some(cell), "the fixture must admit the intended floor");
+                assert!(!Ground(server).water_at(cell), "the fixture must offer dry land");
+            }
+        }
+    }
+
     #[test]
     fn residents_leave_the_nearby_animal_budget_available() {
         let mut server = crate::test_server();
@@ -1492,15 +1512,9 @@ mod density_tests {
         (def.supernatural, def.habitat, def.group.size) = (false, Default::default(), (6, 6));
         let rules = creature::Rules { limits: creature::Limits { spawn_unseen_angle: 0.0, empty_for_monsters: 0.0, ..Default::default() }, ..Default::default() };
         server.content.creatures = std::sync::Arc::new(creature::CreatureRegistry::new(vec![def], rules, &server.content.blocks, &server.content.skills).unwrap());
-        let y = server.overworld.site(0, 0).height + 30;
-        server.load_area(IVec3::new(-44, y, -44), IVec3::new(44, y, 44));
-        let stone = server.content.blocks.id("base:stone").unwrap();
+        let y = 200;
+        dry_spawn_pad(&mut server, IVec3::new(-44, y, -44), IVec3::new(44, y, 44));
         let torch = server.content.blocks.id("base:torch").unwrap();
-        for z in -44..=44 {
-            for x in -44..=44 {
-                server.world.set_block(IVec3::new(x, y - 1, z), stone);
-            }
-        }
         // Eleven lit cells out of twelve leave narrow dark lanes. A leader in a lane
         // may be allowed while its group offsets enter the adjacent torchlight.
         for z in -3..=3 {
@@ -1514,6 +1528,7 @@ mod density_tests {
         player.joined = true;
         server.players.insert(1, player);
         server.day = (LATER + 20_000) as f64;
+        assert!(server.daylight() < 0.25 && !first_night(server.day, server.daylight()));
         let (mut monsters, mut groups) = (0, 0);
         for salt in 0..400 {
             server.creatures.live.clear();
@@ -1576,14 +1591,8 @@ mod density_tests {
         let rules = creature::Rules { limits: creature::Limits { spawn_unseen_angle: 0.0, empty_for_monsters: 0.0, ..Default::default() }, ..Default::default() };
         server.content.creatures = std::sync::Arc::new(creature::CreatureRegistry::new(vec![def], rules, &server.content.blocks, &server.content.skills).unwrap());
         let species = CreatureId(0);
-        let y = server.overworld.site(0, 0).height + 30;
-        server.load_area(IVec3::new(-4, y, -44), IVec3::new(124, y, 44));
-        let stone = server.content.blocks.id("base:stone").unwrap();
-        for z in -44..=44 {
-            for x in -4..=124 {
-                server.world.set_block(IVec3::new(x, y - 1, z), stone);
-            }
-        }
+        let y = 200;
+        dry_spawn_pad(&mut server, IVec3::new(-4, y, -44), IVec3::new(124, y, 44));
         let (a, ca) = voxmar_protocol::local_pair();
         let (b, cb) = voxmar_protocol::local_pair();
         let _keep = (a, b);
@@ -1593,6 +1602,7 @@ mod density_tests {
             server.players.insert(id, player);
         }
         server.day = 20_000.0;
+        assert!(first_night(server.day, server.daylight()));
         let mut allowed = 0;
         for salt in 0..300 {
             server.creatures.live.clear();
