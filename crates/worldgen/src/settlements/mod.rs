@@ -25,6 +25,7 @@
 
 mod canvas;
 mod centre;
+pub mod culture;
 pub mod def;
 mod house;
 pub mod people;
@@ -77,6 +78,25 @@ pub struct Building {
     pub work: Option<String>,
 }
 
+/// Whose a settlement is, as gameplay and tools see it (`cultures.ron`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CultureInfo {
+    /// The family's name in the file, and its title in English and Japanese.
+    pub family: String,
+    pub title: (String, String),
+    /// The second family mixed in (near a border, or the region's under a site claim) and
+    /// its share of every weight.
+    pub second: Option<(String, f32)>,
+    /// Its quirks' names and titles (one, now and then two).
+    pub quirks: Vec<(String, (String, String))>,
+    /// Piety, martial, trade, craft, festivity, outlook, hierarchy and lore, each 0 ..= 1.
+    pub axes: [f32; culture::AXES],
+    /// The family entries it dropped and the ones it borrowed from another family, as
+    /// `houses:hall` and `family:props:Lamp`.
+    pub dropped: Vec<String>,
+    pub borrowed: Vec<String>,
+}
+
 /// A planned settlement.
 pub struct Plan {
     pub id: u64,
@@ -90,6 +110,8 @@ pub struct Plan {
     pub centre: IVec2,
     pub height: i32,
     pub levers: Levers,
+    /// Whose it is: its family, quirk and axes (`cultures.ron`).
+    pub culture: culture::Culture,
     pub buildings: Vec<Building>,
     /// Where lanes leading out end, which trails join.
     pub gates: Vec<IVec2>,
@@ -282,11 +304,25 @@ pub struct Slot(pub Option<Plan>);
 
 impl Weigh for Slot {
     fn bytes(&self) -> usize {
-        self.0.as_ref().map_or(0, |p| {
-            p.raster.cells.len() * std::mem::size_of::<Cell>()
-                + p.voxels.values().map(|v| v.len() * std::mem::size_of::<Voxel>() + 32).sum::<usize>()
-                + p.buildings.len() * std::mem::size_of::<Building>()
-                + 256
+        std::mem::size_of::<Self>() + self.0.as_ref().map_or(0, |p| {
+            // Capacity counts allocated storage, even when a vector is only partly full.
+            // The hash table has vacant buckets and one control byte per bucket, plus
+            // a trailing control group. Round capacity up for its bucket allocation.
+            let buckets = if p.voxels.capacity() == 0 { 0 } else { p.voxels.capacity().next_power_of_two() };
+            let table = buckets * (std::mem::size_of::<(IVec2, Vec<Voxel>)>() + 1) + usize::from(buckets > 0) * 16;
+            p.raster.cells.capacity() * std::mem::size_of::<Cell>()
+                + p.raster.sums.capacity() * std::mem::size_of::<(f32, f32, f32)>()
+                + table + p.voxels.values().map(|v| v.capacity() * std::mem::size_of::<Voxel>()).sum::<usize>()
+                + p.buildings.capacity() * std::mem::size_of::<Building>()
+                + p.buildings.iter().map(|b| b.what.capacity() + b.work.as_ref().map_or(0, String::capacity) + b.room.capacity() * std::mem::size_of::<IVec2>()).sum::<usize>()
+                + p.people.capacity() * std::mem::size_of::<people::Resident>()
+                + p.people.iter().map(|r| r.species.capacity()).sum::<usize>()
+                + p.gates.capacity() * std::mem::size_of::<IVec2>()
+                + p.lanes.capacity() * std::mem::size_of::<Vec<Vec2>>()
+                + p.lanes.iter().map(|l| l.capacity() * std::mem::size_of::<Vec2>()).sum::<usize>()
+                + p.lane_halves.capacity() * std::mem::size_of::<f32>()
+                + p.size.capacity() + p.layout.capacity() + p.style.capacity() + p.name.0.capacity() + p.name.1.capacity()
+                + p.culture.bytes() - std::mem::size_of::<culture::Culture>()
         })
     }
 }
@@ -317,6 +353,8 @@ pub struct Settlements {
     /// for them (`spawn_square`).
     promised: std::sync::OnceLock<Vec<IVec2>>,
     id: u64,
+    /// Terrain fits by region, shared by nearby settlements, bounded by owned bytes.
+    cells: Cache<IVec2, culture::Fits>,
     /// How many squares were planned, for tests that no square is planned twice.
     #[cfg(test)]
     pub(crate) planned: std::sync::atomic::AtomicUsize,
@@ -349,6 +387,7 @@ impl Settlements {
             spawn: std::sync::OnceLock::new(),
             promised: std::sync::OnceLock::new(),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            cells: Cache::new(MB),
             #[cfg(test)]
             planned: std::sync::atomic::AtomicUsize::new(0),
         }
@@ -373,6 +412,23 @@ impl Settlements {
     #[cfg(test)]
     pub(crate) fn made(&self) -> usize {
         self.plans.len()
+    }
+
+    /// Whose `plan` is: its family, second family, quirks, axes and mutations.
+    pub fn culture_info(&self, plan: &Plan) -> CultureInfo {
+        let def = &self.def.cultures;
+        let c = &plan.culture;
+        let family = &def.families[c.family];
+        let entry = |e: &culture::Entry| format!("{}:{}", e.listing.name(), e.name);
+        CultureInfo {
+            family: family.name.clone(),
+            title: family.title.clone(),
+            second: c.second.as_ref().map(|s| (def.families[s.family].name.clone(), s.share)),
+            quirks: c.quirks.iter().map(|&q| (def.quirks[q].name.clone(), def.quirks[q].title.clone())).collect(),
+            axes: c.axes,
+            dropped: c.dropped.iter().map(entry).collect(),
+            borrowed: c.borrowed.iter().map(|(f, e)| format!("{}:{}", def.families[*f].name, entry(e))).collect(),
+        }
     }
 
     /// The settlement planned in square `cell`, if any.
@@ -530,7 +586,7 @@ impl Settlements {
         #[cfg(test)]
         self.planned.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let land = world.land();
-        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn, promised: self.promised(world) };
+        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn, promised: self.promised(world), cells: &self.cells };
         plan::plan(&ctx, cell)
     }
 
@@ -604,7 +660,7 @@ impl Settlements {
         let Some(fixed) = &self.fixed else { return false };
         let at = world.spawn_estimate();
         let land = world.land();
-        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn: Some(at), promised: self.promised(world) };
+        let ctx = plan::Ctx { world, land: &land, def: &self.def, resolved: &self.resolved, fixed, seed: self.seed, spawn: Some(at), promised: self.promised(world), cells: &self.cells };
         self.in_reach(at).into_iter().any(|c| !plan::site(&ctx, c, Some(at)).is_empty())
     }
 

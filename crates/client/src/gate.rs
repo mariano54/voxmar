@@ -419,6 +419,8 @@ struct Gate {
     ore: IVec3,
     /// Where `/locate settlement` sent the player: the middle of its square.
     settlement: IVec3,
+    /// What `/locate settlement` answered, English, for the culture it names.
+    settlement_reply: String,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
@@ -539,6 +541,7 @@ impl Gate {
             gorge: IVec3::ZERO,
             gorge_reached: false,
             settlement: IVec3::ZERO,
+            settlement_reply: String::new(),
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             blows_seen: 0,
@@ -678,6 +681,9 @@ struct Observer {
     teleports: u32,
     /// What the server answered the observer's commands.
     replies: Vec<voxmar_engine::lang::Words>,
+    /// Heartbeats follow the protocol's tick rate, not the renderer: inputs ahead of a
+    /// command otherwise fill the deliberately lagging server's per-player message budget.
+    last_input: Option<Instant>,
 }
 
 impl Observer {
@@ -690,21 +696,28 @@ impl Observer {
         net.server()?.connections().send(server_side).ok()?;
         connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content, admin_token: None });
         connection.send(ClientMessage::Settings { view_distance: 2, fly_speed: 1.0 });
-        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), names: default(), teleports: 0, replies: Vec::new() })
+        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), names: default(), teleports: 0, replies: Vec::new(), last_input: None })
     }
 
     /// Applies what the server sent, and keeps the observer floating where it was put.
     fn pump(&mut self) -> Result<(), String> {
+        self.pump_at(Instant::now())
+    }
+
+    fn pump_at(&mut self, now: Instant) -> Result<(), String> {
+        let mut moved = false;
         loop {
             match self.connection.try_recv() {
                 Ok(Some(message)) => match message {
                     ServerMessage::Welcome { player, position, .. } => {
                         self.id = Some(player);
                         self.position = Some(position);
+                        moved = true;
                     }
                     ServerMessage::Teleport { position, seq } => {
                         self.position = Some(position);
                         self.teleports = seq;
+                        moved = true;
                     }
                     ServerMessage::Column { pos, column } => self.world.insert(pos, column),
                     ServerMessage::Unload { pos } => {
@@ -729,9 +742,13 @@ impl Observer {
                 Err(_) => return Err("the server dropped the observer".into()),
             }
         }
-        if let Some(position) = self.position {
+        let interval = Duration::from_nanos(1_000_000_000 / voxmar_protocol::TICKS_PER_SECOND as u64);
+        if let Some(position) = self.position
+            && (moved || self.last_input.is_none_or(|sent| now.saturating_duration_since(sent) >= interval))
+        {
             let input = PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: true, teleport: self.teleports };
             self.connection.send(ClientMessage::Input(input));
+            self.last_input = Some(now);
         }
         Ok(())
     }
@@ -6123,6 +6140,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 return;
             };
             gate.settlement = at;
+            gate.settlement_reply = reply.clone();
             world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
             if let Some(observer) = gate.observer.as_mut() {
                 observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
@@ -6223,8 +6241,16 @@ fn judge_settlement(world: &World, gate: &Gate, at: IVec3) -> Result<String, Str
         problems.push("no door within reach of the square to judge".into());
     }
     let name = &plan.name.0;
+    // The server names its culture: the family's title, as worldgen plans it.
+    let culture = &plan.culture;
+    if !gate.settlement_reply.contains(&culture.title.0) {
+        problems.push(format!("/locate settlement does not name its culture ({}): {}", culture.title.0, gate.settlement_reply));
+    }
+    if culture.axes.iter().any(|a| !(0.0..=1.0).contains(a)) {
+        problems.push(format!("its culture's axes are out of range: {:?}", culture.axes));
+    }
     if problems.is_empty() {
-        Ok(format!("{name}, a {} at {at}: a well on the square, {doors} doors open onto floors, {houses} buildings dry", plan.size))
+        Ok(format!("{name}, a {} in {} country at {at}: a well on the square, {doors} doors open onto floors, {houses} buildings dry", plan.size, culture.title.0))
     } else {
         Err(format!("{name}, a {} at {at}: {}", plan.size, problems.join("; ")))
     }
@@ -7001,6 +7027,59 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observer_heartbeats_leave_commands_and_teleports_prompt() {
+        let (connection, server) = local_pair();
+        let mut observer = Observer {
+            connection, world: VoxelWorld::default(), id: None, position: None,
+            moved: false, others: default(), names: default(), teleports: 0,
+            replies: Vec::new(), last_input: None,
+        };
+        let now = Instant::now();
+        let origin = Vec3::new(1.0, 180.0, 2.0);
+        assert!(server.send(ServerMessage::Welcome { player: 7, seed: 1, weather_seed: 2, position: origin, yaw: 0.0, flying: true, allow_flight: true, admin: true }));
+        observer.pump_at(now).unwrap();
+        assert!(matches!(server.try_recv().unwrap(), Some(ClientMessage::Input(input)) if input.position == origin && input.flying && input.teleport == 0));
+        for _ in 0..10_000 {
+            observer.pump_at(now).unwrap();
+        }
+        assert!(observer.connection.send(ClientMessage::Command { line: "locate settlement 3000".into() }));
+        assert!(matches!(server.try_recv().unwrap(), Some(ClientMessage::Command { line }) if line == "locate settlement 3000"), "render-frame inputs must not queue ahead of commands");
+        assert!(server.try_recv().unwrap().is_none());
+
+        observer.pump_at(now + Duration::from_millis(49)).unwrap();
+        assert!(server.try_recv().unwrap().is_none());
+        observer.pump_at(now + Duration::from_millis(50)).unwrap();
+        assert!(matches!(server.try_recv().unwrap(), Some(ClientMessage::Input(_))));
+        assert!(server.try_recv().unwrap().is_none());
+        let later = now + Duration::from_secs(10);
+        observer.pump_at(later).unwrap();
+        for _ in 0..1000 {
+            observer.pump_at(later).unwrap();
+        }
+        assert!(matches!(server.try_recv().unwrap(), Some(ClientMessage::Input(_))));
+        assert!(server.try_recv().unwrap().is_none(), "a long pause sends one heartbeat, not a catch-up burst");
+
+        let at = Vec3::new(-1043.0, 178.0, 2908.0);
+        assert!(server.send(ServerMessage::Teleport { position: origin, seq: 1 }));
+        assert!(server.send(ServerMessage::Teleport { position: at, seq: 2 }));
+        observer.pump_at(later + Duration::from_millis(1)).unwrap();
+        assert!(matches!(server.try_recv().unwrap(), Some(ClientMessage::Input(input)) if input.position == at && input.teleport == 2 && input.flying));
+        assert!(server.try_recv().unwrap().is_none(), "teleports drained together echo only the latest state");
+
+        let column = ColumnPos::new(-33, 90);
+        assert!(server.send(ServerMessage::Column { pos: column, column: std::sync::Arc::new(voxmar_engine::world::Column::default()) }));
+        assert!(server.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Chat, text: Words::text("settlement reply") }));
+        observer.pump_at(later + Duration::from_millis(2)).unwrap();
+        assert!(observer.world.contains(column), "incoming world updates are never throttled");
+        assert_eq!(observer.replies.last(), Some(&Words::text("settlement reply")));
+        assert!(server.try_recv().unwrap().is_none());
+        observer.pump_at(later + Duration::from_millis(50)).unwrap();
+        assert!(server.try_recv().unwrap().is_none(), "a teleport starts a fresh heartbeat interval");
+        observer.pump_at(later + Duration::from_millis(51)).unwrap();
+        assert!(matches!(server.try_recv().unwrap(), Some(ClientMessage::Input(input)) if input.teleport == 2));
+    }
 
     /// A 960×540 shot with the horizon at row `horizon`: `sky(x, y)` above it, the sea below
     /// (as pale as the sky over it, as in the gate's morning shot).

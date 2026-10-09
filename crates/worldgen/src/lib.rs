@@ -534,7 +534,8 @@ impl Overworld {
                 buildings: p.buildings.clone(),
                 gates: p.gates.clone(),
                 lanes: p.lanes.clone(),
-                levers: p.levers.0,
+                levers: p.levers,
+                culture: self.settlements.culture_info(p),
                 people: p.people.clone(),
             })
             .collect()
@@ -609,6 +610,15 @@ impl Overworld {
         self.sampler(IVec2::new(x, z), IVec2::new(x, z)).site(x, z)
     }
 
+    /// The home biome and regional temperature for decisions spanning kilometres, such
+    /// as culture regions. Reading their smooth fields must not plan distant rivers or
+    /// sample local slopes and vegetation, which only a settlement's own site needs.
+    pub(crate) fn regional_biome(&self, x: i32, z: i32) -> (&Biome, f32) {
+        let sampler = self.sampler(IVec2::new(x, z), IVec2::new(x, z));
+        let home = sampler.pick(x, z).home;
+        (self.biomes.get(home), sampler.grid.at(x, z).temperature())
+    }
+
     /// What the surface looks like from far away, given its local steepness in blocks.
     /// Matches full generation except for caves and individual trees and plants.
     pub fn surface_sample(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
@@ -641,6 +651,26 @@ struct RiverLand<'a> {
 impl trails::Land for RiverLand<'_> {
     fn sample(&self, x: i32, z: i32) -> GeoSample {
         self.rivers.sample(self.stages, x, z, false)
+    }
+
+    fn sample_cached(&self, x: i32, z: i32, scratch: &mut water::Samples) -> GeoSample {
+        self.rivers.sample_cached(self.stages, x, z, scratch)
+    }
+
+    fn samples_cached(&self, points: &[(i32, i32)], scratch: &mut water::Samples) -> Vec<GeoSample> {
+        self.rivers.samples_cached(self.stages, points, scratch)
+    }
+
+    fn freshwater_absent_cached(&self, at: IVec2, scratch: &mut water::Samples) -> bool {
+        self.rivers.freshwater_absent_cached(self.stages, at, scratch)
+    }
+
+    fn freshwater_near(&self, centre: IVec2, radius: i32, step: i32, cache: &mut water::Freshwater) -> bool {
+        self.rivers.freshwater_near(self.stages, centre, radius, step, cache)
+    }
+
+    fn remember_freshwater_grid(&self, origin: IVec2, step: i32, size: i32, samples: &[GeoSample], cache: &mut water::Freshwater) {
+        self.rivers.remember_freshwater_grid(origin, step, size, samples, cache);
     }
 
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
@@ -695,11 +725,14 @@ pub struct SettlementInfo {
     /// Where its lanes leading out end.
     pub gates: Vec<IVec2>,
     pub lanes: Vec<Vec<voxmar_engine::glam::Vec2>>,
-    /// Wealth, age, order, crowding and green, each 0 ..= 1.
-    pub levers: [f32; 5],
+    /// The five settlement levers and eight culture axes, each 0 ..= 1.
+    pub levers: settlements::Levers,
+    pub culture: CultureInfo,
     /// Who lives there, each with their home and work as indices into `buildings`.
     pub people: Vec<people::Resident>,
 }
+
+pub use settlements::CultureInfo;
 
 /// Samples sites over an area, computing the regional climate once per lattice point.
 pub struct Sampler<'a> {

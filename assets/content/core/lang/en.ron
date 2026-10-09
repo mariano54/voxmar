@@ -624,7 +624,7 @@
     "command.locate.here": "The nearest {biome} is at {place}, {distance} blocks away. {tp} goes there.",
     "command.locate.gorge": "The nearest gorge is at {place}, its water at {water}, {distance} blocks away to the {way}. {tp} goes there.",
     "command.locate.ore": "The nearest {block}, over its vein, is at {place}, {distance} blocks away to the {way}. {tp} goes there.",
-    "command.locate.settlement": "The nearest settlement is {name}, a {size}, at {place}, {distance} blocks away to the {way}. {tp} goes there.",
+    "command.locate.settlement": "The nearest settlement is {name}, a {size} in {culture} country, at {place}, {distance} blocks away to the {way}. {tp} goes there.",
     "settlement.size.hamlet": "hamlet",
     "settlement.size.village": "village",
     "command.setblock": "Put {block} at {place}.",
