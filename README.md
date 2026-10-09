@@ -26,6 +26,20 @@ While developing, use `--profile iter` in place of `--release` (for `run`, `buil
 it rebuilds in seconds rather than minutes after an edit and runs nearly as fast. Keep
 `--release` for performance measurements.
 
+For a bounded renderer diagnosis, set `VOXMAR_PROFILE_FRAMES=1` together with
+`VOXMAR_RECORD_SLOW_FRAMES=1` for a capture. Slow-frame records then include wall and
+thread CPU time for streaming, compaction and buffer operations, with queue counts and
+bytes. Storage stays fixed at eleven measurements per render frame in the existing
+three-frame ring; only slow frames write JSON. `render_local_frame` identifies a render
+record; the shared process-local monotonic intervals join it to main-frame intervals.
+Parent measurements include their nested operations, so their times must not be added
+together. Thread CPU excludes sleep and descheduling, and neither clock measures GPU
+execution. Unsupported or failed CPU clocks are `null`. `receive.input_bytes` counts
+payloads of applied messages. Child `written_bytes` counters cover the targeted page,
+arena and compaction queue writes; origins, wind, coverage and blade-index setup writes
+are outside these counters. `buffer_bytes_created` counts allocated capacity. These are
+different quantities.
+
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
 frame rate), `--language CODE` (`en` or `ja`; captures are in English without it), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as

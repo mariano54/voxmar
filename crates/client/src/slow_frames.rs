@@ -27,6 +27,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use bevy::app::MainScheduleOrder;
 use bevy::ecs::schedule::ScheduleLabel;
+use bevy::diagnostic::FrameCount;
 use bevy::prelude::*;
 use serde_json::{Value, json};
 
@@ -167,6 +168,7 @@ fn between(a: Option<Instant>, b: Option<Instant>) -> Option<f32> {
 
 #[allow(clippy::too_many_arguments)]
 fn record(
+    count: Res<FrameCount>,
     time: Res<Time<Real>>,
     mut frames: ResMut<SlowFrames>,
     mut extra: ResMut<SlowFrameExtra>,
@@ -207,8 +209,9 @@ fn record(
     let (tiles, wanted) = lod.map_or((0, 0), |lod| lod.progress());
     let stats = world.stats;
     let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-    let line = json!({
+    let mut line = json!({
         "t": seconds,
+        "main_frame": count.0,
         "frame_ms": frame_ms,
         "median_ms": median,
         "loading": now < frames.settling_until,
@@ -248,6 +251,12 @@ fn record(
         "render": render,
         "load_average": load_average(),
     });
+    if let Some(end) = crate::render::work::timestamp(end) {
+        line["main_interval_monotonic"] = json!({
+            "previous_end": crate::render::work::timestamp(last_end),
+            "begun": start.and_then(crate::render::work::timestamp), "ended": end,
+        });
+    }
     frames.write(&line);
 }
 
