@@ -434,6 +434,12 @@ struct Gate {
     settlement_reply: String,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
+    /// The snail struck, so a fallen mark on another creature cannot end its watch.
+    quarry_id: Option<u32>,
+    fallen_watched: bool,
+    weapon_fallen_watched: bool,
+    fallen_since: Option<f32>,
+    weapon_fallen_since: Option<f32>,
     /// Blows the server has answered, as last counted.
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
@@ -559,6 +565,11 @@ impl Gate {
             settlement_reply: String::new(),
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
+            quarry_id: None,
+            fallen_watched: false,
+            weapon_fallen_watched: false,
+            fallen_since: None,
+            weapon_fallen_since: None,
             blows_seen: 0,
             readout_seen: false,
             fall_judged: false,
@@ -4749,6 +4760,7 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             match snail(world) {
                 Some(view) if !stalled && blows < MOST_BLOWS => {
                     gate.quarry = view.position;
+                    gate.quarry_id = Some(view.id);
                     if landed > 0 {
                         gate.struck_heights = (gate.struck_heights.0.min(view.position.y), gate.struck_heights.1.max(view.position.y));
                     }
@@ -4772,6 +4784,7 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 None => {
                     mouse(world, MouseButton::Left, false);
+                    key(world, KeyCode::KeyW, false);
                     let deaths = world.resource::<crate::creatures::Creatures>().deaths;
                     let (blows, landed) = {
                         let creatures = world.resource::<crate::creatures::Creatures>();
@@ -4797,6 +4810,19 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         1 => {
+            // The old loot walk aimed a small corpse below the viewport immediately
+            // after its death. Give its real mark a view before moving over the drops.
+            if !gate.fallen_watched {
+                let anchor = gate.quarry_id.and_then(|id| {
+                    world.resource::<crate::creatures::Creatures>().centre(world.resource::<Launch>(), id)
+                }).map(|(centre, _)| centre);
+                let Some(result) = watch_fallen(world, gate.quarry_id, anchor, &mut gate.fallen_since, now) else { return };
+                gate.fallen_watched = true;
+                gate.check("combat marks: slain snail", result.map(|seen| format!("its mark stayed visible for {seen:.2} s before the loot walk"))
+                    .map_err(|seen| format!("its mark stayed visible for only {seen:.2} s during the bounded corpse watch")));
+                gate.shot(world, "fallen-splat");
+                return;
+            }
             // How its body fell, once it has: over onto its side close to where it stood,
             // and never drawn around the eye (from close up, its inside showed).
             if !gate.fall_judged {
@@ -4931,6 +4957,18 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 // Out of sight: dead only if it was seen dying.
                 None => {
+                    if gate.feel.died && !gate.weapon_fallen_watched {
+                        // Cleanup teleports into the corpse and removes its view. Watch
+                        // this actual bear's mark before issuing any sweep commands.
+                        let anchor = gate.feel.bear.and_then(|id| {
+                            world.resource::<crate::creatures::Creatures>().centre(world.resource::<Launch>(), id)
+                        }).map(|(centre, _)| centre);
+                        let Some(result) = watch_fallen(world, gate.feel.bear, anchor, &mut gate.weapon_fallen_since, now) else { return };
+                        gate.weapon_fallen_watched = true;
+                        gate.check("combat marks: slain bear", result.map(|seen| format!("its mark stayed visible for {seen:.2} s before cleanup"))
+                            .map_err(|seen| format!("its mark stayed visible for only {seen:.2} s during the bounded corpse watch")));
+                        return;
+                    }
                     let result = if !gate.feel.died {
                         Err("the bear went out of sight alive".to_string())
                     } else if hardest > fist {
@@ -5339,7 +5377,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             let fighting = world.resource::<crate::fight::Fighting>();
             if fighting.struck_count > gate.feel.struck {
-                let (_, damage, blow, _) = *fighting.struck.last().expect("counted");
+                let (_, damage, blow, _, _) = *fighting.struck.last().expect("counted");
                 gate.feel.poked = gate.server_now;
                 if blow == Blow::Counter && damage > 0 {
                     gate.check("counter", Ok(format!("the click after the perfect block was a counter for {damage}")));
@@ -5603,7 +5641,7 @@ fn tell_blows(world: &mut World, creature: u32) {
     assert!(STRUCK_SHOWN.len() <= most && HURT_SHOWN.len() <= most, "the combat check tells more blows than `splats.most` ({most}) keeps on one target");
     let mut fighting = world.resource_mut::<crate::fight::Fighting>();
     for (i, (damage, blow)) in STRUCK_SHOWN.into_iter().enumerate() {
-        fighting.struck(creature, damage, blow, (i as u8 + 1).min(pips), now);
+        fighting.struck(creature, damage, blow, (i as u8 + 1).min(pips), false, now);
     }
     for (damage, defended) in HURT_SHOWN {
         fighting.hurt(creature, damage, defended, now);
@@ -5629,6 +5667,35 @@ fn splats_missing(world: &mut World) -> Vec<String> {
 /// tells them again (a splat shows `splats.seconds`, 0.9), and how many runs it tells at most.
 const MARKS_WAIT: f32 = 0.6;
 const MARKS_TELLS: u32 = 3;
+
+const FALLEN_SECONDS: f32 = 0.2;
+const FALLEN_WAIT: f32 = 2.0;
+
+/// Hold the actual killed target in view, with native movement/attack inputs released.
+/// Only its currently visible mark ends the watch; an absent/hidden mark times out.
+pub(crate) fn watch_fallen(world: &mut World, id: Option<u32>, mut anchor: Option<Vec3>, since: &mut Option<f32>, now: f32) -> Option<Result<f32, f32>> {
+    let began = since.is_none();
+    let elapsed = now - *since.get_or_insert(now);
+    key(world, KeyCode::KeyW, false);
+    mouse(world, MouseButton::Left, false);
+    let mut marks = world.query::<(&crate::hud::combat::HitSplat, &Visibility)>();
+    if anchor.is_none() {
+        anchor = marks.iter(world).find(|(mark, _)| id.is_some() && mark.creature == id && mark.killed).and_then(|(mark, _)| mark.anchor());
+    }
+    let killed = marks.iter(world).any(|(mark, _)| id.is_some() && mark.creature == id && mark.killed);
+    let seen = marks.iter(world).filter(|(mark, visible)| id.is_some() && mark.killed && mark.creature == id && **visible != Visibility::Hidden)
+        .map(|(mark, _)| mark.fallen_drawn_for()).fold(0.0, f32::max);
+    if let Some(anchor) = anchor { aim_at(world, anchor); }
+    if began || seen >= FALLEN_SECONDS || elapsed >= FALLEN_WAIT {
+        let real = world.get_resource::<Time<Real>>().map(|time| (time.elapsed_secs_f64(), time.delta_secs_f64()));
+        let game_dt = world.get_resource::<Time>().map(|time| time.delta_secs_f64());
+        let player = world.resource::<LocalPlayer>();
+        info!("fallen watch: target {id:?}, server killed {killed}, game {now:.3}s/dt {game_dt:?}, real {real:?}, watch {elapsed:.3}s, visible {seen:.3}s, anchor {anchor:?}, feet {:?}, yaw {:.3}, pitch {:.3}", player.position, player.yaw, player.pitch);
+    }
+    if elapsed >= FALLEN_WAIT { Some(Err(seen)) }
+    else if seen >= FALLEN_SECONDS { Some(Ok(seen)) }
+    else { None }
+}
 
 fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::combat::SplatsShown;
@@ -5664,7 +5731,6 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // A killing blow's splat stays over the falling body (the fights killed a snail
             // and bears), drawn for some time, not dropped with the creature: by the game's
             // clock, as a frame may take a quarter second under load.
-            const FALLEN_SECONDS: f32 = 0.2;
             let result = if !shown.meter {
                 Err("the meter never showed through the fights".to_owned())
             } else if shown.struck != struck || shown.hurt != hurt {

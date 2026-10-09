@@ -323,7 +323,7 @@ pub(crate) fn receive(
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
             ServerMessage::Struck { creature, damage, killed, blow, pips } => {
                 creatures.struck(creature, damage, killed, time.elapsed_secs());
-                fighting.struck(creature, damage, blow, pips, time.elapsed_secs_f64());
+                fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
             ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
