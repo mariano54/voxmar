@@ -2845,6 +2845,60 @@ fn culture_planning_hotspots() {
     }
 }
 
+/// Compare the complete direct planner with the original linear occupied scan over
+/// the budget's original twenty seeds. This is an output oracle, not a timing result.
+#[test]
+#[ignore]
+fn occupied_grid_preserves_all_twenty_seed_plans() {
+    use crate::water::cache::Weigh;
+    crate::parallel::set_enabled(false);
+    struct Helpers;
+    impl Drop for Helpers {
+        fn drop(&mut self) { crate::parallel::set_enabled(true); }
+    }
+    let _helpers = Helpers;
+    let mut counts = [0; 2];
+    for seed in 1..=20 {
+        let world = base_world(seed);
+        let spawn = world.spawn_point();
+        let centre = IVec2::new(spawn.x, spawn.z);
+        let mut found = world.settlements.near(&world, centre, 2048);
+        if !found.iter().any(|s| s.0.as_ref().is_some_and(|p| p.size == "village")) {
+            found = world.settlements.near(&world, centre, 4096);
+        }
+        for (i, size) in ["hamlet", "village"].into_iter().enumerate() {
+            let Some(slot) = found.iter().find(|s| s.0.as_ref().is_some_and(|p| p.size == size)) else { continue };
+            let known = slot.0.as_ref().unwrap();
+            let cell = world.settlements.cell_of(known.centre.x, known.centre.y);
+            let spawn_at = world.settlements.spawn.get().and_then(|s| s.square).filter(|s| s.1 == cell).map(|s| s.0);
+            let replan = || world.settlements.plan(&world, world.settlements.fixed.as_ref().unwrap(), cell, spawn_at).unwrap();
+            let original = super::Slot(Some(super::plan::with_original_occupied(replan)));
+            let indexed = super::Slot(Some(replan()));
+            let (a, b) = (original.0.as_ref().unwrap(), indexed.0.as_ref().unwrap());
+            assert_eq!((a.id, &a.size, &a.layout, &a.style, &a.name, a.centre, a.height),
+                (b.id, &b.size, &b.layout, &b.style, &b.name, b.centre, b.height), "seed {seed} {size}");
+            assert_eq!(a.levers, b.levers);
+            assert_eq!(a.culture, b.culture);
+            assert_eq!(a.buildings, b.buildings);
+            assert_eq!(a.gates, b.gates);
+            assert_eq!(a.lanes, b.lanes);
+            assert_eq!(a.lane_halves, b.lane_halves);
+            assert_eq!(a.people, b.people);
+            assert_eq!((a.min, a.max, a.raster.min, a.raster.max), (b.min, b.max, b.raster.min, b.raster.max));
+            let cells = |p: &super::Plan| p.raster.cells.iter().map(|c| (c.target, c.weight, c.core, c.tread, c.clear)).collect::<Vec<_>>();
+            assert_eq!(cells(a), cells(b));
+            let sums = |p: &super::Plan| p.raster.sums.iter().map(|s| (s.0.to_bits(), s.1.to_bits(), s.2.to_bits())).collect::<Vec<_>>();
+            assert_eq!(sums(a), sums(b));
+            assert_eq!(a.voxels, b.voxels, "exact order of every column's voxels");
+            assert_eq!(original.bytes(), indexed.bytes(), "retained allocations");
+            for (column, voxels) in &a.voxels { assert_eq!(voxels.capacity(), b.voxels[column].capacity()); }
+            counts[i] += 1;
+        }
+    }
+    assert_eq!(counts, [17, 20], "all original budget plans must be compared");
+    println!("occupied-grid original oracle: {} complete plans over all 20 seeds", counts.iter().sum::<usize>());
+}
+
 /// Planning budgets are measured in release with thread CPU time, after the surrounding
 /// land is known. Report cold region discovery separately in settlement_preview.
 #[test]
