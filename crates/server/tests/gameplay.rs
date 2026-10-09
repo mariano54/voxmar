@@ -1684,6 +1684,137 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table")));
 }
 
+/// The First Night contract uses real grid and cooking events, and both kinds of
+/// progress survive a restart before completion. Charcoal and food from another station
+/// cannot stand in for a meal at the campfire.
+#[test]
+fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
+    let dir = world_dir("first-night-food");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let fire = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let done = |c: &Client| c.quests.iter().any(|q| q.name == "base:first_night" && q.done);
+    let count = |c: &Client, name: &str| {
+        let item = c.content.blocks.expect(name);
+        c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
+    };
+    client.clear();
+    for line in ["/setblock ~3 ~ ~ campfire", "/give oak_log 1", "/skill cooking 99"] { client.ok(line); }
+    client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:campfire") && count(c, "base:oak_log") == 1);
+    client.send_position(client.position, false);
+    client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
+    client.pump_until(|c| count(c, "base:charcoal") == 1);
+    client.wait_server(2);
+    assert!(!done(&client), "charcoal completed a food quest");
+    assert_eq!(client.quests.iter().find(|q| q.name == "base:first_night").unwrap().tasks, vec![vec![(0, 1), (0, 1)]], "charcoal supplied cooked-food progress");
+    client.clear();
+    for line in ["/setblock ~3 ~ ~ pit_kiln", "/give clay 1", "/skill crafting 99"] { client.ok(line); }
+    client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:pit_kiln") && count(c, "base:clay") == 1);
+    client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
+    client.pump_until(|c| count(c, "base:fired_clay") == 1);
+    client.wait_server(2);
+    assert_eq!(client.quests.iter().find(|q| q.name == "base:first_night").unwrap().tasks, vec![vec![(0, 1), (0, 1)]], "fired clay supplied cooked-food progress");
+    client.ok("/setblock ~3 ~ ~ campfire");
+    client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:campfire"));
+    client.clear();
+    client.ok("/give raw_minnow 1");
+    client.pump_until(|c| count(c, "base:raw_minnow") == 1);
+    client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
+    client.pump_until(|c| count(c, "base:cooked_minnow") == 1);
+    client.wait_server(2);
+    assert!(!done(&client), "a debug-given campfire replaced the crafting goal");
+    drop(client);
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| !c.quests.is_empty());
+    let state = client.quests.iter().find(|q| q.name == "base:first_night").unwrap();
+    assert_eq!(state.tasks, vec![vec![(0, 1), (1, 1)]], "saved cooking progress changed");
+    client.clear();
+    for line in ["/give oak_log 2", "/give cobblestone 2"] { client.ok(line); }
+    client.pump_until(|c| count(c, "base:oak_log") == 2 && count(c, "base:cobblestone") == 2);
+    for (from, cells) in [(0, &voxmar_engine::craft::SMALL[..2]), (1, &voxmar_engine::craft::SMALL[2..])] {
+        for &cell in cells {
+            client.propose("core:transfer", ActionTarget::Slots { from, to: (voxmar_engine::inventory::CRAFT + cell) as u8, count: 1 });
+        }
+    }
+    client.propose("core:craft", ActionTarget::Slot(0));
+    client.pump_until(|c| done(c) && count(c, "base:campfire") == 1 && count(c, "base:torch") == 4);
+    drop(client);
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| done(c));
+    client.wait_server(2);
+    assert_eq!(count(&client, "base:torch"), 4, "rejoining paid the quest twice");
+    drop(client);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A standing kiln must receive a complete valid charge. Lighting progress and the
+/// paid fire survive reload; taking out a brick and putting it back leaves it cold.
+#[test]
+fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
+    let dir = world_dir("kiln-fire");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    let lit = |c: &Client| c.quests.iter().find(|q| q.name == "base:crucible_kiln").unwrap().tasks[0][0].0;
+    let light = |c: &Client| c.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    let count = |c: &Client, name: &str| {
+        let item = c.content.blocks.expect(name);
+        c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
+    };
+    client.clear();
+    for line in ["/fill ~3 ~ ~-1 ~5 ~1 ~1 kiln_bricks", "/setblock ~4 ~ ~ crucible", "/give coal_ore 23", "/skill engineering 20"] { client.ok(line); }
+    client.pump_until(|c| c.world.block(core) == c.content.blocks.id("base:crucible") && count(c, "base:coal_ore") == 23 && !c.quests.is_empty());
+    client.send_position(client.position, false);
+    light(&client);
+    client.settle();
+    client.wait_server(2);
+    assert_eq!(lit(&client), 0, "an incomplete fuel charge counted as lit");
+    assert_eq!(count(&client, "base:coal_ore"), 23);
+    client.clear();
+    client.ok("/give oak_log 32");
+    client.pump_until(|c| count(c, "base:oak_log") == 32);
+    light(&client);
+    client.settle();
+    client.wait_server(2);
+    assert_eq!(lit(&client), 0, "a log was accepted as kiln fuel");
+    assert_eq!(count(&client, "base:oak_log"), 32);
+    client.clear();
+    client.ok("/give coal_ore 24");
+    client.pump_until(|c| count(c, "base:coal_ore") == 24);
+    client.chat.clear();
+    light(&client);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Crucible Kiln is lit")) && lit(c) == 1);
+    assert_eq!(count(&client, "base:coal_ore"), 0);
+    drop(client);
+    let meta = voxmar_server::save::WorldSave::new(&dir).read_meta().unwrap();
+    let fire = meta.lit.iter().find(|fire| fire.position == core.to_array()).expect("saved paid fire").clone();
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| !c.quests.is_empty() && c.world.block(core) == c.content.blocks.id("base:crucible"));
+    assert_eq!(lit(&client), 1);
+    light(&client);
+    client.settle();
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, "base:copper_ore") == 1);
+    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    client.pump_until(|c| count(c, "base:copper_ingot") == 1);
+    // Two consecutive edits must quench it even before any cooking or quest check.
+    for line in ["/setblock ~3 ~1 ~-1 air", "/setblock ~3 ~1 ~-1 kiln_bricks"] { client.ok(line); }
+    client.clear();
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, "base:copper_ore") == 1);
+    client.chat.clear();
+    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("is cold")));
+    assert_eq!(count(&client, "base:copper_ore"), 1);
+    assert_eq!(count(&client, "base:copper_ingot"), 0);
+    assert_eq!(lit(&client), 1, "dismantling erased historical quest progress");
+    drop(client);
+    let meta = voxmar_server::save::WorldSave::new(&dir).read_meta().unwrap();
+    assert!(meta.lit.is_empty(), "a quenched fire was saved");
+    assert!(fire.until > meta.time, "the test accidentally waited for the charge to expire");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// The recipe viewer opened on an item is reported by the client: looking up the stone
 /// pickaxe finishes "Look It Up", looking up anything else, or an item that does not
 /// exist, does not.
@@ -1849,9 +1980,19 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
         client.ok(line);
     }
     client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks"));
+    smelt(&mut client);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("is cold")));
+    assert_eq!(count(&client, ore), 2, "a standing but cold kiln consumed ore");
+    client.clear();
+    client.ok("/give coal_ore 24");
+    let coal = client.content.blocks.expect("base:coal_ore");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == coal && s.count == 24));
     client.chat.clear();
     client.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
     client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Crucible Kiln is lit")));
+    assert_eq!(count(&client, coal), 0, "lighting did not consume the charge");
+    client.ok("/give copper_ore 2");
+    client.pump_until(|c| count(c, ore) == 2);
     smelt(&mut client);
     client.pump_until(|c| count(c, ingot) == 1 && count(c, ore) == 1);
 }
@@ -1932,11 +2073,20 @@ fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
     ] {
         client.ok(line);
     }
-    let blocks = &client.content.blocks;
+    let blocks = client.content.blocks.clone();
     let (crucible, dust, ingot) = (blocks.expect("base:crucible"), blocks.expect("base:copper_dust"), blocks.expect("base:copper_ingot"));
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks") && count(c, dust) == 2);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.clear();
+    client.ok("/give charcoal 32");
+    let charcoal = blocks.expect("base:charcoal");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == charcoal && s.count == 32));
+    client.chat.clear();
+    client.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Crucible Kiln is lit")));
+    client.ok("/give copper_dust 2");
+    client.pump_until(|c| count(c, dust) == 2);
     client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
     client.pump_until(|c| count(c, ingot) == 1 && count(c, dust) == 1);
 }

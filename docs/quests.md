@@ -23,6 +23,8 @@ reward, shown first), tasks, after, rewards. Goals:
 | Goal | Reads |
 | --- | --- |
 | `Craft(item, n)`, `Cook(item, n)` | the player's tallies of things made and cooked |
+| `CookAt(item, station, n)` | successful cooking tallies for a station tag; First Night asks for edible food at a campfire, plus crafting the campfire |
+| `Built(structure, n)`, `Lit(structure, n)` | standing construction and successful fuelled lighting, separately; factory construction never supplies lighting credit |
 | `Tame(creature, n)` | the tally of animals tamed |
 | `Catch(fish, n)`, `Catch("Kinds", n)` | the journal's Fish page |
 | `Kill(creature, n)` | the journal's Animals and Monsters pages |
@@ -48,3 +50,12 @@ tallies are saved with the player.
 The Nomad chapter has the quests the game can already do (first night, stone tools,
 where to settle, the hearth, taming, fishing, twine, pouches, torches, the table, copper);
 the rest of quest book v2 joins as its content lands.
+
+The Crucible Kiln needs a standing pattern and a complete charge held in the hand:
+32 charcoal or 24 coal. Right-clicking its core lights it and consumes that charge.
+Its burn time uses the fuel times in `machines.ron`, measured by server ticks; the
+remaining fire is saved in `world.ron`. Cooking needs both the standing pattern and a
+live fire. Removing a required piece quenches it; rebuilding requires a new charge.
+Completed quests in older saves stay completed. Older `cooked` and `built` tallies do
+not establish which station cooked food or whether fuel was paid, so they cannot
+complete these stricter goals for an unfinished quest.

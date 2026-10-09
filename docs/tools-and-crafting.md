@@ -124,7 +124,7 @@ a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar
 corner. A crucible smelts only in a standing kiln: copper ore into ingots,
 and a bronze blend (three copper ingots and a tin ore) into bronze, all Engineering,
 never burnt (`stop_burning: 0`). Right clicking the crucible with nothing it smelts
-lights the kiln, and quests count it (`Built("crucible_kiln")`).
+lights the kiln, and quests count it (`Lit("crucible_kiln", 1)`).
 
 Multiblocks are lit generically (`base:light` on a block tagged `multiblock_core`): a
 multiblock with `home: true` becomes home, any other is just lit; one that does not
