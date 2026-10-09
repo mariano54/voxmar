@@ -1051,7 +1051,7 @@ mod tests {
         server.bring_out(1, 0);
         let resident = server.villagers.towns[&1].people[0].creature.unwrap();
         server.creatures.live.get_mut(&resident).unwrap().health = 1;
-        let sheep = server.content.creatures.id("base:sheep").unwrap();
+        let sheep = server.content.creatures.id("base:mouflon").unwrap();
         let wild = server.spawn_creature(sheep, Vec3::new(8.0, 200.0, 8.0), 7).unwrap();
         server.command(1, "creatures disperse");
         assert!(!server.creatures.live.contains_key(&wild), "the command must actually disperse wild creatures");

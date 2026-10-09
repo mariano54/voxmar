@@ -1460,7 +1460,7 @@ mod density_tests {
         server.players.insert(1, player);
         let cap = server.content.creatures.limits().animals_near;
         let farmer = server.content.creatures.id("base:farmer").unwrap();
-        let sheep = server.content.creatures.id("base:sheep").unwrap();
+        let sheep = server.content.creatures.id("base:mouflon").unwrap();
         for seed in 0..cap + 1 {
             server.spawn_seeded(farmer, at, seed as u64).expect("room for residents");
         }
