@@ -1,6 +1,7 @@
 //! Cooking at stations (`engine::cooking`): a player holding something a station cooks
 //! uses it on the station (`base:cook`) and gets one cooked, or burnt, with Cooking
-//! experience for what does not burn.
+//! experience for what does not burn. Successful output is counted by station as well
+//! as item, so early food quests cannot be completed by smelting or charcoal.
 
 use voxmar_engine::glam::IVec3;
 use voxmar_engine::traits;
@@ -13,12 +14,17 @@ impl Server {
     /// Cooks one of what `agent` holds at the station at `block`.
     pub(crate) fn cook(&mut self, agent: PlayerId, block: IVec3) {
         let Some(station) = self.block(block) else { return };
-        // A crucible smelts only in its kiln.
+        // A crucible smelts only in its standing, fuelled kiln. A failed attempt only
+        // explains what is missing; it must not light the kiln or consume the ingredient.
         if !self.station_stands(block) {
             if let Some(player) = self.players.get_mut(&agent) {
                 player.changed(traits::INVENTORY);
             }
-            self.light(agent, block);
+            self.station_hint(agent, block);
+            return;
+        }
+        if !self.station_lit(block) {
+            self.station_hint(agent, block);
             return;
         }
         let tags = self.content.blocks.def(station).tags.clone();
@@ -49,6 +55,7 @@ impl Server {
         if !burnt {
             let name = self.content.blocks.def(recipe.output).name.clone();
             self.tally(agent, "cooked", &name, 1);
+            self.tally(agent, &format!("cooked_at:{}", recipe.def.station), &name, 1);
         }
     }
 }

@@ -7,7 +7,8 @@
 // Goals: Craft(item, n), Cook(item, n), Catch(fish, n) (Catch("Kinds", n) for kinds),
 // Kill(creature, n), Tame(creature, n), Pick(plant, n), Mine(ore, n), Visit(biomes),
 // Discover(page, n), Level(skill, n), Have(item, n), Home, Built(multiblock, n),
-// LookUp(item) (opened it in the recipe viewer). Cook
+// LookUp(item) (opened it in the recipe viewer), CookAt(item, station_tag, n),
+// Lit(multiblock, n) (standing and successfully fuelled). Cook
 // counts what any station turns out: fired pots and smelted ingots too. Items and creatures may be
 // `any` or `tag:TAG`. Rewards: Xp(skill, xp), Item(item, count).
 //
@@ -24,7 +25,7 @@
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
             why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
-            tasks: [[Cook("any", 1)]],
+            tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
         (
@@ -276,7 +277,7 @@
         (
             name: "crucible_kiln", age: "farm", branch: "main", title: "Crucible Kiln",
             why: "Bronze needs heat a campfire can't reach. Lighting the kiln starts the Bronze age.",
-            tasks: [[Built("crucible_kiln", 1)]],
+            tasks: [[Lit("crucible_kiln", 1)]],
             after: ["the_potter", "red_metal", "the_crucible"],
             rewards: [Xp("engineering", 905.0)],
         ),

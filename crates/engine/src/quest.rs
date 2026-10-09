@@ -23,6 +23,8 @@ pub enum Goal {
     Craft(String, u32),
     /// Cooked this many of an item, or of anything with a tag.
     Cook(String, u32),
+    /// Successfully cooked this many of an item at a station with this tag.
+    CookAt(String, String, u32),
     /// Caught this many fish (of one kind, or `any`), or this many kinds (`Kinds`).
     Catch(String, u32),
     /// Killed this many of a creature (or `any`).
@@ -43,8 +45,10 @@ pub enum Goal {
     Have(String, u32),
     /// Has a home (a lit hearth).
     Home,
-    /// Lit a multiblock (a crucible kiln) this many times.
+    /// Built a standing multiblock this many times.
     Built(String, u32),
+    /// Lit a standing multiblock, with its required fuel, this many times.
+    Lit(String, u32),
     /// Looked an item up in the recipe viewer (the item may be `any` or `tag:TAG`).
     LookUp(String),
 }
@@ -159,6 +163,7 @@ impl Progress<'_> {
         match goal {
             Goal::Craft(item, n) => (tally("crafted", item), *n),
             Goal::Cook(item, n) => (tally("cooked", item), *n),
+            Goal::CookAt(item, station, n) => (tally(&format!("cooked_at:{station}"), item), *n),
             Goal::Catch(fish, n) if fish == "Kinds" => (self.journal.found(Page::Fish) as u32, *n),
             Goal::Catch(fish, n) => (journal(Page::Fish, fish), *n),
             Goal::Kill(creature, n) => (journal(Page::Animals, creature) + journal(Page::Monsters, creature), *n),
@@ -174,6 +179,7 @@ impl Progress<'_> {
             Goal::Have(item, n) => ((self.carried)(item), *n),
             Goal::Home => (u32::from(self.home), 1),
             Goal::Built(structure, n) => (tally("built", structure), *n),
+            Goal::Lit(structure, n) => (tally("lit", structure), *n),
             Goal::LookUp(item) => (tally("lookedup", item).min(1), 1),
         }
     }
@@ -291,6 +297,26 @@ impl QuestRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cooking_station_and_lighting_goals_reject_legacy_broad_tallies() {
+        let journal = Journal::default();
+        let tallies = FxHashMap::from_iter([
+            ("cooked:base:cooked_rabbit".into(), 4),
+            ("cooked_at:oven:base:cooked_rabbit".into(), 2),
+            ("cooked_at:campfire:base:charcoal".into(), 16),
+            ("built:base:crucible_kiln".into(), 1),
+        ]);
+        let level = |_: &str| 1;
+        let carried = |_: &str| 0;
+        let has_tag = |name: &str, tag: &str| name == "base:cooked_rabbit" && tag == "edible";
+        let drops = |_: &str| None;
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: false };
+        assert_eq!(progress.goal(&Goal::CookAt("tag:edible".into(), "campfire".into(), 1)), (0, 1));
+        assert_eq!(progress.goal(&Goal::CookAt("tag:edible".into(), "oven".into(), 2)), (2, 2));
+        assert_eq!(progress.goal(&Goal::Lit("crucible_kiln".into(), 1)), (0, 1));
+        assert_eq!(progress.goal(&Goal::Built("crucible_kiln".into(), 1)), (1, 1));
+    }
 
     const QUESTS: &str = r#"(quests: [
         (name: "fire", age: "nomad", branch: "main", title: "First Night", why: "", tasks: [[Cook("any", 1)]], rewards: [Xp("cooking", 93.0), Item("torch", 4)]),

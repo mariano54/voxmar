@@ -1950,6 +1950,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     format!("setblock {} kiln_bricks", at(1, 1, -1)),
                     format!("setblock {} kiln_bricks", at(-1, 1, 1)),
                     format!("setblock {} kiln_bricks", at(1, 1, 1)),
+                    "clear".to_owned(),
+                    "give coal_ore 24".to_owned(),
                 ] {
                     net.command(&line);
                 }
@@ -1973,6 +1975,16 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
+            let (coal, slot) = holding(world, "base:coal_ore");
+            if !lit(world) {
+                let Some(slot) = slot.filter(|_| coal >= 24) else {
+                    if gate.server_in_phase() > WORKSHOP_WAIT {
+                        fail(world, gate, "kiln", "the complete coal charge never came".into());
+                    }
+                    return;
+                };
+                world.resource_mut::<LocalPlayer>().selected = slot;
+            }
             if gate.kiln_since == 0.0 {
                 gate.kiln_since = gate.server_now;
             }
@@ -1993,7 +2005,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z));
             }
             if done {
-                gate.check("workshop: kiln", Ok("lighting the crucible lit the Crucible Kiln round it".into()));
+                if coal != 0 {
+                    return fail(world, gate, "kiln", format!("lighting left {coal} coal of its 24-item charge"));
+                }
+                gate.check("workshop: kiln", Ok("a complete coal charge lit the standing Crucible Kiln and counted its lighting goal".into()));
                 // Where the kiln stood, a boiler with a steam crusher beside it, and nothing in
                 // hand but coal to fire it.
                 let at = |d: IVec3| { let p = kiln + d; format!("{} {} {}", p.x, p.y, p.z) };
@@ -5961,6 +5976,29 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
+            for line in ["clear", "give oak_log 2", "give cobblestone 2", "skill cooking 99"] { net.command(line); }
+            gate.advance(now);
+        }
+        1 => {
+            let (logs, log_slot) = holding(world, "base:oak_log");
+            let (stone, stone_slot) = holding(world, "base:cobblestone");
+            if let (Some(log_slot), Some(stone_slot)) = (log_slot, stone_slot) && logs == 2 && stone == 2 {
+                let net = world.resource::<Net>();
+                let transfer = world.resource::<crate::Actions>().0.expect("core:transfer");
+                for (from, cells) in [(log_slot, &voxmar_engine::craft::SMALL[..2]), (stone_slot, &voxmar_engine::craft::SMALL[2..])] {
+                    for &cell in cells {
+                        net.propose(transfer, voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (voxmar_engine::inventory::CRAFT + cell) as u8, count: 1 });
+                    }
+                }
+                net.propose(world.resource::<crate::Actions>().0.expect("core:craft"), voxmar_engine::action::ActionTarget::Slot(0));
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("first night: campfire", Err("campfire ingredients never arrived".into()));
+                gate.next(Step::Ore, now);
+            }
+        }
+        2 => {
+            let net = world.resource::<Net>();
             // The creature the combat check summoned goes, or its level tag would still be
             // up behind the menus' text check.
             net.command("creatures kill");
@@ -5970,7 +6008,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command(&format!("tp {} {} {}", fire.x as f32 + 0.5, fire.y, fire.z as f32 - 1.5));
             gate.advance(now);
         }
-        1 => {
+        3 => {
             let client = world.resource::<ClientWorld>();
             let (Some(raw), Some(campfire)) = (client.registry.id("base:raw_rabbit"), client.registry.id("base:campfire")) else {
                 gate.check("cook", Err("no raw rabbit or campfire in the content".into()));
@@ -5994,12 +6032,14 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 _ => {}
             }
         }
-        2 => {
+        4 => {
             aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             let cooked = item_count(world, "base:cooked_rabbit") + item_count(world, "base:burnt_food");
-            if cooked > gate.count_before {
+            let first_night = world.resource::<LocalPlayer>().quests.iter().any(|q| q.name == "base:first_night" && q.done);
+            if cooked > gate.count_before && first_night {
                 mouse(world, MouseButton::Right, false);
                 gate.check("cook", Ok(format!("{} came back from the fire", cooked - gate.count_before)));
+                gate.check("first night: food", Ok("a crafted campfire and successful cooked meal completed First Night".into()));
                 gate.advance(now);
             } else if gate.server_in_phase() > 15.0 {
                 mouse(world, MouseButton::Right, false);
@@ -6017,14 +6057,14 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // The fire's particles, counted for a while: smoke, embers and sparks rising from
         // it. Counting is the same at any frame rate; a picture of the air over it, taken
         // twice, is kept for the record (a few faint puffs sit near any threshold).
-        3 => {
+        5 => {
             aim_at(world, fire.as_vec3() + Vec3::new(0.5, 1.6, 0.5));
             if in_phase > 0.5 && gate.shot(world, "fire").is_some() {
                 world.resource_mut::<crate::emitters::Emitters>().watch(fire);
                 gate.advance(now);
             }
         }
-        4 if in_phase > FIRE_WATCH => {
+        6 if in_phase > FIRE_WATCH => {
             let Some(later) = gate.shot(world, "fire_later") else { return };
             let change = gate.earlier_shot("fire").map_or(0.0, |earlier| change(&earlier, &later, 0.4));
             let amount = world.resource::<crate::render::particles::Particles>().amount;
