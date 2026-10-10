@@ -64,6 +64,8 @@ pub struct CapturePlugin {
     pub path: PathBuf,
     /// Optional camera override: offset from the player's eye, then yaw and pitch (degrees).
     pub pose: Option<[f32; 5]>,
+    /// How far the pose moves each second of a clip, for camera moves (`--dolly`).
+    pub dolly: Option<[f32; 5]>,
     /// Seconds to fly forward after loading, measuring frame pacing while streaming.
     pub flight: Option<f32>,
     /// Seconds to dig straight down after loading, holding the button as a player would,
@@ -99,6 +101,10 @@ pub struct CapturePlugin {
     pub repeat: bool,
     /// Keep looking at the nearest creature (`--face-creature`).
     pub face_creature: bool,
+    /// Hide the HUD and the outline of the block looked at, for footage (`--cinematic`).
+    pub cinematic: bool,
+    /// Hide the console's lines and tips (`--no-console`; `--cinematic` implies it).
+    pub no_console: bool,
     /// The creature to summon and strike before the shot (see the module docs).
     pub strike: Option<String>,
     /// The skill whose next level to note before the shot (see the module docs).
@@ -146,6 +152,7 @@ impl Plugin for CapturePlugin {
         app.insert_resource(UiState { menu_open: self.menu, inventory_open: self.inventory, character_open: self.character, ..default() }).insert_resource(Capture {
             path: self.path.clone(),
             pose: self.pose,
+            dolly: self.dolly,
             flight: self.flight,
             lift_asked: None,
             dig: self.dig,
@@ -202,13 +209,25 @@ impl Plugin for CapturePlugin {
                 .before(crate::render::update_environment)
                 .before(TransformSystems::Propagate),
         );
+        if self.cinematic {
+            app.add_systems(Update, (crate::hud::show_hud::<false>, hide_gizmos).run_if(in_state(Screen::InGame)));
+        }
+        if self.no_console {
+            app.add_systems(PostUpdate, (crate::hud::console::hide, crate::hud::tips::hide).run_if(in_state(Screen::InGame)));
+        }
     }
+}
+
+/// `--cinematic`: no outline on the block looked at (nor any other gizmo).
+fn hide_gizmos(mut store: ResMut<GizmoConfigStore>) {
+    store.config_mut::<DefaultGizmoConfigGroup>().0.enabled = false;
 }
 
 #[derive(Resource)]
 struct Capture {
     path: PathBuf,
     pose: Option<[f32; 5]>,
+    dolly: Option<[f32; 5]>,
     flight: Option<f32>,
     /// When (by the server's clock) the flight asked to be teleported to its height.
     lift_asked: Option<f32>,
@@ -350,7 +369,15 @@ pub(crate) fn target_ui(
 }
 
 fn apply_pose(state: Res<Capture>, player: Res<LocalPlayer>, mut camera: Query<&mut Transform, With<Camera3d>>) {
-    let (Some([x, y, z, yaw, pitch]), Ok(mut transform)) = (state.pose, camera.single_mut()) else { return };
+    let (Some(mut pose), Ok(mut transform)) = (state.pose, camera.single_mut()) else { return };
+    // `--dolly`: the pose moves on steadily through the clip, frame by frame.
+    if let (Some(dolly), Some(clip)) = (state.dolly, state.clip.as_ref().filter(|c| c.started)) {
+        let seconds = clip.taken as f32 / CLIP_RATE as f32;
+        for (p, d) in pose.iter_mut().zip(dolly) {
+            *p += d * seconds;
+        }
+    }
+    let [x, y, z, yaw, pitch] = pose;
     let step = state.flicker.as_ref().map_or(Vec3::ZERO, |f| f.step);
     transform.translation = player.eye() + Vec3::new(x, y, z) + step;
     // `--face-creature` turns the player toward the creature; the camera looks as they do.

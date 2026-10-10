@@ -98,7 +98,7 @@ const BOTTOM: f32 = 4.0 * PX;
 
 /// The HUD's root, shown only in game.
 #[derive(Component)]
-struct HudRoot;
+pub(crate) struct HudRoot;
 /// The icon showing what is in a slot (a hotbar or inventory slot, or `CURSOR`).
 #[derive(Component)]
 pub struct SlotIcon(pub usize);
@@ -238,7 +238,7 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
     });
 }
 
-fn show_hud<const SHOWN: bool>(mut root: Query<&mut Visibility, With<HudRoot>>) {
+pub(crate) fn show_hud<const SHOWN: bool>(mut root: Query<&mut Visibility, With<HudRoot>>) {
     if let Ok(mut visibility) = root.single_mut() {
         *visibility = if SHOWN { Visibility::Inherited } else { Visibility::Hidden };
     }

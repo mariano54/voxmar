@@ -70,6 +70,7 @@ impl Console {
     /// Shows a line from the server; several lines if `text` has line breaks.
     pub fn push(&mut self, kind: ChatKind, text: &str, now: f32) {
         for line in text.lines() {
+            info!("console: {line}");
             self.lines.push_back(Line { kind, text: line.to_owned(), at: now });
         }
         while self.lines.len() > KEPT {
@@ -106,9 +107,16 @@ impl Console {
     }
 }
 
+/// Hides the console's lines, for footage (`--no-console`).
+pub(crate) fn hide(mut root: Query<&mut Visibility, With<ConsoleRoot>>) {
+    for mut visibility in &mut root {
+        *visibility = Visibility::Hidden;
+    }
+}
+
 /// The console's widgets, made for each game.
 #[derive(Component)]
-struct ConsoleRoot;
+pub(crate) struct ConsoleRoot;
 #[derive(Component)]
 struct ConsoleLine(usize);
 #[derive(Component)]

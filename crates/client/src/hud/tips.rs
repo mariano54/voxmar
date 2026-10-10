@@ -36,6 +36,13 @@ const APART: f32 = 90.0;
 /// How wide a tip's words may run.
 const WIDTH: f32 = 150.0 * PX;
 
+/// Hides the tip plate, for footage (`--no-console`).
+pub(crate) fn hide(mut plate: Query<&mut Visibility, With<TipPlate>>) {
+    for mut visibility in &mut plate {
+        *visibility = Visibility::Hidden;
+    }
+}
+
 /// Every tip, by name: its words are `tip.<name>`.
 pub const TIPS: [&str; 10] = ["inventory", "recipes", "character", "effect", "seed", "food", "creature", "level", "table", "catalogue"];
 
@@ -64,7 +71,7 @@ impl Tips {
 pub struct HeldTip(pub String);
 
 #[derive(Component)]
-struct TipPlate;
+pub(crate) struct TipPlate;
 #[derive(Component)]
 struct TipCorner;
 #[derive(Component)]

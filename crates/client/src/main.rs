@@ -4,12 +4,12 @@
 //! `--world NAME` play (or create) the saved world NAME, `--connect HOST[:PORT]` join a
 //! server, `--capture PATH` (screenshot and exit once loaded; plays an unsaved world unless
 //! `--world` or `--connect` is given) with `--pose dx,dy,dz,yaw,pitch` (camera offset from
-//! the player) or `--flight SECONDS` (fly forward first and report frame pacing) or `--dig
+//! the player; `--dolly dx,dy,dz,yaw,pitch` moves it that much each second of a clip) or `--flight SECONDS` (fly forward first and report frame pacing) or `--dig
 //! SECONDS` (dig straight down holding the button, reporting frame pacing), `--wait
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--journal PAGE` (the journal on that page), `--tip NAME` (hold that first-time tip), `--quests QUEST` (the quest book on that quest), `--pin QUEST` (pin a quest), `--hover-slot N` (the tooltip of inventory slot N), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot), `--tend CREATURE` (summon one and feed it until the shot), `--grid A,B,C,D` (lay items into the crafting grid; up to nine, row by row, show a crafting table's three by three), `--recipes NAME` / `--uses NAME` (open the recipe viewer on an item), `--effect NAME:SECONDS` (show the player that timed effect, the server not told), `--effect-tip NAME` (show that effect's hover plate over its chip), `--catalogue SEARCH` (open creative mode's catalogue on a search, once in creative),
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--journal PAGE` (the journal on that page), `--tip NAME` (hold that first-time tip), `--quests QUEST` (the quest book on that quest), `--pin QUEST` (pin a quest), `--hover-slot N` (the tooltip of inventory slot N), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot), `--tend CREATURE` (summon one and feed it until the shot), `--grid A,B,C,D` (lay items into the crafting grid; up to nine, row by row, show a crafting table's three by three), `--recipes NAME` / `--uses NAME` (open the recipe viewer on an item), `--effect NAME:SECONDS` (show the player that timed effect, the server not told), `--effect-tip NAME` (show that effect's hover plate over its chip), `--cinematic` (no HUD, console or block outline, for footage), `--no-console` (no console lines or tips), `--catalogue SEARCH` (open creative mode's catalogue on a search, once in creative),
 //! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--scale-factor N` (screen
 //! pixels per interface pixel, 2 to shoot as a Retina display draws: use twice the size), `--clip SECONDS` (save
 //! every frame of that much game time at 30 fps instead, to check motion; `--clip-join` starts
@@ -97,6 +97,8 @@ struct Options {
     gate: Option<std::path::PathBuf>,
     server_lag: Option<u64>,
     pose: Option<[f32; 5]>,
+    /// `--dolly dx,dy,dz,yaw,pitch`: how far the pose moves each second of a clip.
+    dolly: Option<[f32; 5]>,
     flight: Option<f32>,
     dig: Option<f32>,
     wait: f32,
@@ -152,6 +154,10 @@ struct Options {
     repeat: bool,
     /// `--face-creature`: keep looking at the nearest creature.
     face_creature: bool,
+    /// `--cinematic`: no HUD and no outline on the block looked at, for footage.
+    cinematic: bool,
+    /// `--no-console`: no console lines (command replies) or tips on screen.
+    no_console: bool,
     size: UVec2,
     scale_factor: f32,
     windowed: bool,
@@ -176,6 +182,7 @@ fn parse_options() -> Result<Options, String> {
         gate: None,
         server_lag: None,
         pose: None,
+        dolly: None,
         flight: None,
         dig: None,
         wait: 0.0,
@@ -208,6 +215,8 @@ fn parse_options() -> Result<Options, String> {
         hold: None,
         wear: Vec::new(),
         repeat: false,
+        cinematic: false,
+        no_console: false,
         face_creature: false,
         size: UVec2::new(1920, 1080),
         scale_factor: 1.0,
@@ -272,6 +281,8 @@ fn parse_options() -> Result<Options, String> {
             "--wear" => options.wear.push(value()?),
             "--repeat" => options.repeat = true,
             "--face-creature" => options.face_creature = true,
+            "--cinematic" => options.cinematic = true,
+            "--no-console" => options.no_console = true,
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
             "--clip-join" => options.clip_join = true,
             "--clip-command" => options.clip_commands.push(value()?),
@@ -292,6 +303,10 @@ fn parse_options() -> Result<Options, String> {
             "--screen" => {
                 let name = value()?;
                 options.screen = Some(Screen::from_name(&name).ok_or_else(|| format!("--screen: no screen called {name}"))?);
+            }
+            "--dolly" => {
+                let parts: Vec<f32> = value()?.split(',').map(str::parse).collect::<Result<_, _>>().map_err(|e| format!("--dolly: {e}"))?;
+                options.dolly = Some(parts.try_into().map_err(|_| "--dolly needs x,y,z,yaw,pitch")?);
             }
             "--pose" => {
                 let parts: Vec<f32> = value()?.split(',').map(str::parse).collect::<Result<_, _>>().map_err(|e| format!("--pose: {e}"))?;
@@ -520,6 +535,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.add_plugins(capture::CapturePlugin {
             path,
             pose: options.pose,
+            dolly: options.dolly,
             flight: options.flight,
             dig: options.dig,
             wait: options.wait,
@@ -537,6 +553,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             wear: options.wear,
             repeat: options.repeat,
             face_creature: options.face_creature,
+            cinematic: options.cinematic,
+            no_console: options.no_console || options.cinematic,
             strike: options.strike,
             level_up: options.level_up,
             tend: options.tend,
