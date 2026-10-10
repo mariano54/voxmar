@@ -20,10 +20,10 @@ TIMELINE = [
     ("title", 2.7, [("peaks", 0.2, 3.5)]),
     ("biomes", 1.7, [("ocean", 0.3, 1.0), ("cherry", 0.4, 0.8), ("gorge", 0.3, 0.7), ("silverwood", 0.4, 0.95), ("village", 0.4, 1.05)]),
     ("creatures", 1.7, [("deer", 1.0, 1.2), ("wolves", 0.2, 1.0), ("bear", 0.3, 0.9), ("magic", 0.6, 0.9)]),
-    ("skills", 1.7, [("character", 0.2, 1.8), ("guide", 0.2, 1.7)]),
+    ("skills", 1.4, [("skills_open", 0.3, 1.5), ("character", 0.2, 1.1), ("guide", 0.2, 0.9)]),
     ("combat", 1.3, [("combat", 0.6, 2.0), ("combat_night", 1.3, 1.5)]),
     ("factories", 1.7, [("factory_wide", 0.2, 1.8), ("factory_line", 0.4, 1.4), ("factory_top", 0.4, 1.3)]),
-    ("quests", 1.7, [("quests", 0.2, 1.3), ("inventory", 0.2, 1.1), ("crafting", 0.2, 1.1)]),
+    ("quests", 1.3, [("quests_open", 0.3, 1.4), ("quests", 0.2, 0.8), ("inventory", 0.2, 0.65), ("crafting", 0.3, 0.65)]),
     ("end", 2.4, [("moonlit", 0.2, 3.0)]),
 ]
 FADE = 0.25

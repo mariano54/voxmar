@@ -131,7 +131,9 @@ SHOTS = {
                  commands=MEADOW, clip_commands=["/summon brown_bear 1 ~ ~ ~-4", "/summon fox 2 ~2 ~ ~-5"]),
     "magic": shot(2.5, CLOSE, ["--time", 0.69, "--weather", "aurora"], pose(-0.5, -0.6, 1.5, 0, 4), fly(-90, 0.5),
                   commands=MOONLIT_CLEARING, clip_commands=["/summon moonhare 3 ~ ~ ~-4", "/summon wisp 3 ~ ~1 ~-5", "/summon glimmer_moth 5 ~ ~1 ~-3"]),
-    # Skills.
+    # Skills: the card plays over a village's fields before the menus.
+    "skills_open": shot(2.5, ["--time", 0.12], pose(0, 9, 0, 200, -18), fly(200, 3, turn=-4),
+                        commands=["/tp 560 133 -2256"]),
     "character": shot(2.0, UI, ["--character", "--time", 0.1],
                       commands=MEADOW + SKILLED, cinematic=False),
     "guide": shot(2.0, UI, ["--character", "--guide", "farming", "--time", 0.1],
@@ -143,7 +145,9 @@ SHOTS = {
     "combat_night": shot(3.0, UI, ["--time", 0.63, "--hold", "iron_sword", "--press", "left", "--repeat", "--face-creature"],
                          commands=MEADOW + ["/give iron_sword 1", "/skill attack 40"],
                          clip_commands=["/summon shambler 2 ~ ~ ~-2"], cinematic=False),
-    # Quests, inventory and crafting.
+    # Quests, inventory and crafting: the card plays over a hamlet before the menus.
+    "quests_open": shot(2.5, ["--time", 0.45], pose(0, 26, 0, 30, -24), fly(30, 4, turn=5),
+                        commands=["/tp 336 146 -496"]),
     "quests": shot(2.0, UI, ["--quests", "first_bronze", "--time", 0.1], commands=MEADOW, cinematic=False),
     "inventory": shot(2.0, UI, ["--inventory", "--hover-slot", 0, "--time", 0.1], commands=MEADOW, cinematic=False),
     "factory_wide": shot(3.0, ["--time", 0.18], pose(-20, 12, 4, -46, -22), fly(-90, 3, turn=3),
