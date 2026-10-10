@@ -3,8 +3,7 @@
     python3 tools/trailer/edit.py OUT_DIR CARDS_DIR TRAILER.mp4
 
 OUT_DIR is shoot.py's (its clips/), CARDS_DIR cards.py's. Each section of TIMELINE is a
-montage of shots, with its card over the first couple of seconds (the footage blurred
-under it); the music is a stretch
+montage of shots, with its card over the first couple of seconds; the music is a stretch
 of one of the game's own tracks, ending with it.
 """
 
@@ -49,18 +48,9 @@ def main():
             pieces.append(f"[p{i}]")
             at += length
     total = at
-    filters.append("".join(pieces) + f"concat=n={len(pieces)}:v=1:a=0,split=2[base][toblur]")
-    # A blurred copy of the footage, faded in under each card so the words stand out (and
-    # menus behind them don't compete).
-    filters.append(f"[toblur]gblur=sigma=14,eq=brightness=-0.06,split={len(overlays)}" + "".join(f"[blur{k}]" for k in range(len(overlays))))
+    filters.append("".join(pieces) + f"concat=n={len(pieces)}:v=1:a=0[base]")
     last = "base"
     for k, (card, start, hold) in enumerate(overlays):
-        filters.append(
-            f"[blur{k}]trim=start={start:.2f}:duration={hold:.2f},setpts=PTS-STARTPTS,format=yuva420p,"
-            f"fade=in:st=0:d={FADE}:alpha=1,fade=out:st={hold - FADE:.2f}:d={FADE}:alpha=1,setpts=PTS+{start:.2f}/TB[b{k}]"
-        )
-        filters.append(f"[{last}][b{k}]overlay=eof_action=pass:format=auto[u{k}]")
-        last = f"u{k}"
         i = add("-loop", "1", "-t", f"{hold:.2f}", "-i", str(cards / f"{card}.png"))
         filters.append(
             f"[{i}:v]format=rgba,fade=in:st=0:d={FADE}:alpha=1,fade=out:st={hold - FADE:.2f}:d={FADE}:alpha=1,"

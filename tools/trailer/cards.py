@@ -109,7 +109,7 @@ def card(glyphs, head, sub):
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     # A soft dark band behind the words, so they read over bright skies and snow.
     band = Image.new("L", (W, H), 0)
-    ImageDraw.Draw(band).rectangle([0, H // 2 - 170, W, H // 2 + 150], fill=120)
+    ImageDraw.Draw(band).rectangle([0, H // 2 - 170, W, H // 2 + 150], fill=70)
     band = band.filter(ImageFilter.GaussianBlur(70))
     img.paste(Image.new("RGBA", (W, H), (8, 10, 18, 255)), (0, 0), band)
 
