@@ -95,5 +95,21 @@ Against a brown bear (level 28, slash, accuracy 0.8 × 28 = 22) a Defence 15 pla
 about 76% of the time bare, 63% in bronze scale; a Defence 20 player in chainmail (66 against
 slash) about 43%. A set costs 25 of its material: hood 5, body 8, legs 7, gloves 2, boots 3.
 
-Still to come in phase 4, in order: food timing and Magic's prayers (wards against each style, boosts, vows); ranged
-weapons, ammunition and projectiles; then modifications (P42).
+## Prayers
+
+Eighteen prayers (`prayers.ron`, `engine/src/prayer.rs`, `server/src/prayers.rs`), each opening at a Magic level and
+draining points a minute while on. Points are `points` + `per_level` × Magic (10 + 1 a level), saved with the player.
+
+| Question | Decision |
+| --- | --- |
+| Turning on | A quick key (X V B N G, set in the keys tab) or the book: needs the Magic level and a point left. One ward at a time and one boost of each stat: the last turned on puts out the one it shares a kind with. |
+| Draining | The prayers on drain together by the tick; at none left every prayer goes out. Prayers off drain nothing (flicking them is allowed: it costs the keys, not points). |
+| Points back | With no prayer on and no blow either way for `calm` (10 s), one point every `regain` (20 s). Praying at an altar fills them, and takes an offering in hand (a bone) for Magic experience first. |
+| Boosts | Attack, Strength and Defence by a share of the level, rounded by chance so a small one still counts. |
+| Wards | A ward stops `ward` (0.8) of a blow of its style from a creature (`ward_boss` 0.5, `ward_player` 0.4), never past what a guard stops: the larger stop counts. |
+| Mending | Health comes back faster. |
+| Death | Keepsake keeps one more item, never past the worth rule's most (4 with a grave ward); death puts out every prayer. |
+| Last Breath | A blow that leaves the player under its share of health heals a share, then costs every point. |
+
+Still to come in phase 4, in order: food timing; ranged weapons, ammunition and projectiles; then modifications (P42). The
+prayer book's screen and the spell bar's drawing are the UI's; the vows come with the temple rites.
