@@ -363,7 +363,7 @@ fn draw_guide(
     locale: Res<Locale>,
     mut page: Query<(Entity, &mut Node, &mut ScrollPosition), With<GuidePage>>,
     mut levels: Query<(&SkillLevel, &mut Text)>,
-    mut drawn: Local<Option<(SkillId, GuideView)>>,
+    mut drawn: Local<Option<(SkillId, GuideView, u8)>>,
     images: Res<super::HudImages>,
 ) {
     draw_levels(&locale, &launch, &player, &mut levels);
@@ -372,7 +372,8 @@ fn draw_guide(
     if node.display != display {
         node.display = display;
     }
-    let wanted = guide.0.map(|id| (id, view.clone()));
+    // Drawn again when the level changes, too: the lines reached light up as it rises.
+    let wanted = guide.0.map(|id| (id, view.clone(), launch.content.skills.level(player.skills.xp(id))));
     if *drawn == wanted && !locale.is_changed() {
         return;
     }

@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Refuses a new wall-clock wait in the crates' tests (gate's hygiene step).
+
+    tools/test-waits BASE        # lines added since BASE in crates/*/tests/*.rs
+    tools/test-waits --self-check
+
+A test that waits for a deadline on the wall clock (`let until = Instant::now() + 800 ms;
+pump_until(|_| Instant::now() > until)`) passes on a quick machine and fails on a loaded
+one, or passes for the wrong reason: main once went red from an 800 ms wait that raced the
+server's once-a-second quest check. Wait for what the server says instead (`settle`, a
+message, its ticks), and space a player's actions with arrival stamps (`propose_at`).
+
+Refused, on a line added in a test file:
+- a deadline made from the clock: `Instant::now() + ...` or `Instant::now().checked_add(...)`;
+- the clock compared with anything (`Instant::now() > until`);
+- the clock or `.elapsed()` inside a `pump_until(` wait.
+
+Allowed:
+- watchdogs: a deadline named after WATCHDOGS, and `assert!(Instant::now() < ...)`. They
+  only fail a server that hangs, and can never let a check pass;
+- TIMING_TESTS: the tests that sleep to stand for a player's real time (how long a block
+  takes to break, a blow's cooldown), which the server judges by arrival stamps;
+- `.elapsed()` measured in an assert (a timing check, not a wait).
+"""
+
+import re
+import subprocess
+import sys
+
+# Watchdog limits, by name: gameplay.rs's `pump_until` gives up on a server silent for
+# SERVER_SILENT or waited on for SERVER_WAIT in all.
+WATCHDOGS = ["SERVER_SILENT", "SERVER_WAIT"]
+
+# Tests that sleep to stand for the player's real time, by function name.
+TIMING_TESTS = [
+    "break_and_place_blocks",
+    "a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started",
+    "falling_hurts",
+    "only_admins_fly_fast",
+    "walking_wears_a_path",
+    "a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it",
+    "placing_or_throwing_while_mining_does_not_cancel_the_mining",
+    "a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks",
+]
+
+TEST_FILES = re.compile(r"^crates/[^/]+/tests/.*\.rs$")
+DEADLINE = re.compile(r"Instant::now\(\)\s*(\+|\.checked_add\()")
+COMPARED = re.compile(r"Instant::now\(\)\s*[<>]|[<>]=?\s*Instant::now\(\)")
+WATCHDOG_ASSERT = re.compile(r"^\s*assert!\(\s*Instant::now\(\)\s*<")
+CLOCK = re.compile(r"Instant::now\(\)|\.elapsed\(\)")
+FN = re.compile(r"^\s*(?:pub(?:\([\w:]+\))?\s+)?fn\s+(\w+)")
+
+
+def enclosing_fn(lines, index):
+    for j in range(index, -1, -1):
+        m = FN.match(lines[j])
+        if m:
+            return m.group(1)
+    return None
+
+
+def problem(line):
+    """Why an added line is a wall-clock wait, or None."""
+    if any(name in line for name in WATCHDOGS):
+        return None
+    if DEADLINE.search(line):
+        return "a deadline on the wall clock"
+    if COMPARED.search(line) and not WATCHDOG_ASSERT.match(line):
+        return "the wall clock compared with a deadline"
+    if "pump_until(" in line and CLOCK.search(line):
+        return "a wait that ends by the wall clock"
+    return None
+
+
+def findings(path, text, added):
+    """Wall-clock waits on the `added` line numbers (1-based) of `path`'s `text`."""
+    lines = text.split("\n")
+    found = []
+    for number in sorted(added):
+        if number > len(lines):
+            continue
+        line = lines[number - 1]
+        why = problem(line)
+        if why and enclosing_fn(lines, number - 1) not in TIMING_TESTS:
+            found.append(f"{path}:{number}: {why}: {line.strip()}")
+    return found
+
+
+def added_lines(base):
+    """{path: (text, {added line numbers})} for test files changed since `base`, the
+    working tree included."""
+    diff = subprocess.run(["git", "diff", "-U0", "--no-color", base, "--", "crates/*/tests/*.rs"], capture_output=True, text=True, check=True).stdout
+    changed = {}
+    path = None
+    for line in diff.split("\n"):
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else None
+            if path and TEST_FILES.match(path):
+                changed.setdefault(path, set())
+            else:
+                path = None
+        elif path and line.startswith("@@"):
+            m = re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
+            start, count = int(m.group(1)), int(m.group(2) or 1)
+            changed[path].update(range(start, start + count))
+    return {p: (open(p, encoding="utf-8").read(), n) for p, n in changed.items()}
+
+
+def self_check():
+    planted = """fn a_new_test() {
+    let until = Instant::now() + Duration::from_millis(800);
+    client.pump_until(|_| Instant::now() > until);
+    client.pump_until(|c| c.done || started.elapsed() > Duration::from_millis(300));
+    let later = Instant::now().checked_add(Duration::from_secs(1)).unwrap();
+}"""
+    every = set(range(1, 7))
+    refused = findings("crates/server/tests/gameplay.rs", planted, every)
+    assert len(refused) == 4, f"a planted wall-clock wait passed: {refused}"
+    timing = planted.replace("fn a_new_test", f"fn {TIMING_TESTS[0]}")
+    assert findings("crates/server/tests/gameplay.rs", timing, every) == [], "an allow-listed timing test was refused"
+    watchdogs = """fn pump_until(&mut self) {
+    let start = Instant::now();
+    let deadline = Instant::now() + SERVER_WAIT;
+    assert!(Instant::now() < deadline, "the login was never answered");
+    let now = Instant::now();
+    assert!(now - heard < SERVER_SILENT && now - start < SERVER_WAIT, "timed out");
+    assert!(started.elapsed() + CATCH_UP >= hardness, "mining completed too early");
+}"""
+    passed = findings("crates/server/tests/gameplay.rs", watchdogs, set(range(1, 9)))
+    assert passed == [], f"a watchdog or timing assert was refused: {passed}"
+    # The tests as they stand, every line taken as new: only the timing tests' own clock
+    # and the ones written before this rule (gameplay replaces those) are found, never a
+    # watchdog.
+    try:
+        text = open("crates/server/tests/gameplay.rs", encoding="utf-8").read()
+    except OSError:
+        return
+    lines = text.split("\n")
+    found = findings("crates/server/tests/gameplay.rs", text, set(range(1, len(lines) + 1)))
+    for f in found:
+        assert not any(w in f for w in WATCHDOGS), f"a watchdog was refused: {f}"
+        number = int(f.split(":")[1])
+        assert enclosing_fn(lines, number - 1) not in TIMING_TESTS, f"an allow-listed timing test was refused: {f}"
+
+
+def main():
+    args = sys.argv[1:]
+    if args == ["--self-check"]:
+        self_check()
+        return 0
+    if len(args) != 1:
+        print(__doc__.split("\n\n")[1], file=sys.stderr)
+        return 2
+    found = [f for path, (text, added) in added_lines(args[0]).items() for f in findings(path, text, added)]
+    for f in found:
+        print(f)
+    if found:
+        print("test-waits: wait for what the server says (settle, a message, its ticks), not the wall clock; see tools/test-waits", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
