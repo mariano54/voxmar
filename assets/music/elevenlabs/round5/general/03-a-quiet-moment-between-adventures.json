@@ -1,0 +1,29 @@
+{
+  "leads": [
+    "soft felt piano"
+  ],
+  "support": [
+    "electric piano (Rhodes)",
+    "harp",
+    "zither"
+  ],
+  "texture": null,
+  "opener": "Gentle, warm video-game soundtrack piece",
+  "space": "natural chamber acoustics, moderate reverb",
+  "form": "a simple, memorable melody that returns as a motif",
+  "percussion": null,
+  "hint": "like a quiet walk with an old friend",
+  "vibes": [
+    "timeless and welcoming",
+    "intimate chamber-music warmth"
+  ],
+  "touch": null,
+  "biome": "general",
+  "scene": "a quiet moment between adventures",
+  "bpm": 58,
+  "key": "B-flat major",
+  "length_s": 152,
+  "prompt": "Gentle, warm video-game soundtrack piece for a cozy adventure game scene: a quiet moment between adventures, like a quiet walk with an old friend. Mood: timeless and welcoming, intimate chamber-music warmth. Timeless and peaceful: it should fit any place and any time of day, day or night. Lead melody on soft felt piano, accompanied by electric piano (Rhodes), harp, zither, with no background pad or drone, just the instruments and the space between notes. Structure: a simple, memorable melody that returns as a motif; a clear, singable melody, and rests and silences are welcome. Sound: natural chamber acoustics, moderate reverb. Slow, unhurried tempo around 58 BPM in B-flat major, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 82
+}

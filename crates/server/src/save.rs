@@ -179,8 +179,10 @@ pub struct SavedPlayer {
     pub bed: Option<[f32; 3]>,
     /// Everything they have discovered.
     pub journal: Vec<voxmar_engine::journal::Entry>,
-    /// Quests finished, and the tallies quests count.
+    /// Quests finished, those of them whose rewards were claimed, and the tallies quests
+    /// count.
     pub quests: Vec<String>,
+    pub quests_claimed: Vec<String>,
     pub tallies: Vec<(String, u32)>,
 }
 
@@ -216,6 +218,10 @@ struct PlayerFile {
     journal: Vec<voxmar_engine::journal::Entry>,
     #[serde(default)]
     quests: Vec<String>,
+    /// Absent in saves from before rewards were claimed in the quest screen, whose finished
+    /// quests were all paid when they finished.
+    #[serde(default)]
+    quests_claimed: Option<Vec<String>>,
     #[serde(default)]
     tallies: Vec<(String, u32)>,
 }
@@ -497,7 +503,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests: file.quests, tallies: file.tallies }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: file.tallies }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -536,6 +542,7 @@ impl WorldSave {
             pouched: held.pouched.iter().map(|&(item, count)| (registry.def(item).name.clone(), count)).collect(),
             journal: player.journal.clone(),
             quests: player.quests.clone(),
+            quests_claimed: Some(player.quests_claimed.clone()),
             tallies: player.tallies.clone(),
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
@@ -1009,6 +1016,44 @@ mod tests {
         assert_eq!(*received, column);
     }
 
+    /// A player file from before rewards were claimed in the quest screen has no list of
+    /// claimed quests: everything it finished was paid then, so all of it counts as claimed.
+    /// Saved with a list, it keeps the finished-but-unclaimed ones waiting.
+    #[test]
+    fn quests_finished_before_claiming_existed_count_as_claimed() {
+        let dir = temp_dir("claimed");
+        let save = WorldSave::new(&dir);
+        let registry = registry(false);
+        let player = SavedPlayer {
+            position: Vec3::new(0.5, 80.0, 0.5),
+            yaw: 0.0,
+            mode: None,
+            flying: false,
+            health: Health { current: 20, max: 20 },
+            inventory: Inventory::default(),
+            skills: Vec::new(),
+            effects: Vec::new(),
+            home: None,
+            bed: None,
+            journal: Vec::new(),
+            quests: vec!["base:a".into(), "base:b".into()],
+            quests_claimed: vec!["base:a".into()],
+            tallies: Vec::new(),
+        };
+        save.write_player("ada", &player, &registry).unwrap();
+        assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().quests_claimed, ["base:a"], "a waiting reward is kept");
+        let path = dir.join("players/ada.ron");
+        let text = std::fs::read_to_string(&path).unwrap();
+        // The field is a list over several lines: cut from its name to the end of its list.
+        let from = text.find("quests_claimed").unwrap();
+        let to = from + text[from..].find("]),").unwrap() + "]),".len();
+        let old = format!("{}{}", &text[..from], text[to..].trim_start());
+        assert!(!old.contains("quests_claimed"));
+        std::fs::write(&path, old).unwrap();
+        assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().quests_claimed, ["base:a", "base:b"], "an older save's finished quests were all paid");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn players_round_trip_by_name() {
         let dir = temp_dir("players");
@@ -1032,7 +1077,8 @@ mod tests {
             home: Some([3.5, 70.0, -2.5]),
             bed: Some([1.5, 64.0, 9.5]),
             journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
-            quests: vec!["base:first_night".into()],
+            quests: vec!["base:first_night".into(), "base:stone_in_hand".into()],
+            quests_claimed: vec!["base:first_night".into()],
             tallies: vec![("crafted:base:torch".into(), 8)],
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
@@ -1103,6 +1149,7 @@ mod tests {
             bed: None,
             journal: Vec::new(),
             quests: Vec::new(),
+            quests_claimed: Vec::new(),
             tallies: Vec::new(),
         };
         save.write_player("herbalist", &player, &registry).unwrap();

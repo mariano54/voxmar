@@ -4082,6 +4082,12 @@ fn tracked(world: &World) -> (u32, u32) {
     player.quests.iter().find(|q| q.name == TRACKED).and_then(|q| q.tasks.first()?.first().copied()).unwrap_or((0, 1))
 }
 
+/// What the tracker says of a quest finished and not yet claimed, or finished and paying
+/// nothing.
+fn done_words(world: &World, quest: &voxmar_engine::quest::QuestDef) -> String {
+    world.resource::<Locale>().get(if quest.pays() { "quest.tracker.ready" } else { "quest.tracker.done" }).to_owned()
+}
+
 /// The words the tracker shows for the torch quest at `have` torches, or done.
 fn tracker_words(world: &World, have: u32) -> String {
     let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
@@ -4089,7 +4095,7 @@ fn tracker_words(world: &World, have: u32) -> String {
     let Some(goal) = quest.tasks.first().and_then(|t| t.first()) else { return String::new() };
     let need = if let voxmar_engine::quest::Goal::Craft(_, need) = goal { *need } else { 1 };
     if have >= need {
-        return locale.get("quest.tracker.done").to_owned();
+        return done_words(world, quest);
     }
     let met = locale.get("quest.mark.todo");
     format!("{met} {}", crate::hud::quests::goal_words(locale, &launch.content, quest, goal, (have, need)))
@@ -4289,7 +4295,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         11 => {
-            let done = world.resource::<Locale>().get("quest.tracker.done").to_owned();
+            let done = world.resource::<Launch>().content.quests.get(DONE_QUEST).map(|quest| done_words(world, quest)).unwrap_or_default();
             let lines = tracker_lines(world);
             if !lines.as_ref().is_some_and(|lines| lines.contains(&done)) {
                 if waited > 2.0 {
@@ -4300,7 +4306,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("quests: done", Ok(format!("{DONE_QUEST} pinned reads {done:?}")));
             gate.advance(now);
         }
-        _ => {
+        12 => {
             // It stays its while, counted from when it was pinned done, then goes.
             let stays = world.resource::<Launch>().content.quests.tracker().done_stays;
             let since = now - gate.quest_pinned;
@@ -4317,8 +4323,64 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if pinned || lines.is_some() { Err(format!("{since:.1} s after it was pinned done, still pinned: {pinned}; the tracker reads {lines:?}")) } else { Ok(format!("done, it stayed and dropped off by {since:.1} s ({stays} s asked), and the tracker went")) },
             );
             world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
+            gate.advance(now);
+        }
+        // The finished quest pays only when claimed in the book: it opens on the quest with
+        // its reward waiting (Twine and Thong, finished at the start), its Claim button is
+        // clicked, and the server's word comes back claimed with the experience given.
+        13 => {
+            let content = world.resource::<Launch>().content.clone();
+            let Some(reward) = content.quests.get(DONE_FIRST).and_then(|q| q.rewards.iter().find_map(|r| if let voxmar_engine::quest::Reward::Xp(skill, xp) = r { Some((skill.clone(), *xp)) } else { None })) else {
+                return quit(world, gate, "quests: claim", format!("{DONE_FIRST} has no experience to claim"));
+            };
+            if !crate::hud::quests::claimable(world.resource::<LocalPlayer>(), DONE_FIRST) {
+                return quit(world, gate, "quests: claim", format!("{DONE_FIRST} was finished, yet its reward is not waiting to be claimed"));
+            }
+            let skill = content.skills.id(&reward.0);
+            gate.count_before = skill.map_or(0, |skill| world.resource::<LocalPlayer>().skills.xp(skill));
+            *world.resource_mut::<QuestView>() = QuestView { picked: Some(DONE_FIRST.into()), ..default() };
+            world.resource_mut::<UiState>().quests_open = true;
+            gate.advance(now);
+        }
+        14 => {
+            let button = world.query_filtered::<(Entity, &InheritedVisibility), With<crate::hud::quests::ClaimButton>>().iter(world).find(|(_, v)| v.get()).map(|(entity, _)| entity);
+            let Some(button) = button else {
+                if in_phase > 2.0 {
+                    quit(world, gate, "quests: claim", format!("the book open on {DONE_FIRST} shows no Claim button"));
+                }
+                return;
+            };
+            // The book as it stands with a reward waiting: the web filling most of the
+            // window, the picked quest's page in the sidebar at the right with its Claim
+            // button and its rewards.
+            if in_phase < 0.5 || gate.shot(world, "quests-claim").is_none() {
+                return;
+            }
+            world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
+            gate.advance(now);
+        }
+        15 => {
+            let content = world.resource::<Launch>().content.clone();
+            let player = world.resource::<LocalPlayer>();
+            let claimed = player.quests.iter().any(|q| q.name == DONE_FIRST && q.done && q.claimed);
+            if !claimed {
+                if waited > QUEST_WAIT {
+                    let state = player.quests.iter().find(|q| q.name == DONE_FIRST).cloned();
+                    quit(world, gate, "quests: claim", format!("Claim clicked, {waited:.1} server s on the quest stands {state:?}"));
+                }
+                return;
+            }
+            let Some((skill, xp)) = content.quests.get(DONE_FIRST).and_then(|q| q.rewards.iter().find_map(|r| if let voxmar_engine::quest::Reward::Xp(skill, xp) = r { content.skills.id(skill).map(|id| (id, *xp)) } else { None })) else { return };
+            let gained = player.skills.xp(skill).saturating_sub(gate.count_before);
+            // The experience comes in the same message as the state, or just after it.
+            if gained < (xp * 10.0) as u32 && waited <= QUEST_WAIT {
+                return;
+            }
+            gate.check("quests: claim", if gained >= (xp * 10.0) as u32 { Ok(format!("Claim paid {DONE_FIRST}: the quest reads claimed and {} xp came", gained as f32 / 10.0)) } else { Err(format!("claimed, yet only {} of {xp} xp came", gained as f32 / 10.0)) });
+            world.resource_mut::<UiState>().quests_open = false;
             gate.next(Step::Catalogue, now);
         }
+        _ => gate.next(Step::Catalogue, now),
     }
 }
 

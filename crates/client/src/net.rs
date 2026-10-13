@@ -127,6 +127,11 @@ impl Net {
         self.connection.send(ClientMessage::LookedUp { item });
     }
 
+    /// Claims a finished quest's rewards (see `ClientMessage::ClaimQuest`).
+    pub fn claim_quest(&self, name: &str) {
+        self.connection.send(ClientMessage::ClaimQuest { name: name.into() });
+    }
+
     /// Says something to everyone.
     pub fn chat(&self, text: &str) {
         self.connection.send(ClientMessage::Chat { text: text.into() });

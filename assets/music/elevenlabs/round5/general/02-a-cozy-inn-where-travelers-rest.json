@@ -1,0 +1,29 @@
+{
+  "leads": [
+    "warm solo violin"
+  ],
+  "support": [
+    "harp",
+    "gentle bells and chimes",
+    "soft reed organ"
+  ],
+  "texture": "warm ambient synth pads",
+  "opener": "Calm, cozy instrumental",
+  "space": "dry, close-miked and intimate, very little reverb",
+  "form": "a simple, memorable melody that returns as a motif",
+  "percussion": null,
+  "hint": null,
+  "vibes": [
+    "dreamy and weightless",
+    "quietly reverent"
+  ],
+  "touch": "quietly reverent",
+  "biome": "general",
+  "scene": "a cozy inn where travelers rest",
+  "bpm": 55,
+  "key": "C major",
+  "length_s": 162,
+  "prompt": "Calm, cozy instrumental for a cozy adventure game scene: a cozy inn where travelers rest. Mood: dreamy and weightless, quietly reverent. Timeless and peaceful: it should fit any place and any time of day, day or night. Lead melody on warm solo violin, accompanied by harp, gentle bells and chimes, soft reed organ, over warm ambient synth pads. Structure: a simple, memorable melody that returns as a motif; a clear, singable melody, and rests and silences are welcome. Sound: dry, close-miked and intimate, very little reverb. Slow, unhurried tempo around 55 BPM in C major, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 82
+}
