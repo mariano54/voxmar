@@ -103,6 +103,10 @@ pub struct WorldMeta {
     pub regrowing: Vec<SavedRegrowing>,
     #[serde(default)]
     pub planter_grown: Vec<[i32; 3]>,
+    /// Fuelled multiblocks and the server tick when their fire goes out. Older worlds
+    /// open cold; completed quests stay completed in the player's own file.
+    #[serde(default)]
+    pub lit: Vec<crate::hearth::Lit>,
     /// The last whole save: files of a later one were cut short and are not used.
     #[serde(default)]
     pub generation: u64,
@@ -143,6 +147,7 @@ impl WorldMeta {
             placed: Vec::new(),
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
+            lit: Vec::new(),
             generation: 0,
             worldgen_content: None,
         }

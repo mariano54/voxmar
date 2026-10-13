@@ -190,9 +190,8 @@
             ],
         ),
         (
-            name: "ranged", title: "Ranged", description: "Slings, bows, crossbows and thrown weapons: hitting flyers and what you cannot reach.",
+            name: "ranged", title: "Ranged", description: "Bows, crossbows and thrown weapons: hitting flyers and what you cannot reach.",
             guide: [
-                (category: "weapons", level: 1, text: "Sling, thrown spears and rocks", how: "Twist twine into a sling; any loose rock is ammunition."),
                 (category: "weapons", level: 5, text: "Shortbow with flint arrows", how: "A bent stick and twine make the bow; knap flint for arrowheads."),
                 (category: "weapons", level: 10, text: "Bolas: tangles a creature for taming", how: "Weights on cords; hit a fleeing animal and it stops for taming."),
                 (category: "ammunition", level: 15, text: "Bronze arrowheads; javelins", how: "Cast bronze heads in the Bronze age; javelins hit hard up close."),

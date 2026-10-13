@@ -23,6 +23,9 @@ pub struct MultiblockDef {
     /// Lit, it becomes the player's home, where they wake after dying.
     #[serde(default)]
     pub home: bool,
+    /// Alternative fuel stacks consumed to light it. Empty means it needs no fuel.
+    #[serde(default)]
+    pub fuels: Vec<(String, u8)>,
     /// Bottom layer first; in each, rows run north to south and characters west to east.
     pub layers: Vec<Vec<String>>,
     pub key: FxHashMap<char, String>,
@@ -52,6 +55,7 @@ pub struct Multiblock {
     pub title: String,
     pub hint: String,
     pub home: bool,
+    pub fuels: Vec<(BlockId, u8)>,
     /// What the core takes.
     pub core: Vec<BlockId>,
     /// Each cell's offset from the core (unturned) and what it takes.
@@ -59,6 +63,18 @@ pub struct Multiblock {
 }
 
 impl Multiblock {
+    /// Could changing this cell break any turn of the structure round this core?
+    pub fn includes(&self, core: IVec3, changed: IVec3) -> bool {
+        let d = changed - core;
+        self.cells.iter().any(|(at, _)| {
+            let mut o = *at;
+            (0..4).any(|_| {
+                let same = o == d;
+                o = IVec3::new(-o.z, o.y, o.x);
+                same
+            })
+        })
+    }
     /// What it is built of: each set of blocks a cell takes, with how many cells take it,
     /// the core's among them.
     pub fn pieces(&self) -> Vec<(&[BlockId], u32)> {
@@ -116,6 +132,11 @@ impl MultiblockRegistry {
                     *name = name.split('|').map(|n| if n.contains(':') { n.to_owned() } else { format!("{namespace}:{n}") }).collect::<Vec<_>>().join("|");
                 }
             }
+            for (name, _) in &mut def.fuels {
+                if !name.contains(':') {
+                    *name = format!("{namespace}:{name}");
+                }
+            }
         }
         Ok(file)
     }
@@ -167,7 +188,17 @@ impl MultiblockRegistry {
                 return Err(bad(format!("its core `{}` is not tagged `multiblock_core`, so it would work without the structure", blocks.def(loose).name)));
             }
             let cells = cells.into_iter().filter(|(_, cell)| *cell != Cell::Any).map(|(at, cell)| (at - core, cell)).collect();
-            multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, core: core_takes, cells });
+            let fuels = def.fuels.iter().map(|(name, count)| {
+                if *count == 0 {
+                    return Err(bad("a fuel stack must hold at least one item".into()));
+                }
+                let item = blocks.id(name).ok_or_else(|| bad(format!("no fuel `{name}`")))?;
+                if *count > crate::inventory::MAX_STACK {
+                    return Err(bad(format!("{count} of `{name}` does not fit in a stack")));
+                }
+                Ok((item, *count))
+            }).collect::<Result<Vec<_>, RegistryError>>()?;
+            multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, fuels, core: core_takes, cells });
         }
         Ok(Self { multiblocks })
     }
@@ -190,6 +221,21 @@ impl MultiblockRegistry {
 mod tests {
     use super::*;
     use crate::block::BlockDef;
+
+    #[test]
+    fn lighting_fuel_names_and_stack_sizes_are_checked_on_load() {
+        let core = BlockDef { name: "t:core".into(), tags: vec!["multiblock_core".into()], ..Default::default() };
+        let fuel = BlockDef { name: "t:fuel".into(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![core, fuel]).unwrap();
+        let load = |name: &str, count: u8| {
+            let source = format!("(multiblocks: [(name: \"kiln\", layers: [[\"C\"]], key: {{'C': \"core\"}}, core: 'C', fuels: [(\"{name}\", {count})])])");
+            MultiblockRegistry::new(vec![MultiblockRegistry::read("t", &source).unwrap()], &blocks)
+        };
+        assert!(load("fuel", 32).is_ok());
+        assert!(load("missing", 32).is_err());
+        assert!(load("fuel", 0).is_err());
+        assert!(load("fuel", crate::inventory::MAX_STACK + 1).is_err());
+    }
 
     #[test]
     fn a_hearth_stands_turned_any_way_and_not_with_a_piece_missing() {
