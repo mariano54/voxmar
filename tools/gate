@@ -105,10 +105,27 @@ SLOW_TESTS=(
 
 # The crates whose tests a changed file can reach: the crate itself and its dependents.
 # Assets reach every crate whose tests read them (engine: crops, movement, recipes, weather;
-# texgen: assets/ui/fonts; worldgen, server and client: everything).
+# texgen: assets/ui/fonts; worldgen, server and client: everything it reads). Music, sounds
+# and shader packs are the client's alone; texture packs and fonts are texgen's and the
+# client's. A content file that nothing in worldgen reads (quests, recipes, skills, combat,
+# lang...) cannot change what its tests generate, so it skips the slow worldgen tests; the
+# engine, server and client load all of it, so a bad reference there still fails. What
+# worldgen reads is every `*.ron` it names in its sources, the blocks, and the creatures
+# its settlements' people are checked against. Anything else reaches all of them.
+world_files=
 crates_for() {
   case $1 in
     Cargo.toml | Cargo.lock | crates/engine/*) echo voxmar_engine voxmar_worldgen voxmar_server voxmar_client ;;
+    assets/music/* | assets/shaderpacks/* | assets/content/*/sounds/*) echo voxmar_client ;;
+    assets/packs/* | assets/ui/*) echo voxmar_texgen voxmar_client ;;
+    assets/content/*)
+      [[ -n $world_files ]] || world_files=$(git grep -hoE '"[a-z_]+\.ron"' -- crates/worldgen | tr -d '"' | sort -u)
+      local name=${1##*/}
+      if [[ $name == blocks*.ron || $name == creatures*.ron ]] || grep -qxF "$name" <<<"$world_files"; then
+        echo voxmar_engine voxmar_worldgen voxmar_server voxmar_client
+      else
+        echo voxmar_engine voxmar_server voxmar_client
+      fi ;;
     assets/*) echo voxmar_engine voxmar_worldgen voxmar_server voxmar_client voxmar_texgen ;;
     crates/worldgen/*) echo voxmar_worldgen voxmar_server voxmar_client ;;
     crates/protocol/*) echo voxmar_server voxmar_client ;;
@@ -126,6 +143,11 @@ reach_self_check() {
   done <<'EOF_REACH'
 assets/content/base/crops.ron|voxmar_engine
 assets/content/core/movement.ron|voxmar_engine
+assets/content/base/creatures_villagers.ron|voxmar_worldgen
+assets/content/base/settlements.ron|voxmar_worldgen
+assets/content/base/quests.ron|voxmar_server
+assets/content/base/lang/ja.ron|voxmar_client
+assets/music/dawn_meadow.mp3|voxmar_client
 assets/content/base/blocks.ron|voxmar_worldgen
 assets/content/base/blocks.ron|voxmar_server
 assets/content/base/blocks.ron|voxmar_client
@@ -139,6 +161,10 @@ crates/protocol/src/lib.rs|voxmar_client
 Cargo.lock|voxmar_engine
 EOF_REACH
   [[ -z $(crates_for docs/quality.md) ]] || { echo "gate: docs reach a crate"; return 1; }
+  # The slow worldgen tests are skipped by what worldgen cannot read, and by nothing else.
+  for path in assets/content/base/quests.ron assets/content/base/recipes.ron assets/content/core/skills.ron assets/content/base/lang/en.ron assets/music/dawn_meadow.mp3 assets/packs/default/variants.ron; do
+    [[ " $(crates_for "$path") " != *" voxmar_worldgen "* ]] || { echo "gate: $path reaches worldgen's tests"; return 1; }
+  done
 }
 
 started=$(date +%s)
@@ -153,7 +179,9 @@ fail() {
 step() { echo "gate: $* ($(($(date +%s) - started))s)"; }
 
 step "hygiene"
-git diff main --check >"$out/hygiene.txt" || { cat "$out/hygiene.txt"; fail "whitespace errors against main"; }
+hygiene_base=main
+git rev-parse --verify -q main >/dev/null || hygiene_base=origin/main
+git diff "$hygiene_base" --check >"$out/hygiene.txt" || { cat "$out/hygiene.txt"; fail "whitespace errors against main"; }
 if git grep -nE '^(<<<<<<<|>>>>>>>)( |$)' -- '*.rs' '*.ron' '*.md' '*.wgsl' '*.toml' >"$out/hygiene.txt"; then
   cat "$out/hygiene.txt"
   fail "conflict markers"
@@ -161,8 +189,7 @@ fi
 tools/bench --self-check || fail "tools/bench's self-check"
 reach_self_check || fail "the map from files to the crates they reach"
 tools/test-waits --self-check || fail "tools/test-waits' self-check"
-hygiene_base=main
-[[ $(git rev-parse HEAD) == $(git rev-parse main) ]] && hygiene_base=origin/main
+[[ $(git rev-parse HEAD) == $(git rev-parse "$hygiene_base") ]] && hygiene_base=origin/main
 tools/test-waits "$(git merge-base HEAD "$hygiene_base")" || fail "a test waits on the wall clock"
 [[ -z $(git status --porcelain --untracked-files=no) ]] && clean=1 || clean=0
 tree=$(git rev-parse HEAD^{tree})
@@ -176,14 +203,28 @@ fi
 packages=()
 session=1
 if ((!full)); then
+  # A fresh clone (a cloud session) has no local main: origin/main is the base then.
   base=main
-  [[ $(git rev-parse HEAD) == $(git rev-parse main) ]] && base=origin/main
+  git rev-parse --verify -q main >/dev/null || base=origin/main
+  [[ $(git rev-parse HEAD) == $(git rev-parse "$base") ]] && base=origin/main
   changed=$( (git diff --name-only "$(git merge-base HEAD "$base")" HEAD; git diff --name-only HEAD) | sort -u)
   reach() { for p in "$@"; do [[ " ${packages[*]+"${packages[*]}"} " == *" $p "* ]] || packages+=("$p"); done; }
   while read -r path; do
     [[ -n $path ]] && reach $(crates_for "$path")
   done <<<"$changed"
   ((${#packages[@]})) || session=0
+fi
+
+# A machine with no display and no GPU (a cloud container) builds and tests but does not play
+# the session, and records no pass (the Mac's gate is the landing bar): the session needs a
+# GPU. `VOXMAR_GATE_SOFTWARE=1` plays it on a virtual display with Mesa's software Vulkan
+# (`apt install xvfb mesa-vulkan-drivers`) instead, as a look rather than a bar: frames take
+# half a second there, so steps that time the game (perfect block, dodge, natural births)
+# fail on the speed alone, and the run stops at the first one.
+norecord=0
+if [[ $(uname -s) == Linux && -z ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] && ((session)) && [[ -z ${VOXMAR_GATE_SOFTWARE:-} ]]; then
+  session=0 norecord=1
+  echo "gate: no display here, so the build and tests run but the session is not played, and no pass is recorded"
 fi
 
 # A change that reaches no crate (docs, tools) has nothing to build, test or play: main
@@ -218,11 +259,11 @@ fi
 run='
   out=$1 session=$2; shift 2
   if [[ $session == 1 ]]; then
-    (VOXMAR_MUTE=1 target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
+    (VOXMAR_MUTE=1 $GATE_PREFIX target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
   fi
   lower=(nice -n 10)
   while IFS=$(printf "\t") read -r dir exe; do
-    (cd "$dir" && "${lower[@]}" "$exe" "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
+    (cd "$dir" && RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" -Z unstable-options --report-time "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
   done <"$out/tests.list"
   wait'
 : >"$out/tests.list"
@@ -236,14 +277,27 @@ for line in sys.stdin:
         print(os.path.dirname(m["manifest_path"]) + "\t" + m["executable"])' >"$out/tests.list" ||
     fail "building the tests ($out/tests-build.txt)"
 fi
+# The software session (see `VOXMAR_GATE_SOFTWARE` above): a virtual display and Mesa's lavapipe.
+GATE_PREFIX=
+if [[ $(uname -s) == Linux && -z ${DISPLAY:-}${WAYLAND_DISPLAY:-} && -n ${VOXMAR_GATE_SOFTWARE:-} ]] && command -v xvfb-run >/dev/null; then
+  lvp=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)
+  [[ -n $lvp ]] && export VK_ICD_FILENAMES=$lvp GATE_PREFIX='xvfb-run -a'
+fi
+export GATE_PREFIX
 # The session keeps its settings in a directory of its own, and Mariano's own must not
 # change while it runs: a gate run once saved its settings over his.
 his_settings=$(if [[ $(uname -s) == Darwin ]]; then echo ~/Library/Application\ Support/voxmar/settings.ron; else echo "${XDG_CONFIG_HOME:-$HOME/.config}/voxmar/settings.ron"; fi)
 fingerprint() { [[ -e $his_settings ]] && shasum "$his_settings" | cut -d' ' -f1 || echo none; }
 his_before=$(fingerprint)
 mkdir -p "$out/config"
+# The load average is sampled while the tests run (a measure taken afterwards would only see
+# the quiet at the end, where the slowest binary runs alone), for the time budgets below.
+: >"$out/load.txt"
+( while :; do cut -d' ' -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg | awk '{ print $2 }'; sleep 10; done >>"$out/load.txt" ) &
+sampler=$!
 VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
   $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
+kill "$sampler" 2>/dev/null
 
 # A check the session skipped (a hitch, on a machine too loaded for a long frame to say
 # anything about the game) is not a pass, or a landing could go in untested: once the
@@ -286,6 +340,21 @@ if ((tests_failed)); then
   grep -E '^test .* FAILED|^failures:|panicked|^error' "$out/tests.txt" | head -40
   fail "tests (all output in $out/tests.txt)"
 fi
+# How long the tests took, against tools/test-budget.toml (docs/quality.md, "Fast tests"): the
+# slowest are listed every run, a test over its budget fails the gate. The budgets are for a
+# machine as busy as the gate usually finds it; a busier one scales them by the load it
+# averaged while the tests ran.
+if compgen -G "$out/test-*.txt" >/dev/null; then
+  scale=$(awk -v c="$(getconf _NPROCESSORS_ONLN)" '{ s += $1; n++ } END { s = n ? s / n / c : 1; print (s < 1 ? 1 : s) }' "$out/load.txt")
+  # What else the machine runs (an emulator, browsers) must never block a landing: with the
+  # load averaged during the tests over the cores, the times are listed, not judged. Judged on
+  # a calm machine, where a test's time is its own.
+  if awk -v s="$scale" 'BEGIN { exit !(s > 1) }'; then
+    tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || echo "gate: test times not judged: the load during the tests was x$scale over the cores; run tools/gate on a calmer machine to hold them to tools/test-budget.toml"
+  else
+    tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || fail "test times (tools/test-budget.toml)"
+  fi
+fi
 status=$(cat "$out/game.status" 2>/dev/null || echo 0)
 ((session)) && [[ ! -e $out/game.status ]] && fail "the session never ran ($out/run.txt)"
 if ((session)); then
@@ -308,7 +377,9 @@ checks=$(grep -c 'gate: ok' <<<"$log")
 ((session == 0 || checks > 0)) || fail "the game recorded no gate checks ($out/game.txt)"
 ran=$(grep -h '^test result' "$out/tests.txt" 2>/dev/null | awk '{ p += $4 } END { print p + 0 }')
 summary="$level passed $(date -u +%FT%TZ) in $(($(date +%s) - started))s: $checks game checks, $ran tests"
-if ((clean)); then
+if ((norecord)); then
+  echo "gate: $summary (the session was not played, so nothing was recorded)"
+elif ((clean)); then
   mkdir -p "$passed_dir" && echo "$summary" >>"$passed_dir/$tree"
   echo "gate: $(git rev-parse --short HEAD) $summary"
 else
