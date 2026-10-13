@@ -6349,16 +6349,17 @@ impl Fresh {
     }
 
     /// Teleports to the nearest spot round `goal`, a little inside where a walk to it stops,
-    /// with room for the body and a step every way; whether there was one.
+    /// with room for the body and a step every way; whether there was one. Where the goal is
+    /// in a nook (a corner of a dug pit) with no such spot, any spot inside the stop with room
+    /// for the body does.
     fn hop_near(&mut self, goal: Vec3, stop: f32) -> bool {
         let r = (stop - 0.3).max(0.0) + 0.25;
         let room = |me: &Self, p: Vec3| (-2..=2).all(|i| (-2..=2).all(|k| me.has_room(p + Vec3::new(i as f32 * 0.2, 0.0, k as f32 * 0.2))));
-        let near = (0..24)
-            .map(|i| (i as f32 * 15.0).to_radians())
-            .map(|a| Vec3::new(goal.x + r * a.cos(), self.at.y, goal.z + r * a.sin()))
-            .filter(|&p| room(self, p))
-            .min_by(|a, b| across(*a, self.at).total_cmp(&across(*b, self.at)));
-        let Some(to) = near else { return false };
+        let ring = |r: f32, at: Vec3| (0..24).map(|i| (i as f32 * 15.0).to_radians()).map(move |a| Vec3::new(goal.x + r * a.cos(), at.y, goal.z + r * a.sin()));
+        let nearest = |spots: Vec<Vec3>, at: Vec3| spots.into_iter().min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
+        let roomy = nearest(ring(r, self.at).filter(|&p| room(self, p)).collect(), self.at);
+        let tight = || nearest([0.05, 0.15, 0.25, 0.35, 0.45].into_iter().filter(|&r| r < stop).flat_map(|r| ring(r, self.at)).filter(|&p| self.has_room(p)).collect(), self.at);
+        let Some(to) = roomy.or_else(tight) else { return false };
         self.c.tp(to);
         self.at = to;
         true
@@ -6487,11 +6488,17 @@ impl Fresh {
         let until = self.c.ticks() + 30 * TICKS_PER_SECOND as u64;
         self.spend(Act::Mine, |me| {
             while me.have(item) < need {
-                assert!(me.c.ticks() < until, "{item}: only {} of {need} came in, {} loose", me.have(item), loose(&me.c, item));
+                assert!(me.c.ticks() < until, "{item}: only {} of {need} came in, {} loose, nearest {:?} from {:?}; carrying {:?}", me.have(item), loose(&me.c, item), me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, me.at).total_cmp(&across(*b, me.at))), me.at, (0..voxmar_engine::inventory::SLOTS).filter_map(|s| me.c.inventory.get(s).map(|x| (me.c.content.blocks.def(x.item).name.clone(), x.count))).collect::<Vec<_>>());
                 let at = me.at;
                 let far = me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
                 match far {
-                    Some(p) if across(p, me.at) > 2.0 => me.go_near(p),
+                    // Walked up to rather than left to the pull, which stops at blocks: a drop
+                    // with a trunk or a pit's side between would lie there, in the pull's range
+                    // and out of it at once. Within 0.8 the body's reach takes it, walls or not.
+                    Some(p) if across(p, me.at) > 0.8 => {
+                        me.go_near(p);
+                        me.tick();
+                    }
                     _ => me.tick(),
                 }
             }
@@ -6865,6 +6872,33 @@ impl Fresh {
         }
     }
 
+    /// Throws away what the rest of the way has no use for, until `free` slots are empty: at
+    /// the far corner of the farm plot, out of the way of every site, then back. A full pack
+    /// takes nothing more in (a quest's reward, a craft, dug clay), and cooked food takes a
+    /// slot each, so by the Farm age a player clears theirs out as this does.
+    fn make_room(&mut self, free: usize) {
+        const SPARE: [&str; 9] = ["base:burnt_food", "base:feather", "base:wooden_pickaxe", "base:raw_rabbit", "base:raw_chicken", "base:cooked_rabbit", "base:cooked_chicken", "base:oak_planks", "base:bread"];
+        let slots = voxmar_engine::inventory::SLOTS;
+        let empty = |c: &Client| (0..slots).filter(|&s| c.inventory.get(s).is_none()).count();
+        if empty(&self.c) >= free {
+            return;
+        }
+        let back = self.at;
+        assert!(self.hop_near(Self::middle(self.rel(29, 0, -10)), 0.5), "no room at the plot's far corner");
+        for item in SPARE {
+            let id = self.c.content.blocks.expect(item);
+            while empty(&self.c) < free {
+                let Some(slot) = (0..slots).find(|&s| self.c.inventory.get(s).is_some_and(|x| x.item == id)) else { break };
+                let count = self.c.inventory.get(slot).map_or(0, |x| x.count);
+                self.propose("core:drop", ActionTarget::Stack { slot: slot as u8, count });
+                self.wait(5.0, &format!("throwing away {item}"), |c| c.inventory.get(slot).is_none_or(|x| x.item != id));
+            }
+        }
+        assert!(empty(&self.c) >= free, "only {} slots empty after throwing away the spare", empty(&self.c));
+        self.c.tp(back);
+        self.at = back;
+    }
+
     /// Burns logs down at the campfire until `need` charcoal are in hand.
     fn burn_charcoal(&mut self, site: &Site, need: u32) {
         if self.have("base:charcoal") >= need {
@@ -6927,6 +6961,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.gather("base:stone_axe", trunks, log, 52);
     f.burn_charcoal(&site, 16);
     f.mark("charcoal");
+    f.make_room(8);
 
     // Red Metal: nine copper ores (Mining 5) with the stone pickaxe; a copper ore over a
     // charcoal in the grid makes an ingot (Engineering 5); three ingots over two sticks at
