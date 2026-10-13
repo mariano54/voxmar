@@ -414,6 +414,15 @@ impl Creatures {
         Some((shown.position + Vec3::Y * height * 0.5, shown.dying.is_some()))
     }
 
+    /// The creature nearest along the look ray within `within` blocks of the eye, and how far.
+    pub fn looked_at(&self, launch: &Launch, eye: Vec3, look: Vec3, within: f32) -> Option<(u32, f32)> {
+        self.shown
+            .keys()
+            .filter_map(|&id| Some((id, ray_box(eye, look, &self.aabb(launch, id)?)?)))
+            .filter(|&(_, distance)| distance <= within)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
     fn aabb(&self, launch: &Launch, id: u32) -> Option<Aabb> {
         let shown = self.shown.get(&id).filter(|s| s.dying.is_none())?;
         let size = launch.content.creatures.get(shown.view.species).def.body.size;
@@ -1028,7 +1037,7 @@ pub fn aim(
 }
 
 /// Where a ray from `origin` along unit `direction` first enters `aabb`, if it does.
-fn ray_box(origin: Vec3, direction: Vec3, aabb: &Aabb) -> Option<f32> {
+pub(crate) fn ray_box(origin: Vec3, direction: Vec3, aabb: &Aabb) -> Option<f32> {
     let inverse = direction.recip();
     let t1 = (aabb.min - origin) * inverse;
     let t2 = (aabb.max - origin) * inverse;
