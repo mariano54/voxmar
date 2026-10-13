@@ -37,23 +37,39 @@ fn generated_water_does_not_move() {
     let mut kinds = std::collections::HashSet::new();
     let first = [(3, true, None), (11, true, None), (2, true, None), (5, true, None), (7, true, Some(IVec2::new(1500, 5200))), (0x5eed, false, Some(IVec2::ZERO))];
     let more = [13, 17, 19, 23, 29, 31].map(|seed| (seed, true, None));
-    for (i, (seed, near_spawn, also)) in first.into_iter().chain(more).enumerate() {
-        if i >= first.len() && pinned > 500 && curtain > 20 {
-            break;
-        }
+    // Around the places of one seed, each on its own core: the kinds of water found and
+    // the counts of each place.
+    let seed_areas = |(seed, near_spawn, also): (u64, bool, Option<IVec2>)| {
         let generator = Overworld::with_content(seed, registry.clone(), &world_content);
         let mut places: Vec<IVec2> = also.into_iter().collect();
+        let mut found = Vec::new();
         if near_spawn {
             let spawn = generator.spawn_point();
             let sights = generator.water_sights(IVec2::new(spawn.x, spawn.z), 600);
-            kinds.extend(sights.iter().map(|&(kind, _)| kind));
+            found.extend(sights.iter().map(|&(kind, _)| kind));
             places.extend(sights.into_iter().map(|(_, at)| IVec2::new(at.x, at.z)));
         }
-        // Each place on its own core.
         let counts: Vec<(usize, usize, usize)> = places.par_iter().map(|&place| check_area(&registry, &generator, seed, place)).collect();
+        (found, counts)
+    };
+    // The first seeds side by side, the rest one at a time and only while needed, all
+    // counted in seed order.
+    let mut count = |(found, counts): (Vec<WaterSight>, Vec<(usize, usize, usize)>)| {
+        kinds.extend(found);
         for (fluids, falls, rivers) in counts {
             (fluid_cells, curtain, pinned) = (fluid_cells + fluids, curtain + falls, pinned + rivers);
         }
+        pinned > 500 && curtain > 20
+    };
+    let mut enough = false;
+    for areas in first.into_par_iter().map(seed_areas).collect::<Vec<_>>() {
+        enough = count(areas);
+    }
+    for seed in more {
+        if enough {
+            break;
+        }
+        enough = count(seed_areas(seed));
     }
     println!("{fluid_cells} fluid cells: {pinned} of rivers with a current, {curtain} pouring down falls; found {kinds:?}");
     for kind in [WaterSight::Waterfall, WaterSight::HighlandLake, WaterSight::Confluence, WaterSight::RiverMouth] {
