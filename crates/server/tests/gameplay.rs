@@ -5827,7 +5827,11 @@ impl Fresh {
     }
 }
 
+/// Takes 3 to 4 minutes (it plays real server time), too slow for every run: use
+/// `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
+/// after changing early-age content, quests or recipes, and read the milestone block.
 #[test]
+#[ignore = "plays 3 to 4 minutes of real server time; run it after changing early-age content"]
 fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     let c = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
     let mut f = Fresh::lay_out(c);

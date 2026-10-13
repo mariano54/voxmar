@@ -89,6 +89,10 @@ stalled.
 
 ## Measured pacing
 
+Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
+(about three minutes of real server time, so it is ignored in ordinary runs); run it after
+changing early-age quests, recipes or cooking.
+
 `a_fresh_survival_player_reaches_each_nomad_milestone` (crates/server/tests/gameplay.rs) plays
 the start of a fresh survival game headless, with only actions a player can propose: mine at
 real tool speed, collect drops, craft, place, cook (2 s each), light, strike animals. Nothing
