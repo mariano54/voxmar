@@ -520,10 +520,18 @@ Breaking a block (`client/src/breaking.rs`) uses it as Minecraft does:
 
 Particles are lit with a sky light estimated once per burst from the columns around the
 block, by the engine's rule (straight down from the sky, less through water and leaves,
-stopped by solid blocks, then one level less per block sideways, up to three), and the
-block's own glow as block light, since the client keeps no light field outside the
-mesher. A cave lit by torches therefore
-gets dark pieces; a light field kept from meshing would fix it.
+stopped by solid blocks, then one level less per block sideways, up to three), and a block
+light from the torches and glowing blocks within seven blocks (`breaking::light_at`, the
+dropped items' `block_light`), or the block's own glow if that is more, since the client
+keeps no light field outside the mesher. Pieces breaking from a block in a cave by a torch
+are lit by the torch, in a dark cave they are dark, at night the moon's. (They once took
+only the block's own glow, so a torch-lit cave gave dark pieces.)
+
+The cracks are lit by the face under them. Multiplying keeps the block's light on their
+dark lines, and their light edges (a texel over mid grey) are light a crack catches, so
+they show as much as that face is lit: the same sky and block light as the pieces, through
+`SceneLight`, faded by the pack's `crack_light` (default luminance 0.02 to 0.25). In a dark
+cave the crack only darkens; by a torch or in the sun it glints.
 
 The particle setting (All, Fewer, Off) and the shader pack's `particles` scale how many
 are spawned, and the pack's `cracks` how strongly cracks show (0 hides them).
@@ -832,6 +840,18 @@ the terrain shader draws it over the side by its alpha, tinted with the biome co
 top has; before, the side showed the pack's fixed green fringe whatever the biome. The
 layer table holds each layer's overlay and its tint; break particles, inventory icons and
 the distant terrain's colours take the overlay too.
+
+**Mist belongs to the open air** (render/exposure.rs). Ground fog, the weather's fog and the
+puffs of mist (`precipitation.rs`) show only where the camera sees the sky: dug down, in a
+cave or in a room there is none, though the camera is still under the fog's top. Sky light
+cannot tell, since a shaft dug straight down keeps full sky light the whole way, so the
+camera looks for the sky as an eye does: 32 rays over the upper hemisphere, evenly by solid
+angle, and the share that go 32 blocks without meeting a block that hides the sky (leaves
+do not, so a forest is open). Every 0.1 s, eased over about half a second. Open land sees
+1, a cliff beside it about half, a one-block hole a third, a shaft three deep next to
+nothing. The pack's `mist_sky` (default 0.12 to 0.4) says between which shares the mist
+fades from none to all (`ShaderPack::mist_share`), and scales `Atmosphere`'s ground fog and
+weather fog (`View::mist_share`) and the puffs. The haze of clear air stays.
 
 **The air** (atmosphere.wgsl, render/atmosphere.rs): clear-air haze densest at sea level
 and thinning with height, ground fog (valley fog, dawn mist, sea fog) densest below the
