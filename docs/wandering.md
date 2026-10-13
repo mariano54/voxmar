@@ -33,11 +33,12 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
 - **Scripts.** The script decides where the leader goes; every other member gets a formation
   slot from its role. The server hands each member an `Errand`, the same handoff villagers
   use, so the creature brain still decides how to walk it (and still fights or looks around
-  when its modules say so). A party's errand is `steady`: the brain's own `Flee` waits while
-  it holds one, so a member runs only when its script says (a chase, a scatter, a lure
-  hurrying on), and a wild stag or a hurt traveller does not bolt from the player the script
-  is meant to meet. Freeing, scattering and release clear the errand, and the brain is
-  itself again.
+  when its modules say so). Until a player turns the party, its errand is `steady`: the
+  brain's own `Flee` waits while it holds one, so a member runs only when its script says
+  (a chase, a lure hurrying on), and a wild stag or a hurt traveller does not bolt from the
+  player the script is meant to meet. Once a player turns it (a scatter, a sprung ambush)
+  the errand is no longer steady and each member's fear may run it; a freed or released
+  member has no errand at all, and its brain is wholly its own.
   - `March(pass, length, pace)`: a line that passes the player at `pass` blocks and walks on.
   - `Patrol(radius, stops, pause, laps)`: a ring of stops, each paused at, then marches off.
   - `Camp(near, stay, mill, away)`: settles near the player, mills about (rests at night),
