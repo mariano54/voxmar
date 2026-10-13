@@ -6505,7 +6505,13 @@ impl Fresh {
                 let at = me.at;
                 let far = me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
                 match far {
-                    Some(p) if across(p, me.at) > 2.0 => me.go_near(p),
+                    // Walked up to rather than left to the pull, which stops at blocks: a drop
+                    // with a trunk or a pit's side between would lie there, in the pull's range
+                    // and out of it at once. Within 0.8 the body's reach takes it, walls or not.
+                    Some(p) if across(p, me.at) > 0.8 => {
+                        me.go_near(p);
+                        me.tick();
+                    }
                     _ => me.tick(),
                 }
             }
