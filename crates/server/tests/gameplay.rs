@@ -4130,11 +4130,19 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     let x = at.x + 4.0;
     client.ok(&format!("/fill {} {} {} {} {} {} stone", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
     client.wait_server(1);
-    let (blows, left) = (client.blows, carried_of(&client, stone));
-    client.propose("core:attack", ActionTarget::Creature(id));
-    client.pump_until(|c| c.blows == blows + 1);
-    assert_eq!(client.damage.last(), Some(&0), "a shot through a wall hit");
-    client.pump_until(|c| carried_of(c, stone) == left - 1);
+    // Two shots, the second on the sling's beat (0.53 s): both are at the air, so off the
+    // beat, and earn no pip.
+    let (blows, left, pips) = (client.blows, carried_of(&client, stone), client.pips.last().copied().unwrap_or(0));
+    let start = Instant::now();
+    for k in 0..2u32 {
+        client.propose_at("core:attack", ActionTarget::Creature(id), start + Duration::from_secs_f32(0.53 * k as f32 - if k == 0 { 0.0 } else { 0.06 }));
+        client.pump_until(|c| c.blows == blows + k + 1);
+        assert_eq!(client.damage.last(), Some(&0), "a shot through a wall hit");
+    }
+    let kinds = &client.kinds[client.kinds.len() - 2..];
+    assert_eq!(kinds, [voxmar_engine::combat::Blow::Plain; 2], "shots into a wall counted as {kinds:?}");
+    assert!(client.pips.last().copied().unwrap_or(0) <= pips, "shots into a wall earned a pip: {:?}", client.pips);
+    client.pump_until(|c| carried_of(c, stone) == left - 2);
 }
 
 /// Whether a dodge proposed now is taken: a second one at once must then be refused by its

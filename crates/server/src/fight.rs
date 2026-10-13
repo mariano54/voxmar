@@ -254,15 +254,6 @@ impl Server {
         p.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text: words });
     }
 
-    /// Whether nothing solid stands between a player's eye and the middle of `aabb`: a shot
-    /// needs a clear line where a blow needs only reach.
-    fn clear_shot(&self, eye: Vec3, aabb: &Aabb) -> bool {
-        let centre = (aabb.min + aabb.max) * 0.5;
-        let distance = eye.distance(centre);
-        let blocks = &self.content.blocks;
-        let solid = |cell: voxmar_engine::glam::IVec3| self.block(cell).is_some_and(|b| blocks.info(b).solid);
-        voxmar_engine::physics::raycast(eye, centre - eye, distance, solid).is_none_or(|hit| hit.distance >= distance)
-    }
 
     /// A player starts a bite of food (`core:eat`): a swing under way is dropped, and the
     /// meter starts again from empty, so a bite costs a beat (`Rhythm::restart`).
@@ -403,25 +394,24 @@ impl Server {
             }
         }
         // Players' swings. One at the air counts as off the beat: it earns no pip and spends
-        // no flourish.
+        // no flourish. A shot needs a clear line as well as reach: one into a wall is at the air.
         let mut landing = Vec::new();
+        let (world, blocks, combat) = (&self.world, &self.content.blocks, &self.content.combat);
+        let solid = |cell: voxmar_engine::glam::IVec3| world.block(cell).is_some_and(|b| blocks.info(b).solid);
         for (&player, fighter) in &mut self.fights.fighters {
             if let Some(swing) = fighter.rhythm.landed(now) {
                 let Some(aim) = fighter.aim.take() else { continue };
                 let eye = self.players.get(&player).map(|p| p.eye());
-                let in_reach = eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| eye.distance(eye.clamp(aabb.min, aabb.max)) <= aim.weapon.reach + feel.reach_slack);
+                let shoots = !combat.ammo(&aim.weapon).is_empty();
+                let in_reach = eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| {
+                    eye.distance(eye.clamp(aabb.min, aabb.max)) <= aim.weapon.reach + feel.reach_slack && (!shoots || clear_shot(eye, &aabb, solid))
+                });
                 let on_beat = in_reach && (swing.on_beat || aim.riposte || aim.counter);
                 let kind = fighter.rhythm.blow(&Swing { on_beat, ..swing }, now, &feel);
                 landing.push((player, aim, swing.strength, on_beat, kind, in_reach));
             }
         }
-        for (player, aim, strength, mut on_beat, kind, mut in_reach) in landing {
-            // A shot needs a clear line too: one into a wall is a miss.
-            if in_reach && !self.content.combat.ammo(&aim.weapon).is_empty() {
-                let eye = self.players.get(&player).map(|p| p.eye());
-                in_reach = eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| self.clear_shot(eye, &aabb));
-                on_beat &= in_reach;
-            }
+        for (player, aim, strength, on_beat, kind, in_reach) in landing {
             self.land_swing(player, aim, strength, on_beat, kind, in_reach);
         }
         // Creatures' blows, each judged at the moment it lands, once every guard and dodge
@@ -861,4 +851,12 @@ mod tests {
             assert!((server.lag_allowance(player) - allowance).abs() < 1e-6, "{round_trip}: {}", server.lag_allowance(player));
         }
     }
+}
+
+/// Whether nothing `solid` stands between an eye and the middle of `aabb`: a shot needs a
+/// clear line where a blow needs only reach.
+fn clear_shot(eye: Vec3, aabb: &Aabb, solid: impl Fn(voxmar_engine::glam::IVec3) -> bool) -> bool {
+    let centre = (aabb.min + aabb.max) * 0.5;
+    let distance = eye.distance(centre);
+    voxmar_engine::physics::raycast(eye, centre - eye, distance, solid).is_none_or(|hit| hit.distance >= distance)
 }
