@@ -7,7 +7,8 @@
 // Goals: Craft(item, n), Cook(item, n), Catch(fish, n) (Catch("Kinds", n) for kinds),
 // Kill(creature, n), Tame(creature, n), Pick(plant, n), Mine(ore, n), Visit(biomes),
 // Discover(page, n), Level(skill, n), Have(item, n), Home, Built(multiblock, n),
-// LookUp(item) (opened it in the recipe viewer), CookAt(item, station_tag, n),
+// LookUp(item) (opened it in the recipe viewer), Thriving(n, percent) (keeps n animals at
+// that condition or better right now), CookAt(item, station_tag, n),
 // Lit(multiblock, n) (standing and successfully fuelled). Cook
 // counts what any station turns out: fired pots and smelted ingots too. Items and creatures may be
 // `any` or `tag:TAG`. Rewards: Xp(skill, xp), Item(item, count).
@@ -561,5 +562,15 @@
             after: ["a_table_for_two"],
             rewards: [Xp("crafting", 60.0)],
         ),
+        (
+            name: "food_enough", age: "farm", branch: "farming", title: "Food Enough",
+            why: "Food that lasts is a farm that works. Show any one: harvest twelve wheat and six carrots or rye, keep four animals well fed and housed (condition at least 75), or land forty fish. Ten loaves of bread are your reward.",
+            tasks: [[Pick("wheat_crop", 12), Pick("carrot_crop", 6)], [Pick("wheat_crop", 12), Pick("rye_crop", 6)], [Thriving(4, 75)], [Catch("any", 40)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("farming", 530.0), Item("bread", 10)],
+        ),
     ],
+    // A new player's book opens with these pinned (a book with nothing done or pinned), so
+    // the first thing on screen is what to do.
+    tracker: (start_pins: ["look_it_up", "first_night"]),
 )

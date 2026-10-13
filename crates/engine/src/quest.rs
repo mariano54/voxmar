@@ -51,6 +51,10 @@ pub enum Goal {
     Lit(String, u32),
     /// Looked an item up in the recipe viewer (the item may be `any` or `tag:TAG`).
     LookUp(String),
+    /// Keeps this many animals at once whose condition is at least this percent (a newly
+    /// tamed one starts at 60; only food, water, room and shelter raise it). What they
+    /// keep now, not a count of what was done.
+    Thriving(u32, u8),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -97,11 +101,14 @@ pub struct QuestFile {
 }
 
 /// What a package changes of how pinned quests are followed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrackerPatch {
     #[serde(default)]
     pub pins: Option<usize>,
+    /// Quests pinned for a player whose book is new (nothing done, nothing pinned).
+    #[serde(default)]
+    pub start_pins: Option<Vec<String>>,
     #[serde(default)]
     pub done_stays: Option<f32>,
     #[serde(default)]
@@ -130,6 +137,7 @@ impl Default for Tracker {
 pub struct QuestRegistry {
     quests: Vec<QuestDef>,
     tracker: Tracker,
+    start_pins: Vec<String>,
 }
 
 /// What a player has done, as quests read it.
@@ -146,6 +154,8 @@ pub struct Progress<'a> {
     /// What breaking a block (by name) gives, if anything: a Mine goal counts every block
     /// that drops its ore (deepslate copper and copper samples for copper).
     pub drops: &'a dyn Fn(&str) -> Option<String>,
+    /// How many animals they keep with a condition of at least this percent.
+    pub thriving: &'a dyn Fn(u8) -> u32,
     pub home: bool,
 }
 
@@ -181,6 +191,7 @@ impl Progress<'_> {
             Goal::Built(structure, n) => (tally("built", structure), *n),
             Goal::Lit(structure, n) => (tally("lit", structure), *n),
             Goal::LookUp(item) => (tally("lookedup", item).min(1), 1),
+            Goal::Thriving(n, percent) => ((self.thriving)(*percent), *n),
         }
     }
 
@@ -210,6 +221,9 @@ impl QuestRegistry {
                 *name = format!("{namespace}:{name}");
             }
         };
+        for name in file.tracker.iter_mut().filter_map(|t| t.start_pins.as_mut()).flatten() {
+            qualify(name);
+        }
         for quest in &mut file.quests {
             qualify(&mut quest.name);
             for after in &mut quest.after {
@@ -222,7 +236,11 @@ impl QuestRegistry {
     pub fn new(files: Vec<QuestFile>) -> Result<Self, RegistryError> {
         // Packages in order, each changing what it gives.
         let mut tracker = Tracker::default();
-        for patch in files.iter().filter_map(|f| f.tracker) {
+        let mut start_pins = Vec::new();
+        for patch in files.iter().filter_map(|f| f.tracker.as_ref()) {
+            if let Some(names) = &patch.start_pins {
+                start_pins = names.clone();
+            }
             tracker.pins = patch.pins.unwrap_or(tracker.pins);
             tracker.done_stays = patch.done_stays.unwrap_or(tracker.done_stays);
             tracker.backing_alpha = patch.backing_alpha.unwrap_or(tracker.backing_alpha);
@@ -241,7 +259,18 @@ impl QuestRegistry {
                 }
             }
         }
-        Ok(Self { quests, tracker })
+        if start_pins.len() > tracker.pins {
+            return Err(RegistryError(format!("quests.ron: {} start pins, but the tracker follows {}", start_pins.len(), tracker.pins)));
+        }
+        if let Some(name) = start_pins.iter().find(|name| !quests.iter().any(|q| &q.name == *name)) {
+            return Err(RegistryError(format!("quests.ron: the start pin `{name}` is not a quest")));
+        }
+        Ok(Self { quests, tracker, start_pins })
+    }
+
+    /// The quests a new player's book starts with pinned.
+    pub fn start_pins(&self) -> &[String] {
+        &self.start_pins
     }
 
     /// How the interface follows pinned quests.
@@ -311,11 +340,36 @@ mod tests {
         let carried = |_: &str| 0;
         let has_tag = |name: &str, tag: &str| name == "base:cooked_rabbit" && tag == "edible";
         let drops = |_: &str| None;
-        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: false };
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &|_| 0, home: false };
         assert_eq!(progress.goal(&Goal::CookAt("tag:edible".into(), "campfire".into(), 1)), (0, 1));
         assert_eq!(progress.goal(&Goal::CookAt("tag:edible".into(), "oven".into(), 2)), (2, 2));
         assert_eq!(progress.goal(&Goal::Lit("crucible_kiln".into(), 1)), (0, 1));
         assert_eq!(progress.goal(&Goal::Built("crucible_kiln".into(), 1)), (1, 1));
+    }
+
+    #[test]
+    fn thriving_counts_the_animals_kept_now_at_that_condition() {
+        let (journal, tallies) = (Journal::default(), FxHashMap::default());
+        let level = |_: &str| 1;
+        let carried = |_: &str| 0;
+        let has_tag = |_: &str, _: &str| false;
+        let drops = |_: &str| None;
+        // Three animals at 60, 80 and 90 percent.
+        let thriving = |percent: u8| [60u8, 80, 90].iter().filter(|&&c| c >= percent).count() as u32;
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &thriving, home: false };
+        assert_eq!(progress.goal(&Goal::Thriving(4, 75)), (2, 4));
+        assert_eq!(progress.goal(&Goal::Thriving(2, 75)), (2, 2));
+        assert_eq!(progress.goal(&Goal::Thriving(3, 50)), (3, 3));
+    }
+
+    #[test]
+    fn start_pins_are_qualified_and_must_be_quests_within_the_tracker() {
+        let load = |source: &str| QuestRegistry::new(vec![QuestRegistry::read("t", source).unwrap()]);
+        let quest = r#"(name: "a", age: "nomad", branch: "main", title: "A", why: "", tasks: [[Home]])"#;
+        let ok = load(&format!("(quests: [{quest}], tracker: (start_pins: [\"a\"]))")).unwrap();
+        assert_eq!(ok.start_pins(), ["t:a".to_owned()]);
+        assert!(load(&format!("(quests: [{quest}], tracker: (start_pins: [\"missing\"]))")).is_err());
+        assert!(load(&format!("(quests: [{quest}], tracker: (pins: 1, start_pins: [\"a\", \"a\"]))")).is_err());
     }
 
     const QUESTS: &str = r#"(quests: [
@@ -346,7 +400,7 @@ mod tests {
         let carried = |_: &str| 0u32;
         let has_tag = |_: &str, _: &str| false;
         let drops = |_: &str| None;
-        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: true };
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &|_| 0, home: true };
         // The tools were made before the quest was ever seen; the biomes visited too. With
         // a home already, the hearth follows the same moment.
         let done = quests.newly_done(&[], &progress);
@@ -356,7 +410,7 @@ mod tests {
         assert_eq!((fish.done, fish.tasks.clone()), (false, vec![vec![(3, 5)], vec![(1, 10)]]));
         // Two more trout finish it.
         journal.record(&rules, Page::Fish, "base:raw_trout", 2, 3);
-        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: true };
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &|_| 0, home: true };
         assert_eq!(quests.newly_done(&done, &progress), ["base:fish"]);
     }
 
@@ -369,7 +423,7 @@ mod tests {
         let has_tag = |name: &str, tag: &str| tag == "tool" && name.ends_with("pickaxe");
         let mut tallies = FxHashMap::default();
         let ask = |tallies: &FxHashMap<String, u32>, goal: &Goal| {
-            let progress = Progress { journal: &journal, tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: false };
+            let progress = Progress { journal: &journal, tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &|_| 0, home: false };
             progress.goal(goal)
         };
         let pickaxe = Goal::LookUp("stone_pickaxe".into());
@@ -395,7 +449,7 @@ mod tests {
         let tallies = FxHashMap::default();
         let (level, carried, has_tag) = (|_: &str| 1u8, |_: &str| 0u32, |_: &str, _: &str| false);
         let drops = |name: &str| name.strip_prefix("base:deepslate_").map(|ore| format!("base:{ore}"));
-        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: false };
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &|_| 0, home: false };
         assert_eq!(progress.goal(&Goal::Mine("copper_ore".into(), 5)), (5, 5));
         assert_eq!(progress.goal(&Goal::Mine("base:iron_ore".into(), 5)), (4, 5));
         let nothing = |_: &str| None;

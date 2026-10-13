@@ -34,9 +34,11 @@ pub struct QuestsPlugin;
 impl Plugin for QuestsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestView>()
+            .init_resource::<PinsSeeded>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, turn_ways, draw).chain().after(ScreenSystems), (retire, track).chain()).run_if(in_state(Screen::InGame)));
+            .add_systems(OnExit(Screen::InGame), |mut seeded: ResMut<PinsSeeded>| seeded.0 = false)
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, turn_ways, draw).chain().after(ScreenSystems), (seed_pins, retire, track).chain()).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -91,6 +93,26 @@ fn open_start(
         ui.quests_open = true;
     }
     commands.remove_resource::<StartQuest>();
+}
+
+/// Whether this world's quests have been looked at for a new player's pins.
+#[derive(Resource, Default)]
+struct PinsSeeded(bool);
+
+/// A new player (nothing done, nothing pinned) starts with the content's `start_pins`
+/// pinned, so the first thing on screen is what to do. Once, when the world's quests first
+/// arrive; a player who unpins them keeps their choice.
+fn seed_pins(player: Res<LocalPlayer>, launch: Res<Launch>, mut seeded: ResMut<PinsSeeded>, mut settings: ResMut<Settings>) {
+    if seeded.0 || player.quests.is_empty() {
+        return;
+    }
+    seeded.0 = true;
+    if settings.pinned_quests.is_empty() && player.quests.iter().all(|quest| !quest.done) {
+        let content = &launch.content;
+        for name in content.quests.start_pins() {
+            toggle_pin(&mut settings, content, name);
+        }
+    }
 }
 
 /// Only quests the content has stay pinned, and no more than the tracker shows.
@@ -269,6 +291,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         }
         Goal::Have(item, _) => locale.format("quest.goal.have", &[("item", &item_words(locale, content, package, item))]),
         Goal::Home => return locale.get("quest.goal.home").to_owned(),
+        Goal::Thriving(..) => locale.get("quest.goal.thriving").to_owned(),
         Goal::Built(name, _) => locale.format("quest.goal.built", &[("item", &multiblock_words(locale, content, package, name))]),
         Goal::Lit(name, _) => {
             let fuels = qualified(package, name).iter().find_map(|name| content.multiblocks.get(name)).map(|m| {

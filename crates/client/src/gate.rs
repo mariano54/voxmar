@@ -6004,6 +6004,15 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         2 => {
+            // The grid craft is answered by the server, not at once: First Night counts a
+            // campfire crafted, so the cooking waits until one is in hand.
+            if item_count(world, "base:campfire") == 0 {
+                if gate.server_in_phase() > 10.0 {
+                    gate.check("first night: campfire", Err("the grid never made a campfire from two logs over two cobblestone".into()));
+                    gate.next(Step::Ore, now);
+                }
+                return;
+            }
             let net = world.resource::<Net>();
             // The creature the combat check summoned goes, or its level tag would still be
             // up behind the menus' text check.
@@ -6054,7 +6063,13 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
                     player.inventory.get(player.selected).map_or("nothing".to_owned(), |s| client.registry.def(s.item).name.clone())
                 };
-                gate.check("cook", Err(format!("right clicks on the campfire cooked nothing in 15 server seconds ({in_phase:.1} game s), the hand holding {held}")));
+                let first_night = world.resource::<LocalPlayer>().quests.iter().find(|q| q.name == "base:first_night").map(|q| (q.done, q.tasks.clone()));
+                let reason = if cooked > gate.count_before {
+                    format!("food came back but First Night never finished in 15 server seconds: {first_night:?} (goals are the campfire crafted, then food cooked at it)")
+                } else {
+                    format!("right clicks on the campfire cooked nothing in 15 server seconds ({in_phase:.1} game s), the hand holding {held}")
+                };
+                gate.check("cook", Err(reason));
                 gate.next(Step::Ore, now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);

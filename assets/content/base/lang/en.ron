@@ -1022,6 +1022,8 @@
     "quest.base.earthenware.why": "Fired clay makes plates, bowls, jars and jugs for the shelf, and a basket is twine. Make three pieces of crockery at the crafting table.",
     "quest.base.candlelight": "Candlelight",
     "quest.base.candlelight.why": "Twine and two hides make two candles (Crafting 3): a softer light than a torch for a table or shelf.",
+    "quest.base.food_enough": "Food Enough",
+    "quest.base.food_enough.why": "Food that lasts is a farm that works. Show any one: harvest twelve wheat and six carrots or rye, keep four animals well fed and housed (condition at least 75), or land forty fish. Ten loaves of bread are your reward.",
     "block.base.farmland": "Farmland",
     "block.base.stick": "Stick",
     "block.base.dead_log": "Dead Log",
