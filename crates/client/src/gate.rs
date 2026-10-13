@@ -4728,8 +4728,9 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// The lower right of the view, where the hand is (fractions of the frame: x from, x to, y
 /// from, y to; y down).
 const HAND_AREA: [f32; 4] = [0.5, 1.0, 0.45, 1.0];
-/// The rest of the view, which holding something must leave as it was.
-const OUT_OF_HAND: [f32; 4] = [0.0, 0.45, 0.0, 0.5];
+/// The rest of the view, which holding something must leave as it was: sky above the hand,
+/// clear of the quest cards, the chat and any leaves, which sway in the wind between shots.
+const OUT_OF_HAND: [f32; 4] = [0.5, 0.8, 0.0, 0.35];
 
 /// The item in the hand, seen in first person: looking up at the open sky, an empty hand,
 /// an iron sword and a stone block each give a shot; the sword and the block each change
