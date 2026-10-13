@@ -906,6 +906,27 @@
             after: ["first_harvest"],
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
         ),
+        (
+            name: "master_and_journeyman", age: "farm", branch: "crafting", title: "Master and Journeyman",
+            why: "A child may tag along behind you for a while, watching you work. Once you are good at something (Farming, Mining or Crafting 15), they ask to learn it and pay a coin for the lesson. Days later they pass again as a journeyman, with a gift for their old teacher. Teach them, then meet the journeyman.",
+            tasks: [[Met("apprentice", 1), Met("journeyman", 1)]],
+            after: ["the_potter"],
+            rewards: [Xp("crafting", 150.0), Xp("mining", 100.0)],
+        ),
+        (
+            name: "the_market_road", age: "nomad", branch: "explore", title: "The Market Road",
+            why: "Where market folk walk the road to town, highwaymen may come a little after and lie in wait for travellers who can fight. Meet the market folk, and when the highwaymen spring their ambush, win: they give up a purse.",
+            tasks: [[Met("market_folk", 1), Met("highwaymen", 1)]],
+            after: ["to_market"],
+            rewards: [Xp("defence", 120.0), Xp("attack", 60.0)],
+        ),
+        (
+            name: "found_and_thanked", age: "nomad", branch: "explore", title: "Found and Thanked",
+            why: "A child lost far from home wanders one spot. Food in your hand and they follow you to the nearest settlement. Days later the parents come looking for you near your home, with coins and bread for your trouble. Bring the child home, then meet the parents.",
+            tasks: [[Met("lost_child", 1), Met("grateful_parents", 1)]],
+            after: ["a_kind_turn"],
+            rewards: [Xp("hitpoints", 100.0)],
+        ),
     ],
     // A new player's book opens with these pinned (a book with nothing done or pinned), so
     // the first thing on screen is what to do.
