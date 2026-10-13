@@ -93,6 +93,71 @@ pub struct Checks {
     pub wall_box: (f32, f32),
 }
 
+crate::content::settable! {
+    /// What one package's `movement.ron` sets of the `checks`.
+    SetChecks for Checks {
+        speed_margin: f32, burst: f32, slack: f32, rise_slack: f32, hover_grace: f32, hover_sink: f32,
+        let_down_pause: f32, near_ground: f32, sweep_step: f32, wall_box: (f32, f32),
+    }
+}
+
+/// What a package's `movement.ron` sets after the first: any of the numbers, which replace
+/// the earlier packages' (Design draft 91), and any of the `checks`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SetTuning {
+    pub walk_speed: Option<f32>,
+    pub sprint_speed: Option<f32>,
+    pub sprint_jump_boost: Option<f32>,
+    pub jump_velocity: Option<f32>,
+    pub gravity: Option<f32>,
+    pub terminal_velocity: Option<f32>,
+    pub water_speed: Option<f32>,
+    pub fly_speed: Option<f32>,
+    pub fly_sprint_speed: Option<f32>,
+    pub wade_depth: Option<f32>,
+    pub step_out: Option<f32>,
+    pub climb_out_speed: Option<f32>,
+    pub jump_delay: Option<f32>,
+    pub head_on: Option<f32>,
+    pub step_up: Option<f32>,
+    pub checks: Option<SetChecks>,
+}
+
+impl crate::content::Settable for Tuning {
+    type Set = SetTuning;
+
+    fn with(mut self, set: &SetTuning) -> (Self, Vec<&'static str>) {
+        let mut changed = Vec::new();
+        macro_rules! lay {
+            ($($field:ident),*) => {$(
+                if let Some(value) = set.$field {
+                    self.$field = value;
+                    changed.push(stringify!($field));
+                }
+            )*};
+        }
+        lay!(walk_speed, sprint_speed, sprint_jump_boost, jump_velocity, gravity, terminal_velocity, water_speed, fly_speed, fly_sprint_speed, wade_depth, step_out, climb_out_speed, jump_delay, head_on, step_up);
+        if let Some(checks) = &set.checks {
+            let (laid, names) = self.checks.with(checks);
+            self.checks = laid;
+            changed.extend(names.into_iter().map(|name| match name {
+                "speed_margin" => "checks.speed_margin",
+                "burst" => "checks.burst",
+                "slack" => "checks.slack",
+                "rise_slack" => "checks.rise_slack",
+                "hover_grace" => "checks.hover_grace",
+                "hover_sink" => "checks.hover_sink",
+                "let_down_pause" => "checks.let_down_pause",
+                "near_ground" => "checks.near_ground",
+                "sweep_step" => "checks.sweep_step",
+                _ => "checks.wall_box",
+            }));
+        }
+        (self, changed)
+    }
+}
+
 impl Checks {
     fn check(&self) -> Result<(), String> {
         let Checks { speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, wall_box: (width, height) } = *self;
@@ -118,9 +183,21 @@ impl Checks {
 impl Tuning {
     pub fn from_ron(source: &str) -> Result<Self, RegistryError> {
         let tuning: Tuning = ron::from_str(source).map_err(|e| RegistryError(format!("movement.ron: {e}")))?;
-        tuning.check().map_err(|e| RegistryError(format!("movement.ron: {e}")))?;
-        tuning.checks.check().map_err(|e| RegistryError(format!("movement.ron: checks: {e}")))?;
+        tuning.validate()?;
         Ok(tuning)
+    }
+
+    /// What a package after the first writes in its `movement.ron`: only the numbers it changes.
+    pub fn set_from_ron(source: &str) -> Result<SetTuning, RegistryError> {
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        options.from_str(source).map_err(|e| RegistryError(format!("movement.ron: {e}")))
+    }
+
+    /// Refuses numbers that could hang or stop the server or the players, as a file or the
+    /// packages' fields laid together set them.
+    pub fn validate(&self) -> Result<(), RegistryError> {
+        self.check().map_err(|e| RegistryError(format!("movement.ron: {e}")))?;
+        self.checks.check().map_err(|e| RegistryError(format!("movement.ron: checks: {e}")))
     }
 
     fn check(&self) -> Result<(), String> {
@@ -384,6 +461,22 @@ mod tests {
             assert!(source.contains(from), "{from}");
             assert!(Tuning::from_ron(&source.replace(from, to)).is_err(), "{to} loads");
         }
+    }
+
+    #[test]
+    fn a_later_file_sets_only_the_numbers_it_names_and_the_laid_result_is_checked() {
+        use crate::content::Settable;
+        let base = tuning();
+        let set = Tuning::set_from_ron("(gravity: 20.0, checks: (burst: 3.0, wall_box: (0.8, 0.9)))").unwrap();
+        let (laid, changed) = base.clone().with(&set);
+        assert_eq!(changed, ["gravity", "checks.burst", "checks.wall_box"]);
+        assert_eq!((laid.gravity, laid.checks.burst, laid.checks.wall_box), (20.0, 3.0, (0.8, 0.9)));
+        assert_eq!((laid.walk_speed, laid.checks.slack), (base.walk_speed, base.checks.slack));
+        laid.validate().unwrap();
+        assert!(Tuning::set_from_ron("(gravty: 20.0)").is_err(), "a misspelt number is refused");
+        // Each file may pass alone while what they lay to is out of range.
+        let (broken, _) = base.clone().with(&Tuning::set_from_ron("(checks: (let_down_pause: 5.0))").unwrap());
+        assert!(broken.validate().unwrap_err().0.contains("let_down_pause"));
     }
 
     /// Holds `controls` for `seconds` at `fps` frames a second; returns the body and

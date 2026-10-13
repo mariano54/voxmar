@@ -386,6 +386,22 @@ their own blocks and drop the plant, as many as their size. Blocks carry tags (`
 `wetland`, `edible`, `alchemy:calming`, `dye:blue`; the vocabulary is at the top of
 `blocks.ron`) and a rarity, so biomes, food and alchemy select them without naming them.
 
+**Packages setting the same data.** Packages load in name order. Names (blocks, recipes,
+creatures) are their own package's, so two packages never clash. Data with a single value
+(how players move, what things are worth, the weather's tuning, survival's numbers, a
+journal page's thresholds, creature limits, the level curve, treasure settings) is the
+other case, and one rule covers it (Design draft 91): **a later package replaces an earlier
+one's value, field by field, and the load log names both packages**. A later package
+writes only the fields it changes (a `movement.ron` of `(walk_speed: 5.0, checks: (burst:
+3.0))` tunes two numbers and keeps the rest), and a list is replaced whole. The first
+package that sets `movement.ron` gives every field, and the laid-together result is checked
+as a whole, so numbers that would hang the server are refused at launch with the package
+named. Each replacement is one line (`zz_tuned/movement.ron replaces the
+movement core set (walk_speed, checks.burst)`) in the server log and in `Content::notes`.
+In code the rule goes through `Laid` (`crates/engine/src/content.rs`): `Setting` and
+`settable!` for a struct of numbers, `Laid::set` for anything else; the world generator's
+`layered!` is the same rule for climate, land and trail data.
+
 How the design primitives map to the code today:
 
 - **Definition**: blocks (`content/base/blocks.ron`), actions (`content/core/actions.ron`,
