@@ -34,6 +34,20 @@
         // `contexts` says otherwise.
         (name: "suno", folder: "suno"),
         (name: "lyria", folder: "lyria"),
+        // Made with ElevenLabs Music v2.5 by tools/music/elevenlabs (rounds 4 and 5): the
+        // general tracks play anywhere; a biome's only in its biome (by its tags in
+        // biomes.ron), above ground; a boss's only in a boss fight, its own biome's first.
+        (name: "elevenlabs", folder: "elevenlabs", tracks: [
+            (paths: ["*/forest/boss-*"], contexts: [Boss], biomes: ["forest"]),
+            (paths: ["*/snow/boss-*"], contexts: [Boss], biomes: ["frozen", "cold", "tundra", "snow"]),
+            (paths: ["*/desert/boss-*"], contexts: [Boss], biomes: ["desert", "dunes", "mesa"]),
+            (paths: ["*/fantasy/boss-*"], contexts: [Boss], biomes: ["fantastical"]),
+            (paths: ["*/boss-*"], contexts: [Boss]),
+            (paths: ["*/forest/*"], contexts: [Game], biomes: ["forest"]),
+            (paths: ["*/snow/*"], contexts: [Game], biomes: ["frozen", "cold", "tundra", "snow"]),
+            (paths: ["*/desert/*"], contexts: [Game], biomes: ["desert", "dunes", "mesa"]),
+            (paths: ["*/fantasy/*"], contexts: [Game], biomes: ["fantastical"]),
+        ]),
         // Borrowed from the Prism instance, so only with Minecraft assets on.
         (name: "minecraft_menu"),
         (name: "minecraft_world"),
@@ -42,7 +56,11 @@
     ],
     // Tracks played lately that are passed over while others suit.
     recent: 12,
-    // Underground: this many blocks below the surface, with this little of the air
+    // A boss fight: a creature with `boss: true` alive within `within` blocks, or a block
+    // of a boss's room (by name in `rooms`) within `room_reach` blocks. Only Boss tracks
+    // play then: the calm track playing fades as it starts, and the boss's when it ends.
+    boss: (within: 32.0, rooms: [], room_reach: 12),
+        // Underground: this many blocks below the surface, with this little of the air
     // around open to the sky.
     underground: (depth: 12.0, max_sky: 0.05),
 

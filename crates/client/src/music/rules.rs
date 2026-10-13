@@ -22,6 +22,9 @@ pub enum Context {
     Game,
     /// In a world, deep under the surface and out of the sky's sight.
     Underground,
+    /// Near a boss that is alive (a creature `boss: true`), or in a boss's room (`boss` in
+    /// `music.ron`). Only tracks for it play then, and the others never do.
+    Boss,
 }
 
 /// The rules, merged across packages.
@@ -39,6 +42,8 @@ pub struct MusicRules {
     pub menu_gap: (f32, f32),
     /// How the name of a track starting shows.
     pub now_playing: NowPlaying,
+    /// When the player is in a boss fight.
+    pub boss: BossMusic,
     /// Seconds a track takes to fade out when the player starts or leaves a game.
     pub fade_out: f32,
     /// Seconds before another pick when a borrowed track cannot be read or decoded.
@@ -66,6 +71,18 @@ pub struct NowPlaying {
     pub fade: f32,
 }
 
+/// When the player counts as in a boss fight: a boss alive within `within` blocks, or a
+/// block of a boss's room (one of `rooms`, by name) within `room_reach` blocks.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossMusic {
+    pub within: f32,
+    #[serde(default)]
+    pub rooms: Vec<String>,
+    #[serde(default)]
+    pub room_reach: i32,
+}
+
 /// When the player counts as underground.
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,6 +107,11 @@ pub struct Category {
     /// Where its own tracks play.
     #[serde(default = "everywhere")]
     pub contexts: Vec<Context>,
+    /// Where some of its own tracks play instead, by their path under `assets/music` (with
+    /// the folder: `elevenlabs/round5/forest/boss-01.mp3`): the first rule a track matches
+    /// decides; one matching none plays as `contexts` says, in any biome.
+    #[serde(default)]
+    pub tracks: Vec<Rule>,
 }
 
 impl Category {
@@ -97,6 +119,11 @@ impl Category {
     /// Minecraft assets on.
     pub fn borrowed_only(&self) -> bool {
         self.folder.is_none()
+    }
+
+    /// The rule of `tracks` an own track at `path` (from `assets/music`) matches first.
+    pub fn track_rule(&self, path: &str) -> Option<&Rule> {
+        self.tracks.iter().find(|rule| rule.paths.iter().any(|pattern| glob(pattern, path)))
     }
 }
 
@@ -111,13 +138,18 @@ pub struct Rule {
     /// Patterns of paths, the location less its namespace, `*` standing for anything:
     /// `*music/menu/*`.
     pub paths: Vec<String>,
-    /// The category they are in (`categories`).
+    /// The category they are in (`categories`); left out in a category's own `tracks`.
+    #[serde(default)]
     pub category: String,
     /// Where they play; none leaves them out.
     pub contexts: Vec<Context>,
     /// How often one is picked against the others that suit the moment.
     #[serde(default = "one")]
     pub weight: f32,
+    /// Biome tags (`biomes.ron`) where they play, one enough; none for anywhere. A boss
+    /// fight where no boss track suits the biome takes one from anywhere.
+    #[serde(default)]
+    pub biomes: Vec<String>,
 }
 
 fn one() -> f32 {
@@ -134,6 +166,7 @@ struct File {
     gap: Option<(f32, f32)>,
     menu_gap: Option<(f32, f32)>,
     now_playing: Option<NowPlaying>,
+    boss: Option<BossMusic>,
     fade_out: Option<f32>,
     retry_after: Option<f32>,
     resume_after: Option<f32>,
@@ -155,6 +188,7 @@ impl Default for MusicRules {
             gap: (180.0, 420.0),
             menu_gap: (180.0, 420.0),
             now_playing: NowPlaying { shown: 6.0, fade: 1.0 },
+            boss: BossMusic::default(),
             fade_out: 1.5,
             retry_after: 2.0,
             resume_after: 2.0,
@@ -177,7 +211,7 @@ impl MusicRules {
             macro_rules! replace {
                 ($($field:ident),*) => {$(if let Some(value) = read.$field { rules.$field = value; })*};
             }
-            replace!(volume, borrowed_volume, first_menu_delay, gap, menu_gap, now_playing, fade_out, retry_after, resume_after, own_share, recent, underground, prism);
+            replace!(volume, borrowed_volume, first_menu_delay, gap, menu_gap, now_playing, boss, fade_out, retry_after, resume_after, own_share, recent, underground, prism);
             for category in read.categories {
                 check_category(&category).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
                 match rules.categories.iter_mut().find(|known| known.name == category.name) {
@@ -186,6 +220,9 @@ impl MusicRules {
                 }
             }
             rules.rules.splice(0..0, read.rules);
+        }
+        if let Some(rule) = rules.categories.iter().flat_map(|c| &c.tracks).find(|rule| !rule.category.is_empty()) {
+            return Err(format!("{FILE}: the category's track rule for {:?} names a category; it is the one it is in", rule.paths));
         }
         if let Some(rule) = rules.rules.iter().find(|rule| rules.category(&rule.category).is_none()) {
             return Err(format!("{FILE}: the rule for {:?} puts tracks in category {:?}, which no categories list has", rule.paths, rule.category));
@@ -364,6 +401,25 @@ mod tests {
             assert_eq!(category.folder.as_deref(), Some(name));
             assert!(category.contexts.contains(&Menu) && category.contexts.contains(&Game), "{name}");
         }
+        // ElevenLabs' tracks: a boss's only in a boss fight, in its biome first; a biome's
+        // only there, above ground; the general ones anywhere.
+        let eleven = rules.category("elevenlabs").expect("no category elevenlabs");
+        for (path, contexts, biome) in [
+            ("elevenlabs/round5/forest/boss-01-a-corrupted-beast.mp3", &[Boss][..], Some("forest")),
+            ("elevenlabs/round5/snow/boss-01-a-frost-giant.mp3", &[Boss], Some("frozen")),
+            ("elevenlabs/round5/desert/boss-01-the-guardian.mp3", &[Boss], Some("desert")),
+            ("elevenlabs/round5/fantasy/boss-01-a-duel.mp3", &[Boss], Some("fantastical")),
+            ("elevenlabs/round9/swamp/boss-01-a-hag.mp3", &[Boss], None),
+            ("elevenlabs/round4/forest/03-under-the-oaks.mp3", &[Game], Some("forest")),
+            ("elevenlabs/round5/snow/02-quiet-drifts.mp3", &[Game], Some("frozen")),
+        ] {
+            let rule = eleven.track_rule(path).unwrap_or_else(|| panic!("{path} has no rule"));
+            assert_eq!(rule.contexts, contexts, "{path}");
+            assert_eq!(rule.biomes.first().map(String::as_str), biome, "{path}");
+        }
+        assert!(eleven.track_rule("elevenlabs/round5/general/01-a-peaceful-village-square.mp3").is_none());
+        assert_eq!(eleven.contexts, [Menu, Game, Underground]);
+        assert!(rules.boss.within > 0.0);
         // Every category is named and explained (every language has the same keys, as
         // `lang::every_language_has_the_same_keys` checks), every folder holds tracks, and
         // every track of `assets/music` is in a category's folder.

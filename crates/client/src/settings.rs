@@ -1990,8 +1990,8 @@ mod tests {
     #[test]
     fn music_categories_switch_off_and_on_by_name() {
         let switches = music_switches(&MusicCategories(vec![
-            crate::music::rules::Category { name: "suno".into(), folder: Some("suno".into()), contexts: Vec::new() },
-            crate::music::rules::Category { name: "minecraft_world".into(), folder: None, contexts: Vec::new() },
+            crate::music::rules::Category { name: "suno".into(), folder: Some("suno".into()), contexts: Vec::new(), tracks: Vec::new() },
+            crate::music::rules::Category { name: "minecraft_world".into(), folder: None, contexts: Vec::new(), tracks: Vec::new() },
         ]));
         assert_eq!(switches.iter().map(|s| (s.key, s.borrowed_only)).collect::<Vec<_>>(), [("music.suno", false), ("music.minecraft_world", true)]);
         let (suno, world) = (Toggle::Music(switches[0]), Toggle::Music(switches[1]));

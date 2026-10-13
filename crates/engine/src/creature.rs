@@ -422,6 +422,10 @@ pub struct CreatureDef {
     /// Lives only where aether is high (docs/creatures.md, "Supernatural").
     #[serde(default)]
     pub supernatural: bool,
+    /// A boss: while one is alive near a player, the music of boss fights plays for them
+    /// (`Boss` in `music.ron`).
+    #[serde(default)]
+    pub boss: bool,
     /// Its combat level, RuneScape-style.
     #[serde(default = "first")]
     pub level: u8,

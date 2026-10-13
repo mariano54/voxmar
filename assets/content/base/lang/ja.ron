@@ -1368,6 +1368,8 @@
     "music.suno.hint": "Sunoで作ったVoxmarの曲。メニューと世界で流れます。",
     "music.lyria": "Lyria",
     "music.lyria.hint": "Google Lyriaで作ったVoxmarの曲。メニューと世界で流れます。",
+    "music.elevenlabs": "ElevenLabs",
+    "music.elevenlabs.hint": "ElevenLabsで作ったVoxmarの曲。一般の曲はどこでも、他はそのバイオームとボス戦で流れます。",
     "music.minecraft_menu": "Minecraftのメニュー",
     "music.minecraft_menu.hint": "Prism Launcherのインスタンスのタイトル画面の音楽。Minecraftの素材がオンのとき。",
     "music.minecraft_world": "Minecraftの世界",
