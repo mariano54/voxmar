@@ -59,6 +59,37 @@ announced in chat with a **Next:** line, and the better one hides the other:
 them); `meal_heal` and `meal_time` are two new modifiers, applied as the meal is eaten from
 the modifiers of the last second. Raw meat's queasiness is not lengthened.
 
+## Reactions (what a home does with what is around it)
+
+A home also answers other content, as plain effects with a condition, no code of their own:
+
+| Reaction | Needs | Gives while at home |
+| --- | --- | --- |
+| Sheltered | indoors, a fire (hearth or heat block), and rain, snow, hail, dust or a storm falling outside | heal x1.2, learn x1.05 |
+| Company | 1 animal the player keeps within the home's reach | heal x1.1 |
+| Full house | 4 such animals (hides Company) | heal x1.2, learn x1.05 |
+| Kitchen garden | 4 crop plants (any stage) within reach | meals heal x1.1 (`meal_heal`, stacks with a larder) |
+
+How they work, for mod authors: `Condition::Sheltered(inner)` holds under a roof while `inner`
+(a weather condition, which is normally true only out in the open) holds in the open, so the
+weather is judged as the sky sees it, not as the player's roof lets them feel it. The home tag
+`kept` is not a block tag: the survey counts the player's own kept animals (`owner_id`) whose
+position is inside the home box (`survey_around(anchor, keeper)`); a mod can ask
+`HomeHas("kept", n)` like any other tag, and content load accepts it. `crop` is the block tag
+every crop stage carries, so a garden needs no new tag. Other players' animals never count.
+
+Ideas left: species rules (`kept:hen` for eggs, a cat for fewer mice), wandering visitors
+who stop at a lit home (needs hooks from the wandering events work), a herb nook.
+
+## `/home`
+
+`/home` tells where the home is and, for each chain of steps (the ladder, and with the rooms
+the workbench and the larder), the highest step reached and what the next one lacks, judged
+as if you stood in it: "Camp reached. Next, Hearthside: it needs hearth 0/1." What a step
+lacks is read off its own condition (`Condition::lacks`), so a mod's steps are covered with no
+extra work; a block tag shows by `home.tag.<tag>` in the language files, else as the tag.
+It is a console command, so it needs no protocol change.
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the
@@ -85,7 +116,6 @@ reach the step).
 
 - A herb nook (hanging herbs, jars) boosting Alchemy and Farming: `hanging_herbs` is only a
   village prop today, with no recipe.
-- A `/home` command listing what is still missing for the next step.
 - Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
   protocol to take a slot count.
 - Passing the night by sleeping, and a visible Rested icon (effects use the plain buff icon).

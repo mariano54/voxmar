@@ -73,14 +73,18 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:rested"], "a bed under the sky is only a plain rest");
 }
 
-/// What a survey with these counts, indoors, shows of the rooms (the side branches).
-fn rooms(counts: &[(&str, u32)]) -> Vec<String> {
+/// What a survey with these counts shows of the rooms (the side branches) in this weather.
+fn rooms_in(counts: &[(&str, u32)], weather: &Weather, outdoors: bool) -> Vec<String> {
     let content = content();
     let effects = &content.effects;
-    let calm = Weather::NONE;
     let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
-    let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey) };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey) };
     effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| !LADDER.iter().any(|step| *name == format!("base:{step}"))).collect()
+}
+
+/// The same, indoors in fair weather.
+fn rooms(counts: &[(&str, u32)]) -> Vec<String> {
+    rooms_in(counts, &Weather::NONE, false)
 }
 
 #[test]
@@ -121,4 +125,43 @@ fn a_workshop_boosts_the_levels_recipes_are_checked_against() {
     assert_eq!((effects.boost(&active, "core:crafting"), effects.boost(&active, "core:engineering")), (2, 1));
     let away = Situation { home: None, ..at_home };
     assert_eq!(effects.boost(&effects.active(&away, &[]), "core:crafting"), 0, "away from home there is no boost");
+}
+
+#[test]
+fn a_home_with_a_fire_shelters_from_the_weather_outside() {
+    let fire = [("hearth", 1)];
+    let sheltered = "base:sheltered".to_string();
+    let storm = Weather { precipitation: 0.9, ..Weather::NONE };
+    let snow = Weather { precipitation: 0.9, snow: 1.0, ..Weather::NONE };
+    let dust = Weather { dust: 0.8, ..Weather::NONE };
+    let lone = |weather: &Weather, outdoors, counts: &[(&str, u32)]| rooms_in(counts, weather, outdoors);
+    for weather in [&storm, &snow, &dust] {
+        assert!(lone(weather, false, &fire).contains(&sheltered), "rain, snow and dust all count from indoors");
+        assert!(!lone(weather, true, &fire).contains(&sheltered), "out in it you are not sheltered");
+        assert!(!lone(weather, false, &[]).contains(&sheltered), "a roof with no fire is just a roof");
+    }
+    assert!(!lone(&Weather::NONE, false, &fire).contains(&sheltered), "fair weather asks for no shelter");
+    assert!(lone(&storm, false, &[("heat", 1)]).contains(&sheltered), "any heat block is a fire");
+}
+
+#[test]
+fn animals_kept_about_the_house_are_company_and_more_a_full_house() {
+    assert!(rooms(&[("kept", 0)]).is_empty());
+    assert_eq!(rooms(&[("kept", 1)]), ["base:company"]);
+    assert_eq!(rooms(&[("kept", 3)]), ["base:company"]);
+    assert_eq!(rooms(&[("kept", 4)]), ["base:full_house"], "a full house hides company");
+    // Company needs no roof: a yard is a yard.
+    assert_eq!(rooms_in(&[("kept", 1)], &Weather::NONE, true), ["base:company"]);
+}
+
+#[test]
+fn crops_by_the_door_are_a_kitchen_garden_that_makes_meals_heal_more() {
+    assert!(rooms(&[("crop", 3)]).is_empty());
+    assert_eq!(rooms(&[("crop", 4)]), ["base:kitchen_garden"]);
+    let content = content();
+    let garden = content.effects.get(content.effects.id("base:kitchen_garden").unwrap());
+    assert_eq!(garden.modifiers.meal_heal, 1.1);
+    // It stacks with a larder: both lift a meal's healing.
+    let larder = [("storage", 4), ("cooking", 1), ("table", 1), ("hearth", 1), ("crop", 4)];
+    assert_eq!(rooms(&larder), ["base:larder", "base:kitchen_garden"]);
 }

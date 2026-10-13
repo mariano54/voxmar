@@ -87,6 +87,22 @@
         (name: "larder", kind: Buff, title: "Larder", description: "Meals heal a fifth more here and their good lasts half again as long.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("storage", 4), HomeHas("cooking", 1), HomeHas("table", 1), Any([HomeHas("hearth", 1), HomeHas("heat", 1)])])),
             replaces: ["pantry"], modifiers: (meal_heal: 1.2, meal_time: 1.5)),
+        // Reactions: a home answers what is around it. A roof and a fire in a storm, animals
+        // kept in the yard (`kept` counts those within reach) and crops growing by the door
+        // each give something, with no code of their own.
+        (name: "sheltered", kind: Buff, title: "Sheltered", description: "Warm and dry while it storms: you heal a fifth faster, learn a bit more.",
+            when: Some(All([AtHome, Indoors, Sheltered(Any([Rain(0.3), Snow(0.3), Hail(0.2), Dust(0.3), Storm(0.1)])), Any([HomeHas("hearth", 1), HomeHas("heat", 1)])])),
+            replaces: [], modifiers: (heal: 1.2, xp: 1.05)),
+        (name: "company", kind: Buff, title: "Company", description: "Your animals about the house: you heal a tenth faster here.", announce: true,
+            next: "Next: four animals kept about the house make it a full house.",
+            when: Some(All([AtHome, HomeHas("kept", 1)])),
+            replaces: [], modifiers: (heal: 1.1)),
+        (name: "full_house", kind: Buff, title: "Full house", description: "A yard full of animals: you heal a fifth faster, learn a bit more here.", announce: true,
+            when: Some(All([AtHome, HomeHas("kept", 4)])),
+            replaces: ["company"], modifiers: (heal: 1.2, xp: 1.05)),
+        (name: "kitchen_garden", kind: Buff, title: "Kitchen garden", description: "Greens growing by the door: meals heal a tenth more here.", announce: true,
+            when: Some(All([AtHome, HomeHas("crop", 4)])),
+            replaces: [], modifiers: (meal_heal: 1.1)),
         // Sleeping at a bed (the sleeps rules below): the better the home around the bed, the
         // better the rest, which lasts a while wherever you go, and keeps you from sleeping again.
         (name: "rested", kind: Buff, title: "Rested", description: "You slept: you heal and learn a little more for a while.",

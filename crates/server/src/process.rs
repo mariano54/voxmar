@@ -246,10 +246,18 @@ impl Server {
         if near.x > rules.home_reach || near.z > rules.home_reach || feet.y > anchor.y + up || feet.y < anchor.y - down {
             return None;
         }
+        Some(self.survey_around(anchor, Some(id)))
+    }
+
+    /// What lies around a home at `anchor`, whoever stands near it: its blocks by tag and the
+    /// animals `keeper` keeps within its reach (`kept`).
+    pub(crate) fn survey_around(&self, anchor: IVec3, keeper: Option<PlayerId>) -> HomeSurvey {
+        let rules = &self.survival;
+        let (up, down) = (rules.home_up, rules.home_down);
         let wanted = self.content.effects.home_tags();
         let mut counts: Vec<(String, u32)> = wanted.iter().map(|tag| (tag.clone(), 0)).collect();
         if wanted.is_empty() {
-            return Some(HomeSurvey { counts });
+            return HomeSurvey { counts };
         }
         let blocks = &self.content.blocks;
         let reach = rules.home_reach;
@@ -269,7 +277,16 @@ impl Server {
                 }
             }
         }
-        Some(HomeSurvey { counts })
+        if let Some((_, kept)) = counts.iter_mut().find(|(tag, _)| tag == "kept") {
+            let (reach, centre) = (reach as f32 + 0.5, anchor.as_vec3() + Vec3::splat(0.5));
+            for creature in self.creatures.live.values().filter(|c| keeper.is_some() && c.owner_id == keeper) {
+                let off = creature.body.position - centre;
+                if off.x.abs() <= reach && off.z.abs() <= reach && off.y <= up as f32 + 1.0 && off.y >= -(down as f32) - 1.0 {
+                    *kept += 1;
+                }
+            }
+        }
+        HomeSurvey { counts }
     }
 
     /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in

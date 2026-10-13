@@ -2197,6 +2197,88 @@ fn a_larder_makes_more_of_a_meal() {
 }
 
 #[test]
+fn a_home_answers_the_weather_the_animals_and_the_garden_around_it() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let at = |dx: i32, dz: i32| feet + IVec3::new(dx, 0, dz);
+    // A bag, a hearth and a roof: a snug home to react from.
+    let mut lines = vec![format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 6, feet.y + 4, feet.z + 3)];
+    for (dx, block) in [(2, "sleeping_bag"), (3, "hearthstone")] {
+        lines.push(format!("/setblock {} {} {} {block}", at(dx, 0).x, at(dx, 0).y, at(dx, 0).z));
+    }
+    for line in lines {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(at(3, 0)) == c.content.blocks.id("base:hearthstone"));
+    client.propose("base:sleep", ActionTarget::Block { block: at(2, 0), face: Face::PosY });
+    client.pump_until(|c| has(c, "base:camp") || has(c, "base:hearthside"));
+    // Fair weather, no animals, no crops: none of the reactions.
+    for name in ["base:sheltered", "base:company", "base:full_house", "base:kitchen_garden"] {
+        assert!(!has(&client, name), "{name} before anything is around");
+    }
+    // A storm outside and a fire inside: sheltered; out from under the roof it is just a storm.
+    client.ok("/weather storm max 600");
+    client.pump_until(|c| has(c, "base:sheltered"));
+    client.tp(feet.as_vec3() + Vec3::new(0.5, 0.0, 6.5));
+    client.pump_until(|c| !has(c, "base:sheltered"));
+    client.tp(feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+    client.pump_until(|c| has(c, "base:sheltered"));
+    client.ok("/weather clear");
+    client.pump_until(|c| !has(c, "base:sheltered"));
+    // One kept animal about the house is company; four, a full house that hides it.
+    client.ok("/summon rabbit 1 ~4 ~ ~1");
+    client.ok("/creatures tame rabbit");
+    client.pump_until(|c| has(c, "base:company"));
+    client.ok("/summon rabbit 3 ~4 ~ ~-1");
+    client.ok("/creatures tame rabbit");
+    client.pump_until(|c| has(c, "base:full_house"));
+    assert!(!has(&client, "base:company"), "a full house hides company");
+    // Out of reach of home, the animals are not at home with them.
+    client.tp(feet.as_vec3() + Vec3::new(40.5, 0.0, 0.5));
+    client.pump_until(|c| !has(c, "base:full_house"));
+    client.tp(feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+    // Four crops by the door are a kitchen garden.
+    let mut lines = vec![format!("/fill {} {} {} {} {} {} farmland", feet.x - 1, feet.y - 1, feet.z + 2, feet.x + 2, feet.y - 1, feet.z + 2)];
+    for dx in -1..=2 {
+        lines.push(format!("/setblock {} {} {} wheat_crop", feet.x + dx, feet.y, feet.z + 2));
+    }
+    for line in lines {
+        client.ok(&line);
+    }
+    client.pump_until(|c| has(c, "base:kitchen_garden"));
+}
+
+#[test]
+fn home_says_where_home_is_and_what_the_next_step_needs() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    // No bed, no hearth: no home.
+    let lines = client.command("/home");
+    assert!(lines.iter().any(|(kind, text)| *kind != ChatKind::Info && text.contains("no home yet")), "{lines:?}");
+    // A bag and a torch, slept in, are a camp; the hint names the hearth as the next step.
+    let bag = feet + IVec3::new(2, 0, 0);
+    for line in [format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z), format!("/setblock {} {} {} torch", feet.x + 3, feet.y, feet.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(feet + IVec3::new(3, 0, 0)) == c.content.blocks.id("base:torch"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    // Wait out the sleep's own lines and the step's announcement before asking.
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Camp:")));
+    let said = client.ok("/home");
+    assert!(said.contains(&format!("Your home is at {}, {}, {}", bag.x, bag.y + 1, bag.z)), "{said}");
+    assert!(said.contains("Camp reached. Next, Hearthside: it needs hearth 0/1"), "{said}");
+    // A hearthstone lights it: the ladder moves on and the next step names a roof and the rest.
+    let hearth = feet + IVec3::new(4, 0, 0);
+    client.ok(&format!("/setblock {} {} {} hearthstone", hearth.x, hearth.y, hearth.z));
+    client.pump_until(|c| c.world.block(hearth) == c.content.blocks.id("base:hearthstone"));
+    client.chat.clear();
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Hearthside:")));
+    let said = client.ok("/home");
+    assert!(said.contains("Hearthside reached. Next, Snug: it needs a roof overhead, light 1/2"), "{said}");
+}
+
+#[test]
 fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
     let mut client = Client::join();
     let boiler = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
