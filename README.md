@@ -26,6 +26,23 @@ While developing, use `--profile iter` in place of `--release` (for `run`, `buil
 it rebuilds in seconds rather than minutes after an edit and runs nearly as fast. Keep
 `--release` for performance measurements.
 
+For a bounded renderer diagnosis, set `VOXMAR_PROFILE_FRAMES=1` together with
+`VOXMAR_RECORD_SLOW_FRAMES=1` for a capture. Slow-frame records then include wall and
+thread CPU time for streaming, compaction and buffer operations, with queue counts and
+bytes. Storage stays fixed at eleven measurements per render frame in the existing
+three-frame ring; only slow frames write JSON. `render_local_frame` identifies a render
+record; the shared process-local monotonic intervals join it to main-frame intervals.
+Parent measurements include their nested operations, so their times must not be added
+together. Thread CPU excludes sleep and descheduling, and neither clock measures GPU
+execution. Unsupported or failed CPU clocks are `null`. `receive.input_bytes` counts
+payloads of applied messages. Child `written_bytes` counters cover the targeted page,
+arena and compaction queue writes; origins, wind, coverage and blade-index setup writes
+are outside these counters. `buffer_bytes_created` counts allocated capacity. These are
+different quantities. Owner `original_writes` and `original_bytes` describe assignments
+on pages that survive to the end-of-receive flush; `unique_dirty_words` counts distinct
+assigned positions, including same-value assignments. `compact.reused_after_unrelated_changes`
+counts view reuse that the previous whole-terrain revision check would have invalidated.
+
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
 frame rate), `--language CODE` (`en` or `ja`; captures are in English without it), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
@@ -110,6 +127,14 @@ crafting grid, a campfire, shears on a mouflon, a creature that drops it); arrow
 pages, clicking an item looks up its recipes (right-click, its uses) and Back retraces the
 steps. Both keys can be changed in Settings, Keys. It reads the same content the game plays
 by, so a package's recipes show up in it on their own.
+
+In survival, the inventory has a recipe search beside it: type part of an item's English
+or Japanese name, then click it for recipes or right-click it for uses. The quest book
+shows recipes under crafting, cooking and carried-item goals; click any goal, ingredient
+or reward item to look it up, and Back returns to the book. The Nomad quest "Look It Up"
+teaches this with the stone pickaxe and awards 40 Crafting xp once. For captures,
+`--catalogue SEARCH` opens the search in either mode, and `--quests QUEST` opens that
+quest's page.
 
 The character screen (C) shows health, how warm you feel and the effects on you, and
 every skill with its icon, level and progress; click a skill for its guide, what each level
@@ -386,6 +411,20 @@ their own blocks and drop the plant, as many as their size. Blocks carry tags (`
 `wetland`, `edible`, `alchemy:calming`, `dye:blue`; the vocabulary is at the top of
 `blocks.ron`) and a rarity, so biomes, food and alchemy select them without naming them.
 
+Colour variants cost no extra art. A block may say `tint: Fixed(r, g, b)`: its textures are
+multiplied by that colour when the texture array is built (one layer per texture and colour),
+so a greyscale drawing makes a family of woods or dyes and the renderer sees an untinted
+block. A `blocks*.ron` file may list `dyes: [(name: "indigo", rgb: (52, 64, 150)), ...]`
+(one palette across packages, each dye named by `family.<package>.<name>` in the language
+files), and a family line `(template: "dyed", dyes: true)` makes the template once for every
+dye, with the dye's name for `{name}` and its colour as the tint. A family recipe may take the
+tag of its own name (`tag:dye:{name}`), and a fill whose tag nothing has is skipped. The decor
+blocks (`blocks_furnishings.ron`: furniture in three woods, cloth things in twelve dyes,
+crockery in three glazes, lights, graves, columns; their boxes are in `shapes.ron`, their
+greyscale drawings in the default pack's `decor.ron`, written by `tools/art/decor.py`) are
+the first users; Voxmar HD shows the default drawings at twice the fineness until the pack
+thread redraws them.
+
 **Packages setting the same data.** Packages load in name order. Names (blocks, recipes,
 creatures) are their own package's, so two packages never clash. Data with a single value
 (how players move, what things are worth, the weather's tuning, survival's numbers, a
@@ -608,9 +647,18 @@ generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `
 arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
 and routes that failed. `river_sights` prints
 `--pose` arguments for captures of the places water makes near spawn (highland lakes,
-waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
-`Overworld::water_sights` finds; `shape_sights` does the same for the best example of each
-terrain shape and the highest peak, with a `/tp` command and `--pose` for each.
+tarns, waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
+`Overworld::water_sights` finds; `tarn_census` (with `SEEDS` and `REGIONS`) counts the tarns
+around mountains and alpine meadows in and out of tarn country, their visible water area,
+and the share of the land that is lake bank. `LOTUS=n` also generates the connected shore
+of up to n visible pools per seed to count actual lotus plants and visible clusters. Existing high lakes and snowy peaks are counted
+separately; `Overworld::locate_tarn` finds a visible pool filled by the tarn rule.
+`rare_herb_census` (with `SEEDS`, `CHUNKS`, `PLACES` (up to three far places of each biome a
+world), or `WILD=a,b` or `WILDTAG=tag` with `WILDBIOMES=a,b` for other plants instead, `AT=1`
+for where the biggest patch of each is) counts the
+rare herbs as generation places them, per million columns of each biome naming them;
+`shape_sights` prints a `/tp` command and `--pose` for the best example of each
+terrain shape and the highest peak.
 `ore_preview` (with `SEED`, a centre `X`, `Z` and `COLUMNS`) writes an x-ray of the ore veins
 from above and a cut through the richest row to `target/ores_*.ppm`, with the surface samples
 in white, and prints each ore's blocks per column and the share lying alone.

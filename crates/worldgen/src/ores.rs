@@ -642,8 +642,7 @@ mod tests {
     use crate::tests::generate_area;
 
     fn registry() -> Arc<BlockRegistry> {
-        let source = include_str!("../../../assets/content/base/blocks.ron");
-        Arc::new(BlockRegistry::from_ron("base", source).unwrap())
+        Arc::new(crate::test_registry())
     }
 
     /// `cargo test --profile iter -p voxmar_worldgen ore_preview -- --ignored --nocapture`

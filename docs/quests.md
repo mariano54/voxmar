@@ -31,6 +31,7 @@ reward, shown first), tasks, after, rewards. Goals:
 | `Level(skill, n)` | the skill's level |
 | `Have(item, n)` | what the player carries, pouches too |
 | `Home` | a lit Homestead Hearth |
+| `LookUp(item)` | the recipe viewer was opened on the item (the client says so once, `ClientMessage::LookedUp`; tally `lookedup:<item>`) |
 
 Items and creatures may be `any` or `tag:TAG`. Rewards are `Xp(skill, xp)` and
 `Item(item, count)`. Titles and reasons are translated as `quest.<package>.<name>` and

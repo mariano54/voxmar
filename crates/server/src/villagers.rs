@@ -202,7 +202,7 @@ impl Town {
         let centre = IVec2::new(info.centre.x, info.centre.z);
         let (min, max) = (min.min(centre) - margin, max.max(centre) + margin);
         let people = info.people.iter().map(|_| Person::default()).collect();
-        Self { levers: SettlementLevers(info.levers), info, min, max, people, alive: false }
+        Self { levers: info.levers, info, min, max, people, alive: false }
     }
 
     /// Blocks from `at` to the nearest of its ground.
@@ -965,7 +965,7 @@ mod tests {
     /// streaming, wall clock, or expensive settlement search.
     fn fixture(species: &str, count: usize) -> Server {
         use voxmar_engine::world::Column;
-        use voxmar_worldgen::{SettlementBuilding, SettlementFacing, people::Resident};
+        use voxmar_worldgen::{CultureInfo, SettlementBuilding, SettlementFacing, people::Resident};
         let mut server = crate::test_server();
         server.world = Default::default();
         let mut column = Column::default();
@@ -981,7 +981,9 @@ mod tests {
         let routine = server.overworld.settlement_people().routine("worker").unwrap();
         let info = SettlementInfo {
             id: 1, name: ("Test".into(), "テスト".into()), size: "village".into(), style: "timber".into(), layout: "test".into(),
-            centre: IVec3::new(8, 200, 8), levers: [0.5; 5], gates: vec![IVec2::new(8, 12)], lanes: Vec::new(),
+            centre: IVec3::new(8, 200, 8), levers: SettlementLevers { levers: [0.5; 5], axes: [0.5; 8] }, gates: vec![IVec2::new(8, 12)], lanes: Vec::new(),
+            culture: CultureInfo { family: "hearth".into(), title: ("Hearth".into(), "炉辺".into()), second: None,
+                quirks: Vec::new(), axes: [0.5; 8], dropped: Vec::new(), borrowed: Vec::new() },
             buildings: vec![SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(4, 4), max: IVec2::new(12, 12), floor: 199,
                 room: (6..=10).flat_map(|x| (6..=10).map(move |z| IVec2::new(x, z))).collect(),
                 door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None }],
@@ -1039,6 +1041,28 @@ mod tests {
         server.bring_out(1, 0);
         let next = server.villagers.towns[&1].people[0].creature.unwrap();
         assert_eq!(server.creatures.live[&next].seed, seed);
+    }
+
+    #[test]
+    fn dispersing_wild_creatures_preserves_a_residents_body_and_mapping() {
+        let mut server = fixture("base:farmer", 1);
+        player(&mut server);
+        server.players.get_mut(&1).unwrap().admin = true;
+        server.bring_out(1, 0);
+        let resident = server.villagers.towns[&1].people[0].creature.unwrap();
+        server.creatures.live.get_mut(&resident).unwrap().health = 1;
+        let sheep = server.content.creatures.id("base:mouflon").unwrap();
+        let wild = server.spawn_creature(sheep, Vec3::new(8.0, 200.0, 8.0), 7).unwrap();
+        server.command(1, "creatures disperse");
+        assert!(!server.creatures.live.contains_key(&wild), "the command must actually disperse wild creatures");
+        assert_eq!(server.creatures.live[&resident].health, 1, "dispersal must leave the resident's living body intact");
+        assert_eq!(server.villagers.by_creature.get(&resident), Some(&(1, 0)));
+        server.note_all_deaths();
+        server.bring_out(1, 0);
+        assert_eq!(server.villagers.towns[&1].people[0].creature, Some(resident), "the lifecycle scan must not replace the resident");
+        assert_eq!(server.creatures.live[&resident].health, 1);
+        assert_eq!(server.villagers.by_creature.get(&resident), Some(&(1, 0)));
+        assert!(server.villagers.saved().is_empty(), "dispersal must not mark a resident dead");
     }
 
     #[test]

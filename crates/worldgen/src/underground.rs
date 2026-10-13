@@ -629,7 +629,7 @@ mod tests {
     fn cave_biomes_keep_to_their_claims() {
         use crate::rarity::Featured;
         use crate::rng::Rng;
-        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = WorldContent::base(&registry).unwrap();
         let featured = Featured::new(3, 0.5);
         let rocks = Rocks::new(3, &content, &registry, &featured);

@@ -45,6 +45,8 @@ pub enum Goal {
     Home,
     /// Lit a multiblock (a crucible kiln) this many times.
     Built(String, u32),
+    /// Looked an item up in the recipe viewer (the item may be `any` or `tag:TAG`).
+    LookUp(String),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -172,6 +174,7 @@ impl Progress<'_> {
             Goal::Have(item, n) => ((self.carried)(item), *n),
             Goal::Home => (u32::from(self.home), 1),
             Goal::Built(structure, n) => (tally("built", structure), *n),
+            Goal::LookUp(item) => (tally("lookedup", item).min(1), 1),
         }
     }
 
@@ -329,6 +332,29 @@ mod tests {
         journal.record(&rules, Page::Fish, "base:raw_trout", 2, 3);
         let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: true };
         assert_eq!(quests.newly_done(&done, &progress), ["base:fish"]);
+    }
+
+    /// A look-up goal holds from the first time the item was looked up, and a tag or `any`
+    /// takes any item that matches.
+    #[test]
+    fn a_look_up_goal_holds_once_the_item_was_looked_up() {
+        let journal = Journal::default();
+        let (level, carried, drops) = (|_: &str| 1u8, |_: &str| 0u32, |_: &str| None);
+        let has_tag = |name: &str, tag: &str| tag == "tool" && name.ends_with("pickaxe");
+        let mut tallies = FxHashMap::default();
+        let ask = |tallies: &FxHashMap<String, u32>, goal: &Goal| {
+            let progress = Progress { journal: &journal, tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: false };
+            progress.goal(goal)
+        };
+        let pickaxe = Goal::LookUp("stone_pickaxe".into());
+        assert_eq!(ask(&tallies, &pickaxe), (0, 1));
+        tallies.insert("lookedup:base:oak_planks".to_owned(), 1);
+        assert_eq!(ask(&tallies, &pickaxe), (0, 1), "another item does not count");
+        assert_eq!(ask(&tallies, &Goal::LookUp("any".into())), (1, 1));
+        assert_eq!(ask(&tallies, &Goal::LookUp("tag:tool".into())), (0, 1));
+        tallies.insert("lookedup:base:stone_pickaxe".to_owned(), 3);
+        assert_eq!(ask(&tallies, &pickaxe), (1, 1), "however often it was looked up, it is once");
+        assert_eq!(ask(&tallies, &Goal::LookUp("tag:tool".into())), (1, 1));
     }
 
     /// A Mine goal counts every block that drops its ore: deepslate copper (and copper

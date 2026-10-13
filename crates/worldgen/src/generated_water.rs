@@ -59,6 +59,35 @@ fn generated_water_does_not_move() {
     assert!(fluid_cells > 10_000 && pinned > 500 && curtain > 20);
 }
 
+/// Tarns, the small still lakes in high hollows, settle like any other lake: around the
+/// first two pits filled by the tarn rule in the regions around the alpine meadow
+/// nearest the origin, on a few seeds, found afresh.
+#[test]
+fn tarns_do_not_move() {
+    let content = load_content();
+    let world_content = WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let mut tarns = 0;
+    for seed in [1, 2, 3, 4] {
+        let generator = Overworld::with_content(seed, registry.clone(), &world_content);
+        let floor = generator.rivers.tarn_floor().expect("the base content has tarns");
+        let Some(meadow) = generator.locate_biome("alpine_meadow", IVec2::ZERO, 60000) else { continue };
+        let region = meadow.div_euclid(IVec2::splat(crate::water::REGION));
+        let found: Vec<IVec2> = (0..9)
+            .flat_map(|r| generator.rivers.stream_lakes(generator.stages(), region + IVec2::new(r % 3 - 1, r / 3 - 1)))
+            .filter(|&(_, water, _, tarn)| water as f32 >= floor && tarn)
+            .map(|(pit, _, _, _)| pit)
+            .take(2)
+            .collect();
+        for pit in found {
+            let fluids = check_area(&registry, &generator, seed, pit).0;
+            assert!(fluids > 0, "seed {seed}: no water around the tarn at {pit}");
+            tarns += 1;
+        }
+    }
+    assert!(tarns >= 4, "only {tarns} tarns found around alpine meadows");
+}
+
 /// Generates the area around `place` and checks that none of its water would move: none is
 /// scheduled when its columns load, and ticking any of it would change nothing. Counts its
 /// fluid cells as `count_fluid` does.

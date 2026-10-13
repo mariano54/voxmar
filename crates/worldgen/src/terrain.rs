@@ -556,17 +556,21 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     }
     terrain.curtains(&geology, origin, &mut blocks);
 
-    // Ground plants, wherever trees, decorations, caves and water left the ground open.
+    // Ground plants, wherever trees, decorations, caves and water left the ground open:
+    // first boulders and the ground each open column offers, then the patches of rare herbs
+    // along water, which the chunk's columns decide together (a chunk is one cell of them),
+    // then a plant for every other open column.
+    const _: () = assert!(crate::ecology::PATCH_CELL == CHUNK_SIZE);
+    let mut open_ground: Vec<Option<Ground>> = vec![None; (CHUNK_SIZE * CHUNK_SIZE) as usize];
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
             let (site, _) = &surfaces[(z * CHUNK_SIZE + x) as usize];
             let h = site.height;
-            let open = |y: i32| y < WORLD_HEIGHT && blocks.get_local(x, y, z).is_air();
-            if h < site.water || !open(h + 1) || site.trail > 0.2 {
+            if h + 1 >= WORLD_HEIGHT {
                 continue;
             }
-            let (wx, wz) = (origin.x + x, origin.z + z);
-            if let Some(boulder) = boulder(world, site, &geology, wx, wz) {
+            let Some(ground) = terrain.plant_ground(site, blocks.get_local(x, h, z), blocks.get_local(x, h + 1, z)) else { continue };
+            if let Some(boulder) = boulder(world, site, &geology, origin.x + x, origin.z + z) {
                 for (y, block) in (h + 1..).zip(boulder.into_iter().flatten()) {
                     if y >= WORLD_HEIGHT || !blocks.get_local(x, y, z).is_air() {
                         break;
@@ -575,8 +579,22 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 }
                 continue;
             }
-            let ground = terrain.ground(blocks.get_local(x, h, z));
-            match world.ecology.plant(site, ground, wx, wz) {
+            open_ground[(z * CHUNK_SIZE + x) as usize] = Some(ground);
+        }
+    }
+    let edges = world.ecology.edge_patches(IVec2::new(origin.x, origin.z), |i| open_ground[i].map(|ground| (&surfaces[i].0, ground)));
+    for z in 0..CHUNK_SIZE {
+        for x in 0..CHUNK_SIZE {
+            let i = (z * CHUNK_SIZE + x) as usize;
+            let Some(ground) = open_ground[i] else { continue };
+            let site = &surfaces[i].0;
+            let h = site.height;
+            let open = |y: i32| y < WORLD_HEIGHT && blocks.get_local(x, y, z).is_air();
+            let plant = match edges.iter().find(|(j, _)| *j == i) {
+                Some(&(_, plant)) => Some(plant),
+                None => world.ecology.plant(site, ground, origin.x + x, origin.z + z),
+            };
+            match plant {
                 Some(Plant::One(plant)) => blocks.set_local(x, h + 1, z, plant),
                 Some(Plant::Tall(bottom, top)) if open(h + 2) => {
                     blocks.set_local(x, h + 1, z, bottom);
@@ -869,6 +887,15 @@ impl Terrain {
     /// What a surface block offers plants.
     pub fn ground(&self, block: BlockId) -> Ground {
         self.grounds[block.0 as usize]
+    }
+
+    /// What the actual surface offers a ground plant. Cave mouths can remove the
+    /// nominal surface: air, water and wood also classify as Bare, but are not earth.
+    /// Both ordinary plants and bank patches take their candidates from this check.
+    pub(crate) fn plant_ground(&self, site: &crate::Site, ground: BlockId, above: BlockId) -> Option<Ground> {
+        (site.height >= site.water && site.height + 1 < WORLD_HEIGHT && above.is_air()
+            && site.trail <= 0.2 && self.firm[ground.0 as usize] && self.earth[ground.0 as usize])
+            .then(|| self.ground(ground))
     }
 
     /// Whether a block is a small plant.

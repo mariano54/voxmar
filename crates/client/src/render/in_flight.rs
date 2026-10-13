@@ -48,8 +48,15 @@ fn note(queue: Res<RenderQueue>, mut frames: ResMut<InFlight>) {
 }
 
 fn wait(device: Res<RenderDevice>, frames: Res<InFlight>) {
+    let mut profile = super::work::measure(super::work::Part::Wait);
+    if let Some(profile) = &mut profile {
+        profile.counts.submitted = frames.submitted;
+        profile.counts.done_before = frames.done.load(Ordering::Acquire);
+    }
     while frames.submitted.saturating_sub(frames.done.load(Ordering::Acquire)) >= FRAMES {
+        if let Some(profile) = &mut profile { profile.counts.polls += 1; }
         let _ = device.poll(PollType::Poll);
         std::thread::sleep(Duration::from_micros(50));
     }
+    if let Some(profile) = &mut profile { profile.counts.done_after = frames.done.load(Ordering::Acquire); }
 }

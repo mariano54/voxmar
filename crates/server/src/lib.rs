@@ -1119,6 +1119,29 @@ mod tests {
         }
     }
 
+    /// Preparation can happen before connecting; an accepted peer still has to say
+    /// hello within the configured deadline. Check the boundary without wall-clock luck.
+    #[test]
+    fn a_silent_pending_login_expires_after_its_configured_ticks() {
+        let mut server = test_server();
+        let (accepted, incoming) = unbounded();
+        server.incoming = incoming;
+        let (client, server_side) = voxmar_protocol::local_pair();
+        accepted.send(server_side).unwrap();
+        server.accept_connections();
+        let (&id, player) = server.players.iter().next().unwrap();
+        let connected = player.connected_tick;
+        let hello_ticks = (server.config.limits.hello_seconds * TICKS_PER_SECOND as f32) as u64;
+        assert_eq!(server.config.limits.hello_seconds, 3.0);
+        server.tick = connected + hello_ticks;
+        server.limit_players();
+        assert!(server.players.contains_key(&id), "expired before the deadline");
+        server.tick += 1;
+        server.limit_players();
+        assert!(!server.players.contains_key(&id), "kept a silent pending connection");
+        assert!(client.try_recv().is_err(), "the expired connection was still open");
+    }
+
     #[test]
     fn loot_waiting_for_a_body_to_fall_is_saved_where_it_will_drop() {
         let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();

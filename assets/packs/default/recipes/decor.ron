@@ -1,0 +1,115 @@
+// The decor blocks' greyscale drawings (content/base/blocks_furnishings.ron). Written by
+// tools/art/decor.py: edit the script, not this book. A block's tint multiplies them by a
+// wood's or a dye's colour, so every shade is light.
+(
+    palettes: {
+        "furn_wood": ["#8c8c8c", "#a2a2a2", "#b6b6b6", "#c9c9c9", "#dadada", "#eaeaea"],
+        "furn_cloth": ["#aaaaaa", "#bcbcbc", "#cdcdcd", "#dcdcdc", "#ebebeb", "#f8f8f8"],
+        "furn_ink": ["#505050", "#686868", "#808080"],
+        "furn_metal": ["#7c7c84", "#9494a0", "#acacb8", "#c4c4d0", "#dcdce6", "#f2f2fa"],
+        "furn_iron": ["#26262a", "#34343a", "#44444c", "#585862", "#707080"],
+        "furn_coal": ["#2a1810", "#5a2410", "#8c3a14", "#c85a1c", "#f08c28", "#ffc060"],
+        "furn_stew": ["#3a2a14", "#4a5a1c", "#5e7a24", "#728e30", "#8aa63c"],
+        "furn_brick": ["#5a3a30", "#704a3c", "#865a48", "#9a6c58", "#ae7e68"],
+        "furn_thread": ["#8a7a5a", "#a6966e", "#c2b286", "#d8c89c"],
+    },
+    textures: {
+        "block/furniture_wood": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.58, shade: [Boards(height: 4, seam: -0.5, joint: -0.4, value: 0.2, bevel: 0.12), Noise(cells: (4, 16), octaves: 2, amount: 0.25)], clean: true),
+        ]),
+        "block/furniture_grain": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.58, shade: [Noise(cells: (8, 2), octaves: 2, amount: 0.32), Stripes(period: 4.0, width: 0.25, amount: -0.2, vertical: true, phase: 1.0), Grain(0.12)], clean: true),
+        ]),
+        "block/furniture_panel": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.58, shade: [Noise(cells: (8, 2), amount: 0.25), Grain(0.1)], clean: true),
+            Grid(legend: {'d': "wood:0", 'm': "wood:3", 'l': "wood:5"}, rows: ["dddddddddddddddd", "d......dd......d", "d.llld.dd.llld.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmdlddllmmd.d", "d.lmmdddddlmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lddd.dd.lddd.d", "d......dd......d", "dddddddddddddddd"]),
+        ]),
+        "block/furniture_drawers": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.58, shade: [Noise(cells: (8, 2), amount: 0.25), Grain(0.1)], clean: true),
+            Grid(legend: {'d': "wood:0", 'm': "wood:3", 'l': "wood:5", 'k': "ink:2"}, rows: ["dddddddddddddddd", "dlllllllllllllld", "dmmkmmmmmmmmkmmd", "dmmdmmmmmmmmdmmd", "dddddddddddddddd", "dddddddddddddddd", "dlllllllllllllld", "dmmkmmmmmmmmkmmd", "dmmdmmmmmmmmdmmd", "dddddddddddddddd", "dddddddddddddddd", "dlllllllllllllld", "dmmkmmmmmmmmkmmd", "dmmdmmmmmmmmdmmd", "dddddddddddddddd", "dddddddddddddddd"]),
+        ]),
+        "block/furniture_books": (palettes: {"wood": "furn_wood", "cloth": "furn_cloth"}, layers: [
+            Paint(palette: "wood", base: 0.3, shade: [Grain(0.1)], clean: true),
+            Grid(legend: {'d': "wood:0", 'l': "cloth:1", 'm': "cloth:2", 'n': "cloth:3", 'o': "cloth:4", 'p': "cloth:5"}, rows: ["dddddddddddddddd", "dddddddddddddddd", "plloooooodlppppp", "plloooooodlppppp", "plloooooodlppppp", "dddddodddddddddd", "dddddddddddddddd", "dddddddddddddddd", "dddmmdddddddllld", "pppmoopppmmmllld", "pppmoopppmmmllld", "pppmoopppmmmllld", "pppmoopppmmmllld", "dddddddddddddddd", "dddddddddddddddd", "dddddddddddddddd"]),
+        ]),
+        "block/furniture_cask": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.58, shade: [Stripes(period: 3.0, width: 0.2, amount: -0.45, phase: 1.0), Noise(cells: (2, 8), amount: 0.22), Grain(0.1)], clean: true),
+            Grid(legend: {'h': "wood:5", 'd': "wood:0"}, rows: ["....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd....", "....hd....hd...."]),
+        ]),
+        "block/furniture_crate": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.58, shade: [Boards(height: 4, seam: -0.5, joint: -0.3, value: 0.2, bevel: 0.1), Noise(cells: (4, 8), amount: 0.2)], clean: true),
+            Grid(legend: {'d': "wood:0", 'm': "wood:4", 'l': "wood:5", 's': "wood:1"}, rows: ["dddddddddddddddd", "ddmmmmmmmmmmmmdd", "dml...........md", "dm.l..........md", "dmsslsssssssssmd", "dm...l........md", "dm....l.......md", "dm.....l......md", "dmsssssslsssssmd", "dm.......l....md", "dm........l...md", "dmssssssssslssmd", "dm..........l.md", "dm...........lmd", "ddmmmmmmmmmmmmdd", "dddddddddddddddd"]),
+        ]),
+        "block/furniture_linen": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.62, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.14), Stripes(period: 2.0, width: 0.5, amount: 0.14, vertical: true), Noise(cells: (4, 4), amount: 0.12), Grain(0.1), Stripes(period: 16.0, width: 0.125, amount: -0.4, phase: 9.0)], clean: true),
+        ]),
+        "block/furniture_pot": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.6, shade: [Noise(cells: (3, 3), amount: 0.2), Stripes(period: 8.0, width: 0.125, amount: -0.35, phase: 2.0), Gradient(from: 0.15, to: -0.2, across: true), Grain(0.1)], clean: true),
+        ]),
+        "block/cloth_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.58, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.14), Stripes(period: 2.0, width: 0.5, amount: 0.14, vertical: true), Noise(cells: (4, 4), amount: 0.12), Grain(0.1)], clean: true),
+        ]),
+        "block/rug_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.5, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.14), Stripes(period: 2.0, width: 0.5, amount: 0.14, vertical: true), Noise(cells: (4, 4), amount: 0.12), Grain(0.1)], clean: true),
+            Grid(legend: {'d': "cloth:0", 'm': "cloth:2", 'l': "cloth:5"}, rows: ["dddddddddddddddd", "dmmmmmmmmmmmmmmd", "dmllllllllllllmd", "dml....ll....lmd", "dml...llll...lmd", "dml..llddll..lmd", "dml.llddddll.lmd", "dmlllddddddlllmd", "dmlllddddddlllmd", "dml.llddddll.lmd", "dml..llddll..lmd", "dml...llll...lmd", "dml....ll....lmd", "dmllllllllllllmd", "dmmmmmmmmmmmmmmd", "dddddddddddddddd"]),
+        ]),
+        "block/banner_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.55, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.14), Stripes(period: 2.0, width: 0.5, amount: 0.14, vertical: true), Noise(cells: (4, 4), amount: 0.12), Grain(0.1)], clean: true),
+            Grid(legend: {'d': "cloth:0", 'l': "cloth:5"}, rows: ["................", "................", "dddddddddddddddd", "dddddddddddddddd", "................", "................", ".......ll.......", "......llll......", ".....llddll.....", ".....llddll.....", "......llll......", ".......ll.......", "................", "................", "................", "dddddddddddddddd"]),
+        ]),
+        "block/curtain_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.6, shade: [Stripes(period: 4.0, width: 0.5, amount: 0.3, vertical: true, warp: 0.6), Stripes(period: 4.0, width: 0.125, amount: -0.25, vertical: true, phase: 3.0), Gradient(from: 0.05, to: -0.1), Grain(0.08)], clean: true),
+        ]),
+        "block/lantern_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.8, shade: [Stripes(period: 3.0, width: 0.34, amount: -0.28, phase: 1.0), Stripes(period: 8.0, width: 0.125, amount: -0.25, vertical: true), Noise(cells: (3, 3), amount: 0.12)], clean: true),
+        ]),
+        "block/cushion_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.58, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.14), Stripes(period: 2.0, width: 0.5, amount: 0.14, vertical: true), Noise(cells: (4, 4), amount: 0.12), Grain(0.1), Border(width: 1, amount: -0.3)], clean: true),
+            Grid(legend: {'d': "cloth:0", 'l': "cloth:5"}, rows: ["................", "................", "................", "................", "................", "................", "................", ".......ld.......", ".......dd.......", "................", "................", "................", "................", "................", "................", "................"]),
+        ]),
+        "block/bunting_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.6, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.14), Stripes(period: 2.0, width: 0.5, amount: 0.14, vertical: true), Noise(cells: (4, 4), amount: 0.12), Grain(0.1), Stripes(period: 8.0, width: 0.25, amount: -0.3, slope: 1.0, phase: 2.0)], clean: true),
+        ]),
+        "block/awning_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.66, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.14), Stripes(period: 2.0, width: 0.5, amount: 0.14, vertical: true), Noise(cells: (4, 4), amount: 0.12), Grain(0.1), Stripes(period: 8.0, width: 0.5, amount: -0.38, vertical: true)], clean: true),
+        ]),
+        "block/crockery_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.66, shade: [Rings(spacing: 2.8, width: 0.3, amount: -0.25), Stripes(period: 8.0, width: 0.125, amount: -0.3, phase: 2.0), Noise(cells: (3, 3), amount: 0.15), Border(width: 1, amount: -0.15, sides: (0.0, 1.0, 0.0, 1.0))], clean: true),
+        ]),
+        "block/candle_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.78, shade: [Stripes(period: 5.0, width: 0.2, amount: -0.15, vertical: true, phase: 1.0), Noise(cells: (2, 4), amount: 0.12)], clean: true),
+        ]),
+        "block/metal_grey": (palettes: {"metal": "furn_metal", "ink": "furn_ink"}, layers: [
+            Paint(palette: "metal", base: 0.6, shade: [Noise(cells: (4, 4), amount: 0.2), Stripes(period: 8.0, width: 0.125, amount: -0.3, phase: 1.0), Grain(0.08)], clean: true),
+            Grid(legend: {'l': "metal:5"}, rows: ["................", "................", "................", "................", "................", "................", "................", "......llll......", "......llll......", "......llll......", "......llll......", "......llll......", "................", "................", "................", "................"]),
+        ]),
+        "block/brazier_coals": (palettes: {"coal": "furn_coal"}, layers: [
+            Paint(palette: "coal", base: 0.55, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.5), Speckle(chance: 0.2, amount: 0.4), Grain(0.2)], clean: true),
+        ]),
+        "block/brazier_iron": (palettes: {"iron": "furn_iron"}, layers: [
+            Paint(palette: "iron", base: 0.5, shade: [Noise(cells: (4, 4), amount: 0.25), Stripes(period: 8.0, width: 0.125, amount: -0.3, phase: 5.0), Grain(0.1)], clean: true),
+        ]),
+        "block/cauldron_iron": (palettes: {"iron": "furn_iron"}, layers: [
+            Paint(palette: "iron", base: 0.45, shade: [Noise(cells: (4, 4), amount: 0.25), Stripes(period: 8.0, width: 0.125, amount: -0.3, phase: 7.0), Speckle(chance: 0.04, amount: 0.5)], clean: true),
+        ]),
+        "block/cauldron_stew": (palettes: {"stew": "furn_stew"}, layers: [
+            Paint(palette: "stew", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.5), Speckle(chance: 0.12, amount: 0.5)], clean: true),
+        ]),
+        "block/stove_bricks": (palettes: {"brick": "furn_brick"}, layers: [
+            Paint(palette: "brick", base: 0.55, shade: [Bricks(size: (8, 4), mortar: -0.45, value: 0.25, bevel: 0.12), Noise(cells: (4, 4), amount: 0.15)], clean: true),
+        ]),
+        "block/stove_plate": (palettes: {"iron": "furn_iron"}, layers: [
+            Paint(palette: "iron", base: 0.4, shade: [Noise(cells: (4, 4), amount: 0.2), Grain(0.1)], clean: true),
+            Paint(palette: "iron", base: 0.15, mask: [Circle(radius: 4.0, soft: 0.5)], above: 0.5),
+        ]),
+        "block/loom_warp": (palettes: {"thread": "furn_thread"}, layers: [
+            Paint(palette: "thread", base: 0.55, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.4, vertical: true), Noise(cells: (2, 8), amount: 0.2)], clean: true),
+        ]),
+        "block/wind_flags": (palettes: {}, layers: [
+            Grid(legend: {'a': "#3a6ac8", 'b': "#f0f0f0", 'c': "#d03a30", 'd': "#3a9a48", 'e': "#f0c030"}, rows: ["aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee"]),
+        ]),
+        "block/basket_grey": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.58, shade: [Boards(height: 2, seam: -0.4, joint: -0.3, value: 0.22, bevel: 0.1), Grain(0.12)], clean: true),
+        ]),
+    },
+)

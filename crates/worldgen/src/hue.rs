@@ -107,7 +107,7 @@ pub(crate) fn hue(rgb: [f32; 3]) -> f32 {
 /// The colour a block shows: its average colour, or the grass or foliage colour where the
 /// game tints it.
 pub(crate) fn shown(def: &BlockDef, grass: [f32; 3], foliage: [f32; 3]) -> [f32; 3] {
-    match def.tint {
+    match def.tint.drawn() {
         // A tinted texture is grey: the tint is its colour.
         Tint::Grass => grass,
         Tint::Foliage => foliage,

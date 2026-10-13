@@ -123,7 +123,7 @@ impl Land for OverworldLand {
             aether: site.aether,
             // Dust is the ground's own colour where it is bare (sand, red sand, snow), and dry
             // earth's where plants cover it.
-            dust_color: if underwater || self.blocks.def(ground).tint != Tint::None {
+            dust_color: if underwater || self.blocks.def(ground).tint.drawn() != Tint::None {
                 LocalWeather::NONE.dust_color
             } else {
                 self.blocks.def(ground).color

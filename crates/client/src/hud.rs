@@ -212,7 +212,7 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
         };
         root.spawn((Bottom, bottom)).with_children(|bottom| {
             let name = Node { height: Val::Px(12.0 * PX), margin: UiRect::bottom(Val::Px(space::HAIR)), ..default() };
-            bottom.spawn(name).with_child((HeldName, shadowed(font, "", BODY, TEXT)));
+            bottom.spawn(name).with_child((HeldName, Visibility::Inherited, shadowed(font, "", BODY, TEXT)));
             let width = HOTBAR_SLOTS as f32 * (SLOT + GAP) - GAP + 2.0 * FRAME;
             // The effects on you, then health across the hotbar's width.
             let chips = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), row_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::INNER)), flex_wrap: FlexWrap::Wrap, ..default() };
@@ -418,20 +418,26 @@ fn show_held_name(
     player: Res<LocalPlayer>,
     world: Res<ClientWorld>,
     locale: Res<Locale>,
-    mut name: Query<(&mut Text, &mut TextColor, &mut TextShadow), With<HeldName>>,
+    mut name: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Visibility), With<HeldName>>,
     mut last: Local<(Option<voxmar_engine::block::BlockId>, f32)>,
 ) {
     let held = player.inventory.get(player.selected).map(|s| s.item);
     let now = time.elapsed_secs();
-    let Ok((mut text, mut color, mut shadow)) = name.single_mut() else { return };
-    if held != last.0 {
+    let Ok((mut text, mut color, mut shadow, mut visibility)) = name.single_mut() else { return };
+    let changed = held != last.0;
+    if changed {
         *last = (held, now);
+    }
+    if changed || locale.is_changed() {
         text.0 = held.map(|item| locale.block(world.registry.def(item))).unwrap_or_default();
     }
     let alpha = ((last.1 + NAME_SECONDS - now) / NAME_FADE).clamp(0.0, 1.0);
     let base = held.map_or(TEXT, |item| inventory::rarity_color(world.registry.def(item).rarity));
     color.set_if_neq(TextColor(base.with_alpha(alpha)));
     shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
+    // Fully faded words no longer participate in layout checks or drawing. Inherited
+    // visibility still follows the HUD's root when a new held item restores the label.
+    visibility.set_if_neq(if alpha == 0.0 { Visibility::Hidden } else { Visibility::Inherited });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -551,5 +557,68 @@ fn update_debug(
     // Only new text: an unchanged one assigned would still count as a change to lay out.
     if text.0 != new {
         text.0 = new;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn faded_held_names_hide_and_new_items_restore_inherited_visibility() {
+        use bevy::camera::visibility::VisibilityPlugin;
+        use voxmar_engine::inventory::ItemStack;
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let planks = content.blocks.id("base:oak_planks").unwrap();
+        let torch = content.blocks.id("base:torch").unwrap();
+        let registry = content.blocks.clone();
+        let mut player = LocalPlayer::default();
+        player.inventory.slots[0] = Some(ItemStack { item: planks, count: 1 });
+        let mut app = App::new();
+        app.add_plugins(bevy::app::TaskPoolPlugin::default())
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>()
+            .add_plugins(VisibilityPlugin)
+            .insert_resource(Time::<()>::default())
+            .insert_resource(player)
+            .insert_resource(ClientWorld::new(registry.clone(), 1, crate::render::terrain::Terrain::detached()))
+            .insert_resource(Locale::load(&assets.join("content"), "en"))
+            .add_systems(Update, show_held_name);
+        let parent = app.world_mut().spawn(Visibility::Inherited).id();
+        let label = app.world_mut().spawn((ChildOf(parent), HeldName, Text::new(""), TextColor(TEXT), TextShadow::default(), Visibility::Inherited)).id();
+        let visible = |app: &App| app.world().get::<InheritedVisibility>(label).unwrap().get();
+        app.update();
+        assert!(visible(&app));
+        assert_eq!(app.world().get::<Text>(label).unwrap().0, app.world().resource::<Locale>().block(registry.def(planks)));
+
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(1750));
+        app.update();
+        assert!(visible(&app), "partly faded words still draw");
+        assert_eq!(app.world().get::<TextColor>(label).unwrap().0.alpha(), 0.5);
+        app.insert_resource(Locale::load(&assets.join("content"), "ja"));
+        app.update();
+        let japanese = app.world().resource::<Locale>().block(registry.def(planks));
+        assert_eq!(app.world().get::<Text>(label).unwrap().0, japanese, "active words follow the locale");
+        assert_eq!(app.world().get::<TextColor>(label).unwrap().0.alpha(), 0.5, "locale refresh must not restart the fade");
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(250));
+        app.update();
+        assert!(!visible(&app), "transparent text must also be hidden from layout checks");
+        assert_eq!(*app.world().get::<Visibility>(label).unwrap(), Visibility::Hidden);
+        assert_eq!(app.world().get::<TextShadow>(label).unwrap().color.alpha(), 0.0);
+
+        app.insert_resource(Locale::load(&assets.join("content"), "en"));
+        app.update();
+        assert!(!visible(&app), "a language change cannot revive an expired label");
+        app.world_mut().entity_mut(parent).insert(Visibility::Hidden);
+        app.world_mut().resource_mut::<LocalPlayer>().inventory.slots[0] = Some(ItemStack { item: torch, count: 1 });
+        app.update();
+        assert_eq!(*app.world().get::<Visibility>(label).unwrap(), Visibility::Inherited);
+        assert_eq!(app.world().get::<TextColor>(label).unwrap().0.alpha(), 1.0);
+        assert_eq!(app.world().get::<Text>(label).unwrap().0, app.world().resource::<Locale>().block(registry.def(torch)));
+        assert!(!visible(&app), "restored words must respect a hidden HUD parent");
+        app.world_mut().entity_mut(parent).insert(Visibility::Inherited);
+        app.update();
+        assert!(visible(&app), "a new held item becomes visible with its HUD");
     }
 }
