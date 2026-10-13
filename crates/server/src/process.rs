@@ -139,6 +139,8 @@ impl Process for Survival {
             let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
             let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
             let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
+            // Mending (a prayer) brings health back faster.
+            let mending = server.content.prayers.mending(&server.players[&id].praying.on);
 
             let player = server.players.get_mut(&id).unwrap();
             let creative = player.allow_flight;
@@ -179,7 +181,7 @@ impl Process for Survival {
             // Healing, while anything is left to heal.
             match rates.heal_every.filter(|_| player.health.current < player.health.max) {
                 Some(every) => {
-                    player.heal_clock += seconds;
+                    player.heal_clock += seconds * mending;
                     if player.heal_clock >= every {
                         player.heal_clock -= every;
                         player.health.heal(1);

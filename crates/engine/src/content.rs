@@ -47,6 +47,8 @@ pub struct Content {
     pub tools: Arc<ToolRegistry>,
     /// Weapons, their classes and styles (`combat`).
     pub combat: Arc<crate::combat::CombatRegistry>,
+    /// The prayer book (`prayer`): Magic's prayers, their points, and what altars take.
+    pub prayers: Arc<crate::prayer::PrayerRegistry>,
     /// What bites where.
     pub fishing: Arc<FishingRegistry>,
     /// Structures recognised from patterns of blocks (the Homestead Hearth).
@@ -175,6 +177,7 @@ impl Content {
         let mut effects = Vec::new();
         let mut tools = Vec::new();
         let mut combat = Vec::new();
+        let mut prayers = Vec::new();
         let mut value = Vec::new();
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
@@ -297,6 +300,10 @@ impl Content {
                         combat.push(crate::combat::CombatRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "prayers.ron" => {
+                        prayers.push(crate::prayer::PrayerRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "effects.ron" => {
                         effects.push(EffectRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -328,6 +335,7 @@ impl Content {
         let effects = EffectRegistry::new(effects)?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
+        let prayers = crate::prayer::PrayerRegistry::new(prayers, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
@@ -336,6 +344,7 @@ impl Content {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
         }
         let value = crate::value::Value::merge(value);
+        value.check()?;
         let limits = stack_limits(&blocks, &stacking)?;
         let treasure = crate::treasure::Treasure::new(treasure, &blocks, &value, &limits, &mut notes)?;
         // An opened chest becomes a bin with room for all it can give.
@@ -371,6 +380,7 @@ impl Content {
             effects: Arc::new(effects),
             tools: Arc::new(tools),
             combat: Arc::new(combat),
+            prayers: Arc::new(prayers),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
             treasure: Arc::new(treasure),

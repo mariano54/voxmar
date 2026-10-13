@@ -107,6 +107,11 @@ impl Net {
         self.connection.send(ClientMessage::Pong { id });
     }
 
+    /// The player turned a prayer on or off (`fight::quick_prayers`).
+    pub fn pray(&self, prayer: voxmar_engine::prayer::PrayerId, on: bool) {
+        self.connection.send(ClientMessage::Pray { prayer, on });
+    }
+
     pub fn send_settings(&self, view_distance: u8, fly_speed: f32) {
         self.connection.send(ClientMessage::Settings { view_distance, fly_speed });
     }
@@ -327,6 +332,7 @@ pub(crate) fn receive(
             }
             ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
             ServerMessage::Ping { id } => net.pong(id),
+            ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
         }
     }

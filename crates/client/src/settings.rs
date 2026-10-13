@@ -73,6 +73,9 @@ impl Plugin for SettingsPlugin {
     }
 }
 
+/// How many quick prayers have a key.
+pub const QUICK_PRAYERS: usize = 5;
+
 /// The player's choices. Fields missing from the file keep their defaults.
 #[derive(Resource, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -168,6 +171,9 @@ pub struct Settings {
     pub uses_key: Key,
     /// Key that copies the frame to the clipboard and saves it (`screenshot`).
     pub screenshot_key: Key,
+    /// Quick prayers: each key turns its prayer (by name, as content calls it) on or off.
+    pub prayer_keys: [Key; QUICK_PRAYERS],
+    pub quick_prayers: [String; QUICK_PRAYERS],
     /// The language's code (`en`, `ja`), or empty to follow the system's.
     pub language: String,
 }
@@ -366,6 +372,9 @@ impl Default for Settings {
             recipes_key: Key(KeyCode::KeyR),
             uses_key: Key(KeyCode::KeyU),
             screenshot_key: Key(KeyCode::F2),
+            // The design's X C V B N, with G for C, which shows the character.
+            prayer_keys: [KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyB, KeyCode::KeyN, KeyCode::KeyG].map(Key),
+            quick_prayers: ["base:bark_skin", "base:ember_arm", "base:keen_mind", "base:mending", "base:keepsake"].map(String::from),
             language: String::new(),
         }
     }
@@ -850,6 +859,8 @@ enum Binding {
     Recipes,
     Uses,
     Screenshot,
+    /// A quick prayer's key, by its place.
+    Prayer(usize),
 }
 
 impl Binding {
@@ -893,6 +904,7 @@ impl Binding {
             Binding::Recipes => "settings.key.recipes",
             Binding::Uses => "settings.key.uses",
             Binding::Screenshot => "settings.key.screenshot",
+            Binding::Prayer(i) => ["settings.key.prayer_1", "settings.key.prayer_2", "settings.key.prayer_3", "settings.key.prayer_4", "settings.key.prayer_5"][i],
         }
     }
 
@@ -909,6 +921,7 @@ impl Binding {
             Binding::Recipes => settings.recipes_key,
             Binding::Uses => settings.uses_key,
             Binding::Screenshot => settings.screenshot_key,
+            Binding::Prayer(i) => settings.prayer_keys[i],
         }
     }
 
@@ -925,6 +938,7 @@ impl Binding {
             Binding::Recipes => &mut settings.recipes_key,
             Binding::Uses => &mut settings.uses_key,
             Binding::Screenshot => &mut settings.screenshot_key,
+            Binding::Prayer(i) => &mut settings.prayer_keys[i],
         } = key;
     }
 }
@@ -1060,6 +1074,11 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Key(Binding::Sprint),
             Control::Key(Binding::Dodge),
             Control::Key(Binding::Zoom),
+            Control::Key(Binding::Prayer(0)),
+            Control::Key(Binding::Prayer(1)),
+            Control::Key(Binding::Prayer(2)),
+            Control::Key(Binding::Prayer(3)),
+            Control::Key(Binding::Prayer(4)),
         ],
     ),
     (

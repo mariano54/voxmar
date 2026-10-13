@@ -489,6 +489,8 @@ mod tests {
             }
             keys.extend(blocks.def(id).tags.iter().filter_map(|tag| tag.strip_prefix("holds:")).map(|kind| format!("pouch.fills.{kind}")));
         }
+        // The prayer book's names (the UI draws them).
+        keys.extend(content.prayers.all().filter(|(_, prayer)| first_party(&prayer.name)).map(|(_, prayer)| def_key("prayer", &prayer.name)));
         // What each first-party package is called, at the foot of every item's tooltip.
         keys.extend(FIRST_PARTY.iter().map(|package| format!("package.{package}")));
         // The quest book's chapters, one per age the first-party quests name.

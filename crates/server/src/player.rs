@@ -114,6 +114,12 @@ pub struct Player {
     /// the player's client as measured, smoothed (`fight`'s lag allowance).
     pub ping: Option<(u32, std::time::Instant)>,
     pub round_trip: Option<f32>,
+    /// The last tick a blow fell between them and a creature, either way (prayer points
+    /// come back only after a calm, `prayers`).
+    pub last_blow: u64,
+    /// Prayer points and the prayers on, and what the player was last told of them.
+    pub praying: voxmar_engine::prayer::Praying,
+    pub prayers_sent: Option<(u16, u16, Vec<voxmar_engine::prayer::PrayerId>)>,
     /// Owner-replicated traits changed since they were last sent.
     pub dirty: Vec<TraitDecl>,
     pub sent: FxHashSet<ColumnPos>,
@@ -173,6 +179,9 @@ impl Player {
             grounded: 0,
             ping: None,
             round_trip: None,
+            last_blow: 0,
+            praying: Default::default(),
+            prayers_sent: None,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
             items_seen: FxHashSet::default(),
@@ -253,6 +262,7 @@ impl Player {
             journal: self.journal.entries().cloned().collect(),
             quests: self.quests_done.clone(),
             tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
+            prayer_points: Some(self.praying.points),
         }
     }
 }
@@ -289,6 +299,7 @@ impl Server {
             ClientMessage::Take { item, count, held } => self.take_from_catalogue(id, item, count, held),
             ClientMessage::Guard { up } => self.raise_guard(id, up),
             ClientMessage::Pong { id: number } => self.pong(id, number, at),
+            ClientMessage::Pray { prayer, on } => self.pray(id, prayer, on),
         }
     }
 
@@ -406,6 +417,7 @@ impl Server {
         let token_admin = self.config.admin_token.as_deref().zip(admin_token.as_deref()).is_some_and(|(ours, theirs)| same_token(ours, theirs));
         let skill_ids = self.content.skills.clone();
         let effect_ids = self.content.effects.clone();
+        let prayers = self.content.prayers.clone();
         let weather_seed = self.weather.seed();
         let player = self.players.get_mut(&id).expect("message from unknown player");
 
@@ -422,7 +434,9 @@ impl Server {
             || token_admin;
         player.admin = player.admin_by_right;
         player.allow_flight = saved.as_ref().and_then(|saved| saved.mode).map_or(allow_flight, GameMode::allows_flight);
-        // Returning players carry on where they left; new ones start at spawn with a kit.
+        // Returning players carry on where they left, prayer points and all (the dead with
+        // them full); new ones start at spawn with a kit.
+        let points = saved.as_ref().filter(|saved| saved.health.alive()).and_then(|saved| saved.prayer_points);
         match saved {
             Some(saved) if saved.health.alive() => {
                 player.position = saved.position;
@@ -456,6 +470,8 @@ impl Server {
             None => player.inventory = new_inventory,
         }
         skill_ids.start(&mut player.skills);
+        let most = prayers.most(prayers.skill.map_or(1, |skill| skill_ids.level(player.skills.xp(skill))));
+        player.praying.points = points.unwrap_or(most).clamp(0.0, most);
         player.changed(traits::INVENTORY);
         player.changed(traits::HEALTH);
         player.changed(traits::SKILLS);

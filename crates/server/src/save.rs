@@ -177,6 +177,8 @@ pub struct SavedPlayer {
     /// Quests finished, and the tallies quests count.
     pub quests: Vec<String>,
     pub tallies: Vec<(String, u32)>,
+    /// Prayer points left; none in older saves, which come back full.
+    pub prayer_points: Option<f32>,
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -213,6 +215,8 @@ struct PlayerFile {
     quests: Vec<String>,
     #[serde(default)]
     tallies: Vec<(String, u32)>,
+    #[serde(default)]
+    prayer_points: Option<f32>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -492,7 +496,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests: file.quests, tallies: file.tallies }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests: file.quests, tallies: file.tallies, prayer_points: file.prayer_points }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -532,6 +536,7 @@ impl WorldSave {
             journal: player.journal.clone(),
             quests: player.quests.clone(),
             tallies: player.tallies.clone(),
+            prayer_points: player.prayer_points,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -1029,6 +1034,7 @@ mod tests {
             journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
             quests: vec!["base:first_night".into()],
             tallies: vec![("crafted:base:torch".into(), 8)],
+            prayer_points: Some(7.5),
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1099,6 +1105,7 @@ mod tests {
             journal: Vec::new(),
             quests: Vec::new(),
             tallies: Vec::new(),
+            prayer_points: None,
         };
         save.write_player("herbalist", &player, &registry).unwrap();
         let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();

@@ -262,7 +262,7 @@ impl Server {
         self.content.skills.id(name)
     }
 
-    fn level(&self, player: PlayerId, skill: Option<SkillId>) -> u8 {
+    pub(crate) fn level(&self, player: PlayerId, skill: Option<SkillId>) -> u8 {
         let Some(skill) = skill else { return 1 };
         self.players.get(&player).map_or(1, |p| self.content.skills.level(p.skills.xp(skill)))
     }
@@ -590,8 +590,14 @@ impl Server {
             return Some(0);
         }
         let defence_skill = self.skill("core:defence");
-        let defence = self.level(player, defence_skill);
         let [hit, amount] = combat_roll(self.tick, species.0 as u32, player as u64 ^ 0xa7);
+        // A Defence boost (a prayer) raises the level the blow is rolled against.
+        let book = &self.content.prayers;
+        let boost = 1.0 + book.boost(&target.praying.on, voxmar_engine::prayer::Stat::Defence);
+        let defence = voxmar_engine::combat::by_chance(self.level(player, defence_skill) as f32 * boost, unit_from(mix(hit.to_bits() as u64, 0xdef))).min(u8::MAX as u16) as u8;
+        // A ward up against the blow's style stops its share; with a guard, the larger stop.
+        let share = if book.warded(&target.praying.on, attack.style) { share.min(1.0 - book.rules.ward) } else { share };
+        let last_breath = book.last_breath(&target.praying.on);
         let (low, high) = attack.damage;
         // Worn armour adds to the defence roll, by the wearer's own Defence level.
         let armour = self.content.combat.armour_of(target.held(), &target.inventory.worn, attack.style, |skill| self.content.skills.level(target.skills.xp(skill)));
@@ -605,6 +611,16 @@ impl Server {
         let target = self.players.get_mut(&player).expect("checked above");
         if target.health.damage(damage) {
             target.connection.send(ServerMessage::Died);
+        }
+        // Last Breath: left under its share of health, a share comes back, and every prayer
+        // point goes.
+        if let Some((below, heal)) = last_breath.filter(|_| target.health.alive()) {
+            let most = target.health.max as f32;
+            if (target.health.current as f32) < below * most {
+                target.health.heal(((heal * most).round() as u8).max(1));
+                target.praying.points = 0.0;
+                target.praying.on.clear();
+            }
         }
         target.changed(traits::HEALTH);
         Some(damage as u16)
@@ -659,13 +675,19 @@ impl Server {
         let calm = self.villager_struck(id, player);
         let creature = self.creatures.live.get(&id)?;
         let species = self.content.creatures.get(creature.species);
-        let attack = self.level(player, weapon.skill);
+        // Accuracy and Strength boosts (prayers) raise the level a hit is rolled with and
+        // the max hit.
+        let on = self.players.get(&player).map_or(&[][..], |p| &p.praying.on[..]);
+        let book = &self.content.prayers;
+        let (accurate, strong) = (1.0 + book.boost(on, voxmar_engine::prayer::Stat::Accuracy), 1.0 + book.boost(on, voxmar_engine::prayer::Stat::Strength));
+        let level = self.level(player, weapon.skill);
         let sunder = self.fights.sunder(id);
         let defence = voxmar_engine::combat::defence_against(species.def.defence, species.def.weak, weapon.style);
         let [hit, amount] = combat_roll(self.tick, id, player as u64 ^ 0x5717);
         // Shares of a level or a max hit round by chance, so a small one still counts.
         let defence = voxmar_engine::combat::by_chance(defence as f32 * (1.0 - sunder), unit_from(mix(hit.to_bits() as u64, 0x5d)))
             .min(u8::MAX as u16) as u8;
+        let attack = voxmar_engine::combat::by_chance(level as f32 * accurate, unit_from(mix(hit.to_bits() as u64, 0xacc))).min(u8::MAX as u16) as u8;
         if !stroke.certain && hit >= voxmar_engine::combat::hit_chance_with(attack, weapon.accuracy, defence, 0, stroke.accuracy) {
             let creature = self.creatures.live.get_mut(&id).expect("checked above");
             if !calm {
@@ -674,7 +696,8 @@ impl Server {
             self.struck(player, id, 0, false, stroke.blow);
             return Some(0);
         }
-        let max_hit = stroke.max_hit(weapon.max_hit(attack), unit_from(mix(amount.to_bits() as u64, 0x3a7)));
+        let max_hit = voxmar_engine::combat::by_chance(weapon.max_hit(level) as f32 * strong, unit_from(mix(amount.to_bits() as u64, 0x57e)));
+        let max_hit = stroke.max_hit(max_hit, unit_from(mix(amount.to_bits() as u64, 0x3a7)));
         let full = (1 + (amount * max_hit as f32) as u16).min(max_hit);
         // A blow struck sooner than the buffer lands lighter (`combat`).
         let damage = voxmar_engine::combat::scaled(full, stroke.strength, unit_from(mix(amount.to_bits() as u64, 0x5e1f)));

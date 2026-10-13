@@ -25,6 +25,8 @@ struct Client {
     skills: voxmar_engine::skill::Skills,
     /// Experience earned, in tenths, in the order it was.
     earned: Vec<u32>,
+    /// Prayer points, the most, and the prayers on, as last told.
+    prayers: Option<(u16, u16, Vec<voxmar_engine::prayer::PrayerId>)>,
     world: VoxelWorld,
     position: Vec3,
     admin: bool,
@@ -138,6 +140,7 @@ impl Client {
             collected: Vec::new(),
             skills: Default::default(),
             earned: Vec::new(),
+            prayers: None,
             world: VoxelWorld::default(),
             position: Vec3::ZERO,
             admin: false,
@@ -249,6 +252,7 @@ impl Client {
                 self.skills = skills;
             }
             ServerMessage::Xp { tenths, .. } => self.earned.push(tenths),
+            ServerMessage::Prayers { points, most, on } => self.prayers = Some((points, most, on)),
             ServerMessage::Weather { weather, quick, .. } => {
                 self.weather = Some(weather);
                 self.quick = quick;
@@ -1593,6 +1597,67 @@ fn a_player_rejoining_in_another_case_keeps_their_animals_and_their_drops() {
     assert!(carried(&client) >= 47, "a player back as BOB could not gather what Bob dropped: {rest:?}");
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
+    use voxmar_engine::combat::Defended;
+    let mut client = Client::join();
+    let book = client.content.prayers.clone();
+    let [ward, keepsake] = ["base:ward_melee", "base:keepsake"].map(|n| book.id(n).unwrap());
+    client.ok("/gamemode survival");
+    client.ok("/skill hitpoints 60");
+    // Below a prayer's Magic level it stays off.
+    client.ok("/skill magic 45");
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.1 == 55));
+    client.connection.send(ClientMessage::Pray { prayer: ward, on: true });
+    client.wait_server(1);
+    assert!(client.prayers.as_ref().unwrap().2.is_empty(), "Ward Melee is Magic 46");
+    // Points are 10 and one a Magic level, full for a new player.
+    client.ok("/skill magic 46");
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.1 == 56));
+    let (id, slot) = beside_a_bear(&mut client);
+    client.connection.send(ClientMessage::Pray { prayer: ward, on: true });
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.2 == vec![ward]));
+    // A ward stops 80% of a creature's blow in its styles: a bear's 2 to 4 comes to 1 at
+    // most.
+    for _ in 0..3 {
+        let before = provoke_until_it_winds_up(&mut client, id, slot, "bear");
+        client.pump_until(|c| c.hurt.len() > before);
+        let (damage, defended) = client.hurt[before];
+        assert!(defended != Defended::Hit || damage <= 1, "a warded bear's blow did {damage}");
+    }
+    // Ward Melee drains 24 a minute: some are gone.
+    let (points, most, _) = client.prayers.clone().unwrap();
+    assert!(points < most, "{points} of {most} after a fight warded");
+    // Off; at an altar they come back in full, and a bone in hand is offered for Magic
+    // experience (16 a bone).
+    client.connection.send(ClientMessage::Pray { prayer: ward, on: false });
+    client.ok("/creatures kill");
+    let altar = client.position.floor().as_ivec3() + IVec3::new(0, 0, 2);
+    client.ok("/setblock ~ ~ ~2 stone_altar");
+    client.ok("/give bone 1");
+    let bone = client.content.blocks.expect("base:bone");
+    client.pump_until(|c| c.world.block(altar) == c.content.blocks.id("base:stone_altar") && c.inventory.slots.iter().flatten().any(|s| s.item == bone));
+    let bone_slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == bone)).expect("the bone in the hotbar");
+    let yaw = yaw_toward(client.position, altar.as_vec3() + 0.5);
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.3, selected_slot: bone_slot as u8, flying: false }));
+    client.wait_server(1);
+    let earned = client.earned.len();
+    client.propose("base:pray", ActionTarget::Block { block: altar, face: Face::NegZ });
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.0 == p.1) && c.earned.len() > earned);
+    assert!(client.earned[earned..].contains(&160), "a bone offered: {:?}", &client.earned[earned..]);
+    // Keepsake keeps a fourth thing through death.
+    client.connection.send(ClientMessage::Pray { prayer: keepsake, on: true });
+    for line in ["/clear", "/give iron_pickaxe 1", "/give iron_ingot 5", "/give dirt 30"] {
+        client.ok(line);
+    }
+    let carried = |c: &Client| c.inventory.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| carried(c) == 36 && c.prayers.as_ref().is_some_and(|p| p.2 == vec![keepsake]));
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0 && carried(c) == 4);
+    // Death puts every prayer out.
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.2.is_empty()));
 }
 
 #[test]
@@ -3190,7 +3255,14 @@ fn a_guard_and_a_dodge_count_from_when_the_player_saw_the_wind_up() {
         let dodge = combat.dodge_of(&client.inventory.worn).clone();
         // Answers the bear's next blow `after` seconds after its wind-up is seen to begin,
         // answering pings meanwhile; returns what came of it.
+        // The pokes that provoke it, and the counter, are sword blows, and a slow machine
+        // takes more of them: each try has a bear of its own, at full health.
         let answer = |client: &mut Client, after: f32, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| -> Defended {
+            client.ok("/creatures kill brown_bear");
+            client.pump_until(|c| c.creatures.values().all(|v| v.species != bear));
+            client.ok("/summon brown_bear 1 ~ ~ ~");
+            client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
+            let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).expect("summoned");
             let before = provoke_until_it_winds_up(client, id, slot, "bear");
             let seen = Instant::now();
             client.pump_until(|_| seen.elapsed().as_secs_f32() >= after);

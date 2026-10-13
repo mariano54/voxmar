@@ -383,6 +383,7 @@ impl Server {
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
                 (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
                 (Effect::PickLock, ActionTarget::Block { block, .. }) => self.pick_lock(agent, block),
+                (Effect::Pray, ActionTarget::Block { .. }) => self.pray_at_altar(agent),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => {
                     let player = self.players.get_mut(&agent).unwrap();
                     player.bed = Some(block.as_vec3() + Vec3::new(0.5, 1.0, 0.5));

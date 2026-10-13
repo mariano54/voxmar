@@ -38,19 +38,30 @@ pub struct Value {
 
 /// What a player keeps through death (Mariano, 2026-10-06): the `kept` units worth most,
 /// `warded` with a grave-ward amulet (kept besides); the rest lies `grave` seconds where
-/// they fell, `warded_grave` with the amulet.
+/// they fell, `warded_grave` with the amulet. A prayer that keeps more (Keepsake) never
+/// takes it past `most` (design d86: it doesn't stack with the amulet).
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Death {
     pub kept: u8,
     pub warded: u8,
+    pub most: u8,
     pub grave: f32,
     pub warded_grave: f32,
 }
 
 impl Default for Death {
     fn default() -> Self {
-        Self { kept: 3, warded: 4, grave: 1800.0, warded_grave: 3600.0 }
+        Self { kept: 3, warded: 4, most: 4, grave: 1800.0, warded_grave: 3600.0 }
+    }
+}
+
+impl Death {
+    /// How many units death keeps (besides an amulet): `kept`, or `warded` with one, and
+    /// `more` from prayers, never past `most`.
+    pub fn keeps(&self, warded: bool, more: u8) -> u8 {
+        let base = if warded { self.warded } else { self.kept };
+        base.saturating_add(more).min(self.most.max(base))
     }
 }
 
@@ -111,6 +122,16 @@ impl Value {
             value.death = file.death.unwrap_or(value.death);
         }
         value
+    }
+
+    /// Refuses numbers that cannot hold together: death's `most` under what it keeps
+    /// without prayers.
+    pub fn check(&self) -> Result<(), crate::block::RegistryError> {
+        let d = self.death;
+        if d.most < d.kept || d.most < d.warded {
+            return Err(crate::block::RegistryError(format!("value.ron: death keeps at most {} but {} without prayers ({} with the amulet)", d.most, d.kept, d.warded)));
+        }
+        Ok(())
     }
 
     /// Coins for one of a thing of `level` and `rarity`.
@@ -221,5 +242,16 @@ mod tests {
         for item in (0..content.blocks.len() as u16).map(BlockId) {
             assert!(worth_in(&content, item, &mut known) >= 1);
         }
+    }
+
+    #[test]
+    fn a_keepsake_keeps_one_more_but_never_past_most_with_the_amulet() {
+        // Design d86: the amulet and the Keepsake prayer don't stack; four kept at most.
+        let death = Value::default().death;
+        assert_eq!([death.keeps(false, 0), death.keeps(false, 1), death.keeps(true, 0), death.keeps(true, 1)], [3, 4, 4, 4]);
+        let most = |source: &str| Value::merge(vec![Value::read("t", source).unwrap()]).check();
+        assert!(most("(death: (most: 3))").is_err(), "under what the amulet keeps");
+        assert!(most("(death: (most: 5))").is_ok());
+        assert_eq!(Value::merge(vec![Value::read("t", "(death: (most: 5))").unwrap()]).death.keeps(true, 1), 5);
     }
 }

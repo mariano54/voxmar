@@ -1,9 +1,9 @@
 //! How fights feel on this side (`voxmar_engine::combat`; the server's `fight` decides what
 //! lands): the swing rhythm this side keeps for the cooldown meter, the guard held up with
-//! the right button, the dodge's dash, and what the server said of blows lately, for
-//! hitsplats.
+//! the right button, the dodge's dash, what the server said of blows lately, for
+//! hitsplats, and the prayer points and prayers on, which quick keys turn on and off.
 //!
-//! The meter, pips and hitsplats are drawn by the interface from [`Fighting`].
+//! The meter, pips, hitsplats and prayers are drawn by the interface from [`Fighting`].
 
 use bevy::prelude::*;
 use voxmar_engine::combat::{Blow, Click, Defended, Rhythm, Timing};
@@ -49,6 +49,16 @@ pub struct Fighting {
     held: Option<voxmar_engine::block::BlockId>,
     /// When the player and each creature last traded blows, either way (app seconds).
     fought: std::collections::HashMap<u32, f64>,
+    /// Prayer points and the prayers on, as the server last said (`voxmar_engine::prayer`).
+    pub prayers: Prayers,
+}
+
+/// A player's prayer points (whole, of the most they have) and the prayers they have on.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Prayers {
+    pub points: u16,
+    pub most: u16,
+    pub on: Vec<voxmar_engine::prayer::PrayerId>,
 }
 
 impl Fighting {
@@ -147,5 +157,20 @@ pub fn guard(
             fighting.rhythm.cancel(now, &timing, &combat.feel);
         }
         net.guard(up);
+    }
+}
+
+/// A quick prayer's key turns its prayer on, or off if the server has it on. The server
+/// decides: a prayer above the player's Magic level, or with no points left, stays off.
+pub fn quick_prayers(keys: Res<ButtonInput<KeyCode>>, settings: Res<crate::settings::Settings>, ui: Res<UiState>, launch: Res<Launch>, net: Res<Net>, player: Res<LocalPlayer>, fighting: Res<Fighting>) {
+    if !ui.cursor_locked || player.dead || !player.joined {
+        return;
+    }
+    for (key, name) in settings.prayer_keys.iter().zip(&settings.quick_prayers) {
+        if keys.just_pressed(key.0)
+            && let Some(prayer) = launch.content.prayers.id(name)
+        {
+            net.pray(prayer, !fighting.prayers.on.contains(&prayer));
+        }
     }
 }
