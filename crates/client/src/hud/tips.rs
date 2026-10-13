@@ -37,7 +37,7 @@ const APART: f32 = 90.0;
 const WIDTH: f32 = 150.0 * PX;
 
 /// Every tip, by name: its words are `tip.<name>`.
-pub const TIPS: [&str; 10] = ["inventory", "recipes", "character", "effect", "seed", "food", "creature", "level", "table", "catalogue"];
+pub const TIPS: [&str; 11] = ["quests", "inventory", "recipes", "character", "effect", "seed", "food", "creature", "level", "table", "catalogue"];
 
 /// The tip showing, since when and whether its moment still lasts; when the last went; and
 /// each mechanic's moment as last seen, to tell when one begins.
@@ -110,7 +110,9 @@ fn notice(
     if player.skills_known {
         tips.levels = Some(levels);
     }
-    let met: [(&'static str, bool); 10] = [
+    let met: [(&'static str, bool); 11] = [
+        // The first thing a new player needs: where the quests are. It lasts until the book opens.
+        ("quests", player.skills_known && !ui.quests_open),
         ("inventory", ui.inventory_open),
         ("recipes", ui.inventory_open && hovered.0.is_some()),
         ("character", ui.character_open),
@@ -193,8 +195,8 @@ fn show_tip(
 }
 
 /// The keys a tip may name (`{character}` in its words), as bound.
-fn bound_keys(settings: &Settings) -> [(&'static str, crate::keys::Key); 3] {
-    [("character", settings.character_key), ("recipes", settings.recipes_key), ("uses", settings.uses_key)]
+fn bound_keys(settings: &Settings) -> [(&'static str, crate::keys::Key); 4] {
+    [("character", settings.character_key), ("recipes", settings.recipes_key), ("uses", settings.uses_key), ("quests", settings.quests_key)]
 }
 
 #[cfg(test)]

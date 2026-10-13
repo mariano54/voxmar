@@ -480,6 +480,7 @@
     "tip.level": "A skill went up. Press {character} to see what it opened.",
     "tip.table": "A crafting table gives a three by three grid.",
     "tip.catalogue": "Creative mode: every item is on the right. Search, then click to take.",
+    "tip.quests": "Press {quests} for the quest book: it shows what to do next. Pin quests to follow them here.",
     "guide.needs": "You need",
     "guide.how": "How",
     "guide.gives": "You get",
