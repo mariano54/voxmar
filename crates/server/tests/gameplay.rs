@@ -1560,18 +1560,28 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(0).is_some_and(|s| s.item == c.content.blocks.expect("base:fishing_rod")));
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
+    let miss = client.content.english.render(&voxmar_engine::lang::Words::key("fishing.nothing"), &client.content.blocks);
+    let nothing = |c: &Client| c.chat.iter().any(|(_, text)| *text == miss);
     // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
-    // A cast takes five seconds of the clock (`actions.ron`), and a busy machine takes longer
-    // to bring the catch: waiting just past five seconds cancelled every cast with the next
-    // one (a miss streak of six, on 5.6 s a cast, in one run in a dozen), so each is waited out
-    // with room to spare, the wait ending at the catch.
+    // A cast takes five seconds of the clock (`actions.ron`), judged by when the player's
+    // messages arrive: each is proposed as if clicked at `at`, and a command stamped just
+    // past its time is handled after the cast is done, so the casts follow one another
+    // exactly, however busy the machine, without waiting the seconds out. Each ends in a
+    // fish or nothing before the next.
+    let mut at = Instant::now();
     for _ in 0..6 {
-        client.propose("base:fish", ActionTarget::Block { block: water, face: Face::PosY });
-        let up = Instant::now() + Duration::from_secs(15);
-        client.pump_until(|c| fish(c) || Instant::now() > up);
+        client.chat.clear();
+        client.propose_at("base:fish", ActionTarget::Block { block: water, face: Face::PosY }, at);
+        at += Duration::from_millis(5100);
+        client.connection.send_at(ClientMessage::Command { line: "/time".into() }, at);
+        client.pump_until(|c| fish(c) || nothing(c) || !c.refused.is_empty());
+        assert!(client.refused.is_empty(), "a cast was refused: {:?}", client.refused);
         if fish(&client) {
             break;
         }
+        // The catch is rolled by the tick it lands on: the next cast lands on another.
+        client.after_server_ticks(1);
+        at += Duration::from_millis(100);
     }
     assert!(fish(&client), "six casts at Fishing 80 caught nothing");
     client.pump_until(|c| !c.earned.is_empty());
