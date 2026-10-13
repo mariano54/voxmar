@@ -207,6 +207,10 @@ pub struct EventDef {
     /// where one of them is within its `reach`.
     #[serde(default)]
     pub seek: Vec<String>,
+    /// Where a `Gather` party that carries takes what it worked: block names and `tag:`
+    /// selectors. It comes only where one of them is within its `reach` as well.
+    #[serde(default)]
+    pub deliver: Vec<String>,
     /// Whether the party warns off a player who comes near, then turns on them.
     #[serde(default)]
     pub guard: Option<Guard>,
@@ -437,8 +441,28 @@ pub enum Script {
     /// Everyone who walks works: each goes to the nearest block the event `seek`s within
     /// `reach` blocks of where the party began (one each), stands at it `work` seconds
     /// (least and most), then the next, until the party has worked `visits` times, then
-    /// they go. A block that is gone (picked, cut) sends its worker to another.
-    Gather { reach: f32, work: (f32, f32), visits: u8 },
+    /// they go. A block that is gone (picked, cut) sends its worker to another. With
+    /// `carry`, each worker then takes what it worked to the nearest block the event
+    /// `deliver`s to (or back to where the party began) before the next.
+    Gather {
+        reach: f32,
+        work: (f32, f32),
+        visits: u8,
+        #[serde(default)]
+        carry: Option<Carry>,
+    },
+}
+
+/// What a `Gather` worker does with what it worked.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Carry {
+    /// Seconds spent setting it down (least and most).
+    pub set: (f32, f32),
+    /// Planted crops within this many blocks of where it is set down grow on by this many
+    /// stages (water poured on a field).
+    #[serde(default)]
+    pub tend: Option<(f32, u8)>,
 }
 
 /// What speakers of an event say and give.
@@ -585,6 +609,8 @@ pub struct Event {
     pub reveal: Vec<ResolvedReward>,
     /// The blocks a `Gather` party works at.
     pub seek: Vec<BlockId>,
+    /// The blocks a carrying `Gather` party takes its work to.
+    pub deliver: Vec<BlockId>,
     /// The skill whose level lets a player come nearer a startled party, and by how much a level.
     pub stalk: Option<(SkillId, f32)>,
 }
@@ -766,6 +792,7 @@ impl WanderRegistry {
             qualify(&mut event.name);
             event.cast.iter_mut().for_each(|g| qualify(&mut g.species));
             event.seek.iter_mut().for_each(qualify);
+            event.deliver.iter_mut().for_each(qualify);
             if let Some((skill, _)) = event.startle.as_mut().and_then(|s| s.stalk.as_mut())
                 && !skill.contains(':')
             {
@@ -908,8 +935,13 @@ impl WanderRegistry {
                 Script::Lure { keep, length, pace, patience, linger } if keep.0 < 3.0 || keep.0 > keep.1 || length < 40.0 || !(0.3..=2.0).contains(&pace) || patience < 20.0 || linger < 2.0 => {
                     return Err(error(format!("Lure needs keep of at least 3 (least <= most), a length of at least 40, a pace of 0.3 to 2, patience of 20 seconds and a linger of 2, not {keep:?}, {length}, {pace}, {patience}, {linger}")));
                 }
-                Script::Gather { reach, work, visits } if !(4.0..=32.0).contains(&reach) || work.0 < 2.0 || work.0 > work.1 || visits == 0 => {
+                Script::Gather { reach, work, visits, .. } if !(4.0..=32.0).contains(&reach) || work.0 < 2.0 || work.0 > work.1 || visits == 0 => {
                     return Err(error(format!("Gather needs a reach of 4 to 32, work of at least 2 seconds (least <= most) and a visit, not {reach}, {work:?}, {visits}")));
+                }
+                Script::Gather { carry: Some(Carry { set, tend }), .. }
+                    if set.0 < 1.0 || set.0 > set.1 || tend.is_some_and(|(near, stages)| !(1.0..=6.0).contains(&near) || !(1..=2).contains(&stages)) =>
+                {
+                    return Err(error(format!("Gather's carry needs a set of at least 1 second (least <= most), and tends 1 to 6 blocks by 1 or 2 stages, not {set:?}, {tend:?}")));
                 }
                 _ => {}
             }
@@ -931,6 +963,14 @@ impl WanderRegistry {
             let mut seek = Vec::new();
             for name in &def.seek {
                 seek.extend(selector(name, blocks).map_err(|why| error(format!("seek: {why}")))?.blocks(blocks));
+            }
+            let carries = matches!(def.script, Script::Gather { carry: Some(_), .. });
+            if !carries && !def.deliver.is_empty() {
+                return Err(error("only a `Gather` that carries `deliver`s".into()));
+            }
+            let mut deliver = Vec::new();
+            for name in &def.deliver {
+                deliver.extend(selector(name, blocks).map_err(|why| error(format!("deliver: {why}")))?.blocks(blocks));
             }
             if (chase || ambush || lure) && (def.guard.is_some() || def.startle.is_some()) {
                 return Err(error("a chase, an ambush or a lure does not `guard` or `startle`".into()));
@@ -1104,7 +1144,7 @@ impl WanderRegistry {
                 meetings.push(ResolvedMeeting { who: meeting.who, greet: meeting.greet.clone(), greets: meeting.greets, lines });
             }
             registry.by_name.insert(def.name.clone(), registry.events.len());
-            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, stalk });
+            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk });
         }
         Ok(registry)
     }

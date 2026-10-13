@@ -67,6 +67,12 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
     `visits` works between them, or with nothing left, they go. A block that is gone (the
     player picked it) sends its worker to another; one not reached in time is passed over.
     A gathering kind comes only where something it seeks is within `reach` of the spot.
+    With `carry: Some((set, tend))`, each worker then takes what it worked to the nearest
+    block the event `deliver`s to (or, delivering nowhere, back to where the party began,
+    its pile), sets it down for `set` seconds, and only then counts the work; with `tend:
+    Some((near, stages))`, planted crops within `near` blocks of where it is set down grow
+    on `stages` (water poured on a field). A kind that delivers comes only where something
+    it delivers to is within `reach` as well.
   The leader strides in 6-block steps and turns aside where the ground will not do; with no
   headway for six seconds it detours, and after four detours the party gives up and leaves.
 - **Stopping.** A party with a `halt` stops for a player who comes within `near` of its
@@ -80,7 +86,8 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   rewards (items, XP, an effect, healing, `Free`, `Anger`, `Leave`: the party gives up what it
   was about and goes, no grudge; `Point(selector, reach)`: tells the player which way, and
   about how far, the nearest block of that name or `tag:` lies within `reach` of the speaker,
-  true to the land, or that none is near; `Hand(group)`: hands one member of that group to
+  true to the land (a line that points is said only when something of the kind is near, so
+  a once-only line is not spent on nothing); `Hand(group)`: hands one member of that group to
   the player as if tamed (a calf sold), said only when there is one and the player has room
   for another kept animal; `Cook(station, most, keep)`: cooks what the line takes by the
   game's own recipes at that station (cooking.ron), never burnt, up to `most` of what is in
@@ -255,6 +262,30 @@ rewards) are each used by several kinds and the ones to come.
 | strikes one | scatter and will not talk | the sow fights, the piglets run | scatter |
 | is a skilled hunter | nothing | nothing | comes nearer unseen |
 
+## Batch 5 (implemented, six kinds): carrying and the crop ladder
+
+More of the Nomad and Farm ages: folk who carry their work somewhere, and traders whose
+goods follow a player's farming level. The new piece is `carry` on `Gather` (with
+`deliver` and `tend`), used by two kinds here and by the haulers to come; a `Point` line
+now waits until there is something to point to.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| woodcutters | Gather, carry | Woodcutters work the trees about a clearing, one each, and carry every load back to their pile. Eight logs buy four coins, once; an axe in a beginner's hand gets a word on felling (Construction below 10); they say where fruit trees grow, if any are near. |
+| water carriers | Gather, carry, tend | Farmers fill pails at the water and carry them to the nearest tilled field, to players with a home: the crops within a few blocks of where each pail is poured grow on a stage. Only where water and a field lie together. A beginner gets a farming tip; the hurt a drink. |
+| harvest family | March | A farming family with what they grew. Each crop buys the next a farmer can sow, once each and only at the level to sow it: six wheat buy rye seed at Farming 3, six rye buy carrots at 5, six carrots buy chickpeas at 7. A beginner with seed in hand learns to sow. |
+| charcoal burners | Camp | Burners camp by their mound, day or night. A dozen logs buy two charcoal, once; they say where coal shows at the surface (an ore sample) if any is near. |
+| wandering healer | March | An elder who mends the hurt once, and makes a salve of three herbs: Soothed, and a little Alchemy. |
+| story teller | Camp | Camps at dusk with listeners. The tale is of something strange and near, true to the land, once, and a listener leaves Focused. |
+
+| the player | woodcutters | water carriers | the traders |
+| --- | --- | --- | --- |
+| walks past | they halt if close, then work on | the same | they halt if close |
+| picks or cuts what they work | the worker moves to the next | n/a | n/a |
+| has a field near water | nothing | they water it: it grows | nothing |
+| holds what they want | logs buy coins, once | n/a | crops buy the next crop, by level |
+| strikes one | scatter and will not talk | the same | the same |
+
 ## Catalogue of 100
 
 Status: `done` is in a batch above, `next` is the second batch (ages 1 and 2: Nomad and Farm
@@ -279,16 +310,16 @@ are the mechanics later batches add, each used by several kinds.
 | 14 | goose girl | geese on a march to water | Herd | 2 | next |
 | 15 | berry pickers | see batch 4 | Forage | 1 | done |
 | 16 | fisher folk | see batch 4 | Gather | 1 | done |
-| 17 | woodcutters | two villagers fell a lone tree and haul the logs | Haul | 2 | next |
-| 18 | charcoal burners | a small camp with a smoking mound | Camp, Haul | 2 | next |
-| 19 | water carriers | villagers with yokes go from well to field | Haul | 2 | next |
-| 20 | harvest cart | a cart-pushing family in the farm age; swaps seeds | Haul | 2 | next |
+| 17 | woodcutters | see batch 5 | Carry | 2 | done |
+| 18 | charcoal burners | see batch 5 | Camp | 2 | done |
+| 19 | water carriers | see batch 5 | Carry | 2 | done |
+| 20 | harvest family | see batch 5 | | 2 | done |
 | 21 | herb gatherer | see batch 4 | Forage | 1 | done |
-| 22 | wandering healer | mends and sells a salve | | 1 | next |
+| 22 | wandering healer | see batch 5 | | 1 | done |
 | 23 | hermit | lives off the path; a riddle gives a recipe | Vigil | 1 | next |
 | 24 | travelling smith | repairs held tools for coin | Camp | 2 | next |
 | 25 | travelling cook | see batch 4 | Camp | 1 | done |
-| 26 | story teller | camps at dusk; players near get a journal page | Camp | 1 | next |
+| 26 | story teller | see batch 5 | Camp | 1 | done |
 | 27 | stray hound | see batch 2 | Roam | 1 | done |
 | 28 | deer herd | see batch 4 | Herd | 1 | done |
 | 29 | boar sounder | see batch 4 | Herd | 1 | done |
@@ -370,6 +401,7 @@ Each is a script or a role used by many kinds, so every kind stays a few lines o
 
 - **Herd**: members drift together in a loose circle with a shepherd; they flee as one.
 - **Forage / Gather**: done (batch 4): members work the blocks of a name or tag about them.
+- **Carry**: done (batch 5): a `Gather` worker takes each load to a pile or a field.
 - **Haul**: two members carry a load along a line; kill one and it drops the load.
 - **Escort**: the party follows the player toward a settlement; arriving pays out, losing
   them (distance, death) ends it.

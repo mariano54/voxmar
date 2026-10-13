@@ -195,6 +195,8 @@ struct Work {
     stand: Vec3,
     since: u64,
     until: Option<u64>,
+    /// Taking what was worked to `block`, where it is set down, not working it.
+    carrying: bool,
 }
 
 enum Plan {
@@ -404,6 +406,26 @@ impl Server {
         })
     }
 
+    /// Where a worker takes what it worked at `from`: beside the nearest of `deliver` to it
+    /// within `reach` of the party's `anchor`, or (with nothing to deliver to, or none
+    /// near) back to the anchor, where the party piles it.
+    fn drop_spot(&self, anchor: Vec3, from: IVec3, reach: f32, deliver: &[BlockId]) -> Work {
+        let to = (!deliver.is_empty())
+            .then(|| self.nearest_block(from.as_vec3(), reach * 2.0, deliver, 0.0, &[]))
+            .flatten()
+            .filter(|cell| flat(cell.as_vec3(), anchor) <= reach * 2.0)
+            .and_then(|cell| Some((cell, self.work_spot(cell)?)));
+        let (block, stand) = to.unwrap_or((anchor.floor().as_ivec3() - IVec3::Y, anchor));
+        Work { block, stand, since: self.tick, until: None, carrying: true }
+    }
+
+    /// What a `Point` from `from` names: the nearest of `want` within `reach`, past the few
+    /// blocks around (so the way is worth telling), or nearer only if there is nothing else.
+    fn point_at(&self, from: Vec3, want: &Want, reach: f32) -> Option<IVec3> {
+        let ids = want.blocks(&self.content.blocks);
+        self.nearest_block(from, reach, &ids, POINT_PAST, &[]).or_else(|| self.nearest_block(from, reach, &ids, 0.0, &[]))
+    }
+
     /// Makes creature `id` young, to grow up as kept young do.
     fn make_young(&mut self, id: u32) {
         let tick = self.tick;
@@ -442,7 +464,8 @@ impl Server {
             }
             // A gathering party comes only where there is something to gather.
             if let Script::Gather { reach, .. } = event.def.script
-                && self.nearest_block(spot.as_vec3(), reach, &event.seek, 0.0, &[]).is_none()
+                && (self.nearest_block(spot.as_vec3(), reach, &event.seek, 0.0, &[]).is_none()
+                    || !event.deliver.is_empty() && self.nearest_block(spot.as_vec3(), reach, &event.deliver, 0.0, &[]).is_none())
             {
                 continue;
             }
@@ -811,10 +834,7 @@ impl Server {
                 ResolvedReward::Point(ref want, reach) => {
                     let from = self.creatures.live.get(&source).map(|c| c.body.position).or_else(|| self.players.get(&player).map(|p| p.position));
                     let (Some(from), Some(p)) = (from, self.players.get(&player)) else { return };
-                    let ids = want.blocks(&self.content.blocks);
-                    // Past the few blocks around, so the way is worth telling; nearer only if nothing else.
-                    let found = self.nearest_block(from, reach, &ids, POINT_PAST, &[]).or_else(|| self.nearest_block(from, reach, &ids, 0.0, &[]));
-                    let text = match found {
+                    let text = match self.point_at(from, want, reach) {
                         Some(cell) => {
                             let to = xz(cell.as_vec3() + Vec3::splat(0.5)) - xz(from);
                             let far = ((to.length() / 10.0).round().max(1.0) * 10.0) as u32;
@@ -1505,7 +1525,7 @@ impl Server {
             }
         }
         // Gathering: each worker to its own block, to work it a while, then the next.
-        if let (Plan::Gather { anchor }, Script::Gather { reach, work, visits }) = (&inst.plan, script) {
+        if let (Plan::Gather { anchor }, Script::Gather { reach, work, visits, carry }) = (&inst.plan, script) {
             let anchor = *anchor;
             if inst.worked >= visits as u16 && !halted {
                 inst.plan = self.march_away(lead, nearest, heading, 0.9);
@@ -1524,25 +1544,41 @@ impl Server {
                         errands[i] = Some(errand(me, true, Pose::Idle, nearest, 1.0));
                         continue;
                     }
-                    if let Some(w) = inst.members[i].work {
+                    if let Some(w) = inst.members[i].work
+                        && w.carrying
+                    {
+                        // Set down where it goes (on time or not, it was carried).
+                        let late = w.until.is_none() && self.tick > w.since + ticks(2.0 * reach / 0.8 + 20.0);
+                        let done = w.until.is_some_and(|until| self.tick >= until);
+                        if late || done {
+                            inst.worked += 1;
+                            if let (true, Some((near, stages))) = (done, carry.and_then(|c| c.tend)) {
+                                self.grow_around(w.block.as_vec3() + Vec3::new(0.5, 1.0, 0.5), near, stages);
+                            }
+                            inst.members[i].work = None;
+                        }
+                    } else if let Some(w) = inst.members[i].work {
                         let gone = !self.block(w.block).is_some_and(|b| event.seek.contains(&b));
                         let late = w.until.is_none() && self.tick > w.since + ticks(reach / 0.8 + 20.0);
                         let done = w.until.is_some_and(|until| self.tick >= until);
                         if gone || late || done {
-                            if done && !gone {
-                                inst.worked += 1;
-                            }
                             if late {
                                 inst.skipped.push(w.block);
                             }
                             inst.members[i].work = None;
+                            if done && !gone {
+                                match carry {
+                                    Some(_) => inst.members[i].work = Some(self.drop_spot(anchor, w.block, reach, &event.deliver)),
+                                    None => inst.worked += 1,
+                                }
+                            }
                         }
                     }
                     if inst.members[i].work.is_none() {
                         while let Some(cell) = self.nearest_block(anchor, reach, &event.seek, 0.0, &taken) {
                             taken.push(cell);
                             if let Some(stand) = self.work_spot(cell) {
-                                inst.members[i].work = Some(Work { block: cell, stand, since: self.tick, until: None });
+                                inst.members[i].work = Some(Work { block: cell, stand, since: self.tick, until: None, carrying: false });
                                 break;
                             }
                             inst.skipped.push(cell);
@@ -1553,7 +1589,11 @@ impl Server {
                             let there = flat(me, w.stand) < 1.0;
                             if there && w.until.is_none() {
                                 let roll = unit_from(mix(inst.seed, self.tick ^ (i as u64) << 40));
-                                w.until = Some(self.tick + ticks(work.0 + roll * (work.1 - work.0)));
+                                let (least, most) = match carry {
+                                    Some(c) if w.carrying => c.set,
+                                    _ => work,
+                                };
+                                w.until = Some(self.tick + ticks(least + roll * (most - least)));
                             }
                             errand(w.stand, there, if there { Pose::Crouched } else { Pose::Idle }, Some(w.block.as_vec3() + Vec3::splat(0.5)), 1.0)
                         }
@@ -1613,6 +1653,8 @@ impl Server {
                 && line.gives.iter().all(|g| match g {
                     ResolvedReward::Hand(group) => can_hand(*group),
                     ResolvedReward::Cook(station, ..) => held.is_some_and(|h| self.content.cooking.for_item(h.item, std::slice::from_ref(station)).is_some()),
+                    // Where nothing of the kind is near, they have nothing to tell.
+                    ResolvedReward::Point(want, reach) => self.creatures.live.get(&id).is_some_and(|c| self.point_at(c.body.position, want, *reach).is_some()),
                     _ => true,
                 })
                 && line.wants.as_ref().is_none_or(|(want, count)| {
@@ -3011,5 +3053,214 @@ mod tests {
         let said = told(&client);
         let point = said.iter().find(|(key, _)| key == "wander.point").unwrap_or_else(|| panic!("roots pointed to: {said:?}"));
         assert!(point.1.iter().any(|(n, w)| n == "dir" && *w == Words::key("compass.east")));
+    }
+
+    /// The first block with `tag`.
+    fn tagged(server: &Server, tag: &str) -> BlockId {
+        server.content.blocks.tagged(tag).next().unwrap_or_else(|| panic!("a block tagged {tag}"))
+    }
+
+    /// Whether a speaker said the line `key`.
+    fn says(said: &[(String, Vec<(String, Words)>)], key: &str) -> bool {
+        said.iter().any(|(k, args)| k == "wander.said" && args.iter().any(|(n, w)| n == "text" && *w == Words::key(key)))
+    }
+
+    fn has_effect(server: &Server, name: &str) -> bool {
+        let effect = server.content.effects.find(name).unwrap();
+        server.players[&1].timed_effects.iter().any(|&(e, _)| e == effect)
+    }
+
+    /// Wheat sprouts on farmland at y 199 for each x of `xs` along z `z`; returns the sprout.
+    fn field(server: &mut Server, xs: std::ops::Range<i32>, z: i32) -> BlockId {
+        let seed = server.content.blocks.expect("base:wheat_seeds");
+        let wheat = server.content.crops.planted_by(seed).unwrap();
+        let sprout = server.content.crops.get(wheat).stages[0];
+        for x in xs {
+            place(server, "base:farmland", IVec3::new(x, 199, z));
+            server.world.set_block(IVec3::new(x, 200, z), sprout);
+            server.farm.schedule(IVec3::new(x, 200, z), crate::farm::Planted { crop: wheat, stage: 0, due: u64::MAX - 1, sown: true });
+        }
+        sprout
+    }
+
+    #[test]
+    fn water_carriers_come_only_where_water_and_a_field_lie_together() {
+        let mut server = fixture();
+        server.day = TICKS_PER_DAY as f64 * 3.4;
+        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        let carriers = event(&server, "water_carriers");
+        let spot = IVec3::new(150, 200, 128);
+        place(&mut server, "base:water", IVec3::new(160, 199, 128));
+        for seed in 0..300 {
+            assert_ne!(server.pick_event(1, spot, seed), Some(carriers), "water, but no field");
+        }
+        let deliver = server.content.wandering.get(carriers).deliver.clone();
+        field(&mut server, 140..142, 128);
+        assert_eq!(server.nearest_block(spot.as_vec3(), 24.0, &deliver, 0.0, &[]), Some(IVec3::new(141, 199, 128)));
+    }
+
+    #[test]
+    fn water_carriers_fill_at_the_water_and_the_field_they_water_grows() {
+        let mut server = fixture();
+        server.players.get_mut(&1).unwrap().position = Vec3::new(100.5, 200.0, 100.5);
+        for x in 150..156 {
+            for z in 124..132 {
+                place(&mut server, "base:water", IVec3::new(x, 199, z));
+            }
+        }
+        let sprout = field(&mut server, 132..136, 128);
+        let id = start(&mut server, "water_carriers", (142, 128));
+        assert!(
+            run_until(&mut server, id, 90, |i| i.members.iter().any(|m| m.work.is_some_and(|w| w.carrying))),
+            "a carrier fills at the water and sets off"
+        );
+        let to = server.wandering.active[&id].members.iter().find_map(|m| m.work.filter(|w| w.carrying)).unwrap();
+        assert!((131..=136).contains(&to.block.x) && to.block.z == 128, "to the field: {:?}", to.block);
+        assert!(run_until(&mut server, id, 90, |i| i.worked >= 1), "and sets it down there");
+        let grown = (132..136).filter(|&x| server.block(IVec3::new(x, 200, 128)) != Some(sprout)).count();
+        assert!(grown > 0, "the watered crops grow on a stage");
+    }
+
+    #[test]
+    fn woodcutters_carry_each_load_back_to_their_pile() {
+        let mut server = fixture();
+        server.players.get_mut(&1).unwrap().position = Vec3::new(100.5, 200.0, 100.5);
+        for y in 200..204 {
+            place(&mut server, "base:oak_log", IVec3::new(146, y, 128));
+        }
+        let id = start(&mut server, "woodcutters", (134, 128));
+        let Plan::Gather { anchor } = server.wandering.active[&id].plan else { panic!("gathering") };
+        assert!(run_until(&mut server, id, 90, |i| i.members.iter().any(|m| m.work.is_some_and(|w| w.carrying))), "a load is cut");
+        let load = server.wandering.active[&id].members.iter().find_map(|m| m.work.filter(|w| w.carrying)).unwrap();
+        assert!(flat(load.stand, anchor) < 1.0, "carried back to the pile where they began");
+        assert_eq!(server.wandering.active[&id].worked, 0, "counted only once set down");
+        assert!(run_until(&mut server, id, 60, |i| i.worked >= 1));
+    }
+
+    #[test]
+    fn woodcutters_buy_logs_once_teach_the_axe_and_point_to_fruit_trees() {
+        let mut server = fixture();
+        place(&mut server, "base:oak_log", IVec3::new(112, 200, 128));
+        let id = start(&mut server, "woodcutters", (110, 128));
+        let cutter = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:oak_log", 10);
+        assert!(server.meet(1, cutter));
+        assert_eq!((count_of(&server, "base:oak_log"), count_of(&server, "base:gold_coin")), (2, 4));
+        give_held(&mut server, "base:oak_log", 10);
+        assert!(server.meet(1, cutter));
+        assert_eq!(count_of(&server, "base:oak_log"), 10, "once to each player");
+        let construction = server.content.skills.id("core:construction").unwrap();
+        give_held(&mut server, "base:stone_axe", 1);
+        assert!(server.meet(1, cutter));
+        assert!(server.players[&1].skills.xp(construction) > 0, "a word on felling");
+        // With no fruit tree near, they have nothing to tell of it.
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, cutter));
+        assert!(!says(&told(&client), "wander.base.woodcutters.fruit"), "nothing near, nothing said");
+        let at = server.creatures.live[&cutter].body.position;
+        let leaves = tagged(&server, "fruit_leaves");
+        server.world.set_block(IVec3::new(at.x as i32 + 40, 205, at.z as i32), leaves);
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, cutter));
+        let said = told(&client);
+        assert!(says(&said, "wander.base.woodcutters.fruit"), "{said:?}");
+        let point = said.iter().find(|(key, _)| key == "wander.point").unwrap_or_else(|| panic!("fruit trees pointed to: {said:?}"));
+        assert!(point.1.iter().any(|(n, w)| n == "dir" && *w == Words::key("compass.east")));
+    }
+
+    #[test]
+    fn the_harvest_family_trades_the_next_crop_up_by_farming_level() {
+        let mut server = fixture();
+        let id = start(&mut server, "harvest_family", (110, 128));
+        let farmer = members_of(&server, id, 0)[0];
+        skill_to(&mut server, "core:farming", 2);
+        give_held(&mut server, "base:wheat", 6);
+        assert!(server.meet(1, farmer));
+        assert_eq!(count_of(&server, "base:wheat"), 6, "rye only for a farmer who can sow it (3)");
+        skill_to(&mut server, "core:farming", 3);
+        assert!(server.meet(1, farmer));
+        assert_eq!(count_of(&server, "base:wheat"), 0);
+        assert!((2..=3).contains(&count_of(&server, "base:rye")));
+        give_held(&mut server, "base:wheat", 6);
+        assert!(server.meet(1, farmer));
+        assert_eq!(count_of(&server, "base:wheat"), 6, "once");
+        // Rye is not yet carrots below Farming 5.
+        give_held(&mut server, "base:rye", 6);
+        assert!(server.meet(1, farmer));
+        assert_eq!(count_of(&server, "base:rye"), 6);
+        skill_to(&mut server, "core:farming", 5);
+        assert!(server.meet(1, farmer));
+        assert!((2..=3).contains(&count_of(&server, "base:carrot")));
+        // A beginner with seed in hand learns to sow.
+        let mut server = fixture();
+        let id = start(&mut server, "harvest_family", (110, 128));
+        let farmer = members_of(&server, id, 0)[0];
+        let farming = server.content.skills.id("core:farming").unwrap();
+        give_held(&mut server, "base:wheat_seeds", 2);
+        assert!(server.meet(1, farmer));
+        assert!(server.players[&1].skills.xp(farming) > 0);
+        assert_eq!(count_of(&server, "base:wheat_seeds"), 2, "shown, not taken");
+    }
+
+    #[test]
+    fn charcoal_burners_burn_a_dozen_logs_once_and_point_to_coal() {
+        let mut server = fixture();
+        let id = start(&mut server, "charcoal_burners", (110, 128));
+        let burner = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:oak_log", 12);
+        assert!(server.meet(1, burner));
+        assert_eq!((count_of(&server, "base:oak_log"), count_of(&server, "base:charcoal")), (0, 2));
+        give_held(&mut server, "base:oak_log", 12);
+        assert!(server.meet(1, burner));
+        assert_eq!(count_of(&server, "base:oak_log"), 12, "once");
+        let at = server.creatures.live[&burner].body.position;
+        place(&mut server, "base:coal_ore_sample", IVec3::new(at.x as i32, 200, at.z as i32 + 50));
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, burner));
+        let said = told(&client);
+        let point = said.iter().find(|(key, _)| key == "wander.point").unwrap_or_else(|| panic!("coal pointed to: {said:?}"));
+        assert!(point.1.iter().any(|(n, w)| n == "dir" && *w == Words::key("compass.south")));
+        assert!(point.1.iter().any(|(n, w)| n == "thing" && *w == Words::Block("base:coal_ore_sample".into())));
+    }
+
+    #[test]
+    fn the_healer_mends_the_hurt_and_three_herbs_buy_a_salve() {
+        let mut server = fixture();
+        let id = start(&mut server, "wandering_healer", (110, 128));
+        let healer = members_of(&server, id, 0)[0];
+        let max = server.players[&1].health.max;
+        server.players.get_mut(&1).unwrap().health.current = max - 8;
+        assert!(server.meet(1, healer));
+        assert_eq!(server.players[&1].health.current, max, "mended");
+        let herb = tagged(&server, "herb");
+        let name = server.content.blocks.def(herb).name.clone();
+        give_held(&mut server, &name, 3);
+        assert!(server.meet(1, healer));
+        assert_eq!(count_of(&server, &name), 0);
+        assert!(has_effect(&server, "soothed"), "a salve soothes");
+        let alchemy = server.content.skills.id("core:alchemy").unwrap();
+        assert!(server.players[&1].skills.xp(alchemy) > 0);
+    }
+
+    #[test]
+    fn the_story_teller_tells_of_something_strange_and_near_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "story_teller", (110, 128));
+        let teller = members_of(&server, id, 0)[0];
+        let at = server.creatures.live[&teller].body.position;
+        let strange = tagged(&server, "supernatural");
+        server.world.set_block(IVec3::new(at.x as i32 - 60, 200, at.z as i32), strange);
+        let client = listen(&mut server);
+        assert!(server.meet(1, teller));
+        let said = told(&client);
+        assert!(says(&said, "wander.base.story_teller.tale"), "{said:?}");
+        let point = said.iter().find(|(key, _)| key == "wander.point").unwrap_or_else(|| panic!("pointed to: {said:?}"));
+        assert!(point.1.iter().any(|(n, w)| n == "dir" && *w == Words::key("compass.west")));
+        assert!(has_effect(&server, "focused"));
+        assert!(server.meet(1, teller));
+        assert!(told(&client).iter().all(|(key, _)| key != "wander.point"), "once");
     }
 }

@@ -428,5 +428,96 @@
                 (name: "green", needs: [Below("hunter", 12)]),
             ])],
         ),
+        // Batch 5 (docs/wandering.md): carrying, and the farm age's ladder of crops.
+        // Woodcutters work the trees about a clearing and carry each load back to their
+        // pile. They buy logs once, cheap; they tell where fruit trees grow; an axe in a
+        // beginner's hand gets a word on felling.
+        (
+            name: "woodcutters", weight: 0.6,
+            biomes: [("tag:forest", 1.2), ("tag:forest_edge", 1.0), ("tag:open", 0.3)],
+            daylight: (0.25, 0.85), needs: (days: 0.8),
+            cast: [(species: "woodcutter"), (species: "woodcutter", count: (0, 1), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
+            script: Gather(reach: 20.0, work: (10.0, 18.0), visits: 6, carry: Some((set: (2.0, 4.0)))),
+            seek: ["tag:log"],
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "buy", wants: ("tag:log", 8), gives: [Item("gold_coin", (4, 4))], once: Player),
+                (name: "axe", needs: [Holds("axe"), Below("construction", 10)], gives: [Xp("construction", 10.0)], once: Player),
+                (name: "fruit", gives: [Point("tag:fruit_leaves", 128.0)], once: Player),
+            ])],
+        ),
+        // Water carriers fill pails at the water and carry them to the nearest field, to a
+        // player with a home: the crops they water grow on a stage. Only where there is
+        // water and tilled land together.
+        (
+            name: "water_carriers", weight: 0.8,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:river", 1.0), ("tag:forest", 0.4)],
+            daylight: (0.2, 0.85), needs: (days: 1.0, home: true),
+            cast: [(species: "farmer"), (species: "farmer", count: (0, 1), role: Follow), (species: "child", count: (0, 1), role: Follow)],
+            script: Gather(reach: 24.0, work: (3.0, 6.0), visits: 8, carry: Some((set: (3.0, 5.0), tend: Some((2.5, 1))))),
+            seek: ["water"],
+            deliver: ["farmland"],
+            halt: (near: 6.0, seconds: (10.0, 18.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "tip", needs: [Below("farming", 8)], gives: [Xp("farming", 8.0)], once: Player),
+                (name: "drink", needs: [Hurt], gives: [Heal(4)], once: Player),
+            ])],
+        ),
+        // A farming family on the move with what they grew. Each crop they carry is the next
+        // a farmer can sow: wheat buys rye seed at Farming 3, rye buys carrots at 5, carrots
+        // buy chickpeas at 7, once each; a beginner with seed in hand learns to sow.
+        (
+            name: "harvest_family", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:steppe", 0.6)],
+            daylight: (0.3, 0.85), needs: (days: 1.2, home: true),
+            cast: [(species: "farmer"), (species: "farmer", count: (0, 1), role: Follow), (species: "child", count: (1, 2), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
+            script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.75),
+            halt: (near: 6.0, seconds: (14.0, 24.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "chickpea", needs: [Skill("farming", 7)], wants: ("carrot", 6), gives: [Item("chickpea", (2, 3))], once: Player),
+                (name: "carrot", needs: [Skill("farming", 5)], wants: ("rye", 6), gives: [Item("carrot", (2, 3))], once: Player),
+                (name: "rye", needs: [Skill("farming", 3)], wants: ("wheat", 6), gives: [Item("rye", (2, 3))], once: Player),
+                (name: "sow", needs: [Below("farming", 6), Holds("seed")], gives: [Xp("farming", 8.0)], once: Player),
+            ])],
+        ),
+        // Charcoal burners camp by their smoking mound for a while. A dozen logs buy two
+        // charcoal, once; they say where coal shows at the surface (an ore sample).
+        (
+            name: "charcoal_burners", weight: 0.5,
+            biomes: [("tag:forest", 1.0), ("tag:forest_edge", 0.8), ("tag:mountain", 0.4)],
+            daylight: (0.0, 1.0), needs: (days: 1.5),
+            cast: [(species: "woodcutter"), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 24.0, stay: (300.0, 480.0), mill: 4.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "burn", wants: ("tag:log", 12), gives: [Item("charcoal", (2, 2))], once: Player),
+                (name: "coal", gives: [Point("coal_ore_sample", 128.0)], once: Player),
+            ])],
+        ),
+        // A wandering healer: mends the hurt once, and three herbs buy a salve (soothed)
+        // and a little Alchemy.
+        (
+            name: "wandering_healer", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:grassland", 0.8), ("tag:wetland", 0.6)],
+            daylight: (0.3, 1.0), needs: (days: 0.8, away: Some((40.0, 100000.0))),
+            cast: [(species: "elder"), (species: "villager", count: (0, 1), role: Follow)],
+            script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.7),
+            halt: (near: 6.0, seconds: (12.0, 22.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "mend", needs: [Hurt], gives: [Heal(10)], once: Player),
+                (name: "salve", wants: ("tag:herb", 3), gives: [Effect("soothed", 600.0), Xp("alchemy", 6.0)], once: Player),
+            ])],
+        ),
+        // A story teller camps at dusk with listeners. The tale is of something strange
+        // and near, true to the land (once), and a listener leaves focused.
+        (
+            name: "story_teller", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 0.8), ("tag:forest", 0.6)],
+            daylight: (0.05, 0.45), needs: (days: 1.0),
+            cast: [(species: "elder"), (species: "child", count: (1, 2), role: Follow), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 24.0, stay: (240.0, 360.0), mill: 3.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "tale", gives: [Point("tag:supernatural", 128.0), Effect("focused", 300.0)], once: Player),
+            ])],
+        ),
     ],
 )
