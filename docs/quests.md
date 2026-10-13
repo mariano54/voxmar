@@ -29,7 +29,8 @@ reward, shown first), tasks, after, rewards. Goals:
 | `Catch(fish, n)`, `Catch("Kinds", n)` | the journal's Fish page |
 | `Kill(creature, n)` | the journal's Animals and Monsters pages |
 | `Pick(plant, n)`, `Mine(ore, n)` | the journal's Plants and Ores pages |
-| `Visit(n)`, `Discover(page, n)` | how many entries the journal has |
+| `Visit(n)`, `Discover(page, n)` | how many entries the journal has (Animals and Monsters entries are only found from close up, see [journal.md](journal.md)) |
+| `Kinds(page, which, n)` | how many different entries of a page were done at least once (killed, caught, picked, mined; only seen does not count), among `any`, a `tag:TAG` or one name: Wild Harvest is `Kinds(Plants, "any", 5)` |
 | `Level(skill, n)` | the skill's level |
 | `Have(item, n)` | what the player carries, pouches too |
 | `Home` | a lit Homestead Hearth |

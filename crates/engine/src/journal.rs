@@ -105,12 +105,26 @@ pub struct PageRule {
     pub studied: Option<u32>,
     #[serde(default)]
     pub mastered: Option<u32>,
+    /// For a page of creatures: how near (blocks, eye to body) a player must come, with
+    /// nothing solid between, for one to count as found. None: found only by what is done
+    /// to it (a kill, a catch).
+    #[serde(default)]
+    pub seen_within: Option<f32>,
 }
 
 impl JournalRules {
     pub fn read(namespace: &str, source: &str) -> Result<JournalRules, RegistryError> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
-        options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/journal.ron: {e}")))
+        let rules: JournalRules = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/journal.ron: {e}")))?;
+        if let Some(rule) = rules.pages.iter().find(|r| r.seen_within.is_some_and(|d| !(d.is_finite() && d > 0.0 && d <= 64.0))) {
+            return Err(RegistryError(format!("{namespace}/journal.ron: {:?}'s seen_within must be more than 0 and at most 64 blocks", rule.page)));
+        }
+        Ok(rules)
+    }
+
+    /// How near a creature on `page` must be, in plain view, to be found (see `PageRule`).
+    pub fn seen_within(&self, page: Page) -> Option<f32> {
+        self.pages.iter().find(|r| r.page == page).and_then(|r| r.seen_within)
     }
 
     /// Several packages' rules (with their package's name): a later package's rule for a

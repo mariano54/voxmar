@@ -405,6 +405,8 @@
     "quest.goal.cook": "{item}を料理する",
     "quest.goal.catch": "{item}を釣る",
     "quest.goal.kinds": "釣った魚の種類",
+    "quest.goal.kinds_of": "{page}の種類",
+    "quest.goal.kinds_of_which": "{page}の種類（{item}）",
     "quest.goal.kill": "{creature}を倒す",
     "quest.goal.tame": "{creature}を手なずける",
     "quest.goal.pick": "{item}を採る",
