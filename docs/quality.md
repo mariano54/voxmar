@@ -157,6 +157,44 @@ The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loa
 - `VOXMAR_GATE_STALL=1` with `--server-lag 150` runs the session as a machine loaded far
   past its cores would: a new step should pass that way too.
 
+## Fast tests
+
+Fast tests are a standing rule: the suites run on every landing and every edit, so a slow
+test costs the whole project. Nothing is made fast by weakening it: no test is skipped,
+shrunk below what proves its claim or stripped of its negative side to save time.
+
+`tools/test-budget.toml` holds the numbers and `tools/test-times DIR` checks them against a
+run's output (`DIR/test-*.txt`, the test binaries run with `-Z unstable-options
+--report-time`, which needs `RUSTC_BOOTSTRAP=1` off nightly): a test may take
+`per_test_seconds` (5 now, measured while the gate runs every binary side by side, times how
+much busier than idle the machine is), the slowest test binary `suite_seconds`, and a test
+over its budget is listed in `[[allow]]` with its own `seconds` and the reason. It prints the
+slowest tests every time. It fails on a test over its budget, on a binary over the suite
+budget, and on an allowance the test no longer needs (it ran back under the default), so the
+list only shrinks as tests get cheaper. A new test over the default is made cheaper first;
+an entry is the last resort, with a reason a reader can check.
+
+How the tests are kept cheap:
+
+- Time in a test is work or waiting. Waiting is judged on the server's ticks, never on the
+  clock (no `sleep`, no wall-clock asserts; poll with `after_ticks` and `pump_until`). The
+  gameplay tests start their servers with `ServerConfig.tick_speedup` (20), so a wait of
+  twenty ticks takes a tick's worth of time; the hello limit and every tick-judged system
+  scale with it. What the server judges by the wall clock (combat, timed actions, the
+  movement hover grace, idle and chat limits: arrival stamps, `Connection::send_at`) cannot
+  speed up, and a test of one calls `real_time("why")` first to get a normal server. Such a
+  test is slow by nature until the server reads a clock the test can drive; each one is in
+  the allow-list under that reason.
+- The gameplay tests share one generated world per seed (`keep_world`), because planning the
+  spawn village costs more than a second the first time a world is asked where spawn is.
+  The settlements tests do the same for the tests that only read a world (`shared_world`);
+  a test that counts what a world plans, or compares a fresh world with another, builds its
+  own (`base_world`).
+- A loop that asks the generator for the same answer on every block asks once per column
+  and keeps it (`decorations_rest_on_the_ground` asked `height` 440 000 times).
+- The generator's own cost (a column 13 to 18 ms, `site()` 0.15 to 0.5 ms, a village a
+  second of planning) is most of what is left in the worldgen suite: that is where to win more.
+
 ## The FPS benchmark: `tools/bench fps`
 
 For optimising frame rate, and for anyone (Mariano included) who wants to know where it

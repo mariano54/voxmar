@@ -295,6 +295,27 @@ pub(super) fn base_world(seed: u64) -> Overworld {
     Overworld::new(seed, base_registry())
 }
 
+/// One world per seed for the whole test binary, for the tests that only read a world: a
+/// settlement's plan is made once however many tests look at it, and planning is most of
+/// what these tests cost. Tests that count what a world plans, or that compare a fresh
+/// world with another, use `base_world`.
+fn shared_world(seed: u64) -> std::sync::Arc<Overworld> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static WORLDS: Mutex<Vec<(u64, Arc<OnceLock<Arc<Overworld>>>)>> = Mutex::new(Vec::new());
+    let slot = {
+        let mut worlds = WORLDS.lock().unwrap();
+        match worlds.iter().find(|(s, _)| *s == seed) {
+            Some((_, slot)) => slot.clone(),
+            None => {
+                let slot = Arc::new(OnceLock::new());
+                worlds.push((seed, slot.clone()));
+                slot
+            }
+        }
+    };
+    slot.get_or_init(|| Arc::new(base_world(seed))).clone()
+}
+
 /// A settlement, its graded ground and its buildings are the same whichever column or
 /// square is asked for first, and on whichever thread.
 #[test]
@@ -331,7 +352,7 @@ fn settlements_stand_dry_with_open_doors() {
     let mut doors = 0;
     for seed in [1u64, 42] {
         let registry = base_registry();
-        let world = Overworld::new(seed, registry.clone());
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         // The settlements to look over: the squares round spawn hold a few.
         let found = world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000);
@@ -383,7 +404,7 @@ fn settlement_wells_hold_water_and_crops_are_everyday() {
     let mut failures = Vec::new();
     let (mut wells, mut planted) = (0, 0);
     for seed in [1u64, 42, 7] {
-        let world = Overworld::new(seed, registry.clone());
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000).iter().take(6) {
             let mut columns: rustc_hash::FxHashMap<ColumnPos, Column> = Default::default();
@@ -818,7 +839,7 @@ fn servers_on_one_world_share_its_planning() {
 /// サブイル; a consonant into a consonant, or a vowel into a vowel, joins as it is.
 #[test]
 fn japanese_names_join_as_they_are_said() {
-    let world = base_world(1);
+    let world = shared_world(1);
     let kana = &world.settlements.def.kana;
     let join = |a: (&str, &str), b: (&str, &str)| super::plan::join_kana(kana, &(a.0.into(), a.1.into()), &(b.0.into(), b.1.into()));
     assert_eq!(join(("Sab", "サブ"), ("ir", "イル")), "サビル");
@@ -842,7 +863,7 @@ fn plans_keep_to_their_squares_and_rules() {
     use super::house::Kind;
     let (mut squares, mut hamlets, mut villages, mut chapels, mut shrines) = (0, 0, 0, 0, 0);
     for seed in [1u64, 42] {
-        let world = base_world(seed);
+        let world = shared_world(seed);
         let def = &world.settlements.def;
         let spacing = def.grid.spacing;
         let land = world.land();
@@ -900,7 +921,7 @@ fn plans_keep_to_their_squares_and_rules() {
 #[test]
 fn settlements_are_unchanged() {
     const EXPECTED: u64 = 5509520930946309829;
-    let world = base_world(1);
+    let world = shared_world(1);
     let mut text = String::new();
     for cz in -3..3 {
         for cx in -3..3 {
@@ -1019,7 +1040,7 @@ fn lanes_keep_off_wells_and_centrepieces() {
     use super::house::Kind;
     let mut looked = 0;
     for seed in [1u64, 42, 7] {
-        let world = base_world(seed);
+        let world = shared_world(seed);
         for cz in -5..5 {
             for cx in -5..5 {
                 let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
@@ -1223,7 +1244,7 @@ fn slopes_never_bury_walls() {
     let mut failures = Vec::new();
     let mut looked = 0;
     for seed in [0u64, 1, 42, 7] {
-        let world = Overworld::new(seed, registry.clone());
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         let mut columns: rustc_hash::FxHashMap<ColumnPos, Column> = Default::default();
         for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000).iter().take(4) {
@@ -1283,7 +1304,7 @@ fn stair_candidates_keep_original_first_valid_paths() {
 fn every_storey_has_a_stair_up() {
     use super::def::{Extra, Form, Roof};
     use super::house::{self, Kind, Spec};
-    let world = base_world(1);
+    let world = shared_world(1);
     let def = &world.settlements.def;
     let mut flights = 0;
     for h in def.houses.iter().filter(|h| h.storeys.1 >= 2) {
@@ -1358,7 +1379,7 @@ fn every_settlement_is_joined_to_the_trails() {
     let mut failures = Vec::new();
     let mut joined = 0;
     for seed in [1u64, 42, 7] {
-        let world = base_world(seed);
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000).iter().take(3) {
             let centre = IVec2::new(s.centre.x, s.centre.z);
@@ -1392,7 +1413,7 @@ fn no_snow_falls_indoors() {
     let boxy = ["cottage", "long_house", "town_house", "farm_house", "hall", "tower_house", "wing_house"];
     let (mut failures, mut looked) = (Vec::new(), 0);
     'seeds: for seed in [1u64, 42, 7, 3, 11] {
-        let world = Overworld::new(seed, registry.clone());
+        let world = shared_world(seed);
         for cz in -4..4 {
             for cx in -4..4 {
                 let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
@@ -1618,7 +1639,7 @@ fn ripe_or_rare_fruit_is_refused() {
 /// smaller than one way's.
 #[test]
 fn people_numbers_that_would_not_play_are_refused() {
-    let world = base_world(1);
+    let world = shared_world(1);
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
@@ -1670,7 +1691,7 @@ fn settlements_are_peopled() {
     use super::people::{Place, is, place_at};
     let mut villages = 0;
     for seed in [1u64, 42, 7] {
-        let world = base_world(seed);
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         let people = world.settlement_people();
         for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000) {
@@ -1837,7 +1858,7 @@ fn trees_keep_off_roofs_and_walls() {
     let log = |b: BlockId| registry.def(b).has_tag("log") && registry.def(b).has_tag("natural");
     let (mut failures, mut roofs) = (Vec::new(), 0);
     for seed in [1u64, 42, 7] {
-        let world = base_world(seed);
+        let world = shared_world(seed);
         // Where a trunk may be rooted, less the block a thick trunk spreads to.
         let trunks = world.settlements.def.site.glade.0 - 1;
         let spawn = world.spawn_point();
@@ -1889,7 +1910,7 @@ fn near_settlements_have_names_of_their_own() {
     let mut clashes = Vec::new();
     let mut pairs = 0;
     for seed in [1u64, 42] {
-        let world = base_world(seed);
+        let world = shared_world(seed);
         let def = &world.settlements.def;
         let apart = def.rules.names_apart as f32;
         let bare = |name: &str| {
@@ -1918,7 +1939,7 @@ fn near_settlements_have_names_of_their_own() {
 /// stretch of squares wide enough that the same draws would clash many times over.
 #[test]
 fn naming_never_repeats_near() {
-    let world = base_world(1);
+    let world = shared_world(1);
     let def = &world.settlements.def;
     let (grid, apart) = (&def.grid, def.rules.names_apart as f32);
     // A quarter of the squares hamlets with small names, then every one: the small names
@@ -1966,7 +1987,7 @@ fn naming_never_repeats_near() {
 #[test]
 fn a_taken_name_only_when_the_list_has_no_other() {
     use super::plan::{NAME_OFFERS, offered_name, unique_name};
-    let world = base_world(1);
+    let world = shared_world(1);
     let mut def = world.settlements.def.clone();
     let mut list = def.cultures.families[0].names.clone();
     list.first = vec![("Ash".to_owned(), "アッシュ".to_owned())];

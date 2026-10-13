@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Test times and budgets. See docs/quality.md ("Fast tests").
+
+    tools/test-times DIR [--scale X] [--top N] [--quiet]
+        Reads the test output files the gate keeps (DIR/test-*.txt, run with
+        `-Z unstable-options --report-time`, so every line ends in its time), prints the
+        slowest tests and each test binary's time, and checks them against
+        tools/test-budget.toml: a test may take `per_test_seconds`, and one listed in
+        `[[allow]]` (`binary`, `tests`, `seconds`, `why`) its own `seconds`, for the reason given. Exits 1 when a test is over, when
+        the slowest binary is over `suite_seconds`, or when an allowance is not needed any
+        more (the test is back under the default, or gone): the list stays honest.
+        --scale X: how much slower than an idle machine this one is running (the gate passes
+        the load over the cores, at least 1), since a busy machine slows every test alike.
+
+Times come from the test harness, so they are wall-clock times: a test that waits is slow
+however little work it does, which is what these budgets are for.
+"""
+import glob
+import os
+import re
+import sys
+
+try:
+    import tomllib
+except ImportError:  # Python before 3.11 (the Mac's system one): the subset the budget file uses
+    tomllib = None
+
+BUDGET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test-budget.toml")
+LINE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)(?: <([0-9.]+)s>)?")
+DONE = re.compile(r"^test result: .* finished in ([0-9.]+)s")
+
+
+def binary_name(path):
+    """`test-gameplay-0123456789abcdef.txt` -> `gameplay`."""
+    name = os.path.basename(path)[len("test-"):-len(".txt")]
+    return re.sub(r"-[0-9a-f]{16}$", "", name)
+
+
+def read(directory):
+    tests, binaries = [], {}
+    for path in sorted(glob.glob(os.path.join(directory, "test-*.txt"))):
+        binary = binary_name(path)
+        with open(path, errors="replace") as file:
+            for line in file:
+                found = LINE.match(line)
+                if found and found.group(3) is not None:
+                    tests.append((float(found.group(3)), binary, found.group(1)))
+                done = DONE.match(line)
+                if done:
+                    binaries[binary] = binaries.get(binary, 0.0) + float(done.group(1))
+    return tests, binaries
+
+
+def parse_budget(text):
+    """The budget file's TOML: `key = number | "string"`, `[[allow]]` tables, and
+    `tests = [ "name", ... ]` lists, one string to a line."""
+    budget, table, listing = {"allow": []}, None, None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if listing is not None:
+            if line == "]":
+                listing = None
+            else:
+                listing.append(line.rstrip(",").strip('"'))
+        elif line == "[[allow]]":
+            table = {}
+            budget["allow"].append(table)
+        else:
+            key, value = (part.strip() for part in line.split("=", 1))
+            target = budget if table is None else table
+            if value == "[":
+                target[key] = listing = []
+            elif value.startswith('"'):
+                target[key] = value.strip('"')
+            else:
+                target[key] = float(value)
+    return budget
+
+
+def main(argv):
+    directory, scale, top, quiet = None, 1.0, 20, False
+    args = iter(argv)
+    for arg in args:
+        if arg == "--scale":
+            scale = max(1.0, float(next(args)))
+        elif arg == "--top":
+            top = int(next(args))
+        elif arg == "--quiet":
+            quiet = True
+        elif directory is None:
+            directory = arg
+        else:
+            sys.exit(__doc__)
+    if directory is None:
+        sys.exit(__doc__)
+    with open(BUDGET, "rb") as file:
+        budget = tomllib.load(file) if tomllib else parse_budget(file.read().decode())
+    per_test, suite = float(budget["per_test_seconds"]), float(budget["suite_seconds"])
+    allowed = {}
+    for entry in budget.get("allow", []):
+        if not entry.get("why") or float(entry["seconds"]) <= per_test:
+            sys.exit(f"{BUDGET}: the allowance for {entry.get('tests')} needs a reason (`why`) and more than {per_test} s")
+        for test in entry["tests"]:
+            if (entry["binary"], test) in allowed:
+                sys.exit(f"{BUDGET}: {test} is allowed twice")
+            allowed[(entry["binary"], test)] = entry
+
+    tests, binaries = read(directory)
+    if not tests:
+        sys.exit(f"test-times: no test times in {directory}/test-*.txt (were the tests run with --report-time?)")
+    tests.sort(reverse=True)
+    problems, seen = [], set()
+    for seconds, binary, name in tests:
+        entry = allowed.get((binary, name))
+        seen.add((binary, name))
+        limit = float(entry["seconds"]) if entry else per_test
+        if seconds > limit * scale:
+            what = f"allowed {limit:g} s" if entry else f"budget {limit:g} s"
+            problems.append(f"{seconds:6.1f} s  {binary} {name}: over its {what}" + (f" (x{scale:.1f} for this machine's load)" if scale > 1 else ""))
+    # An allowance the test no longer needs: it ran, and well under the default.
+    for (binary, name), entry in allowed.items():
+        ran = [s for s, b, n in tests if (b, n) == (binary, name)]
+        if ran and ran[0] <= per_test:
+            problems.append(f"{ran[0]:6.1f} s  {binary} {name}: back under {per_test:g} s, so its allowance of {entry['seconds']} s can go")
+    slowest = max(binaries.values(), default=0.0)
+    if slowest > suite * scale:
+        problems.append(f"slowest test binary took {slowest:.0f} s, over the {suite:g} s for the tests")
+
+    if not quiet:
+        total = sum(t[0] for t in tests)
+        print(f"test-times: {len(tests)} tests, {total:.0f} s in all; the slowest binary {slowest:.0f} s (budget {suite:g} s per binary, {per_test:g} s per test)")
+        for binary, seconds in sorted(binaries.items(), key=lambda b: -b[1])[:6]:
+            print(f"  binary {binary:32} {seconds:6.1f} s")
+        print(f"  slowest {top}:")
+        for seconds, binary, name in tests[:top]:
+            note = f"  [allowed {allowed[(binary, name)]['seconds']:g} s]" if (binary, name) in allowed else ""
+            print(f"  {seconds:6.1f} s  {binary} {name}{note}")
+    if problems:
+        print("test-times: over budget (tools/test-budget.toml):", file=sys.stderr)
+        for problem in problems:
+            print("  " + problem, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
