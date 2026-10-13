@@ -515,6 +515,28 @@ road to town).
 | falls behind | n/a | n/a | nothing at the town |
 | strikes one | they scatter | they scatter | they scatter |
 
+## Batch 13 (implemented, six kinds): ore and fire, pots, and nights near home
+
+No new mechanics. Each kind answers something early play is already doing: first ores and
+the crucible, fired pots, a flame held up at night, a home at night, rain.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| sleepwalker | Roam, near home, night | A neighbour wandering in their sleep near a player's home. Wake them and they give a coin and go home (once for the party). |
+| ore assayer | Camp | Where rock shows. A beginner miner (Mining below 12) holding ore learns to read it, once; four copper ore buy a coin, once. |
+| bloomery smelters | Camp | Smelt two to four copper ore in their crucible once, keeping one ingot: a first look at metal before your own Crucible Kiln. A beginner learns what bellows are for. |
+| moth netters | Camp, night, dry | Hold up a flame (a torch, anything tagged fire) and they net the moths that come: a coin and a little Hunter, once. |
+| potter | March (halts) | Four fired pots buy two coins, once; a beginner (Crafting below 12) holding one is shown how to burnish. |
+| snail racers | Camp, show, wet | Children race snails in the rain. Watch a race through (20 s) for Refreshed; bet a coin once: two back or only a laugh. |
+
+| the player | sleepwalker | bloomery smelters | snail racers |
+| --- | --- | --- | --- |
+| gives what's asked | a coin, they go home | copper ingots, less one | two coins or a laugh |
+| holds too little | n/a | no fire lit for one lump | n/a |
+| is a beginner | n/a | told about bellows | n/a |
+| stays to watch | n/a | n/a | Refreshed |
+| strikes one | they scatter | they scatter | they scatter |
+
 ## Quest hooks
 
 Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
@@ -538,6 +560,11 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **A toast to the fields** (wassailers): share a loaf with the wassailers and see a field grow.
 - **New seed** (seed swappers): swap wheat seed for another crop and sow it.
 - **Keep up** (messenger): run with a messenger all the way to town.
+- **Sleepwalking** (sleepwalker): wake a neighbour wandering in their sleep and see them home.
+- **First metal** (bloomery smelters): have copper smelted at a travelling bloomery.
+- **To the light** (moth netters): hold a flame up for the moth netters.
+- **Sound pots** (potter): sell four fired pots to a travelling potter.
+- **The green one** (snail racers): watch a snail race in the rain.
 
 ## Catalogue of 100
 
@@ -668,6 +695,12 @@ are the mechanics later batches add, each used by several kinds.
 | 119 | seed swappers | see batch 12 | OneOf | 2 | done |
 | 120 | flint knappers | see batch 12 | Point | 1 | done |
 | 121 | frog giggers | see batch 12 | Hunt | 1 | done |
+| 122 | sleepwalker | see batch 13 | near home | 2 | done |
+| 123 | ore assayer | see batch 13 | Camp | 1 | done |
+| 124 | bloomery smelters | see batch 13 | Cook | 2 | done |
+| 125 | moth netters | see batch 13 | Holds | 1 | done |
+| 126 | potter | see batch 13 | March | 1 | done |
+| 127 | snail racers | see batch 13 | wet, show | 1 | done |
 
 ## Mechanics the next batches add
 

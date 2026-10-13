@@ -5497,4 +5497,117 @@ mod tests {
         server.meet(1, runner);
         assert!(told(&client).iter().filter(|(k, _)| k == "wander.point").count() == 0, "told once");
     }
+
+    #[test]
+    fn a_sleepwalker_wanders_near_a_home_at_night_and_woken_pays_and_goes_home() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (3.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) < 0.1).expect("a dark hour");
+        let walker = event(&server, "sleepwalker");
+        let spot = land_for(&server, walker, Vec3::new(128.0, 200.0, 128.0), |_| true);
+        let comes = |server: &Server| (0..800u64).any(|seed| server.pick_event(1, spot, mix(seed, 3)) == Some(walker));
+        let home = spot.as_vec3() + Vec3::new(10.0, 0.0, 0.0);
+        server.players.get_mut(&1).unwrap().position = home;
+        assert!(!comes(&server), "no home, nobody's sleepwalker");
+        server.players.get_mut(&1).unwrap().home = Some(home);
+        assert!(comes(&server), "near home at night");
+        broad_day(&mut server);
+        assert!(!comes(&server), "awake by day");
+
+        let mut server = fixture();
+        let id = start(&mut server, "sleepwalker", (110, 128));
+        let sleeper = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        assert!(server.meet(1, sleeper));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "a coin for the kindness");
+        assert!(matches!(server.wandering.active[&id].plan, Plan::March { .. }), "and home they go");
+        server.meet(1, sleeper);
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "once");
+    }
+
+    #[test]
+    fn the_assayer_teaches_a_beginner_holding_ore_and_buys_copper_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "ore_assayer", (110, 128));
+        let assayer = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:copper_ore", 8);
+        assert!(server.meet(1, assayer));
+        assert!(xp_in(&server, "core:mining") > 0, "how to read ore");
+        assert_eq!(count_of(&server, "base:copper_ore"), 8, "read, not taken");
+        assert!(server.meet(1, assayer));
+        assert_eq!((count_of(&server, "base:copper_ore"), count_of(&server, "base:gold_coin")), (4, 1));
+        assert!(server.meet(1, assayer));
+        assert_eq!(count_of(&server, "base:copper_ore"), 4, "once");
+    }
+
+    #[test]
+    fn bloomery_smelters_smelt_copper_once_keeping_an_ingot() {
+        let mut server = fixture();
+        let id = start(&mut server, "bloomery_smelters", (110, 128));
+        let smith = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:copper_ore", 1);
+        assert!(server.meet(1, smith));
+        assert_eq!(count_of(&server, "base:copper_ore"), 1, "one lump is not worth the fire");
+        assert!(xp_in(&server, "core:engineering") > 0, "how bellows work");
+        give_held(&mut server, "base:copper_ore", 3);
+        assert!(server.meet(1, smith));
+        assert_eq!((count_of(&server, "base:copper_ore"), count_of(&server, "base:copper_ingot")), (0, 2), "three smelted, one kept");
+        give_held(&mut server, "base:copper_ore", 3);
+        server.meet(1, smith);
+        assert_eq!(count_of(&server, "base:copper_ore"), 3, "once");
+    }
+
+    #[test]
+    fn moth_netters_pay_one_who_holds_up_a_flame() {
+        let mut server = fixture();
+        let id = start(&mut server, "moth_netters", (110, 128));
+        let netter = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        server.meet(1, netter);
+        assert_eq!(count_of(&server, "base:gold_coin"), 0, "no light, no moths");
+        let flame = tagged(&server, "fire");
+        let name = server.content.blocks.def(flame).name.clone();
+        give_held(&mut server, &name, 1);
+        assert!(server.meet(1, netter));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1);
+        assert!(xp_in(&server, "core:hunter") > 0);
+        server.meet(1, netter);
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "once");
+    }
+
+    #[test]
+    fn the_potter_shows_a_beginner_a_burnish_and_buys_four_pots_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "potter", (110, 128));
+        let potter = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:fired_clay", 8);
+        assert!(server.meet(1, potter));
+        assert!(xp_in(&server, "core:crafting") > 0);
+        assert_eq!(count_of(&server, "base:fired_clay"), 8, "shown, not taken");
+        assert!(server.meet(1, potter));
+        assert_eq!((count_of(&server, "base:fired_clay"), count_of(&server, "base:gold_coin")), (4, 2));
+        server.meet(1, potter);
+        assert_eq!(count_of(&server, "base:fired_clay"), 4, "once");
+    }
+
+    #[test]
+    fn snail_races_are_run_in_the_rain_and_a_bet_pays_double_or_a_laugh() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        let races = event(&server, "snail_racers");
+        let spot = land_for(&server, races, Vec3::new(128.0, 200.0, 128.0), |_| true);
+        let picks = |server: &Server, wet: bool| (0..800u64).filter_map(|seed| server.pick_event_in(1, spot, mix(seed, 3), wet)).collect::<Vec<_>>();
+        assert!(picks(&server, true).contains(&races) && !picks(&server, false).contains(&races), "snails race in the wet");
+        let mut server = fixture();
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let (_, racer) = camped(&mut server, "snail_racers", 3.0);
+        run(&mut server, 22 * TICKS_PER_SECOND as u64);
+        assert!(has_effect(&server, "refreshed"), "a race watched through");
+        give_held(&mut server, "base:gold_coin", 1);
+        assert!(server.meet(1, racer));
+        let coins = count_of(&server, "base:gold_coin");
+        assert!(coins == 0 || coins == 2, "lost or doubled, not {coins}");
+        give_held(&mut server, "base:gold_coin", 1);
+        server.meet(1, racer);
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "one bet each");
+    }
 }

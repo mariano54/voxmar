@@ -1134,5 +1134,83 @@
                 (name: "news", gives: [Point("tag:wonder", 128.0)], once: Player),
             ])],
         ),
+        // A sleepwalker out of a neighbour's house at night, wandering near folk's homes in
+        // a nightshirt. Wake them gently and they give a coin for the kindness and go home.
+        (
+            name: "sleepwalker", weight: 0.4,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:forest", 0.6)],
+            daylight: (0.0, 0.25), needs: (days: 2.0, home: true, near_home: Some(48.0)),
+            cast: [(species: "villager")],
+            script: Roam(radius: 10.0, pause: (4.0, 9.0), rest: false, seconds: 480.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "wake", gives: [Item("gold_coin", (1, 1)), Leave], once: Party),
+            ])],
+        ),
+        // An assayer camps where the rock shows, testing ore. A beginner miner holding ore
+        // learns to read it; four copper ore buy a coin, once.
+        (
+            name: "ore_assayer", weight: 0.5,
+            biomes: [("tag:mountain", 1.2), ("tag:rocky", 1.0), ("tag:open", 0.5)],
+            daylight: (0.25, 0.85), needs: (days: 1.5),
+            cast: [(species: "smith"), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "assay", needs: [Holds("ore"), Below("mining", 12)], gives: [Xp("mining", 10.0)], once: Player),
+                (name: "buy", wants: ("copper_ore", 4), gives: [Item("gold_coin", (1, 1))], once: Player),
+            ])],
+        ),
+        // Smelters with a clay bloomery on a cart. Two copper ore and they fire it in their
+        // crucible for you, once, keeping one ingot for the charcoal: a first look at metal
+        // before your own kiln. A beginner is told how the bellows work.
+        (
+            name: "bloomery_smelters", weight: 0.4,
+            biomes: [("tag:forest", 1.0), ("tag:mountain", 0.8), ("tag:open", 0.6)],
+            daylight: (0.25, 0.85), needs: (days: 3.0, home: true),
+            cast: [(species: "smith"), (species: "villager", role: Follow)],
+            script: Camp(near: 22.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "smelt", wants: ("copper_ore", 2), gives: [Cook("crucible", 4, 1)], once: Player),
+                (name: "bellows", needs: [Below("engineering", 8)], gives: [Xp("engineering", 8.0)], once: Player),
+            ])],
+        ),
+        // A naturalist out at night with a net, after the moths that come to a light. Hold a
+        // flame up for them and they net a jarful, and pay a coin and a word on tracking.
+        (
+            name: "moth_netters", weight: 0.5,
+            biomes: [("tag:forest", 1.0), ("tag:grassland", 0.8), ("tag:wetland", 0.6)],
+            daylight: (0.0, 0.3), needs: (days: 1.5, wet: Some(false)),
+            cast: [(species: "traveller"), (species: "child", count: (0, 1), role: Follow)],
+            script: Camp(near: 16.0, stay: (180.0, 300.0), mill: 2.0, away: 100.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "net", needs: [Holds("fire")], gives: [Item("gold_coin", (1, 1)), Xp("hunter", 6.0)], once: Player),
+            ])],
+        ),
+        // A potter with a cart of crocks. Four fired pots of yours buy two coins, once; a
+        // beginner holding one is shown how to burnish it.
+        (
+            name: "potter", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.3, 0.9), needs: (days: 2.0),
+            cast: [(species: "trader"), (species: "hound", count: (0, 1), role: Pet(0))],
+            script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.7),
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "burnish", needs: [Holds("fired_clay"), Below("crafting", 12)], gives: [Xp("crafting", 8.0)], once: Player),
+                (name: "buy", wants: ("fired_clay", 4), gives: [Item("gold_coin", (2, 2))], once: Player),
+            ])],
+        ),
+        // Children racing snails in the rain. Watch a race through for a cheer, or bet a
+        // coin on the green one: two back if it wins, a laugh if it doesn't.
+        (
+            name: "snail_racers", weight: 0.5,
+            biomes: [("tag:grassland", 1.0), ("tag:forest", 0.8), ("tag:open", 0.8)],
+            daylight: (0.3, 0.9), needs: (days: 1.0, wet: Some(true)),
+            cast: [(species: "child"), (species: "child", count: (1, 2), role: Follow), (species: "garden_snail", count: (2, 3), role: Pet(0))],
+            script: Camp(near: 16.0, stay: (180.0, 300.0), mill: 1.0, away: 100.0),
+            show: (near: 5.0, seconds: 20.0, gives: [Effect("refreshed", 600.0)]),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "bet", wants: ("gold_coin", 1), gives: [OneOf([Item("gold_coin", (2, 2)), Effect("refreshed", 300.0)])], once: Player),
+            ])],
+        ),
     ],
 )
