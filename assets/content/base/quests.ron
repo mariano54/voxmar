@@ -267,7 +267,7 @@
         ),
         (
             name: "stockpile", age: "nomad", branch: "start", title: "Stockpile",
-            why: "A home runs on common stock. Carry thirty-two logs and sixty-four cobblestone and nothing you want to build is a trip away.",
+            why: "A home runs on common stock. Carry thirty-two logs and sixty-four cobblestone and nothing you want to build is a trip away. Woods give the logs fastest, and stone lies a few blocks under the dirt almost anywhere.",
             tasks: [[Have("tag:log", 32), Have("cobblestone", 64)]],
             after: ["timber", "a_pile_of_stone"],
             rewards: [Xp("construction", 40.0), Item("torch", 16)],
@@ -648,7 +648,7 @@
         ),
         (
             name: "ore_run", age: "farm", branch: "mining", title: "An Ore Run",
-            why: "Bronze needs a good store of ore. With a copper kit you dig fast: bring up twenty-four copper, nine tin and twelve coal, and the crucible will not wait on you.",
+            why: "Bronze needs a good store of ore. With a copper kit you dig fast: bring up twenty-four copper, nine tin and twelve coal, and the crucible will not wait on you. Copper lies below sea level with tin in the lower part of the same vein, coal in seams near sea level; small copper and coal stones lying on the ground mark the veins below.",
             tasks: [[Mine("copper_ore", 24), Mine("tin_ore", 9), Mine("coal_ore", 12)]],
             after: ["tin_find", "copper_kit"],
             rewards: [Xp("mining", 400.0), Item("coal_ore", 16)],
