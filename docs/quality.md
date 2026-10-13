@@ -32,11 +32,19 @@ again, up to three times; it never forces. Only its last line, `land: <commit> l
 means landed; anything else, the push included, failed and says why. On a typical change
 it takes well under a minute.
 
-1. Hygiene: `git diff main --check` and no conflict markers.
+1. Hygiene: `git diff main --check`, no conflict markers, and no new wall-clock wait in a
+   test (`tools/test-waits`). A test that waits until `Instant::now()` passes a deadline,
+   or ends a `pump_until` by the clock, passes on a quick machine and fails on a loaded one
+   (main once went red from an 800 ms wait racing the once-a-second quest check): wait for
+   what the server says (`settle`, a message, its ticks) and space a player's actions with
+   arrival stamps (`propose_at`). Only watchdogs that can never let a check pass
+   (`SERVER_WAIT`, `SERVER_SILENT`, `assert!(Instant::now() < ...)`) and the timing tests
+   that sleep to stand for a player's real time are allowed, by name, in the script.
 2. An incremental build of the workspace, tests included (`--profile iter`); any warning
    fails.
 3. The tests of the crates the change can reach, worked out from the files it touches
-   against main (a client change runs the client's; an engine change everything's),
+   against main (a client change runs the client's; an engine change or any asset
+   everything's, for the engine's and texgen's tests read assets too),
    less the few slow ones listed in the script's `SLOW_TESTS`, and meanwhile
 4. a scripted session in the real game (`voxmar --gate DIR`, crates/client/src/gate.rs) in
    a small world, headless and silent, with the integrated server made to run behind as
