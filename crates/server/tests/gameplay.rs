@@ -5838,6 +5838,7 @@ fn a_second_server_on_the_same_world_answers_a_join() {
 
 #[test]
 fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
+    real_time("the loot is seen between ticks, and must not be picked up (pickup delay in ticks) before this thread has looked");
     let mut client = Client::join();
     let rabbit = client.content.creatures.find("rabbit").expect("rabbits in the content");
     let falls = client.content.creatures.get(rabbit).def.death.drops_after();
