@@ -721,14 +721,14 @@
             name: "a_proper_workshop", age: "farm", branch: "home", title: "A Proper Workshop",
             why: "Under a roof, beside your bench, seat and two lights, add a loom frame, spindle stand or quern and two places to store things. At home you then craft and build as if two levels higher, and engineer a level higher.",
             tasks: [[Built("home_workshop", 1)]],
-            after: ["a_bench_to_work_at", "workshop_and_stove"],
+            after: ["workshop_and_stove"],
             rewards: [Xp("construction", 150.0), Xp("engineering", 80.0)],
         ),
         (
             name: "a_larder", age: "farm", branch: "home", title: "A Larder",
             why: "Four places to store things, a stove or cauldron and a table, under a roof by the fire: meals eaten here heal a fifth more and their good lasts half again as long.",
             tasks: [[Built("home_larder", 1)]],
-            after: ["pantry_shelves", "workshop_and_stove", "a_table_for_two"],
+            after: ["workshop_and_stove", "a_table_for_two"],
             rewards: [Xp("cooking", 150.0), Item("bread", 4)],
         ),
         (
@@ -742,14 +742,14 @@
             name: "a_full_house", age: "farm", branch: "husbandry", title: "A Full House",
             why: "Keep four animals about the house: you heal a fifth faster and learn a little more at home. Junglefowl, mallards and mouflon tamed near home all count.",
             tasks: [[Built("home_full_house", 1)]],
-            after: ["company_at_camp", "hens_in_a_row"],
+            after: ["hens_in_a_row"],
             rewards: [Xp("farming", 150.0), Xp("hunter", 80.0)],
         ),
         (
             name: "many_travellers", age: "farm", branch: "explore", title: "Many Travellers",
             why: "Every kind of traveller wants something different and gives something different: a smith whets your edges for a coin, a cartographer far from where the world began tells the way to town, a fortune teller reads what lies near, a hermit points to a wonder. Deal with five different kinds.",
             tasks: [[Met("Kinds", 5)]],
-            after: ["folk_of_the_road", "homestead_hearth"],
+            after: ["homestead_hearth"],
             rewards: [Xp("hunter", 100.0), Xp("crafting", 100.0), Item("bread", 4)],
         ),
         (
@@ -763,7 +763,7 @@
             name: "safe_home", age: "farm", branch: "explore", title: "Safe Home",
             why: "Some on the road need more than food. A family fled from a raid sits waiting: a meal, and one of them follows you home to stay. A prisoner marched in ropes goes free for three coins, a knife or a fight. A hurt traveller by the road is bait for raiders: win, and he thanks you.",
             tasks: [[Met("refugees", 1)], [Met("prison_convoy", 1)], [Met("wounded_traveller", 1)]],
-            after: ["a_kind_turn", "homestead_hearth"],
+            after: ["homestead_hearth"],
             rewards: [Xp("hitpoints", 150.0), Xp("defence", 100.0)],
         ),
         (

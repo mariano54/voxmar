@@ -33,6 +33,21 @@ fn nomad_and_farm_each_have_thirty_quests_with_words() {
     }
 }
 
+/// The Farm chapter opens with the lit hearth: a Farm quest comes after Farm quests or the
+/// Homestead Hearth, never after a Nomad side quest a player may have passed by.
+#[test]
+fn farm_quests_come_after_farm_quests_or_the_hearth() {
+    let content = content();
+    let farm: Vec<&str> = content.quests.iter().filter(|q| q.age == "farm").map(|q| q.name.as_str()).collect();
+    let wrong: Vec<String> = content
+        .quests
+        .iter()
+        .filter(|q| q.age == "farm")
+        .flat_map(|q| q.after.iter().flat_map(|a| a.split('|')).filter(|a| *a != "base:homestead_hearth" && !farm.contains(a)).map(move |a| format!("{} after {a}", q.name)))
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 #[test]
 fn every_early_quest_names_things_the_content_has() {
     let content = content();

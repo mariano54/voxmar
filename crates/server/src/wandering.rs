@@ -1991,7 +1991,8 @@ impl Server {
             None if inst.guided => (Words::key(&event.key("company")), Vec::new(), None, None),
             None => (asked.unwrap_or_else(|| Words::key(&event.greeting(meeting, variant))), Vec::new(), None, None),
         };
-        let dealt = line.is_some();
+        // A line that takes or gives something; one said for its words alone is no dealing.
+        let dealt = line.is_some_and(|(_, line)| !line.gives.is_empty() || line.wants_of(seed).is_some());
         let who = self.speaker_name(id);
         let halts = event.def.halt.is_some();
         let inst = self.wandering.active.get_mut(&instance).expect("checked");
@@ -2036,7 +2037,7 @@ impl Server {
         if let (Some(who), Some(p)) = (who, self.players.get(&player)) {
             p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", words) });
         }
-        // A line said is a dealing with the kind, for quests (`Met`); a greeting is not.
+        // A dealing with the kind, for quests (`Met`).
         if dealt {
             self.tally(player, "met", &event.def.name, 1);
         }

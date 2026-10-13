@@ -211,6 +211,15 @@ mod tests {
         hold(&mut server, "base:hide", 2);
         assert!(server.meet(1, pedlar));
         assert_eq!(tally(&server, "met:base:pedlar_and_hound"), 1, "two hides for twine is a dealing");
+        // A line said for its words alone (the hurt hunter has nothing to teach the skilled)
+        // is no dealing either.
+        let hunter = party(&mut server, "wounded_hunter");
+        let skill = server.content.skills.id("core:hunter").expect("hunter");
+        let xp = server.content.skills.xp_for(15);
+        server.players.get_mut(&1).unwrap().skills.grant(skill, xp);
+        hold(&mut server, "base:bread", 4);
+        assert!(server.meet(1, hunter));
+        assert_eq!(tally(&server, "met:base:wounded_hunter"), 0, "the skilled are only told so");
     }
 
     #[test]
