@@ -349,9 +349,21 @@ impl Server {
         });
     }
 
+    /// Whether two connections come from one place: both in process, or both from one
+    /// address as the limits count them (`Limits::address_key`).
+    fn same_place(&self, a: PlayerId, b: PlayerId) -> bool {
+        let (a, b) = (&self.players[&a].connection, &self.players[&b].connection);
+        let key = |ip| self.config.limits.address_key(ip);
+        match (a.peer(), b.peer()) {
+            (Some(x), Some(y)) => key(x) == key(y),
+            (None, None) => a.is_local() && b.is_local(),
+            _ => false,
+        }
+    }
+
     fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
         let fingerprint = self.content.fingerprint();
-        let blocks = &self.content.blocks;
+        let blocks = self.content.blocks.clone();
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
         let name: String = name.chars().filter(|c| !c.is_control()).take(self.config.limits.name_length).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
@@ -359,14 +371,25 @@ impl Server {
             return;
         }
         // One player per name: a second login would load the same save twice, so whatever
-        // either carried would be doubled and their saves would overwrite each other.
+        // either carried would be doubled and their saves would overwrite each other. Unless
+        // it comes from where the first did, and the first has gone silent: a client that
+        // froze or lost its network without closing its socket still looks joined until it
+        // is idle too long, and its player coming back is them, so the old connection leaves
+        // (saved) and this one joins. A session still heard is never ended so (an address
+        // can be a whole school's); the integrated server's own player always comes back.
+        let earlier = self.players.iter().find(|(_, p)| p.joined && same_name(&p.name, &name)).map(|(&earlier, _)| earlier);
+        let silence = std::time::Duration::from_secs_f32(self.config.limits.rejoin_silence);
+        let again = earlier.filter(|&earlier| {
+            let local = self.players[&earlier].connection.is_local();
+            self.same_place(earlier, id) && (local || self.players[&earlier].idle(Instant::now(), silence))
+        });
         let reason = if protocol != PROTOCOL_VERSION {
             Some(Words::key("net.rejected.protocol").with("theirs", Words::text(protocol)).with("ours", Words::text(PROTOCOL_VERSION)))
         } else if content != fingerprint {
             Some(Words::key("net.rejected.content"))
-        } else if self.players.values().any(|p| p.joined && same_name(&p.name, &name)) {
+        } else if earlier.is_some() && again.is_none() {
             Some(Words::key("net.rejected.name_taken").with("name", name.as_str()))
-        } else if self.players.values().filter(|p| p.joined).count() >= self.config.max_players {
+        } else if again.is_none() && self.players.values().filter(|p| p.joined).count() >= self.config.max_players {
             Some(Words::key("net.rejected.full"))
         } else {
             None
@@ -375,28 +398,47 @@ impl Server {
             self.players[&id].connection.send(ServerMessage::Rejected { reason });
             return;
         }
+        // The new connection takes what the earlier one held in memory, not the player's
+        // file: leaving saves the whole world, and a save that fails (a disk that will not
+        // take the file) leaves the old file behind, which would hand back what they have
+        // dropped or stored since. The earlier spelling of the name stays theirs.
+        let carried = again.map(|earlier| {
+            tracing::info!("{name} joined again from the same address; the earlier, silent connection leaves");
+            self.players[&earlier].connection.send(ServerMessage::Rejected { reason: Words::key("net.rejected.joined_again") });
+            self.bury_if_dead(earlier);
+            let (skills, effects) = (self.content.skills.clone(), self.content.effects.clone());
+            let held = self.players[&earlier].saved(&skills, &effects);
+            let spelling = self.players[&earlier].name.clone();
+            self.leave(earlier);
+            (held, spelling)
+        });
+        let name = carried.as_ref().map_or(name, |(_, spelling)| spelling.clone());
         // A save that is not a player file is moved aside rather than replaced by a new
         // player's at the next save. One that could not be read at all (no permission, a
         // failing disk), or cannot be moved, turns the player away.
-        let (saved, set_aside) = match self.save.as_ref().map(|save| (save, save.read_player(&name, blocks))) {
-            None => (None, None),
-            Some((_, Ok(saved))) => (saved, None),
-            Some((_, Err(e))) if e.kind() != std::io::ErrorKind::InvalidData => {
-                tracing::error!("could not read player {name}: {e}");
-                self.players[&id].connection.send(ServerMessage::Rejected { reason: Words::key("net.rejected.save") });
-                return;
-            }
-            Some((save, Err(e))) => match save.set_aside_player(&name) {
-                Ok(aside) => {
-                    tracing::error!("could not load player {name}: {e}; kept it as {} and started them afresh", aside.display());
-                    (None, aside.file_name().map(|n| n.to_string_lossy().into_owned()))
-                }
-                Err(moving) => {
-                    tracing::error!("could not load player {name}: {e}; nor move it aside: {moving}");
+        let (saved, set_aside) = if let Some((held, _)) = carried {
+            (Some(held), None)
+        } else {
+            match self.save.as_ref().map(|save| (save, save.read_player(&name, &blocks))) {
+                None => (None, None),
+                Some((_, Ok(saved))) => (saved, None),
+                Some((_, Err(e))) if e.kind() != std::io::ErrorKind::InvalidData => {
+                    tracing::error!("could not read player {name}: {e}");
                     self.players[&id].connection.send(ServerMessage::Rejected { reason: Words::key("net.rejected.save") });
                     return;
                 }
-            },
+                Some((save, Err(e))) => match save.set_aside_player(&name) {
+                    Ok(aside) => {
+                        tracing::error!("could not load player {name}: {e}; kept it as {} and started them afresh", aside.display());
+                        (None, aside.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    }
+                    Err(moving) => {
+                        tracing::error!("could not load player {name}: {e}; nor move it aside: {moving}");
+                        self.players[&id].connection.send(ServerMessage::Rejected { reason: Words::key("net.rejected.save") });
+                        return;
+                    }
+                },
+            }
         };
         // A player plays under the name as first saved, whatever case they type now, so
         // everything that compares names (animals kept, drops left, machines owned) agrees.
@@ -864,6 +906,19 @@ mod tests {
         connection
     }
 
+    /// Joins from another place than the in-process host, over a real socket: a second
+    /// connection in process is the host coming back, which replaces the first.
+    fn join_from_elsewhere(server: &mut Server, id: PlayerId, name: &str) -> ClientConnection {
+        let (accepted, incoming) = crossbeam_channel::unbounded();
+        let addr = voxmar_protocol::tcp::listen("127.0.0.1:0", accepted).unwrap();
+        let connection = voxmar_protocol::tcp::connect(addr).unwrap();
+        let server_side = incoming.recv_timeout(std::time::Duration::from_secs(30)).expect("the connection is accepted");
+        let player = Player::new(id, server_side, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        server.players.insert(id, player);
+        server.hello(id, name.into(), PROTOCOL_VERSION, server.content.fingerprint(), None);
+        connection
+    }
+
     /// Drive the server directly: no tick race can hide an identity change or a cap bypass.
     #[test]
     fn the_saved_name_keeps_identity_herd_caps_births_and_death_drops() {
@@ -927,9 +982,17 @@ mod tests {
         server.tick_husbandry();
         assert_eq!(server.creatures.live[&parents[0]].owner_id, Some(2));
         // Duplicate rejection remains case-insensitive after canonicalising the session.
-        let duplicate = join(&mut server, 3, "bOb");
+        let duplicate = join_from_elsewhere(&mut server, 3, "bOb");
         assert!(!server.players[&3].joined);
-        assert!(matches!(duplicate.try_recv().unwrap(), Some(ServerMessage::Rejected { .. })));
+        let mut told = None;
+        for _ in 0..30_000 {
+            told = duplicate.try_recv().unwrap();
+            if told.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(matches!(told, Some(ServerMessage::Rejected { .. })), "the duplicate was not turned away: {told:?}");
         server.tick_items();
         let picked: u32 = server.players[&2].inventory.slots.iter().flatten().filter(|s| s.item == dirt).map(|s| s.count as u32).sum();
         assert_eq!(picked, 9, "both known spellings of their saved death drops are collectible");
