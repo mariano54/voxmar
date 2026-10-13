@@ -1049,13 +1049,15 @@ impl Server {
             && matches!(inst.plan, Plan::March { .. } | Plan::Amble { .. } | Plan::Gather { .. } | Plan::Camp { .. } | Plan::Patrol { .. })
         {
             let members: Vec<Vec3> = inst.members.iter().filter_map(|m| self.creatures.live.get(&m.creature).map(|c| c.body.position)).collect();
+            // The nearest player who holds nothing that calms the kind: one with a torch or
+            // food is let be, and the rest are not.
             let close = players
                 .iter()
+                .filter(|&&(id, _)| !self.calms(kind, id))
                 .map(|&(id, at)| (id, at, members.iter().map(|m| flat(*m, at)).fold(f32::MAX, f32::min)))
                 .min_by(|a, b| a.2.total_cmp(&b.2));
-            let calmed = close.is_some_and(|(id, ..)| self.calms(kind, id));
             match close {
-                Some((id, at, d)) if d <= guard.near && !calmed => {
+                Some((id, at, d)) if d <= guard.near => {
                     let since = match inst.warned {
                         Some((who, since)) if who == id => since,
                         _ => {
@@ -1074,7 +1076,7 @@ impl Server {
                         warning = Some(at);
                     }
                 }
-                Some((id, at, d)) if d < guard.calm && !calmed && inst.warned.is_some_and(|(who, _)| who == id) => warning = Some(at),
+                Some((id, at, d)) if d < guard.calm && inst.warned.is_some_and(|(who, _)| who == id) => warning = Some(at),
                 _ => inst.warned = None,
             }
         }
@@ -3122,6 +3124,23 @@ mod tests {
             let inst = &server.wandering.active[&id];
             assert!(inst.provoked.is_none() && inst.warned.is_none(), "{held}: no warning, no charge");
         }
+    }
+
+    #[test]
+    fn a_torch_held_by_one_player_does_not_shield_another() {
+        let mut server = fixture();
+        let (id, sow, _) = sounder(&mut server, 4.0);
+        give_held(&mut server, "base:torch", 1);
+        // A second player, empty-handed, six blocks off on the other side.
+        let at = server.creatures.live[&sow].body.position;
+        let (client, connection) = voxmar_protocol::local_pair();
+        let _keep = client;
+        let mut other = crate::player::Player::new(2, connection, Vec3::new(at.x - 6.0, 200.0, at.z), 2, server.tick, server.survival.max_health, &server.config.limits);
+        other.joined = true;
+        server.players.insert(2, other);
+        run(&mut server, 20);
+        assert_eq!(server.wandering.active[&id].warned.map(|w| w.0), Some(2), "the one without a torch is warned");
+        assert!(run_until(&mut server, id, 6, |i| i.provoked == Some(2)), "and charged for staying");
     }
 
     /// A herd of deer settled where it began, the player `blocks` east of its stag.
