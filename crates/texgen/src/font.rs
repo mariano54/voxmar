@@ -272,14 +272,32 @@ fn compose(base: &Bitmap, mark: &Mark) -> Bitmap {
 
 /// Traces the ink of a bitmap into closed outlines in font pixels, y up from the
 /// baseline: clockwise around ink, counter-clockwise around holes, as TrueType wants.
+///
+/// On dense grids over the bitmap's bounds rather than sets and maps keyed by point: a
+/// font's every glyph is traced each time it is built (tens of thousands with the CJK
+/// fallback), and hashing points was most of that.
 fn outlines(bitmap: &Bitmap) -> Vec<Vec<(i32, i32)>> {
-    use std::collections::HashMap;
-    let ink: std::collections::BTreeSet<(i32, i32)> =
-        bitmap.ink().map(|(x, row)| (x, CAP_HEIGHT - 1 - row)).collect();
-    let filled = |x: i32, y: i32| ink.contains(&(x, y));
-    // Unit edges with ink on their right, keyed by where they start.
-    let mut edges: HashMap<(i32, i32), Vec<(i32, i32)>> = HashMap::new();
-    let mut add = |from: (i32, i32), to: (i32, i32)| edges.entry(from).or_default().push(to);
+    let mut ink: Vec<(i32, i32)> = bitmap.ink().map(|(x, row)| (x, CAP_HEIGHT - 1 - row)).collect();
+    if ink.is_empty() {
+        return Vec::new();
+    }
+    ink.sort_unstable();
+    // Corners run from the lowest ink to one past the highest; pixels one further each way,
+    // so that a pixel's neighbours are always on the grid.
+    let (low, high) = ink.iter().fold(((i32::MAX, i32::MAX), (i32::MIN, i32::MIN)), |(l, h), &(x, y)| ((l.0.min(x), l.1.min(y)), (h.0.max(x), h.1.max(y))));
+    let (width, height) = (high.0 - low.0 + 3, high.1 - low.1 + 3);
+    let pixel = |x: i32, y: i32| ((y - low.1 + 1) * width + x - low.0 + 1) as usize;
+    let mut filled = vec![false; (width * height) as usize];
+    for &(x, y) in &ink {
+        filled[pixel(x, y)] = true;
+    }
+    let filled = |x: i32, y: i32| filled[pixel(x, y)];
+    // Unit edges with ink on their right, by the corner they start from (at most two: where
+    // two runs of ink touch only at a corner), in the order they were found.
+    let (corners_x, corners_y) = (high.0 - low.0 + 2, high.1 - low.1 + 2);
+    let corner = |(x, y): (i32, i32)| ((x - low.0) * corners_y + y - low.1) as usize;
+    let mut edges = vec![Edges::default(); (corners_x * corners_y) as usize];
+    let mut add = |from: (i32, i32), to: (i32, i32)| edges[corner(from)].push(to);
     for &(x, y) in &ink {
         if !filled(x - 1, y) {
             add((x, y), (x, y + 1));
@@ -294,21 +312,22 @@ fn outlines(bitmap: &Bitmap) -> Vec<Vec<(i32, i32)>> {
             add((x + 1, y), (x, y));
         }
     }
-    let mut starts: Vec<(i32, i32)> = edges.keys().copied().collect();
-    starts.sort();
+    // Corners are indexed by x, then y: in that order they are sorted.
+    let starts: Vec<(i32, i32)> = (0..corners_x * corners_y).filter(|&i| edges[i as usize].found).map(|i| (low.0 + i / corners_y, low.1 + i % corners_y)).collect();
     let mut contours = Vec::new();
     for start in starts {
-        while let Some(first) = edges.get_mut(&start).and_then(Vec::pop) {
+        while let Some(first) = edges[corner(start)].pop() {
             let mut points = vec![start];
             let (mut from, mut at) = (start, first);
             while at != start {
                 points.push(at);
-                let options = edges.get_mut(&at).expect("outlines close");
+                let options = &mut edges[corner(at)];
+                assert!(options.len > 0, "outlines close");
                 // Where two runs of ink touch only at a corner, turn right, keeping them
                 // apart.
                 let heading = (at.0 - from.0, at.1 - from.1);
                 let right = (heading.1, -heading.0);
-                let pick = options.iter().position(|&to| (to.0 - at.0, to.1 - at.1) == right).unwrap_or(0);
+                let pick = options.to[..options.len as usize].iter().position(|&to| (to.0 - at.0, to.1 - at.1) == right).unwrap_or(0);
                 let next = options.swap_remove(pick);
                 (from, at) = (at, next);
             }
@@ -316,6 +335,38 @@ fn outlines(bitmap: &Bitmap) -> Vec<Vec<(i32, i32)>> {
         }
     }
     contours
+}
+
+/// The unit edges leaving one corner of an outline, as a `Vec` would keep them (`pop` and
+/// `swap_remove` alike), and whether any ever did.
+#[derive(Clone, Copy, Default)]
+struct Edges {
+    to: [(i32, i32); 2],
+    len: u8,
+    found: bool,
+}
+
+impl Edges {
+    fn push(&mut self, to: (i32, i32)) {
+        assert!(self.len < 2, "more than two outline edges leave one corner");
+        self.to[self.len as usize] = to;
+        self.len += 1;
+        self.found = true;
+    }
+
+    fn pop(&mut self) -> Option<(i32, i32)> {
+        (self.len > 0).then(|| {
+            self.len -= 1;
+            self.to[self.len as usize]
+        })
+    }
+
+    fn swap_remove(&mut self, i: usize) -> (i32, i32) {
+        let taken = self.to[i];
+        self.len -= 1;
+        self.to[i] = self.to[self.len as usize];
+        taken
+    }
 }
 
 /// Drops the points in the middle of straight runs.

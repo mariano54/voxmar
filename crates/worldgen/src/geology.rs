@@ -716,8 +716,10 @@ mod tests {
     /// sea, coast, plains and ranges, in any grouping.
     #[test]
     fn lands_match_land_alone() {
+        use rayon::prelude::*;
         let registry = std::sync::Arc::new(crate::test_registry());
-        for seed in [7, 42] {
+        // Each seed, and each group, on its own core.
+        [7, 42].into_par_iter().for_each(|seed| {
             let world = crate::Overworld::new(seed, registry.clone());
             let geology = &world.geology;
             let mut rng = crate::rng::Rng::new(seed, 1, 2, 3);
@@ -725,7 +727,7 @@ mod tests {
             // so that they are not; seven at a time leaves groups of four and of three.
             let mut points: Vec<(i32, i32)> = (0..4000).map(|i| (i % 80 * 37 - 1500, i / 80 * 41 - 1000)).collect();
             points.extend((0..4000).map(|_| (rng.range(-20_000, 20_000), rng.range(-20_000, 20_000))));
-            for group in points.chunks(7) {
+            points.par_chunks(7).for_each(|group| {
                 let lands = geology.lands(group);
                 let floats: Vec<(f32, f32)> = group.iter().map(|&(x, z)| (x as f32 + 0.5, z as f32 - 0.25)).collect();
                 let reliefs = geology.reliefs(&floats);
@@ -733,8 +735,8 @@ mod tests {
                     assert_eq!(format!("{:?}", lands[k]), format!("{:?}", geology.land(x, z)), "land at ({x}, {z})");
                     assert_eq!(format!("{:?}", reliefs[k]), format!("{:?}", geology.relief(floats[k].0, floats[k].1)), "relief at {:?}", floats[k]);
                 }
-            }
-        }
+            });
+        });
     }
 
     /// The regional climate worked out four positions at a time is exactly the climate at

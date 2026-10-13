@@ -33,26 +33,30 @@ fn regional_crops_are_regional() {
     let mut sampled = 0usize;
     // Land where the cold holds wheat back, and where rye grows faster there.
     let (mut cold, mut rye_wins) = (0usize, 0usize);
-    for seed in SEEDS {
+    let grows = |site: &voxmar_worldgen::Site| {
+        let at = Conditions { temperature: site.temperature, moisture: site.soil_moisture(), light: 15, fertile: true, watered: true };
+        crops.iter().map(|def| crop::rate(def, at)).collect::<Vec<f32>>()
+    };
+    // Each world on its own core, and its sites on every core, counted in order so the
+    // census is the same: the rates at its spawn, and per site.
+    let worlds: Vec<(Vec<f32>, Vec<Option<(f32, Vec<f32>, String)>>)> = SEEDS.par_iter().map(|&seed| {
         let world = Overworld::with_content(seed, content.blocks.clone(), &world_content);
         let spawn = world.spawn_point();
-        let grows = |site: &voxmar_worldgen::Site| {
-            let at = Conditions { temperature: site.temperature, moisture: site.soil_moisture(), light: 15, fertile: true, watered: true };
-            crops.iter().map(|def| crop::rate(def, at)).collect::<Vec<f32>>()
-        };
         let here = grows(&world.site(spawn.x, spawn.z));
-        for (i, rate) in here.iter().take(4).enumerate() {
-            if *rate < 1.0 {
-                below_best[i] += 1;
-            }
-        }
-        // The sites are sampled on every core (in order, so the census is the same).
-        let cells: Vec<Option<(f32, Vec<f32>, String)>> = (0..SIDE * SIDE).into_par_iter().map(|i| {
+        let cells = (0..SIDE * SIDE).into_par_iter().map(|i| {
             let (dx, dz) = (i % SIDE, i / SIDE);
             let at = IVec3::new(spawn.x + (dx - SIDE / 2) * STEP, 0, spawn.z + (dz - SIDE / 2) * STEP);
             let site = world.site(at.x, at.z);
             (site.height > SEA_LEVEL).then(|| (site.temperature, grows(&site), world.biomes().get(site.biome).name.clone()))
         }).collect();
+        (here, cells)
+    }).collect();
+    for (here, cells) in worlds {
+        for (i, rate) in here.iter().take(4).enumerate() {
+            if *rate < 1.0 {
+                below_best[i] += 1;
+            }
+        }
         for cell in cells {
             sampled += 1;
             let Some((temperature, rates, biome)) = cell else { continue };

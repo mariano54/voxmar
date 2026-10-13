@@ -268,9 +268,9 @@ const EXPECTED: [u64; 4] = [0x662bca41355b2476, 0x708d39cdd2dc0c0e, 0x1b92b142bf
 fn output_is_unchanged() {
     use rayon::prelude::*;
     let registry = registry();
-    // Every column on its own core, mixed in order.
+    // Every seed and column on its own core, mixed in order.
     let hashes: Vec<u64> = GOLDEN
-        .iter()
+        .par_iter()
         .map(|(seed, columns)| {
             let world = Overworld::new(*seed, registry.clone());
             let each: Vec<u64> = columns.par_iter().map(|&(x, z)| column_hash(&world.generate(ColumnPos::new(x, z)), &registry)).collect();
@@ -295,13 +295,19 @@ const LIGHT: u64 = 0x2923024e18114411;
 fn light_is_unchanged() {
     use rayon::prelude::*;
     let registry = registry();
+    // Every seed and column on its own core, the light mixed in seed order.
+    let regions: Vec<LitRegion> = GOLDEN
+        .par_iter()
+        .map(|&(seed, columns)| {
+            let world = Overworld::new(seed, registry.clone());
+            let centre = ColumnPos::new(columns[0].0, columns[0].1);
+            let around: Vec<Arc<Column>> = (0..9).into_par_iter().map(|k| Arc::new(world.generate(centre.offset(k as i32 % 3 - 1, k as i32 / 3 - 1)))).collect();
+            let around: [Arc<Column>; 9] = around.try_into().ok().expect("nine columns");
+            LitRegion::compute(&registry, &around)
+        })
+        .collect();
     let mut hash = 0;
-    for (seed, columns) in GOLDEN {
-        let world = Overworld::new(seed, registry.clone());
-        let centre = ColumnPos::new(columns[0].0, columns[0].1);
-        let around: Vec<Arc<Column>> = (0..9).into_par_iter().map(|k| Arc::new(world.generate(centre.offset(k as i32 % 3 - 1, k as i32 / 3 - 1)))).collect();
-        let around: [Arc<Column>; 9] = around.try_into().ok().expect("nine columns");
-        let region = LitRegion::compute(&registry, &around);
+    for region in &regions {
         for y in 0..voxmar_engine::coords::WORLD_HEIGHT {
             for z in -1..33 {
                 hash = mix(hash ^ (-1..33).fold(0u64, |h, x| mix(h ^ region.light(voxmar_engine::glam::IVec3::new(x, y, z)) as u64)));

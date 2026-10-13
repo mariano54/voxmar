@@ -27,7 +27,7 @@
 //! Breaking is played under load besides: a row of blocks of every hardness broken with
 //! the bare hand, a held block (throwing one halfway through) and every tool, while busy
 //! threads contend for the cores, the game's own frames stall now and then and the server runs behind
-//! (`SERVER_LAG`). Mariano kept losing blocks he broke on a busy machine; client and server
+//! (`SERVER_LAG`, in the steps that play against it: `Step::lagged`). Mariano kept losing blocks he broke on a busy machine; client and server
 //! must still agree on every one.
 //!
 //! It runs headless like `--capture`, builds its own test ground high above spawn with
@@ -73,6 +73,7 @@ pub struct GatePlugin {
 /// other action is proposed. Mariano's play builds lost blocks he broke to both: a server whose
 /// word came late (fixed in 17bf62f), and one stalled when the break was proposed, whose
 /// own clock then started late (fixed by the client's `Finished`).
+/// It runs behind only in the steps that play against it (`Step::lagged`).
 pub const SERVER_LAG: Lag = Lag {
     per_tick: Duration::from_millis(60),
     stall: Duration::from_millis(400),
@@ -380,6 +381,18 @@ enum Step {
     Done,
 }
 
+impl Step {
+    /// Whether the server runs behind (`SERVER_LAG`) in this step: in those that play
+    /// against a lagging server (placing, digging, breaking, the workshop's breaks, and
+    /// combat timed against where blows fall) and the steps before them. The rest check
+    /// what lag does not change, and run against a server at full speed, which gets there
+    /// three times sooner.
+    fn lagged(self) -> bool {
+        use Step::*;
+        matches!(self, Load | Build | Arrive | Place | PlaceSettle | Dig | DigSettle | Collect | Breaks | Workshop | HvAge | Strike | Weapon | Feel | Cook)
+    }
+}
+
 #[derive(Resource)]
 struct Gate {
     dir: PathBuf,
@@ -674,7 +687,7 @@ impl Gate {
     }
 
     fn next(&mut self, step: Step, now: f32) {
-        info!("gate: {step:?} at {now:.1}s");
+        info!("gate: {step:?} at {now:.1}s, server {:.1}s", self.server_now);
         self.step = step;
         self.since = now;
         self.frames = 0;
@@ -686,8 +699,10 @@ impl Gate {
         self.food_moved = false;
     }
 
-    /// On to the next stage of a step.
+    /// On to the next stage of a step. Logged with the game's and the server's clocks, so a
+    /// run shows which stages its time goes to.
     fn advance(&mut self, now: f32) {
+        info!("gate: {:?} stage {} at {now:.1}s, server {:.1}s", self.step, self.phase + 1, self.server_now);
         self.phase += 1;
         self.phase_since = now;
         self.settled = 0;
@@ -829,6 +844,9 @@ fn run(world: &mut World) {
     // (No server once the world is left: the clock stands still then.)
     if let Some(net) = world.get_resource::<Net>() {
         gate.server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
+        if let Some(server) = net.server() {
+            server.set_lagging(gate.step.lagged());
+        }
     }
     // The wall clock, for what ends a session whose other clocks stopped (`guard`).
     gate.wall += world.resource::<Time<Real>>().delta_secs().min(SUSPENDED);
@@ -999,15 +1017,17 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
         _ => STEP_LIMIT,
     };
-    // A step in the world is timed by the server's clock, as its own waits are: a server
-    // running behind takes longer, not too long, and one that hangs runs into TIME_LIMIT.
+    // A step in the world is too long only by both the server's clock, as its own waits
+    // are, and the game's, as its frames are: a server running behind takes longer, not too
+    // long, as does a machine drawing slowly against a server at full speed (`Step::lagged`),
+    // and one that hangs runs into TIME_LIMIT.
     // Loading and leaving have no server ticking for them. The text-fit tours are judged
     // view by view: sixty views at a settle each take most of a step's time on their own,
     // and a lagging machine draws each later, not wrongly.
     let (taken, clock) = match gate.step {
         Step::Fit | Step::FitJournal | Step::FitMenus => (now - gate.phase_since, "s"),
         Step::Load | Step::Leave => (now - gate.since, "s"),
-        _ => (gate.server_in_step(), " server s"),
+        _ => (gate.server_in_step().min(now - gate.since), " s by the server's clock and the game's"),
     };
     if taken > limit {
         return Err(format!("{:?} took longer than {limit}{clock}", gate.step));
