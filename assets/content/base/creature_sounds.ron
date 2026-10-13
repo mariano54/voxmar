@@ -467,5 +467,12 @@
         "guard": (voice: "person"),
         "elder": (voice: "person", pitch: 0.92),
         "child": (voice: "person", pitch: 1.5),
+        "mage": (voice: "person", pitch: 0.96),
+        "pilgrim": (voice: "person"),
+        "pedlar": (voice: "person", pitch: 1.04),
+        "bard": (voice: "person", pitch: 1.06),
+        "stranger": (voice: "person", pitch: 0.88),
+        "raider": (voice: "person", pitch: 0.9),
+        "hound": (voice: "wolf", pitch: 1.35),
     },
 )

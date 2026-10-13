@@ -49,6 +49,7 @@ pub mod treasure;
 pub mod value;
 pub mod vitals;
 pub mod visibility;
+pub mod wander;
 pub mod weather;
 pub mod world;
 

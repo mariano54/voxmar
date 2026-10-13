@@ -63,6 +63,8 @@ pub struct Content {
     pub treasure: Arc<crate::treasure::Treasure>,
     /// What things are worth (`value`).
     pub value: Arc<crate::value::Value>,
+    /// Parties that come by on their own errands (`wandering.ron`).
+    pub wandering: Arc<crate::wander::WanderRegistry>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -185,6 +187,8 @@ impl Content {
         let mut machines = Vec::new();
         let mut processes = Vec::new();
         let mut quests = Vec::new();
+        let mut wandering = Vec::new();
+        let mut wander_rules = Setting::<crate::wander::Rules>::default();
         let mut shapes = Vec::new();
         let mut shape_limits = Setting::<crate::shape::ShapeLimits>::default();
         let mut files = Vec::new();
@@ -281,6 +285,12 @@ impl Content {
                         treasure.push((package.clone(), crate::treasure::Treasure::read(package, &source)?));
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "wandering.ron" => {
+                        let package_file = crate::wander::WanderRegistry::read(package, &source)?;
+                        wander_rules.set(package, &name, "wandering rules", package_file.rules, &mut notes);
+                        wandering.push(package_file);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "stacking.ron" => {
                         stacking.push(source.clone());
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -346,6 +356,7 @@ impl Content {
                 return Err(RegistryError(format!("treasure.ron: `{}` opens to a bin of {room} stacks, but its table gives up to {most}", blocks.def(block).name)));
             }
         }
+        let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects)?;
         crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
         crate::inventory::set_worn_slots(combat.worn_slots());
@@ -375,6 +386,7 @@ impl Content {
             regrowth: Arc::new(regrowth),
             treasure: Arc::new(treasure),
             value: Arc::new(value),
+            wandering: Arc::new(wandering),
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),

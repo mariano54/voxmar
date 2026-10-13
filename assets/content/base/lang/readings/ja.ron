@@ -605,4 +605,11 @@
     "multiblock.base.blast_furnace": "こうろ",
     "block.base.iron_bloom": "てっかい",
     "multiblock.base.bellows_bloomery": "ふいごつきかいてつろ",
+    "creature.base.mage": "たびのまじゅつし",
+    "creature.base.pilgrim": "じゅんれいしゃ",
+    "creature.base.pedlar": "ぎょうしょうにん",
+    "creature.base.bard": "ぎんゆうしじん",
+    "creature.base.stranger": "フードのみしらぬひと",
+    "creature.base.raider": "やとう",
+    "creature.base.hound": "りょうけん",
 }

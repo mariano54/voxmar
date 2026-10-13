@@ -274,7 +274,7 @@ impl Server {
     }
 
     /// Daylight now, 0..=1.
-    fn daylight(&self) -> f32 {
+    pub(crate) fn daylight(&self) -> f32 {
         creature::daylight(self.day as u64)
     }
 
@@ -295,6 +295,7 @@ impl Server {
             self.despawn_far();
         }
         self.tick_villagers();
+        self.tick_wandering();
         self.think_and_move();
         self.tick_husbandry();
         self.drop_fallen_loot();
@@ -372,7 +373,7 @@ impl Server {
                     food,
                     mate,
                     kept: creature.owner.is_some(),
-                    errand: self.villagers.errand(id, handoff),
+                    errand: self.villagers.errand(id, handoff).or_else(|| self.wandering.errand(id)),
                     dt: every as f32 * dt,
                     seed: mix(creature.seed, self.tick),
                 };
@@ -727,6 +728,7 @@ impl Server {
         self.creatures.gone.push(CreatureGone { id, died: true });
         // One of a settlement's people: noted dead now, so no save misses it.
         self.villager_died(id);
+        self.wandering_died(id);
         let species = self.content.creatures.get(creature.species);
         let killer = creature.hurt_by.and_then(|p| self.players.get(&p));
         let tool: Vec<String> = killer.and_then(|p| p.held()).map_or_else(Vec::new, |item| self.content.blocks.def(item).tags.clone());
@@ -796,15 +798,25 @@ impl Server {
     }
 
     fn spawn_seeded_unseen(&mut self, species: CreatureId, at: Vec3, seed: u64, angle: f32) -> Option<u32> {
-        let people = self.creatures.live.values().filter(|c| self.content.creatures.get(c.species).def.kind == Kind::Villager).count();
+        // Settlements' people and the land's animals each have a budget; the people and
+        // animals of wandering parties (`wandering`) have their own, so they use up
+        // neither.
+        let people = self.creatures.live.keys().filter(|id| self.content.creatures.get(self.creatures.live[*id].species).def.kind == Kind::Villager);
+        let (all, settled) = people.fold((0, 0), |(all, settled), id| (all + 1, settled + usize::from(!self.wandering.manages(*id))));
         let full = if self.content.creatures.get(species).def.kind == Kind::Villager {
-            people >= self.overworld.settlement_people().live.most
+            settled >= self.overworld.settlement_people().live.most
         } else {
-            self.creatures.live.len() - people >= self.content.creatures.limits().most
+            self.creatures.live.len() - all >= self.content.creatures.limits().most
         };
         if full {
             return None;
         }
+        self.place_creature(species, at, seed, angle)
+    }
+
+    /// Puts a creature of `species` at `at` whose looks and mind come from `seed`, if its
+    /// body is not seen appearing; the caller has judged whether the world has room.
+    pub(crate) fn place_creature(&mut self, species: CreatureId, at: Vec3, seed: u64, angle: f32) -> Option<u32> {
         let id = self.creatures.next;
         let genome = self.wild_genome(species, at, seed);
         let def = &self.content.creatures.get(species).def;
@@ -878,6 +890,14 @@ impl Server {
         genes::Population::of(defs, self.meta.seed, key, region, site.temperature, site.aether).individual(defs, seed)
     }
 
+    /// Most monsters near a player now: a new world's first night brings only a few, until
+    /// its first dawn: the world begins at sunrise, so that is the first day, and any
+    /// darkness that runs on past its end.
+    pub(crate) fn monsters_cap(&self) -> usize {
+        let limits = self.content.creatures.limits();
+        if first_night(self.day, self.daylight()) { limits.monsters_near.min(limits.first_night_monsters) } else { limits.monsters_near }
+    }
+
     /// Tries a spot around a player, and puts there a group of whatever suits it best,
     /// if anything does and the player has room for more around them.
     pub(crate) fn spawn_near(&mut self, player: PlayerId, salt: u64) {
@@ -898,7 +918,7 @@ impl Server {
         let (animals, monsters) = (nearby(Kind::Animal), nearby(Kind::Monster));
         // A new world's first night brings only a few, until its first dawn: the world begins
         // at sunrise, so that is the first day, and any darkness that runs on past its end.
-        let monsters_cap = if first_night(self.day, self.daylight()) { limits.monsters_near.min(limits.first_night_monsters) } else { limits.monsters_near };
+        let monsters_cap = self.monsters_cap();
         if animals >= limits.animals_near && monsters >= monsters_cap {
             return;
         }
@@ -924,7 +944,7 @@ impl Server {
         for (id, species) in self.content.creatures.iter() {
             let def = &species.def;
             // People come with their settlements (`villagers`), never from the land.
-            if def.kind == Kind::Villager {
+            if def.kind == Kind::Villager || def.habitat.party_only {
                 continue;
             }
             let monster = def.kind == Kind::Monster;
@@ -1004,7 +1024,7 @@ impl Server {
 
     /// Every joined player's nearby budget applies, including where two players' areas
     /// overlap. Count accepted members again so a group cannot cross either cap.
-    fn nearby_room(&self, at: Vec3, monster: bool, cap: usize) -> bool {
+    pub(crate) fn nearby_room(&self, at: Vec3, monster: bool, cap: usize) -> bool {
         self.players.values().filter(|p| p.joined && p.position.distance(at) < NEAR).all(|player| {
             self.creatures.live.values().filter(|c| {
                 let kind = self.content.creatures.get(c.species).def.kind;

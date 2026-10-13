@@ -27,6 +27,7 @@ mod rules;
 mod treasure;
 pub mod save;
 mod villagers;
+mod wandering;
 mod weather;
 mod wear;
 
@@ -472,6 +473,8 @@ pub(crate) struct Server {
     creatures: creatures::Creatures,
     /// The people of settlements near players.
     villagers: villagers::Villagers,
+    /// Parties that come by on their own errands (`wandering`).
+    wandering: wandering::Wandering,
     /// A new player's health and kit, and what falls, lava, fires and water do.
     survival: Arc<rules::SurvivalRules>,
     /// Swings, guards, dodges and creatures' wind-ups (`fight`).
@@ -583,6 +586,7 @@ impl Server {
             heard: None,
             creatures: creatures::Creatures::default(),
             villagers: villagers::Villagers::restore(state.villagers),
+            wandering: Default::default(),
             survival,
             fights: fight::Fights::default(),
             processes,

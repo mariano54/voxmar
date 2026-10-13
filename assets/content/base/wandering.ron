@@ -1,0 +1,130 @@
+// Wandering events (engine/src/wander.rs, server/src/wandering.rs, docs/wandering.md):
+// parties that come by on their own errands, to keep the land interesting between
+// settlements. Each has a cast (who, how many, what part), a script (March past the
+// player, Patrol a ring, Camp a while, Shadow a stranger) and, for those who talk, a
+// meeting: right click one to hear it and, with something in hand, to swap or be taught.
+// Their words are lang keys `wander.base.EVENT.LINE` (`title`, `greet` and each line).
+//
+// Rare by design: one party near a player at a time, minutes between them, and the
+// creature caps of the land count their animals and monsters. `/wander list` names the
+// kinds, `/wander start NAME` brings one ahead of an admin.
+(
+    rules: (
+        scan_every: 20.0,
+        chance: 0.25,
+        gap: 300.0,
+        most_near: 1,
+        near: 110.0,
+        most_total: 8,
+        people_most: 16,
+        appear_near: 55.0,
+        appear_far: 85.0,
+        leave: 150.0,
+        errand_every: 0.5,
+        first_days: 0.4,
+        speak_reach: 4.0,
+        repeat_weight: 0.15,
+        repeat_memory: 1800.0,
+    ),
+    events: [
+        // A mage on the road with apprentices. Teaches Magic, by the mote.
+        (
+            name: "mage_tutors", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.6), ("tag:fantastical", 1.5)],
+            daylight: (0.35, 1.0), needs: (days: 0.8),
+            cast: [(species: "mage"), (species: "villager", count: (1, 2), role: Follow)],
+            script: March(pass: (14.0, 26.0), length: 150.0, pace: 0.9),
+            meeting: (who: 0, lines: [
+                (name: "lesson_pair", wants: ("aether_mote", 2), gives: [Xp("magic", 32.0), Effect("focused", 300.0)], once: Player),
+                (name: "lesson", wants: ("aether_mote", 1), gives: [Xp("magic", 15.0), Effect("focused", 300.0)], once: Player),
+            ]),
+        ),
+        // A pedlar and their hound, swapping what they carry for what the road gives.
+        (
+            name: "pedlar_and_hound", weight: 1.0,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.4, 1.0),
+            cast: [(species: "pedlar"), (species: "hound", role: Pet(0))],
+            script: March(pass: (10.0, 22.0), length: 130.0, pace: 1.0),
+            meeting: (who: 0, lines: [
+                (name: "swap_hide", wants: ("hide", 2), gives: [Item("twine", (6, 6))]),
+                (name: "swap_bone", wants: ("bone", 3), gives: [Item("seed_mix", (4, 4))]),
+                (name: "swap_feather", wants: ("feather", 6), gives: [Item("bread", (2, 2))]),
+            ]),
+        ),
+        // Pilgrims bound for some far shrine, slowly. The priest blesses those who ask.
+        (
+            name: "pilgrims", weight: 0.7,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:mountain", 0.4)],
+            daylight: (0.3, 1.0), needs: (days: 0.6),
+            cast: [(species: "priest"), (species: "pilgrim", count: (2, 4), role: Follow), (species: "child", count: (0, 1), role: Follow)],
+            script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.85),
+            meeting: (who: 0, lines: [
+                (name: "mend", needs: [Hurt], gives: [Heal(8)], once: Player),
+                (name: "blessing", gives: [Effect("sustained", 600.0)], once: Player),
+            ]),
+        ),
+        // Someone out for a walk with their dog.
+        (
+            name: "stroll_with_dog", weight: 1.4,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.4)],
+            daylight: (0.5, 1.0),
+            cast: [(species: "villager"), (species: "hound", role: Pet(0))],
+            script: March(pass: (8.0, 18.0), length: 90.0, pace: 0.8),
+            meeting: (who: 0, lines: [
+                (name: "treat", wants: ("bone", 1), gives: [Item("twine", (1, 2))], once: Player),
+            ]),
+        ),
+        // Bandits walking a ring round their camp, who go for anyone who comes near.
+        (
+            name: "bandit_patrol", weight: 0.6,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:rocky", 0.5)],
+            daylight: (0.0, 0.7), needs: (days: 1.5, home: true, combat: (3, 40)),
+            cast: [(species: "raider"), (species: "raider", count: (1, 2), role: Flank)],
+            script: Patrol(radius: 22.0, stops: 4, pause: (4.0, 9.0), laps: 2),
+        ),
+        // A wolf pack on its night round.
+        (
+            name: "wolf_prowl", weight: 0.5,
+            biomes: [("tag:forest", 1.0), ("tag:cold", 1.0), ("tag:tundra", 0.6)],
+            daylight: (0.0, 0.3), needs: (days: 1.0),
+            cast: [(species: "wolf"), (species: "wolf", count: (1, 3), role: Follow)],
+            script: Patrol(radius: 28.0, stops: 5, pause: (5.0, 12.0), laps: 2),
+        ),
+        // A hooded stranger who keeps their distance and stands still when watched. Walk up
+        // to them and they are not so shy.
+        (
+            name: "hooded_stranger", weight: 0.4,
+            daylight: (0.0, 0.35), needs: (days: 1.5),
+            cast: [(species: "stranger")],
+            script: Shadow(keep: (12.0, 20.0), seconds: 150.0),
+            meeting: (who: 0, lines: [
+                (name: "light", gives: [Item("torch", (1, 2))], once: Player),
+            ]),
+        ),
+        // A tinker's camp: a trader, a helper or two and a dog, resting a while by the road.
+        (
+            name: "tinker_camp", weight: 0.7,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.6)],
+            daylight: (0.2, 1.0), needs: (days: 1.2),
+            cast: [(species: "trader"), (species: "villager", count: (1, 2), role: Follow), (species: "hound", role: Pet(0))],
+            script: Camp(near: 26.0, stay: (240.0, 420.0), mill: 5.0, away: 140.0),
+            meeting: (who: 0, lines: [
+                (name: "swap_hide", wants: ("hide", 4), gives: [Item("bread", (6, 6))]),
+                (name: "swap_wool", wants: ("wool", 3), gives: [Item("twine", (8, 8))]),
+                (name: "swap_fang", wants: ("fang", 1), gives: [Item("seed_mix", (6, 6))]),
+            ]),
+        ),
+        // Singers and their hangers-on, walking the road from fair to fair.
+        (
+            name: "bard_band", weight: 0.6,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.4, 1.0),
+            cast: [(species: "bard"), (species: "villager", count: (1, 3), role: Follow)],
+            script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.95),
+            meeting: (who: 0, lines: [
+                (name: "song", gives: [Effect("refreshed", 240.0)], once: Player),
+            ]),
+        ),
+    ],
+)

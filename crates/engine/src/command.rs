@@ -76,6 +76,8 @@ pub enum Run {
     Skill,
     /// Tells how the machine at a block is doing.
     Machine,
+    /// Lists, starts and ends wandering parties (`wandering.ron`).
+    Wander,
     /// Runs these command lines in order. `$1`, `$2`, … stand for this command's
     /// arguments and `$*` for all of them.
     Alias(Vec<String>),

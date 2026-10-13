@@ -24,6 +24,10 @@ const NOTABLE: f32 = 0.8;
 
 impl Server {
     pub(crate) fn inspect(&mut self, player: PlayerId, id: u32) {
+        // A wandering party's speaker answers instead (`wandering::meet`).
+        if self.meet(player, id) {
+            return;
+        }
         // A kept one's needs as they are now, not as last reckoned.
         if self.creatures.live.get(&id).is_some_and(|c| c.owner.is_some()) {
             let needs = self.needs_of(id);

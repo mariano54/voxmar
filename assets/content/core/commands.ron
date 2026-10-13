@@ -141,6 +141,13 @@
             run: Creatures,
         ),
         (
+            name: "wander",
+            usage: "[list | start <event> | end]",
+            help: "Tells which wandering parties are about (the people, animals and monsters that come by on their own errands), lists the kinds there are, starts one 40 blocks ahead of you where you look, or sends every party away.",
+            permission: Admin,
+            run: Wander,
+        ),
+        (
             name: "skill",
             usage: "<skill> <level>",
             help: "Sets your level in a skill (farming, hunter, cooking, attack…), from 1 to the highest.",

@@ -221,6 +221,9 @@ pub struct Habitat {
     pub active: Active,
     /// Lives under ground, in caves.
     pub caves: bool,
+    /// Comes only with a wandering party (`wandering.ron`), never from the land's own
+    /// population: a bandit patrol's raiders, a hunter's hound.
+    pub party_only: bool,
 }
 
 impl Habitat {
@@ -841,6 +844,9 @@ impl CreatureRegistry {
             let modules = behaviours
                 .iter()
                 .map(|entry| (brain::modules::module(entry.behaviour), entry.weight))
+                // Anything may be sent on an errand (a wandering party's), so every species
+                // can follow one; it wants nothing until it has one.
+                .chain((!behaviours.iter().any(|entry| matches!(entry.behaviour, Behaviour::Routine { .. }))).then(|| (brain::modules::module(Behaviour::Routine { arrive: 0.8, look: 4.0 }), 1.0)))
                 .chain(brain::modules::always().into_iter().map(|module| (module, 1.0)))
                 .collect();
             let id = CreatureId(registry.creatures.len() as u16);

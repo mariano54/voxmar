@@ -125,7 +125,7 @@ impl Villagers {
         let trip = self.towns.get(&town)?.people[i].trip.as_ref()?;
         let to = *trip.path.get(trip.step)?;
         let last = trip.step + 1 >= trip.path.len();
-        Some(Errand { to: to.as_vec3() + Vec3::new(0.5, 0.0, 0.5), last, pose: trip.pose, face: trip.face, chase: trip.pursuit.map(|_| handoff) })
+        Some(Errand { to: to.as_vec3() + Vec3::new(0.5, 0.0, 0.5), last, pose: trip.pose, face: trip.face, chase: trip.pursuit.map(|_| handoff), pace: 1.0 })
     }
 }
 

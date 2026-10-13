@@ -611,7 +611,7 @@ impl Module for Routine {
         let Some(errand) = ctx.at.errand else { return Decision::default() };
         let there = errand.last && flat(errand.to, ctx.at.position) < self.arrive;
         if !there {
-            return Decision { goal: Some(errand.to), speed: walk(ctx), ..Default::default() };
+            return Decision { goal: Some(errand.to), speed: walk(ctx) * errand.pace, ..Default::default() };
         }
         // Awake, they turn to a player close by.
         let near = ctx.nearest().filter(|p| ctx.distance(p.position) < self.look && errand.pose != Pose::Resting);

@@ -44,7 +44,7 @@ const MAX_FILL: i64 = 32_768;
 const MAX_FILL_SIDE: i32 = 128;
 
 /// What a command says back: words for the console, or why it could not run.
-type Reply = Result<Words, Words>;
+pub(crate) type Reply = Result<Words, Words>;
 
 /// Who runs a command: a player, or the dedicated server's own console, which is an admin
 /// and stands at the world's spawn.
@@ -197,6 +197,7 @@ impl Server {
             },
             Run::Skill => self.skill_command(id, args),
             Run::Machine => self.machine_command(id, args),
+            Run::Wander => self.wander_command(id, args),
         };
         let (Ok(text) | Err(text)) = &reply;
         tracing::debug!("/{}: {}", def.short_name(), self.english(text));

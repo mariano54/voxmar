@@ -390,6 +390,8 @@ ideas we used is credited in [INSPIRATIONS.md](INSPIRATIONS.md).
 | `client` | Bevy app: rendering, input, prediction, HUD, menus; the only crate that depends on Bevy |
 | `texgen` | texture recipes and text sprites rendered to pixel art, and the `texgen` review tool |
 
+Wandering events (travelling parties, pets, patrols, camps) are data too: a package's `wandering.ron` lists casts, scripts and what they say, and species that only come with a party say `party_only`. See [docs/wandering.md](docs/wandering.md) for how they run and the catalogue of 100 kinds.
+
 Content is data: blocks are defined in `assets/content/base/blocks.ron` and loaded through the
 same registry a mod will use. Client and server compare a content fingerprint on join. Templates
 make whole families from one line (a wood: log, stripped log, wood, planks, leaves, sapling; a
