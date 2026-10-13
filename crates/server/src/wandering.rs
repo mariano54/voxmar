@@ -101,6 +101,9 @@ pub struct Wandering {
     /// Companions from the save whose species is not in the content (a mod turned off):
     /// saved again as they were, for when it comes back.
     waiting: Vec<SavedCompanion>,
+    /// An admin's `/wander hold`: no event begins by chance until `/wander allow`. Kept only
+    /// while the server runs.
+    held: bool,
 }
 
 struct Instance {
@@ -379,6 +382,9 @@ impl Server {
     /// not in the gap after the last, and the world and their surroundings have room.
     fn wandering_welcome(&self, player: PlayerId) -> bool {
         let rules = self.content.wandering.rules();
+        if self.wandering.held {
+            return false;
+        }
         let Some(p) = self.players.get(&player).filter(|p| p.joined && p.health.alive()) else { return false };
         if self.day / (voxmar_protocol::TICKS_PER_DAY as f64) < rules.first_days as f64 || self.tick < self.wandering.quiet_until.get(&player).copied().unwrap_or(0) {
             return false;
@@ -1998,6 +2004,14 @@ impl Server {
                     .collect(),
             )),
             Some("end") => Ok(Words::key("command.wander.ended").with("count", Words::text(self.end_all_events()))),
+            Some("hold") => {
+                self.wandering.held = true;
+                Ok(Words::key("command.wander.held"))
+            }
+            Some("allow") => {
+                self.wandering.held = false;
+                Ok(Words::key("command.wander.allowed"))
+            }
             Some("start") => {
                 let name = args.get(1).ok_or_else(|| Words::key("command.wander.what"))?;
                 let event = registry.find(name).ok_or_else(|| Words::key("command.wander.unknown").with("name", name.as_str()))?;
@@ -2342,6 +2356,21 @@ mod tests {
             let at = server.creatures.live[&member.creature].body.position;
             assert!(at.y >= 240.0 && (at - Vec3::new(128.5, at.y, 128.5)).length() < 8.0, "a member stands at {at}, not on the pad");
         }
+    }
+
+    /// `/wander hold` keeps parties from setting out by chance, `/wander allow` lets them
+    /// again; an admin's own start still comes while they are held.
+    #[test]
+    fn held_parties_set_out_only_when_an_admin_starts_one() {
+        let mut server = fixture();
+        assert!(server.wandering_welcome(1), "the fixture's player could meet a party");
+        server.wander_command(Source::Player(1), &["hold".into()]).unwrap();
+        assert!(!server.wandering_welcome(1), "held: none by chance");
+        start(&mut server, "stroll_with_dog", (110, 128));
+        server.wander_command(Source::Player(1), &["end".into()]).unwrap();
+        server.wander_command(Source::Player(1), &["allow".into()]).unwrap();
+        server.wandering.quiet_until.clear();
+        assert!(server.wandering_welcome(1), "allowed again");
     }
 
     /// Clears the world of parties and creatures between tries on one server.

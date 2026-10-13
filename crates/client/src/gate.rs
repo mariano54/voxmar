@@ -221,7 +221,8 @@ fn render_offscreen(
 enum Step {
     /// The world around the player loads.
     Load,
-    /// The test ground is built, the clock and weather held, and the observer joins.
+    /// The test ground is built, the clock, weather and chance wandering parties held, and
+    /// the observer joins.
     Build,
     /// The player stands on the test ground, the observer floats out of the way.
     Arrive,
@@ -1082,6 +1083,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             for line in [
                 "time set noon".to_owned(),
                 "time freeze".into(),
+                // No party sets out by chance into a step about something else (the party
+                // step starts its own).
+                "wander hold".into(),
+                "wander end".into(),
                 "clear".into(),
                 "give oak_planks 64".into(),
                 "give cobblestone 64".into(),
