@@ -2361,6 +2361,7 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
 
 #[test]
 fn a_larder_makes_more_of_a_meal() {
+    real_time("eating takes its time on the clock (stamps of arrival)");
     let mut client = on_a_test_floor();
     let feet = client.position.floor().as_ivec3();
     // Hurt by a fall first (food is eaten to heal), from air cleared high enough.
@@ -2406,6 +2407,7 @@ fn a_larder_makes_more_of_a_meal() {
 
 #[test]
 fn a_home_answers_the_weather_the_animals_and_the_garden_around_it() {
+    real_time("kept animals wander at the game's own pace, or they leave the house before they are counted");
     let mut client = on_a_test_floor();
     let feet = client.position.floor().as_ivec3();
     let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
