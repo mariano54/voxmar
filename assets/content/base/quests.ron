@@ -333,8 +333,8 @@
         ),
         (
             name: "a_field_of_gold", age: "farm", branch: "farming", title: "A Field of Gold",
-            why: "One plot is a hobby; a field is a food supply. Keep sowing from your own seed and harvest twenty-four wheat plants. Seeds come back with each harvest, so the field pays for itself. A field that size also teaches Farming 5.",
-            tasks: [[Pick("wheat_crop", 24), Level("farming", 5)]],
+            why: "One plot is a hobby; a field is a food supply. Keep sowing from your own seed and harvest twenty-four wheat plants. Seeds come back with each harvest, so the field pays for itself. A field that size also teaches Farming 4.",
+            tasks: [[Pick("wheat_crop", 24), Level("farming", 4)]],
             after: ["first_harvest"],
             rewards: [Xp("farming", 250.0)],
         ),
@@ -382,7 +382,7 @@
         ),
         (
             name: "fresh_eggs", age: "farm", branch: "husbandry", title: "Fresh Eggs",
-            why: "A kept hen lays on the ground near her. Collect six eggs: they fry on a campfire, and a hen that is fed, watered and sheltered lays more. Fry one to taste the reward, and keep the other five.",
+            why: "A kept hen lays on the ground near her, and a hen that is fed, watered and sheltered lays more. Fry your first egg on a campfire to taste the reward, then collect five more and keep them.",
             tasks: [[Have("egg", 5), Cook("fried_egg", 1)]],
             after: ["hens_in_a_row"],
             rewards: [Xp("farming", 100.0)],
