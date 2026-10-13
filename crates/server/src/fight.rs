@@ -160,9 +160,12 @@ impl Server {
     }
 
     /// A player clicked a creature to strike it (`core:attack`): a swing starts with what
-    /// is in hand, or waits for the beat. Nothing while their guard is up.
+    /// is in hand, or waits for the beat. Nothing while their guard is up or they are eating.
     pub(crate) fn swing_at(&mut self, player: PlayerId, creature: u32) {
         let Some(weapon) = self.wielded_by(player) else { return };
+        if self.eating(player) {
+            return;
+        }
         let held = self.players.get(&player).and_then(|p| p.held());
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
@@ -182,6 +185,15 @@ impl Server {
             fighter.riposte_until = 0.0;
             fighter.aim = Some(Aim { creature, counter, riposte, weapon, held });
         }
+    }
+
+    /// A player starts a bite of food (`core:eat`): a swing under way is dropped, and the
+    /// meter starts again from empty, so a bite costs a beat (`Rhythm::restart`).
+    pub(crate) fn bite_started(&mut self, player: PlayerId) {
+        let now = self.fight_arrival();
+        let fighter = self.fights.fighters.entry(player).or_default();
+        fighter.rhythm.restart(now);
+        fighter.aim = None;
     }
 
     /// A player raised or lowered their guard. Raising it cancels their own wind-up; a raise
