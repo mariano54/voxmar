@@ -136,7 +136,8 @@ Home (Farm), each with routes that also accept any higher step, because a player
 reaches a higher step never gets the lower one announced; they come after the craft quests
 that make the pieces (seats, a table, shelves, rugs, crockery, candles) and A Stove and a
 Quern, Books and Banners, the two parts the last step needs. Hearthside is the Homestead
-Hearth quest itself.
+Hearth quest itself. The rooms have their own: A Bench to Work At, Pantry Shelves and
+Company at Camp (Nomad), A Proper Workshop, A Larder, A Kitchen Garden and A Full House (Farm).
 
 ## Not built (ideas)
 

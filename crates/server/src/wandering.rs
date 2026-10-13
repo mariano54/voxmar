@@ -907,6 +907,7 @@ impl Server {
                 if let (Some(who), Some(p)) = (self.speaker_name(speaker), self.players.get(&id)) {
                     p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("show"))) });
                 }
+                self.tally(id, "met", &event.def.name, 1);
                 self.hand_out(id, speaker, &event.show);
             }
         }
@@ -1015,6 +1016,7 @@ impl Server {
             if let Some(who) = self.speaker_name(captive) {
                 self.players[&player].connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("thanks"))) });
             }
+            self.tally(player, "met", &event.def.name, 1);
             self.hand_out(player, captive, &event.thanks);
         }
         let plan = follows.map(|player| Plan::Follow { player, until: self.tick + ticks(freed.follow_for), arrive: Arrival::Home, guided: false });
@@ -1719,6 +1721,7 @@ impl Server {
                 if let (Some(who), Some(p)) = (self.speaker_name(leader), self.players.get(&player)) {
                     p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("share"))) });
                 }
+                self.tally(player, "met", &event.def.name, 1);
                 self.hand_out(player, leader, &event.share);
             }
         }
@@ -1766,6 +1769,7 @@ impl Server {
             if let Some(p) = self.players.get(&player) {
                 p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key(&event.key("arrived")) });
             }
+            self.tally(player, "met", &event.def.name, 1);
             self.hand_out(player, leader, &event.reveal);
         }
         if let Some((player, fight)) = stir {
@@ -1779,6 +1783,7 @@ impl Server {
                         p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("arrived"))) });
                     }
                 }
+                self.tally(player, "met", &event.def.name, 1);
                 self.hand_out(player, leader, &event.guide_thanks);
             } else if let (Some(who), Some(p)) = (self.speaker_name(leader), self.players.get(&player)) {
                 p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.settled").with("who", who) });
@@ -2072,6 +2077,8 @@ impl Server {
             None if inst.guided => (Words::key(&event.key("company")), Vec::new(), None, None),
             None => (asked.unwrap_or_else(|| Words::key(&event.greeting(meeting, variant))), Vec::new(), None, None),
         };
+        // A line that takes or gives something; one said for its words alone is no dealing.
+        let dealt = line.is_some_and(|(_, line)| !line.gives.is_empty() || line.wants_of(seed).is_some());
         let who = self.speaker_name(id);
         let halts = event.def.halt.is_some();
         let inst = self.wandering.active.get_mut(&instance).expect("checked");
@@ -2115,6 +2122,10 @@ impl Server {
         }
         if let (Some(who), Some(p)) = (who, self.players.get(&player)) {
             p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", words) });
+        }
+        // A dealing with the kind, for quests (`Met`).
+        if dealt {
+            self.tally(player, "met", &event.def.name, 1);
         }
         self.hand_out(player, id, &gives);
         if gives.contains(&ResolvedReward::Free)

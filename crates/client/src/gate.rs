@@ -4337,6 +4337,29 @@ fn tracker_lines(world: &mut World) -> Option<Vec<String>> {
 /// held with it open does not walk, Esc shuts it and grabs the mouse again; a quest
 /// pinned stands at the right and counts torches crafted for real, as the server counts
 /// them; a quest done reads so, then drops off and the tracker goes.
+/// The goals that meet wanderers and the altar, as the quest book words them in the
+/// language now on: each names the kind or the prayer by its own words, never a bare key.
+fn road_words(world: &World) -> Result<String, String> {
+    let (locale, content) = (world.resource::<Locale>(), &world.resource::<Launch>().content);
+    let mut lines = Vec::new();
+    for name in ["base:farmers_on_the_road", "base:many_travellers", "base:altar_rites"] {
+        let quest = content.quests.get(name).ok_or_else(|| format!("no quest {name}"))?;
+        for goal in quest.tasks.iter().flatten() {
+            let words = crate::hud::quests::goal_words(locale, content, quest, goal, (0, 1));
+            let named = match goal {
+                voxmar_engine::quest::Goal::Met(kind, _) if kind != "Kinds" && kind != "any" => Some(locale.get(&format!("{}.title", voxmar_engine::lang::def_key("wander", kind))).to_owned()),
+                voxmar_engine::quest::Goal::Prayed(prayer, _) => Some(locale.get(&voxmar_engine::lang::def_key("prayer", prayer)).to_owned()),
+                _ => None,
+            };
+            if words.contains("quest.goal") || named.as_ref().is_some_and(|named| !words.contains(named.as_str())) {
+                return Err(format!("{name}: {goal:?} reads `{words}`"));
+            }
+            lines.push(words);
+        }
+    }
+    Ok(lines.join("; "))
+}
+
 fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::quests::{QuestView, toggle_pin};
     let key_code = world.resource::<crate::settings::Settings>().quests_key.0;
@@ -4412,6 +4435,8 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             let nodes = world.query_filtered::<(), With<Button>>().iter(world).count();
             gate.check("quests: book", Ok(format!("L opened the quest book on {picked} ({nodes} buttons drawn)")));
+            let words = road_words(world);
+            gate.check("quests: road words", words);
             gate.advance(now);
         }
         // The book as it stands (what the earlier steps did shows done), in English, then
@@ -4426,6 +4451,8 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if in_phase < 0.5 || gate.shot(world, "quests-ja").is_none() {
                 return;
             }
+            let words = road_words(world);
+            gate.check("quests: road words (ja)", words);
             set_language(world, "en");
             // W held with the book open.
             gate.quest_feet = world.resource::<LocalPlayer>().position;
