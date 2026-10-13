@@ -965,7 +965,7 @@
     "quest.base.charcoal": "Charcoal",
     "quest.base.charcoal.why": "Fuel before metal: coal or charcoal smelts copper and makes torches. Burn logs down at a campfire (hold a log and right-click the fire), or dig out a coal seam: a small black-flecked stone on the ground marks one below.",
     "quest.base.red_metal": "Red Metal",
-    "quest.base.red_metal.why": "Copper tools are faster and find more, and copper is three parts of bronze. A small copper-coloured stone on the ground marks a copper vein below it. A copper ore over a coal or charcoal in the grid makes a copper ingot (Engineering 5); three ingots over two sticks at the table make the pickaxe.",
+    "quest.base.red_metal.why": "Copper tools are faster and find more, and copper is three parts of bronze. A small copper-coloured stone on the ground marks a copper vein below it; breaking copper ore takes Mining 5, which the Charcoal quest's reward brings once claimed in the book. A copper ore over a coal or charcoal in the grid makes a copper ingot (Engineering 5); three ingots over two sticks at the table make the pickaxe.",
     "quest.base.crucible_kiln": "Crucible Kiln",
     "quest.base.crucible_kiln.why": "Bronze needs heat a campfire can't reach. Set the crucible down, ring it with eight kiln bricks, and stand one more brick on each corner of the ring. Then hold thirty-two charcoal or twenty-four coal and right-click the crucible: lighting the kiln starts the Bronze age.",
     "quest.base.first_bronze": "First Bronze",
