@@ -164,6 +164,7 @@ fn crops_by_the_door_are_a_kitchen_garden_that_makes_meals_heal_more() {
     // It stacks with a larder: both lift a meal's healing.
     let larder = [("storage", 4), ("cooking", 1), ("table", 1), ("hearth", 1), ("crop", 4)];
     assert_eq!(rooms(&larder), ["base:larder", "base:kitchen_garden"]);
+}
 
 #[test]
 fn the_next_step_is_above_the_highest_reached_not_one_skipped_below() {
