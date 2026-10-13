@@ -15,7 +15,7 @@ fn dir() -> std::path::PathBuf {
 #[test]
 fn every_event_word_is_a_key_in_both_languages() {
     let content = Content::load(&dir()).unwrap();
-    assert!(content.wandering.len() >= 88, "the first fourteen batches load");
+    assert!(content.wandering.len() >= 94, "the first fifteen batches load");
     for code in ["en", "ja"] {
         let lang = Lang::load(&dir(), code);
         for (_, event) in content.wandering.iter() {
@@ -150,4 +150,35 @@ fn bouts_are_checked_as_they_load() {
     assert!(load("guard", &lines(&won)).is_ok(), "a bout's ends are its stages");
     assert!(load("guard", &lines(r#"(name: "lost", needs: [When(Lost)])"#)).is_err(), "no bout, no end of one");
     assert!(load("guard", &format!("show: (near: 5.0, seconds: 5.0, gives: [Spar(0.5, 60.0)])")).is_err(), "a bout only from a line");
+}
+
+#[test]
+fn parties_that_answer_other_parties_are_checked_as_they_load() {
+    use voxmar_engine::wander::{Rules, WanderRegistry};
+    let content = Content::load(&dir()).unwrap();
+    let load = |rest: &str| {
+        let roam = "cast: [(species: \"villager\")], script: Roam(radius: 4.0, pause: (2.0, 3.0), rest: false, seconds: 60.0)";
+        let events = format!("(name: \"poacher\", {roam}), (name: \"x\", {roam}, {rest})");
+        let package = WanderRegistry::read("base", &format!("(events: [{events}])")).expect("parses");
+        WanderRegistry::new(vec![package], Rules::default(), &content.creatures, &content.blocks, &content.skills, &content.effects, &content.cooking, &content.weather)
+    };
+    assert!(load("needs: (after: Some((\"poacher\", 160.0)))").is_ok());
+    assert!(load("needs: (after: Some((\"nobody\", 160.0)))").is_err(), "after a kind there is");
+    assert!(load("needs: (after: Some((\"x\", 160.0)))").is_err(), "not after itself");
+    assert!(load("needs: (after: Some((\"poacher\", 900.0)))").is_err(), "within sight of it");
+    assert!(load("needs: (met: Some(\"poacher\"))").is_ok());
+    assert!(load("needs: (met: Some(\"nobody\"))").is_err(), "a kind there is to have met");
+    let line = |gives: &str| load(&format!("meetings: [(lines: [(name: \"l\", gives: [{gives}])])]"));
+    assert!(line("Toward(\"poacher\", 160.0)").is_ok());
+    assert!(line("OneOf([Toward(\"poacher\", 160.0), Item(\"bread\", (1, 1))])").is_ok());
+    assert!(line("Toward(\"nobody\", 160.0)").is_err(), "tells of a kind there is");
+    assert!(line("Toward(\"poacher\", 4.0)").is_err());
+    let camp = "cast: [(species: \"villager\")], script: Camp(near: 16.0, stay: (60.0, 90.0), mill: 1.0, away: 60.0)";
+    let show = |gives: &str| {
+        let events = format!("(name: \"poacher\", {camp}), (name: \"x\", {camp}, show: (near: 5.0, seconds: 10.0, gives: [{gives}]))");
+        let package = WanderRegistry::read("base", &format!("(events: [{events}])")).expect("parses");
+        WanderRegistry::new(vec![package], Rules::default(), &content.creatures, &content.blocks, &content.skills, &content.effects, &content.cooking, &content.weather)
+    };
+    assert!(show("Item(\"bread\", (1, 1))").is_ok());
+    assert!(show("Toward(\"poacher\", 160.0)").is_err(), "a show tells of nobody");
 }

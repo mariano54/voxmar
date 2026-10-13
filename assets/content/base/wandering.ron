@@ -1303,5 +1303,82 @@
                 (name: "air", needs: [Below("magic", 10)], gives: [Xp("magic", 8.0)], once: Player),
             ])],
         ),
+        // Batch 15 (docs/wandering.md): parties that answer other parties. Gamekeepers come
+        // after a poacher at work, and tell where he is; a beginner learns the snare law.
+        (
+            name: "gamekeepers", weight: 0.8,
+            biomes: [("tag:forest", 1.0), ("tag:grassland", 0.8), ("tag:open", 0.6)],
+            daylight: (0.05, 0.6), needs: (days: 1.5, after: Some(("poacher", 160.0))),
+            cast: [(species: "guard"), (species: "hound", role: Pet(0))],
+            script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.9),
+            halt: (near: 6.0, seconds: (8.0, 12.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "seen", gives: [Toward("poacher", 160.0)], once: Player),
+                (name: "law", needs: [Below("hunter", 10)], gives: [Xp("hunter", 6.0)], once: Player),
+            ])],
+        ),
+        // Pilgrims straggling behind a shrine bearer, footsore. They say which way the
+        // shrine went; share a loaf and they pray with you.
+        (
+            name: "stragglers", weight: 0.8,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
+            daylight: (0.25, 1.0), needs: (days: 1.0, after: Some(("shrine_bearer", 200.0))),
+            cast: [(species: "pilgrim"), (species: "pilgrim", count: (0, 1), role: Follow)],
+            script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.5),
+            halt: (near: 6.0, seconds: (10.0, 16.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "which_way", gives: [Toward("shrine_bearer", 200.0)], once: Player),
+                (name: "pray", wants: ("bread", 1), gives: [Prayer(10.0), Xp("magic", 4.0)], once: Player),
+            ])],
+        ),
+        // A village gossip who knows who is on the roads: a coin and they tell where the
+        // nearest pedlar, tinker, smith, cook, fortune teller or puppet show is.
+        (
+            name: "gossip", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.3, 0.9), needs: (days: 1.0, town: Some(260.0)),
+            cast: [(species: "villager")],
+            script: Roam(radius: 12.0, pause: (6.0, 12.0), rest: false, seconds: 480.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "news", wants: ("gold_coin", 1), gives: [OneOf([Toward("pedlar_and_hound", 256.0), Toward("tinker_camp", 256.0), Toward("travelling_smith", 256.0), Toward("travelling_cook", 256.0), Toward("fortune_teller", 256.0), Toward("puppeteers", 256.0)])]),
+            ])],
+        ),
+        // Kin of refugees a player took in come by to thank them, with seed from home.
+        (
+            name: "refugee_kin", weight: 1.0,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
+            daylight: (0.3, 0.9), needs: (days: 3.0, near_home: Some(64.0), met: Some("refugees")),
+            cast: [(species: "villager"), (species: "child", count: (0, 2), role: Follow)],
+            script: Camp(near: 16.0, stay: (180.0, 300.0), mill: 2.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "thanks", gives: [Item("seed_mix", (4, 6)), Xp("farming", 15.0)], once: Player),
+            ])],
+        ),
+        // A christening: the couple from a wedding a player met, with their child, walking to
+        // be blessed. A loaf for the feast and they share the blessing.
+        (
+            name: "christening", weight: 1.0,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.4, 1.0), needs: (days: 6.0, met: Some("wedding")),
+            cast: [(species: "priest"), (species: "villager", count: (2, 2), role: Follow), (species: "child", role: Follow)],
+            script: March(pass: (8.0, 16.0), length: 140.0, pace: 0.6),
+            halt: (near: 6.0, seconds: (10.0, 16.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "feast", wants: ("bread", 1), gives: [Prayer(15.0), Effect("refreshed", 900.0)], once: Player),
+            ])],
+        ),
+        // The poacher's friends, who heard who crossed him: they lie in wait by a road for a
+        // player who met him, his snares for bait. Beat them and they pay to be let go.
+        (
+            name: "poachers_gang", weight: 0.5,
+            biomes: [("tag:forest", 1.0), ("tag:open", 0.6)],
+            daylight: (0.05, 0.45), needs: (days: 3.0, combat: (5, 60), met: Some("poacher")),
+            cast: [(species: "poacher"), (species: "raider", count: (1, 2), role: Lurk)],
+            script: Ambush(near: 22.0, trigger: 7.0, delay: (6.0, 10.0), patience: 300.0, away: 120.0, hold: (30.0, 60.0)),
+            hurt: Avenge,
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "let_go", needs: [When(Won)], gives: [Item("gold_coin", (2, 3)), Xp("hunter", 10.0)], once: Player),
+            ])],
+        ),
     ],
 )

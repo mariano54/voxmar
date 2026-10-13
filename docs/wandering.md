@@ -559,6 +559,28 @@ the player has become good at.
 | gives what's asked | eggs, a hen | a coin | n/a |
 | strikes one | they scatter | they scatter | they scatter |
 
+## Batch 15 (implemented, six kinds): parties that answer other parties
+
+Three general rules, all in data:
+- **`needs.after: (kind, reach)`**: the kind comes only while a party of that kind is about,
+  within reach of where it would appear (16 to 256 blocks).
+- **`needs.met: kind`**: the kind comes only to a player who has met that kind before. The
+  player's "met" tally is kept with their save, so one visit sets up a later one.
+- **`Toward(kind, reach)`**: a reward that tells which way and how far the nearest running
+  party of that kind is. It can also be one of the choices in a `OneOf`. It is said only
+  when there is one.
+
+Each named kind is checked when the content loads.
+
+| kind | rule | what it adds |
+| --- | --- | --- |
+| gamekeepers | after the poacher | Come after a poacher at work, with a hound. They say which way he is, once; a beginner learns the snare law. |
+| stragglers | after the shrine bearer | Pilgrims fallen behind a shrine. They say which way it went; a loaf and they pray with you (prayer restored). |
+| gossip | Toward, near a town | A coin and they tell where the nearest pedlar, tinker, smith, cook, fortune teller or puppet show is. With nobody on the roads, they take nothing. |
+| refugee kin | met the refugees, near home | Kin of refugees a player took in come to thank them: seed mix and Farming, once. |
+| christening | met the wedding | The couple from a wedding a player met, with their child, days later. A loaf for the feast: prayer and Refreshed, once. |
+| poacher's gang | met the poacher | Friends of a poacher a player met lie in wait (Ambush) for them. Beat them and they pay to be let go. |
+
 ## Quest hooks
 
 Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
@@ -590,6 +612,10 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **A hen of your own** (henwife): take a hen home from a henwife.
 - **Teach a trade** (apprentice): be good enough at something that a would-be apprentice asks to learn it.
 - **Herbs into aether** (hedge witch): have three herbs made into a mote of aether.
+- **The keepers' word** (gamekeepers, poacher): meet the gamekeepers, then find the poacher they point to.
+- **Catch up the shrine** (stragglers, shrine bearer): learn from the stragglers which way the shrine went, then reach it.
+- **From wedding to christening** (wedding, christening): meet a wedding, and later bless its child.
+- **Those taken in** (refugees, refugee kin): take refugees in at home, then welcome their kin.
 
 ## Catalogue of 100
 
@@ -731,6 +757,12 @@ are the mechanics later batches add, each used by several kinds.
 | 130 | woodcarver | see batch 14 | Camp | 1 | done |
 | 131 | shearers | see batch 14 | March | 2 | done |
 | 132 | apprentice | see batch 14 | Skill | 2 | done |
+| 133 | gamekeepers | see batch 15 | after | 1 | done |
+| 134 | stragglers | see batch 15 | after | 1 | done |
+| 135 | gossip | see batch 15 | Toward | 1 | done |
+| 136 | refugee kin | see batch 15 | met | 2 | done |
+| 137 | christening | see batch 15 | met | 2 | done |
+| 138 | poacher's gang | see batch 15 | met, Ambush | 2 | done |
 
 ## Mechanics the next batches add
 
@@ -749,6 +781,7 @@ Each is a script or a role used by many kinds, so every kind stays a few lines o
 - **Show**: done (batch 7): a camped party puts on something to watch; staying pays.
 - **Hunt**: done (batch 8): a party goes after wild quarry and brings it down; first blood shares.
 - **Journey**: done (batch 9): a party walks to a town; those who walk with it are thanked there.
+- **After / met / Toward**: done (batch 15): a party that comes after another, follows up an earlier visit, or tells where one is.
 - **Duel / Dance / Crossing / Vigil**: fixed arrangements of the formation code.
 
 ## Notes
