@@ -1640,7 +1640,7 @@ impl Server {
             // Whoever drew first blood is given a share, the kill's own loot with it.
             let first = self.creatures.live.get(&quarry).and_then(|c| c.hurt_by).filter(|p| self.players.get(p).is_some_and(|p| p.health.alive()));
             let shared = first.filter(|_| !event.share.is_empty());
-            self.creature_felled(quarry, shared.is_some());
+            self.creature_felled(quarry, shared);
             inst.stage = Stage::Took;
             if let Some(player) = shared {
                 if let (Some(who), Some(p)) = (self.speaker_name(leader), self.players.get(&player)) {
@@ -4341,6 +4341,9 @@ mod tests {
         assert!(says(&told(&client), "wander.base.hunting_party.share"));
         assert!(xp_in(&server, "core:hunter") > 0, "a share of the hunt's experience");
         assert!(loot_falling(&server) > 0, "and of the kill");
+        let journal = &server.players[&1].journal;
+        assert!(journal.get(voxmar_engine::journal::Page::Animals, "base:wild_boar").is_some(), "the kill in their journal");
+        assert!(journal.get(voxmar_engine::journal::Page::Collection, "base:raw_pork").is_some(), "and its meat in their collection log");
     }
 
     #[test]

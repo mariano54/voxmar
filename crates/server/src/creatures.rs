@@ -754,6 +754,12 @@ impl Server {
 
     /// A creature dies: its loot pops out, its killer earns experience.
     pub(crate) fn creature_dies(&mut self, id: u32) {
+        self.creature_dies_by(id, true);
+    }
+
+    /// A creature dies: its loot pops out for the player who last hurt it, as theirs
+    /// (their tool, their skill, their journal), and with `xp` they earn the kill's experience.
+    fn creature_dies_by(&mut self, id: u32, xp: bool) {
         let Some(creature) = self.creatures.live.remove(&id) else { return };
         self.creatures.gone.push(CreatureGone { id, died: true });
         // One of a settlement's people: noted dead now, so no save misses it.
@@ -783,7 +789,7 @@ impl Server {
             let body = dropped::popped(cell, random3(self.tick, cell, i as u32 + id));
             self.creatures.falling_loot.push((due, ItemStack { item, count }, body));
         }
-        if let (Some(player), Some(skill)) = (creature.hurt_by, species.xp_skill) {
+        if let (Some(player), Some(skill), true) = (creature.hurt_by, species.xp_skill, xp) {
             let tenths = (species.def.xp.kill * 10.0) as u32;
             if let Some(p) = self.players.get_mut(&player).filter(|_| tenths > 0) {
                 p.skills.grant(skill, tenths);
@@ -798,29 +804,22 @@ impl Server {
         }
     }
 
-    /// A creature brought down by no player's hand (a hunting party's quarry): it dies and
-    /// teaches nobody anything. Its loot drops only when `shared`, for the player who drew
-    /// first blood and is given their share of the kill.
-    pub(crate) fn creature_felled(&mut self, id: u32, shared: bool) {
-        let Some(creature) = self.creatures.live.remove(&id) else { return };
-        self.creatures.gone.push(CreatureGone { id, died: true });
-        self.villager_died(id);
-        self.wandering_died(id);
-        if !shared {
+    /// A creature brought down by no player's hand (a hunting party's quarry): it teaches
+    /// nobody anything. With `shared`, the player who drew first blood is given their share
+    /// of the kill: its loot drops for them as if theirs, and goes in their journal; else it
+    /// dies with nothing.
+    pub(crate) fn creature_felled(&mut self, id: u32, shared: Option<PlayerId>) {
+        if let Some(player) = shared {
+            if let Some(creature) = self.creatures.live.get_mut(&id) {
+                creature.hurt_by = Some(player);
+            }
+            self.creature_dies_by(id, false);
             return;
         }
-        let species = self.content.creatures.get(creature.species);
-        let moment = Moment { bonus: 0.0, tool: &[], night: self.daylight() < 0.3, by_player: true };
-        let mut draws = 0u32;
-        let found = loot::roll(&species.loot, &moment, || {
-            draws += 1;
-            unit_from(mix(creature.seed, draws as u64 ^ self.tick << 8))
-        });
-        let cell = creature.body.position.floor().as_ivec3();
-        let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
-        for (i, (item, count)) in found.into_iter().enumerate() {
-            let body = dropped::popped(cell, random3(self.tick, cell, i as u32 + id));
-            self.creatures.falling_loot.push((due, ItemStack { item, count }, body));
+        if self.creatures.live.remove(&id).is_some() {
+            self.creatures.gone.push(CreatureGone { id, died: true });
+            self.villager_died(id);
+            self.wandering_died(id);
         }
     }
 
