@@ -32,8 +32,12 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   `Lurk` (lies in wait about the leader, in an `Ambush`).
 - **Scripts.** The script decides where the leader goes; every other member gets a formation
   slot from its role. The server hands each member an `Errand`, the same handoff villagers
-  use, so the creature brain still decides how to walk it (and still flees, fights or looks
-  around when its modules say so).
+  use, so the creature brain still decides how to walk it (and still fights or looks around
+  when its modules say so). A party's errand is `steady`: the brain's own `Flee` waits while
+  it holds one, so a member runs only when its script says (a chase, a scatter, a lure
+  hurrying on), and a wild stag or a hurt traveller does not bolt from the player the script
+  is meant to meet. Freeing, scattering and release clear the errand, and the brain is
+  itself again.
   - `March(pass, length, pace)`: a line that passes the player at `pass` blocks and walks on.
   - `Patrol(radius, stops, pause, laps)`: a ring of stops, each paused at, then marches off.
   - `Camp(near, stay, mill, away)`: settles near the player, mills about (rests at night),
@@ -54,7 +58,7 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
     seconds later (time to talk, pay, or run): the lurkers turn on that player (`Sprung`,
     `Avenge`), the bait is afraid. Every lurker gone is `Won`: the bait stays `hold` seconds
     to be thanked. Nobody comes in `patience` seconds, or a `Wary` player stands by (see
-    Reactions) for twenty, and they go `away`.
+    Reactions) for twenty, and they march `away` blocks off (a paid toll or a won fight the same).
   - `Lure(keep, length, pace, patience, linger)`: the leader stands watching where it appeared
     until a player comes within `keep.1` blocks, then leads off along a line `length` blocks
     long, away from them, hurrying if they come nearer than `keep.0`, waiting (alert) if they

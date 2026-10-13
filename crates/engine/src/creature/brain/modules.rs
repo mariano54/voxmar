@@ -267,6 +267,9 @@ impl Module for Flee {
     }
 
     fn want(&self, ctx: &Ctx) -> Option<Want> {
+        if ctx.at.errand.is_some_and(|e| e.steady) {
+            return None;
+        }
         match self.threat(ctx) {
             Some(threat) => {
                 let closeness = 1.0 - (ctx.distance(threat.position) / (self.radius * 1.5)).min(1.0);

@@ -234,8 +234,17 @@ fn xz(v: Vec3) -> Vec2 {
     Vec2::new(v.x, v.z)
 }
 
+/// How far a party walks off when it gives up or is sent on its way: an ambush's own
+/// `away`, else 80 blocks.
+fn leaves(script: Script) -> f32 {
+    match script {
+        Script::Ambush { away, .. } => away,
+        _ => 80.0,
+    }
+}
+
 fn errand(to: Vec3, last: bool, pose: Pose, face: Option<Vec3>, pace: f32) -> Errand {
-    Errand { to, last, pose, face, chase: None, pace }
+    Errand { to, last, pose, face, chase: None, pace, steady: true }
 }
 
 impl Server {
@@ -541,7 +550,7 @@ impl Server {
             let seconds = hold.0 + unit_from(mix(inst.seed, self.tick ^ 0x3c0)) * (hold.1 - hold.0);
             let lead = positions.first().copied().unwrap_or(Vec3::ZERO);
             let nearest = players.iter().map(|&(_, p)| p).min_by(|a, b| a.distance(lead).total_cmp(&b.distance(lead)));
-            let away = self.march_away(lead, nearest, Vec2::X, 0.9);
+            let away = self.march_away(lead, nearest, Vec2::X, 0.9, leaves(event.def.script));
             inst.plan = Plan::Held { until: self.tick + ticks(seconds), next: Box::new(away) };
         }
         // Left with no captors, a captive is free.
@@ -569,9 +578,9 @@ impl Server {
 
     /// The plan of walking off from the nearest player (or on along `heading`), `pace` of a
     /// walk, for 80 blocks.
-    fn march_away(&self, lead: Vec3, nearest: Option<Vec3>, heading: Vec2, pace: f32) -> Plan {
+    fn march_away(&self, lead: Vec3, nearest: Option<Vec3>, heading: Vec2, pace: f32, far: f32) -> Plan {
         let away = nearest.map_or(heading, |p| (xz(lead) - xz(p)).try_normalize().unwrap_or(heading));
-        Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * 80.0, pace }
+        Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * far, pace }
     }
 
     /// How the party's `kind` answers what the players round `at` hold (`Reaction`).
@@ -1131,7 +1140,7 @@ impl Server {
             inst.stage = Stage::Passing;
         }
         if leaving {
-            inst.plan = self.march_away(lead, nearest, heading, 1.0);
+            inst.plan = self.march_away(lead, nearest, heading, 1.0, leaves(script));
             inst.stage = Stage::Passing;
         }
         if let Some(player) = spring {
@@ -1390,7 +1399,7 @@ impl Server {
         {
             let lead = inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map_or(Vec3::ZERO, |c| c.body.position);
             let from = self.players.get(&player).map(|p| p.position);
-            inst.plan = self.march_away(lead, from, Vec2::X, 1.0);
+            inst.plan = self.march_away(lead, from, Vec2::X, 1.0, leaves(event.def.script));
             inst.stage = Stage::Passing;
             inst.provoked = None;
             inst.done = false;
@@ -2345,8 +2354,11 @@ mod tests {
         near_bait(&mut server, id, 5.0);
         run(&mut server, 20 * 15);
         assert_eq!(server.wandering.active[&id].stage, Stage::Waiting, "armed and seasoned: no spring");
-        run(&mut server, 20 * 15);
-        assert!(matches!(server.wandering.active[&id].plan, Plan::March { .. }), "they give it up");
+        assert!(run_until(&mut server, id, 15, |i| matches!(i.plan, Plan::March { .. })), "they give it up");
+        let inst = &server.wandering.active[&id];
+        let Plan::March { goal, .. } = inst.plan else { unreachable!() };
+        let lead = server.creatures.live[&inst.members[0].creature].body.position;
+        assert!((110.0..=130.0).contains(&flat(goal, lead)), "they go the script's `away` (120 blocks), not a fixed march");
         // The same player with empty hands would have been sprung on.
         let mut server = fixture();
         let id = walk_to_waiting(&mut server);
@@ -2355,6 +2367,18 @@ mod tests {
         skill_to(&mut server, "core:hitpoints", 25);
         near_bait(&mut server, id, 5.0);
         assert!(run_until(&mut server, id, 15, |i| i.stage == Stage::Sprung), "nothing in the hand: not feared");
+    }
+
+    #[test]
+    fn the_bait_lies_still_when_a_player_walks_right_up_to_it() {
+        let mut server = fixture();
+        let id = walk_to_waiting(&mut server);
+        let bait = server.wandering.active[&id].members[0].creature;
+        let at = server.creatures.live[&bait].body.position;
+        near_bait(&mut server, id, 2.0);
+        run(&mut server, 20 * 3);
+        assert_eq!(server.wandering.active[&id].stage, Stage::Waiting);
+        assert!(flat(at, server.creatures.live[&bait].body.position) < 1.0, "lying hurt is its errand: it does not bolt from a stranger");
     }
 
     #[test]
@@ -2390,9 +2414,9 @@ mod tests {
         assert_eq!(server.wandering.active[&id].stage, Stage::Passing);
         let hunter = server.content.skills.id("core:hunter").unwrap();
         let xp = server.players[&1].skills.xp(hunter);
-        // A follower ten blocks behind: it walks on, the whole way.
+        // A follower seven blocks behind, near enough to scare a wild stag: it walks on, the whole way.
         for _ in 0..400 {
-            follow(&mut server, id, 10.0);
+            follow(&mut server, id, 7.0);
             run(&mut server, 20);
             if server.wandering.active.get(&id).is_none_or(|i| i.stage == Stage::Arrived) {
                 break;

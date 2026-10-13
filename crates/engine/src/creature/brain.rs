@@ -100,6 +100,9 @@ pub struct Errand {
     /// How fast it goes, as a share of its walk: 1 for the day's errands; a party's
     /// stragglers hurry to catch up with theirs.
     pub pace: f32,
+    /// Its flight is the errand's (a wandering party's script, which runs a quarry and
+    /// scatters a struck party itself): it does not `Flee` while it holds this one.
+    pub steady: bool,
 }
 
 /// What a creature senses this decision.
@@ -541,7 +544,7 @@ pub(super) mod tests {
         let guard = species(&format!(
             "(creatures: [(name: \"guard\", health: 10, leash: 8.0, {BODY}, attack: (damage: (1, 2)), behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Defend)])])"
         ));
-        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: None, pace: 1.0 };
+        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: None, pace: 1.0, steady: false };
         let mut mind = Mind::new(&guard.def.temperament, 6);
         let far = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&[]) };
         let decision = think(&guard, &mut mind, &far);
@@ -573,7 +576,7 @@ pub(super) mod tests {
         assert_eq!(mind.attacker(), Some(1));
         mind.forgive();
         assert_eq!((mind.attacker(), mind.anger, mind.fear), (None, 0.0, 0.0));
-        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: None, pace: 1.0 };
+        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: None, pace: 1.0, steady: false };
         let near = [player(Vec3::new(20.0, 0.0, 0.0))];
         let at = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&near) };
         let _ = think(&guard, &mut mind, &at);
