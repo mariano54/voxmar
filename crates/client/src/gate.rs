@@ -4655,6 +4655,10 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
 /// step of 0.05 cannot jump one.
 const FEEL_TRIES: u32 = 10;
 const FEEL_STEP: f32 = 0.05;
+/// Seconds past the moment tried that a frame may come late with the try still saying
+/// something of the moment: a frame that late answered after the blow could have landed
+/// (the wind-up is 0.7 s), and said nothing, as on a machine drawing a frame a second.
+const FEEL_SLOW_FRAME: f32 = 0.25;
 /// Server seconds the block, counter and dodge take at most together; past them the step
 /// fails what it is on and goes on to kill the bears, so none is left behind.
 const FEEL_LIMIT: f32 = 120.0;
@@ -4697,6 +4701,11 @@ struct FeelRun {
     facing_checked: bool,
     facing_camera: Option<(f32, f32)>,
     facing_frames: u8,
+    /// How late the frame that answered came past the moment tried, the worst of the tries
+    /// set aside for it, and how many were.
+    late: f32,
+    slowest: f32,
+    slow: u32,
 }
 
 /// The bear in survival: provoked with a click every few server seconds until it winds up,
@@ -4826,6 +4835,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 && seen.elapsed().as_secs_f32() >= gate.feel.after
             {
                 gate.feel.answered = true;
+                gate.feel.late = seen.elapsed().as_secs_f32() - gate.feel.after;
                 if blocking {
                     mouse(world, MouseButton::Right, true);
                 } else {
@@ -4878,6 +4888,28 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.feel.seen = None;
             gate.feel.outcomes.push(defended);
             let passed = if blocking { defended == Defended::Perfect } else { defended == Defended::Dodged };
+            // An answer sent by a frame that came this late may have gone after the blow
+            // landed, whatever moment was tried: the try says nothing of the moment, so it is
+            // set aside, not counted, and the search stays. Enough of them and the machine is
+            // too slow to judge (as `creature falls` is when it draws too few frames).
+            let late = std::mem::take(&mut gate.feel.late);
+            if !passed && answered && late > FEEL_SLOW_FRAME {
+                gate.feel.outcomes.pop();
+                gate.feel.slow += 1;
+                gate.feel.slowest = gate.feel.slowest.max(late);
+                if gate.feel.slow >= FEEL_TRIES {
+                    let detail = format!("{} answers came {:.2} s late at most, past a {windup} s wind-up, so none says whether the game judges the moment", gate.feel.slow, gate.feel.slowest);
+                    gate.known(if blocking { "perfect block" } else { "dodge" }, Err(detail), "frames slower than a wind-up, as on a loaded machine");
+                    gate.feel.slow = 0;
+                    gate.feel.slowest = 0.0;
+                    if blocking {
+                        to_dodge(gate, windup, now);
+                    } else {
+                        clear_feel(gate, now);
+                    }
+                }
+                return;
+            }
             if passed {
                 let detail = format!("{defended:?} for {damage} damage, answered {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
                 let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
@@ -4968,6 +5000,8 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// After the block and counter, passed or not: on to the dodge (phase 4) with its own tries.
 fn to_dodge(gate: &mut Gate, windup: f32, now: f32) {
     gate.feel.tries = 0;
+    gate.feel.slow = 0;
+    gate.feel.slowest = 0.0;
     gate.feel.outcomes.clear();
     gate.feel.seen = None;
     gate.feel.answered = false;
