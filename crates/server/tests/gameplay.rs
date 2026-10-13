@@ -6697,10 +6697,10 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let rel = |f: &Fresh, cells: Vec<IVec3>| -> Vec<IVec3> { cells.into_iter().map(|p| f.origin + p).collect() };
     let (cobble, clay, stick, log) = ("base:cobblestone", "base:clay", "base:stick", "base:oak_log");
 
-    // Timber, with bare hands (a new player starts with nothing): eight logs, four more for
-    // the two campfires, and four more for planks.
+    // Timber, with bare hands (a new player starts with nothing): four logs, for the planks
+    // that make the table, the sticks and the first two tools.
     let trunks = rel(f, [1, 3, 5, 7].into_iter().flat_map(|x| (0..4).map(move |y| v(x, y, -5))).collect());
-    f.gather("", trunks, log, 16);
+    f.gather("", trunks.clone(), log, 4);
     f.mark("timber");
     f.craft(&[(0, log, 4)], "base:oak_planks", 16);
 
@@ -6714,6 +6714,12 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.craft(&[(0, "base:oak_planks", 3), (3, "base:oak_planks", 3)], stick, 12);
     f.at_table(table);
     f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (2, "base:oak_planks", 1), (4, stick, 1), (7, stick, 1)], "base:wooden_pickaxe", 1);
+
+    // An Axe to It: a wooden axe, and the twelve logs the campfires and later planks want
+    // chopped with it, in half the time a fist takes.
+    f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (3, "base:oak_planks", 1), (4, stick, 1), (7, stick, 1)], "base:wooden_axe", 1);
+    f.gather("base:wooden_axe", trunks, log, 12);
+    f.mark("an_axe_to_it");
 
     // Stone in Hand: cobblestone with the wooden pickaxe, then a stone pickaxe and axe.
     let stone = rel(f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
@@ -6972,9 +6978,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.mark("the_potter");
 
     // Charcoal: logs held and burnt down at the campfire, sixteen. The trunks give the
-    // charcoal for the copper ingots and the kiln's charge as well.
+    // charcoal for the copper ingots and what the kiln's charge lacks after The Crucible's
+    // sixteen (three more), and a log for sticks: twenty-four is a few to spare.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
-    f.gather("base:stone_axe", trunks, log, 52);
+    f.gather("base:stone_axe", trunks, log, 24);
     f.burn_charcoal(&site, 16);
     f.mark("charcoal");
     f.make_room(8);
@@ -7064,6 +7071,7 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("look_it_up", "look_it_up"),
     ("timber", "timber"),
     ("crafting_table", "crafting_table"),
+    ("an_axe_to_it", "an_axe_to_it"),
     ("stone_in_hand", "stone_in_hand"),
     ("first_night", "first_night"),
     ("a_bed_of_your_own", "a_bed_of_your_own"),

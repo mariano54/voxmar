@@ -25,7 +25,7 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; a junglefowl gives chicken and sometimes an egg. Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; a junglefowl gives chicken and sometimes an egg. Fists are slow at the hunt too: swing the stone axe, which hits three times as hard (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
@@ -96,6 +96,13 @@
             rewards: [Xp("engineering", 18.0)],
         ),
         (
+            name: "an_axe_to_it", age: "nomad", branch: "start", title: "An Axe to It",
+            why: "Punching trees is slow. At the crafting table, three planks and two sticks make a wooden axe (the recipe viewer shows the shape): a log takes half the time it takes a fist, and a stone axe halves that again. Make one and chop eight logs; the campfire, planks and sticks ahead all want them.",
+            tasks: [[Craft("wooden_axe", 1), Have("tag:log", 8)]],
+            after: ["crafting_table"],
+            rewards: [Xp("engineering", 20.0), Item("stick", 4)],
+        ),
+        (
             name: "first_ore", age: "nomad", branch: "mining", title: "Red Metal Underfoot",
             why: "Copper needs Mining 5 and the pickaxe you have. Mining grows mostly from coal: a score or so of it, with what the early quests give, takes you there. Copper lies in veins underground, mostly below sea level and richest under granite; a small copper-coloured stone lying on the ground marks a vein below it, so dig down there. Mine five; it is the start of every metal.",
             tasks: [[Mine("copper_ore", 5)]],
@@ -104,8 +111,8 @@
         ),
         (
             name: "timber", age: "nomad", branch: "start", title: "Timber",
-            why: "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the attack button: bare hands are slow, but they work) and gather eight logs; woods have the most trees, and plains have a few in groves. A log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and axe.",
-            tasks: [[Have("tag:log", 8)]],
+            why: "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the attack button: bare hands are slow, but they work) and gather four logs; woods have the most trees, and plains have a few in groves. Four are enough to start: a log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and a wooden axe. Chop the rest with the axe, in half the time a fist takes.",
+            tasks: [[Have("tag:log", 4)]],
             rewards: [Xp("engineering", 30.0)],
         ),
         (
