@@ -5165,6 +5165,20 @@ fn open_scene_pose(world: &mut World, gate: &mut Gate) -> bool {
     ready && gate.settled >= 3
 }
 
+/// Why `open_scene_pose` has not settled, for its checks' failures.
+fn unsettled(world: &World, gate: &Gate) -> String {
+    let player = world.resource::<LocalPlayer>();
+    let position = gate.feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    format!(
+        "the open test-ground teleport did not settle: teleported {}, on the ground {}, in water {}, {:.2} from the spot at {:.2}",
+        player.teleports != gate.scene_teleport,
+        player.on_ground,
+        player.in_water,
+        player.position.distance(position),
+        player.position
+    )
+}
+
 /// A storm, then snow, each drawn (rain, snow and their particles change the view), then
 /// clear skies again.
 fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -5179,7 +5193,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
-                    gate.check("weather: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.check("weather: pose", Err(unsettled(world, gate)));
                     gate.next(Step::Depths, now);
                 }
                 return;
@@ -5297,7 +5311,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
-                    gate.check("depths: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.check("depths: pose", Err(unsettled(world, gate)));
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -5463,7 +5477,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         8 | 9 => {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
-                    gate.check("depths: back", Err("the open test-ground teleport did not settle".into()));
+                    gate.check("depths: back", Err(unsettled(world, gate)));
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -6306,7 +6320,7 @@ struct FeelRun {
     centre: f32,
     probe: u32,
     /// The moment after the wind-up showed that the perfect block was found at: the dodge's
-    /// search starts just before it, as the same delays (the server's, the frames') hold.
+    /// search starts there, as the same delays (the server's, the frames') hold.
     found: Option<f32>,
     /// The bear the step is about (`the_bear`), whether it was seen dying, and whether it
     /// has been seen out of its attack pose since the last blow (a wind-up counts from the
@@ -6649,8 +6663,12 @@ fn to_dodge(gate: &mut Gate, windup: f32, now: f32) {
     gate.feel.seen = None;
     gate.feel.answered = false;
     // A dodge is safe from 0.04 to about 0.2 s in, a perfect guard up to 0.15 s before the
-    // blow: the dodge goes about 0.05 s before the perfect block's moment, if it was found.
-    gate.feel.after = gate.feel.found.map_or(windup - 0.15, |at| at - 0.05).clamp(0.0, windup);
+    // blow. The block's search starts at its window's earliest moment and moves later only
+    // on a guard raised too soon, so the moment it was found at lands early in the guard's
+    // window, which is the middle of the dodge's: the dodge starts there. (0.05 s before it
+    // was the dodge window's very edge, and once the smoothed round trip had grown with the
+    // lag since the block's try, the server judged the same request earlier and it was hit.)
+    gate.feel.after = gate.feel.found.unwrap_or(windup - 0.15).clamp(0.0, windup);
     gate.feel.centre = gate.feel.after;
     gate.feel.probe = 0;
     to_phase(gate, FEEL_DODGE, now);
@@ -7669,7 +7687,7 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         0 => {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
-                    gate.check("sky: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.check("sky: pose", Err(unsettled(world, gate)));
                     gate.next(Step::Tree, now);
                 }
                 return;
