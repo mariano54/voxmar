@@ -53,6 +53,9 @@ const THERE: f32 = 2.5;
 const HURRY: f32 = 4.0;
 /// Blocks a watcher must be from the party for it to be taken away unseen.
 const UNSEEN_BEYOND: f32 = 40.0;
+/// How far ahead of an admin `/wander start` brings a party, in blocks: the first of these
+/// with standing room, down to the admin's own feet.
+const ADMIN_SPOT_AHEAD: [f32; 5] = [40.0, 24.0, 12.0, 4.0, 0.0];
 /// A struck party's grudge: seconds it lasts without the player near, and how near that is.
 const GRUDGE: f32 = 20.0;
 const GRUDGE_RANGE: f32 = 45.0;
@@ -2213,12 +2216,25 @@ impl Server {
                     }
                     Source::Console => (None, self.spawn, Vec3::NEG_Z),
                 };
-                let at = (feet + look * 40.0).floor().as_ivec3();
-                self.load_area(at, at);
-                let spot = self.standing_spot(at.x, at.z, at.y).ok_or_else(|| Words::key("command.wander.no_room"))?;
+                // Ahead of them, out of the way, or nearer where the land ahead falls away or
+                // rises out of reach: an admin's start never fails for want of a spot while
+                // they stand on something.
+                let spot = ADMIN_SPOT_AHEAD.into_iter().find_map(|ahead| {
+                    let at = (feet + look * ahead).floor().as_ivec3();
+                    self.load_area(at, at);
+                    self.standing_spot(at.x, at.z, at.y)
+                });
+                let name = &registry.get(event).def.name;
+                let Some(spot) = spot else {
+                    tracing::info!("wandering: /wander start {name} refused: no standing room ahead of {feet} or at it");
+                    return Err(Words::key("command.wander.no_room"));
+                };
                 // Seen or not: the admin asked for it.
                 let seed = mix(self.meta.seed, self.tick);
-                self.begin_event_at(player, event, spot, seed, true).ok_or_else(|| Words::key("command.wander.no_room"))?;
+                if self.begin_event_at(player, event, spot, seed, true).is_none() {
+                    tracing::info!("wandering: /wander start {name} refused: no cast could be brought to {spot}");
+                    return Err(Words::key("command.wander.no_room"));
+                }
                 Ok(Words::key("command.wander.started").with("event", Words::key(&registry.get(event).title_key())))
             }
             Some(_) => Err(Words::key("command.wander.what")),
@@ -2515,6 +2531,25 @@ mod tests {
         let id = start(&mut server, "stroll_with_dog", (110, 128));
         let kinds: Vec<Kind> = server.wandering.active[&id].members.iter().map(|m| server.content.creatures.get(server.creatures.live[&m.creature].species).def.kind).collect();
         assert_eq!(kinds, [Kind::Villager, Kind::Animal], "the person and the dog");
+    }
+
+    /// An admin on a pad high over the ground, the land forty blocks ahead out of reach:
+    /// the party comes nearer, on the pad, rather than being refused.
+    #[test]
+    fn an_admins_start_on_a_pad_in_the_air_brings_the_party_to_the_pad() {
+        let mut server = fixture();
+        let stone = server.content.blocks.expect("base:stone");
+        let pad: Vec<(IVec3, BlockId)> = (-2..=2).flat_map(|x| (-2..=2).map(move |z| (IVec3::new(128 + x, 239, 128 + z), stone))).collect();
+        server.set_blocks(&pad);
+        let player = server.players.get_mut(&1).unwrap();
+        (player.position, player.yaw, player.pitch) = (Vec3::new(128.5, 240.0, 128.5), 0.0, 0.0);
+        let reply = server.wander_command(Source::Player(1), &["start".into(), "tinker_camp".into()]);
+        assert!(reply.is_ok(), "the start was refused: {reply:?}");
+        let (_, instance) = server.wandering.active.iter().next().expect("a party");
+        for member in &instance.members {
+            let at = server.creatures.live[&member.creature].body.position;
+            assert!(at.y >= 240.0 && (at - Vec3::new(128.5, at.y, 128.5)).length() < 8.0, "a member stands at {at}, not on the pad");
+        }
     }
 
     /// Clears the world of parties and creatures between tries on one server.
