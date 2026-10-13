@@ -352,7 +352,17 @@ if compgen -G "$out/test-*.txt" >/dev/null; then
   if awk -v s="$scale" 'BEGIN { exit !(s > 1) }'; then
     tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || echo "gate: test times not judged: the load during the tests was x$scale over the cores; run tools/gate on a calmer machine to hold them to tools/test-budget.toml"
   else
-    tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || fail "test times (tools/test-budget.toml)"
+    # VOXMAR_TEST_TIMES_ADVISORY=1 (set on the Mac's landing gates, where the tests run at a
+    # step below the game and 3 to 8 times slower than on the box that set the budgets): every
+    # over-budget test is still printed with its time and budget, but the gate passes. Unset (the
+    # default, the cloud, Linux and --strict runs), a test over its budget fails the gate.
+    if ! tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8; then
+      if [[ ${VOXMAR_TEST_TIMES_ADVISORY:-} == 1 ]]; then
+        echo "gate: test times over budget, advisory only (VOXMAR_TEST_TIMES_ADVISORY=1): tools/test-budget.toml"
+      else
+        fail "test times (tools/test-budget.toml)"
+      fi
+    fi
   fi
 fi
 status=$(cat "$out/game.status" 2>/dev/null || echo 0)
