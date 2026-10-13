@@ -23,12 +23,17 @@ player file.
 
 | Page | Seen | Counted |
 | --- | --- | --- |
-| Animals, Monsters (and spirits) | within 16 blocks | each kill |
-| Fish | a catch | each catch |
+| Animals, Monsters (and spirits) | within `seen_within` blocks (3), body in plain view from the eyes | each kill |
+| Fish | a catch, or within `seen_within` blocks (3) in plain view | each catch |
 | Plants | a flower, herb or fungus picked, a crop harvested | each pick or harvest |
 | Ores | an ore, gem or natural rock mined | each block |
 | Biomes | standing in it | |
 | Collection | a creature's drop on a kill | each item dropped |
+
+`seen_within` is a page rule in `core/journal.ron` (Animals, Monsters and Fish: 3.0;
+load-checked to more than 0 and at most 64): a creature counts as seen only when the
+straight line from the player's eyes to the middle of its body is that short and passes
+no solid block, so a quest that asks to find animals means getting right up to them.
 
 Bosses, breeds, places, sky, music, books and discoveries have pages and rules but no
 events yet; `Server::discover(player, page, name, times)` and `Journal::study` are the

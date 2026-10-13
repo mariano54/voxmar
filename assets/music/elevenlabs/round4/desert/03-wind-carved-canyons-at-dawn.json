@@ -1,0 +1,29 @@
+{
+  "leads": [
+    "soft felt piano"
+  ],
+  "support": [
+    "ney flute",
+    "glockenspiel",
+    "harp"
+  ],
+  "texture": "warm ambient synth pads",
+  "opener": "Calm, cozy instrumental",
+  "space": "natural chamber acoustics, moderate reverb",
+  "form": "the lead starts alone, other instruments join gradually, then it ends alone again",
+  "percussion": null,
+  "hint": "like a song passed down for generations",
+  "vibes": [
+    "melancholic but comforting",
+    "vast and solitary"
+  ],
+  "touch": null,
+  "biome": "desert",
+  "scene": "wind-carved canyons at dawn",
+  "bpm": 52,
+  "key": "A harmonic minor",
+  "length_s": 159,
+  "prompt": "Calm, cozy instrumental for a desert scene: wind-carved canyons at dawn, like a song passed down for generations. Mood: melancholic but comforting, vast and solitary. Lead melody on soft felt piano, accompanied by ney flute, glockenspiel, harp, over warm ambient synth pads. Structure: the lead starts alone, other instruments join gradually, then it ends alone again; a clear, singable melody, and rests and silences are welcome. Sound: natural chamber acoustics, moderate reverb. Slow, unhurried tempo around 52 BPM in A harmonic minor, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 74
+}

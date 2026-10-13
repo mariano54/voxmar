@@ -1,0 +1,15 @@
+// What the name at the top left of the screen reads (crates/client/src/hud/target.rs): the block,
+// dropped item, creature or player under the crosshair. Distances are blocks from the eye; a
+// block is named within the player's reach, whatever its mining speed. A later package changes
+// what it gives, and anything nearer the eye, a wall included, hides what is behind it.
+(
+    // Creatures, villagers and the rest of what lives about the world.
+    creature: 24.0,
+    // Other players.
+    player: 24.0,
+    // Dropped items.
+    item: 6.0,
+    // The width of the box the crosshair must meet to name a dropped item, which is drawn
+    // small: more than the item itself, so it can be aimed at.
+    item_box: 0.6,
+)

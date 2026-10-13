@@ -1,0 +1,30 @@
+{
+  "leads": [
+    "soft felt piano"
+  ],
+  "support": [
+    "dulcimer",
+    "celesta",
+    "harp",
+    "wooden flute"
+  ],
+  "texture": null,
+  "opener": "Relaxed, intimate instrumental tune",
+  "space": "warm small-room sound, light reverb",
+  "form": "a theme followed by a soft variation",
+  "percussion": null,
+  "hint": "like a lullaby someone half-remembers",
+  "vibes": [
+    "melancholic but comforting",
+    "whimsical and enchanted"
+  ],
+  "touch": "wooden flute",
+  "biome": "fantasy",
+  "scene": "a fairy village in the roots of a great tree",
+  "bpm": 62,
+  "key": "G major",
+  "length_s": 170,
+  "prompt": "Relaxed, intimate instrumental tune for an enchanted fantasy scene: a fairy village in the roots of a great tree, like a lullaby someone half-remembers. Mood: melancholic but comforting, whimsical and enchanted. Lead melody on soft felt piano, accompanied by dulcimer, celesta, harp, wooden flute, with no background pad or drone, just the instruments and the space between notes. Structure: a theme followed by a soft variation; a clear, singable melody, and rests and silences are welcome. Sound: warm small-room sound, light reverb. Slow, unhurried tempo around 62 BPM in G major, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 73
+}

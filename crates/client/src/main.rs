@@ -40,6 +40,7 @@ mod drops;
 mod emitters;
 mod fight;
 mod gate;
+mod held;
 mod hud;
 mod interact;
 mod keys;
@@ -327,6 +328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let content = voxmar_server::load_content(&assets)?;
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
+    let look = hud::target::LookStyle::load(&content.files)?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -419,6 +421,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .add_plugins(lang::LangPlugin);
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin));
     app.add_plugins(emitters::EmittersPlugin);
+    app.add_plugins(held::HeldPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.
     if std::env::var_os("VOXMAR_GPU_TIMES").is_some() {
@@ -464,7 +467,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(look);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }
@@ -509,7 +512,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !headless || std::env::var_os("VOXMAR_RECORD_SLOW_FRAMES").is_some() {
         app.add_plugins(slow_frames::SlowFramesPlugin);
     }
-    if options.music && !headless {
+    // The gate rehearses the music, silently (`music::Rehearse`), to see its switches and
+    // the line naming a track; captures have none, so no track's name shows in a shot.
+    if options.music && (!headless || options.gate.is_some()) {
         app.add_plugins(music::MusicPlugin);
     }
     app.add_plugins(ambience::AmbiencePlugin);
@@ -854,6 +859,7 @@ fn setup(
         })
         .collect();
     commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons, effects });
+    commands.insert_resource(held::load(source.held_books(), registry));
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

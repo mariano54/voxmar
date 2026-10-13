@@ -5,6 +5,10 @@
 //!
 //! Each sound is a few decaying sine partials, which may glide in pitch, be frequency
 //! modulated or blip twice, and may carry a breath of high noise.
+//!
+//! A quest finished chimes, and its rewards claimed ring softer. These do not follow the
+//! set chosen: they are events, not clicks. Synthesized unless a package's `sounds.ron`
+//! lists recordings for them (`quest_done`, `quest_claim`), which replace the synthesis.
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -15,13 +19,17 @@ use serde::{Deserialize, Serialize};
 
 use super::widgets::Disabled;
 use crate::settings::Settings;
-use crate::sfx::{Audible, MASTER, RATE, wav};
+use crate::session::Launch;
+use crate::sfx::{Audible, MASTER, RATE, Recordings, wav};
 
 pub struct UiSoundPlugin;
 
 impl Plugin for UiSoundPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<UiSound>().add_systems(Startup, synthesize).add_systems(Update, (click_buttons, play.in_set(Audible)).chain());
+        app.add_message::<UiSound>()
+            .add_systems(Startup, (synthesize, quest_clips))
+            .add_systems(Update, (click_buttons, play.in_set(Audible)).chain())
+            .add_systems(Update, play_quest.in_set(Audible));
     }
 }
 
@@ -32,6 +40,10 @@ pub enum UiSound {
     Click,
     /// An item picked up or put down.
     Item,
+    /// A quest finished: a rising two-note chime.
+    QuestDone,
+    /// A finished quest's rewards claimed: a softer, brighter ring of coins.
+    QuestClaim,
 }
 
 /// Buttons that make no click of their own, such as inventory slots, which tap instead.
@@ -97,7 +109,6 @@ impl UiSounds {
 
     /// The synthesized click and item tap, or `None` for silence or a recorded set.
     fn recipe(self) -> Option<[Sound; 2]> {
-        const PLAIN: Sound = Sound { partials: &[], seconds: 0.05, attack: 0.001, glide: 0.0, fm: None, noise: None, echo: None };
         Some(match self {
             UiSounds::Haptic => [
                 Sound { partials: &[(170.0, 150.0, 1.0, 0.012), (3800.0, 3800.0, 0.18, 0.002)], attack: 0.0008, glide: 0.02, ..PLAIN },
@@ -127,6 +138,27 @@ impl UiSounds {
         })
     }
 }
+
+const PLAIN: Sound = Sound { partials: &[], seconds: 0.05, attack: 0.001, glide: 0.0, fm: None, noise: None, echo: None };
+
+/// The quest chime: a bell (its partials not whole multiples, as a struck bell's are) and the
+/// same bell a fifth above a moment later.
+const QUEST_DONE: Sound = Sound {
+    partials: &[(784.0, 784.0, 1.0, 0.45), (1568.0, 1568.0, 0.35, 0.26), (2163.0, 2163.0, 0.16, 0.15), (3190.0, 3190.0, 0.07, 0.08)],
+    seconds: 1.1,
+    attack: 0.003,
+    echo: Some((0.14, 1.5)),
+    ..PLAIN
+};
+
+/// Rewards claimed: two quick, high, small rings.
+const QUEST_CLAIM: Sound = Sound {
+    partials: &[(1568.0, 1568.0, 1.0, 0.1), (2349.0, 2349.0, 0.4, 0.07), (4698.0, 4698.0, 0.1, 0.03)],
+    seconds: 0.45,
+    attack: 0.002,
+    echo: Some((0.07, 1.335)),
+    ..PLAIN
+};
 
 /// A short synthesized sound, as `UiSounds::recipe` describes.
 struct Sound {
@@ -219,6 +251,45 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
 }
 
 #[allow(clippy::type_complexity)]
+/// The quest sounds: a package's recordings where it lists any, else the synthesized chimes.
+#[derive(Resource)]
+struct QuestClips {
+    done: Vec<Handle<AudioSource>>,
+    claim: Vec<Handle<AudioSource>>,
+}
+
+fn quest_clips(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>, assets: Res<AssetServer>, launch: Res<Launch>) {
+    let recorded = Recordings::load(&launch.content.files).unwrap_or_else(|e| {
+        error!("no recorded sounds: {e}");
+        Recordings::default()
+    });
+    let mut pick = |paths: &[String], synthesized: &Sound, seed| -> Vec<Handle<AudioSource>> {
+        if paths.is_empty() {
+            vec![sources.add(AudioSource { bytes: Arc::from(wav(&synthesized.render(seed))) })]
+        } else {
+            paths.iter().map(|path| assets.load::<AudioSource>(path.clone())).collect()
+        }
+    };
+    commands.insert_resource(QuestClips { done: pick(&recorded.quest_done, &QUEST_DONE, 3), claim: pick(&recorded.quest_claim, &QUEST_CLAIM, 5) });
+}
+
+/// Plays the quest chimes, taking turns among a package's recordings if it lists several.
+fn play_quest(mut commands: Commands, mut sounds: MessageReader<UiSound>, clips: Option<Res<QuestClips>>, settings: Res<Settings>, mut turn: Local<usize>) {
+    let volume = MASTER * settings.sound_volume as f32 / 100.0;
+    for &sound in sounds.read() {
+        let (Some(clips), true) = (&clips, volume > 0.0) else { continue };
+        let (list, gain) = match sound {
+            UiSound::QuestDone => (&clips.done, 0.5),
+            UiSound::QuestClaim => (&clips.claim, 0.3),
+            UiSound::Click | UiSound::Item => continue,
+        };
+        *turn += 1;
+        if let Some(clip) = list.get(*turn % list.len().max(1)) {
+            commands.spawn((AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume))));
+        }
+    }
+}
+
 fn click_buttons(
     buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, Without<Disabled>, Without<Silent>)>,
     mut sounds: MessageWriter<UiSound>,
@@ -240,6 +311,7 @@ fn play(mut commands: Commands, mut sounds: MessageReader<UiSound>, clips: Optio
         let (clip, gain) = match sound {
             UiSound::Click => (&set[0], 0.4),
             UiSound::Item => (&set[1], 0.32),
+            UiSound::QuestDone | UiSound::QuestClaim => continue,
         };
         commands.spawn((AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume))));
     }
@@ -257,6 +329,18 @@ mod tests {
                 assert!(dir.join(file).is_file(), "{set:?}: no {file}");
             }
         }
+    }
+
+    /// The quest chimes sound, fade out, and the claim is the shorter and softer of the two.
+    #[test]
+    fn the_quest_chimes_sound_and_end_quietly() {
+        let (done, claim) = (QUEST_DONE.render(3), QUEST_CLAIM.render(5));
+        for samples in [&done, &claim] {
+            assert!(samples.iter().any(|s| s.abs() > 0.7), "silent");
+            assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 0.81));
+            assert!(samples.last().unwrap().abs() < 1e-3, "ends with a click");
+        }
+        assert!(claim.len() < done.len());
     }
 
     #[test]

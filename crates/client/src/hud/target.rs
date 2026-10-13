@@ -1,22 +1,41 @@
-//! The target readout, RuneScape-style but small: the creature under the crosshair (or the
-//! one being fought, for a while after the last blow) named at the top of the screen with
-//! its combat level, coloured by how it compares with ours; once struck at, a thin bar of
-//! its health underneath. A kept animal says so (and whose, when it is someone else's), as
-//! do one still young and one ready to breed, in a quiet line under the name.
+//! The target readout, RuneScape-style but small, at the top left of the screen: whatever
+//! the crosshair rests on is named there, so the player can always tell what they look at.
+//! A block is named within reach; a dropped item (with its count when there are several), a
+//! creature or another player, further, by `look.ron`; the nearest wins, and a wall hides
+//! what is behind it. Names come from the language files, so a mod's content is named for
+//! free, and the words are coloured by rarity.
+//!
+//! A creature (or the one being fought, for a while after the last blow, when only ground is
+//! looked at) also shows its combat level, coloured by how it compares with ours; once struck
+//! at, a thin bar of its health underneath. A kept animal says so (and whose, when it is
+//! someone else's), as do one still young and one ready to breed, in a quiet line under the name.
 
 use bevy::color::Mix;
 use bevy::prelude::*;
 
+use bevy::ecs::system::SystemParam;
+use serde::Deserialize;
+use voxmar_engine::block::BlockId;
+use voxmar_engine::content::ContentFile;
+use voxmar_engine::inventory::ItemStack;
+use voxmar_engine::physics::raycast;
+use voxmar_protocol::PlayerId;
+
+use crate::breaking::shows_breaking;
 use crate::creatures::{Creatures, Keeper, Sighting};
-use crate::net::RemotePlayers;
+use crate::drops::Drops;
+use crate::hud::DebugPlate;
+use crate::hud::inventory::rarity_color;
 use crate::interact::Target;
 use crate::lang::Locale;
 use crate::menu::Screen;
+use crate::net::RemotePlayers;
 use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
-use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, MUTED, SOFT, TEXT, UiFont, shadowed, text};
 use crate::ui::widgets::space;
+use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, MUTED, SOFT, TEXT, UiFont, shadowed, text};
+use crate::world::ClientWorld;
 
 /// Seconds the creature last struck at stays in the readout after the crosshair leaves it.
 const FIGHTING: f32 = 6.0;
@@ -25,13 +44,64 @@ const SPREAD: f32 = 10.0;
 /// The level colour of a creature far below us.
 const EASY: Color = Color::srgb(0.56, 0.88, 0.46);
 
+/// How far each kind of thing is named from, and how big a box a dropped item is aimed at
+/// with (`look.ron`, in `core`); a later package changes what it gives. Read with the rest
+/// of the content at launch, which a bad value fails.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct LookStyle {
+    pub creature: f32,
+    pub player: f32,
+    pub item: f32,
+    pub item_box: f32,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct LookFile {
+    creature: Option<f32>,
+    player: Option<f32>,
+    item: Option<f32>,
+    item_box: Option<f32>,
+}
+
+impl LookStyle {
+    pub const FILE: &str = "look.ron";
+
+    pub fn load(files: &[ContentFile]) -> Result<Self, String> {
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let mut given = LookFile::default();
+        for file in files.iter().filter(|f| f.name == Self::FILE) {
+            let next: LookFile = options.from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
+            given = LookFile {
+                creature: next.creature.or(given.creature),
+                player: next.player.or(given.player),
+                item: next.item.or(given.item),
+                item_box: next.item_box.or(given.item_box),
+            };
+        }
+        let need = |name: &str, value: Option<f32>| value.ok_or(format!("no package's {} gives {name}", Self::FILE));
+        let style = LookStyle { creature: need("creature", given.creature)?, player: need("player", given.player)?, item: need("item", given.item)?, item_box: need("item_box", given.item_box)? };
+        for (name, value) in [("creature", style.creature), ("player", style.player), ("item", style.item), ("item_box", style.item_box)] {
+            if !(value > 0.0 && value.is_finite()) {
+                return Err(format!("{}: {name} must be more than 0 and finite, not {value}", Self::FILE));
+            }
+        }
+        Ok(style)
+    }
+
+    /// The furthest anything is named from.
+    fn farthest(&self) -> f32 {
+        self.creature.max(self.player).max(self.item)
+    }
+}
+
 pub struct TargetPlugin;
 
 impl Plugin for TargetPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Readout>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, show.run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (show, place).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), hide);
     }
 }
@@ -42,6 +112,9 @@ impl Plugin for TargetPlugin {
 pub struct Readout {
     pub creature: Option<u32>,
     pub name: String,
+    /// The name's colour: by rarity for a block or item.
+    pub name_colour: Color,
+    /// A creature's level, or the count of a stack.
     pub level: String,
     /// The level's colour against our own combat level.
     pub colour: Color,
@@ -53,6 +126,8 @@ pub struct Readout {
 /// Tags shown at most: kept, young, ready.
 const TAGS: usize = 3;
 
+#[derive(Component)]
+struct ReadoutStrip;
 #[derive(Component)]
 struct ReadoutPlate;
 #[derive(Component)]
@@ -72,17 +147,17 @@ struct ReadoutDot(usize);
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
-    let strip = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), top: Val::Px(space::GAP), justify_content: JustifyContent::Center, ..default() };
+    let strip = Node { position_type: PositionType::Absolute, left: Val::Px(space::GAP), top: Val::Px(space::GAP), ..default() };
     let plate = Node {
         flex_direction: FlexDirection::Column,
-        align_items: AlignItems::Center,
+        align_items: AlignItems::Start,
         row_gap: Val::Px(space::HAIR),
         padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
         ..default()
     };
     let line = Node { column_gap: Val::Px(space::INNER), ..default() };
     let bar = Node { align_self: AlignSelf::Stretch, min_width: Val::Px(40.0 * PX), height: Val::Px(4.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
-    commands.spawn((strip, GlobalZIndex(1))).with_children(|strip| {
+    commands.spawn((strip, ReadoutStrip, GlobalZIndex(1))).with_children(|strip| {
         strip.spawn((plate, Piece::Tooltip.image(), ReadoutPlate, Visibility::Hidden)).with_children(|plate| {
             plate.spawn(line).with_children(|line| {
                 line.spawn((shadowed(font, "", BODY, TEXT), ReadoutName));
@@ -116,48 +191,117 @@ pub fn level_colour(theirs: u8, ours: Option<u8>) -> Color {
     GOLD.mix(&towards, (difference.abs() / SPREAD).min(1.0))
 }
 
+/// What the crosshair rests on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Subject {
+    Block(BlockId),
+    Item(ItemStack),
+    Creature(u32),
+    Player(PlayerId),
+}
+
+/// The nearest of what lies along the look, each with its distance from the eye.
+fn nearest(seen: impl IntoIterator<Item = (f32, Subject)>) -> Option<Subject> {
+    seen.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, subject)| subject)
+}
+
+/// Everything the crosshair can rest on.
+#[derive(SystemParam)]
+struct Sight<'w> {
+    world: Res<'w, ClientWorld>,
+    player: Res<'w, LocalPlayer>,
+    target: Res<'w, Target>,
+    launch: Res<'w, Launch>,
+    style: Res<'w, LookStyle>,
+    creatures: Res<'w, Creatures>,
+    drops: Res<'w, Drops>,
+    players: Res<'w, RemotePlayers>,
+}
+
+impl Sight<'_> {
+    /// What is nearest along the look: the block within reach, a dropped item, a creature or
+    /// a player within their distances, unless a wall (any block, however far) is nearer.
+    fn subject(&self) -> Option<Subject> {
+        let (eye, look) = (self.player.eye(), self.player.look_direction().normalize_or_zero());
+        let style = &self.style;
+        let block = self.target.block_hit.and_then(|hit| Some((hit.distance, Subject::Block(self.world.block(hit.block)?))));
+        let things = [
+            self.creatures.looked_at(&self.launch, eye, look, style.creature).map(|(id, d)| (d, Subject::Creature(id))),
+            self.players.looked_at(eye, look, style.player).map(|(id, d)| (d, Subject::Player(id))),
+            self.drops.looked_at(eye, look, style.item, style.item_box).map(|(stack, d)| (d, Subject::Item(stack))),
+        ];
+        // Beyond reach no block is targeted, but a wall still hides what is behind it.
+        let wall = || {
+            raycast(eye, look, style.farthest(), |p| self.world.block(p).is_some_and(|b| shows_breaking(self.world.registry.info(b)))).map_or(f32::MAX, |hit| hit.distance)
+        };
+        let mut seen: Vec<(f32, Subject)> = block.into_iter().collect();
+        if things.iter().flatten().next().is_some() {
+            let wall = wall();
+            seen.extend(things.into_iter().flatten().filter(|&(d, _)| d < wall));
+        }
+        nearest(seen)
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn show(
     time: Res<Time>,
-    launch: Res<Launch>,
     locale: Res<Locale>,
-    (ui, player): (Res<UiState>, Res<LocalPlayer>),
-    target: Res<Target>,
-    creatures: Res<Creatures>,
+    ui: Res<UiState>,
+    sight: Sight,
     mut readout: ResMut<Readout>,
     mut plate: Query<&mut Visibility, (With<ReadoutPlate>, Without<ReadoutBar>)>,
     mut bar: Query<&mut Visibility, (With<ReadoutBar>, Without<ReadoutPlate>)>,
     mut fill: Query<&mut Node, With<ReadoutFill>>,
-    mut name: Query<&mut Text, (With<ReadoutName>, Without<ReadoutLevel>, Without<ReadoutTag>)>,
+    mut name: Query<(&mut Text, &mut TextColor), (With<ReadoutName>, Without<ReadoutLevel>, Without<ReadoutTag>)>,
     mut level: Query<(&mut Text, &mut TextColor), (With<ReadoutLevel>, Without<ReadoutName>, Without<ReadoutTag>)>,
     mut tag_row: Query<&mut Node, (With<ReadoutTags>, Without<ReadoutFill>)>,
     mut tag_texts: Query<(&ReadoutTag, &mut Text, &mut TextColor, &mut Visibility), (Without<ReadoutName>, Without<ReadoutLevel>, Without<ReadoutPlate>, Without<ReadoutBar>)>,
     mut dots: Query<(&ReadoutDot, &mut Visibility), (Without<ReadoutTag>, Without<ReadoutPlate>, Without<ReadoutBar>)>,
-    players: Res<RemotePlayers>,
 ) {
     let screen_open = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open;
-    let creature = target.creature.or_else(|| creatures.fighting(time.elapsed_secs(), FIGHTING)).filter(|_| !screen_open && !player.dead);
-    let sighting = creature.and_then(|id| Some((id, creatures.sighting(id)?)));
-    let next = match sighting {
-        Some((id, seen)) => {
+    let (launch, player, creatures, players) = (&sight.launch, &sight.player, &sight.creatures, &sight.players);
+    let subject = if screen_open || player.dead {
+        None
+    } else {
+        // Ground or sky looked at while fighting keeps the creature fought in view, with its health.
+        match sight.subject() {
+            seen @ (None | Some(Subject::Block(_))) => creatures.fighting(time.elapsed_secs(), FIGHTING).map(Subject::Creature).or(seen),
+            seen => seen,
+        }
+    };
+    let next = match subject {
+        Some(Subject::Creature(id)) => creatures.sighting(id).map(|seen| {
             let def = &launch.content.creatures.get(seen.species).def;
             let ours = player.skills_known.then(|| launch.content.skills.combat_level(&player.skills));
             Readout {
                 creature: Some(id),
                 name: locale.creature(def),
+                name_colour: TEXT,
                 level: locale.format("character.level", &[("level", &def.level)]),
                 colour: level_colour(def.level, ours),
                 health: seen.struck.then(|| seen.health as f32 / def.health.max(1) as f32),
-                tags: tags(&locale, &players, &seen),
+                tags: tags(&locale, players, &seen),
             }
+        }),
+        Some(Subject::Block(block)) => {
+            let def = sight.world.registry.def(block);
+            Some(Readout { name: locale.block(def), name_colour: rarity_color(def.rarity), ..Readout::default() })
         }
-        None => Readout::default(),
-    };
+        Some(Subject::Item(stack)) => {
+            let def = sight.world.registry.def(stack.item);
+            let count = if stack.count > 1 { locale.format("target.count", &[("count", &stack.count)]) } else { String::new() };
+            Some(Readout { name: locale.block(def), name_colour: rarity_color(def.rarity), level: count, colour: SOFT, ..Readout::default() })
+        }
+        Some(Subject::Player(id)) => players.name(id).map(|who| Readout { name: who.to_owned(), name_colour: ACCENT, ..Readout::default() }),
+        None => None,
+    }
+    .unwrap_or_default();
     if *readout == next {
         return;
     }
     if let Ok(mut visibility) = plate.single_mut() {
-        visibility.set_if_neq(if next.creature.is_some() { Visibility::Inherited } else { Visibility::Hidden });
+        visibility.set_if_neq(if next.name.is_empty() { Visibility::Hidden } else { Visibility::Inherited });
     }
     if let Ok(mut visibility) = bar.single_mut() {
         visibility.set_if_neq(if next.health.is_some() { Visibility::Inherited } else { Visibility::Hidden });
@@ -167,10 +311,11 @@ fn show(
     {
         node.width = Val::Percent(share.clamp(0.0, 1.0) * 100.0);
     }
-    if let Ok(mut text) = name.single_mut()
-        && text.0 != next.name
-    {
-        text.0.clone_from(&next.name);
+    if let Ok((mut text, mut color)) = name.single_mut() {
+        if text.0 != next.name {
+            text.0.clone_from(&next.name);
+        }
+        color.set_if_neq(TextColor(next.name_colour));
     }
     if let Ok((mut text, mut color)) = level.single_mut() {
         if text.0 != next.level {
@@ -225,6 +370,19 @@ fn tags(locale: &Locale, players: &RemotePlayers, seen: &Sighting) -> Vec<(Strin
     tags
 }
 
+/// Keeps the label below the debug overlay while that is open, in the same corner.
+fn place(
+    debug: Query<(&Visibility, &ComputedNode), With<DebugPlate>>,
+    mut strip: Query<&mut Node, With<ReadoutStrip>>,
+) {
+    let Ok(mut node) = strip.single_mut() else { return };
+    let below = debug.single().ok().filter(|(visibility, _)| **visibility != Visibility::Hidden).map_or(0.0, |(_, computed)| computed.size().y * computed.inverse_scale_factor() + space::GAP);
+    let top = Val::Px(space::GAP + below);
+    if node.top != top {
+        node.top = top;
+    }
+}
+
 fn hide(mut readout: ResMut<Readout>, mut plate: Query<&mut Visibility, With<ReadoutPlate>>) {
     *readout = Readout::default();
     if let Ok(mut visibility) = plate.single_mut() {
@@ -247,6 +405,42 @@ mod tests {
         assert_eq!(words(seen(Some(Keeper::Us), true, true)), ["Kept", "Young", "Ready to breed"]);
         // Someone else's, with them away: still kept, without a name to give.
         assert_eq!(words(seen(Some(Keeper::Other(7)), false, false)), ["Kept"]);
+    }
+
+    #[test]
+    fn the_nearest_thing_is_named() {
+        let item = ItemStack { item: BlockId(3), count: 4 };
+        assert_eq!(nearest([]), None);
+        assert_eq!(nearest([(4.0, Subject::Block(BlockId(1)))]), Some(Subject::Block(BlockId(1))));
+        // A dropped item before the ground it lies on, a creature beyond reach before nothing.
+        assert_eq!(nearest([(3.2, Subject::Block(BlockId(1))), (2.9, Subject::Item(item))]), Some(Subject::Item(item)));
+        assert_eq!(nearest([(3.0, Subject::Block(BlockId(1))), (12.5, Subject::Creature(7))]), Some(Subject::Block(BlockId(1))));
+        assert_eq!(nearest([(12.5, Subject::Creature(7)), (20.0, Subject::Player(2))]), Some(Subject::Creature(7)));
+    }
+
+    fn file(package: &str, source: &str) -> ContentFile {
+        ContentFile { package: package.to_owned(), name: LookStyle::FILE.to_owned(), source: source.to_owned() }
+    }
+
+    #[test]
+    fn the_shipped_distances_load_and_a_mod_changes_only_what_it_gives() {
+        let core = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/core").join(LookStyle::FILE)).unwrap();
+        let shipped = LookStyle::load(&[file("core", &core)]).unwrap();
+        assert!(shipped.creature > 5.0, "creatures are named from further than a block can be mined");
+        let modded = LookStyle::load(&[file("core", &core), file("mod", "(item: 3.0)")]).unwrap();
+        assert_eq!((modded.item, modded.creature, modded.item_box), (3.0, shipped.creature, shipped.item_box));
+        assert!(LookStyle::load(&[]).is_err_and(|e| e.contains("gives creature")), "some package must give each");
+        assert!(LookStyle::load(&[file("core", &core), file("mod", "(player: 0.0)")]).is_err_and(|e| e.contains("player")));
+        assert!(LookStyle::load(&[file("core", &core), file("mod", "(creature: 1.0, typo: 2.0)")]).is_err());
+    }
+
+    #[test]
+    fn a_stack_is_counted_in_both_languages() {
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        for language in ["en", "ja"] {
+            let locale = Locale::load(&content, language);
+            assert_eq!(locale.format("target.count", &[("count", &12)]), "×12", "{language}");
+        }
     }
 
     #[test]

@@ -1,0 +1,28 @@
+{
+  "leads": [
+    "warm solo violin"
+  ],
+  "support": [
+    "harp",
+    "glockenspiel"
+  ],
+  "texture": null,
+  "opener": "Calm, cozy instrumental",
+  "space": "natural chamber acoustics, moderate reverb",
+  "form": "call-and-response phrases between the lead and a second instrument",
+  "percussion": "soft frame drum heartbeat",
+  "hint": "like watching the light change slowly",
+  "vibes": [
+    "meditative and still",
+    "whimsical and enchanted"
+  ],
+  "touch": null,
+  "biome": "fantasy",
+  "scene": "a crystal library hidden in old ruins",
+  "bpm": 56,
+  "key": "C major",
+  "length_s": 171,
+  "prompt": "Calm, cozy instrumental for an enchanted fantasy scene: a crystal library hidden in old ruins, like watching the light change slowly. Mood: meditative and still, whimsical and enchanted. Lead melody on warm solo violin, accompanied by harp, glockenspiel, with no background pad or drone, just the instruments and the space between notes. Structure: call-and-response phrases between the lead and a second instrument; a clear, singable melody, and rests and silences are welcome. Sound: natural chamber acoustics, moderate reverb. Slow, unhurried tempo around 56 BPM in C major, soft dynamics throughout. Occasional soft frame drum heartbeat, very sparse, no drum kit and no electronic beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 73
+}

@@ -2,19 +2,20 @@
 
 use voxmar_engine::block::BlockId;
 use voxmar_engine::creature::Kind;
+use voxmar_engine::glam::Vec3;
 use voxmar_engine::journal::Page;
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 
-/// How near a creature must come to be seen for the journal.
-const SIGHT: f32 = 16.0;
+/// Eye height above the feet, for what a player can see.
+const EYE: f32 = 1.6;
 
 impl Server {
     /// `agent` found `name` on `page`, and did it `times` more (0 for only seeing it): the
     /// journal records it, and the player hears of anything that changed.
     pub(crate) fn discover(&mut self, agent: PlayerId, page: Page, name: &str, times: u32) {
-        let rules = self.content.journal.clone();
+        let rules = &self.content.journal;
         let tick = self.tick;
         let Some(player) = self.players.get_mut(&agent) else { return };
         let news = player.journal.record(&rules, page, name, times, tick).is_some();
@@ -60,20 +61,38 @@ impl Server {
             return;
         }
         let mut found: Vec<(PlayerId, Page, String)> = Vec::new();
+        let rules = &self.content.journal;
+        let reach = [Page::Animals, Page::Monsters, Page::Fish].into_iter().filter_map(|p| rules.seen_within(p)).fold(0.0f32, f32::max);
         for player in self.players.values().filter(|p| p.joined && p.health.alive()) {
             let feet = player.position.floor().as_ivec3();
             found.push((player.id, Page::Biomes, self.overworld.biome_at(feet.x, feet.z).name.clone()));
+            let eye = player.position + Vec3::Y * EYE;
             for creature in self.creatures.live.values() {
-                if creature.body.position.distance(player.position) <= SIGHT {
-                    let species = self.content.creatures.get(creature.species);
-                    if let Some(page) = Self::page_of(species.def.kind) {
-                        found.push((player.id, page, species.def.name.clone()));
-                    }
+                // A cheap test first: nothing past the widest page's reach is looked at.
+                if creature.body.position.distance(player.position) > reach + 1.0 {
+                    continue;
+                }
+                let species = self.content.creatures.get(creature.species);
+                let Some(page) = Self::page_of(species.def.kind) else { continue };
+                let Some(within) = rules.seen_within(page) else { continue };
+                let body = creature.body.position + Vec3::Y * (species.def.body.size.1 * 0.5);
+                if body.distance(eye) <= within && self.in_plain_view(eye, body) {
+                    found.push((player.id, page, species.def.name.clone()));
                 }
             }
         }
         for (id, page, name) in found {
             self.discover(id, page, &name, 0);
         }
+    }
+
+    /// Whether nothing solid lies on the straight line from `from` to `to` (sampled every
+    /// quarter block).
+    pub(crate) fn in_plain_view(&self, from: Vec3, to: Vec3) -> bool {
+        let steps = ((to - from).length() * 4.0).ceil().max(1.0) as u32;
+        (1..steps).all(|i| {
+            let at = from.lerp(to, i as f32 / steps as f32).floor().as_ivec3();
+            self.block(at).is_none_or(|b| !self.content.blocks.info(b).solid)
+        })
     }
 }

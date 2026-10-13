@@ -52,6 +52,7 @@ fn every_early_quest_names_things_the_content_has() {
             let known = match goal {
                 Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
                 Goal::Catch(name, _) => name == "Kinds" || item(name),
+                Goal::Kinds(_, name, _) => item(name) || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                 Goal::Kill(name, _) | Goal::Tame(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                 Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some() || content.effects.steps().contains(name)),
                 Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
