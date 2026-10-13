@@ -230,3 +230,12 @@ All from real items. Levels are Cooking levels; effects as above.
 | Sunwing-egg soufflé | 47 | oven | sunwing egg, butter, cheese | Warm meal, Hearty |
 | Heartbloom pie | 49 | oven | heartbloom, flour, butter, honey | Hearty (strong) |
 | Banquet | 50 | table | 5 different dishes | every effect, shared with all who eat |
+
+## Early quest cooking
+
+First Night needs a crafted campfire and successful food cooked at a campfire. Charcoal,
+fired clay, ingots and burnt food earn no progress toward its meal, although successful
+non-food cooking still trains its skill and counts for quests that ask for that product.
+The Crucible Kiln consumes a charge of 32 charcoal or 24 coal when its standing core is
+lit. Its paid fire lasts according to `machines.ron` fuel times and is saved across reload;
+a cold or dismantled kiln leaves a proposed smelting ingredient untouched.

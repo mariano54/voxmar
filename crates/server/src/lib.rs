@@ -466,6 +466,8 @@ pub(crate) struct Server {
     farm: farm::Farm,
     /// Machines players built, and the power between them.
     factory: voxmar_engine::factory::Factory,
+    /// Multiblocks burning their initial fuel charge, by core cell.
+    lit: FxHashMap<IVec3, hearth::Lit>,
     /// Cells whose block a player placed: ores, which then teach nothing; plants, which
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
@@ -574,6 +576,8 @@ impl Server {
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
+        let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
+            .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect();
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
@@ -590,6 +594,7 @@ impl Server {
             items,
             farm,
             factory: voxmar_engine::factory::Factory::default(),
+            lit,
             placed,
             regrowing,
             planter_grown,
@@ -890,6 +895,8 @@ impl Server {
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
         grown.sort();
         meta.planter_grown = grown;
+        meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
+        meta.lit.sort_by_key(|fire| fire.position);
         meta.day = Some(self.day as u64);
         meta.day_speed = self.day_speed;
         meta.last_played = save::unix_time();
@@ -1008,6 +1015,7 @@ impl Server {
                 self.forget_placed(pos);
                 done.push((pos, block));
                 self.machine_changed(pos, old, block);
+                self.fire_changed(pos);
             }
         }
         for &(pos, _) in &done {
@@ -1041,6 +1049,7 @@ impl Server {
             self.dirty.insert(column);
             self.forget_placed(pos);
             self.machine_changed(pos, old, block);
+            self.fire_changed(pos);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }

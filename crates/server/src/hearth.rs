@@ -1,50 +1,182 @@
-//! Lighting a multiblock (`multiblocks.ron`) by its core: the Homestead Hearth becomes a
-//! player's home (the Nomad age's gate in the progression plan), where they wake after
-//! dying; the Crucible Kiln (the Farm age's) starts smelting. Quests count what was lit.
+//! Lighting the early age gates. A hearth becomes a respawn home; a kiln consumes a
+//! content-defined fuel charge and smelts only while that fire and its structure hold.
+//! The fire uses server ticks and is saved with the world, so reconnecting cannot refuel it.
 
+use serde::{Deserialize, Serialize};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::lang::{Words, def_key};
-use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
+use voxmar_engine::multiblock::Multiblock;
+use voxmar_engine::traits;
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 
+/// A paid fuel charge, by structure name rather than transient block ids.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Lit {
+    pub position: [i32; 3],
+    pub structure: String,
+    pub until: u64,
+}
+
+fn structure_words(structure: &Multiblock) -> Words {
+    Words::Own(def_key("multiblock", &structure.name), structure.title.clone())
+}
+
+fn fuel_words(structure: &Multiblock, blocks: &voxmar_engine::block::BlockRegistry) -> Words {
+    let fuels = structure.fuels.iter().map(|&(item, count)| {
+        Words::key("multiblock.fuel_stack").with("count", count.to_string()).with("item", Words::Block(blocks.def(item).name.clone()))
+    }).collect();
+    Words::key("multiblock.fuel").with("structure", structure_words(structure)).with("fuels", Words::List(fuels))
+}
+
 impl Server {
-    /// `agent` lights the core block at `core`: each multiblock it is the core of that
-    /// stands comes to life; if none does, they are told what the first needs.
+    /// Light a standing core. A cold kiln takes a complete fuel charge from the hand;
+    /// using an already burning kiln consumes nothing and earns no further lighting tally.
     pub(crate) fn light(&mut self, agent: PlayerId, core: IVec3) {
         let Some(block) = self.block(core) else { return };
         let multiblocks = self.content.multiblocks.clone();
-        let candidates: Vec<_> = multiblocks.with_core(block).collect();
-        let standing = candidates.iter().find(|m| m.stands(core, |p| self.block(p)));
-        tracing::debug!("player {agent} lights {core}: {}", standing.map_or("nothing stands", |m| m.name.as_str()));
-        let words = match (standing, candidates.first()) {
-            (Some(lit), _) => {
-                let name = lit.name.clone();
-                self.tally(agent, "built", &name, 1);
-                if lit.home
-                    && let Some(player) = self.players.get_mut(&agent)
-                {
-                    // On the core, in the middle of its ring.
-                    player.home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
-                }
-                let key = if lit.home { "multiblock.home" } else { "multiblock.lit" };
-                Words::key(key).with("structure", Words::Own(def_key("multiblock", &lit.name), lit.title.clone()))
-            }
-            (None, Some(first)) => Words::Own(format!("{}.hint", def_key("multiblock", &first.name)), first.hint.clone()),
-            (None, None) => return,
+        let Some(structure) = multiblocks.with_core(block).find(|m| m.stands(core, |p| self.block(p))) else {
+            self.station_hint(agent, core);
+            return;
         };
+        self.tally(agent, "built", &structure.name, 1);
+        if !structure.fuels.is_empty() && !self.station_lit(core) {
+            let fuel = self.players.get(&agent).and_then(|p| p.inventory.get(p.selected))
+                .and_then(|stack| structure.fuels.iter().find(|&&(item, count)| item == stack.item && stack.count >= count).copied());
+            let Some((item, count)) = fuel else {
+                self.structure_reply(agent, fuel_words(structure, &self.content.blocks));
+                return;
+            };
+            let seconds = self.content.machines.burn_seconds(item).expect("checked fuel") * count as f32;
+            let Some(player) = self.players.get_mut(&agent) else { return };
+            player.inventory.take(player.selected, count);
+            player.changed(traits::INVENTORY);
+            let until = self.tick.saturating_add((seconds * TICKS_PER_SECOND as f32).ceil() as u64);
+            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until });
+            self.tally(agent, "lit", &structure.name, 1);
+        } else if structure.fuels.is_empty() {
+            self.tally(agent, "lit", &structure.name, 1);
+        }
+        if structure.home && let Some(player) = self.players.get_mut(&agent) {
+            player.home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+        }
+        let key = if structure.home { "multiblock.home" } else { "multiblock.lit" };
+        self.structure_reply(agent, Words::key(key).with("structure", structure_words(structure)));
+    }
+
+    fn structure_reply(&self, agent: PlayerId, words: Words) {
         if let Some(player) = self.players.get(&agent) {
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
     }
 
-    /// Whether a station block that is a multiblock's core (a crucible) stands in its
-    /// structure; any other station always works.
+    /// Explain a broken or cold station without activating it as a side effect of cooking.
+    pub(crate) fn station_hint(&self, agent: PlayerId, core: IVec3) {
+        let Some(block) = self.block(core) else { return };
+        let structures = &self.content.multiblocks;
+        let words = match structures.with_core(block).find(|m| m.stands(core, |p| self.block(p))) {
+            Some(standing) => Words::key("multiblock.cold").with("structure", structure_words(standing)).with("fuel", fuel_words(standing, &self.content.blocks)),
+            None => {
+                let Some(first) = structures.with_core(block).next() else { return };
+                Words::Own(format!("{}.hint", def_key("multiblock", &first.name)), first.hint.clone())
+            }
+        };
+        self.structure_reply(agent, words);
+    }
+
+    /// A station core must stand in its structure; ordinary stations work on their own.
     pub(crate) fn station_stands(&self, at: IVec3) -> bool {
         let Some(block) = self.block(at) else { return false };
         if !self.content.blocks.def(block).has_tag("multiblock_core") {
             return true;
         }
         self.content.multiblocks.with_core(block).any(|m| m.stands(at, |p| self.block(p)))
+    }
+
+    pub(crate) fn station_lit(&self, at: IVec3) -> bool {
+        let Some(block) = self.block(at) else { return false };
+        let structures = &self.content.multiblocks;
+        let mut candidates = structures.with_core(block).peekable();
+        if candidates.peek().is_none() {
+            return true;
+        }
+        candidates.any(|m| m.stands(at, |p| self.block(p)) && (m.fuels.is_empty()
+            || self.lit.get(&at).is_some_and(|fire| fire.structure == m.name && fire.until > self.tick)))
+    }
+
+    /// Dismantling the core or a required piece quenches its fire immediately. Putting
+    /// the piece back cannot resurrect a paid charge, even between simulation ticks.
+    pub(crate) fn fire_changed(&mut self, changed: IVec3) {
+        let (structures, world, tick) = (&self.content.multiblocks, &self.world, self.tick);
+        self.lit.retain(|&core, fire| fire.until > tick && structures.get(&fire.structure)
+            .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p))));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use voxmar_engine::block::BlockId;
+    use voxmar_engine::coords::ColumnPos;
+    use voxmar_engine::inventory::ItemStack;
+    use crate::player::Player;
+
+    fn player(server: &mut Server) {
+        let (_, connection) = voxmar_protocol::local_pair();
+        server.players.insert(1, Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits));
+    }
+
+    #[test]
+    fn kiln_fire_expires_at_its_paid_tick_and_relighting_takes_another_charge() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let coal = server.content.blocks.expect("base:coal_ore");
+        server.set_block(core, server.content.blocks.expect("base:crucible"));
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: coal, count: 24 });
+        server.light(1, core);
+        assert!(!server.lit.contains_key(&core), "a loose core was lit");
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 24, "a loose core consumed fuel");
+        let brick = server.content.blocks.expect("base:kiln_bricks");
+        for x in -1..=1 { for z in -1..=1 {
+            server.set_block(core + IVec3::new(x, 0, z), brick);
+        }}
+        for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
+        server.set_block(core, server.content.blocks.expect("base:crucible"));
+        server.light(1, core);
+        let until = server.lit[&core].until;
+        assert_eq!(until - server.tick, (24.0 * server.content.machines.burn_seconds(coal).unwrap() * TICKS_PER_SECOND as f32) as u64);
+        server.tick = until - 1;
+        assert!(server.station_lit(core));
+        server.tick = until;
+        assert!(!server.station_lit(core), "the fire outlived its charge");
+        server.light(1, core);
+        assert!(!server.station_lit(core), "an empty hand relit an expired fire");
+        assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 1);
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: coal, count: 24 });
+        server.light(1, core);
+        assert!(server.station_lit(core));
+        assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 2);
+        server.set_block(core, BlockId::AIR);
+        assert!(!server.lit.contains_key(&core));
+    }
+
+    #[test]
+    fn a_burnt_meal_does_not_count_as_successful_campfire_food() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let fire = server.spawn.floor().as_ivec3() + IVec3::Y * 4;
+        server.set_block(fire, server.content.blocks.expect("base:campfire"));
+        let raw = server.content.blocks.expect("base:raw_minnow");
+        let recipe = server.content.cooking.for_item(raw, &["campfire".into()]).unwrap();
+        let burn = recipe.burn_chance(1);
+        let burnt = recipe.burnt.unwrap();
+        let tick = (server.tick..server.tick + 1000).find(|&tick| crate::items::random3(tick, fire, 1 ^ 0xc00c)[0] < burn).expect("a real burnt roll");
+        server.tick = tick;
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: raw, count: 1 });
+        server.cook(1, fire);
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().item, burnt);
+        assert!(!server.players[&1].tallies.keys().any(|key| key.starts_with("cooked")), "a burnt output counted");
     }
 }
