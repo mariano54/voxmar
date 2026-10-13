@@ -1277,7 +1277,7 @@ mod tests {
         };
         BlockRegistry::new(vec![
             block("stone", RenderKind::Opaque),
-            BlockDef { solid: false, tint: Tint::Grass, ..block("short_grass", RenderKind::Plant) },
+            BlockDef { solid: false, tint: crate::block::BlockTint::Grass, ..block("short_grass", RenderKind::Plant) },
             block("leaves", RenderKind::Leaves),
             block("glass", RenderKind::Cutout),
         ])

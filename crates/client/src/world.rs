@@ -131,6 +131,8 @@ pub struct WorldStats {
     pub visible_quads: usize,
     pub visible_chunks: usize,
     pub jobs_in_flight: usize,
+    /// Meshable columns waiting at the last dispatch scan. While all workers are busy,
+    /// this count stays cached; the next free slot refreshes it before idle is reported.
     pub pending_columns: usize,
 }
 
@@ -195,6 +197,8 @@ impl ClientWorld {
         for cy in 0..COLUMN_CHUNKS {
             let chunk = pos.chunk(cy);
             if let Some(render) = self.chunks.remove(&chunk) {
+                self.stats.chunk_entities -= render.passes.into_iter().filter(|&present| present).count();
+                self.stats.quads -= render.quads.into_iter().sum::<usize>();
                 for (pass, _) in PASSES.iter().zip(render.passes).filter(|(_, present)| *present) {
                     self.terrain.remove(chunk, *pass);
                 }
@@ -303,10 +307,16 @@ fn dispatch_jobs(
             }
         }
     }
+    world.stats.jobs_in_flight = world.in_flight.len();
+    // No job can start until a result frees a slot. Keep the detail checks above, but
+    // avoid thousands of nine-neighbour lookups on every busy streaming frame.
+    if world.in_flight.len() >= max_in_flight {
+        return;
+    }
     let voxels = &world.voxels;
     world.dirty.retain(|pos| voxels.contains(*pos));
-    // Columns at the edge of the loaded area wait for neighbours. While the world streams
-    // in, thousands wait, so this pass runs every frame: it only looks columns up.
+    // Columns at the edge of the loaded area wait for neighbours. Scan them when a
+    // worker slot is available, so newly arrived neighbours can make them ready.
     let mut meshable = 0;
     let mut ready = Vec::new();
     for &pos in &world.dirty {
@@ -381,6 +391,7 @@ fn apply_meshes(mut world: ResMut<ClientWorld>) {
                     continue;
                 }
                 render.hashes[i] = result.hash;
+                world.stats.quads = world.stats.quads - render.quads[i] + result.quads;
                 render.quads[i] = result.quads;
                 uploaded += result.quads;
                 let present = !result.mesh.is_empty();
@@ -388,13 +399,10 @@ fn apply_meshes(mut world: ResMut<ClientWorld>) {
                     world.terrain.upload(chunk, pass, result.mesh);
                 }
                 world.visibility_dirty |= present != render.passes[i];
+                world.stats.chunk_entities = world.stats.chunk_entities - usize::from(render.passes[i]) + usize::from(present);
                 render.passes[i] = present;
             }
         }
-    }
-    if uploaded > 0 {
-        world.stats.chunk_entities = world.chunks.values().flat_map(|c| c.passes).filter(|&p| p).count();
-        world.stats.quads = world.chunks.values().flat_map(|c| c.quads).sum();
     }
 }
 
@@ -490,4 +498,98 @@ fn cull_chunks(
     let chunks = world.chunks.iter().map(|(&pos, c)| (pos, c.connectivity, c.quads.iter().sum())).collect();
     let job = CullJob { eye, radius: radius.max(world.view_distance), chunks };
     world.culler.busy = world.culler.jobs.send(job).is_ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_world() -> ClientWorld {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        ClientWorld::new(content.blocks, 2, Terrain::detached())
+    }
+
+    fn chunk(quads: [usize; 5]) -> ChunkResult {
+        let passes = quads.map(|count| {
+            let vertices = vec![[0, 0]; count * 4];
+            let indices = (0..count as u32).flat_map(|quad| {
+                let first = quad * 4;
+                [first, first + 1, first + 2, first, first + 2, first + 3]
+            }).collect();
+            PassResult::new(MeshBuffers { vertices, indices })
+        });
+        ChunkResult { connectivity: Connectivity::default(), passes, blades: Vec::new(), blades_hash: 0 }
+    }
+
+    fn queue(app: &mut App, pos: ColumnPos, quads: [usize; 5]) {
+        let mut world = app.world_mut().resource_mut::<ClientWorld>();
+        world.in_flight.insert(pos);
+        world.results_tx.send(MeshResult { pos, detail: 1, chunks: vec![chunk(quads)] }).unwrap();
+        drop(world);
+        app.update();
+    }
+
+    fn assert_stats(app: &App, quads: usize, passes: usize) {
+        let world = app.world().resource::<ClientWorld>();
+        assert_eq!(world.stats.quads, quads);
+        assert_eq!(world.stats.chunk_entities, passes);
+        assert_eq!(world.stats.quads, world.chunks.values().flat_map(|c| c.quads).sum::<usize>());
+        assert_eq!(world.stats.chunk_entities, world.chunks.values().flat_map(|c| c.passes).filter(|&p| p).count());
+    }
+
+    #[test]
+    fn mesh_totals_follow_replacements_empty_results_unloads_and_reset() {
+        let mut world = test_world();
+        let a = ColumnPos::new(0, 0);
+        let b = ColumnPos::new(1, 0);
+        world.insert_column(a, Arc::new(Column::default()));
+        world.insert_column(b, Arc::new(Column::default()));
+        let mut app = App::new();
+        app.insert_resource(world).add_systems(Update, apply_meshes);
+        queue(&mut app, a, [2, 1, 0, 1, 0]);
+        queue(&mut app, b, [0, 0, 3, 0, 2]);
+        assert_stats(&app, 9, 5);
+        queue(&mut app, a, [1, 0, 0, 0, 4]);
+        assert_stats(&app, 10, 4);
+        queue(&mut app, a, [1, 0, 0, 0, 4]);
+        assert_stats(&app, 10, 4);
+        // An all-empty result uploads zero quads, but must still subtract old geometry.
+        queue(&mut app, b, [0; 5]);
+        assert_stats(&app, 5, 2);
+        app.world_mut().resource_mut::<ClientWorld>().remove_column(a);
+        assert_stats(&app, 0, 0);
+        queue(&mut app, a, [9, 0, 0, 0, 0]);
+        assert_stats(&app, 0, 0);
+        app.world_mut().resource_mut::<ClientWorld>().insert_column(a, Arc::new(Column::default()));
+        queue(&mut app, a, [2; 5]);
+        assert_stats(&app, 10, 5);
+        app.world_mut().resource_mut::<ClientWorld>().reset(3);
+        assert_stats(&app, 0, 0);
+    }
+
+    #[test]
+    fn full_workers_defer_the_queue_scan_but_keep_detail_checks() {
+        let mut world = test_world();
+        let far = ColumnPos::new(20, 0);
+        world.details.insert(far, 1);
+        world.set_far_detail([2, 4]);
+        let max = rayon::current_num_threads() * 2;
+        world.in_flight.extend((0..max).map(|x| ColumnPos::new(x as i32, 0)));
+        world.stats.pending_columns = 42;
+        let mut app = App::new();
+        app.insert_resource(world).add_systems(Update, dispatch_jobs);
+        app.update();
+        let world = app.world().resource::<ClientWorld>();
+        assert!(!world.details_dirty);
+        assert!(world.dirty.contains(&far), "detail changes must queue even while workers are full");
+        assert_eq!(world.stats.jobs_in_flight, max);
+        assert_eq!(world.stats.pending_columns, 42, "the busy-frame count comes from the last dispatch scan");
+        app.world_mut().resource_mut::<ClientWorld>().in_flight.clear();
+        app.update();
+        let world = app.world().resource::<ClientWorld>();
+        assert!(world.dirty.is_empty(), "the next free slot must discard unloaded columns");
+        assert_eq!(world.stats.jobs_in_flight, 0);
+        assert_eq!(world.stats.pending_columns, 0, "cached pending work must never prevent idle after a fresh scan");
+    }
 }

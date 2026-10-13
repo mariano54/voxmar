@@ -222,10 +222,14 @@ pub trait Surroundings {
 
 /// Advances `body` by `dt` seconds (split into substeps of at most [`SUBSTEP`]).
 pub fn advance(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, controls: Controls, dt: f32) {
-    let mut remaining = dt;
-    while remaining > 0.0 {
-        let dt = remaining.min(SUBSTEP);
-        remaining -= dt;
+    let steps = (dt / SUBSTEP).ceil() as usize;
+    if steps == 0 {
+        return;
+    }
+    // Equal steps preserve the whole frame without a tiny subtraction remainder whose
+    // downward displacement rounds away and clears on_ground after landing.
+    let dt = dt / steps as f32;
+    for _ in 0..steps {
         step(body, world, tuning, controls, dt);
     }
 }
@@ -407,6 +411,34 @@ mod tests {
     const EAST: Controls = Controls { wish: Vec3::X, forward: true, sprint: false, jump: false, descend: false };
     const EAST_SPRINTING: Controls = Controls { sprint: true, ..EAST };
     const EAST_JUMPING: Controls = Controls { jump: true, ..EAST };
+
+    #[test]
+    fn landing_stays_grounded_across_slow_fast_and_mixed_frames() {
+        let tuning = tuning();
+        for x in [0.5, 20_000.5, -5_000.5] {
+            for intervals in [vec![0.25], vec![1.0 / 12.0], vec![1.0 / 60.0], vec![1.0 / 500.0], vec![0.25, 1.0 / 60.0, 0.12, 1.0 / 12.0]] {
+                let scene = Scene { solid: |c: IVec3| c.y < 201, water: None };
+                let mut body = at(x, 202.0, 0.5);
+                let (mut landed, mut elapsed, mut frame) = (false, 0.0, 0);
+                while elapsed < 2.0 {
+                    let dt = intervals[frame % intervals.len()];
+                    advance(&mut body, &scene, &tuning, Controls::default(), dt);
+                    if landed {
+                        assert!(body.on_ground, "lost grounding at {x}, intervals {intervals:?}, frame {frame}: {body:?}");
+                        assert_eq!(body.position.y, 201.0);
+                        assert_eq!(body.velocity.y, 0.0);
+                    }
+                    landed |= body.on_ground;
+                    elapsed += dt;
+                    frame += 1;
+                }
+                assert!(landed, "never landed at {x}, intervals {intervals:?}");
+                let before = body;
+                advance(&mut body, &scene, &tuning, Controls::default(), 0.0);
+                assert_eq!(body, before, "a zero frame does not change movement");
+            }
+        }
+    }
 
     #[test]
     fn walking_into_a_wall_stops_at_it() {

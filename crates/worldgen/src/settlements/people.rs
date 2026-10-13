@@ -561,7 +561,7 @@ fn count(range: (u32, u32), lean: &Lean, levers: &Levers, rng: &mut Rng) -> u32 
 /// The people of a settlement of size `size`, drawn from its seed.
 pub fn residents(people: &PeopleDef, houses: &[HouseDef], size: &str, levers: &Levers, buildings: &[Building], gates: &[IVec2], seed: u64) -> Vec<Resident> {
     let mut rng = Rng::new(seed, 0x9e09_1e, 0, 0);
-    let crowded = Lean(vec![(super::def::Lever::Crowding, 1.0)]);
+    let crowded = Lean(vec![(super::def::Key::Lever(super::def::Lever::Crowding), 1.0)]);
     // Room in each home: what its house kind holds, fuller where it is crowded.
     let room: Vec<u32> = buildings
         .iter()

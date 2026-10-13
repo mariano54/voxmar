@@ -31,8 +31,7 @@ use crate::stage::{self, Stage, Times};
 use crate::{Generator, Overworld};
 
 fn registry() -> Arc<BlockRegistry> {
-    let source = include_str!("../../../assets/content/base/blocks.ron");
-    Arc::new(BlockRegistry::from_ron("base", source).unwrap())
+    Arc::new(crate::test_registry())
 }
 
 /// CPU time this thread has used: unlike wall-clock time, it is not inflated when other
@@ -259,7 +258,7 @@ const GOLDEN: [(u64, [(i32, i32); 8]); 4] = [
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 4] = [0xe1a0f3c3a5b26046, 0x708d39cdd2dc0c0e, 0xd3c1c13bcf558fd2, 0x428bf872a73508a8];
+const EXPECTED: [u64; 4] = [0x4c3793e5d1742b58, 0x708d39cdd2dc0c0e, 0x73c709cebc5cf272, 0x428bf872a73508a8];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
