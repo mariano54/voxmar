@@ -322,7 +322,7 @@
         // your own buy a loaf from their basket.
         (
             name: "berry_pickers", weight: 0.9,
-            biomes: [("tag:forest", 1.0), ("tag:forest_edge", 1.0), ("tag:grassland", 0.6), ("tag:open", 0.6)],
+            biomes: [("tag:forest", 1.0), ("base:forest_steppe", 1.0), ("tag:grassland", 0.6), ("tag:open", 0.6)],
             daylight: (0.3, 0.9), needs: (days: 0.4),
             cast: [(species: "villager"), (species: "villager", count: (1, 2), role: Follow), (species: "child", count: (0, 1), role: Follow)],
             script: Gather(reach: 20.0, work: (8.0, 16.0), visits: 10),
@@ -339,7 +339,7 @@
         // if any grow near.
         (
             name: "herb_gatherer", weight: 0.6,
-            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:forest_edge", 0.8), ("tag:forest", 0.5), ("tag:wetland", 0.6)],
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("base:forest_steppe", 0.8), ("tag:forest", 0.5), ("tag:wetland", 0.6)],
             daylight: (0.3, 0.85), needs: (days: 0.6, away: Some((30.0, 100000.0))),
             cast: [(species: "elder")],
             script: Gather(reach: 24.0, work: (10.0, 20.0), visits: 6),
@@ -377,7 +377,7 @@
         // may lose.
         (
             name: "boar_sounder", weight: 0.7,
-            biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("tag:forest_edge", 0.6), ("tag:grassland", 0.3)],
+            biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("base:forest_steppe", 0.6), ("tag:grassland", 0.3)],
             daylight: (0.15, 0.85), needs: (days: 0.6),
             cast: [(species: "wild_sow"), (species: "wild_boar", count: (2, 4), role: Herd, young: true)],
             script: Drift(leg: (5.0, 10.0), pause: (8.0, 20.0), seconds: 480.0),
@@ -389,7 +389,7 @@
         // still hand holding food is let near. Strike one and they scatter.
         (
             name: "deer_herd", weight: 0.7,
-            biomes: [("tag:forest", 1.0), ("tag:grassland", 0.8), ("tag:forest_edge", 1.0)],
+            biomes: [("tag:forest", 1.0), ("tag:grassland", 0.8), ("base:forest_steppe", 1.0)],
             daylight: (0.1, 0.6), needs: (days: 0.5),
             cast: [(species: "red_deer"), (species: "red_deer", count: (2, 4), role: Herd), (species: "red_deer", count: (0, 2), role: Herd, young: true)],
             script: Drift(leg: (6.0, 12.0), pause: (6.0, 18.0), seconds: 480.0),
@@ -434,7 +434,7 @@
         // beginner's hand gets a word on felling.
         (
             name: "woodcutters", weight: 0.6,
-            biomes: [("tag:forest", 1.2), ("tag:forest_edge", 1.0), ("tag:open", 0.3)],
+            biomes: [("tag:forest", 1.2), ("base:forest_steppe", 1.0), ("tag:open", 0.3)],
             daylight: (0.25, 0.85), needs: (days: 0.8),
             cast: [(species: "woodcutter"), (species: "woodcutter", count: (0, 1), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
             script: Gather(reach: 20.0, work: (10.0, 18.0), visits: 6, carry: Some((set: (2.0, 4.0)))),
@@ -468,7 +468,7 @@
         // buy chickpeas at 7, once each; a beginner with seed in hand learns to sow.
         (
             name: "harvest_family", weight: 0.6,
-            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:steppe", 0.6)],
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("base:steppe", 0.6)],
             daylight: (0.3, 0.85), needs: (days: 1.2, home: true),
             cast: [(species: "farmer"), (species: "farmer", count: (0, 1), role: Follow), (species: "child", count: (1, 2), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
             script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.75),
@@ -484,7 +484,7 @@
         // charcoal, once; they say where coal shows at the surface (an ore sample).
         (
             name: "charcoal_burners", weight: 0.5,
-            biomes: [("tag:forest", 1.0), ("tag:forest_edge", 0.8), ("tag:mountain", 0.4)],
+            biomes: [("tag:forest", 1.0), ("base:forest_steppe", 0.8), ("tag:mountain", 0.4)],
             daylight: (0.0, 1.0), needs: (days: 1.5),
             cast: [(species: "woodcutter"), (species: "villager", count: (0, 1), role: Follow)],
             script: Camp(near: 24.0, stay: (300.0, 480.0), mill: 4.0, away: 120.0),
@@ -552,7 +552,7 @@
         // hand gets a lesson; at Mining 5 they say where more ore shows.
         (
             name: "prospector", weight: 0.6,
-            biomes: [("tag:mountain", 1.2), ("tag:open", 0.6), ("tag:forest", 0.5), ("tag:steppe", 0.8)],
+            biomes: [("tag:mountain", 1.2), ("tag:open", 0.6), ("tag:forest", 0.5), ("base:steppe", 0.8)],
             daylight: (0.25, 0.85), needs: (days: 1.0),
             cast: [(species: "smith"), (species: "hound", count: (0, 1), role: Pet(0))],
             script: Gather(reach: 24.0, work: (8.0, 14.0), visits: 4),
