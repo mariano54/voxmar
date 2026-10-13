@@ -32,8 +32,10 @@ impl Server {
         }
         if !on {
             player.praying.on.retain(|&p| p != prayer);
-        } else if level >= def.level && player.praying.points > 0.0 {
+        } else if level >= def.level && player.praying.points > 0.0 && !player.praying.on.contains(&prayer) {
             player.praying.on = book.turn_on(&player.praying.on, prayer);
+            // Quests count prayers turned on (`Prayed`).
+            *player.tallies.entry(format!("prayed:{}", def.name)).or_default() += 1;
         }
     }
 
@@ -93,7 +95,9 @@ impl Server {
         let Some(player) = self.players.get_mut(&id) else { return };
         if let (Some(worth), Some(skill)) = (player.held().and_then(|item| book.offering(item)), book.skill) {
             let selected = player.selected;
-            if player.inventory.take_one(selected).is_some() {
+            if let Some(offered) = player.inventory.take_one(selected) {
+                // Quests count what was offered (`Offered`).
+                *player.tallies.entry(format!("offered:{}", self.content.blocks.def(offered).name)).or_default() += 1;
                 let tenths = (10.0 * book.rules.offer_xp * worth).round() as u32;
                 player.skills.grant(skill, tenths);
                 player.changed(traits::INVENTORY);

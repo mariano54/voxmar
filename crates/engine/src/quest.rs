@@ -66,6 +66,15 @@ pub enum Goal {
     /// tamed one starts at 60; only food, water, room and shelter raise it). What they
     /// keep now, not a count of what was done.
     Thriving(u32, u8),
+    /// Had dealings with this many parties of a wandering kind (or `any`), or with this many
+    /// different kinds (`Kinds`): a line said that gave or took something, a show watched, a
+    /// share of a hunt, a captive's or a guided one's thanks, a lure followed to its end. A
+    /// greeting alone is no dealing.
+    Met(String, u32),
+    /// Turned a prayer (or `any`) on this many times.
+    Prayed(String, u32),
+    /// Offered this many of an item (or `any`, or a `tag:TAG`) at an altar.
+    Offered(String, u32),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -154,7 +163,8 @@ pub struct QuestRegistry {
 /// What a player has done, as quests read it.
 pub struct Progress<'a> {
     pub journal: &'a Journal,
-    /// Tallies by key: `crafted:<item>`, `cooked:<item>`, `tamed:<creature>`.
+    /// Tallies by key: `crafted:<item>`, `cooked:<item>`, `tamed:<creature>`, `met:<event>`,
+    /// `prayed:<prayer>`, `offered:<item>`.
     pub tallies: &'a FxHashMap<String, u32>,
     /// Their level in a skill, by name.
     pub level: &'a dyn Fn(&str) -> u8,
@@ -204,6 +214,10 @@ impl Progress<'_> {
             Goal::Lit(structure, n) => (tally("lit", structure), *n),
             Goal::LookUp(item) => (tally("lookedup", item).min(1), 1),
             Goal::Thriving(n, percent) => ((self.thriving)(*percent), *n),
+            Goal::Met(kind, n) if kind == "Kinds" => (self.tallies.iter().filter(|&(key, &times)| times > 0 && key.starts_with("met:")).count() as u32, *n),
+            Goal::Met(kind, n) => (tally("met", kind), *n),
+            Goal::Prayed(prayer, n) => (tally("prayed", prayer), *n),
+            Goal::Offered(item, n) => (tally("offered", item), *n),
         }
     }
 
@@ -304,7 +318,7 @@ impl QuestRegistry {
     /// quest that never finishes or a reward that never comes. Journal pages are checked as
     /// the file is read.
     pub fn resolve(&mut self, named: &Named) -> Result<(), RegistryError> {
-        let Named { blocks, skills, creatures, fishing, multiblocks, steps } = *named;
+        let Named { blocks, skills, creatures, fishing, multiblocks, steps, events, prayers } = *named;
         let block_ids: Vec<BlockId> = blocks.ids().collect();
         let fish_ids: Vec<BlockId> = fishing.iter().map(|c| c.item).collect();
         let names = |ids: &[BlockId]| ids.iter().map(|&id| blocks.def(id).name.as_str()).collect::<Vec<_>>();
@@ -331,6 +345,10 @@ impl QuestRegistry {
         let multiblock = Kind { what: "multiblock", names: &multiblock_names, ..creature };
         let built = Kind { what: "multiblock or ladder step", names: &built_names, ..creature };
         let reward = Kind { tagged: &[], ..item };
+        let event_names: Vec<&str> = events.iter().map(String::as_str).collect();
+        let prayer_names: Vec<&str> = prayers.iter().map(String::as_str).collect();
+        let event = Kind { what: "wandering kind", names: &event_names, ..creature };
+        let prayer = Kind { what: "prayer", names: &prayer_names, ..creature };
         for quest in &mut self.quests {
             let namespace = quest.name.split(':').next().unwrap_or("").to_owned();
             let refuse = |what: &str, name: &str| RegistryError(format!("quest {} names the {what} `{name}`, which no package has", quest.name));
@@ -375,6 +393,10 @@ impl QuestRegistry {
                         _ => return Err(refuse("kind on that page (only `any` there)", name)),
                     },
                     Goal::Visit(_) | Goal::Discover(..) | Goal::Home => {}
+                    Goal::Met(name, _) if name == "Kinds" => {}
+                    Goal::Met(name, _) => find(name, &event)?,
+                    Goal::Prayed(name, _) => find(name, &prayer)?,
+                    Goal::Offered(name, _) => find(name, &made)?,
                 }
             }
             for given in &mut quest.rewards {
@@ -448,6 +470,10 @@ pub struct Named<'a> {
     pub multiblocks: &'a MultiblockRegistry,
     /// The announced steps of effect ladders (`base:home_snug`), which `Built` may name too.
     pub steps: &'a [String],
+    /// The wandering kinds' full names, which `Met` names.
+    pub events: &'a [String],
+    /// The prayers' full names, which `Prayed` names.
+    pub prayers: &'a [String],
 }
 
 /// The one of `names` a quest in package `namespace` means by `name`: a full name as
@@ -587,6 +613,31 @@ mod tests {
         assert_eq!(quests.newly_done(&done, &progress), ["base:fish"]);
     }
 
+    /// Dealings with wanderers count by kind or all together, and `Kinds` counts the kinds
+    /// dealt with at least once; prayers and offerings count by name, offerings by tag too.
+    #[test]
+    fn wanderers_prayers_and_offerings_count_from_their_tallies() {
+        let journal = Journal::default();
+        let mut tallies = FxHashMap::default();
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9)] {
+            tallies.insert(key.to_owned(), n);
+        }
+        let level = |_: &str| 1u8;
+        let carried = |_: &str| 0u32;
+        let has_tag = |name: &str, tag: &str| name == "base:bone" && tag == "offering";
+        let drops = |_: &str| None;
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &|_| 0, home: false };
+        let goal = |goal: Goal| progress.goal(&goal);
+        assert_eq!(goal(Goal::Met("base:pedlar".into(), 1)), (2, 1));
+        assert_eq!(goal(Goal::Met("pedlar".into(), 3)), (2, 3), "a short name is the kind's own");
+        assert_eq!(goal(Goal::Met("any".into(), 4)), (3, 4));
+        assert_eq!(goal(Goal::Met("Kinds".into(), 3)), (2, 3), "a kind never dealt with is no kind");
+        assert_eq!(goal(Goal::Prayed("base:bark_skin".into(), 1)), (3, 1));
+        assert_eq!(goal(Goal::Prayed("base:ember_arm".into(), 1)), (0, 1));
+        assert_eq!(goal(Goal::Offered("base:bone".into(), 3)), (4, 3), "only what was offered, not what was made");
+        assert_eq!(goal(Goal::Offered("tag:offering".into(), 3)), (4, 3));
+    }
+
     /// A look-up goal holds from the first time the item was looked up, and a tag or `any`
     /// takes any item that matches.
     #[test]
@@ -671,7 +722,7 @@ mod tests {
         let multiblocks = MultiblockRegistry::new(vec![MultiblockRegistry::read("base", kiln).unwrap()], &blocks).unwrap();
         let source = format!("(quests: [{quest}])");
         let mut quests = QuestRegistry::new(vec![QuestRegistry::read(namespace, &source).unwrap()])?;
-        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[] })?;
+        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[], events: &["base:pedlar".to_owned()], prayers: &["base:bark_skin".to_owned()] })?;
         Ok(quests)
     }
 
@@ -702,6 +753,10 @@ mod tests {
         assert_eq!(refused(r#"Mine("coper_ore", 1)"#, ""), Some("quest base:dig names the block `coper_ore`, which no package has".to_owned()));
         assert_eq!(refused(r#"Mine("tag:ores", 1)"#, ""), Some("quest base:dig names the tag `ores`, which no package has".to_owned()));
         assert_eq!(refused(r#"Built("kil", 1)"#, ""), Some("quest base:dig names the multiblock or ladder step `kil`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Met("pedler", 1)"#, ""), Some("quest base:dig names the wandering kind `pedler`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Prayed("bark_skn", 1)"#, ""), Some("quest base:dig names the prayer `bark_skn`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Offered("bon", 1)"#, ""), Some("quest base:dig names the item `bon`, which no package has".to_owned()));
+        assert!(refused(r#"Met("pedlar", 1), Met("Kinds", 3), Met("any", 2), Prayed("bark_skin", 1), Offered("torch", 2)"#, "").is_none());
         // A page no journal has is refused as the file is read.
         let page = quest(r#"Discover(Spells, 1)"#, "");
         assert!(QuestRegistry::read("base", &format!("(quests: [{page}])")).is_err());
