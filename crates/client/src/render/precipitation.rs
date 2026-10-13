@@ -469,7 +469,8 @@ fn update(
     let eye = camera.translation();
     let column = eye.xz().floor().as_ivec2();
     map.age += time.delta_secs();
-    if (column - (map.origin + MAP / 2)).abs().max_element() > RECENTER || map.age > REFRESH {
+    // A map never read has no origin to measure from (its sentinel would overflow).
+    if map.origin == IVec2::MAX || (column - (map.origin + MAP / 2)).abs().max_element() > RECENTER || map.age > REFRESH {
         map.refresh(&world, column);
     }
 
