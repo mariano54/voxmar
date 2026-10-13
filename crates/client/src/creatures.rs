@@ -203,6 +203,9 @@ struct Shown {
     death_spread: f32,
     death_scale: f32,
     death_samples: u32,
+    /// The longest step of game time a frame took while it tipped over (a slow frame there
+    /// is what leaves fewer samples).
+    death_slowest: f32,
     /// Whether we have struck at it, so the target readout shows its health.
     struck: bool,
     /// Smoothed head pitch and turn, and body crouch.
@@ -259,6 +262,8 @@ pub struct Fall {
     /// Joint samples taken while it tipped over, and how many joints it has.
     pub samples: u32,
     pub joints: u32,
+    /// The longest step of game time, in seconds, any frame took while it tipped over.
+    pub slowest: f32,
 }
 
 /// A creature as the target readout shows it.
@@ -707,6 +712,7 @@ fn show(
                 death_spread: 0.0,
                 death_scale: 0.0,
                 death_samples: 0,
+                death_slowest: 0.0,
                 struck: false,
                 nod: 0.0,
                 look: 0.0,
@@ -786,6 +792,9 @@ fn show(
             .with_rotation(Quat::from_rotation_y(shown.yaw))
             .with_scale(Vec3::splat(scale));
         if let Some(dying) = shown.dying.as_mut() {
+            if *dying < def.death.seconds * 0.5 {
+                shown.death_slowest = shown.death_slowest.max(dt);
+            }
             *dying += dt;
             // It falls away from the eye: rolled toward the eye at melee range, its back
             // came through the camera and showed the inside of the body.
@@ -934,7 +943,7 @@ fn show(
     }
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
-            creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale, samples: shown.death_samples, joints: shown.joints.len() as u32 });
+            creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale, samples: shown.death_samples, joints: shown.joints.len() as u32, slowest: shown.death_slowest });
             despawn(&mut commands, &shown);
             if shown.painting.is_none() {
                 images.remove(&shown.skin);

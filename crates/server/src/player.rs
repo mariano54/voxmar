@@ -557,7 +557,9 @@ impl Server {
     /// that have not said hello in time.
     pub(crate) fn limit_players(&mut self) {
         let (tick, limits) = (self.tick, &self.config.limits);
-        let hello_ticks = (limits.hello_seconds * TICKS_PER_SECOND as f32) as u64;
+        // Counted in ticks, so a server running behind does not cut off a slow hello; a server
+        // whose ticks run quicker than the clock (`tick_speedup`) counts as many more.
+        let hello_ticks = (limits.hello_seconds * TICKS_PER_SECOND as f32) as u64 * self.config.tick_speedup.max(1) as u64;
         self.players.retain(|_, player| {
             player.messages_left = limits.messages_per_tick;
             player.joined || tick.saturating_sub(player.connected_tick) <= hello_ticks

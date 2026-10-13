@@ -14,7 +14,7 @@ use voxmar_protocol::{
     ChatKind, ClientConnection, ClientMessage, ItemView, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND,
     Weather, local_pair, tcp,
 };
-use voxmar_server::{Limits, ServerConfig, ServerHandle, load_content, spawn};
+use voxmar_server::{Limits, ServerConfig, ServerHandle, load_content};
 
 struct Client {
     connection: ClientConnection,
@@ -72,6 +72,47 @@ struct Client {
     _server: Option<ServerHandle>,
 }
 
+/// How many times faster than the clock a test server's ticks run. Waits here are judged by
+/// ticks (`Client::after_ticks`), so the pace only changes how long a test takes.
+const TICK_SPEEDUP: u32 = 20;
+
+thread_local! {
+    /// Set by a test that runs its server at the clock's pace (`real_time`).
+    static REAL_TIME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Makes this test's servers tick at the clock's pace, for a test whose claim is about what
+/// the server judges by the clock, not by its ticks (`why` says which): what is judged by
+/// when messages arrived (a break, a blow, a move, silence) takes the same time however
+/// quickly the ticks come, so a wait of so many ticks would be short of it.
+fn real_time(why: &str) {
+    assert!(!why.is_empty());
+    REAL_TIME.set(true);
+}
+
+/// Starts a server as the game does, its ticks `TICK_SPEEDUP` times as quick unless the test
+/// is about the clock (`real_time`) or makes the server run behind on purpose (`lag`).
+fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
+    if config.lag == voxmar_server::Lag::default() && !REAL_TIME.get() {
+        config.tick_speedup = TICK_SPEEDUP;
+    }
+    keep_world(config.seed, &content);
+    voxmar_server::spawn(config, content)
+}
+
+/// Keeps the generator of a seed alive for the rest of the run. A server on a world another
+/// holds open shares its generator (`Overworld::shared`), with the land round spawn already
+/// planned; one dropped between two tests made the next plan the spawn village again, some
+/// 1.4 s of each join.
+fn keep_world(seed: u64, content: &Content) {
+    static HELD: std::sync::Mutex<Vec<(u64, std::sync::Arc<voxmar_worldgen::Overworld>)>> = std::sync::Mutex::new(Vec::new());
+    let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if held.iter().all(|(s, _)| *s != seed) {
+        let world = voxmar_worldgen::WorldContent::load(content).expect("world content loads");
+        held.push((seed, voxmar_worldgen::Overworld::shared(seed, content, &world)));
+    }
+}
+
 fn content() -> Content {
     load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")
 }
@@ -99,15 +140,6 @@ impl Client {
         let server = spawn(config, content.clone()).unwrap();
         let accepted = server.connections();
         Self::greet_content(|| local_connection(accepted), name, Some(server), None, || content)
-    }
-
-    /// Joins a new server through a connection that takes half of `round_trip` each way
-    /// (`delayed`): a player far from it.
-    fn join_delayed(round_trip: Duration) -> Self {
-        let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
-        let (connection, server_side) = delayed(round_trip);
-        server.connections().send(server_side).unwrap();
-        Self::hello(|| connection, "test", server)
     }
 
     /// Joins a new server over TCP as `name`.
@@ -455,6 +487,7 @@ const CATCH_UP: Duration = Duration::from_millis(11 * 1000 / TICKS_PER_SECOND as
 
 #[test]
 fn break_and_place_blocks() {
+    real_time("a break takes its time on the clock (stamps of arrival), and a pick-up delay is waited for in seconds here");
     let mut client = Client::join();
     client.clear();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
@@ -494,6 +527,7 @@ fn break_and_place_blocks() {
 
 #[test]
 fn broken_blocks_pop_out_items_that_are_picked_up_and_thrown_stacks_fly() {
+    real_time("a break takes its time on the clock (stamps of arrival), and a pick-up delay is waited for in seconds here");
     let mut client = Client::join();
     client.clear();
     client.ok("/give oak_planks 64");
@@ -623,6 +657,7 @@ fn a_block_the_client_finished_breaks_even_if_the_server_started_it_late() {
 
 #[test]
 fn falling_hurts() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = Client::join();
     let height = fall_from_open_sky(&mut client);
     let expected = 20 - (height - 3) as u8;
@@ -701,6 +736,7 @@ fn a_bite_of_food_holds_the_swing_and_drops_the_one_under_way() {
 
 #[test]
 fn only_admins_fly_fast() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     // The integrated server's own player and players named with `--admin` are admins.
     let clients = [(Client::join(), true), (Client::join_remote("guest", &["boss"]), false), (Client::join_remote("boss", &["boss"]), true)];
     for (mut client, admin) in clients {
@@ -1170,6 +1206,7 @@ fn walking_wears_a_path() {
 
 #[test]
 fn summoned_creatures_are_seen_struck_and_drop_their_loot() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     strike_a_snail(Client::join());
 }
 
@@ -1217,6 +1254,7 @@ fn strike_a_snail(mut client: Client) {
 /// strikes as a bare fist (max hit 1, and 1 more for every eight levels).
 #[test]
 fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = Client::join();
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
     let sword = client.content.blocks.id("base:iron_sword").unwrap();
@@ -1414,39 +1452,6 @@ fn a_finished_break_the_server_refused_is_undone_on_the_client() {
     client.pump_until(|c| c.world.block(far) == Some(stone));
 }
 
-/// An in-process connection whose messages take half of `round_trip` each way, each
-/// stamped as it comes out, as over a network.
-fn delayed(round_trip: Duration) -> (voxmar_protocol::ClientConnection, voxmar_protocol::ServerConnection) {
-    use std::collections::VecDeque;
-    let (client, from_client) = local_pair();
-    let (to_server, server) = local_pair();
-    let way = round_trip / 2;
-    std::thread::spawn(move || {
-        let (mut up, mut down) = (VecDeque::new(), VecDeque::new());
-        loop {
-            while let Ok(Some((at, message))) = from_client.try_recv_at() {
-                up.push_back((at + way, message));
-            }
-            while let Ok(Some((at, message))) = to_server.try_recv_at() {
-                down.push_back((at + way, message));
-            }
-            let now = Instant::now();
-            while up.front().is_some_and(|(due, _)| *due <= now) {
-                if !to_server.send(up.pop_front().expect("checked").1) {
-                    return;
-                }
-            }
-            while down.front().is_some_and(|(due, _)| *due <= now) {
-                if !from_client.send(down.pop_front().expect("checked").1) {
-                    return;
-                }
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    });
-    (client, server)
-}
-
 /// A server held up as on a busy machine: every tick slow, every fifth stalled, and a
 /// stall as every other action is proposed (as `voxmar_client::gate::SERVER_LAG`).
 const SLOW: voxmar_server::Lag = voxmar_server::Lag {
@@ -1458,6 +1463,7 @@ const SLOW: voxmar_server::Lag = voxmar_server::Lag {
 
 #[test]
 fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
+    real_time("a break takes its time on the clock (stamps of arrival), and a pick-up delay is waited for in seconds here");
     let mut client = Client::join();
     let ore = client.position.floor().as_ivec3() + IVec3::new(0, -1, 1);
     client.ok("/setblock ~ ~-1 ~1 iron_ore");
@@ -1555,9 +1561,13 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
     // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
+    // A cast takes five seconds of the clock (`actions.ron`), and a busy machine takes longer
+    // to bring the catch: waiting just past five seconds cancelled every cast with the next
+    // one (a miss streak of six, on 5.6 s a cast, in one run in a dozen), so each is waited out
+    // with room to spare, the wait ending at the catch.
     for _ in 0..6 {
         client.propose("base:fish", ActionTarget::Block { block: water, face: Face::PosY });
-        let up = Instant::now() + Duration::from_millis(5600);
+        let up = Instant::now() + Duration::from_secs(15);
         client.pump_until(|c| fish(c) || Instant::now() > up);
         if fish(&client) {
             break;
@@ -1707,30 +1717,41 @@ fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
 
 /// An animal is found only from close up with nothing in between (`seen_within` in
 /// journal.ron, 3 blocks for animals): not across the floor, not through a wall right
-/// beside it, and at once when the wall goes.
+/// beside it, and at once when the wall goes. The rabbit is the one summoned (told apart
+/// from any wild one by its id and height), held still (`/creatures hold` reaches 8 blocks,
+/// so it is summoned well inside that), and every wait is a count of server ticks.
 #[test]
 fn an_animal_is_found_only_from_close_up_in_plain_view() {
     use voxmar_engine::journal::Page;
     let mut client = on_a_test_floor();
     let at = client.position.floor().as_ivec3();
     let rabbit = client.content.creatures.find("rabbit").expect("rabbits in the content");
-    client.ok(&format!("/summon rabbit 1 {} {} {}", at.x + 10, at.y, at.z));
+    let before: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
+    client.ok(&format!("/summon rabbit 1 {} {} {}", at.x + 7, at.y, at.z));
     client.ok("/creatures hold rabbit");
-    client.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
+    let ours = move |c: &Client| c.creatures.iter().find(|(id, v)| v.species == rabbit && !before.contains(id) && (v.position.y - at.y as f32).abs() < 1.0).map(|(&id, _)| id);
+    client.pump_until(|c| ours(c).is_some());
+    let id = ours(&client).unwrap();
     let found = |c: &Client| c.journal.get(Page::Animals, "base:rabbit").is_some();
-    // Eight blocks off in the open: seen, but not found.
+    // Some blocks off in the open, held still: seen, but not found.
     client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
-    assert!(!found(&client), "a rabbit eight blocks away was found");
+    let p = client.creatures[&id].position;
+    let off = p.with_y(0.0).distance(client.position.with_y(0.0));
+    assert!((4.0..8.0).contains(&off), "the summoned rabbit is {off} blocks off, at {p:?}");
+    assert!(!found(&client), "a rabbit {off} blocks away was found");
     // Within three blocks, with a wall between.
-    let p = client.creatures.values().find(|v| v.species == rabbit).unwrap().position;
     let wall = p.x.floor() as i32 - 1;
     client.ok(&format!("/fill {wall} {} {} {wall} {} {} stone", at.y, at.z - 3, at.y + 3, at.z + 3));
     client.tp(Vec3::new(wall as f32 - 0.35, at.y as f32, p.z));
     client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
+    assert_eq!(client.creatures[&id].position, p, "the held rabbit moved");
     assert!(!found(&client), "a rabbit was found through a wall");
-    // The wall gone, it is found from where the player stands.
+    // The wall gone, it is found from where the player stands within the journal's next
+    // look round (once a second).
     client.ok(&format!("/fill {wall} {} {} {wall} {} {} air", at.y, at.z - 3, at.y + 3, at.z + 3));
-    client.pump_until(found);
+    client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
+    let (now, me) = (client.creatures[&id].position, client.position);
+    assert!(found(&client), "a rabbit at {now:?} was not found from {me:?} with nothing between");
 }
 
 #[test]
@@ -2543,6 +2564,7 @@ fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
 
 #[test]
 fn gravel_sometimes_breaks_to_flint_instead() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = Client::join();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
     for line in ["/clear", "/give iron_shovel 1"] {
@@ -2724,6 +2746,7 @@ fn arm_for_villager_death(client: &mut Client) {
 /// in the journal.
 #[test]
 fn a_villager_killed_drops_nothing_and_teaches_nothing() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = settlement_client();
     to_settlement(&mut client, "", "noon");
     let folk = |c: &Client| villagers(c).into_iter().find(|v| species_name(c, v) != "base:guard");
@@ -2746,6 +2769,7 @@ fn a_villager_killed_drops_nothing_and_teaches_nothing() {
 /// days on, with looks of their own.
 #[test]
 fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let dir = world_dir("villagers");
     let config = || ServerConfig { seed: VILLAGE_SEED, view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
@@ -2794,6 +2818,7 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
 /// and for no one else: a player nearby who struck no one goes unhurt.
 #[test]
 fn guards_come_for_a_player_who_strikes_a_villager() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = settlement_client();
     let mut bystander = client.another("bystander");
     to_settlement(&mut client, "village", "noon");
@@ -2840,6 +2865,7 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
 /// player it can reach it strikes.
 #[test]
 fn guards_give_up_on_a_player_they_cannot_reach() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = settlement_client();
     to_settlement(&mut client, "village", "noon");
     // This checks pursuit and recovery, which require a living, wounded guard and a
@@ -3063,6 +3089,7 @@ impl Client {
 
 #[test]
 fn a_burst_of_inputs_gets_no_more_ground_than_the_clock_allows() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
     let start = client.position;
     // Thirty one-block steps at once: each was allowed on its own (a twentieth of a
@@ -3079,6 +3106,7 @@ fn a_burst_of_inputs_gets_no_more_ground_than_the_clock_allows() {
 
 #[test]
 fn on_foot_nobody_rises_higher_than_a_jump() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
     let start = client.position;
     // Straight up, five blocks: no jump goes that high.
@@ -3099,6 +3127,7 @@ fn on_foot_nobody_rises_higher_than_a_jump() {
 
 #[test]
 fn nobody_walks_through_walls() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
     let start = client.position;
     // Three and a half blocks in one step (a hitch's worth) over open floor, and back.
@@ -3115,6 +3144,7 @@ fn nobody_walks_through_walls() {
 
 #[test]
 fn long_steps_off_ledges_down_terraces_and_up_steps_are_not_snapped() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
     let start = client.position;
     let at = start.floor().as_ivec3();
@@ -3137,6 +3167,7 @@ fn long_steps_off_ledges_down_terraces_and_up_steps_are_not_snapped() {
 
 #[test]
 fn swimmers_climb_out_onto_a_bank_but_nobody_jumps_out_of_a_dry_pit_or_lava() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
     let start = client.position;
     let at = start.floor().as_ivec3();
@@ -3166,6 +3197,7 @@ fn swimmers_climb_out_onto_a_bank_but_nobody_jumps_out_of_a_dry_pit_or_lava() {
 
 #[test]
 fn nobody_hovers_over_a_ravine() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
     let start = client.position;
     let at = start.floor().as_ivec3();
@@ -3185,6 +3217,7 @@ fn nobody_hovers_over_a_ravine() {
 
 #[test]
 fn a_move_sent_before_a_teleport_does_not_undo_it() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
     let start = client.position;
     let to = start + Vec3::X * 5.0;
@@ -3207,6 +3240,7 @@ fn a_move_sent_before_a_teleport_does_not_undo_it() {
 
 #[test]
 fn going_silent_does_not_buy_more_time_hovering() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
     let start = client.position;
     let at = start.floor().as_ivec3();
@@ -3238,6 +3272,7 @@ fn going_silent_does_not_buy_more_time_hovering() {
 
 #[test]
 fn a_player_silent_in_mid_jump_lands_without_being_pulled_back() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
     let start = client.position;
     // Up in a jump, then nothing for four seconds (a hitch, a dropped connection), then
@@ -3281,6 +3316,7 @@ fn say_hello(connection: &ClientConnection, name: &str, content: &Content) {
 /// given (`/op`). The integrated server's own player always comes back.
 #[test]
 fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_a_silent_game_there() {
+    real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
     let dir = world_dir("names");
     let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
     let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
@@ -3354,6 +3390,7 @@ fn frozen_says(stream: &mut std::net::TcpStream, message: ClientMessage) {
 /// would come back with the file.
 #[test]
 fn joining_again_takes_what_the_silent_session_held_not_an_older_file() {
+    real_time("a session is silent by the server's clock (rejoin_silence), which ticks run ahead of when sped up");
     let dir = world_dir("again");
     let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), cut_saves: true, ..Default::default() });
     let mut frozen = frozen_game(addr, "guest", &host.content);
@@ -3403,6 +3440,7 @@ fn closed_within(mut stream: std::net::TcpStream, limit: Duration) {
 
 #[test]
 fn malformed_and_oversized_frames_and_silence_close_the_connection() {
+    real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
     use std::io::Write;
     let (_host, addr) = serve(ServerConfig::default());
     // A frame larger than any message a client sends: closed before it is read.
@@ -3421,6 +3459,7 @@ fn malformed_and_oversized_frames_and_silence_close_the_connection() {
 
 #[test]
 fn a_player_who_falls_silent_is_let_go_and_may_join_again() {
+    real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
     let host = Client::join_with(ServerConfig { view_distance: 2, idle_timeout: Duration::from_secs(1), ..Default::default() });
     let addr = tcp::listen("127.0.0.1:0", host._server.as_ref().unwrap().connections()).unwrap();
     // The host plays in process, and is never let go however long it says nothing.
@@ -3473,6 +3512,7 @@ fn preparing_tcp_content_does_not_spend_the_hello_deadline() {
 
 #[test]
 fn a_player_who_sends_nothing_but_keepalives_is_kept() {
+    real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
     let host = Client::join();
     let addr = tcp::listen("127.0.0.1:0", host._server.as_ref().unwrap().connections()).unwrap();
     let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
@@ -3488,6 +3528,7 @@ fn a_player_who_sends_nothing_but_keepalives_is_kept() {
 
 #[test]
 fn chat_floods_slow_down_once_and_admins_make_admins_for_the_session() {
+    real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
     let dir = world_dir("op");
     let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
     assert!(host.admin, "a name on the admin list is an admin from this machine");
@@ -3562,6 +3603,7 @@ fn a_full_server_turns_newcomers_away() {
 
 #[test]
 fn silent_sockets_neither_count_as_players_nor_pile_up() {
+    real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
     // The operator lets two connections from one address wait to say hello.
     let limits = Limits { max_pending_per_address: 2, ..Default::default() };
     let server = spawn(ServerConfig { view_distance: 2, max_players: 3, idle_timeout: SERVER_WAIT, limits, ..Default::default() }, content()).unwrap();
@@ -3672,6 +3714,7 @@ fn what_is_lost_in_the_void_or_lava_waits_where_the_player_last_stood() {
 
 #[test]
 fn fires_warm_and_water_chills() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = on_a_test_floor();
     // Survival judges warmth once a second: a few judgements on the floor give the air's.
     client.after_server_ticks(3 * TICKS_PER_SECOND as u64);
@@ -3805,6 +3848,7 @@ fn a_blow_wait_keeps_other_creatures_and_earlier_blows_separate() {
 
 #[test]
 fn a_windup_wait_does_not_strike_a_creature_that_is_already_fighting() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = Client::join();
     client.ok("/gamemode survival");
     client.ok("/skill hitpoints 60");
@@ -3846,6 +3890,7 @@ fn face(client: &mut Client, id: u32, slot: usize, flying: bool) {
 
 #[test]
 fn blows_on_the_beat_build_to_a_flourish() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     use voxmar_engine::combat::Blow;
     let mut client = Client::join();
     // Creative, so the bear's blows pass us by; held still, so every swing reaches it.
@@ -3875,6 +3920,7 @@ fn blows_on_the_beat_build_to_a_flourish() {
 
 #[test]
 fn a_swing_is_dropped_when_its_weapon_leaves_the_hand() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = Client::join();
     client.ok("/gamemode creative");
     let (id, slot) = beside_a_bear(&mut client);
@@ -3907,6 +3953,7 @@ fn dodge_taken(client: &mut Client) -> bool {
 
 #[test]
 fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = Client::join();
     client.ok("/gamemode survival");
     client.ok("/fill ~-2 ~-1 ~-2 ~2 ~-1 ~2 stone");
@@ -3933,6 +3980,7 @@ fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
 
 #[test]
 fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     use voxmar_engine::combat::{Blow, Defended};
     let mut client = Client::join();
     // In survival: creatures' blows pass a player in creative by.
@@ -4000,72 +4048,8 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
 }
 
 #[test]
-fn a_guard_and_a_dodge_count_from_when_the_player_saw_the_wind_up() {
-    use voxmar_engine::combat::Defended;
-    // Review: a player sees a wind-up begin half their round trip late, and their answer
-    // comes half of it late again. A guard or dodge is judged that much earlier, by the
-    // round trip the server measures, never past `feel.lag_allowance`: answered on time on
-    // their own screen at 0 or 150 ms, it lands; late, it does not; at 400 ms, past the
-    // allowance, even on time it does not. (Unanswered it would come 150 ms late, past a
-    // perfect window's middle, so the 150 ms answers fail without the allowance.)
-    for round_trip in [0, 150, 400] {
-        let mut client = if round_trip == 0 { Client::join() } else { Client::join_delayed(Duration::from_millis(round_trip)) };
-        client.ok("/gamemode survival");
-        client.ok("/skill hitpoints 60");
-        client.pump_until(|c| c.health >= 100);
-        let (id, slot) = beside_a_bear(&mut client);
-        // A few pings answered, so the round trip is measured.
-        client.wait_server(3);
-        let bear = client.creatures[&id].species;
-        let feel = client.content.combat.feel;
-        let windup = client.content.creatures.get(bear).def.attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup);
-        let combat = &client.content.combat;
-        let level = |_| 20;
-        let perfect = combat.guard_of(client.inventory.get(slot).map(|s| s.item), &client.inventory.worn, level).expect("a sword guards").perfect;
-        let dodge = combat.dodge_of(&client.inventory.worn).clone();
-        // Answers the bear's next blow `after` seconds after its wind-up is seen to begin,
-        // answering pings meanwhile; returns what came of it.
-        let answer = |client: &mut Client, after: f32, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| -> Defended {
-            let before = provoke_until_it_winds_up(client, id, slot, "bear");
-            let seen = Instant::now();
-            client.pump_until(|_| seen.elapsed().as_secs_f32() >= after);
-            respond(client);
-            client.pump_until(|c| c.hurt.len() > before);
-            undo(client);
-            client.wait_server(1);
-            client.hurt[before].1
-        };
-        let raise = |c: &Client| {
-            c.connection.send(ClientMessage::Guard { up: true });
-        };
-        let lower = |c: &Client| {
-            c.connection.send(ClientMessage::Guard { up: false });
-        };
-        let dash = |c: &Client| c.propose("core:dodge", ActionTarget::None);
-        let allowed = round_trip as f32 / 1000.0 <= feel.lag_allowance;
-        // On time on their screen: the middle of the perfect window, and of the dodge's.
-        // A machine too slow for a try only makes it later, so a few are allowed for it.
-        for (want, after, respond, undo) in [
-            (Defended::Perfect, windup - perfect / 2.0, &raise as &dyn Fn(&Client), &lower as &dyn Fn(&Client)),
-            (Defended::Dodged, windup - (dodge.safe.0 + dodge.safe.1) / 2.0, &dash, &(|_: &Client| {}) as &dyn Fn(&Client)),
-        ] {
-            let mut outcomes = Vec::new();
-            for _ in 0..if allowed { 4 } else { 3 } {
-                outcomes.push(answer(&mut client, after, respond, undo));
-                if outcomes.last() == Some(&want) {
-                    break;
-                }
-            }
-            assert_eq!(outcomes.contains(&want), allowed, "{want:?} on time at {round_trip} ms came to {outcomes:?}");
-        }
-        // Late on their screen too: the blow lands.
-        let late = answer(&mut client, windup + 0.25, &raise, &lower);
-        assert!(matches!(late, Defended::Hit | Defended::Missed), "a guard raised late at {round_trip} ms came to {late:?}");
-    }
-}
-
-#[test]
 fn armour_goes_on_from_the_hand_a_shield_guards_and_death_counts_what_is_worn() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     use voxmar_engine::combat::Defended;
     use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
     let mut client = Client::join();
@@ -4134,6 +4118,7 @@ fn armour_goes_on_from_the_hand_a_shield_guards_and_death_counts_what_is_worn() 
 
 #[test]
 fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     use voxmar_engine::combat::Defended;
     // The wiki's draft 65: a wind-up follows its target at a run for its first part and
     // the blow lunges as it lands, so stepping back at a walk (4.7 blocks a second) as it
@@ -4257,6 +4242,7 @@ fn guarded_blow(client: &mut Client, id: u32, slot: usize, off: f32) -> voxmar_e
 
 #[test]
 fn a_shield_guards_wider_than_a_sword_but_not_below_its_level_or_beside_a_spear() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     use voxmar_engine::combat::Defended;
     use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
     let mut client = Client::join();
@@ -4288,6 +4274,7 @@ fn a_shield_guards_wider_than_a_sword_but_not_below_its_level_or_beside_a_spear(
 
 #[test]
 fn a_dodge_waits_longer_in_heavier_armour() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     use voxmar_engine::inventory::WORN;
     let mut client = Client::join();
     client.ok("/gamemode survival");
@@ -4570,7 +4557,7 @@ fn a_hopper_feeds_a_crusher_by_conveyor_and_a_chest_above_collects_its_dust() {
             break;
         }
         assert!(server_seconds(&client, started) < 40, "the chest got no dust: {chest_says}; crusher: {}", client.ok("/machine ~4 ~ ~"));
-        std::thread::sleep(Duration::from_millis(500));
+        client.after_ticks(10);
     }
     assert!(client.ok("/machine ~2 ~ ~").contains("holds 0 items"));
     // A running line earns nothing: Engineering xp is for making and placing its parts.
@@ -4707,6 +4694,7 @@ fn a_processing_array_works_only_inside_its_cube_of_hv_casing() {
 
 #[test]
 fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformers_bring_it_to_lv() {
+    real_time("it asserts the macerator loses power within two server seconds of the break, which a client busy on a loaded machine outlasts when ticks run twenty times quicker");
     let mut client = Client::join();
     let p = client.position.floor().as_ivec3();
     let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
@@ -4842,7 +4830,7 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
             break done;
         }
         assert!(server_seconds(&client, started) < 20, "the crusher never got going: {said}");
-        std::thread::sleep(Duration::from_millis(200));
+        client.after_ticks(4);
     };
     drop(client);
     let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
@@ -4863,7 +4851,7 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
             (moved, last) = (client.server_tick, progress(&said));
         }
         assert!(server_seconds(&client, moved) < 20, "the crusher stopped after the restart: {said}");
-        std::thread::sleep(Duration::from_millis(300));
+        client.after_ticks(6);
     }
     let dust = client.content.blocks.expect("base:iron_dust");
     let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == dust).map(|s| s.count as u32).sum::<u32>();
@@ -5127,7 +5115,7 @@ fn a_water_wheel_turns_on_falling_water_but_not_on_water_poured_out_on_flat_grou
     let started = client.server_tick;
     while client.ok("/machine ~4 ~ ~").contains("a fall of water") {
         assert!(server_seconds(&client, started) < 15, "falling water never turned the wheel");
-        std::thread::sleep(Duration::from_millis(300));
+        client.after_ticks(6);
     }
 }
 
@@ -5195,7 +5183,7 @@ fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_whee
     let started = client.server_tick;
     while client.ok(&format!("/machine {wheel}")).contains("needs a kept animal") {
         assert!(server_seconds(&client, started) < 10, "the aurochs never walked the wheel");
-        std::thread::sleep(Duration::from_millis(300));
+        client.after_ticks(6);
     }
     use_machine(&mut client, boiler);
     client.pump_until(|c| count(c, coal) == 0);
@@ -5279,7 +5267,7 @@ fn a_treadwheel_a_player_placed_is_walked_only_by_their_own_animals() {
     let started = owner.server_tick;
     while owner.ok(&format!("/machine {at}")).contains("needs a kept animal") {
         assert!(server_seconds(&owner, started) < 10, "the other player's aurochs never walked their own wheel");
-        std::thread::sleep(Duration::from_millis(300));
+        owner.after_ticks(6);
     }
 }
 
@@ -5323,7 +5311,7 @@ fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_i
     let started = client.server_tick;
     while !turns(&mut client) {
         assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel");
-        std::thread::sleep(Duration::from_millis(300));
+        client.after_ticks(6);
     }
     // Three days on, unfed, it will not walk.
     client.ok("/time add 3d");
@@ -5342,7 +5330,7 @@ fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_i
     let started = client.server_tick;
     while !turns(&mut client) {
         assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel");
-        std::thread::sleep(Duration::from_millis(300));
+        client.after_ticks(6);
     }
 }
 

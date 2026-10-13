@@ -257,6 +257,9 @@ enum Step {
     Overlay,
     /// A storm and a snowfall come, drawn with their particles, then clear again.
     Weather,
+    /// Mist shows in the open and is gone in a shaft dug down; a crack on a block in a
+    /// sealed dark room is lit by what lights that face, and by a glowstone beside it.
+    Depths,
     /// The sun by day, the moon and stars by night.
     Sky,
     /// A small tree with an apple among its leaves, drawn with its leaf cards and fruit.
@@ -1204,6 +1207,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Music => music(world, gate, now, in_phase),
         Step::Overlay => overlay(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
+        Step::Depths => depths(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Shapes => shapes(world, gate, now, in_phase),
         Step::Held => held(world, gate, now, in_phase),
@@ -4845,7 +4849,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
                     gate.check("weather: pose", Err("the open test-ground teleport did not settle".into()));
-                    gate.next(Step::Sky, now);
+                    gate.next(Step::Depths, now);
                 }
                 return;
             }
@@ -4892,16 +4896,262 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         3 if shown.precipitation < 0.05 && shown.cover < 0.2 => {
             eased(gate);
-            gate.next(Step::Sky, now);
+            gate.next(Step::Depths, now);
         }
         3 if gate.server_in_phase() > 12.0 => {
             gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
             eased(gate);
-            gate.next(Step::Sky, now);
+            gate.next(Step::Depths, now);
         }
         _ => {}
     }
 }
+
+/// Dug down, in a cave or in a room, mist is gone; cracks are lit as the face under them is.
+///
+/// A fog comes over the open test ground, and the renderer's air has ground fog and the
+/// weather's fog in it. The player then goes down a shaft eleven deep, open to the sky (the
+/// sky light there is full all the way down, so only looking for the sky tells it from open
+/// land), and the air has none of either. Then in a sealed room deep in stone, with no light
+/// at all, a wall is mined just until its cracks show: they are lit by nothing and catch no
+/// light (their light edges are gone); a glowstone set beside the wall and the same block
+/// mined again, they are lit by it and glint. Each stint lets go of the button as soon as
+/// the cracks show, and after [`CRACK_HOLD`] seconds without them: a button held on a block
+/// that never cracks floods the lagging server with proposals. Both shots are kept for a look.
+fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::render::atmosphere::Atmosphere;
+    use crate::render::cracks::Crack;
+    // The rig stands apart from everything else: stone nineteen blocks across, thirteen
+    // wide and seventeen deep, level with the test ground, with a shaft down its middle and
+    // a sealed room below whose walls are four blocks thick or more, so no sky light reaches
+    // in beside it and mining one opens nothing.
+    let middle = gate.feet + IVec3::new(-28, 0, 0);
+    let top = gate.feet.y - 1;
+    let shaft_foot = IVec3::new(middle.x, top - 11, middle.z);
+    let room_floor = IVec3::new(middle.x - 3, top - 15, middle.z);
+    let wall = IVec3::new(middle.x - 5, top - 14, middle.z);
+    // The air in front of the face being mined, and the glowstone's place beside the wall.
+    let face = wall + IVec3::X;
+    let glow = IVec3::new(middle.x - 5, top - 13, middle.z);
+    let shown = world.resource::<crate::weather::ClientWeather>().current.clone();
+    let air = *world.resource::<Atmosphere>();
+    let mist = |air: &Atmosphere| format!("ground fog {:.3}, the weather's fog {:.5}", air.mist.x, air.fog.w);
+    let stand = |world: &World, at: IVec3| {
+        let player = world.resource::<LocalPlayer>();
+        player.on_ground && player.position.distance(at.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) < 0.3
+    };
+    // The light on the face being mined as the cracks take it, and how much of their
+    // light edges show in it.
+    let lit = |world: &World| {
+        let crack = world.resource::<Crack>();
+        let scene = world.resource::<crate::render::SceneLight>().at(crack.light[0], crack.light[1]);
+        let pack = world.resource::<crate::render::pack::ActivePack>();
+        (crack.light, pack.crack_highlight(scene.red * 0.2126 + scene.green * 0.7152 + scene.blue * 0.0722))
+    };
+    let face_light = |world: &World| crate::breaking::light_at(world.resource::<ClientWorld>(), face);
+    let bail = |world: &mut World, gate: &mut Gate, name: &str, why: String| {
+        gate.check(name, Err(why));
+        mouse(world, MouseButton::Left, false);
+        world.resource::<Net>().command("weather clear 600");
+        // Back up to the test ground, and the fog lifting.
+        gate.phase = 9;
+        gate.phase_since = now;
+        gate.phase_server = gate.server_now;
+        gate.settled = 0;
+    };
+    match gate.phase {
+        // Build the rig and bring a fog over the test ground.
+        0 => {
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
+            if !open_scene_pose(world, gate) {
+                if gate.server_in_phase() > 15.0 {
+                    gate.check("depths: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.next(Step::Sky, now);
+                }
+                return;
+            }
+            look(world, 0.0, 5.0);
+            let net = world.resource::<Net>();
+            let (x, z) = (middle.x, middle.z);
+            for line in [
+                format!("fill {} {} {} {} {} {} stone", x - 9, top - 16, z - 6, x + 9, top, z + 6),
+                format!("fill {x} {} {z} {x} {top} {z} air", top - 11),
+                format!("fill {} {} {} {} {} {} air", x - 4, top - 15, z - 1, x + 4, top - 13, z + 1),
+                "time set noon".to_owned(),
+                "weather fog 300".into(),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        // The fog is over the test ground and the rig is there: the air has mist in it.
+        1 => {
+            let built = world.resource::<ClientWorld>().block(shaft_foot).is_some_and(|b| b.is_air())
+                && world.resource::<ClientWorld>().block(shaft_foot - IVec3::Y).is_some_and(|b| !b.is_air())
+                && world.resource::<ClientWorld>().block(wall).is_some_and(|b| !b.is_air())
+                && world.resource::<ClientWorld>().block(room_floor - IVec3::Y).is_some_and(|b| !b.is_air());
+            let foggy = shown.ground_fog > 0.3 || shown.fog > 0.3;
+            if !(built && foggy) {
+                if gate.server_in_phase() > 20.0 {
+                    bail(world, gate, "depths: fog", format!("it did not come, or the rig did not build: {} (built {built})", shown.summary()));
+                }
+                return;
+            }
+            // Let the air settle on it, then the shot.
+            if in_phase < 1.0 {
+                return;
+            }
+            let Some(_) = gate.shot(world, "mist-open") else { return };
+            let result = if air.mist.x > 0.0 || air.fog.w > 0.0 {
+                Ok(mist(&air))
+            } else {
+                Err(format!("in the open under {} the air has {}", shown.summary(), mist(&air)))
+            };
+            gate.check("depths: mist in the open", result);
+            world.resource::<Net>().command(&format!("tp {} {} {}", shaft_foot.x as f32 + 0.5, shaft_foot.y, shaft_foot.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // At the foot of the shaft: its light is full, and there is no mist.
+        2 => {
+            if !stand(world, shaft_foot) {
+                if gate.server_in_phase() > 15.0 {
+                    bail(world, gate, "depths: shaft", "the player never stood at the foot of the shaft".into());
+                }
+                return;
+            }
+            look(world, 0.0, 80.0);
+            let gone = air.mist.x == 0.0 && air.fog.w == 0.0;
+            if !gone {
+                // The eye eases onto the new view over a second or so.
+                if in_phase > 8.0 {
+                    let open = world.resource::<crate::render::exposure::SkyOpen>().shown;
+                    bail(world, gate, "depths: no mist in a shaft", format!("eleven deep and open to the sky, the air has {} ({open:.2} of the sky in view)", mist(&air)));
+                }
+                return;
+            }
+            let Some(_) = gate.shot(world, "mist-shaft") else { return };
+            let open = world.resource::<crate::render::exposure::SkyOpen>().shown;
+            gate.check("depths: no mist in a shaft", Ok(format!("{} ({open:.2} of the sky in view)", mist(&air))));
+            let room = format!("tp {} {} {}", room_floor.x as f32 + 0.5, room_floor.y, room_floor.z as f32 + 0.5);
+            world.resource::<Net>().command(&room);
+            gate.advance(now);
+        }
+        // In the sealed room, before the wall is touched: the face is dark.
+        3 => {
+            let dark = face_light(world) == [0, 0];
+            if !(stand(world, room_floor) && dark) {
+                if gate.server_in_phase() > 15.0 {
+                    let [sky, block] = face_light(world);
+                    bail(world, gate, "depths: room", format!("the player never stood in the sealed room, or its wall's face was lit (sky {sky}, block {block})"));
+                }
+                return;
+            }
+            aim_at(world, wall.as_vec3() + 0.5);
+            mouse(world, MouseButton::Left, true);
+            gate.advance(now);
+        }
+        // Mining the wall in the dark: the cracks show, lit by nothing. The shot is of this
+        // frame, so the button is let go at once.
+        4 => {
+            aim_at(world, wall.as_vec3() + 0.5);
+            if world.resource::<Crack>().at.is_none() {
+                if in_phase > CRACK_HOLD {
+                    bail(world, gate, "depths: crack in the dark", format!("mining the wall showed no crack in {CRACK_HOLD} s"));
+                } else {
+                    mouse(world, MouseButton::Left, true);
+                }
+                return;
+            }
+            let (light, highlight) = lit(world);
+            gate.shot(world, "crack-dark");
+            mouse(world, MouseButton::Left, false);
+            let result = if highlight == 0.0 && light[1] == 0 {
+                Ok(format!("sky light {}, block light {}: the cracks darken and catch no light", light[0], light[1]))
+            } else {
+                Err(format!("in a sealed room with no light the cracks are lit: sky {}, block {}, light edges {highlight:.2}", light[0], light[1]))
+            };
+            gate.check("depths: crack in the dark", result);
+            // The glowstone, and the wall as it was in case the stint broke it.
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} stone", wall.x, wall.y, wall.z));
+            net.command(&format!("setblock {} {} {} glowstone", glow.x, glow.y, glow.z));
+            gate.advance(now);
+        }
+        // The glowstone beside the wall lights its face; the shot of the dark cracks is in.
+        5 => {
+            let glowstone = world.resource::<ClientWorld>().registry.id("base:glowstone");
+            let ready = glowstone.is_some()
+                && world.resource::<ClientWorld>().block(glow) == glowstone
+                && world.resource::<ClientWorld>().block(wall).is_some_and(|b| !b.is_air())
+                && world.resource::<Crack>().at.is_none()
+                && face_light(world)[1] >= 10;
+            if !(ready && gate.shot(world, "crack-dark").is_some()) {
+                if gate.server_in_phase() > 15.0 {
+                    let [sky, block] = face_light(world);
+                    bail(world, gate, "depths: crack by a glowstone", format!("the glowstone never lit the wall's face (sky {sky}, block {block})"));
+                }
+                return;
+            }
+            aim_at(world, wall.as_vec3() + 0.5);
+            mouse(world, MouseButton::Left, true);
+            gate.advance(now);
+        }
+        // The same block mined again: the cracks are lit by the glowstone.
+        6 => {
+            aim_at(world, wall.as_vec3() + 0.5);
+            if world.resource::<Crack>().at.is_none() {
+                if in_phase > CRACK_HOLD {
+                    bail(world, gate, "depths: crack by a glowstone", format!("mining the wall showed no crack in {CRACK_HOLD} s"));
+                } else {
+                    mouse(world, MouseButton::Left, true);
+                }
+                return;
+            }
+            let (light, highlight) = lit(world);
+            gate.shot(world, "crack-lit");
+            mouse(world, MouseButton::Left, false);
+            let result = if highlight >= 0.99 && light[1] >= 10 {
+                Ok(format!("sky light {}, block light {}: the cracks catch the light (edges {highlight:.2})", light[0], light[1]))
+            } else {
+                Err(format!("a glowstone beside the wall does not light the cracks: sky {}, block {}, light edges {highlight:.2}", light[0], light[1]))
+            };
+            gate.check("depths: crack by a glowstone", result);
+            world.resource::<Net>().command("weather clear 600");
+            gate.advance(now);
+        }
+        // The shot of the lit cracks is in.
+        7 => {
+            if gate.shot(world, "crack-lit").is_some() || gate.server_in_phase() > 15.0 {
+                gate.advance(now);
+            }
+        }
+        // Back to the test ground.
+        8 | 9 => {
+            if !open_scene_pose(world, gate) {
+                if gate.server_in_phase() > 15.0 {
+                    gate.check("depths: back", Err("the open test-ground teleport did not settle".into()));
+                    gate.next(Step::Sky, now);
+                }
+                return;
+            }
+            gate.phase = 9;
+            gate.advance(now);
+        }
+        // The fog lifts before the sky is judged.
+        _ => {
+            if shown.fog < 0.02 && shown.ground_fog < 0.02 {
+                gate.next(Step::Sky, now);
+            } else if gate.server_in_phase() > 20.0 {
+                gate.check("depths: clear", Err(format!("the fog did not lift: {}", shown.summary())));
+                gate.next(Step::Sky, now);
+            }
+        }
+    }
+}
+
+/// Seconds the depths step holds the button for a crack to show before it lets go.
+const CRACK_HOLD: f32 = 3.0;
 
 /// Whether every change of weather so far (the commands' storm, snow and clearing among
 /// them) eased in without a jump.
@@ -5033,6 +5283,9 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let net = world.resource::<Net>();
             net.command("gamemode creative");
             net.command("time set noon");
+            // The full gate's earlier steps fill the hotbar: start from an empty pack, as the
+            // steps that give their own items do.
+            net.command("clear");
             net.command(&format!("give {} 1", SWORD.trim_start_matches("base:")));
             net.command(&format!("give {} 1", BLOCK.trim_start_matches("base:")));
             gate.advance(now);
@@ -5423,9 +5676,12 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     // Watched over several frames, not one: three samples of every joint. The
                     // tip over lasts half its death's 0.9 s, so three frames need frames under
                     // 150 ms: a machine drawing slower saw fewer, which is known, not a fault,
-                    // as long as it saw the body fall at all.
+                    // as long as it saw the body fall at all. The frames that count are those
+                    // of the tip itself (`Fall::slowest`): the last frames before this check
+                    // come after the corpse watch, seconds later, and a loaded machine's slow
+                    // frames during the fall once failed it with "frames up to 15 ms".
                     let joints = fall.joints.max(1);
-                    let slowest = gate.frame_ms.iter().rev().take(30).copied().fold(0.0, f32::max);
+                    let slowest = fall.slowest * 1000.0;
                     let few = fall.samples < 3 * joints;
                     let result = if fall.samples < joints || (few && slowest < FALL_FRAME_MS) {
                         Err(format!("its fall was hardly seen: {} joint samples for {} joints (frames up to {slowest:.0} ms)", fall.samples, fall.joints))

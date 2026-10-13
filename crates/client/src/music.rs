@@ -478,21 +478,16 @@ fn schedule_music(
         music.current = None;
         music.next_at = Some(if boss { soon } else { time.elapsed() + music.gap(&time, in_menu) });
     }
-    // A boss fight starting ends the calm track playing, and its music comes soon, even
-    // in a quiet gap; one ending ends the boss's track, and quiet follows.
+    // A boss fight starting ends the calm track playing, and its music comes once that has
+    // faded, even in a quiet gap; one ending ends the boss's track, and quiet follows.
     if boss != music.fighting {
         music.fighting = boss;
         if let Some(index) = music.current
             && boss != music.tracks[index].contexts.contains(&Context::Boss)
         {
             music.fade_out(&mut commands);
-            if !boss {
-                music.next_at = Some(time.elapsed() + music.gap(&time, in_menu));
-            }
         }
-        if boss {
-            music.next_at = Some(music.next_at.map_or(soon, |at| at.min(soon)));
-        }
+        music.next_at = Some(if boss { soon } else { time.elapsed() + music.gap(&time, in_menu) });
     }
     if music.playing.is_some() || music.loading.is_some() {
         return;
@@ -569,6 +564,7 @@ fn start_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Musi
     let Some(mut music) = music else { return };
     music.fade_out(&mut commands);
     music.next_at = Some(time.elapsed() + music.gap(&time, false));
+    music.fighting = false;
 }
 
 /// Back in the menus, the game's music fades out and the menu's starts again soon.
@@ -576,6 +572,7 @@ fn leave_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Musi
     let Some(mut music) = music else { return };
     music.fade_out(&mut commands);
     music.next_at = Some(time.elapsed() + Duration::from_secs_f32(random_in(&time, 0, music.rules.first_menu_delay)));
+    music.fighting = false;
 }
 
 fn fade_out(
