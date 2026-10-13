@@ -700,6 +700,11 @@ impl Server {
         };
         let away = player.position.distance(home).round();
         let mut lines = vec![Words::key("home.at").with("x", Words::text(anchor.x)).with("y", Words::text(anchor.y)).with("z", Words::text(anchor.z)).with("away", Words::text(away))];
+        // Out of the loaded world its blocks read as nothing: say so rather than misjudge it.
+        if self.block(anchor).is_none() {
+            lines.push(Words::key("home.far"));
+            return Ok(Words::Lines(lines));
+        }
         for chain in effects.home_progress(&situation) {
             lines.push(match (chain.reached, chain.next) {
                 (Some(reached), Some((next, lacks))) => Words::key("home.step").with("step", name(reached)).with("next", name(next)).with("needs", home_needs(&lacks)),
