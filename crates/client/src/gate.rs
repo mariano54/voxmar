@@ -382,14 +382,15 @@ enum Step {
 }
 
 impl Step {
-    /// Whether the server runs behind (`SERVER_LAG`) in this step: in those that play
-    /// against a lagging server (placing, digging, breaking, the workshop's breaks, and
-    /// combat timed against where blows fall) and the steps before them. The rest check
-    /// what lag does not change, and run against a server at full speed, which gets there
-    /// three times sooner.
+    /// Whether the server runs behind (`SERVER_LAG`) in this step: in those whose checks are
+    /// about playing against a lagging server (placing, digging and breaking, where blocks
+    /// were lost to it, and the fight's guard and dodge, timed against where its blows fall)
+    /// and the steps before them. The rest check what lag does not change (what crafting,
+    /// a kill or a campfire gives), and run against a server at full speed, which gets
+    /// there three times sooner.
     fn lagged(self) -> bool {
         use Step::*;
-        matches!(self, Load | Build | Arrive | Place | PlaceSettle | Dig | DigSettle | Collect | Breaks | Workshop | HvAge | Strike | Weapon | Feel | Cook)
+        matches!(self, Load | Build | Arrive | Place | PlaceSettle | Dig | DigSettle | Collect | Breaks | Feel)
     }
 }
 
@@ -497,6 +498,9 @@ struct Gate {
     spills: Vec<(String, String)>,
     /// Views in a language with line rules where no text had its line breaks checked.
     unbroken: Vec<String>,
+    /// The text-fit tour's view (its step and stage), its layout as last drawn, whether that
+    /// changed since the view was shown, and the frames it has held still since (`FIT_STILL`).
+    fit_layout: ((Step, u32), u64, bool, u32),
     /// The interface font before the gate tried another, to go back to.
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
@@ -626,6 +630,7 @@ impl Gate {
             cover_checked: false,
             spills: Vec::new(),
             unbroken: Vec::new(),
+            fit_layout: ((Step::Load, 0), 0, false, 0),
             font: None,
             food_moved: false,
             tame_aim: [0; 3],
@@ -4762,6 +4767,28 @@ const FIT_LOOKUPS: [(&str, bool); 4] = [("base:campfire", false), ("base:oak_log
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
 const FIT_SETTLE: f32 = 0.4;
+/// Frames a view's layout must hold still, once it changed for the view, to be read before
+/// `FIT_SETTLE`, and the least it is left: a view laid out sooner is read sooner.
+const FIT_STILL: u32 = 4;
+const FIT_SETTLE_LEAST: f32 = 0.1;
+
+/// Where every node of the interface is and how big, and every text's lines: what laying
+/// out a view changes.
+fn layout_print(world: &mut World) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    let mut nodes = world.query::<(&ComputedNode, &bevy::ui::UiGlobalTransform, Option<&bevy::text::TextLayoutInfo>)>();
+    for (node, at, text) in nodes.iter(world) {
+        let size = node.size();
+        let at = at.translation;
+        [size.x, size.y, at.x, at.y].map(f32::to_bits).hash(&mut hasher);
+        if let Some(text) = text {
+            [text.size.x, text.size.y].map(f32::to_bits).hash(&mut hasher);
+            text.glyphs.len().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
 
 /// Opens every view in turn, in each language, and lists the texts that do not fit (see
 /// `ui::fit`): one check for the lot, naming each.
@@ -4805,7 +4832,20 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         set_language(world, language);
     }
     show_view(world, Some(view), now);
-    if in_phase < FIT_SETTLE {
+    // Read once the view is laid out: its layout changed and then held still a few frames,
+    // or `FIT_SETTLE` passed (a view that lays out like the one before it).
+    let print = layout_print(world);
+    let shown = (gate.step, gate.phase);
+    let (on, last, changed, still) = &mut gate.fit_layout;
+    if *on != shown {
+        (*on, *last, *changed, *still) = (shown, print, false, 0);
+    } else if print == *last {
+        *still += 1;
+    } else {
+        (*last, *changed, *still) = (print, true, 0);
+    }
+    let laid_out = *changed && *still >= FIT_STILL && in_phase >= FIT_SETTLE_LEAST;
+    if in_phase < FIT_SETTLE && !laid_out {
         return;
     }
     // A journal page is read once it is drawn, in this language, however long that takes.
