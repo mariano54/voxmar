@@ -638,7 +638,7 @@ impl Server {
         let player = Self::me(id)?;
         let [skill, level] = args else { return Err(Words::key("command.skill.what")) };
         let skills = self.content.skills.clone();
-        let found = skills.id(skill).or_else(|| skills.id(&format!("core:{skill}"))).ok_or_else(|| Words::key("command.skill.unknown").with("name", skill.as_str()))?;
+        let found = skills.named("core", skill).ok_or_else(|| Words::key("command.skill.unknown").with("name", skill.as_str()))?;
         let level: u8 = level.parse().ok().filter(|l| (1..=skills.max_level()).contains(l)).ok_or_else(|| Words::key("command.skill.level"))?;
         let target = skills.xp_for(level);
         let p = self.players.get_mut(&player).expect("a player");

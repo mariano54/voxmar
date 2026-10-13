@@ -45,6 +45,9 @@ when any state changed: each quest's name, whether it is done, and each goal's p
 as (have, need). The client keeps them in `LocalPlayer::quests`. Quests done and the
 tallies are saved with the player.
 
-The Nomad chapter has the quests the game can already do (first night, stone tools,
-where to settle, the hearth, taming, fishing, twine, pouches, torches, the table, copper);
-the rest of quest book v2 joins as its content lands.
+The Nomad and Farm chapters (ages 1 and 2) have the quests the game can already do:
+Nomad runs from the first campfire to the lit Homestead Hearth, Farm from the first harvest
+and the pit kiln to the lit Crucible Kiln. Each has at least thirty quests
+(`crates/engine/tests/early_quests.rs` keeps that floor and checks every name they use). The
+loop through the first days, and what a new player is and is not told, is in
+[first-days.md](first-days.md). The rest of quest book v2 joins as its content lands.

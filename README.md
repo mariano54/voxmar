@@ -284,13 +284,15 @@ use it on networks you trust. `op NAME` typed at the server (or by an admin in g
 anyone else an admin until they leave, and `deop NAME` undoes it (an admin by name or token is
 one again when they come back). Cap render distance with `--view-distance N` (default 32) and players with
 `--max-players N` (default 64). Each name plays once at a time, whatever its case (Ada and ada
-are one player, with one save); at most 16 connections may be waiting to say hello (4 from
+are one player, with one save), except that a player whose game froze or lost its network
+comes back from the same address once that connection has been silent 6 seconds; at most 16 connections may be waiting to say hello (4 from
 one address), and a player from elsewhere whose connection sends nothing for 15 seconds is
 let go (`--idle-seconds N`; the game's network thread says it is there every 5 seconds, even
 while the game is minimized). `--limits FILE` changes how much one connection may ask of the
 server, from a RON file naming any of `messages_per_tick` (64), `chat_burst` (8 lines) and
 `chat_per_second` (2), `hello_seconds` (3), `max_pending` (16), `max_pending_per_address`
-(4) and `name_length` (32), as in `(chat_burst: 4.0, max_pending_per_address: 2)`.
+(4), `name_length` (32), `ipv6_prefix` (64 bits counted as one address) and `rejoin_silence`
+(6 seconds, over the 5-second keepalive), as in `(chat_burst: 4.0, max_pending_per_address: 2)`.
 
 ### Saved worlds
 
@@ -426,6 +428,22 @@ crockery in three glazes, lights, graves, columns; their boxes are in `shapes.ro
 greyscale drawings in the default pack's `decor.ron`, written by `tools/art/decor.py`) are
 the first users; Voxmar HD shows the default drawings at twice the fineness until the pack
 thread redraws them.
+
+**Packages setting the same data.** Packages load in name order. Names (blocks, recipes,
+creatures) are their own package's, so two packages never clash. Data with a single value
+(how players move, what things are worth, the weather's tuning, survival's numbers, a
+journal page's thresholds, creature limits, the level curve, treasure settings) is the
+other case, and one rule covers it (Design draft 91): **a later package replaces an earlier
+one's value, field by field, and the load log names both packages**. A later package
+writes only the fields it changes (a `movement.ron` of `(walk_speed: 5.0, checks: (burst:
+3.0))` tunes two numbers and keeps the rest), and a list is replaced whole. The first
+package that sets `movement.ron` gives every field, and the laid-together result is checked
+as a whole, so numbers that would hang the server are refused at launch with the package
+named. Each replacement is one line (`zz_tuned/movement.ron replaces the
+movement core set (walk_speed, checks.burst)`) in the server log and in `Content::notes`.
+In code the rule goes through `Laid` (`crates/engine/src/content.rs`): `Setting` and
+`settable!` for a struct of numbers, `Laid::set` for anything else; the world generator's
+`layered!` is the same rule for climate, land and trail data.
 
 How the design primitives map to the code today:
 

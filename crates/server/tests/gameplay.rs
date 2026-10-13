@@ -1780,8 +1780,9 @@ fn join_content(content: Content) -> Client {
     Client::greet_content(|| local_connection(accepted), "test", Some(server), None, || content)
 }
 
+/// Short names, as shipped quests write them: `stick` and `torch` are base's, found at load.
 const TEST_QUESTS: &str = r#"(quests: [
-    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("base:stick", 3)]], rewards: [Item("base:torch", 2)]),
+    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("stick", 3)]], rewards: [Item("torch", 2)]),
     (name: "miner", age: "nomad", branch: "main", title: "Miner", why: "", tasks: [[Level("mining", 10)]], rewards: [Xp("crafting", 50.0)]),
     (name: "laden", age: "nomad", branch: "main", title: "Laden", why: "", tasks: [[Have("base:cobblestone", 2304)]], rewards: [Item("base:apple", 3)]),
 ])"#;
@@ -2717,22 +2718,108 @@ fn say_hello(connection: &ClientConnection, name: &str, content: &Content) {
     connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: None });
 }
 
+/// A name already playing is turned away, in any case, from anywhere else, and from the
+/// same address while that player's game is still heard (an address can be a whole
+/// school's). A game that froze or lost its network without closing its socket still looks
+/// joined until it is idle too long; once it has been silent `rejoin_silence`, its player
+/// coming back from that address is them: the earlier connection leaves, saved, and the new
+/// one joins as anyone joining would, with what the save holds and no admin rights it was
+/// given (`/op`). The integrated server's own player always comes back.
 #[test]
-fn a_name_already_playing_is_turned_away_in_any_case() {
+fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_a_silent_game_there() {
     let dir = world_dir("names");
-    let client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
-    for name in ["test", "TeSt"] {
+    let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
+    let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
+    host.connection.send(ClientMessage::Command { line: "/op guest".into() });
+    guest.pump_until(|c| c.admin);
+    guest.ok("/skill mining 7");
+    // In process is not where either plays.
+    for name in ["guest", "GuEsT", "host"] {
         let (connection, server_side) = local_pair();
-        client._server.as_ref().unwrap().connections().send(server_side).unwrap();
-        say_hello(&connection, name, &client.content);
-        let reason = turned_away(&connection, &client.content);
+        host._server.as_ref().unwrap().connections().send(server_side).unwrap();
+        say_hello(&connection, name, &host.content);
+        let reason = turned_away(&connection, &host.content);
         assert!(reason.contains("already playing"), "{name}: {reason}");
     }
-    drop(client);
+    // From the same address while the guest plays: taken, and the guest plays on.
+    let connection = tcp::connect(addr).unwrap();
+    say_hello(&connection, "GuEsT", &host.content);
+    let reason = turned_away(&connection, &host.content);
+    assert!(reason.contains("already playing"), "a playing session was replaced: {reason}");
+    assert!(guest.ok("/seed").contains(char::is_numeric), "the playing guest was let go");
+    drop(guest);
+    gone(&mut host, "guest");
+    // The guest's game joins again and freezes with its socket open: it says hello and
+    // then nothing, not even the network thread's keepalive. An admin makes it an admin.
+    let mut frozen = std::net::TcpStream::connect(addr).unwrap();
+    let hello = ClientMessage::Hello { name: "guest".into(), protocol: PROTOCOL_VERSION, content: host.content.fingerprint(), admin_token: None };
+    let frame = postcard::to_stdvec(&hello).unwrap();
+    std::io::Write::write_all(&mut frozen, &[&(frame.len() as u32).to_le_bytes()[..], &frame].concat()).unwrap();
+    let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
+    while host.command("/op guest").iter().any(|(kind, _)| *kind == ChatKind::Error) {
+        host.after_ticks(1);
+    }
+    // Silent past `rejoin_silence` by the server's clock, the guest comes back from there.
+    let silence = Limits::default().rejoin_silence;
+    let until = ticks(&host) + (silence * TICKS_PER_SECOND as f32) as u64 + 2;
+    host.pump_until(|c| ticks(c) >= until);
+    let mining = host.content.skills.id("core:mining").unwrap();
+    let again = Client::greet(|| tcp::connect(addr).unwrap(), "GuEsT", None);
+    assert!(!again.admin, "admin rights given for a session lasted into the next");
+    assert_eq!(again.content.skills.level(again.skills.xp(mining)), 7, "joined again without what the save holds");
+    // The same in process: the integrated server's own player coming back, never silent.
+    let first = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    let second = first.another("test");
+    assert!(second.admin, "the integrated server's own player is its admin");
+    assert!(turned_away(&first.connection, &first.content).contains("joined again"));
+    drop((again, frozen, host, second, first));
     // One file for the name in any case (macOS and Windows would not tell them apart).
-    assert!(dir.join("players/test.ron").is_file());
-    let joined_as = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
-    drop(joined_as);
+    assert!(dir.join("players/guest.ron").is_file());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A game that says hello as `name` and, whatever it sends after (`frozen_says`), can go
+/// silent with its socket open: frozen, or its network gone. The server hears nothing more,
+/// not even keepalives.
+fn frozen_game(addr: std::net::SocketAddr, name: &str, content: &Content) -> std::net::TcpStream {
+    let mut stream = std::net::TcpStream::connect(addr).unwrap();
+    let hello = ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: None };
+    frozen_says(&mut stream, hello);
+    stream
+}
+
+fn frozen_says(stream: &mut std::net::TcpStream, message: ClientMessage) {
+    let frame = postcard::to_stdvec(&message).unwrap();
+    std::io::Write::write_all(stream, &[&(frame.len() as u32).to_le_bytes()[..], &frame].concat()).unwrap();
+}
+
+/// A player's game that went silent holds more than their file does: leaving saves the
+/// whole world, and a save that cannot write the file (`cut_saves` stops every one short of
+/// the players) leaves the old one. Joining again takes what the earlier session held, or
+/// what they gained since the last save would be gone, and what they had dropped or stored
+/// would come back with the file.
+#[test]
+fn joining_again_takes_what_the_silent_session_held_not_an_older_file() {
+    let dir = world_dir("again");
+    let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), cut_saves: true, ..Default::default() });
+    let mut frozen = frozen_game(addr, "guest", &host.content);
+    // An admin made the guest one, so its commands count (it is theirs for the session).
+    while host.command("/op guest").iter().any(|(kind, _)| *kind == ChatKind::Error) {
+        host.after_ticks(1);
+    }
+    for line in ["/skill mining 7", "/give iron_ore 5"] {
+        frozen_says(&mut frozen, ClientMessage::Command { line: line.into() });
+    }
+    let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
+    let until = ticks(&host) + (Limits::default().rejoin_silence * TICKS_PER_SECOND as f32) as u64 + 2 * TICKS_PER_SECOND as u64;
+    host.pump_until(|c| ticks(c) >= until);
+    let again = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
+    let (mining, ore) = (host.content.skills.id("core:mining").unwrap(), host.content.blocks.expect("base:iron_ore"));
+    assert_eq!(again.content.skills.level(again.skills.xp(mining)), 7, "joined again without what the silent session had gained");
+    let held: u32 = again.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum();
+    assert_eq!(held, 5, "joined again without what the silent session carried");
+    assert!(!dir.join("players/guest.ron").exists(), "the cut saves wrote the player's file, so this proves nothing");
+    drop((again, frozen, host));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
