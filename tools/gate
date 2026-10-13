@@ -7,7 +7,8 @@
 #   tools/gate --passed [--full] [REV]
 #                              # exits 0 if REV (default HEAD) passed (the full gate)
 #
-# Both: hygiene (no whitespace errors, no conflict markers), a warning-free incremental
+# Both: hygiene (no whitespace errors, no conflict markers, no test waiting on the wall
+# clock: tools/test-waits), a warning-free incremental
 # build (`--profile iter`, tests included), tests, and a scripted session in the real game
 # with its integrated server running behind (`voxmar --gate`, crates/client/src/gate.rs):
 # building, digging, drops, climbing out of water, the menu and inventory, storm and snow,
@@ -102,6 +103,44 @@ SLOW_TESTS=(
   voxmar_server a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes # 62 s at load 74, 2026-10-08; direct lifecycle unit runs at every landing
 )
 
+# The crates whose tests a changed file can reach: the crate itself and its dependents.
+# Assets reach every crate whose tests read them (engine: crops, movement, recipes, weather;
+# texgen: assets/ui/fonts; worldgen, server and client: everything).
+crates_for() {
+  case $1 in
+    Cargo.toml | Cargo.lock | crates/engine/*) echo voxmar_engine voxmar_worldgen voxmar_server voxmar_client ;;
+    assets/*) echo voxmar_engine voxmar_worldgen voxmar_server voxmar_client voxmar_texgen ;;
+    crates/worldgen/*) echo voxmar_worldgen voxmar_server voxmar_client ;;
+    crates/protocol/*) echo voxmar_server voxmar_client ;;
+    crates/server/*) echo voxmar_server voxmar_client ;;
+    crates/texgen/*) echo voxmar_texgen voxmar_client ;;
+    crates/client/*) echo voxmar_client ;;
+  esac
+}
+
+# A path in each area reaches the crates whose tests read it.
+reach_self_check() {
+  local path want
+  while IFS='|' read -r path want; do
+    [[ " $(crates_for "$path") " == *" $want "* ]] || { echo "gate: $path does not reach $want"; return 1; }
+  done <<'EOF_REACH'
+assets/content/base/crops.ron|voxmar_engine
+assets/content/core/movement.ron|voxmar_engine
+assets/content/base/blocks.ron|voxmar_worldgen
+assets/content/base/blocks.ron|voxmar_server
+assets/content/base/blocks.ron|voxmar_client
+assets/packs/voxmar/textures/blocks/stone.png|voxmar_texgen
+assets/packs/voxmar/textures/blocks/stone.png|voxmar_client
+assets/ui/fonts/pixel.ttf|voxmar_texgen
+assets/ui/fonts/pixel.ttf|voxmar_client
+crates/engine/src/lib.rs|voxmar_server
+crates/texgen/src/font.rs|voxmar_client
+crates/protocol/src/lib.rs|voxmar_client
+Cargo.lock|voxmar_engine
+EOF_REACH
+  [[ -z $(crates_for docs/quality.md) ]] || { echo "gate: docs reach a crate"; return 1; }
+}
+
 started=$(date +%s)
 out=$PWD/target/gate
 rm -rf "$out" && mkdir -p "$out"
@@ -120,6 +159,11 @@ if git grep -nE '^(<<<<<<<|>>>>>>>)( |$)' -- '*.rs' '*.ron' '*.md' '*.wgsl' '*.t
   fail "conflict markers"
 fi
 tools/bench --self-check || fail "tools/bench's self-check"
+reach_self_check || fail "the map from files to the crates they reach"
+tools/test-waits --self-check || fail "tools/test-waits' self-check"
+hygiene_base=main
+[[ $(git rev-parse HEAD) == $(git rev-parse main) ]] && hygiene_base=origin/main
+tools/test-waits "$(git merge-base HEAD "$hygiene_base")" || fail "a test waits on the wall clock"
 [[ -z $(git status --porcelain --untracked-files=no) ]] && clean=1 || clean=0
 tree=$(git rev-parse HEAD^{tree})
 if ((clean)) && passed "$tree"; then
@@ -137,15 +181,7 @@ if ((!full)); then
   changed=$( (git diff --name-only "$(git merge-base HEAD "$base")" HEAD; git diff --name-only HEAD) | sort -u)
   reach() { for p in "$@"; do [[ " ${packages[*]+"${packages[*]}"} " == *" $p "* ]] || packages+=("$p"); done; }
   while read -r path; do
-    case $path in
-      "") ;;
-      Cargo.toml | Cargo.lock | crates/engine/*) reach voxmar_engine voxmar_worldgen voxmar_server voxmar_client ;;
-      crates/worldgen/* | assets/*) reach voxmar_worldgen voxmar_server voxmar_client ;;
-      crates/protocol/*) reach voxmar_server voxmar_client ;;
-      crates/server/*) reach voxmar_server voxmar_client ;;
-      crates/texgen/*) reach voxmar_texgen voxmar_client ;;
-      crates/client/*) reach voxmar_client ;;
-    esac
+    [[ -n $path ]] && reach $(crates_for "$path")
   done <<<"$changed"
   ((${#packages[@]})) || session=0
 fi
