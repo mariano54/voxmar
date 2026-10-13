@@ -47,14 +47,14 @@
             why: "Biomes help different work: the woods heal, the water fishes, the mountains mine. Walk until you have stood in three different ones; where you build decides what your home gives.",
             tasks: [[Visit(3)]],
             after: ["stone_in_hand"],
-            rewards: [Xp("farming", 100.0), Xp("mining", 100.0), Xp("fishing", 100.0), Item("bread", 6)],
+            rewards: [Xp("farming", 100.0), Xp("mining", 100.0), Xp("fishing", 100.0), Item("bread", 2)],
         ),
         (
             name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",
             why: "Your home: you wake here after dying, and the Farm age opens. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel.",
             tasks: [[Home]],
             after: ["a_bed_of_your_own"],
-            rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 4)],
+            rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 1)],
         ),
         (
             name: "a_friend_in_the_wild", age: "nomad", branch: "hunter", title: "A Friend in the Wild",

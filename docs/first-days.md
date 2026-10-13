@@ -34,7 +34,7 @@ then craft the Hearth (about 28 cobblestone) and light it. **Homestead Hearth en
 Farm quests open. It asks only for a bed (A Bed of Your Own) and a lit Hearth, so a player who
 finds stone and clay beside the camp is never held back by where they have walked. Walking
 three biomes (Where to Settle, then Lay of the Land for six) is its own exploration quest,
-paying Farming, Mining and Fishing experience and six bread.
+paying Farming, Mining and Fishing experience and two bread.
 
 **Days 3 to 5, Farm: sustain yourself, then fire.** Plant wheat (First Harvest), keep hens
 (Hens in a Row, Fresh Eggs), cook (Camp Cook, level 5), a flock (A Woolly Flock). The main line
@@ -193,12 +193,12 @@ Where the grind was, and what changed (Oct 13, from the bot's first timeline):
 - Still long, and left as they are: punching the first logs by hand (40 s; the first tool
   needs the table) and Charcoal's 75 s, which chops the wood for every later charge too.
   The whole line went from 540 to 489 server seconds.
-- **A full pack.** Cooked food takes a slot each, and Where to Settle and Homestead Hearth
-  pay ten bread between them, so by Charcoal the bot's 36 slots were full: A Kiln Load's
-  bricks, a copper ingot or dug clay then had nowhere to go (a claim or craft refused).
-  The bot now throws away its spare (burnt food, feathers, the wooden pickaxe, raw meat,
-  then bread) at Charcoal. A new player meets the same wall here; whether bread rewards
-  should shrink or stack is a design call, left open.
+- **A full pack.** Cooked food takes a slot each (core's `stacking.ron`, as in RuneScape,
+  so what a player carries into a fight is a choice), and Where to Settle and Homestead
+  Hearth paid ten bread between them, so by Charcoal the bot's 36 slots were full: A Kiln
+  Load's bricks, a copper ingot or dug clay then had nowhere to go (a claim or craft
+  refused). Those two now pay three (two and one), and the bot still throws away its spare
+  (burnt food, feathers, the wooden pickaxe, raw meat) at Charcoal if the pack fills.
 
 ## Measured pacing
 
