@@ -6293,45 +6293,39 @@ impl Fresh {
     /// block is in the way, as the table or a fire is, the player turns aside the way a
     /// person would.
     ///
-    /// Across the plot (more than eight blocks) the player is teleported to the near side of
-    /// the goal first, where that spot is clear: the test's shortcut for travel, since the
-    /// way round the plot's builds is no part of what it checks.
+    /// Across the plot (more than eight blocks), or where the walk is caught on the way round
+    /// (a pond, a build), the player is teleported beside the goal: the test's shortcut for
+    /// travel, since the way round is no part of what it checks.
     fn walk_toward(&mut self, goal: Vec3, stop: f32) {
         if across(goal, self.at) > 8.0 {
-            // The nearest spot round the goal, a little inside where the walk stops, with
-            // room for the body and a step every way.
-            let r = (stop - 0.3).max(0.0) + 0.25;
-            let room = |me: &Self, p: Vec3| (-2..=2).all(|i| (-2..=2).all(|k| me.has_room(p + Vec3::new(i as f32 * 0.2, 0.0, k as f32 * 0.2))));
-            let near = (0..24)
-                .map(|i| (i as f32 * 15.0).to_radians())
-                .map(|a| Vec3::new(goal.x + r * a.cos(), self.at.y, goal.z + r * a.sin()))
-                .filter(|&p| room(self, p))
-                .min_by(|a, b| across(*a, self.at).total_cmp(&across(*b, self.at)));
-            if let Some(to) = near {
-                self.c.tp(to);
-                self.at = to;
-            }
+            self.hop_near(goal, stop);
         }
         self.spend(Act::Walk, |me| {
             let mut corrections = 0;
-            for _ in 0..2000 {
+            // The closest the walk has come, and the step it came that close: one that has
+            // come no closer for a while is caught on the way round (a pond, a build).
+            let mut best = (f32::MAX, 0);
+            for steps in 0..2000 {
                 let to = (goal - me.at).with_y(0.0);
                 let left = to.length() - stop;
                 // (Coordinates are large: a step under a hundredth of a block changes nothing.)
                 if left <= 0.01 {
                     return;
                 }
+                if left < best.0 - 0.5 {
+                    best = (left, steps);
+                }
                 let want = to.normalize();
                 // The first heading, turning aside by degrees, whose step has room for the body.
                 let step = left.min(0.2);
-                let clear = |me: &Self, heading: Vec3| {
-                    let to = me.at + heading * step;
-                    [(-0.32, -0.32), (-0.32, 0.32), (0.32, -0.32), (0.32, 0.32)]
-                        .iter()
-                        .all(|&(dx, dz)| (0..2).all(|dy| me.c.world.block(IVec3::new((to.x + dx).floor() as i32, me.origin.y + dy, (to.z + dz).floor() as i32)) == Some(BlockId::AIR)))
-                };
+                let clear = |me: &Self, heading: Vec3| me.has_room(me.at + heading * step);
                 let turn = |degrees: f32| Vec3::new(want.x * degrees.to_radians().cos() - want.z * degrees.to_radians().sin(), 0.0, want.x * degrees.to_radians().sin() + want.z * degrees.to_radians().cos());
-                let heading = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0].into_iter().map(turn).find(|&h| clear(me, h)).expect("a way round");
+                let heading = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0].into_iter().map(turn).find(|&h| clear(me, h));
+                let Some(heading) = heading.filter(|_| steps < best.1 + 60) else {
+                    assert!(me.hop_near(goal, stop), "no way round to {goal:?} from {:?}, and no room near it", me.at);
+                    best = (f32::MAX, steps);
+                    continue;
+                };
                 me.at += heading * step;
                 me.send();
                 me.tick();
@@ -6346,11 +6340,49 @@ impl Fresh {
         })
     }
 
-    /// Whether the body has room standing at `at`: air at both its heights, at each corner.
+    /// Teleports to the nearest spot round `goal`, a little inside where a walk to it stops,
+    /// with room for the body and a step every way; whether there was one.
+    fn hop_near(&mut self, goal: Vec3, stop: f32) -> bool {
+        let r = (stop - 0.3).max(0.0) + 0.25;
+        let room = |me: &Self, p: Vec3| (-2..=2).all(|i| (-2..=2).all(|k| me.has_room(p + Vec3::new(i as f32 * 0.2, 0.0, k as f32 * 0.2))));
+        let near = (0..24)
+            .map(|i| (i as f32 * 15.0).to_radians())
+            .map(|a| Vec3::new(goal.x + r * a.cos(), self.at.y, goal.z + r * a.sin()))
+            .filter(|&p| room(self, p))
+            .min_by(|a, b| across(*a, self.at).total_cmp(&across(*b, self.at)));
+        let Some(to) = near else { return false };
+        self.c.tp(to);
+        self.at = to;
+        true
+    }
+
+    /// Goes to a drop at `p`: walking up to it on open ground, or by teleport to the nearest
+    /// bank in reach of one that floated out on a pond (the walk keeps out of the water, and
+    /// the way round a pond is no part of what the test checks).
+    fn go_near(&mut self, p: Vec3) {
+        let floor = |me: &Self| solid(&me.c, IVec3::new(p.x.floor() as i32, me.origin.y - 1, p.z.floor() as i32));
+        if floor(self) {
+            return self.walk_toward(p, 0.5);
+        }
+        let spot = (1..=4)
+            .flat_map(|ring| (0..16).map(move |i| (ring as f32 * 0.4, (i as f32 * 22.5).to_radians())))
+            .map(|(r, a)| Vec3::new(p.x + r * a.cos(), self.at.y, p.z + r * a.sin()))
+            .filter(|&q| self.has_room(q))
+            .min_by(|a, b| across(*a, self.at).total_cmp(&across(*b, self.at)))
+            .unwrap_or_else(|| panic!("no bank in reach of the drop at {p:?}"));
+        if across(spot, self.at) > 0.3 {
+            self.c.tp(spot);
+            self.at = spot;
+        }
+    }
+
+    /// Whether the body has room standing at `at`: air at both its heights, at each corner,
+    /// over something solid (the walk keeps out of ponds, where the player would sink).
     fn has_room(&self, at: Vec3) -> bool {
-        [(-0.32, -0.32), (-0.32, 0.32), (0.32, -0.32), (0.32, 0.32)]
-            .iter()
-            .all(|&(dx, dz)| (0..2).all(|dy| self.c.world.block(IVec3::new((at.x + dx).floor() as i32, self.origin.y + dy, (at.z + dz).floor() as i32)) == Some(BlockId::AIR)))
+        [(-0.32, -0.32), (-0.32, 0.32), (0.32, -0.32), (0.32, 0.32)].iter().all(|&(dx, dz)| {
+            let (x, z) = ((at.x + dx).floor() as i32, (at.z + dz).floor() as i32);
+            (0..2).all(|dy| self.c.world.block(IVec3::new(x, self.origin.y + dy, z)) == Some(BlockId::AIR)) && solid(&self.c, IVec3::new(x, self.origin.y - 1, z))
+        })
     }
 
     /// Puts `item` in the hand: on the hotbar already, or swapped onto its last slot.
@@ -6451,7 +6483,7 @@ impl Fresh {
                 let at = me.at;
                 let far = me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
                 match far {
-                    Some(p) if across(p, me.at) > 2.0 => me.walk_toward(p, 0.5),
+                    Some(p) if across(p, me.at) > 2.0 => me.go_near(p),
                     _ => me.tick(),
                 }
             }
