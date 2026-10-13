@@ -546,71 +546,82 @@ impl Server {
         }).map(|c| c.0)
     }
 
-    /// Whether another of species `species` fits: people have their own budget, animals
-    /// and monsters the creature caps of the land near every player.
-    /// `placing` people of a party being brought are not counted yet.
-    fn wandering_room(&self, species: CreatureId, at: Vec3, placing: usize) -> bool {
-        let def = &self.content.creatures.get(species).def;
+    /// Whether the whole of a cast fits (`species`, each standing near `at`): people
+    /// against their own budget, animals, birds and monsters against their caps of the land
+    /// near every player and the world's wild room.
+    fn cast_fits(&self, species: &[CreatureId], at: Vec3) -> bool {
         let limits = self.content.creatures.limits();
-        match def.kind {
-            Kind::Villager => self.wandering.people(self) + placing < self.content.wandering.rules().people_most,
-            _ => {
-                let of = crate::creatures::budget(def).unwrap_or(Budget::Animal);
-                let cap = match of {
-                    Budget::Monster => self.monsters_cap(),
-                    Budget::Bird => limits.birds_near,
-                    Budget::Animal => limits.animals_near,
-                };
-                self.wild_room() > 0 && self.nearby_room(at, of, cap)
-            }
-        }
+        let of = |s: &CreatureId| crate::creatures::budget(&self.content.creatures.get(*s).def);
+        let people = species.iter().filter(|s| of(s).is_none()).count();
+        // Room for `n` more under `cap`: no more than `cap - n` there now.
+        let near = |budget: Budget, cap: usize| {
+            let n = species.iter().filter(|s| of(s) == Some(budget)).count();
+            n == 0 || (n <= cap && self.nearby_room(at, budget, cap + 1 - n))
+        };
+        self.wandering.people(self) + people <= self.content.wandering.rules().people_most
+            && self.wild_room() >= species.len() - people
+            && near(Budget::Animal, limits.animals_near)
+            && near(Budget::Bird, limits.birds_near)
+            && near(Budget::Monster, self.monsters_cap())
     }
 
-    /// Brings a cast to `spot` and starts its script, for `player` (or for no one, from an
-    /// admin's command). Returns the event's id, or `None` when the leader could not stand
-    /// there or there was no room.
+    /// Brings a cast to `spot` and starts its script, for `player`, out of sight. Returns
+    /// the event's id, or `None` when the leader could not stand there or the whole cast
+    /// did not fit.
     pub(crate) fn begin_event(&mut self, player: Option<PlayerId>, event: usize, spot: IVec3, seed: u64) -> Option<u64> {
         self.begin_event_at(player, event, spot, seed, false)
     }
 
-    /// `begin_event`, where `visible` lets the cast appear in a player's view.
-    pub(crate) fn begin_event_at(&mut self, player: Option<PlayerId>, event: usize, spot: IVec3, seed: u64, visible: bool) -> Option<u64> {
+    /// `begin_event`, where `forced` is an admin's `/wander` start: the cast may appear in a
+    /// player's view, and is brought whatever the spawn budgets say. A chance start brings
+    /// the whole cast or none of it: never half a party.
+    pub(crate) fn begin_event_at(&mut self, player: Option<PlayerId>, event: usize, spot: IVec3, seed: u64, forced: bool) -> Option<u64> {
         let rules = *self.content.wandering.rules();
         let def = self.content.wandering.get(event);
         let (script, groups) = (def.def.script, def.groups.clone());
         let at = spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
-        let angle = if visible { 0.0 } else { self.content.creatures.limits().spawn_unseen_angle };
-        let mut members: Vec<Member> = Vec::new();
-        for (g, (species, group)) in groups.iter().enumerate() {
+        let angle = if forced { 0.0 } else { self.content.creatures.limits().spawn_unseen_angle };
+        // Who comes, and where each stands: the leader on the spot, the rest about it.
+        let mut cast: Vec<(usize, u8, u8, Vec3)> = Vec::new();
+        for (g, (_, group)) in groups.iter().enumerate() {
             let (low, high) = group.count;
-            let count = low + (unit_from(mix(seed, 10 + g as u64)) * (high - low + 1) as f32) as u8;
-            for i in 0..count.min(high) {
-                let stand = if members.is_empty() {
+            let count = (low + (unit_from(mix(seed, 10 + g as u64)) * (high - low + 1) as f32) as u8).min(high);
+            for i in 0..count {
+                let stand = if cast.is_empty() {
                     at
                 } else {
                     let a = unit_from(mix(seed, 100 + (g * 16 + i as usize) as u64)) * std::f32::consts::TAU;
                     let r = 1.5 + 2.5 * unit_from(mix(seed, 200 + (g * 16 + i as usize) as u64));
-                    let Some(cell) = self.standing_spot((at.x + a.cos() * r).floor() as i32, (at.z + a.sin() * r).floor() as i32, spot.y) else { continue };
-                    cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
+                    match self.standing_spot((at.x + a.cos() * r).floor() as i32, (at.z + a.sin() * r).floor() as i32, spot.y) {
+                        Some(cell) => cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5),
+                        None if forced => at,
+                        None => return None,
+                    }
                 };
-                let placing = members.iter().filter(|m| self.content.creatures.get(self.creatures.live[&m.creature].species).def.kind == Kind::Villager).count();
-                if !self.wandering_room(*species, stand, placing) {
-                    continue;
-                }
-                let member_seed = mix(seed, 1000 + (g * 16 + i as usize) as u64);
-                let Some(creature) = self.place_creature(*species, stand, member_seed, angle) else { continue };
-                self.creatures.live.get_mut(&creature).expect("just made").wanderer = true;
-                if group.young {
-                    self.make_young(creature);
-                }
-                // The rest of the leader's own group walk behind it.
-                let role = if group.role == Role::Lead && !members.is_empty() { Role::Follow } else { group.role };
-                members.push(Member { creature, group: g, slot: voxmar_engine::wander::slot(role, i as usize, count as usize, member_seed), errand: None, mill_until: 0, mill_at: stand, work: None });
+                cast.push((g, i, count, stand));
             }
-            // Without its leader a party is nothing.
-            if g == 0 && members.is_empty() {
+        }
+        if cast.is_empty() || (!forced && !self.cast_fits(&cast.iter().map(|c| groups[c.0].0).collect::<Vec<_>>(), at)) {
+            return None;
+        }
+        let mut members: Vec<Member> = Vec::new();
+        for (g, i, count, stand) in cast {
+            let (species, group) = &groups[g];
+            let member_seed = mix(seed, 1000 + (g * 16 + i as usize) as u64);
+            let Some(creature) = self.place_creature(*species, stand, member_seed, angle) else {
+                // One would be seen appearing: none of them come.
+                for member in members {
+                    self.creatures.take_away(member.creature);
+                }
                 return None;
+            };
+            self.creatures.live.get_mut(&creature).expect("just made").wanderer = true;
+            if group.young {
+                self.make_young(creature);
             }
+            // The rest of the leader's own group walk behind it.
+            let role = if group.role == Role::Lead && !members.is_empty() { Role::Follow } else { group.role };
+            members.push(Member { creature, group: g, slot: voxmar_engine::wander::slot(role, i as usize, count as usize, member_seed), errand: None, mill_until: 0, mill_at: stand, work: None });
         }
         let id = self.wandering.next;
         self.wandering.next += 1;
@@ -2188,7 +2199,43 @@ mod tests {
             server.spawn_creature(hound, Vec3::new(128.5, 200.0, 128.5 + i as f32), i as u64);
         }
         assert!(!server.nearby_room(Vec3::new(128.5, 200.0, 128.5), Budget::Animal, cap));
-        assert!(!server.wandering_room(hound, Vec3::new(128.5, 200.0, 128.5), 0), "no room for another dog");
+        assert!(!server.cast_fits(&[hound], Vec3::new(128.5, 200.0, 128.5)), "no room for another dog");
+    }
+
+    /// Fills the animal room near the player, at the middle of the floor.
+    fn fill_animal_room(server: &mut Server) {
+        let hound = server.content.creatures.id("base:hound").unwrap();
+        for i in 0..server.content.creatures.limits().animals_near {
+            server.spawn_creature(hound, Vec3::new(128.5, 200.0, 120.5 + i as f32 * 0.5), i as u64);
+        }
+    }
+
+    #[test]
+    fn a_chance_start_brings_the_whole_party_or_none_of_it() {
+        let mut server = fixture();
+        // Looking at the sky: nothing is seen appearing.
+        server.players.get_mut(&1).unwrap().pitch = std::f32::consts::FRAC_PI_2;
+        let walk = event(&server, "stroll_with_dog");
+        let spot = server.standing_spot(110, 128, 200).unwrap();
+        let id = server.begin_event(Some(1), walk, spot, 7).expect("room for both: a walk");
+        assert_eq!(server.wandering.active[&id].members.len(), 2);
+        server.wandering.active.clear();
+        server.wandering.by_creature.clear();
+        server.creatures.live.clear();
+        fill_animal_room(&mut server);
+        let before = server.creatures.live.len();
+        assert!(server.begin_event(Some(1), walk, spot, 7).is_none(), "no room for the dog: no walk");
+        assert_eq!(server.creatures.live.len(), before, "and not its person alone either");
+        assert!(server.wandering.active.is_empty());
+    }
+
+    #[test]
+    fn an_admins_start_brings_the_whole_party_past_the_spawn_budgets() {
+        let mut server = fixture();
+        fill_animal_room(&mut server);
+        let id = start(&mut server, "stroll_with_dog", (110, 128));
+        let kinds: Vec<Kind> = server.wandering.active[&id].members.iter().map(|m| server.content.creatures.get(server.creatures.live[&m.creature].species).def.kind).collect();
+        assert_eq!(kinds, [Kind::Villager, Kind::Animal], "the person and the dog");
     }
 
     /// Clears the world of parties and creatures between tries on one server.
@@ -2509,10 +2556,14 @@ mod tests {
         let mut server = fixture();
         let most = server.content.wandering.rules().people_most;
         let pilgrims = event(&server, "pilgrims");
+        // Chance starts (an admin's would bring them whatever the budget), with the player
+        // looking at the sky so that none is seen appearing.
+        server.players.get_mut(&1).unwrap().pitch = std::f32::consts::FRAC_PI_2;
         for seed in 0..40u64 {
             let spot = server.standing_spot(20 + (seed as i32 % 8) * 28, 20 + (seed as i32 / 8) * 40, 200).unwrap();
-            server.begin_event_at(None, pilgrims, spot, seed, true);
+            server.begin_event(None, pilgrims, spot, seed);
         }
+        assert!(server.wandering.people(&server) > 0, "some came");
         assert!(server.wandering.people(&server) <= most, "{} people, {most} allowed", server.wandering.people(&server));
     }
 

@@ -23,8 +23,11 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   last `repeat_memory` seconds weighs `repeat_weight` of itself.
 - **Budgets.** People of a party count against `people_most`, not against the settlements'
   villager cap. Animals and monsters of a party count against the usual land caps near
-  every player (12 animals, the monster cap), so a party can never crowd the land. A species
-  with `habitat: (party_only: true)` is never spawned naturally.
+  every player (12 animals, the monster cap), so a party can never crowd the land. A chance
+  start checks room for the whole cast first, and every member needs a place to stand and
+  must appear unseen: the whole party comes or none of it, never a pedlar without his hound.
+  An admin's `/wander NAME` brings the whole cast whatever the budgets. A species with
+  `habitat: (party_only: true)` is never spawned naturally.
 - **Cast and roles.** A cast is groups, each a species, a count range and a role: `Lead`
   (the first group's first member leads everything), `Follow`, `Flank` (alternating sides),
   `Rear`, `Ahead` (scouts), `Herd` (loosely about the leader), `Captive`, `Pet(group)` (keeps to that group's first member), `Free` (its
