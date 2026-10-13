@@ -230,12 +230,8 @@ impl QuestRegistry {
         }
         for quest in &mut file.quests {
             qualify(&mut quest.name);
-            // A reward item is looked up by its full name when it is given.
-            for reward in &mut quest.rewards {
-                if let Reward::Item(item, _) = reward {
-                    qualify(item);
-                }
-            }
+            // A reward item's full name is written when the content loads (`resolve`), which also
+            // lets a mod's quest name a base item without its package.
             for after in &mut quest.after {
                 *after = after.split('|').map(|n| if n.contains(':') { n.to_owned() } else { format!("{namespace}:{n}") }).collect::<Vec<_>>().join("|");
             }
@@ -481,10 +477,10 @@ mod tests {
     }
 
     #[test]
-    fn reward_items_are_named_in_full_so_the_server_can_find_them() {
+    fn reward_items_keep_their_short_names_for_the_load_check_to_resolve() {
         let source = r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "A", why: "", tasks: [[Home]], rewards: [Xp("cooking", 1.0), Item("torch", 4), Item("core:coin", 1)])])"#;
         let file = QuestRegistry::read("t", source).unwrap();
-        assert_eq!(file.quests[0].rewards, vec![Reward::Xp("cooking".into(), 1.0), Reward::Item("t:torch".into(), 4), Reward::Item("core:coin".into(), 1)]);
+        assert_eq!(file.quests[0].rewards, vec![Reward::Xp("cooking".into(), 1.0), Reward::Item("torch".into(), 4), Reward::Item("core:coin".into(), 1)]);
     }
 
     #[test]
