@@ -818,8 +818,10 @@ update, and never more than 2 ms in one tick.
 
 ## Sound
 
-Music is in `assets/music`, a folder for each category, and plays now and then with long quiet
-gaps; `M` toggles it, and the audio settings switch each category on and off. The categories
+Music is in `assets/music`, a folder for each category, and plays now and then: in a world, 10 to
+20 minutes of quiet between tracks, as in Minecraft. As a track starts, its title and category show
+small at the top right for a few seconds. `M` toggles it, and the audio settings switch each
+category on and off. The categories
 are listed in `assets/content/base/music.ron`: `suno` and `lyria` are our own tracks, and with
 Minecraft assets on, the tracks of the player's own Prism Launcher instance (read where they are,
 never copied) join `minecraft_menu`, `minecraft_world`, `minecraft_deep` or `minecraft_records` by
