@@ -29,6 +29,18 @@
         repeat_weight: 0.15,
         repeat_memory: 1800.0,
     ),
+    // How kinds of creature answer what a player holds, in any event (docs/wandering.md,
+    // "Reactions"): one rule here is every party's, now and in the events to come. The
+    // tag must be one some item has.
+    reactions: [
+        // Bandits lying in wait know a seasoned fighter with a weapon in hand when they see
+        // one, and let them by; a beginner they do not fear.
+        (held: "weapon", range: 18.0, kinds: [Monster], response: Wary, combat: (14, 255)),
+        // Wild things keep from a flame, the spirits of the night most of all.
+        (held: "fire", range: 9.0, kinds: [Animal, Spirit], response: Shy),
+        // And they come to a hand with food in it.
+        (held: "edible", range: 12.0, kinds: [Animal], response: Draw),
+    ],
     events: [
         // A mage on the road with apprentices, far from towns. Teaches Magic by the mote, but
         // only what a beginner needs: past level 15 it asks three motes for a harder lesson,
@@ -215,6 +227,90 @@
             meetings: [(who: 0, greets: 2, lines: [
                 (name: "grown", needs: [Skill("hunter", 15)]),
                 (name: "meal", wants: ("tag:edible", 1), gives: [Xp("hunter", 12.0), Item("flint", (2, 3))], once: Player),
+            ])],
+        ),
+        // A cutpurse runs from the town watch across the land, and the watch runs him down.
+        // Stand clear and they catch him, hold him a while and march him off. Land a blow on
+        // him as he passes and they say so, with the town's coin; kill him and the purse he
+        // stole is yours. Strike the watch instead and they answer in kind, and the thief
+        // runs free.
+        (
+            name: "thief_chase", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.7), ("tag:grassland", 0.8)],
+            daylight: (0.35, 1.0), needs: (days: 1.2, away: Some((50.0, 100000.0))),
+            cast: [(species: "thief"), (species: "constable", count: (1, 2), role: Chaser)],
+            script: Chase(pass: (4.0, 14.0), length: 150.0, pace: 1.8, gain: 1.18, hold: (14.0, 22.0)),
+            hurt: Ignore,
+            meetings: [
+                (who: 0, greet: "thief_greet", greets: 2, lines: [
+                    (name: "thief_caught", needs: [When(Caught)]),
+                ]),
+                (who: 1, greet: "constable_greet", greets: 2, lines: [
+                    (name: "reward", needs: [When(Caught), Struck(0)], gives: [Item("gold_coin", (1, 2)), Xp("attack", 8.0)], once: Player),
+                    (name: "caught", needs: [When(Caught)]),
+                ]),
+            ],
+        ),
+        // A wounded traveller sits by the road, and the men who left him there lie in the
+        // rocks beside it. Go to him and the trap springs. A fighter they know better than to
+        // cross (combat 14, a weapon in hand) is let by; three coins slipped to a raider in
+        // the moment before buys the road; or fight, and the traveller thanks the winner.
+        (
+            name: "wounded_traveller", weight: 0.4,
+            biomes: [("tag:forest", 1.0), ("tag:open", 0.7), ("tag:mountain", 0.3)],
+            daylight: (0.3, 1.0), needs: (days: 2.0, home: true, combat: (4, 60), away: Some((70.0, 100000.0))),
+            cast: [(species: "traveller"), (species: "raider", count: (2, 3), role: Lurk)],
+            script: Ambush(near: 22.0, trigger: 7.0, delay: (6.0, 10.0), patience: 360.0, away: 120.0, hold: (30.0, 60.0)),
+            hurt: Avenge,
+            meetings: [
+                (who: 0, greet: "traveller_greet", greets: 2, lines: [
+                    (name: "thanks", needs: [When(Won)], gives: [Item("gold_coin", (2, 3)), Xp("defence", 12.0)], once: Player),
+                    (name: "won", needs: [When(Won)]),
+                ]),
+                (who: 1, greet: "raider_greet", greets: 2, lines: [
+                    (name: "pay", needs: [When(Waiting)], wants: ("gold_coin", 3), gives: [Leave], once: Party),
+                ]),
+            ],
+        ),
+        // A white stag stands at the edge of the wood, watching. Come near and it walks on,
+        // keeping ahead; follow it the whole way (it waits if you fall behind, and gives
+        // you up if you do not come) and it leads you to a glade and a gift. Strike it and
+        // it bolts; hunt it down and it is only a deer.
+        (
+            name: "white_stag", weight: 0.3,
+            biomes: [("tag:forest", 1.0), ("tag:grassland", 0.4)],
+            daylight: (0.3, 0.75), needs: (days: 1.5, away: Some((60.0, 100000.0))),
+            cast: [(species: "white_stag")],
+            script: Lure(keep: (6.0, 16.0), length: 130.0, pace: 1.0, patience: 150.0, linger: 6.0),
+            hurt: Scatter,
+            reveal: [Item("antler", (1, 1)), Xp("hunter", 40.0), Effect("refreshed", 300.0)],
+        ),
+        // A pale light drifts low over the marsh by night, and keeps ahead of anyone who
+        // follows. It does not like a torch: hold one up and it hangs back until you put it
+        // away. At the end of its path it dips into a hollow and goes out, leaving what the
+        // night keeps.
+        (
+            name: "wisp_trail", weight: 0.3,
+            biomes: [("tag:forest", 0.8), ("tag:wetland", 1.0)],
+            daylight: (0.0, 0.25), needs: (days: 1.5, away: Some((60.0, 100000.0))),
+            cast: [(species: "wisp")],
+            script: Lure(keep: (5.0, 14.0), length: 110.0, pace: 0.9, patience: 120.0, linger: 5.0),
+            hurt: Scatter,
+            reveal: [Item("aether_mote", (2, 3)), Xp("magic", 30.0)],
+        ),
+        // A fox with a hen's feathers on its whiskers, and a farmer after it with a rake. Turn
+        // the fox with a blow as it runs and the farmer pays in eggs; they catch it on their
+        // own soon enough.
+        (
+            name: "fox_and_farmer", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:forest_edge", 0.6)],
+            daylight: (0.3, 0.9), needs: (days: 0.8, away: Some((40.0, 100000.0))),
+            cast: [(species: "fox"), (species: "farmer", role: Chaser)],
+            script: Chase(pass: (4.0, 14.0), length: 130.0, pace: 1.8, gain: 1.2, hold: (8.0, 14.0)),
+            hurt: Ignore,
+            meetings: [(who: 1, greet: "farmer_greet", greets: 2, lines: [
+                (name: "reward", needs: [When(Caught), Struck(0)], gives: [Item("egg", (3, 4)), Xp("farming", 10.0)], once: Player),
+                (name: "caught", needs: [When(Caught)]),
             ])],
         ),
     ],

@@ -28,7 +28,8 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
 - **Cast and roles.** A cast is groups, each a species, a count range and a role: `Lead`
   (the first group's first member leads everything), `Follow`, `Flank` (alternating sides),
   `Rear`, `Ahead` (scouts), `Herd` (loosely about the leader), `Captive`, `Pet(group)` (keeps to that group's first member), `Free` (its
-  own brain, only kept in the party's books).
+  own brain, only kept in the party's books), `Chaser` (runs the leader down, in a `Chase`) and
+  `Lurk` (lies in wait about the leader, in an `Ambush`).
 - **Scripts.** The script decides where the leader goes; every other member gets a formation
   slot from its role. The server hands each member an `Errand`, the same handoff villagers
   use, so the creature brain still decides how to walk it (and still flees, fights or looks
@@ -42,6 +43,24 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
     if `rest`), then goes.
   - `Drift(leg, pause, seconds)`: grazes along in short legs of a slowly turning heading;
     the `Herd` role keeps the rest loosely round the leader.
+  - `Chase(pass, length, pace, gain, hold)`: the leader is the quarry and runs a line like a
+    march at `pace`; its `Chaser`s run at the quarry at `gain` times that. One within 2.5
+    blocks has run it down: the stage is `Caught`, everyone stands about it for `hold` seconds
+    (a talk, a reward), then they march off together. No chasers left, or the quarry dead:
+    the chase is off.
+  - `Ambush(near, trigger, delay, patience, away, hold)`: the leader is the bait and settles
+    `near` blocks short of the player; the `Lurk`ers lie crouched to its sides. The stage is
+    `Waiting`. A player within `trigger` blocks of the bait or any lurker springs it `delay`
+    seconds later (time to talk, pay, or run): the lurkers turn on that player (`Sprung`,
+    `Avenge`), the bait is afraid. Every lurker gone is `Won`: the bait stays `hold` seconds
+    to be thanked. Nobody comes in `patience` seconds, or a `Wary` player stands by (see
+    Reactions) for twenty, and they go `away`.
+  - `Lure(keep, length, pace, patience, linger)`: the leader stands watching where it appeared
+    until a player comes within `keep.1` blocks, then leads off along a line `length` blocks
+    long, away from them, hurrying if they come nearer than `keep.0`, waiting (alert) if they
+    fall behind, and giving up after `patience` seconds with no follower. At the end the
+    event's `reveal` (items, XP, an effect) goes to the nearest player within 18 blocks, with
+    the line `arrived`, and the lure goes `linger` seconds later.
   The leader strides in 6-block steps and turns aside where the ground will not do; with no
   headway for six seconds it detours, and after four detours the party gives up and leaves.
 - **Stopping.** A party with a `halt` stops for a player who comes within `near` of its
@@ -52,8 +71,12 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   first asks the party. Each speaking group has a meeting. The first line whose needs hold
   (`Skill` at least, `Below` a level, `Home`, `Hurt`, `Holds` an item with a tag, which is
   not taken) and whose `wants` the player holds is said, takes what it wants and gives its
-  rewards (items, XP, an effect, healing, `Free`, `Anger`). `once` is `Always`, `Player` or
-  `Party`. The speech is the lang key `wander.<package>.<event>.<line>`; the greeting
+  rewards (items, XP, an effect, healing, `Free`, `Anger`, `Leave`: the party gives up what it
+  was about and goes, no grudge). A line can also need `When(stage)` (the party is at that
+  stage of its script: `Caught`, `Waiting`, `Sprung`, `Won`, `Leading`, `Arrived`; the stage
+  must belong to the event's script) or `Struck(group)` (this player struck a member of that
+  group of the cast, and the party did not turn on them for it). A line with only such needs
+  and no `wants` is the stage's own greeting. `once` is `Always`, `Player` or `Party`. The speech is the lang key `wander.<package>.<event>.<line>`; the greeting
   (when no line applies) is `.greet`, or with `greets: 3` one of `.greet`, `.greet_2`,
   `.greet_3`, drawn each time; the title is `.title`. Lessons are capped by the player's own
   levels (`Below`): a tutor teaches a beginner, asks more for the next step and has nothing
@@ -74,6 +97,24 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   taken away without a death. Killed members leave the party; the party goes on.
 - **Admin.** `/wander` lists the parties about, `/wander list` the kinds, `/wander start
   NAME` begins one ahead of you, `/wander end` sends them all away.
+
+## Reactions
+
+`reactions` in `wandering.ron` are rules every kind inherits: how a *kind* of creature
+(`Animal`, `Monster`, `Spirit`, `Villager`) answers a player who holds an item with a *tag*
+within `range` blocks, optionally only for a `combat` level range. The response is one of:
+
+- `Wary`: it does not stop, and an ambush does not spring (and gives up after twenty seconds
+  of the player standing by).
+- `Shy`: an ambling animal walks away from the player, and a lure hangs back (alert, waiting)
+  until the tag is put away.
+- `Draw`: an ambling animal comes to the player and stands near.
+
+An ambush answers as its lurkers' kind, anything else as its leader's. The tag must be one
+some item has (checked at load), and a later package adds reactions, never rewrites one. The
+shipped three: a weapon in a hand of combat 14 or more makes monsters in wait let them by; a
+`fire` (torch) makes animals and spirits shy; food (`edible`) draws animals. Adding a kind
+that wants a new response to something held is a line in this list, not code in the kind.
 
 ## The bar every kind meets
 
@@ -135,6 +176,31 @@ player has taken in (owner set) leaves its party. These are general rules in dat
 feeding and trading already in the game are what the player combines with a wandering
 kind, and the kind needs no code of its own.
 
+## Batch 3 (implemented, five kinds, three scripts)
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| thief on the run | Chase | A cutpurse runs, the town watch (one or two constables) on his heels. They run him down in well under a minute and hold him a while. A blow on him as he passes earns the constables' bounty (coins, Attack XP) once; kill him and his purse drops; strike the watch and only the one struck fights. |
+| fox and farmer | Chase | A fox with feathers on its whiskers, a farmer after it. A blow that turns the fox earns eggs and Farming XP. |
+| wounded traveller | Ambush | A traveller sits hurt by the road, raiders lie in the rocks beside him. Going to him springs it (after six to ten seconds): fight, or slip a lurker three coins in time and they go. A combat 14 fighter with a weapon in hand is let by. Win and the traveller thanks you once. Only for players with a home and combat 4 to 60, far from the start. |
+| white stag | Lure | A white stag watches from the wood's edge, then leads off if you come near. Follow it to its glade for an antler, Hunter XP and a Refreshed effect. Strike it and it bolts; it waits for stragglers and gives you up if you do not come. |
+| wisp trail | Lure | A pale light over the marsh by night, shy of torches: hold one up and it hangs back until you put it away. At the end of its path, aether motes and Magic XP. |
+
+| the player | chase | ambush | lure |
+| --- | --- | --- | --- |
+| watches | the watch catch the quarry and march it off | nothing: it waits until `patience` | nothing: it gives you up |
+| walks into it | may block the quarry's way and slow it | springs after a moment; fight, flee or pay | it leads on |
+| talks | the held quarry pleads, the watch speak | a lurker takes three coins and goes; the bait thanks the winner | n/a (no speaker) |
+| strikes | the quarry: the watch pay you; the watch: that one fights | a lurker or the bait: it springs at once | it bolts, scattered |
+| holds a weapon | nothing | a seasoned fighter (combat 14) is let by | nothing |
+| holds a torch | nothing | nothing | a wisp hangs back (animals and spirits are shy of flame) |
+| holds food | nothing | nothing | animals ambling about come to it |
+| kills | the quarry's purse drops | the lurkers: the bait thanks you | only a deer |
+
+New in the framework: the `Chase`, `Ambush` and `Lure` scripts, the `Chaser` and `Lurk`
+roles, line stages (`When`) and `Struck`, the `Leave` reward, an event's `reveal`, and
+Reactions. The settled-companions save, the next batch, comes with a save change of its own.
+
 ## Catalogue of 100
 
 Status: `done` is in batch 1, `next` is the second batch (ages 1 and 2: Nomad and Farm
@@ -172,8 +238,8 @@ are the mechanics later batches add, each used by several kinds.
 | 27 | stray hound | see batch 2 | Roam | 1 | done |
 | 28 | deer herd | drifts through; flees when seen | Herd | 1 | next |
 | 29 | boar sounder | sow with piglets; charges what comes close | Herd | 1 | next |
-| 30 | fox and hens | a fox stalks a hen that runs | Chase | 2 | next |
-| 31 | thief and constable | a thief runs from a guard; stop the thief for the loot | Chase | 2 | later |
+| 30 | fox and farmer | see batch 3 (a fox runs, a farmer chases) | Chase | 2 | done |
+| 31 | thief and constable | see batch 3 | Chase | 2 | done |
 | 32 | poacher | hunts deer; reporting them to a guard pays | Hunt | 2 | later |
 | 33 | hunting party | villagers with hounds track a boar | Hunt | 2 | later |
 | 34 | scarecrow walker | a straw figure that stands among crops and moves when unseen | Shadow | 2 | later |
@@ -207,8 +273,8 @@ are the mechanics later batches add, each used by several kinds.
 | 62 | goblin scouts | a pair that slips away if seen, then returns with more | Chase | 2 | later |
 | 63 | skeleton march | at night, a file of bones along a road | March | 3 | later |
 | 64 | wight walk | a single wight on a grave road | Patrol | 3 | later |
-| 65 | ghost lantern | a lantern drifting over a marsh; follow it to a chest | Lure | 2 | later |
-| 66 | wisp trail | will-o-wisps lead off the path | Lure | 3 | later |
+| 65 | ghost lantern | a lantern drifting over a marsh; follow it to a chest (the wisp trail's cousin: a Lure whose reveal is a chest) | Lure | 2 | later |
+| 66 | wisp trail | see batch 3 (a light leads off the path, shy of torches) | Lure | 3 | done |
 | 67 | troll bridge | a troll under a bridge asks a toll | Meeting | 3 | later |
 | 68 | ogre and goats | an ogre drives goats | Herd | 4 | later |
 | 69 | giant on the hill | a slow giant strides over a ridge; the ground shakes | March | 5 | later |
@@ -254,9 +320,10 @@ Each is a script or a role used by many kinds, so every kind stays a few lines o
 - **Haul**: two members carry a load along a line; kill one and it drops the load.
 - **Escort**: the party follows the player toward a settlement; arriving pays out, losing
   them (distance, death) ends it.
-- **Chase**: one cast member is the quarry, another the pursuer; stopping the quarry pays.
-- **Ambush**: hides out of sight until a player is within a distance, then rushes.
-- **Lure**: leads the player on if followed; the end is a reward or a trap.
+- **Chase**: done (batch 3): one cast member is the quarry, another the pursuer; stopping the quarry pays.
+- **Ambush**: done (batch 3): lies in wait until a player is within a distance, then rushes.
+- **Lure**: done (batch 3): leads the player on if followed; the end is a reward. A trap end is a
+  later `Lure` whose lurkers spring at the end.
 - **Duel / Dance / Crossing / Vigil**: fixed arrangements of the formation code.
 
 ## Notes
