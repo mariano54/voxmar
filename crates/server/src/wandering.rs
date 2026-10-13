@@ -5876,4 +5876,94 @@ mod tests {
         assert!(server.meet(1, poacher));
         assert!((2..=3).contains(&count_of(&server, "base:gold_coin")), "paid to be let go");
     }
+
+    #[test]
+    fn grateful_parents_and_a_journeyman_come_back_to_those_who_helped() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        server.day += 5.0 * TICKS_PER_DAY as f64;
+        let spot = land_for(&server, event(&server, "grateful_parents"), Vec3::new(128.0, 200.0, 128.0), |_| true);
+        server.players.get_mut(&1).unwrap().home = Some(spot.as_vec3());
+        server.players.get_mut(&1).unwrap().position = spot.as_vec3();
+        assert!(!comes_at(&server, "grateful_parents", spot) && !comes_at(&server, "journeyman", spot), "nobody helped, nobody comes back");
+        server.tally(1, "met", "base:lost_child", 1);
+        server.tally(1, "met", "base:apprentice", 1);
+        assert!(comes_at(&server, "grateful_parents", spot), "the lost child's parents");
+        assert!(comes_at(&server, "journeyman", spot), "the apprentice, a journeyman now");
+        let mut server = fixture();
+        let id = start(&mut server, "grateful_parents", (110, 128));
+        let parent = members_of(&server, id, 0)[0];
+        assert!(server.meet(1, parent));
+        assert!(count_of(&server, "base:gold_coin") >= 2 && count_of(&server, "base:bread") == 2);
+        let mut server = fixture();
+        let id = start(&mut server, "journeyman", (110, 128));
+        let journeyman = members_of(&server, id, 0)[0];
+        assert!(server.meet(1, journeyman));
+        assert_eq!(count_of(&server, "base:gold_coin"), 2);
+        let learned = ["core:farming", "core:mining", "core:crafting"].iter().filter(|s| xp_in(&server, s) > 0).count();
+        assert_eq!(learned, 1, "one trade's lesson");
+    }
+
+    #[test]
+    fn highwaymen_lie_in_wait_only_while_market_folk_are_on_the_road() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        skill_to(&mut server, "core:attack", 10);
+        skill_to(&mut server, "core:defence", 10);
+        skill_to(&mut server, "core:hitpoints", 10);
+        let spot = land_for(&server, event(&server, "highwaymen"), Vec3::new(128.0, 200.0, 128.0), |_| true);
+        assert!(!comes_at(&server, "highwaymen", spot), "an empty road");
+        let market = start(&mut server, "market_folk", (110, 128));
+        lead_to(&mut server, market, spot.as_vec3() + Vec3::new(60.0, 0.0, 0.0));
+        assert!(comes_at(&server, "highwaymen", spot), "market day");
+        let mut server = fixture();
+        let id = start(&mut server, "highwaymen", (110, 128));
+        let thief = members_of(&server, id, 0)[0];
+        server.wandering.active.get_mut(&id).unwrap().stage = Stage::Won;
+        assert!(server.meet(1, thief));
+        assert!((2..=3).contains(&count_of(&server, "base:gold_coin")), "the purse given back");
+    }
+
+    #[test]
+    fn a_late_pupil_and_beaters_say_where_their_party_went() {
+        for (name, after) in [("late_pupil", "mage_tutors"), ("beaters", "hunting_party")] {
+            let mut server = fixture();
+            broad_day(&mut server);
+            let spot = land_for(&server, event(&server, name), Vec3::new(128.0, 200.0, 128.0), |_| true);
+            assert!(!comes_at(&server, name, spot), "{name}: nobody to come after");
+            let ahead = start(&mut server, after, (110, 128));
+            lead_to(&mut server, ahead, spot.as_vec3() + Vec3::new(60.0, 0.0, 0.0));
+            assert!(comes_at(&server, name, spot), "{name}: after {after}");
+            lead_to(&mut server, ahead, Vec3::new(110.5, 200.0, 128.5));
+            let id = start(&mut server, name, (130, 128));
+            let speaker = members_of(&server, id, 0)[0];
+            let client = listen(&mut server);
+            assert!(server.meet(1, speaker));
+            assert!(told(&client).iter().any(|(k, _)| k == "wander.toward"), "{name}: which way");
+        }
+        let mut server = fixture();
+        let id = start(&mut server, "late_pupil", (110, 128));
+        let pupil = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:bread", 1);
+        assert!(server.meet(1, pupil));
+        assert_eq!(count_of(&server, "base:bread"), 0);
+        assert!(xp_in(&server, "core:magic") > 0, "yesterday's lesson for a loaf");
+    }
+
+    #[test]
+    fn the_rival_pedlar_undercuts_once_and_sneers_toward_the_other() {
+        let mut server = fixture();
+        let ahead = start(&mut server, "pedlar_and_hound", (150, 150));
+        let id = start(&mut server, "rival_pedlar", (110, 128));
+        let rival = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:gold_coin", 2);
+        assert!(server.meet(1, rival));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1);
+        let bargains = ["base:bread", "base:seed_mix", "base:flint"].iter().map(|i| count_of(&server, i)).sum::<u32>();
+        assert!(bargains >= 2, "one of the bargains");
+        let client = listen(&mut server);
+        assert!(server.meet(1, rival));
+        assert!(told(&client).iter().any(|(k, _)| k == "wander.toward"), "where the other went");
+        assert!(server.wandering.active.contains_key(&ahead));
+    }
 }
