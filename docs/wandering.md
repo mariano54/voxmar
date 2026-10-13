@@ -581,6 +581,19 @@ Each named kind is checked when the content loads.
 | christening | met the wedding | The couple from a wedding a player met, with their child, days later. A loaf for the feast: prayer and Refreshed, once. |
 | poacher's gang | met the poacher | Friends of a poacher a player met lie in wait (Ambush) for them. Beat them and they pay to be let go. |
 
+## Batch 16 (implemented, six kinds): more answers, and the hundredth kind
+
+Built from batch 15's rules, so there are no new mechanics. Two kinds come back to a player who helped, three come after another party at work, and one is close behind a rival. This brings the game to 100 kinds.
+
+| kind | rule | what it adds |
+| --- | --- | --- |
+| grateful parents | met the lost child, near home | The family of a lost child a player met come by with coins and bread, once. |
+| journeyman | met the apprentice | The apprentice, days later and a journeyman now: a lesson in one trade (25 XP) and two coins back, once. |
+| highwaymen | after market folk | Lie in wait (Ambush) while market folk are on the road; beaten, they give up a purse. |
+| late pupil | after the mage tutors | Hurrying after the tutors: says which way they went; a loaf for yesterday's Magic lesson. |
+| beaters | after a hunting party | Say where the hunt went; a beginner learns how game is driven. |
+| rival pedlar | after the pedlar and hound | A coin for one of three bargains, once, and a sneer toward where the other pedlar went. |
+
 ## Quest hooks
 
 Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
@@ -616,11 +629,13 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **Catch up the shrine** (stragglers, shrine bearer): learn from the stragglers which way the shrine went, then reach it.
 - **From wedding to christening** (wedding, christening): meet a wedding, and later bless its child.
 - **Those taken in** (refugees, refugee kin): take refugees in at home, then welcome their kin.
+- **Found and thanked** (lost child, grateful parents): walk a lost child to town, then be thanked at home.
+- **Master and journeyman** (apprentice, journeyman): teach an apprentice, then meet them again as a journeyman.
+- **Market road** (market folk, highwaymen): walk with market folk, and beat the highwaymen who come after them.
 
 ## Catalogue of 100
 
-Status: `done` is in a batch above, `next` is the second batch (ages 1 and 2: Nomad and Farm
-first), `later` the rest. "New" names what the kind needs that the framework lacks; those
+Status: `done` is in a batch above (100 kinds in the game after batch 16), `later` the rest. "New" names what the kind needs that the framework lacks; those
 are the mechanics later batches add, each used by several kinds.
 
 | # | kind | what happens | new | age | status |
@@ -763,6 +778,12 @@ are the mechanics later batches add, each used by several kinds.
 | 136 | refugee kin | see batch 15 | met | 2 | done |
 | 137 | christening | see batch 15 | met | 2 | done |
 | 138 | poacher's gang | see batch 15 | met, Ambush | 2 | done |
+| 139 | grateful parents | see batch 16 | met | 1 | done |
+| 140 | journeyman | see batch 16 | met | 2 | done |
+| 141 | highwaymen | see batch 16 | after, Ambush | 2 | done |
+| 142 | late pupil | see batch 16 | after | 1 | done |
+| 143 | beaters | see batch 16 | after | 1 | done |
+| 144 | rival pedlar | see batch 16 | after | 1 | done |
 
 ## Mechanics the next batches add
 
