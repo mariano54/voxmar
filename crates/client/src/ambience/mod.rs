@@ -69,6 +69,8 @@ pub struct Surroundings {
     pub flowers: f32,
     pub depth: f32,
     pub sky: f32,
+    /// The tags of the biome the player is in (`biomes.ron`), for the music of a place.
+    pub biome: Vec<String>,
 }
 
 impl Plugin for AmbiencePlugin {
@@ -370,6 +372,9 @@ fn listen(
         env.set(Fixed::Relief, eye - place.land);
         env.set(Fixed::Depth, place.ground - eye);
         surroundings.depth = place.ground - eye;
+        if surroundings.biome != place.home_tags {
+            surroundings.biome.clone_from(&place.home_tags);
+        }
         env.home_tags.clone_from(&place.home_tags);
         env.neighbour_tags.clone_from(&place.neighbour_tags);
         env.home = place.home;

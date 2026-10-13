@@ -1,0 +1,22 @@
+{
+  "mode": "boss",
+  "biome": "snow",
+  "lead": "fiery solo violin",
+  "colors": [
+    "tubular bells",
+    "glockenspiel"
+  ],
+  "drums": "timpani and taiko",
+  "vibes": [
+    "icy and relentless",
+    "colossal and unyielding"
+  ],
+  "scene": "a frost giant on a frozen glacier",
+  "form": "tense intro, relentless driving main theme, a brief breather, then a final heroic surge that loops cleanly",
+  "bpm": 128,
+  "key": "C minor",
+  "length_s": 147,
+  "prompt": "Intense boss battle theme for a snowy video game: a frost giant on a frozen glacier. Mood: icy and relentless, colossal and unyielding. Lead on fiery solo violin, with tubular bells and glockenspiel; driving rhythm from timpani and taiko. Structure: tense intro, relentless driving main theme, a brief breather, then a final heroic surge that loops cleanly. Epic orchestral game-soundtrack sound with a memorable main motif, punchy and clear but musical, not harsh. Fast tempo around 128 BPM in C minor. Strictly no vocals, no choir, no nature sounds or sound effects, no EDM drops, no dubstep, no heavy-metal distortion guitars.",
+  "model": "music_v2_5",
+  "seed": 92
+}

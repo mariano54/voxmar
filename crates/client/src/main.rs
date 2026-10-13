@@ -512,7 +512,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !headless || std::env::var_os("VOXMAR_RECORD_SLOW_FRAMES").is_some() {
         app.add_plugins(slow_frames::SlowFramesPlugin);
     }
-    if options.music && !headless {
+    // The gate rehearses the music, silently (`music::Rehearse`), to see its switches and
+    // the line naming a track; captures have none, so no track's name shows in a shot.
+    if options.music && (!headless || options.gate.is_some()) {
         app.add_plugins(music::MusicPlugin);
     }
     app.add_plugins(ambience::AmbiencePlugin);
