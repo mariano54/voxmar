@@ -536,8 +536,11 @@ impl EffectRegistry {
                 let mut members: Vec<EffectId> = steps.iter().zip(&chain).filter(|(_, k)| **k == c).map(|(&id, _)| id).collect();
                 members.sort_by_key(|id| (self.replaces[id.0 as usize].len(), *id));
                 let holds = |id: EffectId| self.get(id).when.as_ref().is_some_and(|w| w.holds(situation));
-                let reached = members.iter().copied().filter(|&id| holds(id)).next_back();
-                let next = members.iter().copied().find(|&id| !holds(id)).map(|id| (id, self.get(id).when.as_ref().map(|w| w.lacks(situation)).unwrap_or_default()));
+                // The highest step met, and the next one above it: a lower step left unmet
+                // (a hearth lit with no torch by the bed) is behind, not next.
+                let top = members.iter().rposition(|&id| holds(id));
+                let reached = top.map(|i| members[i]);
+                let next = members[top.map_or(0, |i| i + 1)..].iter().copied().find(|&id| !holds(id)).map(|id| (id, self.get(id).when.as_ref().map(|w| w.lacks(situation)).unwrap_or_default()));
                 HomeProgress { reached, next }
             })
             .collect()
