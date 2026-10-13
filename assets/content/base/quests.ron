@@ -104,7 +104,7 @@
         ),
         (
             name: "timber", age: "nomad", branch: "start", title: "Timber",
-            why: "Every tool starts as wood. Chop a tree with your axe and gather eight logs. A log splits into four planks at the crafting grid, and two planks make four sticks.",
+            why: "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the attack button: bare hands are slow, but they work) and gather eight logs. A log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and axe.",
             tasks: [[Have("tag:log", 8)]],
             rewards: [Xp("engineering", 30.0)],
         ),
@@ -572,5 +572,5 @@
     ],
     // A new player's book opens with these pinned (a book with nothing done or pinned), so
     // the first thing on screen is what to do.
-    tracker: (start_pins: ["look_it_up", "first_night"]),
+    tracker: (start_pins: ["timber", "look_it_up", "first_night"]),
 )

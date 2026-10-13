@@ -924,7 +924,7 @@
     "quest.base.first_ore": "Red Metal Underfoot",
     "quest.base.first_ore.why": "Copper needs Mining 5 and the pickaxe you have. It shows as green-flecked rock in hills and mountains. Mine five; it is the start of every metal.",
     "quest.base.timber": "Timber",
-    "quest.base.timber.why": "Every tool starts as wood. Chop a tree with your axe and gather eight logs. A log splits into four planks at the crafting grid, and two planks make four sticks.",
+    "quest.base.timber.why": "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the attack button: bare hands are slow, but they work) and gather eight logs. A log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and axe.",
     "quest.base.a_pile_of_stone": "A Pile of Stone",
     "quest.base.a_pile_of_stone.why": "Stone is the next step up from wood. Break twenty stone with your pickaxe: it drops cobblestone, which makes stone tools, a campfire and, later, your hearth.",
     "quest.base.coal_and_cinders": "Coal and Cinders",

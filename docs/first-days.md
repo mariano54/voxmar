@@ -12,8 +12,10 @@ locked age chests, a sling) have no quest.
 
 ## The loop, day by day
 
-The starting kit is a wooden pickaxe and axe, four bread, eight torches, sixteen planks and
-a purse (`core/survival.ron`). Recipes are never locked by quests; a quest only opens its
+A new player starts with nothing but the coin purse (`starter_kit` is empty in
+`core/survival.ron`; a mod can list a kit there). The first quests teach the way in: punch
+trees (Timber is pinned first), make planks in the grid, a crafting table, sticks, then a
+wooden pickaxe and axe at the table, then stone. Recipes are never locked by quests; a quest only opens its
 own page, and finishing is retroactive (it counts what you already did).
 
 **Day 1, daylight: tools and a fire.** Logs (Timber), cobblestone (A Pile of Stone), a
@@ -112,20 +114,22 @@ time. It asserts only the budget table at the top of the test (generous ceilings
 regression such as a recipe that suddenly needs ten times the work fails it) and prints one
 summary block to stderr (`--nocapture`).
 
-Medians of three runs, with the numbers of the first measurement (four runs, before the
-balance defaults below) beside them. "Range" is the fastest and slowest of the three.
+Medians of three runs each. "Before" is the first measurement (four runs, with the old
+starting kit and before the balance defaults below); "Kit" is after the balance defaults,
+still with the wooden tools, bread, torches and planks of the old kit; "Now" starts with
+nothing, bare hands on the first trees. "Range" is the fastest and slowest run of "Now".
 
-| Milestone (quest) | Before | Now | Range now | What the time went on |
-|---|---|---|---|---|
-| 8 logs (Timber) | 14.8 s | 14.8 s | 14.8 to 15.0 | Chopping 12 logs with the wooden axe (13 s of the 15), 2 s of walking between trunks. |
-| Crafting table | 14.8 s | 14.8 s | 14.8 to 15.1 | Free: the logs for it were already in hand. Crafting takes no server time. |
-| Stone pickaxe and axe (Stone in Hand) | 23.9 s | 23.9 s | 23.8 to 24.2 | 9 cobble with the wooden pickaxe (about 7 s of mining), then crafting. |
-| Campfire and a cooked meal (First Night) | 66 s | 53.5 s | 45 to 56 | Walking to and chasing animals, killing rabbits and junglefowl, 2 s per cook. |
-| Torches and sleeping bag (A Bed of Your Own) | 89 s | 56.8 s | 53 to 66 | Two feathers and two hides (four junglefowl and rabbit kills at most), crafted in the hand grid. Torches add 4 s (2 coal). |
-| Hearth materials (28 cobble, 4 clay) | 113 s | 83.2 s | 81 to 95 | About 15 s of mining cobble, clay from the pond bank with a stone shovel, 6 to 8 s of walking. |
-| Homestead Hearth built and lit | 117 s | 86.2 s | 85 to 98 | 3 s: ring of 8 cobble, hearthstone, 2 chimneys, light. Home is set ("your home"). |
-| Pit kiln built | 124 s | 92.4 s | 91 to 105 | 7 s: 7 more cobble, a campfire, the kiln recipe. |
-| 12 fired clay (Fire the Clay) | 176 s | 145.8 s | 129 to 158 | 28 clay to dig (7 s), then 35 to 40 s of cooking: about a fifth of the attempts crack, and a cracked clay comes back as clay. |
+| Milestone (quest) | Before | Kit | Now | Range now | What the time went on |
+|---|---|---|---|---|---|
+| 8 logs (Timber) | 14.8 s | 14.8 s | 35.2 s | 35.2 | Punching 16 logs by hand (33 s; the axe made it 13), 2 s of walking between trunks. |
+| Crafting table | 14.8 s | 14.8 s | 35.2 s | 35.2 | Four logs to sixteen planks, the table, sticks and a wooden pickaxe: crafting takes no server time. |
+| Stone pickaxe and axe (Stone in Hand) | 23.9 s | 23.9 s | 44.3 s | 44.3 to 44.8 | 9 cobble with the wooden pickaxe (about 7 s of mining), then crafting. |
+| Campfire and a cooked meal (First Night) | 66 s | 53.5 s | 76.2 s | 74 to 81 | Walking to and chasing animals, killing rabbits and junglefowl, 2 s per cook. |
+| Torches and sleeping bag (A Bed of Your Own) | 89 s | 56.8 s | 84.7 s | 82 to 106 | Two feathers and two hides, crafted in the hand grid. Torches add 4 to 10 s (2 coal). |
+| Hearth materials (28 cobble, 4 clay) | 113 s | 83.2 s | 110.1 s | 110 to 134 | About 15 s of mining cobble, clay from the pond bank with a stone shovel, 6 to 8 s of walking. |
+| Homestead Hearth built and lit | 117 s | 86.2 s | 113.6 s | 113 to 138 | 3 s: ring of 8 cobble, hearthstone, 2 chimneys, light. Home is set ("your home"). |
+| Pit kiln built | 124 s | 92.4 s | 119.7 s | 120 to 144 | 6 s: 7 more cobble, a campfire, the kiln recipe. |
+| 12 fired clay (Fire the Clay) | 176 s | 145.8 s | 168.5 s | 164 to 197 | 28 clay to dig (7 s), then 31 to 40 s of cooking: about a fifth of the attempts crack, and a cracked clay comes back as clay. |
 
 The "before" Hearth rows are when the Hearth was built and lit; the quest itself stayed held
 until three biomes were walked, which the plot cannot do (see "What the run showed"). Now the
@@ -172,5 +176,6 @@ Nomad opening, including 12 fired clay, fits in about three minutes.
   chained on it (`a_pit_kiln`, `fire_the_clay`) were held too. Biome visits no longer gate
   the core chain: Homestead Hearth waits only for A Bed of Your Own. Where to Settle is an
   exploration quest of its own with a reward worth the walk.
-- **The starter kit leaves one hotbar slot free (slot 8)**; bread takes four slots. The test
-  swaps tools through that slot.
+- **Starting with nothing costs about 20 s, all of it on the first trees**: bare hands punch
+  a log in about 2 s against the wooden axe's 1. After the wooden pickaxe the run keeps pace
+  with the kit runs. The first night has no torches until Torchlight's coal.
