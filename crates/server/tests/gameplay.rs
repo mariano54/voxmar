@@ -49,9 +49,6 @@ struct Client {
     day: Option<(u64, f32)>,
     /// The server's tick, as it last told (once a second): the clock waits are judged by.
     server_tick: u64,
-    /// Ticks heard of one by one: with another player joined, every tick sends the others'
-    /// places (`Players`).
-    ticks_heard: u64,
     /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
@@ -158,7 +155,6 @@ impl Client {
             refused: Vec::new(),
             day: None,
             server_tick: 0,
-            ticks_heard: 0,
             creatures: Default::default(),
             deaths: 0,
             died: 0,
@@ -303,7 +299,6 @@ impl Client {
                     }
                 }
             }
-            ServerMessage::Players { .. } => self.ticks_heard += 1,
             _ => {}
         }
     }
