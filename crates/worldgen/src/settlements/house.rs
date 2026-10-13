@@ -40,6 +40,9 @@ pub enum Kind {
 }
 
 impl Kind {
+    pub const ALL: [Kind; 12] =
+        [Kind::House, Kind::Trader, Kind::Inn, Kind::Smithy, Kind::Stall, Kind::Well, Kind::Shrine, Kind::Field, Kind::Pen, Kind::Orchard, Kind::Woodyard, Kind::Centrepiece];
+
     pub fn name(self) -> &'static str {
         match self {
             Kind::House => "house",
@@ -115,6 +118,7 @@ pub struct Fixed {
     pub hanging: Palette,
     pub nets: Palette,
     pub sacks: Palette,
+    pub crates: Palette,
     pub cloth: Palette,
     pub dirt: BlockId,
     /// The chance of a stone lowest course, and old walls' share of weathered blocks.
@@ -158,6 +162,26 @@ impl Spec {
         self.extras.contains(&extra)
     }
 
+    /// Indoor ground-floor columns, using the same footprint as the painted floor.
+    /// Furniture and headroom are checked against the live blocks by gameplay.
+    pub fn room(&self, frame: &Frame) -> Vec<IVec2> {
+        if !self.kind.indoors() {
+            return Vec::new();
+        }
+        let foot = Foot { x0: 0, z0: 0, w: self.w, d: self.d, form: self.form };
+        let mut local: Vec<_> = (0..self.d).flat_map(|z| (0..self.w).map(move |x| (x, z)))
+            .filter(|&(x, z)| foot.room(x, z)).collect();
+        if let Some((ww, wd)) = self.wing {
+            // The back wall is opened into this wing, including its joining row.
+            local.extend((self.d - 1..self.d + wd - 1)
+                .flat_map(|z| (self.w - ww + 1..self.w - 1).map(move |x| (x, z))));
+        }
+        local.into_iter().map(|(x, z)| {
+            let p = frame.at(x, 0, z);
+            IVec2::new(p.x, p.z)
+        }).collect()
+    }
+
     /// The building's own box, everything it puts down included: overhangs, porch,
     /// shed, wing, chimney, the lamp and step at its door.
     pub fn envelope(&self) -> (IVec2, IVec2) {
@@ -193,7 +217,8 @@ impl Spec {
             return Some(((x, d - 2), (x, d - 1)));
         }
         let gabled = matches!(self.roof, Roof::Gable | Roof::HalfHip | Roof::Saltbox | Roof::Gambrel);
-        let back = self.wing.is_none_or(|(ww, _)| w / 2 < w - ww);
+        // The altar occupies the back centre; its hearth must use the side wall.
+        let back = !self.inside.contains(&Fitting::Altar) && self.wing.is_none_or(|(ww, _)| w / 2 < w - ww);
         if gabled && !self.ridge_x && back { Some(((w / 2, d - 2), (w / 2, d - 1))) } else { Some(((1, d / 2), (0, d / 2))) }
     }
 
@@ -1039,14 +1064,20 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 /// too small for a stair even so (a mod's narrow house) has fewer storeys, down to one.
 pub fn make_room_for_stairs(spec: &mut Spec) {
     let fits = |spec: &Spec| !stairs(spec, spec.door.clamp(1, spec.w - 2), spec.chimney().map(|c| c.0)).iter().any(Option::is_none);
-    if spec.chimney().is_some() && !fits(spec) {
+    // The same specification has the same flights. Only its mutations invalidate
+    // the fit, so successful chimney/wall checks need not build those paths again.
+    let mut fit = None;
+    if spec.chimney().is_some() && !*fit.get_or_insert_with(|| fits(spec)) {
         spec.extras.retain(|e| *e != Extra::Chimney);
+        fit = None;
     }
-    while spec.wall > 3 && !fits(spec) {
+    while spec.wall > 3 && !*fit.get_or_insert_with(|| fits(spec)) {
         spec.wall -= 1;
+        fit = None;
     }
-    while spec.storeys > 1 && !fits(spec) {
+    while spec.storeys > 1 && !*fit.get_or_insert_with(|| fits(spec)) {
         spec.storeys -= 1;
+        fit = None;
     }
 }
 
@@ -1061,9 +1092,8 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
         return Vec::new();
     }
     // Too narrow for a run round the inside: a storey above with no way up.
-    let none = vec![None; (spec.storeys - 1) as usize];
     if w < 4 || d < 4 {
-        return none;
+        return vec![None; (spec.storeys - 1) as usize];
     }
     // The cells inside the walls, round in order: along the back, down the left, along the
     // front and up the right.
@@ -1075,7 +1105,7 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
     ring.extend((z0 + 1..z1).map(|z| (x1, z)));
     ring.dedup();
     if ring.len() < run + 1 {
-        return none;
+        return vec![None; (spec.storeys - 1) as usize];
     }
     let mut flights = Vec::new();
     let mut below: Vec<(i32, i32)> = Vec::new();
@@ -1090,8 +1120,8 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
         };
         let n = ring.len();
         let found = (0..n).flat_map(|start| [1isize, -1].map(|dir| (start, dir))).find_map(|(start, dir)| {
-            let flight: Vec<(i32, i32)> = (0..run).map(|k| ring[(start as isize + dir * k as isize).rem_euclid(n as isize) as usize]).collect();
-            (!flight.iter().any(banned)).then_some(flight)
+            let at = |k| ring[(start as isize + dir * k as isize).rem_euclid(n as isize) as usize];
+            (0..run).all(|k| !banned(&at(k))).then(|| (0..run).map(at).collect::<Vec<_>>())
         });
         below = found.as_ref().map_or_else(Vec::new, |f| f[..(STAIRWELL + 1).min(f.len())].to_vec());
         flights.push(found);
@@ -1412,7 +1442,7 @@ fn well(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Can
     }
 }
 
-/// A wayside shrine: a stepped plinth, a pillar and a light.
+/// A wayside shrine: a stepped plinth, an altar, and a pillar and a light behind it.
 fn shrine(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Canvas) {
     let mut pen = Pen { frame, canvas, seed: spec.seed };
     let (w, d) = (spec.w, spec.d);
@@ -1424,9 +1454,18 @@ fn shrine(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut C
         }
     }
     let (cx, cz) = (w / 2, d / 2);
-    pen.ground(cx, 1, cz, Put::Set(mats.frame));
-    pen.ground(cx, 2, cz, Put::Set(mats.frame));
-    pen.ground(cx, 3, cz, Put::Set(fixed.torch));
+    // The altar in the middle and its lamp behind it; without one (or the room), the lamp
+    // alone.
+    let lamp = match fixed.altar {
+        Some(altar) if d - 1 > cz => {
+            pen.ground(cx, 1, cz, Put::Set(altar));
+            d - 1
+        }
+        _ => cz,
+    };
+    pen.ground(cx, 1, lamp, Put::Set(mats.frame));
+    pen.ground(cx, 2, lamp, Put::Set(mats.frame));
+    pen.ground(cx, 3, lamp, Put::Set(fixed.torch));
     for (x, z) in [(cx - 1, cz), (cx + 1, cz)] {
         if let Some(flower) = fixed.flowers.at(spec.seed ^ 0x5a, frame.at(x, 1, z)) {
             pen.ground(x, 1, z, Put::Soft(flower));

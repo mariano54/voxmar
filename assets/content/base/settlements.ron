@@ -35,8 +35,10 @@
 //   Altar, Pews, Boat, Counter; a house with fittings has one storey, as stairs run
 //   round the walls where fittings stand); a house may have extras it `always` has, its own
 //   `roofs`, the `sizes` that build it, the styles it is `not_in`, the `most` one place
-//   builds, `stilts`, and `water: true` to stand only beside fresh water. A-frames stay
-//   out of turf villages, where their grass roofs to the ground read as banks of earth.
+//   builds, `stilts`, and `water: true` to stand only beside fresh water, and how many
+//   `people` live in it, fewest and most (fuller where it is crowded; working buildings
+//   mostly none). A-frames stay out of turf villages, where their grass roofs to the
+//   ground read as banks of earth.
 // roofs: how every roof shape leans, multiplying the weights styles give them (Gable,
 //   Hip, HalfHip, Saltbox, Gambrel, Conical, Flat, Shed). Round houses take cones,
 //   courtyard houses hips, A-frames steep gables, whatever was rolled, unless flat.
@@ -49,9 +51,10 @@
 //   worn, water, cloth, light, bell; `{wood}` the place's wood; any left out from the style),
 //   or one of your own as `blocks` from its middle. `spot` Square stands it at the heart
 //   of the square, the well beside it; Edge out by the end of a lane.
-// names: by biome (the first list whose tags it has, else the one with none), a first part
-//   and a last, or a hamlet's first part and a small word; now and then a prefix. Each in
-//   English and Japanese.
+// Names now come from the culture families (cultures.ron), which also lean the lists
+//   above to what each people builds. Every `lean` may name a lever (wealth, age, order,
+//   crowding, green) or a culture axis (piety, martial, trade, craft, festivity, outlook,
+//   hierarchy, lore).
 // kana: how Japanese names join where the English runs a consonant into a vowel: a first
 //   part ending in `kana` (and its English in `after`, if given) takes `into`'s kana for
 //   ア, イ, ウ, エ or オ opening the last part (Sab + ir is Sabir: サブ + イル, サビル).
@@ -61,6 +64,30 @@
 //   material list is weighed per settlement, which keeps a few of its options, and each
 //   house picks among those. `chimney`: what a chimney is built of, one block of the list
 //   all the way up (Review, 7 Oct: one stone per chimney, never a mix).
+// people: who lives there and how their days go (see crates/worldgen/src/settlements/
+//   people.rs). `jobs`: each building whose work or kind is `at` takes `count` of a
+//   species (by `chance`), living above the shop when it has room, else in the home
+//   nearest. `guards` by size, taking their `routines` in turn. `folk` fill the rest of
+//   every home by weight (`work` sends them to the nearest building of that work or kind,
+//   and they are drawn only where there is one; `alone: false` never the first in a
+//   home). `routines` cut the day into slots `until` a share of it (0 sunrise, 0.667
+//   sunset, 1 the next sunrise), each drawing one place a day among those the settlement
+//   has (Sleep, Home, Yard, Work, Square, Well, Inn, Shrine, Neighbour, Gate, Patrol,
+//   Wander), leaning on the levers. Each person's day runs early or late by up to
+//   `jitter`; they move to another spot of a place after `linger` seconds; a newcomer
+//   takes the place of someone who died after `newcomer` days (at least a quarter; the
+//   world's save keeps who died), and a settlement takes `newcomers_per_day` at most.
+//   `shrine`: the work or kind of building Shrine sends people to. `live`: how the server
+//   keeps them (blocks and seconds): alive within `active` of a player, gone past
+//   `release`, let go past `forget`; ways searched `margin` round the buildings, at most
+//   `search` cells a way and `search_per_tick` a tick, a way not found from one cell to
+//   another not searched again for `failed_for`; `stuck` without getting nearer, the way is found again, and with none,
+//   looked for again after `no_way_retry`; patrols stop `patrol_pause` at each stop.
+//   Guards within `help` of a villager struck come (looked for every `call_every`), find
+//   their way to the striker every `repath` and go straight at them within `handoff`; one
+//   that comes no nearer for `give_up` breaks off, heals and goes home for `calm`. `scale`:
+//   each person's size by their genes', from the first to the second; `spots`: how far from
+//   a place's middle they stand there.
 (
     grid: (spacing: 1024, chance: 0.45, margin: 160),
     // site: where a settlement stands (design wiki, settlements, draft 60).
@@ -81,6 +108,11 @@
     //     of them left past the treeless ring and glade_trees.1 more where it is green.
     //   eaves: crowns reaching past the ring are cut back over each building and this many
     //     blocks round it (0 to 8).
+    //   levels: gentler land first (biome levels, P15; design draft 95): up to biome level
+    //     levels.0 as likely as anywhere, levels.1 of that in harsher biomes. Above level 5,
+    //     not 3: the desert, jungle and mangrove villages (levels 4 and 5) carry chickpea,
+    //     rice and taro, and at 3 the nearest taro field moved from 7 to 25 squares out on
+    //     seed 42 (regional_crop_reach).
     site: (
         temperature: (-10.0, 36.0), mild: (0.0, 26.0), taper: 0.25,
         water: 48, bank: 3,
@@ -88,6 +120,7 @@
         height: (3, 90), relief: 14, reach: 48, firm: 24, caves: 150,
         step: 16, tries: 6, look: 6, creek: 4, score: (luck: 3.0, spread: 1.2, relief: 0.25, water: 3.0, height: 0.02),
         glade: (5, 16), glade_trees: (0.08, 0.1), eaves: 1,
+        levels: (5, 0.7),
     ),
     // rules: the rest of the numbers planning reads.
     //   spawn_settlement_within: a new player finds a settlement within this many blocks of
@@ -170,8 +203,8 @@
     furnishings: (
         torch: "torch", campfire: "campfire", table: "crafting_table", farmland: "farmland",
         water: "water", dirt: "dirt", planter: "herb_planter", anvil: "polished_basalt",
-        // altar: a stand-in until gameplay's base:stone_altar lands; chapels' altars then restore prayer.
-        barrel: "barrel", bell: "bell", altar: "polished_calcite",
+        // altar: chapels' and shrines' altars, which restore prayer (blocks tagged `altar`).
+        barrel: "barrel", bell: "bell", altar: "stone_altar",
         flowers: [Tag("flower", 1)],
         bushes: [Tag("bush", 1)],
         canopies: [Name("red_terracotta", 1), Name("orange_terracotta", 1), Name("yellow_terracotta", 1), Name("white_terracotta", 1), Name("light_blue_terracotta", 1), Name("cyan_terracotta", 1), Name("lime_terracotta", 1), Name("magenta_terracotta", 1), Name("pink_terracotta", 1), Name("green_terracotta", 1), Name("blue_terracotta", 1)],
@@ -184,6 +217,7 @@
         hanging: [Name("hanging_herbs", 1)],
         nets: [Name("fishing_net", 1)],
         sacks: [Name("sack", 1)],
+        crates: [Name("crate", 1)],
         cloth: [Name("white_terracotta", 4), Name("light_blue_terracotta", 1), Name("red_terracotta", 1), Name("yellow_terracotta", 1), Name("pink_terracotta", 1), Name("light_gray_terracotta", 1)],
     ),
     avoid: ["no_settlement", "ocean", "water", "river", "peaks", "ice", "frozen", "fantastical", "giant"],
@@ -200,7 +234,7 @@
             sometimes: [(Field, 0.6), (Pen, 0.45), (Woodyard, 0.35), (Orchard, 0.15), (Shrine, 0.1)],
         ),
         (
-            name: "village", weight: 1.0, lean: {"wealth": 0.4},
+            name: "village", weight: 1.0, lean: {"wealth": 0.4, "trade": 0.3},
             houses: (8, 16), workshops: (1, 4), works: ["shrine"], lanes: (4, 6), lane_length: (36, 72), square: (6, 9), centrepiece: 0.75, crop_level: 12,
             lane_half: 1.4, paving: (0.0, 0.55), well: (3, 4), lamps: 1.0,
             always: [Well, Trader, Inn, Smithy],
@@ -211,46 +245,46 @@
         // Lanes leave the square in every direction.
         (name: "spokes", shape: Spokes, weight: 3.0),
         // One long street through the square, short lanes off it.
-        (name: "street", shape: Line, weight: 2.0, lean: {"order": 0.6}),
+        (name: "street", shape: Line, weight: 2.0, lean: {"order": 0.6, "hierarchy": 0.4}),
         // Houses face a wide green, lanes lead out from its rim.
-        (name: "green", shape: Green, weight: 1.5, lean: {"order": 0.5, "green": 0.8}),
+        (name: "green", shape: Green, weight: 1.5, lean: {"order": 0.5, "green": 0.8, "festivity": 0.6}),
         // No square to speak of: houses wherever the paths wander.
-        (name: "scatter", shape: Scatter, weight: 1.5, lean: {"order": -0.9, "age": 0.5}),
+        (name: "scatter", shape: Scatter, weight: 1.5, lean: {"order": -0.9, "age": 0.5, "hierarchy": -0.5}),
         // A street that forks in two.
         (name: "fork", shape: Fork, weight: 1.5),
         // Four ways meeting square on at the well.
-        (name: "crossroads", shape: Crossroads, weight: 1.5, lean: {"order": 0.8}),
+        (name: "crossroads", shape: Crossroads, weight: 1.5, lean: {"order": 0.8, "trade": 0.6}),
         // A lane round the square, houses either side of it.
-        (name: "ring", shape: Ring, weight: 1.0, lean: {"order": 0.3, "crowding": 0.4}),
+        (name: "ring", shape: Ring, weight: 1.0, lean: {"order": 0.3, "crowding": 0.4, "martial": 0.4, "hierarchy": 0.4}),
         // A street along the bank of the water near, boathouses on the water side.
-        (name: "riverside", shape: Riverside, weight: 3.0, water: true),
+        (name: "riverside", shape: Riverside, weight: 3.0, lean: {"trade": 0.3}, water: true),
         // Streets along the slope, one above another.
         (name: "terraces", shape: Terraces, weight: 1.0, lean: {"age": 0.3}),
     ],
     houses: [
-        (name: "cottage", weight: 4.0, width: (5, 7), depth: (6, 8), walls: (3, 3), storeys: (1, 1)),
-        (name: "long_house", weight: 1.5, lean: {"age": 0.8, "wealth": -0.3}, width: (5, 6), depth: (10, 14), walls: (3, 3), storeys: (1, 1)),
-        (name: "town_house", weight: 1.5, lean: {"wealth": 0.6, "crowding": 0.8, "order": 0.3}, width: (5, 7), depth: (6, 8), walls: (3, 4), storeys: (2, 2)),
-        (name: "farm_house", weight: 1.5, lean: {"green": 0.6, "crowding": -0.8, "wealth": 0.3}, width: (7, 9), depth: (9, 11), walls: (3, 4), storeys: (1, 2), porch: 0.6),
-        (name: "hut", weight: 2.0, lean: {"wealth": -0.9, "age": 0.4}, width: (4, 5), depth: (4, 6), walls: (2, 3), storeys: (1, 1)),
-        (name: "tower_house", weight: 0.4, lean: {"order": -0.5, "age": 0.6}, width: (5, 6), depth: (5, 6), walls: (3, 4), storeys: (3, 3)),
-        (name: "hall", weight: 0.6, lean: {"wealth": 1.0}, width: (8, 10), depth: (11, 14), walls: (4, 5), storeys: (1, 1), porch: 0.4),
-        (name: "wing_house", weight: 1.0, lean: {"wealth": 0.6}, width: (6, 8), depth: (7, 9), walls: (3, 3), storeys: (1, 2), wing: 1.0),
+        (name: "cottage", weight: 4.0, width: (5, 7), depth: (6, 8), walls: (3, 3), storeys: (1, 1), people: (1, 2)),
+        (name: "long_house", weight: 1.5, lean: {"age": 0.8, "wealth": -0.3, "hierarchy": -0.3}, width: (5, 6), depth: (10, 14), walls: (3, 3), storeys: (1, 1), people: (1, 3)),
+        (name: "town_house", weight: 1.5, lean: {"wealth": 0.6, "crowding": 0.8, "order": 0.3, "trade": 0.3}, width: (5, 7), depth: (6, 8), walls: (3, 4), storeys: (2, 2), people: (1, 3)),
+        (name: "farm_house", weight: 1.5, lean: {"green": 0.6, "crowding": -0.8, "wealth": 0.3}, width: (7, 9), depth: (9, 11), walls: (3, 4), storeys: (1, 2), porch: 0.6, people: (1, 3)),
+        (name: "hut", weight: 2.0, lean: {"wealth": -0.9, "age": 0.4}, width: (4, 5), depth: (4, 6), walls: (2, 3), storeys: (1, 1), people: (1, 1)),
+        (name: "tower_house", weight: 0.4, lean: {"order": -0.5, "age": 0.6, "martial": 0.8}, width: (5, 6), depth: (5, 6), walls: (3, 4), storeys: (3, 3), people: (1, 2)),
+        (name: "hall", weight: 0.6, lean: {"wealth": 1.0, "hierarchy": 0.8}, width: (8, 10), depth: (11, 14), walls: (4, 5), storeys: (1, 1), porch: 0.4, people: (2, 4)),
+        (name: "wing_house", weight: 1.0, lean: {"wealth": 0.6, "hierarchy": 0.3}, width: (6, 8), depth: (7, 9), walls: (3, 3), storeys: (1, 2), wing: 1.0, people: (1, 3)),
         // New outlines.
-        (name: "roundhouse", form: Round, weight: 1.0, lean: {"age": 0.6, "wealth": -0.4, "order": -0.5}, width: (7, 9), depth: (7, 9), walls: (3, 3), storeys: (1, 1)),
-        (name: "a_frame", form: AFrame, always: [Chimney], not_in: ["turf_house"], weight: 0.8, lean: {"green": 0.6, "wealth": -0.2}, width: (5, 7), depth: (6, 9), walls: (3, 3), storeys: (1, 1)),
-        (name: "courtyard_house", form: Courtyard, sizes: ["village"], weight: 0.35, lean: {"wealth": 1.0, "crowding": -0.5}, width: (11, 12), depth: (11, 13), walls: (3, 3), storeys: (1, 1)),
-        (name: "shop_house", form: ShopFront, sizes: ["village"], weight: 0.8, lean: {"wealth": 0.5, "crowding": 0.8}, width: (5, 7), depth: (6, 8), walls: (3, 4), storeys: (2, 2)),
+        (name: "roundhouse", form: Round, weight: 1.0, lean: {"age": 0.6, "wealth": -0.4, "order": -0.5, "outlook": -0.3, "lore": 0.3}, width: (7, 9), depth: (7, 9), walls: (3, 3), storeys: (1, 1), people: (1, 3)),
+        (name: "a_frame", form: AFrame, always: [Chimney], not_in: ["turf_house"], weight: 0.8, lean: {"green": 0.6, "wealth": -0.2}, width: (5, 7), depth: (6, 9), walls: (3, 3), storeys: (1, 1), people: (1, 1)),
+        (name: "courtyard_house", form: Courtyard, sizes: ["village"], weight: 0.35, lean: {"wealth": 1.0, "crowding": -0.5, "hierarchy": 0.5}, width: (11, 12), depth: (11, 13), walls: (3, 3), storeys: (1, 1), people: (2, 4)),
+        (name: "shop_house", form: ShopFront, sizes: ["village"], weight: 0.8, lean: {"wealth": 0.5, "crowding": 0.8, "trade": 1.0}, width: (5, 7), depth: (6, 8), walls: (3, 4), storeys: (2, 2), people: (1, 2)),
         // Working buildings, one of each to a place (barns two); `work` names the trade.
-        (name: "bakery", work: "bakery", sizes: ["village"], inside: [Oven, Counter], always: [Chimney], most: 1, weight: 0.8, lean: {"wealth": 0.3, "crowding": 0.4}, width: (5, 7), depth: (6, 8), walls: (3, 3), storeys: (1, 1)),
-        (name: "mill", work: "mill", sizes: ["village"], inside: [Millstone, Bins], always: [Weathervane], most: 1, weight: 0.6, lean: {"green": 0.5}, width: (6, 8), depth: (6, 8), walls: (4, 5), storeys: (1, 1)),
-        (name: "tannery", work: "tannery", sizes: ["village"], inside: [Vats, Racks], most: 1, weight: 0.6, lean: {"wealth": -0.4, "age": 0.3}, width: (6, 8), depth: (7, 9), walls: (3, 3), storeys: (1, 1), roofs: [(Gable, 2), (Shed, 1)]),
-        (name: "barn", work: "barn", inside: [Stalls], most: 2, weight: 0.8, lean: {"green": 0.8, "crowding": -0.8}, width: (8, 10), depth: (10, 14), walls: (4, 5), storeys: (1, 1), roofs: [(Gambrel, 4), (Gable, 2)]),
-        (name: "granary", work: "granary", inside: [Bins], stilts: 1, most: 1, weight: 0.6, lean: {"wealth": 0.3, "green": 0.5}, width: (5, 6), depth: (5, 7), walls: (3, 3), storeys: (1, 1), roofs: [(Hip, 2), (Gable, 2)]),
-        (name: "smokehouse", work: "smokehouse", inside: [Smoke, Racks], most: 1, weight: 0.5, lean: {"age": 0.4}, width: (5, 6), depth: (5, 6), walls: (3, 3), storeys: (1, 1), roofs: [(Gable, 2), (Shed, 1)]),
+        (name: "bakery", work: "bakery", sizes: ["village"], inside: [Oven, Counter], always: [Chimney], most: 1, weight: 0.8, lean: {"wealth": 0.3, "crowding": 0.4, "craft": 0.4}, width: (5, 7), depth: (6, 8), walls: (3, 3), storeys: (1, 1), people: (0, 1)),
+        (name: "mill", work: "mill", sizes: ["village"], inside: [Millstone, Bins], always: [Weathervane], most: 1, weight: 0.6, lean: {"green": 0.5, "craft": 0.5}, width: (6, 8), depth: (6, 8), walls: (4, 5), storeys: (1, 1), people: (0, 1)),
+        (name: "tannery", work: "tannery", sizes: ["village"], inside: [Vats, Racks], most: 1, weight: 0.6, lean: {"wealth": -0.4, "age": 0.3, "craft": 0.6}, width: (6, 8), depth: (7, 9), walls: (3, 3), storeys: (1, 1), roofs: [(Gable, 2), (Shed, 1)], people: (0, 0)),
+        (name: "barn", work: "barn", inside: [Stalls], most: 2, weight: 0.8, lean: {"green": 0.8, "crowding": -0.8}, width: (8, 10), depth: (10, 14), walls: (4, 5), storeys: (1, 1), roofs: [(Gambrel, 4), (Gable, 2)], people: (0, 0)),
+        (name: "granary", work: "granary", inside: [Bins], stilts: 1, most: 1, weight: 0.6, lean: {"wealth": 0.3, "green": 0.5, "trade": 0.2}, width: (5, 6), depth: (5, 7), walls: (3, 3), storeys: (1, 1), roofs: [(Hip, 2), (Gable, 2)], people: (0, 0)),
+        (name: "smokehouse", work: "smokehouse", inside: [Smoke, Racks], most: 1, weight: 0.5, lean: {"age": 0.4, "craft": 0.3}, width: (5, 6), depth: (5, 6), walls: (3, 3), storeys: (1, 1), roofs: [(Gable, 2), (Shed, 1)], people: (0, 0)),
         // The altar here will restore prayer.
-        (name: "chapel", work: "shrine", inside: [Altar, Pews], always: [Weathervane], sizes: ["village"], most: 1, weight: 0.7, lean: {"order": 0.5, "wealth": 0.4}, width: (7, 7), depth: (9, 12), walls: (4, 5), storeys: (1, 1), roofs: [(Gable, 4), (HalfHip, 1)]),
-        (name: "boathouse", work: "boathouse", inside: [Boat], water: true, most: 1, weight: 1.5, width: (6, 7), depth: (8, 10), walls: (3, 3), storeys: (1, 1), roofs: [(Gable, 3), (Shed, 1)]),
+        (name: "chapel", work: "shrine", inside: [Altar, Pews], always: [Weathervane], sizes: ["village"], most: 1, weight: 0.7, lean: {"order": 0.5, "wealth": 0.4, "piety": 1.0}, width: (7, 7), depth: (9, 12), walls: (4, 5), storeys: (1, 1), roofs: [(Gable, 4), (HalfHip, 1)], people: (0, 1)),
+        (name: "boathouse", work: "boathouse", inside: [Boat], water: true, most: 1, weight: 1.5, lean: {"outlook": 0.4, "trade": 0.3}, width: (6, 7), depth: (8, 10), walls: (3, 3), storeys: (1, 1), roofs: [(Gable, 3), (Shed, 1)], people: (0, 0)),
     ],
     roofs: [
         (shape: Gable, weight: 1.0),
@@ -270,149 +304,68 @@
         (name: FlowerBoxes, chance: 0.3, lean: {"green": 0.8, "wealth": 0.3}),
         (name: Garden, chance: 0.35, lean: {"green": 0.9, "crowding": -0.7}),
         (name: Hedge, chance: 0.2, lean: {"green": 0.7, "order": 0.5}),
-        (name: Lamp, chance: 0.6, lean: {"wealth": 0.6}),
+        (name: Lamp, chance: 0.6, lean: {"wealth": 0.6, "festivity": 0.4}),
         (name: Woodpile, chance: 0.35, lean: {"wealth": -0.3, "age": 0.3}),
         (name: Moss, chance: 0.3, lean: {"age": 1.0}),
         (name: Wing, chance: 0.1, lean: {"wealth": 0.5}),
         (name: Dormer, chance: 0.25, lean: {"wealth": 0.5, "order": 0.3}),
-        (name: Balcony, chance: 0.2, lean: {"wealth": 0.6, "crowding": 0.5}),
+        (name: Balcony, chance: 0.2, lean: {"wealth": 0.6, "crowding": 0.5, "festivity": 0.3}),
         (name: OutsideStair, chance: 0.15, lean: {"crowding": -0.3, "age": 0.3}),
-        (name: Shutters, chance: 0.3, lean: {"order": 0.6, "wealth": 0.3}),
-        (name: Awning, chance: 0.12, lean: {"wealth": 0.5, "crowding": 0.6}),
-        (name: SignBoard, chance: 0.1, lean: {"wealth": 0.4}),
+        (name: Shutters, chance: 0.3, lean: {"order": 0.6, "wealth": 0.3, "hierarchy": 0.2}),
+        (name: Awning, chance: 0.12, lean: {"wealth": 0.5, "crowding": 0.6, "trade": 0.8}),
+        (name: SignBoard, chance: 0.1, lean: {"wealth": 0.4, "trade": 0.8}),
         (name: RainBarrel, chance: 0.25, lean: {"green": 0.3}),
-        (name: Weathervane, chance: 0.12, lean: {"wealth": 0.5, "age": 0.3}),
+        (name: Weathervane, chance: 0.12, lean: {"wealth": 0.5, "age": 0.3, "craft": 0.4}),
         (name: Dovecote, chance: 0.08, lean: {"green": 0.5, "wealth": 0.3}),
         (name: HangingHerbs, chance: 0.18, lean: {"green": 0.7, "wealth": -0.2}),
     ],
     props: [
         (name: "Woodpile", weight: 2.0, lean: {"wealth": -0.2}),
-        (name: "Crates", weight: 1.5, lean: {"wealth": 0.5}),
+        (name: "Crates", weight: 1.5, lean: {"wealth": 0.5, "trade": 0.8}),
         (name: "StonePile", weight: 1.0, lean: {"age": 0.6}),
-        (name: "FlowerBed", weight: 1.5, lean: {"green": 1.0}),
-        (name: "HerbPlanter", weight: 1.0, lean: {"green": 0.4, "wealth": 0.3}),
-        (name: "Campfire", weight: 0.8, lean: {"wealth": -0.6, "order": -0.4}),
-        (name: "Lamp", weight: 2.0, lean: {"wealth": 0.8, "order": 0.5}),
+        (name: "FlowerBed", weight: 1.5, lean: {"green": 1.0, "festivity": 0.5}),
+        (name: "HerbPlanter", weight: 1.0, lean: {"green": 0.4, "wealth": 0.3, "lore": 0.3}),
+        (name: "Campfire", weight: 0.8, lean: {"wealth": -0.6, "order": -0.4, "festivity": 0.3}),
+        (name: "Lamp", weight: 2.0, lean: {"wealth": 0.8, "order": 0.5, "festivity": 0.5}),
         (name: "Bush", weight: 1.2, lean: {"green": 0.8, "order": -0.3}),
         (name: "Compost", weight: 0.8, lean: {"green": 0.4}),
         (name: "Boulder", weight: 0.6, lean: {"order": -0.8}),
-        (name: "Cart", weight: 0.8, lean: {"wealth": 0.2, "order": -0.2}),
-        (name: "Barrel", weight: 1.5, lean: {"wealth": 0.3}),
+        (name: "Cart", weight: 0.8, lean: {"wealth": 0.2, "order": -0.2, "trade": 0.6}),
+        (name: "Barrel", weight: 1.5, lean: {"wealth": 0.3, "trade": 0.3}),
         (name: "HayBale", weight: 1.0, lean: {"green": 0.6, "crowding": -0.5}),
         (name: "LaundryLine", weight: 0.7, lean: {"crowding": 0.5}),
         (name: "FenceRun", weight: 1.0, lean: {"order": 0.5, "green": 0.4}),
-        (name: "Scarecrow", weight: 0.4, lean: {"green": 0.8, "crowding": -0.8}),
-        (name: "Skep", weight: 0.5, lean: {"green": 1.0}),
-        (name: "Anvil", weight: 0.25, lean: {"wealth": -0.2}),
-        (name: "Grindstone", weight: 0.4),
-        (name: "Washtub", weight: 0.5, lean: {"crowding": 0.3}),
-        (name: "Sacks", weight: 0.8, lean: {"wealth": 0.3}),
+        (name: "Scarecrow", weight: 0.4, lean: {"green": 0.8, "crowding": -0.8, "lore": 0.2}),
+        (name: "Skep", weight: 0.5, lean: {"green": 1.0, "craft": 0.3}),
+        (name: "Anvil", weight: 0.25, lean: {"wealth": -0.2, "craft": 1.0, "martial": 0.3}),
+        (name: "Grindstone", weight: 0.4, lean: {"craft": 0.8, "martial": 0.5}),
+        (name: "Washtub", weight: 0.5, lean: {"crowding": 0.3, "craft": 0.2}),
+        (name: "Sacks", weight: 0.8, lean: {"wealth": 0.3, "trade": 0.8}),
         (name: "ChickenCoop", weight: 0.6, lean: {"green": 0.6, "crowding": -0.6}),
-        (name: "Signpost", weight: 0.4, lean: {"order": 0.6}),
+        (name: "Signpost", weight: 0.4, lean: {"order": 0.6, "trade": 0.5, "outlook": 0.5}),
         // On the bank of the water near.
-        (name: "Boat", weight: 1.0, water: true),
-        (name: "Nets", weight: 1.0, water: true, lean: {"wealth": -0.3}),
+        (name: "Boat", weight: 1.0, lean: {"outlook": 0.5}, water: true),
+        (name: "Nets", weight: 1.0, water: true, lean: {"wealth": -0.3, "craft": 0.3}),
         // Props of their own: blocks from the spot, y 1 on the ground.
-        (name: "log_bench", weight: 0.8, lean: {"order": 0.4}, blocks: [((0, 1, 0), "stripped_oak_log"), ((1, 1, 0), "stripped_oak_log")]),
-        (name: "stone_cairn", weight: 0.4, lean: {"age": 1.0, "order": -0.4}, blocks: [((0, 1, 0), "cobblestone"), ((0, 2, 0), "mossy_cobblestone"), ((0, 3, 0), "cobblestone")]),
-        (name: "drying_rack", weight: 0.5, lean: {"wealth": -0.4, "green": 0.3}, blocks: [((0, 1, 0), "spruce_log"), ((0, 2, 0), "spruce_log"), ((2, 1, 0), "spruce_log"), ((2, 2, 0), "spruce_log"), ((1, 2, 0), "spruce_planks")]),
+        (name: "log_bench", weight: 0.8, lean: {"order": 0.4, "festivity": 0.4}, blocks: [((0, 1, 0), "stripped_oak_log"), ((1, 1, 0), "stripped_oak_log")]),
+        (name: "stone_cairn", weight: 0.4, lean: {"age": 1.0, "order": -0.4, "lore": 0.7, "piety": 0.3}, blocks: [((0, 1, 0), "cobblestone"), ((0, 2, 0), "mossy_cobblestone"), ((0, 3, 0), "cobblestone")]),
+        (name: "drying_rack", weight: 0.5, lean: {"wealth": -0.4, "green": 0.3, "craft": 0.4}, blocks: [((0, 1, 0), "spruce_log"), ((0, 2, 0), "spruce_log"), ((2, 1, 0), "spruce_log"), ((2, 2, 0), "spruce_log"), ((1, 2, 0), "spruce_planks")]),
         (name: "trough", weight: 0.5, lean: {"green": 0.4}, blocks: [((0, 1, 0), "oak_planks"), ((1, 1, 0), "water"), ((2, 1, 0), "oak_planks")]),
-        (name: "stacked_stone", weight: 0.5, lean: {"wealth": 0.3, "order": 0.5}, blocks: [((0, 1, 0), "stone_bricks"), ((1, 1, 0), "stone_bricks"), ((0, 2, 0), "stone_bricks")]),
+        (name: "stacked_stone", weight: 0.5, lean: {"wealth": 0.3, "order": 0.5, "craft": 0.4, "martial": 0.2}, blocks: [((0, 1, 0), "stone_bricks"), ((1, 1, 0), "stone_bricks"), ((0, 2, 0), "stone_bricks")]),
     ],
     centrepieces: [
-        (name: "GreatTree", weight: 2.0, lean: {"green": 1.0, "age": 0.5}, parts: {"leaves": "{wood}_leaves"}),
-        (name: "StoneCircle", spot: Edge, weight: 1.0, lean: {"age": 1.0, "order": -0.3}, parts: {"stone": "stone", "worn": "mossy_cobblestone"}),
-        (name: "WatchtowerRuin", spot: Edge, weight: 0.8, lean: {"age": 1.0, "wealth": -0.3}),
-        (name: "Windmill", spot: Edge, weight: 1.2, lean: {"wealth": 0.5, "green": 0.4}),
-        (name: "BellFrame", weight: 1.0, lean: {"order": 0.6, "wealth": 0.3}),
-        (name: "FallenStatue", weight: 0.6, lean: {"age": 1.0, "wealth": 0.3}, parts: {"stone": "polished_calcite", "worn": "calcite"}),
-        (name: "Maypole", weight: 1.0, lean: {"green": 0.6, "age": -0.3}, parts: {"leaves": "{wood}_leaves"}),
-        (name: "MarketCross", weight: 1.0, lean: {"wealth": 0.8, "order": 0.5}),
-        (name: "Fountain", weight: 0.8, lean: {"wealth": 1.0, "order": 0.6}),
-        (name: "Beacon", spot: Edge, weight: 0.6, lean: {"age": 0.4, "order": -0.2}),
-        (name: "StandingStone", weight: 0.8, lean: {"age": 0.8}),
-        (name: "DuckPond", weight: 1.0, lean: {"green": 0.8, "crowding": -0.5}),
-    ],
-    // Names: a first part and a last part, each with its Japanese reading, by the biome's
-    // tags (the first list whose tags match; an empty list matches anywhere). Hamlets
-    // sometimes take a small word ("End", "Cross") instead of a last part, and now and
-    // then a name takes a word before it, leaning on the levers ("Old" where it is old).
-    names: [
-        (
-            biome: ["desert", "dunes", "mesa", "savanna", "scrubland"],
-            first: [("Sab", "サブ"), ("Kar", "カル"), ("Ama", "アマ"), ("Zir", "ジル"), ("Tal", "タル"), ("Oas", "オアス"), ("Ham", "ハム"), ("Dal", "ダル"), ("Mer", "メル"), ("Sur", "スル"), ("Ras", "ラス"), ("Nub", "ヌブ"), ("Kes", "ケス"), ("Yar", "ヤル"), ("Qad", "カド"), ("Bah", "バハ"), ("Jem", "ジェム"), ("Saf", "サフ"), ("Tam", "タム"), ("Azz", "アッズ"), ("Mal", "マル"), ("Har", "ハル"), ("Zab", "ザブ"), ("Imr", "イムル"), ("Wad", "ワド"), ("Sel", "セル"), ("Kufr", "クフル"), ("Num", "ヌム"), ("Ebb", "エッブ"), ("Ush", "ウシュ"), ("Nar", "ナル"), ("Tir", "ティル"), ("Baz", "バズ"), ("Fas", "ファス")],
-            last: [("ah", "ア"), ("ir", "イル"), ("um", "ウム"), ("esh", "エシュ"), ("ara", "アラ"), ("oun", "ウン"), ("ad", "アド"), ("is", "イス"), ("an", "アン"), ("eth", "エス"), ("abad", "アバド"), ("iya", "イヤ"), ("oum", "ウーム"), ("assa", "アッサ"), ("ek", "エク"), ("ul", "ウル"), ("ina", "イナ"), ("ar", "アル"), ("aya", "アヤ"), ("ez", "エズ")],
-            small: [("Well", "ウェル"), ("Rest", "レスト"), ("Palms", "パームズ"), ("Spring", "スプリング"), ("Gate", "ゲート"), ("Shade", "シェード")],
-            prefixes: [
-                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
-                (en: "New", ja: "ニュー", weight: 0.5, lean: {"age": -1.0}),
-                (en: "Upper", ja: "アッパー", weight: 0.5),
-                (en: "Lower", ja: "ロウアー", weight: 0.5),
-                (en: "Red", ja: "レッド", weight: 0.4),
-                (en: "Dry", ja: "ドライ", weight: 0.4, lean: {"green": -1.0}),
-            ],
-        ),
-        (
-            biome: ["jungle", "tropical"],
-            first: [("Ma", "マ"), ("Ta", "タ"), ("Ka", "カ"), ("Lu", "ル"), ("Nai", "ナイ"), ("Ro", "ロ"), ("Hi", "ヒ"), ("Pa", "パ"), ("Wai", "ワイ"), ("Ko", "コ"), ("Mo", "モ"), ("Te", "テ"), ("Ala", "アラ"), ("Uku", "ウク"), ("Ewa", "エワ"), ("Oli", "オリ"), ("Ri", "リ"), ("Sa", "サ"), ("Nu", "ヌ"), ("Ho", "ホ")],
-            last: [("lani", "ラニ"), ("koa", "コア"), ("mau", "マウ"), ("nui", "ヌイ"), ("rua", "ルア"), ("tai", "タイ"), ("vale", "ヴァレ"), ("moa", "モア"), ("kai", "カイ"), ("pono", "ポノ"), ("ana", "アナ"), ("hiva", "ヒヴァ"), ("roa", "ロア"), ("lua", "ルア")],
-            small: [("Landing", "ランディング"), ("Grove", "グローヴ"), ("Falls", "フォールズ")],
-            prefixes: [
-                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
-                (en: "Deep", ja: "ディープ", weight: 0.6, lean: {"green": 1.0}),
-            ],
-        ),
-        (
-            biome: ["heath", "highland", "rocky", "mountain", "alpine", "erratics"],
-            first: [("Ben", "ベン"), ("Dun", "ダン"), ("Glen", "グレン"), ("Kil", "キル"), ("Inver", "インヴァー"), ("Strath", "ストラス"), ("Bal", "バル"), ("Auch", "オーク"), ("Craig", "クレイグ"), ("Ard", "アード"), ("Tor", "トル"), ("Pen", "ペン"), ("Lan", "ラン"), ("Cul", "カル"), ("Dal", "ダル"), ("Kin", "キン"), ("Aber", "アバー"), ("Drum", "ドラム"), ("Carn", "カーン"), ("Moy", "モイ"), ("Ross", "ロス"), ("Brae", "ブレイ"), ("Lochan", "ロッホン"), ("Fin", "フィン"), ("Mor", "モー")],
-            last: [("more", "モア"), ("ach", "アック"), ("lie", "リー"), ("nie", "ニー"), ("gorm", "ゴーム"), ("ross", "ロス"), ("ock", "オック"), ("try", "トリー"), ("van", "ヴァン"), ("allan", "アラン"), ("ness", "ネス"), ("fell", "フェル"), ("ton", "トン"), ("garry", "ギャリー"), ("rig", "リグ"), ("eagh", "イー")],
-            small: [("Cairn", "ケアン"), ("Brae", "ブレイ"), ("Crag", "クラグ"), ("Bothy", "ボシー"), ("Shiel", "シール")],
-            prefixes: [
-                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
-                (en: "High", ja: "ハイ", weight: 0.8),
-                (en: "Little", ja: "リトル", weight: 0.5, lean: {"crowding": -1.0}),
-                (en: "Grey", ja: "グレイ", weight: 0.5),
-            ],
-        ),
-        (
-            biome: ["tundra", "conifer", "cold", "snow", "taiga", "frozen"],
-            first: [("Frost", "フロスト"), ("Kald", "カルド"), ("Rav", "ラヴ"), ("Stor", "ストル"), ("Hjal", "ヤル"), ("Grim", "グリム"), ("Ulf", "ウルフ"), ("Bjorn", "ビョルン"), ("Ask", "アスク"), ("Tor", "トル"), ("Skal", "スカル"), ("Hed", "ヘド"), ("Ring", "リング"), ("Ny", "ニュー"), ("Elg", "エルグ"), ("Vind", "ヴィンド"), ("Sva", "スヴァ"), ("Hval", "ヴァル"), ("Lind", "リンド"), ("Bir", "ビル"), ("Gran", "グラン"), ("Haf", "ハフ"), ("Sol", "ソル"), ("Rune", "ルーネ"), ("Varg", "ヴァルグ"), ("Ise", "イーセ"), ("Kvit", "クヴィト"), ("Ormr", "オルム"), ("Fjal", "フィヤル"), ("Thor", "トール"), ("Ey", "エイ"), ("Alf", "アルフ")],
-            last: [("vik", "ヴィク"), ("heim", "ヘイム"), ("by", "ビー"), ("stad", "スタッド"), ("dal", "ダル"), ("ness", "ネス"), ("garth", "ガース"), ("thwaite", "スウェイト"), ("fell", "フェル"), ("sund", "スンド"), ("vang", "ヴァング"), ("holm", "ホルム"), ("bo", "ボー"), ("set", "セット"), ("fjord", "フィヨルド"), ("rud", "ルド"), ("lund", "ルンド"), ("berg", "ベルグ"), ("toft", "トフト"), ("hus", "フース")],
-            small: [("Holt", "ホルト"), ("Stead", "ステッド"), ("Cairn", "ケアン"), ("Hearth", "ハース"), ("Lodge", "ロッジ")],
-            prefixes: [
-                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
-                (en: "North", ja: "ノース", weight: 0.6),
-                (en: "White", ja: "ホワイト", weight: 0.4),
-                (en: "Little", ja: "リトル", weight: 0.5, lean: {"crowding": -1.0}),
-            ],
-        ),
-        (
-            biome: ["wetland"],
-            first: [("Fen", "フェン"), ("Mire", "マイア"), ("Reed", "リード"), ("Sedge", "セッジ"), ("Wil", "ウィル"), ("Bog", "ボグ"), ("Carr", "カー"), ("Rush", "ラッシュ"), ("Eel", "イール"), ("Mud", "マッド"), ("Heron", "ヘロン"), ("Teal", "ティール"), ("Moss", "モス"), ("Alder", "オルダー"), ("Wad", "ワッド"), ("Marsh", "マーシュ"), ("Pool", "プール"), ("Flag", "フラッグ"), ("Withy", "ウィジー"), ("Snipe", "スナイプ"), ("Otter", "オッター"), ("Brack", "ブラック")],
-            last: [("wick", "ウィック"), ("moor", "ムーア"), ("ey", "イー"), ("well", "ウェル"), ("holm", "ホルム"), ("water", "ウォーター"), ("ford", "フォード"), ("mere", "ミア"), ("fleet", "フリート"), ("lode", "ロード"), ("stow", "ストウ"), ("staithe", "ステイズ"), ("hythe", "ハイズ"), ("ings", "イングス")],
-            small: [("Stilts", "スティルツ"), ("Landing", "ランディング"), ("Staithe", "ステイズ"), ("Causeway", "コーズウェイ")],
-            prefixes: [
-                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
-                (en: "Low", ja: "ロウ", weight: 0.7),
-                (en: "Black", ja: "ブラック", weight: 0.4),
-            ],
-        ),
-        (
-            biome: [],
-            first: [("Ash", "アッシュ"), ("Oak", "オーク"), ("Bram", "ブラム"), ("Hollin", "ホリン"), ("Thorn", "ソーン"), ("Mill", "ミル"), ("Wen", "ウェン"), ("Elm", "エルム"), ("Ald", "オルド"), ("Haw", "ホー"), ("Brook", "ブルック"), ("Wyn", "ウィン"), ("Lark", "ラーク"), ("Fern", "ファーン"), ("Barrow", "バロウ"), ("Copp", "コップ"), ("Har", "ハー"), ("Stan", "スタン"), ("Wych", "ウィッチ"), ("Lin", "リン"), ("Mar", "マー"), ("Cran", "クラン"), ("Bly", "ブライ"), ("Cherry", "チェリー"), ("Wood", "ウッド"), ("Red", "レッド"), ("Kings", "キングス"), ("Bourne", "ボーン"), ("Ox", "オックス"), ("Pidd", "ピッド"), ("Sel", "セル"), ("Tun", "タン"), ("Wil", "ウィル"), ("Pen", "ペン"), ("Brad", "ブラッド"), ("Chal", "チャル"), ("Ather", "アザー"), ("Hen", "ヘン"), ("Rook", "ルック"), ("Swan", "スワン"), ("Apple", "アップル"), ("Hazel", "ヘーゼル"), ("Bell", "ベル"), ("Clay", "クレイ"), ("Dun", "ダン"), ("Lang", "ラング"), ("Tad", "タッド")],
-            last: [("ford", "フォード"), ("ley", "リー"), ("ton", "トン"), ("ham", "ハム"), ("wick", "ウィック"), ("field", "フィールド"), ("bury", "ベリー"), ("worth", "ワース"), ("stead", "ステッド"), ("brook", "ブルック"), ("well", "ウェル"), ("hurst", "ハースト"), ("combe", "クーム"), ("dale", "デール"), ("thorpe", "ソープ"), ("cote", "コート"), ("den", "デン"), ("ridge", "リッジ"), ("bridge", "ブリッジ"), ("wold", "ウォルド"), ("shaw", "ショー"), ("hope", "ホープ"), ("minster", "ミンスター"), ("ing", "イング"), ("lock", "ロック"), ("sted", "ステッド"), ("over", "オーヴァー"), ("church", "チャーチ")],
-            small: [("End", "エンド"), ("Green", "グリーン"), ("Cross", "クロス"), ("Hollow", "ホロウ"), ("Row", "ロウ"), ("Corner", "コーナー"), ("Bottom", "ボトム"), ("Hill", "ヒル")],
-            prefixes: [
-                (en: "Old", ja: "オールド", weight: 1.0, lean: {"age": 1.0}),
-                (en: "New", ja: "ニュー", weight: 0.6, lean: {"age": -1.0}),
-                (en: "Great", ja: "グレート", weight: 0.5, lean: {"wealth": 1.0, "crowding": 0.5}),
-                (en: "Little", ja: "リトル", weight: 0.6, lean: {"crowding": -1.0}),
-                (en: "Upper", ja: "アッパー", weight: 0.4),
-                (en: "Lower", ja: "ロウアー", weight: 0.3),
-                (en: "Long", ja: "ロング", weight: 0.3, lean: {"order": 1.0}),
-                (en: "Green", ja: "グリーン", weight: 0.3, lean: {"green": 1.0}),
-            ],
-        ),
+        (name: "GreatTree", weight: 2.0, lean: {"green": 1.0, "age": 0.5, "piety": 0.3, "lore": 0.3}, parts: {"leaves": "{wood}_leaves"}),
+        (name: "StoneCircle", spot: Edge, weight: 1.0, lean: {"age": 1.0, "order": -0.3, "lore": 1.0, "piety": 0.5}, parts: {"stone": "stone", "worn": "mossy_cobblestone"}),
+        (name: "WatchtowerRuin", spot: Edge, weight: 0.8, lean: {"age": 1.0, "wealth": -0.3, "martial": 0.8, "lore": 0.4}),
+        (name: "Windmill", spot: Edge, weight: 1.2, lean: {"wealth": 0.5, "green": 0.4, "craft": 0.6}),
+        (name: "BellFrame", weight: 1.0, lean: {"order": 0.6, "wealth": 0.3, "piety": 1.0}),
+        (name: "FallenStatue", weight: 0.6, lean: {"age": 1.0, "wealth": 0.3, "lore": 0.8}, parts: {"stone": "polished_calcite", "worn": "calcite"}),
+        (name: "Maypole", weight: 1.0, lean: {"green": 0.6, "age": -0.3, "festivity": 1.0}, parts: {"leaves": "{wood}_leaves"}),
+        (name: "MarketCross", weight: 1.0, lean: {"wealth": 0.8, "order": 0.5, "trade": 1.0}),
+        (name: "Fountain", weight: 0.8, lean: {"wealth": 1.0, "order": 0.6, "festivity": 0.5, "trade": 0.3}),
+        (name: "Beacon", spot: Edge, weight: 0.6, lean: {"age": 0.4, "order": -0.2, "martial": 0.8}),
+        (name: "StandingStone", weight: 0.8, lean: {"age": 0.8, "lore": 0.8, "piety": 0.5}),
+        (name: "DuckPond", weight: 1.0, lean: {"green": 0.8, "crowding": -0.5, "festivity": 0.3}),
     ],
     kana: [
         (kana: "ブ", into: ("バ", "ビ", "ブ", "ベ", "ボ")),
@@ -421,6 +374,7 @@
         (kana: "ン", into: ("ナ", "ニ", "ヌ", "ネ", "ノ")),
         (kana: "ド", into: ("ダ", "ディ", "ドゥ", "デ", "ド")),
         (kana: "ト", into: ("タ", "ティ", "トゥ", "テ", "ト")),
+        (kana: "ツ", into: ("ツァ", "ツィ", "ツ", "ツェ", "ツォ")),
         (kana: "ム", into: ("マ", "ミ", "ム", "メ", "モ")),
         (kana: "ス", into: ("サ", "シ", "ス", "セ", "ソ")),
         (kana: "ズ", into: ("ザ", "ジ", "ズ", "ゼ", "ゾ")),
@@ -656,4 +610,154 @@
             weathered: [Name("mossy_cobblestone", 3), Name("cracked_stone_bricks", 1), Name("mossy_stone_bricks", 1)],
         ),
     ],
+    people: (
+        jitter: 0.03,
+        linger: (12.0, 50.0),
+        newcomer: 5.0,
+        newcomers_per_day: 1.0,
+        shrine: "shrine",
+        live: (
+            // A people reserve independent of wild/kept animals; large places stay bounded.
+            most: 512, per_settlement: 48, nearby: 96.0,
+            active: 112.0, release: 160.0, forget: 2000.0,
+            margin: 12, scan_pad: 256, scan_every: 2.0, errand_every: 0.5,
+            search: 8000, search_per_tick: 20000, failed_for: 10.0,
+            stuck: 6.0, no_way_retry: 10.0, patrol_pause: 3.0, repath: 2.0,
+            help: 40.0, call_every: 0.25, give_up: 8.0, calm: 60.0, handoff: 4.0,
+            scale: (0.94, 1.06),
+            spots: (yard: 3, square: 6, gate: 2, patrol_square: 4, patrol_gate: 2, wander: 1, neighbour: 1),
+        ),
+        jobs: [
+            (at: "bakery", species: "baker", count: (1, 2), routine: "worker", lean: {"crowding": 0.5}),
+            (at: "mill", species: "miller", count: (1, 1), routine: "worker"),
+            (at: "tannery", species: "tanner", count: (1, 2), routine: "worker", lean: {"wealth": -0.4}),
+            (at: "barn", species: "herder", count: (1, 2), routine: "farmer", chance: 0.8, lean: {"green": 0.5}),
+            (at: "granary", species: "farmer", count: (0, 1), routine: "farmer"),
+            (at: "smokehouse", species: "villager", count: (1, 1), routine: "worker", chance: 0.7),
+            (at: "shrine", species: "priest", count: (1, 1), routine: "priest", chance: 0.8, lean: {"order": 0.4}),
+            (at: "boathouse", species: "fisher", count: (1, 2), routine: "fisher"),
+            (at: "trader", species: "trader", count: (1, 1), routine: "keeper"),
+            (at: "inn", species: "innkeeper", count: (1, 1), routine: "innkeeper"),
+            (at: "smithy", species: "smith", count: (1, 1), routine: "keeper"),
+            (at: "woodyard", species: "woodcutter", count: (1, 1), routine: "worker", chance: 0.8),
+            (at: "pen", species: "herder", count: (1, 1), routine: "farmer", chance: 0.7),
+            (at: "field", species: "farmer", count: (1, 2), routine: "farmer", lean: {"green": 0.4}),
+            (at: "orchard", species: "farmer", count: (0, 1), routine: "farmer"),
+            (at: "stall", species: "villager", count: (0, 1), routine: "keeper", lean: {"wealth": 0.6}),
+        ],
+        guards: [
+            (size: "village", species: "guard", count: (1, 3), routines: ["watch_day", "watch_night"], lean: {"wealth": 0.6, "order": 0.6}),
+        ],
+        folk: [
+            (species: "villager", weight: 6.0, routine: "homebody"),
+            (species: "farmer", weight: 2.0, routine: "farmer", work: "field", lean: {"green": 0.6, "crowding": -0.4}),
+            (species: "herder", weight: 0.8, routine: "farmer", work: "pen", lean: {"green": 0.6}),
+            (species: "woodcutter", weight: 0.5, routine: "worker", work: "woodyard", lean: {"green": 0.8}),
+            (species: "fisher", weight: 0.8, routine: "fisher", work: "boathouse"),
+            (species: "elder", weight: 1.2, routine: "elder", lean: {"age": 0.9, "crowding": -0.2}),
+            (species: "child", weight: 2.0, routine: "child", alone: false, lean: {"crowding": 0.5, "age": -0.4}),
+        ],
+        routines: [
+            // Out to work after a lie-in, home or to the square at midday, out in the
+            // evening while it is light, to bed an hour after dusk.
+            (name: "worker", slots: [
+                (until: 0.03, go: [(place: Sleep)]),
+                (until: 0.28, go: [(place: Work)]),
+                (until: 0.34, go: [(place: Square, weight: 2.0), (place: Home), (place: Inn, weight: 0.8, lean: {"wealth": 0.5}), (place: Well, weight: 0.6)]),
+                (until: 0.58, go: [(place: Work)]),
+                (until: 0.74, go: [
+                    (place: Square, weight: 2.0), (place: Inn, weight: 1.5, lean: {"wealth": 0.5}), (place: Shrine, weight: 0.6, lean: {"age": 0.5, "order": 0.3}),
+                    (place: Neighbour, lean: {"crowding": 0.4}), (place: Yard), (place: Wander, weight: 0.8, lean: {"order": -0.3}),
+                ]),
+                (until: 0.78, go: [(place: Home)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            // Up before the sun, in the fields till dusk.
+            (name: "farmer", slots: [
+                (until: 0.01, go: [(place: Sleep)]),
+                (until: 0.30, go: [(place: Work)]),
+                (until: 0.36, go: [(place: Home, weight: 2.0), (place: Yard), (place: Well, weight: 0.6)]),
+                (until: 0.64, go: [(place: Work)]),
+                (until: 0.72, go: [(place: Inn, weight: 1.2, lean: {"wealth": 0.4}), (place: Square), (place: Yard), (place: Home)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            // At the water early and late, mending nets between.
+            (name: "fisher", slots: [
+                (until: 0.02, go: [(place: Sleep)]),
+                (until: 0.22, go: [(place: Work)]),
+                (until: 0.40, go: [(place: Yard, weight: 2.0), (place: Square), (place: Home)]),
+                (until: 0.66, go: [(place: Work)]),
+                (until: 0.76, go: [(place: Inn, weight: 1.5), (place: Square), (place: Home)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            // Keeping a shop or forge: long hours, a short break.
+            (name: "keeper", slots: [
+                (until: 0.02, go: [(place: Sleep)]),
+                (until: 0.36, go: [(place: Work)]),
+                (until: 0.40, go: [(place: Yard), (place: Square), (place: Well, weight: 0.5)]),
+                (until: 0.72, go: [(place: Work)]),
+                (until: 0.78, go: [(place: Home, weight: 2.0), (place: Neighbour, weight: 0.6), (place: Inn, weight: 0.5)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            // Keeping the inn: open late.
+            (name: "innkeeper", slots: [
+                (until: 0.06, go: [(place: Sleep)]),
+                (until: 0.30, go: [(place: Work), (place: Yard, weight: 0.4), (place: Well, weight: 0.3)]),
+                (until: 0.34, go: [(place: Square), (place: Yard)]),
+                (until: 0.86, go: [(place: Work)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            // The chapel morning and evening, the village between.
+            (name: "priest", slots: [
+                (until: 0.02, go: [(place: Sleep)]),
+                (until: 0.40, go: [(place: Work)]),
+                (until: 0.48, go: [(place: Square), (place: Neighbour), (place: Wander)]),
+                (until: 0.72, go: [(place: Work)]),
+                (until: 0.76, go: [(place: Home)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            // At home and about it: the yard, the well, the neighbours.
+            (name: "homebody", slots: [
+                (until: 0.04, go: [(place: Sleep)]),
+                (until: 0.30, go: [(place: Yard, weight: 2.0), (place: Home, weight: 1.5), (place: Well), (place: Square), (place: Neighbour), (place: Wander, lean: {"order": -0.3})]),
+                (until: 0.36, go: [(place: Home, weight: 2.0), (place: Square)]),
+                (until: 0.60, go: [(place: Yard), (place: Wander), (place: Square), (place: Neighbour), (place: Shrine, weight: 0.3, lean: {"age": 0.6})]),
+                (until: 0.74, go: [(place: Square, weight: 2.0), (place: Inn, lean: {"wealth": 0.5}), (place: Neighbour), (place: Home)]),
+                (until: 0.78, go: [(place: Home)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            // Late up, early to bed, in the sun in between.
+            (name: "elder", slots: [
+                (until: 0.08, go: [(place: Sleep)]),
+                (until: 0.40, go: [(place: Yard, weight: 2.0), (place: Home, weight: 2.0), (place: Shrine, lean: {"age": 0.6}), (place: Square)]),
+                (until: 0.60, go: [(place: Home, weight: 2.0), (place: Yard)]),
+                (until: 0.70, go: [(place: Square), (place: Shrine), (place: Neighbour), (place: Inn, weight: 0.5)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            // Playing all over, home for meals, in bed by dusk.
+            (name: "child", slots: [
+                (until: 0.06, go: [(place: Sleep)]),
+                (until: 0.30, go: [(place: Square, weight: 3.0), (place: Wander, weight: 2.0), (place: Yard, weight: 2.0), (place: Well)]),
+                (until: 0.36, go: [(place: Home)]),
+                (until: 0.64, go: [(place: Square, weight: 2.0), (place: Wander, weight: 2.0), (place: Neighbour), (place: Yard)]),
+                (until: 0.68, go: [(place: Home)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            // Guards: one watch by day, one by night, walking the lanes and standing at
+            // the gates.
+            (name: "watch_day", slots: [
+                (until: 0.02, go: [(place: Sleep)]),
+                (until: 0.32, go: [(place: Patrol, weight: 2.0), (place: Gate, weight: 2.0), (place: Square)]),
+                (until: 0.38, go: [(place: Inn), (place: Home), (place: Square)]),
+                (until: 0.68, go: [(place: Patrol, weight: 2.0), (place: Gate, weight: 2.0)]),
+                (until: 0.76, go: [(place: Inn), (place: Home, weight: 2.0)]),
+                (until: 1.0, go: [(place: Sleep)]),
+            ]),
+            (name: "watch_night", slots: [
+                (until: 0.30, go: [(place: Sleep)]),
+                (until: 0.60, go: [(place: Home), (place: Square), (place: Inn), (place: Yard)]),
+                (until: 1.0, go: [(place: Patrol, weight: 2.0), (place: Gate, weight: 2.0), (place: Square, weight: 0.5)]),
+            ]),
+        ],
+    ),
 )

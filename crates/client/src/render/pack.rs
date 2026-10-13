@@ -1,6 +1,8 @@
 //! Shader packs: named looks for the lighting, haze and colour grading, read from
 //! `assets/shaderpacks/*.ron`. A pack only scales and tints what the renderer already
 //! computes, so every pack costs the same to draw; the player picks one in settings.
+//! The packs the game ships (listed in `shaderpacks/shipped.ron`) load first, so a pack
+//! dropped in beside them can't take a shipped pack's name.
 
 use std::path::Path;
 
@@ -15,6 +17,15 @@ use crate::weather::atmosphere::ClientAtmosphere;
 #[serde(default)]
 pub struct ShaderPack {
     pub name: String,
+    /// Where it was read from (`shaderpacks/verdant.ron`); none for the built-in Classic.
+    #[serde(skip)]
+    pub source: Option<String>,
+    /// Whether the game ships it.
+    #[serde(skip)]
+    pub shipped: bool,
+    /// Whether lang may name it: not when a pack loaded before it has the same key.
+    #[serde(skip)]
+    pub keyed: bool,
     /// Multiplies the sun and moon.
     pub sun: f32,
     /// Tints the sun's light, usually towards gold so sunlit ground reads warm against
@@ -108,6 +119,9 @@ impl Default for ShaderPack {
     fn default() -> Self {
         Self {
             name: "Classic".into(),
+            source: None,
+            shipped: false,
+            keyed: true,
             sun: 1.0,
             sun_tint: Vec3::ONE,
             ambient: 1.0,
@@ -140,28 +154,78 @@ impl Default for ShaderPack {
     }
 }
 
-/// Every pack found, the built-in Classic look first.
+impl ShaderPack {
+    /// The key lang names it by: its name in lower case, with anything but a letter or a
+    /// digit made `_` (`shader_pack.verdant`, `shader_pack.新緑`, `shader_pack.r_d_v1_2` for
+    /// "R&D v1.2").
+    pub fn key(&self) -> String {
+        let id: String = self.name.chars().flat_map(char::to_lowercase).map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+        format!("shader_pack.{id}")
+    }
+
+    /// Its name in `locale`: lang's, if lang names it and its key is its own, or its own.
+    pub fn named<'a>(&'a self, locale: &'a voxmar_engine::lang::Lang) -> &'a str {
+        if self.keyed { locale.get_or(&self.key(), &self.name) } else { &self.name }
+    }
+
+    fn from(&self) -> &str {
+        self.source.as_deref().unwrap_or("the game itself")
+    }
+}
+
+/// Every pack found, the built-in Classic look first, then the shipped ones in the order
+/// `shipped.ron` lists them, then any others by file name.
 #[derive(Resource)]
 pub struct ShaderPacks(pub Vec<ShaderPack>);
 
+/// The list of the packs the game ships, in `shaderpacks`.
+const SHIPPED: &str = "shipped.ron";
+
 impl ShaderPacks {
     pub fn load(assets: &Path) -> Self {
-        let mut packs = vec![ShaderPack::default()];
+        let mut packs = vec![ShaderPack { shipped: true, ..default() }];
         let dir = assets.join("shaderpacks");
+        let shipped: Vec<String> = match std::fs::read_to_string(dir.join(SHIPPED)) {
+            Ok(text) => ron::from_str(&text).unwrap_or_else(|e| {
+                warn!("could not read shaderpacks/{SHIPPED}: {e}");
+                Vec::new()
+            }),
+            Err(_) => Vec::new(),
+        };
+        let file_name = |path: &Path| path.file_name().map_or_else(String::new, |name| name.to_string_lossy().into_owned());
         let mut files: Vec<_> = std::fs::read_dir(&dir)
             .into_iter()
             .flatten()
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|e| e == "ron"))
+            .filter(|path| path.extension().is_some_and(|e| e == "ron") && file_name(path) != SHIPPED)
             .collect();
-        files.sort();
+        files.sort_by_cached_key(|path| (shipped.iter().position(|name| *name == file_name(path)).unwrap_or(usize::MAX), file_name(path)));
+        for name in shipped.iter().filter(|name| !files.iter().any(|path| file_name(path) == **name)) {
+            warn!("shaderpacks/{SHIPPED} lists {name}, which is not in shaderpacks");
+        }
         for path in files {
-            match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| ron::from_str::<ShaderPack>(&s).map_err(|e| e.to_string())) {
-                Ok(pack) if packs.iter().all(|p| p.name != pack.name) => packs.push(pack),
-                Ok(pack) => warn!("{}: a shader pack called {} already exists", path.display(), pack.name),
-                Err(e) => warn!("could not read shader pack {}: {e}", path.display()),
+            let source = format!("shaderpacks/{}", file_name(&path));
+            let mut pack = match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| ron::from_str::<ShaderPack>(&s).map_err(|e| e.to_string())) {
+                Ok(pack) => pack,
+                Err(e) => {
+                    warn!("could not read shader pack {source}: {e}");
+                    continue;
+                }
+            };
+            if let Some(first) = packs.iter().find(|p| p.name == pack.name) {
+                warn!("{source}: refused, a shader pack named {} is already loaded from {}", pack.name, first.from());
+                continue;
             }
+            // Named alike ("Soft Light", "soft_light"), it would share a name in every
+            // language with the one before it: it keeps its own.
+            if let Some(first) = packs.iter().find(|p| p.keyed && p.key() == pack.key()) {
+                warn!("{source}: {} keeps its own name in every language, as {} from {} is named by {}", pack.name, first.name, first.from(), pack.key());
+                pack.keyed = false;
+            }
+            pack.shipped = shipped.contains(&file_name(&path));
+            pack.source = Some(source);
+            packs.push(pack);
         }
         Self(packs)
     }
@@ -199,3 +263,68 @@ pub fn apply_pack(pack: Res<ActivePack>, air: Res<ClientAtmosphere>, mut camera:
 
 /// How far the local air's warmth (−1..1) shifts the grading's.
 const LOCAL_WARMTH: f32 = 0.08;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(name: &str) -> ShaderPack {
+        ShaderPack { name: name.into(), ..default() }
+    }
+
+    /// The packs a folder of `(file, name)` loads, by name, file and whether lang may name
+    /// them, with `shipped` listing the files the game ships.
+    fn load(files: &[(&str, &str)], shipped: &[&str]) -> Vec<(String, String, bool)> {
+        let dir = std::env::temp_dir().join(format!("voxmar-packs-{}-{}", std::process::id(), files.iter().map(|(file, _)| *file).collect::<Vec<_>>().join("-")));
+        std::fs::create_dir_all(dir.join("shaderpacks")).unwrap();
+        for (file, name) in files {
+            std::fs::write(dir.join("shaderpacks").join(file), format!("(name: {name:?})")).unwrap();
+        }
+        std::fs::write(dir.join("shaderpacks").join(SHIPPED), format!("{shipped:?}")).unwrap();
+        let packs = ShaderPacks::load(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        packs.0.into_iter().skip(1).map(|p| (p.name, p.source.unwrap(), p.keyed)).collect()
+    }
+
+    /// A pack's key keeps its name's letters and digits, in any script, in lower case, and
+    /// makes the rest `_`.
+    #[test]
+    fn a_pack_is_keyed_by_its_name_in_letters_and_digits() {
+        assert_eq!(named("Verdant").key(), "shader_pack.verdant");
+        assert_eq!(named("Classic").key(), "shader_pack.classic");
+        assert_eq!(named("R&D v1.2").key(), "shader_pack.r_d_v1_2");
+        assert_eq!(named("Café").key(), "shader_pack.café");
+        assert_eq!(named("新緑").key(), "shader_pack.新緑");
+        assert_ne!(named("新緑").key(), named("深海").key());
+        assert_eq!(named("Soft Light").key(), named("soft_light").key());
+    }
+
+    /// Packs with names of their own all load, however they are written; one named alike
+    /// to one before it loads too, but keeps its own name; one with a name already taken is
+    /// refused; and a shipped pack loads before a dropped-in one, so it keeps its name.
+    #[test]
+    fn packs_load_once_by_name_and_shipped_first() {
+        let packs = load(&[("a.ron", "新緑"), ("b.ron", "深海"), ("c.ron", "Café")], &[]);
+        assert_eq!(packs.iter().map(|(name, ..)| name.as_str()).collect::<Vec<_>>(), ["新緑", "深海", "Café"]);
+        assert!(packs.iter().all(|(.., keyed)| *keyed));
+        let packs = load(&[("a.ron", "Soft Light"), ("b.ron", "soft_light"), ("c.ron", "Soft Light")], &[]);
+        assert_eq!(packs, [("Soft Light".into(), "shaderpacks/a.ron".into(), true), ("soft_light".into(), "shaderpacks/b.ron".into(), false)]);
+        let (lang, _) = voxmar_engine::lang::Lang::from_files("en", [("core", "en", r#"{ "shader_pack.soft_light": "Lang's Soft Light" }"#)]);
+        let second = ShaderPack { keyed: false, ..named("soft_light") };
+        assert_eq!((named("Soft Light").named(&lang), second.named(&lang)), ("Lang's Soft Light", "soft_light"));
+        let packs = load(&[("aaa.ron", "Verdant"), ("verdant.ron", "Verdant")], &["verdant.ron"]);
+        assert_eq!(packs, [("Verdant".into(), "shaderpacks/verdant.ron".into(), true)]);
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        // The game's own: Classic, built in, then what shipped.ron lists.
+        let real = ShaderPacks::load(&assets);
+        let shipped: Vec<&str> = real.0.iter().filter(|p| p.shipped && p.keyed).map(|p| p.name.as_str()).collect();
+        assert_eq!(shipped, ["Classic", "Verdant"]);
+        // Every file shipped.ron lists loads, as shipped: a missing one would lose its flag.
+        let listed: Vec<String> = ron::from_str(&std::fs::read_to_string(assets.join("shaderpacks").join(SHIPPED)).unwrap()).unwrap();
+        let loaded: Vec<String> = real.0.iter().filter(|p| p.shipped).filter_map(|p| p.source.clone()).collect();
+        assert_eq!(loaded, listed.iter().map(|file| format!("shaderpacks/{file}")).collect::<Vec<_>>());
+        // A listed file that is missing is only warned of: the rest load as before.
+        let packs = load(&[("verdant.ron", "Verdant")], &["gone.ron", "verdant.ron"]);
+        assert_eq!(packs, [("Verdant".into(), "shaderpacks/verdant.ron".into(), true)]);
+    }
+}

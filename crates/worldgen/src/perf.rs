@@ -31,8 +31,7 @@ use crate::stage::{self, Stage, Times};
 use crate::{Generator, Overworld};
 
 fn registry() -> Arc<BlockRegistry> {
-    let source = include_str!("../../../assets/content/base/blocks.ron");
-    Arc::new(BlockRegistry::from_ron("base", source).unwrap())
+    Arc::new(crate::test_registry())
 }
 
 /// CPU time this thread has used: unlike wall-clock time, it is not inflated when other
@@ -259,7 +258,7 @@ const GOLDEN: [(u64, [(i32, i32); 8]); 4] = [
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 4] = [0xc67ac4a79cdbb83d, 0xb5bb37f88d59f40c, 0xd76cdd47b30e4101, 0x126f85a1101e3039];
+const EXPECTED: [u64; 4] = [0x4c3793e5d1742b58, 0x708d39cdd2dc0c0e, 0x73c709cebc5cf272, 0x428bf872a73508a8];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
@@ -284,7 +283,7 @@ fn output_is_unchanged() {
 }
 
 /// The hash of the light over four 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
-const LIGHT: u64 = 0x731fe2b7f3105521;
+const LIGHT: u64 = 0x2923024e18114411;
 
 /// Lighting stays exactly as it was too: the light of the centre column of a 3×3 area on
 /// each of `GOLDEN`'s seeds, with the border the mesher reads. When generation changes on

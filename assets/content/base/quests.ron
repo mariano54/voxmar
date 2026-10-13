@@ -6,7 +6,8 @@
 //
 // Goals: Craft(item, n), Cook(item, n), Catch(fish, n) (Catch("Kinds", n) for kinds),
 // Kill(creature, n), Tame(creature, n), Pick(plant, n), Mine(ore, n), Visit(biomes),
-// Discover(page, n), Level(skill, n), Have(item, n), Home, Built(multiblock, n). Cook
+// Discover(page, n), Level(skill, n), Have(item, n), Home, Built(multiblock, n),
+// LookUp(item) (opened it in the recipe viewer). Cook
 // counts what any station turns out: fired pots and smelted ingots too. Items and creatures may be
 // `any` or `tag:TAG`. Rewards: Xp(skill, xp), Item(item, count).
 //
@@ -15,8 +16,14 @@
 (
     quests: [
         (
+            name: "look_it_up", age: "nomad", branch: "main", title: "Look It Up",
+            why: "Forgotten a recipe? Open the inventory, type part of a name in its search box, and click the item to see how it is made; a right-click shows what it goes into. Look up the stone pickaxe.",
+            tasks: [[LookUp("stone_pickaxe")]],
+            rewards: [Xp("crafting", 40.0)],
+        ),
+        (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Night comes fast. Cooked food heals far more than raw, and a fire keeps the cold off.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Cook("any", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
@@ -45,7 +52,7 @@
             why: "Your home: you wake here after dying, and the Farm age opens. A hearthstone in a ring of stone, with a chimney at a corner.",
             tasks: [[Home]],
             after: ["a_bed_of_your_own", "where_to_settle"],
-            rewards: [Item("seed_pouch", 1), Item("bread", 4)],
+            rewards: [Xp("construction", 250.0), Item("seed_pouch", 1), Item("bread", 4)],
         ),
         (
             name: "a_friend_in_the_wild", age: "nomad", branch: "hunter", title: "A Friend in the Wild",
@@ -101,12 +108,21 @@
             after: ["homestead_hearth"],
             rewards: [Xp("crafting", 305.0), Item("vial", 4)],
         ),
+        // Fuel before metal, and the Engineering and Mining that copper asks for (design
+        // drafts 100 and 102: the nomad path alone left both short of 5).
+        (
+            name: "charcoal", age: "farm", branch: "main", title: "Charcoal",
+            why: "Fuel before metal: coal or charcoal smelts copper and makes torches. Burn logs down in a campfire, or dig out a coal seam.",
+            tasks: [[Cook("charcoal", 16)], [Mine("coal_ore", 24)]],
+            after: ["the_potter"],
+            rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
+        ),
         (
             name: "red_metal", age: "farm", branch: "main", title: "Red Metal",
             why: "Copper tools are faster and find more, and copper is three parts of bronze.",
             tasks: [[Mine("copper_ore", 9), Craft("copper_pickaxe", 1)]],
-            after: ["homestead_hearth"],
-            rewards: [Xp("mining", 375.0), Xp("engineering", 360.0)],
+            after: ["charcoal"],
+            rewards: [Xp("mining", 650.0), Xp("engineering", 750.0)],
         ),
         (
             name: "crucible_kiln", age: "farm", branch: "main", title: "Crucible Kiln",

@@ -1,0 +1,35 @@
+// Treasure (treasure.ron says who opens what, and what each holds): chests locked by the
+// age they belong to, which nothing breaks while locked, and the lockpicks that open them.
+// Worldgen places the chests (ruins, villages, caves); right click one with a lockpick in
+// hand to try its lock (`base:pick_lock`).
+(
+    blocks: [
+        (
+            name: "nomad_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "nomad_treasure_chest_side"),
+            hardness: -1.0, color: (130, 100, 70), tags: ["locked", "wood"],
+        ),
+        (
+            name: "farm_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "farm_treasure_chest_side"),
+            hardness: -1.0, color: (135, 105, 70), tags: ["locked", "wood"],
+        ),
+        (
+            name: "bronze_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "bronze_treasure_chest_side"),
+            hardness: -1.0, color: (150, 110, 65), tags: ["locked", "wood"],
+        ),
+        (
+            name: "iron_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "iron_treasure_chest_side"),
+            hardness: -1.0, color: (140, 130, 120), tags: ["locked", "wood"],
+        ),
+        (
+            name: "steam_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "steam_treasure_chest_side"),
+            hardness: -1.0, color: (120, 120, 125), tags: ["locked", "wood"],
+        ),
+    ],
+    families: [
+        // Lockpicks, one an age: bone, then each age's metal.
+        (template: "drop", name: "bone_lockpick", tags: ["lockpick"], all: (color: (225, 215, 190))),
+        (template: "drop", name: "copper_lockpick", tags: ["lockpick"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "bronze_lockpick", tags: ["lockpick"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "iron_lockpick", tags: ["lockpick"], all: (color: (200, 205, 215))),
+    ],
+)

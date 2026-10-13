@@ -93,6 +93,8 @@ pub struct CapturePlugin {
     pub press: Option<MouseButton>,
     /// An item whose hotbar slot to select once the inventory has it (`--hold`).
     pub hold: Option<String>,
+    /// Armour to put on once the inventory has it (`--wear`, again for each piece).
+    pub wear: Vec<String>,
     /// Click `press` over and over through the clip (`--repeat`).
     pub repeat: bool,
     /// Keep looking at the nearest creature (`--face-creature`).
@@ -168,6 +170,8 @@ impl Plugin for CapturePlugin {
             }),
             press: self.press,
             hold: self.hold.clone(),
+            wear: self.wear.clone(),
+            dressed: self.wear.is_empty(),
             repeat: self.repeat,
             face_creature: self.face_creature,
             strike: self.strike.clone(),
@@ -191,7 +195,7 @@ impl Plugin for CapturePlugin {
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
         )
-        .add_systems(Update, (hold, press, dig, showcase, fill_grid).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
+        .add_systems(Update, (hold, wear, press, dig, showcase, fill_grid).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time)
@@ -228,6 +232,9 @@ struct Capture {
     clip: Option<Clip>,
     press: Option<MouseButton>,
     hold: Option<String>,
+    wear: Vec<String>,
+    /// Every piece of `wear` is on (the shot waits for it).
+    dressed: bool,
     repeat: bool,
     face_creature: bool,
     strike: Option<String>,
@@ -358,6 +365,43 @@ fn hold(state: Res<Capture>, world: Res<crate::world::ClientWorld>, mut player: 
         player.selected = slot;
     }
 }
+
+/// Puts on each piece of `--wear` once the inventory has it, moving it into its worn slot
+/// as a click would. The shot waits until every piece is on; a piece the server has not
+/// put on `WEAR_TICKS` after it was asked fails the capture, naming it.
+fn wear(
+    mut state: ResMut<Capture>,
+    world: Res<crate::world::ClientWorld>,
+    player: Res<LocalPlayer>,
+    net: Res<crate::net::Net>,
+    actions: Res<crate::Actions>,
+    mut asked: Local<Vec<(String, usize, u64)>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    use voxmar_engine::inventory::{WORN, worn_slot};
+    let ticks = net.server().map_or(0, |server| server.ticks());
+    let id = |name: &str| world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}")));
+    let new: Vec<String> = state.wear.iter().filter(|name| !asked.iter().any(|(n, ..)| n == *name)).cloned().collect();
+    for name in &new {
+        let Some(item) = id(name) else { continue };
+        let (Some(from), Some(at)) = ((0..WORN).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == item)), worn_slot(item)) else { continue };
+        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (WORN + at) as u8, count: 1 };
+        net.propose(actions.0.expect("core:transfer"), target);
+        asked.push((name.clone(), WORN + at, ticks));
+    }
+    let worn = |(name, slot, _): &(String, usize, u64)| player.inventory.get(*slot).is_some_and(|stack| Some(stack.item) == id(name));
+    if let Some((name, ..)) = asked.iter().find(|piece| !worn(piece) && ticks.saturating_sub(piece.2) > WEAR_TICKS) {
+        error!("capture: {name} was not put on {WEAR_TICKS} server ticks after asking");
+        exit.write(AppExit::error());
+    }
+    let dressed = asked.len() == state.wear.len() && asked.iter().all(worn);
+    if state.dressed != dressed {
+        state.dressed = dressed;
+    }
+}
+
+/// Server ticks a piece `--wear` asks for has to come on.
+const WEAR_TICKS: u64 = 40;
 
 /// Clip frames `--press` holds its button for: a second, long enough to dig soil.
 const PRESS_FRAMES: u32 = CLIP_RATE;
@@ -636,7 +680,9 @@ fn capture(
     mut exit: MessageWriter<AppExit>,
     lod: Res<Lod>,
     screen: Res<State<Screen>>,
-    (weather, air, launch): (Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>, Res<crate::session::Launch>),
+    (weather, air, launch, creatures): (
+        Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>, Res<crate::session::Launch>, Res<crate::creatures::Creatures>,
+    ),
     (ready, mut console, net): (Res<crate::weather::WeatherReady>, ResMut<crate::hud::console::Console>, Res<crate::net::Net>),
 ) {
     // Real time while `--flicker` stops the game's clock.
@@ -668,6 +714,7 @@ fn capture(
     }
     let busy = joining
         || (*screen.get() == Screen::InGame && !ready.0)
+        || (*screen.get() == Screen::InGame && !state.dressed)
         || stats.jobs_in_flight > 0
         || stats.pending_columns > 0
         || world.voxels.len() < 9
@@ -760,6 +807,20 @@ fn capture(
         stats.jobs_in_flight,
         stats.pending_columns,
     );
+    // Count after taking the frame sample, so settlement comparisons record their
+    // actual replicated population without adding census work to the timed frames.
+    let mut actors = [0usize; 5];
+    for view in creatures.views() {
+        let i = match launch.content.creatures.get(view.species).def.kind {
+            voxmar_engine::creature::Kind::Villager => 0,
+            voxmar_engine::creature::Kind::Animal => 1,
+            voxmar_engine::creature::Kind::Monster => 2,
+            voxmar_engine::creature::Kind::Fish => 3,
+            voxmar_engine::creature::Kind::Spirit => 4,
+        };
+        actors[i] += 1;
+    }
+    info!("actors: {} villagers, {} animals, {} monsters, {} fish, {} spirits replicated alive", actors[0], actors[1], actors[2], actors[3], actors[4]);
     // Per-pass GPU and CPU times with VOXMAR_GPU_TIMES (`RenderDiagnosticsPlugin`).
     let mut passes: Vec<(String, f64)> = diagnostics
         .iter()

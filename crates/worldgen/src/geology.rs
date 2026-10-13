@@ -180,6 +180,10 @@ pub struct Corners {
     values: Vec<Relief>,
 }
 
+impl Corners {
+    pub(crate) fn len(&self) -> usize { self.values.len() }
+}
+
 pub struct Geology {
     router: Router,
     /// The 3D density the land's crags take.
@@ -274,9 +278,9 @@ impl Geology {
     /// Positions on the lattice (the rivers' and trails' grids) take its points as they are.
     pub fn reliefs(&self, points: &[(f32, f32)]) -> Vec<Relief> {
         let cell = RELIEF_CELL as f32;
-        let mut lanes = self.router.lanes();
         // Grids on the lattice, as rivers and trails ask for, need no corners worked out.
         if points.iter().all(|&(x, z)| x % cell == 0.0 && z % cell == 0.0) {
+            let mut lanes = self.router.lanes();
             let mut out = Vec::with_capacity(points.len());
             for four in points.chunks(4) {
                 out.extend_from_slice(&self.relief_lanes(&mut lanes, four)[..four.len()]);
@@ -313,14 +317,17 @@ impl Geology {
             let d = if tx > 0.0 && tz > 0.0 { corner(1, 1) } else if tx > 0.0 { b } else { c };
             refs.push(([a, b, c, d], tx, tz));
         }
-        let mut lanes = self.router.lanes();
-        values.reserve(fresh.len());
-        for four in fresh.chunks(4) {
-            let at: [(f32, f32); 4] = std::array::from_fn(|k| {
-                let (cx, cz) = four[k.min(four.len() - 1)];
-                (cx as f32 * cell, cz as f32 * cell)
-            });
-            values.extend_from_slice(&self.relief_lanes(&mut lanes, &at[..four.len()])[..four.len()]);
+        if !fresh.is_empty() {
+            // A warm corner lookup needs interpolation only, not fresh router state.
+            let mut lanes = self.router.lanes();
+            values.reserve(fresh.len());
+            for four in fresh.chunks(4) {
+                let at: [(f32, f32); 4] = std::array::from_fn(|k| {
+                    let (cx, cz) = four[k.min(four.len() - 1)];
+                    (cx as f32 * cell, cz as f32 * cell)
+                });
+                values.extend_from_slice(&self.relief_lanes(&mut lanes, &at[..four.len()])[..four.len()]);
+            }
         }
         refs.iter()
             .map(|&([a, b, c, d], tx, tz)| {
@@ -404,6 +411,45 @@ impl Geology {
     pub fn lands_with(&self, points: &[(i32, i32)], corners: &mut Corners) -> Vec<Landform> {
         let reliefs = self.reliefs_with(&points.iter().map(|&(x, z)| (x as f32, z as f32)).collect::<Vec<_>>(), corners);
         self.shaped(points, &reliefs)
+    }
+
+    /// One landform with exactly `lands_with`'s corner order and interpolation, keeping
+    /// its single point, fresh corners, references and outputs in fixed arrays.
+    pub(crate) fn land_with(&self, x: i32, z: i32, corners: &mut Corners) -> Landform {
+        let cell = RELIEF_CELL as f32;
+        let (gx, gz) = (x as f32 / cell, z as f32 / cell);
+        let (fx, fz) = (gx.floor(), gz.floor());
+        let (tx, tz) = (gx - fx, gz - fz);
+        let (cx, cz) = (fx as i32, fz as i32);
+        let Corners { index, values } = corners;
+        let mut fresh = [(0, 0); 4];
+        let mut count = 0;
+        let mut corner = |dx: i32, dz: i32| {
+            let key = (cx + dx, cz + dz);
+            *index.entry(key).or_insert_with(|| {
+                fresh[count] = key;
+                count += 1;
+                (values.len() + count - 1) as u32
+            })
+        };
+        let a = corner(0, 0);
+        let b = if tx > 0.0 { corner(1, 0) } else { a };
+        let c = if tz > 0.0 { corner(0, 1) } else { a };
+        let d = if tx > 0.0 && tz > 0.0 { corner(1, 1) } else if tx > 0.0 { b } else { c };
+        if count > 0 {
+            let mut lanes = self.router.lanes();
+            values.reserve(count);
+            let at: [(f32, f32); 4] = std::array::from_fn(|k| {
+                let (cx, cz) = fresh[k.min(count - 1)];
+                (cx as f32 * cell, cz as f32 * cell)
+            });
+            values.extend_from_slice(&self.relief_lanes(&mut lanes, &at[..count])[..count]);
+        }
+        let at = |i: u32| values[i as usize];
+        let relief = at(a).lerp(at(b), tx).lerp(at(c).lerp(at(d), tx), tz);
+        let mut out = [Landform::default()];
+        self.shaped_lanes(&[(x, z)], &[relief], &mut out);
+        out[0]
     }
 
     /// The land at each position with the relief given there.
@@ -631,11 +677,46 @@ impl crate::router::Inputs for Geology {
 mod tests {
     use super::*;
 
+    #[test]
+    fn scalar_land_buffers_keep_original_corners_and_all_facts() {
+        let registry = std::sync::Arc::new(crate::test_registry());
+        let land_bits = |l: Landform| (l.height.to_bits(), l.mountain.to_bits(), l.crag.to_bits(),
+            l.form.shape, l.form.strength.to_bits(), l.form.base.to_bits(), l.form.window.to_bits());
+        let relief_bits = |r: &Relief| [r.elevation.to_bits(), r.continental.to_bits(), r.mountain.to_bits(),
+            r.peak.to_bits(), r.roughness.to_bits(), r.valley.to_bits(), r.crag.to_bits()];
+        let mut points: Vec<_> = (-5..=5).flat_map(|z| (-5..=5).map(move |x| (x, z))).collect();
+        points.extend([(-113, -97), (65_537, -65_535), (16_777_215, -16_777_215),
+            (16_777_216, -16_777_216), (16_777_217, -16_777_217)]);
+        for seed in [7, 42, 7] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            let geology = &world.geology;
+            for warm in [0, points.len() / 2, points.len()] {
+                let (mut original, mut scalar) = (Corners::default(), Corners::default());
+                for &p in points.iter().take(warm) {
+                    geology.lands_with(&[p], &mut original);
+                    geology.lands_with(&[p], &mut scalar);
+                }
+                let before = scalar.len();
+                for &(x, z) in points.iter().chain(points.iter().rev()) {
+                    let expected = geology.lands_with(&[(x, z)], &mut original)[0];
+                    let actual = geology.land_with(x, z, &mut scalar);
+                    assert_eq!(land_bits(actual), land_bits(expected), "seed {seed} at {x},{z}, warm {warm}");
+                    assert_eq!(scalar.index, original.index, "exact corner keys and insertion indices");
+                    assert_eq!(scalar.values.iter().map(relief_bits).collect::<Vec<_>>(),
+                        original.values.iter().map(relief_bits).collect::<Vec<_>>(), "every complete relief field in original order");
+                    assert_eq!(scalar.values.capacity(), original.values.capacity(), "same persistent corner allocation policy");
+                }
+                if warm == points.len() { assert_eq!(scalar.len(), before, "wholly warm lookups add no corners"); }
+                else { assert!(scalar.len() > before, "cold and partially warm fixtures actually fill corners"); }
+            }
+        }
+    }
+
     /// Land worked out four positions at a time is exactly the land at each alone, over
     /// sea, coast, plains and ranges, in any grouping.
     #[test]
     fn lands_match_land_alone() {
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         for seed in [7, 42] {
             let world = crate::Overworld::new(seed, registry.clone());
             let geology = &world.geology;
@@ -660,7 +741,7 @@ mod tests {
     /// each alone.
     #[test]
     fn regionals_match_regional_alone() {
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = crate::Overworld::new(3, registry);
         let mut rng = crate::rng::Rng::new(3, 4, 5, 6);
         let points: Vec<(f32, f32)> = (0..2000).map(|i| if i % 2 == 0 { ((i % 40 * 64) as f32, (i / 40 * 64) as f32) } else { (rng.range(-30_000, 30_000) as f32, rng.range(-30_000, 30_000) as f32) }).collect();
@@ -678,7 +759,7 @@ mod tests {
     #[test]
     #[ignore]
     fn land_timing() {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
         let geology = &world.geology;
         let points: Vec<(i32, i32)> = (0..200_000).map(|i| (i % 400 * 3 - 600, i / 400 * 3 - 750)).collect();
@@ -779,7 +860,7 @@ mod profile {
     #[test]
     #[ignore]
     fn field_profile() {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
         let spawn = crate::Generator::spawn_point(&world);
         let points: Vec<(f32, f32)> = (0..200_000).map(|i| ((spawn.x + i % 500 * 8 - 2000) as f32, (spawn.z + i / 500 * 8 - 1600) as f32)).collect();
@@ -804,7 +885,7 @@ mod profile {
     #[test]
     #[ignore]
     fn relief_profile() {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
         // Rows of an 8-block grid on land around spawn, as rivers and trails ask for it.
         let spawn = crate::Generator::spawn_point(&world);

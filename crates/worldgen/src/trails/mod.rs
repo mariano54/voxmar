@@ -16,11 +16,14 @@
 //! default.
 //!
 //! Everything is a pure function of the seed and the land, worked out by region on
-//! demand and kept in caches bounded by bytes: places by region, the trails each region
-//! owns (those whose lower end lies in it), and the stamps over 64-block tiles that
-//! columns read. A trail reaches at most one region beyond its owner, so a tile reads
-//! the trails of the 3×3 regions around it. Nothing depends on which column, region or
-//! thread came first.
+//! demand and kept in caches bounded by bytes: the planning grid by patch, places by
+//! region, the trails each region owns, and the stamps over 64-block tiles that columns
+//! read. Where trails are laid everywhere a region owns the trails whose lower end lies
+//! in it; near settlements, where every trail leaves a settlement's gate, it owns those
+//! leaving its gates, so a region without a gate owns none and its land is never planned
+//! unless a trail comes near. A trail reaches at most one region beyond its owner, so a
+//! tile reads the trails of the 3×3 regions around it. Nothing depends on which column,
+//! region or thread came first.
 
 mod network;
 mod path;
@@ -30,11 +33,12 @@ mod sites;
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use rustc_hash::FxHashMap;
 use voxmar_engine::glam::{IVec2, Vec2};
 
 pub use self::sites::{Kind, Poi};
 use self::path::{Path, Paths, Stamp};
-use self::sites::{CELL, CELLS, Cell, Grid, REGION};
+use self::sites::{CELL, Cell, Grid, PATCH, REGION};
 pub use crate::content::TrailsWhere;
 use crate::geology::GeoSample;
 use crate::rng;
@@ -72,6 +76,40 @@ pub enum Marker {
 pub trait Land: Sync {
     fn sample(&self, x: i32, z: i32) -> GeoSample;
 
+    /// The same sample, sharing temporary terrain calculations within one planner.
+    /// Synthetic land can keep the standalone implementation.
+    fn sample_cached(&self, x: i32, z: i32, _scratch: &mut crate::water::Samples) -> GeoSample {
+        self.sample(x, z)
+    }
+
+    /// At most 32 exact centre samples, sharing terrain calculations where supported.
+    fn samples_cached(&self, points: &[(i32, i32)], scratch: &mut crate::water::Samples) -> Vec<GeoSample> {
+        assert!(points.len() <= crate::water::SAMPLE_BATCH);
+        points.iter().map(|&(x, z)| self.sample_cached(x, z, scratch)).collect()
+    }
+
+    /// Prove freshwater absent without a terrain sample, where supported. False
+    /// means unknown, so synthetic land keeps its original full-sample predicate.
+    fn freshwater_absent_cached(&self, _at: IVec2, _scratch: &mut crate::water::Samples) -> bool {
+        false
+    }
+
+    /// Whether the close-look grid's circle contains freshwater. Synthetic land keeps
+    /// its grid implementation; real river land can stop before unused terrain reads.
+    /// Like settlement definitions, callers supply radius >= 0 and step >= 1.
+    fn freshwater_near(&self, centre: IVec2, radius: i32, step: i32, _cache: &mut crate::water::Freshwater) -> bool {
+        let first = centre - radius;
+        let size = radius * 2 / step + 1;
+        self.grid(first, step, size).iter().enumerate().any(|(i, g)| {
+            let p = first + IVec2::new(i as i32 % size, i as i32 / size) * step;
+            p.as_vec2().distance(centre.as_vec2()) <= radius as f32 && crate::water::freshwater(g)
+        })
+    }
+
+    /// Reuse this land's already sampled grid in close-water queries where supported.
+    /// Synthetic implementations keep their original full-grid query behaviour.
+    fn remember_freshwater_grid(&self, _origin: IVec2, _step: i32, _size: i32, _samples: &[GeoSample], _cache: &mut crate::water::Freshwater) {}
+
     /// The `size`×`size` samples `step` blocks apart from `origin`, row by row: the same
     /// as sampling each, but free to share the work.
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
@@ -108,7 +146,11 @@ pub struct Trails {
     seed: u64,
     /// Where trails are laid.
     laid: TrailsWhere,
+    /// The planning grid by patch.
     grids: Cache<IVec2, Arc<Grid>>,
+    /// Settlements' gates by region.
+    gates: Cache<IVec2, Arc<[Poi]>>,
+    /// All places by region, gates among them.
     places: Cache<IVec2, Arc<[Poi]>>,
     routes: Cache<IVec2, Arc<Routes>>,
     paths: Cache<IVec2, Arc<Paths>>,
@@ -168,6 +210,7 @@ impl Trails {
             seed: rng::mix(seed ^ 0x7a11_5eed),
             laid,
             grids: Cache::new(48 * MB),
+            gates: Cache::new(MB),
             places: Cache::new(MB),
             routes: Cache::new(8 * MB),
             paths: Cache::new(16 * MB),
@@ -242,85 +285,103 @@ impl Trails {
         (lines, places)
     }
 
-    fn grid(&self, land: &dyn Land, region: IVec2) -> Arc<Grid> {
-        self.grids.get(region, || Arc::new(Grid::new(land, region)))
+    fn grid(&self, land: &dyn Land, patch: IVec2) -> Arc<Grid> {
+        self.grids.get(patch, || Arc::new(Grid::new(land, patch)))
     }
 
-    /// The grid at any cell, reading regions through a small memo.
+    /// The grid at any cell, keeping the patches it reads for as long as it lives.
     fn cells<'a>(&'a self, land: &'a dyn Land) -> impl Fn(IVec2) -> Cell + 'a {
-        let memo: RefCell<Vec<(IVec2, Arc<Grid>)>> = RefCell::new(Vec::new());
+        let memo: RefCell<FxHashMap<IVec2, Arc<Grid>>> = RefCell::default();
         move |c: IVec2| {
-            let region = c.div_euclid(IVec2::splat(CELLS));
-            let local = c - region * CELLS;
-            let index = (local.y * CELLS + local.x) as usize;
-            if let Some((_, grid)) = memo.borrow().iter().find(|(r, _)| *r == region) {
+            let patch = c.div_euclid(IVec2::splat(PATCH));
+            let local = c - patch * PATCH;
+            let index = (local.y * PATCH + local.x) as usize;
+            if let Some(grid) = memo.borrow().get(&patch) {
                 return grid.0[index];
             }
-            let grid = self.grid(land, region);
+            let grid = self.grid(land, patch);
             let cell = grid.0[index];
-            let mut memo = memo.borrow_mut();
-            memo.push((region, grid));
-            if memo.len() > 16 {
-                memo.remove(0);
-            }
+            memo.borrow_mut().insert(patch, grid);
             cell
         }
     }
 
+    /// Where settlements' lanes lead out of `region`, as places trails join.
+    fn gates(&self, land: &dyn Land, region: IVec2) -> Arc<[Poi]> {
+        self.gates.get(region, || {
+            let cells = self.cells(land);
+            let (min, max) = (region * REGION, region * REGION + REGION - 1);
+            land.gates(min, max)
+                .into_iter()
+                .filter_map(|gate| {
+                    let cell = gate.div_euclid(IVec2::splat(CELL));
+                    let here = cells(cell);
+                    (!here.submerged()).then_some(Poi { cell, height: here.height as i32, kind: Kind::Settlement })
+                })
+                .collect()
+        })
+    }
+
+    /// The places of `region`: its places of interest and its settlements' gates.
     fn places(&self, land: &dyn Land, region: IVec2) -> Arc<[Poi]> {
         self.places.get(region, || {
-            let cells = self.cells(land);
-            let mut places = sites::places(self.seed, region, &cells);
-            // Settlements' gates, where their lanes lead out.
-            let (min, max) = (region * REGION, region * REGION + REGION - 1);
-            for gate in land.gates(min, max) {
-                let cell = gate.div_euclid(IVec2::splat(CELL));
-                let here = cells(cell);
-                if !here.submerged() {
-                    places.push(Poi { cell, height: here.height as i32, kind: Kind::Settlement });
-                }
-            }
+            let mut places = sites::places(self.seed, region, &self.cells(land));
+            places.extend(self.gates(land, region).iter().copied());
             places.into()
         })
     }
 
     /// The places within `radius` blocks of `centre`, and perhaps a few more.
     fn places_near(&self, land: &dyn Land, centre: Vec2, radius: f32) -> Vec<Poi> {
-        let first = ((centre - radius) / REGION as f32).floor().as_ivec2();
-        let last = ((centre + radius) / REGION as f32).floor().as_ivec2();
-        let mut near = Vec::new();
-        for rz in first.y..=last.y {
-            for rx in first.x..=last.x {
-                near.extend(self.places(land, IVec2::new(rx, rz)).iter().filter(|p| p.at().as_vec2().distance(centre) <= radius));
-            }
-        }
-        near
+        near(centre, radius, |region| self.places(land, region))
     }
 
-    /// The trails a region owns, routed but not yet merged.
+    /// The settlements' gates within `radius` blocks of `centre`, and perhaps a few more.
+    fn gates_near(&self, land: &dyn Land, centre: Vec2, radius: f32) -> Vec<Poi> {
+        near(centre, radius, |region| self.gates(land, region))
+    }
+
+    /// The trails a region owns, routed but not yet merged: where trails are laid
+    /// everywhere, those whose lower end lies in it; near settlements, those leaving its
+    /// settlements' gates (between two gates, the lower one's), so a region without one
+    /// owns none and reads no land. Either way each trail runs from its lower end to its
+    /// upper and is owned once.
     fn routes(&self, land: &dyn Land, region: IVec2) -> Arc<Routes> {
         self.routes.get(region, || {
+            let everywhere = self.laid == TrailsWhere::Everywhere;
             let near = |centre: Vec2, radius: f32| self.places_near(land, centre, radius);
+            let gates_near = |centre: Vec2, radius: f32| self.gates_near(land, centre, radius);
+            let joins = |a: &Poi, b: &Poi| self.joins(a, b);
             let cells = self.cells(land);
             let mut routes = Vec::new();
-            if !self.laid_in(land, region) {
-                return Arc::new(Routes(Vec::new()));
-            }
-            for from in self.places(land, region).iter() {
+            for from in self.starts(land, region).iter() {
                 let mut ends = self.places_near(land, from.at().as_vec2(), network::MAX_EDGE as f32);
                 ends.sort_by_key(|p| (p.cell.x, p.cell.y));
-                for to in ends.iter().filter(|to| from.below(to) && self.joins(from, to) && network::keep(from, to, &near, &|a, b| self.joins(a, b))) {
-                    let margin = (from.cell - to.cell).abs().max_element() / 3;
+                for to in &ends {
+                    let (lower, upper) = if from.below(to) {
+                        (from, to)
+                    } else if !everywhere && to.kind != Kind::Settlement {
+                        (to, from)
+                    } else {
+                        continue;
+                    };
+                    // Near settlements a place that is no settlement joins only
+                    // settlements, so from one only their gates can stand in the way.
+                    let near: &dyn Fn(Vec2, f32) -> Vec<Poi> = if everywhere || lower.kind == Kind::Settlement { &near } else { &gates_near };
+                    if !(self.joins(lower, upper) && network::keep(lower, upper, near, &joins)) {
+                        continue;
+                    }
+                    let margin = (lower.cell - upper.cell).abs().max_element() / 3;
                     let margin = margin.clamp(6, 16);
-                    let (min, max) = (from.cell.min(to.cell) - margin, from.cell.max(to.cell) + margin);
+                    let (min, max) = (lower.cell.min(upper.cell) - margin, lower.cell.max(upper.cell) + margin);
                     let budget = ((max - min + 1).x * (max - min + 1).y) as usize;
-                    let Some(cells) = route::route(from.cell, to.cell, min, max, budget, &cells) else { continue };
+                    let Some(cells) = route::route(lower.cell, upper.cell, min, max, budget, &cells) else { continue };
                     if !bridges_short(&cells, &self.cells(land)) {
                         continue;
                     }
                     let length = cells.windows(2).map(|w| (w[1] - w[0]).as_vec2().length() * CELL as f32).sum();
                     // Ties in length are broken by the ends, the same for whoever compares.
-                    let id = rng::mix(rng::hash3(self.seed, from.cell.x, 0, from.cell.y) ^ rng::hash3(self.seed, to.cell.x, 1, to.cell.y));
+                    let id = rng::mix(rng::hash3(self.seed, lower.cell.x, 0, lower.cell.y) ^ rng::hash3(self.seed, upper.cell.x, 1, upper.cell.y));
                     routes.push(Route { cells, length, id });
                 }
             }
@@ -328,15 +389,27 @@ impl Trails {
         })
     }
 
+    /// The places a region's trails start from (see `routes`): all its places where
+    /// trails are laid everywhere, its settlements' gates near settlements.
+    fn starts(&self, land: &dyn Land, region: IVec2) -> Arc<[Poi]> {
+        match self.laid {
+            TrailsWhere::Everywhere => self.places(land, region),
+            TrailsWhere::NearSettlements => self.gates(land, region),
+        }
+    }
+
     /// The trails a region owns, merged into longer ones nearby and drawn.
     fn paths(&self, land: &dyn Land, region: IVec2) -> Arc<Paths> {
         self.paths.get(region, || {
+            let own = self.routes(land, region);
+            if own.0.is_empty() {
+                return Arc::new(Paths(Vec::new()));
+            }
             // Trunks owned by the regions around: a trail owned further off rarely runs
             // beside this region's, and looking further would cost far more planning.
-            let around: Vec<Arc<Routes>> =
-                (-1..=1).flat_map(|dz| (-1..=1).map(move |dx| IVec2::new(dx, dz))).map(|d| self.routes(land, region + d)).collect();
+            let around: Vec<Arc<Routes>> = regions_around(region, 1).map(|r| self.routes(land, r)).collect();
             let mut paths = Vec::new();
-            for route in self.routes(land, region).0.iter() {
+            for route in own.0.iter() {
                 let line = network::points(&route.cells);
                 let trunks: Vec<Vec<Vec2>> =
                     around.iter().flat_map(|r| r.0.iter()).filter(|other| other.above(route)).map(|other| network::points(&other.cells)).collect();
@@ -350,40 +423,45 @@ impl Trails {
     }
 
     /// Makes on every core what the trails of the regions around `region` are planned
-    /// from and not made yet: in turn the grids of the regions three around, the places
-    /// and routes of those two around (of each, only those beside a region that lays
-    /// trails) and the paths next door. A tile in `region` reads
-    /// all of them (see `paths`, `routes` and `sites::places`); it may read some further
-    /// out too, as the places it joins lie, which are left to be made when asked for, so
-    /// that nothing is made that is not needed.
+    /// from and not made yet. A tile in `region` reads the paths of the regions next door,
+    /// which read the routes of those two around as trunks; so in turn: which of those
+    /// own trails (near settlements, those with a gate: asking plans their settlements),
+    /// the places their trails may end at (within a trail's length of where they start,
+    /// each reading its patches of the grid), their routes, and the paths next door.
+    /// Anything further a route reads is made when asked for, so that nothing is made
+    /// that is not needed.
     fn prepare(&self, land: &dyn Land, region: IVec2) {
-        let around = |reach: i32| (-reach..=reach).flat_map(move |dz| (-reach..=reach).map(move |dx| region + IVec2::new(dx, dz)));
-        // Which of the regions two around lay trails (asking plans the settlements near
-        // them): only their places and routes, and the grids and places next to them, are
-        // read, so where trails keep near settlements the rest are not made at all.
-        let regions: Vec<IVec2> = around(2).collect();
-        crate::parallel::for_each(&regions, |&r| {
-            self.laid_in(land, r);
-        });
-        let laid: Vec<IVec2> = regions.into_iter().filter(|&r| self.laid_in(land, r)).collect();
-        let beside = |r: IVec2| laid.iter().any(|l| (*l - r).abs().max_element() <= 1);
-        let missing = |reach: i32, has: &dyn Fn(IVec2) -> bool| around(reach).filter(|&r| beside(r) && !has(r)).collect::<Vec<IVec2>>();
-        crate::parallel::for_each(&missing(3, &|r| self.grids.has(r)), |&r| {
-            self.grid(land, r);
-        });
-        crate::parallel::for_each(&missing(2, &|r| self.places.has(r)), |&r| {
+        let regions: Vec<IVec2> = regions_around(region, 2).collect();
+        if self.laid == TrailsWhere::NearSettlements {
+            crate::parallel::for_each(&regions, |&r| {
+                self.gates(land, r);
+            });
+        }
+        let owners: Vec<IVec2> = regions.into_iter().filter(|&r| self.laid == TrailsWhere::Everywhere || !self.gates(land, r).is_empty()).collect();
+        let mut reached: Vec<IVec2> = match self.laid {
+            TrailsWhere::Everywhere => regions_around(region, 3).collect(),
+            TrailsWhere::NearSettlements => owners
+                .iter()
+                .flat_map(|&r| self.gates(land, r).iter().flat_map(|g| regions_within(g.at().as_vec2(), network::MAX_EDGE as f32)).collect::<Vec<_>>())
+                .collect(),
+        };
+        reached.sort_by_key(|r| (r.y, r.x));
+        reached.dedup();
+        let missing = |list: &[IVec2], has: &dyn Fn(IVec2) -> bool| list.iter().copied().filter(|&r| !has(r)).collect::<Vec<IVec2>>();
+        crate::parallel::for_each(&missing(&reached, &|r| self.places.has(r)), |&r| {
             self.places(land, r);
         });
-        crate::parallel::for_each(&missing(2, &|r| self.routes.has(r)), |&r| {
+        crate::parallel::for_each(&missing(&owners, &|r| self.routes.has(r)), |&r| {
             self.routes(land, r);
         });
-        crate::parallel::for_each(&missing(1, &|r| self.paths.has(r)), |&r| {
+        let next: Vec<IVec2> = owners.iter().copied().filter(|r| (*r - region).abs().max_element() <= 1).collect();
+        crate::parallel::for_each(&missing(&next, &|r| self.paths.has(r)), |&r| {
             self.paths(land, r);
         });
     }
 
-    /// How many regions' grids and routes are made, for tests of how much a piece of
-    /// generation needs.
+    /// How many patches of the grid, and regions' routes, are made, for tests of how much
+    /// a piece of generation needs.
     #[cfg(test)]
     pub(crate) fn made(&self) -> (usize, usize) {
         (self.grids.len(), self.routes.len())
@@ -431,8 +509,7 @@ impl Trails {
                 return Arc::new(Tile { stamps: None, markers: Vec::new() });
             }
             self.prepare(land, region);
-            let owners: Vec<Arc<Paths>> =
-                (-1..=1).flat_map(|dz| (-1..=1).map(move |dx| IVec2::new(dx, dz))).map(|d| self.paths(land, region + d)).collect();
+            let owners: Vec<Arc<Paths>> = regions_around(region, 1).map(|r| self.paths(land, r)).collect();
             let paths: Vec<&Path> = owners.iter().flat_map(|p| p.0.iter()).collect();
             let (min, max) = (key * TILE, key * TILE + TILE - 1);
             let inside = |at: IVec2| at.cmpge(min).all() && at.cmple(max).all();
@@ -462,6 +539,23 @@ impl Trails {
     }
 }
 
+/// Of the places `of` gives by region, those within `radius` blocks of `centre`.
+fn near(centre: Vec2, radius: f32, of: impl Fn(IVec2) -> Arc<[Poi]>) -> Vec<Poi> {
+    regions_within(centre, radius).flat_map(|region| of(region).iter().filter(|p| p.at().as_vec2().distance(centre) <= radius).copied().collect::<Vec<_>>()).collect()
+}
+
+/// The regions within `reach` regions of `region`, it among them.
+fn regions_around(region: IVec2, reach: i32) -> impl Iterator<Item = IVec2> {
+    (-reach..=reach).flat_map(move |dz| (-reach..=reach).map(move |dx| region + IVec2::new(dx, dz)))
+}
+
+/// The regions the square `radius` blocks round `centre` touches.
+fn regions_within(centre: Vec2, radius: f32) -> impl Iterator<Item = IVec2> {
+    let first = ((centre - radius) / REGION as f32).floor().as_ivec2();
+    let last = ((centre + radius) / REGION as f32).floor().as_ivec2();
+    (first.y..=last.y).flat_map(move |rz| (first.x..=last.x).map(move |rx| IVec2::new(rx, rz)))
+}
+
 /// Whether every stretch of bridged water on a route is short enough to bridge (100
 /// blocks); longer crossings are left unbuilt, and the trail with them.
 fn bridges_short(cells: &[IVec2], cell: &dyn Fn(IVec2) -> Cell) -> bool {
@@ -486,8 +580,7 @@ mod tests {
 
     /// A world with trails laid everywhere, as they will be near settlements.
     fn world(seed: u64) -> Overworld {
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let mut content = crate::content::WorldContent::base(&registry).unwrap();
         content.trails.laid = TrailsWhere::Everywhere;
         Overworld::with_content(seed, registry, &content)
@@ -515,6 +608,65 @@ mod tests {
         assert!(forward.iter().eq(backward.iter().rev()));
     }
 
+    /// Near settlements, where each trail is planned from a settlement's gate, the ground
+    /// along a trail is the same whichever region, tile or column is asked for first: here
+    /// round a gate two trails leave, where their stamps meet with equal weights.
+    #[test]
+    fn trails_near_settlements_never_depend_on_order() {
+        use crate::Generator;
+        let registry = std::sync::Arc::new(crate::test_registry());
+        let world = || Overworld::new(1, registry.clone());
+        let (a, b) = (world(), world());
+        // Round the gate nearest spawn that two trails leave (their ends within a block of
+        // each other, by a settlement's gate), found in a third world.
+        let third = world();
+        let spawn = third.spawn_point();
+        let centre = IVec2::new(spawn.x, spawn.z);
+        // Culture layouts move the gates; include the settlements just beyond spawn's
+        // first square while still requiring a real shared gate, not merely any trail.
+        let (lines, places) = third.trails_in(centre - 1200, centre + 1200);
+        let centre = centre.as_vec2();
+        let ends: Vec<Vec2> = lines.iter().filter(|l| l.len() > 1).flat_map(|l| [l[0].0, l[l.len() - 1].0]).collect();
+        let gate = |e: Vec2| places.iter().any(|p| p.kind == Kind::Settlement && p.at().as_vec2().distance(e) <= CELL as f32);
+        let shared = ends
+            .iter()
+            .enumerate()
+            .filter(|&(i, &e)| gate(e) && ends.iter().enumerate().any(|(j, &f)| j != i && e.distance(f) <= 1.0))
+            .map(|(_, &e)| e)
+            .min_by(|p, q| p.distance(centre).total_cmp(&q.distance(centre)))
+            .expect("a gate near spawn that two trails leave");
+        let corner = shared.as_ivec2() - 24;
+        let area: Vec<(i32, i32)> = (0..48 * 48).map(|i| (corner.x + i % 48, corner.y + i / 48)).collect();
+        let forward: Vec<GeoSample> = area.iter().map(|&(x, z)| a.geo(x, z)).collect();
+        // The other world plans the far side of the trail's settlement first, on several threads.
+        let _ = std::thread::scope(|s| {
+            let far = s.spawn(|| b.geo(corner.x + 700, corner.y - 500));
+            let near = s.spawn(|| b.geo(corner.x - 300, corner.y + 400));
+            (far.join().unwrap(), near.join().unwrap())
+        });
+        let backward: Vec<GeoSample> = area.iter().rev().map(|&(x, z)| b.geo(x, z)).collect();
+        assert!(forward.iter().any(|g| g.trail.is_some_and(|t| t.tread > 0.9)), "a trail runs through the area");
+        assert!(forward.iter().eq(backward.iter().rev()));
+    }
+
+    /// The planning grid is the land sampled every `CELL` blocks, whichever patch it is
+    /// sampled in: a patch's cells match the land sampled one by one.
+    #[test]
+    fn grid_patches_sample_the_land() {
+        let world = world(7);
+        let land = world.land();
+        for patch in [IVec2::new(0, 0), IVec2::new(-3, 5), IVec2::new(7, -2)] {
+            let grid = Grid::new(&land, patch);
+            for i in 0..PATCH * PATCH {
+                let c = patch * PATCH + IVec2::new(i % PATCH, i / PATCH);
+                let g = land.sample(c.x * CELL, c.y * CELL);
+                let water = if g.submerged() { g.water } else { g.height };
+                let cell = grid.0[i as usize];
+                assert_eq!((cell.height as i32, cell.water as i32, cell.body), (g.height, water, g.body as u8), "cell {c} of patch {patch}");
+            }
+        }
+    }
+
     /// `cargo test --profile iter -p voxmar_worldgen trail_stats -- --ignored --nocapture`
     /// counts, over a few regions of a world (`SEED`), the places, the trails the network
     /// wants, and why any were not built.
@@ -525,21 +677,23 @@ mod tests {
         let world = world(seed);
         let land = world.land();
         let trails = &world.trails;
+        // The grid of 8×8 regions, patch by patch.
+        let patches = REGION / CELL / PATCH;
         let started = std::time::Instant::now();
-        for rz in -4..4 {
-            for rx in -4..4 {
-                trails.grid(&land, IVec2::new(rx, rz));
+        for pz in -4 * patches..4 * patches {
+            for px in -4 * patches..4 * patches {
+                trails.grid(&land, IVec2::new(px, pz));
             }
         }
-        println!("64 grids in {:.1?}", started.elapsed());
+        println!("64 regions' grids in {:.1?}", started.elapsed());
         let again = Trails::new(1, TrailsWhere::Everywhere);
         let started = std::time::Instant::now();
-        for rz in -4..4 {
-            for rx in -4..4 {
-                again.grid(&land, IVec2::new(rx, rz));
+        for pz in -4 * patches..4 * patches {
+            for px in -4 * patches..4 * patches {
+                again.grid(&land, IVec2::new(px, pz));
             }
         }
-        println!("64 grids again, rivers known, in {:.1?}", started.elapsed());
+        println!("64 regions' grids again, rivers known, in {:.1?}", started.elapsed());
         let started = std::time::Instant::now();
         for rz in -3..3 {
             for rx in -3..3 {
@@ -596,8 +750,7 @@ mod sights {
     #[ignore]
     fn trail_sights() {
         let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = Overworld::new(seed, registry);
         let spawn = world.spawn_point();
         let eye = spawn.as_vec3() + voxmar_engine::glam::Vec3::Y * 1.62;
@@ -668,8 +821,7 @@ mod patch {
     fn trail_patch() {
         let env = |name: &str, default: i32| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
         let seed = env("SEED", 7) as u64;
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = Overworld::new(seed, registry.clone());
         const SIZE: i32 = 160;
         const PIXEL: i32 = 4;

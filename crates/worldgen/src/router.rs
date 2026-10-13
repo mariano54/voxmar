@@ -960,7 +960,7 @@ mod tests {
     /// is exactly its plain meaning at each position.
     #[test]
     fn lanes_match_the_plain_meaning() {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = crate::content::WorldContent::base(&registry).unwrap();
         let program = Program::compile(&content.land).unwrap();
         let router = Router::new(7, &WorldDials::sample(7), &program);

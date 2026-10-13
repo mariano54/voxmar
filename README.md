@@ -26,6 +26,23 @@ While developing, use `--profile iter` in place of `--release` (for `run`, `buil
 it rebuilds in seconds rather than minutes after an edit and runs nearly as fast. Keep
 `--release` for performance measurements.
 
+For a bounded renderer diagnosis, set `VOXMAR_PROFILE_FRAMES=1` together with
+`VOXMAR_RECORD_SLOW_FRAMES=1` for a capture. Slow-frame records then include wall and
+thread CPU time for streaming, compaction and buffer operations, with queue counts and
+bytes. Storage stays fixed at eleven measurements per render frame in the existing
+three-frame ring; only slow frames write JSON. `render_local_frame` identifies a render
+record; the shared process-local monotonic intervals join it to main-frame intervals.
+Parent measurements include their nested operations, so their times must not be added
+together. Thread CPU excludes sleep and descheduling, and neither clock measures GPU
+execution. Unsupported or failed CPU clocks are `null`. `receive.input_bytes` counts
+payloads of applied messages. Child `written_bytes` counters cover the targeted page,
+arena and compaction queue writes; origins, wind, coverage and blade-index setup writes
+are outside these counters. `buffer_bytes_created` counts allocated capacity. These are
+different quantities. Owner `original_writes` and `original_bytes` describe assignments
+on pages that survive to the end-of-receive flush; `unique_dirty_words` counts distinct
+assigned positions, including same-value assignments. `compact.reused_after_unrelated_changes`
+counts view reuse that the previous whole-terrain revision check would have invalidated.
+
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
 frame rate), `--language CODE` (`en` or `ja`; captures are in English without it), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
@@ -64,7 +81,7 @@ the last few servers are remembered) and Settings. A new world takes a name, an 
 flight, Survival does not. Either way you are the world's admin, who can run commands.
 
 Controls: WASD move, Space jump, Ctrl (or W tapped twice) sprint, Shift descend, F toggle flight, left mouse break
-(hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
+(hold), right mouse place (on an animal: feed or tame it; Shift and right click one of yours twice to let it go), middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
 inventory, C character screen, T chat, / command, F3 debug overlay (frame rate, and the worst frame, p99 and frames over 25 ms of the last 5 s), Esc menu, R respawn, Z (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
 Movement feels like Minecraft's: a sprint lasts while forward is held, until you run head-on
@@ -110,6 +127,14 @@ crafting grid, a campfire, shears on a mouflon, a creature that drops it); arrow
 pages, clicking an item looks up its recipes (right-click, its uses) and Back retraces the
 steps. Both keys can be changed in Settings, Keys. It reads the same content the game plays
 by, so a package's recipes show up in it on their own.
+
+In survival, the inventory has a recipe search beside it: type part of an item's English
+or Japanese name, then click it for recipes or right-click it for uses. The quest book
+shows recipes under crafting, cooking and carried-item goals; click any goal, ingredient
+or reward item to look it up, and Back returns to the book. The Nomad quest "Look It Up"
+teaches this with the stone pickaxe and awards 40 Crafting xp once. For captures,
+`--catalogue SEARCH` opens the search in either mode, and `--quests QUEST` opens that
+quest's page.
 
 The character screen (C) shows health, how warm you feel and the effects on you, and
 every skill with its icon, level and progress; click a skill for its guide, what each level
@@ -165,7 +190,12 @@ its blocks and skills, or adds a whole language. Definitions are named by key fr
 (`block.base.oak_log`, `skill.core.farming`), and a template's members by pattern, so
 `block.base.{name}_log` with `family.base.oak` names オークの原木 and a new wood needs one
 line per language; anything a language leaves out shows in English, then as a name made from
-the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
+the id. A shader pack is named by `shader_pack.<key>`, its key being its name in lower case
+with anything but a letter or a digit made `_` (Verdant is `shader_pack.verdant`, 新緑
+`shader_pack.新緑`, "R&D v1.2" `shader_pack.r_d_v1_2`); a pack no language names shows its own
+name. The packs the game ships (`assets/shaderpacks/shipped.ron`) load first; a pack with a
+name already loaded is refused, and one whose key is already taken ("soft_light" after "Soft
+Light") loads but keeps its own name. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
 way. Kanji and kana come from Fusion Pixel 12px, a Japanese pixel font (listed in
 `assets/ui/fonts/fallback.ron`) whose glyphs are read at startup and merged under the chosen
 interface font, its pixels drawn at three quarters of ours; BIZ UDGothic, a smooth font,
@@ -178,8 +208,12 @@ language complete, every key the code names defined, and every character drawn.
 T opens the console to chat with everyone on the server; / opens it with a command. Up and down
 recall earlier lines, Tab completes a command's name, Enter sends and Esc closes. Replies and
 chat show above the hotbar and fade after ten seconds. The server checks and runs commands,
-like actions: admins (the singleplayer host, and players named with `--admin` on a dedicated
-server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
+like actions: admins (the singleplayer host, players named with `--admin` on a dedicated
+server who play on its machine, players who join with the server's admin token, and anyone an
+admin makes one with `/op NAME` for the session) may use them all, everyone else `/help`,
+`/seed`, `/biome` and `/list`. Chat (and a non-admin's commands) is limited to a burst of eight
+lines and two a second after it, by the clock; lines past that are dropped, and the first of
+them says so.
 
 - `/time` tells the time; `/time set sunrise|day|morning|noon|afternoon|sunset|dusk|night|midnight|dawn|TICKS`
   moves forward to that time of day (a day is 24000 ticks, 0 is sunrise), `/time add 100|30s|2h|1d`
@@ -212,6 +246,9 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   lying on the ground over a vein (of an ore or vein named so, such as `iron`; within 1000).
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
 
+`/locate settlement [hamlet|village] [RADIUS]` finds a settlement and gives its teleport
+coordinates; the default radius is 4000 blocks.
+
 Commands are data: each package's `commands.ron` names its commands, who may use them, their
 usage and help, and what they run: one of the engine's built-in commands, or other command
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
@@ -229,12 +266,31 @@ broken blocks and the chips while mining, and the smoke, embers, sparks and flam
 and torches give off), how far the hotbar sits above the bottom edge (Raise
 HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the sprint key and double-tap sprint, the zoom key
 (click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
-smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
+smoothly while zoomed), zoom in survival, toggle guard (a right-click raises the guard and the next
+lowers it, instead of holding the button), damage numbers (the hitsplats a fight shows), and fly speed
+for admins, with Resume, Save and quit
 to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in
 the OS config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
 `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`);
 `--view-distance` and `--no-vsync` override them. On a dedicated server, name admins with
-`--admin NAME` (repeatable), and cap render distance with `--view-distance N` (default 32).
+`--admin NAME` (repeatable; names are not checked, so it counts only for players on the server's
+own machine; a tunnel or proxy that forwards players from elsewhere makes them all look local, so
+leave `--admin` out behind one). An admin token makes anyone who joins with it an admin from
+anywhere: the server reads it from `$VOXMAR_ADMIN_TOKEN` or the first line of
+`--admin-token-file FILE` (never the command line, which others on the machine can see), and a
+player gives it by starting the game with `VOXMAR_ADMIN_TOKENS=host:port=TOKEN` (several
+separated by spaces), so each token goes to its own server only. It travels unencrypted, so
+use it on networks you trust. `op NAME` typed at the server (or by an admin in game) makes
+anyone else an admin until they leave, and `deop NAME` undoes it (an admin by name or token is
+one again when they come back). Cap render distance with `--view-distance N` (default 32) and players with
+`--max-players N` (default 64). Each name plays once at a time, whatever its case (Ada and ada
+are one player, with one save); at most 16 connections may be waiting to say hello (4 from
+one address), and a player from elsewhere whose connection sends nothing for 15 seconds is
+let go (`--idle-seconds N`; the game's network thread says it is there every 5 seconds, even
+while the game is minimized). `--limits FILE` changes how much one connection may ask of the
+server, from a RON file naming any of `messages_per_tick` (64), `chat_burst` (8 lines) and
+`chat_per_second` (2), `hello_seconds` (3), `max_pending` (16), `max_pending_per_address`
+(4) and `name_length` (32), as in `(chat_burst: 4.0, max_pending_per_address: 2)`.
 
 ### Saved worlds
 
@@ -245,11 +301,23 @@ Singleplayer worlds live in `voxmar/worlds/<name>/` next to the settings:
 - `columns/<x>.<z>.bin`: each column a player has edited, as zlib-compressed postcard with the
   names of the blocks it uses, so a content change that renumbers blocks does not break saves.
   Untouched columns are not stored; generation recreates them exactly.
-- `players/<name>.ron`: each player's position, health and inventory, restored when they join.
+- `players/<name>.ron`: each player's position, health and inventory, restored when they join,
+  under the name in lower case (a file saved under the name as typed is still read). The
+  file keeps the player's canonical spelling, so Bob reconnecting as BOB keeps animal,
+  machine and death-drop ownership. Older saves recover spellings from their kept animals,
+  machines and actual player filenames and fold matching aliases. An older death drop
+  with only an owner hash and no surviving original spelling remains protected; reconnect
+  with the original spelling to collect it.
 
 The server saves edited columns, players and the time every 30 seconds, when a player leaves
 and when it stops (leaving to the title screen or quitting). Every file is written to a
-temporary file and renamed, so a crash never leaves half a file. Saved columns are unloaded
+temporary file and renamed, so a crash never leaves half a file, and a file that cannot be read
+is never written over. One that is not what it should be is moved aside to
+`<file>.corrupt-<unix time>` and the error logged (a player whose file it was starts afresh and
+is told so); one that could not be read at all (no permission, a failing disk) or moved aside
+is left alone: its player is turned away, its column is not saved over, and a world whose
+items, crops or creatures file it is does not open. When a player leaves, the items they left
+are written before they are, so a crash in between can double things but never lose them. Saved columns are unloaded
 like any other. The dedicated server keeps its world in `--world DIR` (default `./world`),
 created with `--seed N` and, given `--no-flight`, in survival mode if it does not exist yet;
 type `stop` to save and quit. Anything else typed there runs as a command, as an admin
@@ -343,6 +411,20 @@ their own blocks and drop the plant, as many as their size. Blocks carry tags (`
 `wetland`, `edible`, `alchemy:calming`, `dye:blue`; the vocabulary is at the top of
 `blocks.ron`) and a rarity, so biomes, food and alchemy select them without naming them.
 
+Colour variants cost no extra art. A block may say `tint: Fixed(r, g, b)`: its textures are
+multiplied by that colour when the texture array is built (one layer per texture and colour),
+so a greyscale drawing makes a family of woods or dyes and the renderer sees an untinted
+block. A `blocks*.ron` file may list `dyes: [(name: "indigo", rgb: (52, 64, 150)), ...]`
+(one palette across packages, each dye named by `family.<package>.<name>` in the language
+files), and a family line `(template: "dyed", dyes: true)` makes the template once for every
+dye, with the dye's name for `{name}` and its colour as the tint. A family recipe may take the
+tag of its own name (`tag:dye:{name}`), and a fill whose tag nothing has is skipped. The decor
+blocks (`blocks_furnishings.ron`: furniture in three woods, cloth things in twelve dyes,
+crockery in three glazes, lights, graves, columns; their boxes are in `shapes.ron`, their
+greyscale drawings in the default pack's `decor.ron`, written by `tools/art/decor.py`) are
+the first users; Voxmar HD shows the default drawings at twice the fineness until the pack
+thread redraws them.
+
 How the design primitives map to the code today:
 
 - **Definition**: blocks (`content/base/blocks.ron`), actions (`content/core/actions.ron`,
@@ -433,8 +515,10 @@ no two worlds share a rarity table. Everything else is a continuous field:
   falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
   summed region by region through records of where water crosses each 1 km region's border,
   so rivers can be any length and nothing depends on generation order.
+- **Settlements** have deterministic residents with homes, daily routines and guards.
+  Ordinary villagers give no loot or combat XP; deaths persist until a newcomer arrives.
 - **Trails** (`worldgen/src/trails/`, materials in `trails.ron`; laid only near settlements,
-  of which there are none yet, so `laid: NearSettlements` leaves them all out) join the places worth walking
+  with `laid: NearSettlements`) join the places worth walking
   to: summits that stand above the land around, lake shores, the banks of waterfalls, the edges
   of long drops and flat trailheads in the valleys, a few per 512-block region. Nearby places
   are joined into a sparse network (a Gabriel graph, with no two trails setting off side by
@@ -547,9 +631,18 @@ generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `
 arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
 and routes that failed. `river_sights` prints
 `--pose` arguments for captures of the places water makes near spawn (highland lakes,
-waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
-`Overworld::water_sights` finds; `shape_sights` does the same for the best example of each
-terrain shape and the highest peak, with a `/tp` command and `--pose` for each.
+tarns, waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
+`Overworld::water_sights` finds; `tarn_census` (with `SEEDS` and `REGIONS`) counts the tarns
+around mountains and alpine meadows in and out of tarn country, their visible water area,
+and the share of the land that is lake bank. `LOTUS=n` also generates the connected shore
+of up to n visible pools per seed to count actual lotus plants and visible clusters. Existing high lakes and snowy peaks are counted
+separately; `Overworld::locate_tarn` finds a visible pool filled by the tarn rule.
+`rare_herb_census` (with `SEEDS`, `CHUNKS`, `PLACES` (up to three far places of each biome a
+world), or `WILD=a,b` or `WILDTAG=tag` with `WILDBIOMES=a,b` for other plants instead, `AT=1`
+for where the biggest patch of each is) counts the
+rare herbs as generation places them, per million columns of each biome naming them;
+`shape_sights` prints a `/tp` command and `--pose` for the best example of each
+terrain shape and the highest peak.
 `ore_preview` (with `SEED`, a centre `X`, `Z` and `COLUMNS`) writes an x-ray of the ore veins
 from above and a cut through the richest row to `target/ores_*.ppm`, with the surface samples
 in white, and prints each ore's blocks per column and the share lying alone.

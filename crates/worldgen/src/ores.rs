@@ -478,50 +478,59 @@ impl Ores {
         let origin = pos.origin();
         let (min, max) = (origin.xz(), origin.xz() + CHUNK_SIZE - 1);
         for vein in self.veins_near(world, min, max) {
-            let kind = &self.kinds[vein.kind];
-            let mut put = |p: IVec3, t: f32, density: f32| {
-                let h = hash3(vein.seed, p.x, p.y, p.z);
-                if ((h & 0xffff) as f32) >= density * 65536.0 {
-                    return;
-                }
-                let Some(ore) = kind.pick(t, (h >> 16 & 0xffff) as f32 / 65536.0) else { return };
+            self.ores_in(&vein, min, max, |p, ore| {
                 let block = match ore.deep {
                     Some(deep) if blocks.get(p) == self.deepslate => deep,
                     _ => ore.block,
                 };
                 blocks.replace_stone(p, block);
-            };
-            let reach = match kind.shape {
-                VeinShape::Layered => (vein.axes.x * RIM).ceil() as i32,
-                VeinShape::Pipe => (vein.axes.x + SWAY).ceil() as i32,
-            };
-            let (low, high) = ((vein.centre.xz() - reach).max(min), (vein.centre.xz() + reach).min(max));
-            if low.cmpgt(high).any() {
-                continue;
+            });
+        }
+    }
+
+    /// Calls `put` with every block of ore a vein holds between `min` and `max` across
+    /// (columns), and the ore there.
+    fn ores_in(&self, vein: &Vein, min: IVec2, max: IVec2, mut put: impl FnMut(IVec3, &Ore)) {
+        let kind = &self.kinds[vein.kind];
+        let mut put = |p: IVec3, t: f32, density: f32| {
+            let h = hash3(vein.seed, p.x, p.y, p.z);
+            if ((h & 0xffff) as f32) >= density * 65536.0 {
+                return;
             }
-            match kind.shape {
-                VeinShape::Layered => {
-                    for z in low.y..=high.y {
-                        for x in low.x..=high.x {
-                            let Some((foot, top, out)) = vein.span(x, z) else { continue };
-                            // Ore thins towards the rim.
-                            let density = kind.density * (1.0 - 0.55 * out);
-                            for y in (foot.ceil() as i32).max(1)..=(top.floor() as i32).min(WORLD_HEIGHT - 1) {
-                                put(IVec3::new(x, y, z), (y as f32 - foot) / (top - foot), density);
-                            }
+            if let Some(ore) = kind.pick(t, (h >> 16 & 0xffff) as f32 / 65536.0) {
+                put(p, ore);
+            }
+        };
+        let reach = match kind.shape {
+            VeinShape::Layered => (vein.axes.x * RIM).ceil() as i32,
+            VeinShape::Pipe => (vein.axes.x + SWAY).ceil() as i32,
+        };
+        let (low, high) = ((vein.centre.xz() - reach).max(min), (vein.centre.xz() + reach).min(max));
+        if low.cmpgt(high).any() {
+            return;
+        }
+        match kind.shape {
+            VeinShape::Layered => {
+                for z in low.y..=high.y {
+                    for x in low.x..=high.x {
+                        let Some((foot, top, out)) = vein.span(x, z) else { continue };
+                        // Ore thins towards the rim.
+                        let density = kind.density * (1.0 - 0.55 * out);
+                        for y in (foot.ceil() as i32).max(1)..=(top.floor() as i32).min(WORLD_HEIGHT - 1) {
+                            put(IVec3::new(x, y, z), (y as f32 - foot) / (top - foot), density);
                         }
                     }
                 }
-                VeinShape::Pipe => {
-                    let (foot, top) = vein.pipe_ends();
-                    for y in foot.max(1)..=top.min(WORLD_HEIGHT - 1) {
-                        let Some((axis, radius, t)) = vein.disc(y) else { continue };
-                        for z in low.y..=high.y {
-                            for x in low.x..=high.x {
-                                let out = Vec2::new(x as f32, z as f32).distance_squared(axis) / (radius * radius).max(0.25);
-                                if out < 1.0 {
-                                    put(IVec3::new(x, y, z), t, kind.density * (1.0 - 0.5 * out));
-                                }
+            }
+            VeinShape::Pipe => {
+                let (foot, top) = vein.pipe_ends();
+                for y in foot.max(1)..=top.min(WORLD_HEIGHT - 1) {
+                    let Some((axis, radius, t)) = vein.disc(y) else { continue };
+                    for z in low.y..=high.y {
+                        for x in low.x..=high.x {
+                            let out = Vec2::new(x as f32, z as f32).distance_squared(axis) / (radius * radius).max(0.25);
+                            if out < 1.0 {
+                                put(IVec3::new(x, y, z), t, kind.density * (1.0 - 0.5 * out));
                             }
                         }
                     }
@@ -633,8 +642,7 @@ mod tests {
     use crate::tests::generate_area;
 
     fn registry() -> Arc<BlockRegistry> {
-        let source = include_str!("../../../assets/content/base/blocks.ron");
-        Arc::new(BlockRegistry::from_ron("base", source).unwrap())
+        Arc::new(crate::test_registry())
     }
 
     /// `cargo test --profile iter -p voxmar_worldgen ore_preview -- --ignored --nocapture`
@@ -940,31 +948,55 @@ mod tests {
         (counts.map(|c| 100.0 * c as f32 / total as f32), total)
     }
 
-    /// Veins come in the mix of rarity classes the design asks for (draft 63): about two
-    /// thirds common, 17% uncommon, 13% rare and 3% very rare. The weights alone make that
-    /// mix within a point; the rock provinces shift what generates (veins that favour the
-    /// volcanic and granite provinces, mostly uncommon ones, gain a few points), so the
-    /// generated mix is held to wider bounds.
+    /// Veins come in the mix of rarity classes the design asks for (draft 85): about 68%
+    /// common, 17% uncommon, 14% rare and 1% very rare, counted over the veins that
+    /// generate (the weights make up for the rock provinces' bias), within ±1.5, ±1.5, ±0.8
+    /// and ±0.3 points.
     #[test]
     fn veins_come_in_the_designed_mix_of_rarities() {
-        let wanted = [67.0, 17.0, 13.0, 3.0];
-        let mut weighed = [0.0f32; 4];
-        for vein in &crate::content::WorldContent::base(&registry()).unwrap().ores.veins {
-            weighed[(vein.rarity as usize).min(3)] += vein.weight * vein.rarity.multiplier();
-        }
-        let total: f32 = weighed.iter().sum();
-        let weighed = weighed.map(|w| 100.0 * w / total);
-        println!("vein mix by weight: common {:.1}%, uncommon {:.1}%, rare {:.1}%, very rare {:.1}%", weighed[0], weighed[1], weighed[2], weighed[3]);
-        for (got, want) in weighed.iter().zip(wanted) {
-            assert!((got - want).abs() <= 1.0, "vein mix by weight {weighed:?}, wanted {wanted:?}");
-        }
-
+        let wanted = [68.0, 17.0, 14.0, 1.0];
         let (mix, veins) = vein_mix(4, 60);
         println!("vein mix over {veins} veins: common {:.1}%, uncommon {:.1}%, rare {:.1}%, very rare {:.1}%", mix[0], mix[1], mix[2], mix[3]);
-        let tolerance = [4.5, 5.0, 2.0, 1.0];
+        let tolerance = [1.5, 1.5, 0.8, 0.3];
         for ((got, want), tolerance) in mix.iter().zip(wanted).zip(tolerance) {
-            assert!((got - want).abs() <= tolerance, "vein mix {mix:?}, wanted about {wanted:?}");
+            assert!((got - want).abs() <= tolerance, "vein mix {mix:?}, wanted {wanted:?} within {tolerance:?}");
         }
+    }
+
+    /// Every very rare ore is rarer per square than every rare ore (the wiki's rule), in
+    /// blocks of ore over seeds 1 to 3 and 2,500 squares each (the vein bodies' ore, before
+    /// caves cut into it).
+    #[test]
+    fn very_rare_ores_are_rarer_than_rare_ones() {
+        use crate::rarity::Rarity;
+        let registry = registry();
+        let mut counts: rustc_hash::FxHashMap<BlockId, u64> = Default::default();
+        let (seeds, side) = (3u64, 50);
+        for seed in 1..=seeds {
+            let world = Overworld::new(seed, registry.clone());
+            let ores = &world.terrain.ores;
+            let mut veins = Vec::new();
+            for sz in -side / 2..side / 2 {
+                for sx in -side / 2..side / 2 {
+                    ores.square(&world, IVec2::new(sx, sz), &mut veins);
+                }
+            }
+            for vein in &veins {
+                ores.ores_in(vein, IVec2::splat(i32::MIN / 2), IVec2::splat(i32::MAX / 2), |_, ore| *counts.entry(ore.block).or_default() += 1);
+            }
+        }
+        let squares = (seeds * (side * side) as u64) as f32;
+        let per_square = |rarity: Rarity| -> Vec<(String, f32)> {
+            let mut list: Vec<(String, f32)> =
+                counts.iter().filter(|(b, _)| registry.def(**b).rarity == rarity).map(|(b, c)| (registry.def(*b).name.clone(), *c as f32 / squares)).collect();
+            list.sort_by(|a, b| a.1.total_cmp(&b.1));
+            list
+        };
+        let (rare, very_rare) = (per_square(Rarity::Rare), per_square(Rarity::VeryRare));
+        println!("rare ores per square: {rare:?}\nvery rare ores per square: {very_rare:?}");
+        assert!(!rare.is_empty() && !very_rare.is_empty());
+        let (rarest_rare, commonest_very_rare) = (&rare[0], &very_rare[very_rare.len() - 1]);
+        assert!(commonest_very_rare.1 < rarest_rare.1, "{commonest_very_rare:?} is no rarer than {rarest_rare:?}");
     }
 
     /// The base package's veins load, and every kind can be drawn somewhere.

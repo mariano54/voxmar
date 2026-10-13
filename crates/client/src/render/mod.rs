@@ -53,6 +53,7 @@ pub mod volumetric;
 pub mod warm;
 pub mod water;
 pub mod wind;
+pub(crate) mod work;
 
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
 pub const ATTRIBUTE_LOD: MeshVertexAttribute = MeshVertexAttribute::new("Lod", 0x6c6f_6433, VertexFormat::Uint32x4);
@@ -348,6 +349,7 @@ pub fn setup(
     sky_materials: &mut Assets<SkyMaterial>,
     block_textures: &[Rgba],
     layers: &[LayerInfo],
+    shapes: Vec<[f32; 4]>,
 ) {
     commands.insert_resource(particles::TexturePieces::new(block_textures, layers));
     // Overlays are blended by their alpha, so their mips keep its average.
@@ -357,7 +359,7 @@ pub fn setup(
     }
     let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat, &blended));
     let layers = images.add(layer_table(layers));
-    commands.insert_resource(terrain::TerrainTextures { textures, layers });
+    commands.insert_resource(terrain::TerrainTextures { textures, layers, shapes: std::sync::Arc::new(shapes) });
     let sky = sky_materials.add(SkyMaterial { params: SkyParams::default(), atmosphere: default(), layout: default() });
     commands.insert_resource(SkyHandle(sky.clone()));
     commands.spawn((

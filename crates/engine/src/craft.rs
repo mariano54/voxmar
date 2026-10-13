@@ -7,9 +7,9 @@
 //! with more than four ingredients, needs a table. A name with `{name}` in it makes a
 //! family of recipes, one for every name that fits all of the recipe's blocks: one line
 //! turns every wood's log into its planks. A cell or ingredient may also accept several
-//! items: `tag:TAG` takes anything with that tag, and `a|b` either of two. A recipe trains a
-//! skill (Crafting unless it says), may need a level in it, and gives experience for every
-//! one made.
+//! items: `tag:TAG` takes anything with that tag (a family's own, with `{name}` in it, as
+//! `tag:dye:{name}`), and `a|b` either of two. A recipe trains a skill (Crafting unless it
+//! says), may need a level in it, and gives experience for every one made.
 
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -211,8 +211,12 @@ impl RecipeRegistry {
         let mut recipes = Vec::new();
         let crafting = skills.id("core:crafting");
         for def in defs {
-            // The single item names, for families (`tag:` and `a|b` cells stand apart).
-            let names: Vec<&String> = def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.starts_with("tag:") && !n.contains('|')).collect();
+            // The single item names, for families (`tag:` and `a|b` cells stand apart, and an
+            // empty cell is no item: with it in, no name fits and the family has no recipes).
+            let names: Vec<&String> =
+                def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.is_empty() && !n.starts_with("tag:") && !n.contains('|')).collect();
+            // The tags a family fills in (`tag:dye:{name}`).
+            let tags: Vec<&str> = def.pattern.iter().flatten().chain(&def.ingredients).filter_map(|n| n.strip_prefix("tag:")).filter(|t| t.contains("{name}")).collect();
             let bad = |what: &str| RegistryError(format!("recipe for {}: {what}", def.output));
             if def.pattern.len() > SIDE || def.pattern.iter().any(|row| row.len() > SIDE || row.len() != def.pattern[0].len()) {
                 return Err(bad("a pattern is up to three rows of three"));
@@ -233,6 +237,8 @@ impl RecipeRegistry {
                         .map(|i| blocks.def(BlockId(i as u16)).name.as_str())
                         .filter_map(|name| name.strip_prefix(prefix)?.strip_suffix(suffix).map(str::to_owned))
                         .filter(|fill| names.iter().all(|n| blocks.id(&n.replace("{name}", fill)).is_some()))
+                        // A fill whose own tag nothing has is no family member, not an error.
+                        .filter(|fill| tags.iter().all(|tag| blocks.ids().any(|id| blocks.def(id).has_tag(&tag.replace("{name}", fill)))))
                         .map(Some)
                         .collect()
                 }
@@ -247,7 +253,11 @@ impl RecipeRegistry {
                         return Ok(None);
                     }
                     let mut accepts: Accepts = match name.strip_prefix("tag:") {
-                        Some(tag) => (0..blocks.len() as u16).map(BlockId).filter(|&id| blocks.def(id).has_tag(tag)).collect(),
+                        Some(tag) => {
+                            // A family's recipe may take its own tag (`tag:dye:{name}`).
+                            let tag = fill.as_ref().map_or_else(|| tag.to_owned(), |fill| tag.replace("{name}", fill));
+                            (0..blocks.len() as u16).map(BlockId).filter(|&id| blocks.def(id).has_tag(&tag)).collect()
+                        }
                         None => name.split('|').map(item).collect::<Result<_, _>>()?,
                     };
                     if accepts.is_empty() {
@@ -282,6 +292,13 @@ impl RecipeRegistry {
     /// The recipe the grid holds, if any.
     pub fn find(&self, grid: &[Option<BlockId>; GRID]) -> Option<&Recipe> {
         self.recipes.iter().find(|recipe| recipe.matches(grid))
+    }
+
+    /// What each craft of the grid makes while it still holds `first`, the recipe it held
+    /// when the player crafted: crafting all stops once what is left makes another recipe.
+    /// The server judges a craft by this, and the client predicts it the same way.
+    pub fn while_making<'a>(&'a self, first: Option<&'a Recipe>) -> impl Fn(&[Option<BlockId>; GRID]) -> Option<(BlockId, u8)> + 'a {
+        move |grid| self.find(grid).filter(|r| first.is_some_and(|f| std::ptr::eq(*r, f))).map(|r| (r.output, r.count))
     }
 
     /// Every recipe, in the order packages list them.
@@ -380,6 +397,35 @@ mod tests {
     }
 
     #[test]
+    fn a_family_pattern_may_have_empty_cells() {
+        let item = |name: &str| BlockDef { name: name.into(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![item("test:oak_planks"), item("test:birch_planks"), item("test:stick"), item("test:oak_axe"), item("test:birch_axe")]).unwrap();
+        let registry = registry(&blocks, r#"(recipes: [(pattern: [["{name}_planks", "{name}_planks"], ["", "stick"]], output: "{name}_axe")])"#);
+        assert_eq!(registry.len(), 2, "an empty cell is no name to fit");
+    }
+
+    #[test]
+    fn a_family_may_take_the_tag_of_its_own_name() {
+        let tagged = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![
+            tagged("test:wool", &[]),
+            tagged("test:poppy", &["dye:red"]),
+            tagged("test:cornflower", &["dye:blue"]),
+            tagged("test:red_cloth", &[]),
+            tagged("test:blue_cloth", &[]),
+            // Nothing is dyed wraith: not a member of the family, and no error.
+            tagged("test:wraith_cloth", &[]),
+        ])
+        .unwrap();
+        let registry = registry(&blocks, r#"(recipes: [(ingredients: ["wool", "tag:dye:{name}"], output: "{name}_cloth")])"#);
+        let id = |name: &str| Some(blocks.id(&format!("test:{name}")).unwrap());
+        assert_eq!(registry.len(), 2);
+        let made = |flower: &str| registry.find(&grid(&[&[id("wool"), id(flower)]])).map(|r| r.output);
+        assert_eq!(made("poppy"), id("red_cloth"));
+        assert_eq!(made("cornflower"), id("blue_cloth"));
+    }
+
+    #[test]
     fn cells_may_take_any_item_with_a_tag_or_either_of_two() {
         let tagged = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
         let blocks = BlockRegistry::new(vec![
@@ -409,5 +455,33 @@ mod tests {
         // The viewer shows the first of each cell's choices.
         assert_eq!(fire.cells()[..3], [id("oak_log"), id("oak_log"), id("stick")]);
         assert_eq!(fire.alternatives()[0].map(<[BlockId]>::len), Some(2));
+    }
+
+    #[test]
+    fn crafting_all_stops_when_what_is_left_makes_another_recipe() {
+        use crate::inventory::{Inventory, ItemStack};
+        let blocks = blocks();
+        let source = r#"(recipes: [
+            (ingredients: ["oak_log", "stone"], output: "bread"),
+            (ingredients: ["oak_log"], output: "oak_planks", count: 4),
+        ])"#;
+        let registry = registry(&blocks, source);
+        let id = |name: &str| blocks.id(&format!("test:{name}")).unwrap();
+        // Four logs and one stone: one loaf, and then the logs alone would make planks.
+        let mut inventory = Inventory::default();
+        inventory.craft[0] = Some(ItemStack { item: id("oak_log"), count: 4 });
+        inventory.craft[1] = Some(ItemStack { item: id("stone"), count: 1 });
+        let first = registry.find(&inventory.grid());
+        assert_eq!(first.map(|r| r.output), Some(id("bread")));
+        assert_eq!(inventory.craft(registry.while_making(first), true), 1);
+        assert_eq!(inventory.craft[0].map(|s| s.count), Some(3), "the logs left are not made into planks");
+        let carried = |inventory: &Inventory, item| inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+        assert_eq!((carried(&inventory, id("bread")), carried(&inventory, id("oak_planks"))), (1, 0));
+        // Nothing held, nothing made.
+        assert_eq!(inventory.craft(registry.while_making(None), true), 0);
+        // The planks recipe, held from the start, crafts all three.
+        let first = registry.find(&inventory.grid());
+        assert_eq!(inventory.craft(registry.while_making(first), true), 3);
+        assert_eq!(carried(&inventory, id("oak_planks")), 12);
     }
 }

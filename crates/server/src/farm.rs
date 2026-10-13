@@ -25,7 +25,7 @@ use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
 use voxmar_engine::action::ActionTarget;
 use voxmar_engine::lang::Words;
-use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::items::random3;
@@ -249,14 +249,12 @@ impl Server {
         let Some(seed) = voxmar_engine::action::ActionContext::actor_seed(&crate::actions::context(self, agent)) else { return };
         let Some(id) = self.content.crops.planted_by(seed) else { return };
         // Where it could never grow, the seed stays in hand and the player hears why
-        // (the client showed the sprout and gets the ground back).
+        // (the client showed the sprout and gets the ground back), naming the crop by what
+        // it bears ("Rice", "Wheat"), or else by its seed, never by a growing stage.
         let crop = self.content.crops.get(id);
         if let Some(why) = crop::unsuited(&crop.def, self.crop_conditions(pos)) {
-            let ripe = self.content.blocks.def(crop.stages[crop.ripe_stage() as usize]).name.clone();
-            let words = Words::key(why.key()).with("crop", Words::Block(ripe));
-            if let Some(player) = self.players.get(&agent) {
-                player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
-            }
+            let named = self.content.blocks.id(&crop.def.name).unwrap_or(seed);
+            self.refuse(agent, Words::key(why.key()).with("crop", Words::Block(self.content.blocks.def(named).name.clone())));
             self.reject(agent, ActionTarget::Block { block: ground, face: Face::PosY });
             return;
         }

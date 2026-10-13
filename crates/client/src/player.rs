@@ -3,7 +3,6 @@
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::skill::Skills;
@@ -65,6 +64,9 @@ pub struct LocalPlayer {
     /// Experience in every skill, as the server last said, and whether it has said yet.
     pub skills: Skills,
     pub skills_known: bool,
+    /// How many times the server has said the player's state (inventory, health, skills):
+    /// what was predicted here before a count was taken is the server's once it moves on.
+    pub states: u32,
     /// Hunger, warmth and their effects, as the server last said.
     pub vitals: Vitals,
     /// When the vitals last came, in seconds since startup: timed effects count down from it.
@@ -82,6 +84,8 @@ pub struct LocalPlayer {
     pub journal: voxmar_engine::journal::Journal,
     /// Every quest's state, as the server tells it (the quest book's data).
     pub quests: Vec<voxmar_engine::quest::QuestState>,
+    /// The last teleport applied, which inputs echo (`PlayerInput::teleport`).
+    pub teleports: u32,
     /// Counts the server's word on quests, for screens to redraw only on a change.
     pub quests_rev: u32,
 }
@@ -108,6 +112,7 @@ impl Default for LocalPlayer {
             inventory: Inventory::default(),
             skills: Skills::default(),
             skills_known: false,
+            states: 0,
             vitals: Vitals::default(),
             vitals_at: 0.0,
             selected: 0,
@@ -116,6 +121,7 @@ impl Default for LocalPlayer {
             seed: 0,
             journal: Default::default(),
             quests: Vec::new(),
+            teleports: 0,
             quests_rev: 0,
         }
     }
@@ -376,6 +382,7 @@ fn movement(
     world: Res<ClientWorld>,
     mut player: ResMut<LocalPlayer>,
     mut last_forward: Local<Option<f32>>,
+    (net, actions, mut fighting, creatures, target): (Res<crate::net::Net>, Res<crate::Actions>, ResMut<crate::fight::Fighting>, Res<crate::creatures::Creatures>, Res<crate::interact::Target>),
 ) {
     let player = &mut *player;
     if !player.joined || player.dead {
@@ -408,10 +415,43 @@ fn movement(
         double_tap = settings.double_tap_sprint && last_forward.is_some_and(|t| now - t < DOUBLE_TAP);
         *last_forward = (!double_tap).then_some(now);
     }
+    // A dodge (`fight`): with a direction, a dash that way; alone, a step back. Not in the
+    // air (past `dodge_grace` off the ground, as the server judges), nor eating, nor with
+    // the guard up, nor sooner than the last allows.
+    let combat = &launch.content.combat;
+    let clock = time.elapsed_secs_f64();
+    if player.on_ground && !player.flying {
+        fighting.grounded = clock;
+    }
+    if ui.cursor_locked
+        && keys.just_pressed(settings.dodge_key.0)
+        && clock - fighting.grounded <= combat.feel.dodge_grace as f64
+        && !player.flying
+        && fighting.guard.is_none()
+        && now >= target.eating_until
+        && clock >= fighting.dodge_ready
+        && let Some(dodge_action) = actions.0.id("core:dodge")
+    {
+        // The heaviest armour worn chooses the dodge; without armour, the first.
+        let dodge = combat.dodge_of(&player.inventory.worn);
+        let dir = if wish == Vec3::ZERO { -forward } else { wish.normalize() };
+        fighting.dash = Some((dir, dodge.distance / dodge.time.max(0.05), dodge.time));
+        fighting.dodge_was = fighting.dodge_ready;
+        fighting.dodge_ready = clock + dodge.cooldown as f64;
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+        fighting.rhythm.cancel(clock, &combat.timing(&weapon), &combat.feel);
+        net.propose_from(player, dodge_action, voxmar_engine::action::ActionTarget::None);
+    }
+    // Guarding, the player walks slower and cannot sprint.
+    let guard_speed = fighting.guard.and_then(|_| {
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).map(|g| g.speed)
+    });
     let controls = Controls {
         wish: wish.normalize_or_zero(),
         forward: pressed(KeyCode::KeyW) && !pressed(KeyCode::KeyS),
-        sprint: pressed(settings.sprint_key.0) || double_tap,
+        sprint: guard_speed.is_none() && (pressed(settings.sprint_key.0) || double_tap),
         jump: pressed(KeyCode::Space),
         descend: pressed(KeyCode::ShiftLeft),
     };
@@ -426,11 +466,25 @@ fn movement(
         sprinting: player.sprinting,
         jump_delay: player.jump_delay,
     };
-    let water = world.registry.id("base:water").unwrap_or(BlockId::AIR);
     // Quicker or slower on foot as the player's effects say (fruit, a gale).
-    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed;
+    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed * guard_speed.unwrap_or(1.0);
     let tuning = launch.content.movement.on_foot(speed);
-    movement::advance(&mut body, &Around { world: &world, water }, &tuning, controls, time.delta_secs().min(0.25));
+    let dt = time.delta_secs().min(0.25);
+    let around = Around { world: &world };
+    match fighting.dash {
+        Some(under_way) => fighting.dash = dash(&mut body, under_way, &around, &tuning, controls, dt),
+        None => movement::advance(&mut body, &around, &tuning, controls, dt),
+    }
+    // A creature's body is not walked into: the player is put back out of it, a little
+    // clear, so the view never ends up inside its model.
+    let clearance = combat.feel.creature_clearance;
+    for aabb in creatures.bodies(&launch) {
+        if let Some(out) = out_of(body.position, &aabb, dims::WIDTH / 2.0 + clearance)
+            && !Aabb::standing(out, dims::WIDTH, dims::HEIGHT).intersects(|cell| around.solid(cell))
+        {
+            body.position = out;
+        }
+    }
     player.position = body.position;
     player.velocity = body.velocity;
     player.on_ground = body.on_ground;
@@ -441,11 +495,48 @@ fn movement(
     player.jump_delay = body.jump_delay;
 }
 
+/// A dash under way, `(direction, speed, seconds left)`, carries the body `dt` further: at
+/// exactly its speed, so it covers its distance at any frame rate, stopping at a wall or at
+/// a ledge, so it never drops the player off an edge. Returns what is left of it.
+fn dash(body: &mut Body, (dir, speed, left): (Vec3, f32, f32), around: &impl Surroundings, tuning: &movement::Tuning, controls: Controls, dt: f32) -> Option<(Vec3, f32, f32)> {
+    let ahead = (body.position + dir * 0.45).floor().as_ivec3();
+    let ground = (0..=1).any(|d| around.solid(ahead - IVec3::Y * (1 + d)));
+    // The last frame moves only for the time left of it.
+    let step = dt.min(left);
+    let now = if ground && dt > 0.0 { speed * step / dt } else { 0.0 };
+    body.velocity = (dir * now).with_y(body.velocity.y);
+    // Asked for the speed it already has, movement's easing toward it changes nothing.
+    let tuning = movement::Tuning { walk_speed: now, sprint_speed: now, water_speed: 1.0, ..tuning.clone() };
+    let controls = Controls { wish: if ground { dir } else { Vec3::ZERO }, forward: false, sprint: false, ..controls };
+    movement::advance(body, around, &tuning, controls, dt);
+    let left = left - step;
+    if ground && left > 1e-4 {
+        return Some((dir, speed, left));
+    }
+    // Done: it stops, rather than sliding on.
+    body.velocity.x = 0.0;
+    body.velocity.z = 0.0;
+    None
+}
+
+/// Where a player standing at `feet` must move to be `room` clear of `aabb` sideways, if
+/// they are not already (or above or below it).
+fn out_of(feet: Vec3, aabb: &Aabb, room: f32) -> Option<Vec3> {
+    if feet.y + dims::HEIGHT <= aabb.min.y || feet.y >= aabb.max.y {
+        return None;
+    }
+    let (min, max) = (aabb.min - Vec3::new(room, 0.0, room), aabb.max + Vec3::new(room, 0.0, room));
+    if feet.x <= min.x || feet.x >= max.x || feet.z <= min.z || feet.z >= max.z {
+        return None;
+    }
+    // Out by the nearest side.
+    let sides = [(feet.x - min.x, Vec3::new(min.x, feet.y, feet.z)), (max.x - feet.x, Vec3::new(max.x, feet.y, feet.z)), (feet.z - min.z, Vec3::new(feet.x, feet.y, min.z)), (max.z - feet.z, Vec3::new(feet.x, feet.y, max.z))];
+    sides.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, out)| out)
+}
+
 /// The client's world as movement sees it.
 struct Around<'a> {
     world: &'a ClientWorld,
-    /// The water block, the one fluid that is swum in.
-    water: BlockId,
 }
 
 impl Surroundings for Around<'_> {
@@ -454,7 +545,7 @@ impl Surroundings for Around<'_> {
     }
 
     fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
-        movement::water_around(&self.world.registry, self.water, |p| self.world.block(p), aabb)
+        movement::water_around(&self.world.registry, |p| self.world.block(p), aabb)
     }
 }
 
@@ -489,6 +580,52 @@ fn follow_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Flat ground below y 0.
+    struct Floor;
+
+    impl Surroundings for Floor {
+        fn solid(&self, cell: IVec3) -> bool {
+            cell.y < 0
+        }
+
+        fn water(&self, _: &Aabb) -> (f32, Vec2) {
+            (0.0, Vec2::ZERO)
+        }
+    }
+
+    #[test]
+    fn a_dash_covers_its_distance_at_any_frame_rate() {
+        // The shipped movement numbers (which now hold more than a test names), with the ones
+        // this test fixes.
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let tuning = movement::Tuning {
+            walk_speed: 4.7,
+            sprint_speed: 6.0,
+            sprint_jump_boost: 0.0,
+            jump_velocity: 9.0,
+            gravity: 32.0,
+            terminal_velocity: 78.0,
+            water_speed: 0.4,
+            fly_speed: 10.0,
+            fly_sprint_speed: 20.0,
+            ..content.movement.on_foot(1.0)
+        };
+        // The light dodge: 3 blocks in 0.25 s.
+        for fps in [20.0, 30.0, 60.0, 144.0, 240.0] {
+            let start = Vec3::new(0.5, 0.0, 0.5);
+            let mut body = Body { position: start, velocity: Vec3::ZERO, on_ground: true, in_water: false, flying: false, fly_speed: 1.0, against_wall: false, sprinting: false, jump_delay: 0.0 };
+            let mut under_way = Some((Vec3::X, 3.0 / 0.25, 0.25));
+            let mut frames = 0;
+            while let Some(d) = under_way {
+                under_way = dash(&mut body, d, &Floor, &tuning, Controls::default(), 1.0 / fps);
+                frames += 1;
+            }
+            let went = (body.position - start).with_y(0.0).length();
+            assert!((went - 3.0).abs() < 0.02, "{fps} fps: {went} blocks in {frames} frames");
+            assert_eq!(body.velocity.with_y(0.0), Vec3::ZERO, "it stops at the end");
+        }
+    }
 
     #[test]
     fn zoom_eases_in_and_out_and_the_wheel_changes_it() {

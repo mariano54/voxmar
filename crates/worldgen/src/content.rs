@@ -26,6 +26,7 @@ use serde::de::DeserializeOwned;
 use voxmar_engine::block::{BlockRegistry, RenderKind};
 use voxmar_engine::content::{Content, ContentFile};
 
+use crate::levels::{Homes, LevelsDef, MAX_LEVEL};
 use crate::rarity::Rarity;
 
 #[derive(Debug, PartialEq)]
@@ -53,6 +54,144 @@ impl Select {
         match self {
             Select::Name(_, weight) | Select::Tag(_, weight) => *weight,
         }
+    }
+}
+
+/// Single-valued data (one climate, one land, one set of trail materials) that a later
+/// package sets field by field (Design draft 91): its file names only what it changes,
+/// which is laid over what the packages before it set, and loading notes which package
+/// replaced which fields. So a mod tunes one number without restating the file.
+/// [`layered!`] declares one. The engine's `settable!` (crates/engine/src/content.rs) is
+/// the same rule for creature limits: two mechanisms for one rule, until `settable!` grows
+/// nesting and named lists and this one is built on it.
+trait Layered: Sized {
+    /// Every field as an option: what a later package's file sets.
+    type Set: DeserializeOwned;
+    /// These values as a set of every field, to qualify them as a later package's.
+    fn into_set(self) -> Self::Set;
+    /// Lays `set` over these values, naming each field it set (`scales.aether`, a named
+    /// list's entry as `noises.erosion`) after `path`.
+    fn lay(&mut self, set: Self::Set, path: &str, changed: &mut Vec<String>);
+}
+
+/// Declares `$set` for a [`Layered`] `$whole`: its fields as options, as a later package's
+/// file reads them. `replace` fields are replaced whole; `nested` ones are laid field by
+/// field through their own set; `named` lists of `(name, value)` replace the entries a
+/// package names, in place, and add the ones it adds at the end.
+macro_rules! layered {
+    ($set:ident for $whole:ident {
+        replace { $($field:ident: $ty:ty),* $(,)? }
+        $(nested { $($nfield:ident: $nset:ty),* $(,)? })?
+        $(named { $($lfield:ident: $lty:ty),* $(,)? })?
+    }) => {
+        #[doc = concat!("[`", stringify!($whole), "`] as a later package sets it: only the fields it changes.")]
+        #[derive(Clone, Debug, Default, Deserialize)]
+        #[serde(deny_unknown_fields, default)]
+        pub struct $set {
+            $(pub $field: Option<$ty>,)*
+            $($(pub $nfield: Option<$nset>,)*)?
+            $($(pub $lfield: Option<Vec<(String, $lty)>>,)*)?
+        }
+
+        impl Layered for $whole {
+            type Set = $set;
+
+            fn into_set(self) -> $set {
+                // Exhaustive (no `..`): a field added to `$whole` and not listed above is a
+                // compile error here, not a field a later package silently cannot set. A
+                // compile error here means a field is missing from the `layered!` list; never
+                // add `..`.
+                let $whole { $($field,)* $($($nfield,)*)? $($($lfield,)*)? } = self;
+                $set {
+                    $($field: Some($field),)*
+                    $($($nfield: Some($nfield.into_set()),)*)?
+                    $($($lfield: Some($lfield),)*)?
+                }
+            }
+
+            fn lay(&mut self, set: $set, path: &str, changed: &mut Vec<String>) {
+                $(
+                    if let Some(value) = set.$field {
+                        self.$field = value;
+                        changed.push(format!("{path}{}", stringify!($field)));
+                    }
+                )*
+                $($(
+                    if let Some(nested) = set.$nfield {
+                        self.$nfield.lay(nested, &format!("{path}{}.", stringify!($nfield)), changed);
+                    }
+                )*)?
+                $($(
+                    for (name, value) in set.$lfield.into_iter().flatten() {
+                        changed.push(format!("{path}{}.{name}", stringify!($lfield)));
+                        match self.$lfield.iter_mut().find(|(n, _)| *n == name) {
+                            Some(entry) => entry.1 = value,
+                            None => self.$lfield.push((name, value)),
+                        }
+                    }
+                )*)?
+            }
+        }
+    };
+}
+
+/// The package that last set each field of a [`Layered`] value, by field path.
+type Setters = std::collections::HashMap<String, String>;
+
+/// One package's single-valued data, laid over the packages' before it (see [`Layered`]):
+/// the first file read whole (every field it must have), later ones field by field, each
+/// noted. `setters` holds the package that last set each field, so a note names the
+/// package whose value a later one replaces, field by field. `qualify` names the set's
+/// blocks in the package's namespace.
+fn lay_file<T: Layered + DeserializeOwned + Clone>(
+    value: &mut Option<(T, Setters)>,
+    file: &ContentFile,
+    qualify: impl Fn(&mut T::Set),
+    notes: &mut Vec<String>,
+) -> Result<(), ContentError> {
+    let at = format!("{}/{}", file.package, file.name);
+    match value {
+        None => {
+            let mut whole = parse::<T>(&at, &file.source)?;
+            let mut set = whole.clone().into_set();
+            qualify(&mut set);
+            let mut changed = Vec::new();
+            whole.lay(set, "", &mut changed);
+            *value = Some((whole, changed.into_iter().map(|path| (path, file.package.clone())).collect()));
+        }
+        Some((whole, setters)) => {
+            let mut set = parse::<T::Set>(&at, &file.source)?;
+            qualify(&mut set);
+            lay_set(whole, setters, set, file, "", notes);
+        }
+    }
+    Ok(())
+}
+
+/// Lays a later package's settings over a value, retaining the setter of every field.
+/// `path` names a section within a file, such as `tarns.` in terrain.ron.
+fn lay_set<T: Layered>(whole: &mut T, setters: &mut Setters, set: T::Set, file: &ContentFile, path: &str, notes: &mut Vec<String>) {
+    let at = format!("{}/{}", file.package, file.name);
+    let mut changed = Vec::new();
+    whole.lay(set, path, &mut changed);
+    // One note for each package whose fields were replaced (in the order they were
+    // first set), and one for the fields that are new.
+    let mut by_package: Vec<(String, Vec<String>)> = Vec::new();
+    let mut added = Vec::new();
+    for path in changed {
+        match setters.insert(path.clone(), file.package.clone()) {
+            Some(earlier) => match by_package.iter_mut().find(|(p, _)| *p == earlier) {
+                Some((_, paths)) => paths.push(path),
+                None => by_package.push((earlier, vec![path])),
+            },
+            None => added.push(path),
+        }
+    }
+    for (earlier, paths) in by_package {
+        notes.push(format!("{at} replaces the {} {earlier} set ({})", file.name, paths.join(", ")));
+    }
+    if !added.is_empty() {
+        notes.push(format!("{at} adds to the {} ({})", file.name, added.join(", ")));
     }
 }
 
@@ -86,7 +225,26 @@ pub struct ClimateDef {
     #[serde(default)]
     pub humidity: HumidityDef,
     pub frost: FrostDef,
+    /// How biome levels scale finds and how distance from spawn leans the biome picker
+    /// towards higher levels (see `crate::levels`).
+    #[serde(default)]
+    pub levels: LevelsDef,
 }
+
+layered!(ClimateSet for ClimateDef {
+    replace { temperature: BandsDef, moisture: BandsDef, continentalness: BandsDef, erosion: BandsDef, remaps: Vec<RemapDef>, zones: f32 }
+    nested { scales: ScalesSet, humidity: HumiditySet, frost: FrostSet, levels: LevelsSet }
+});
+layered!(LevelsSet for LevelsDef {
+    replace { step: f32, earlier: f32, lean: f32, reach: f32, wildness: f32, trees: Vec<String> }
+    nested { homes: HomesSet }
+});
+layered!(HomesSet for Homes { replace { common: u8, uncommon: u8, rare: u8, very_rare: u8, legendary: u8 } });
+layered!(ScalesSet for ScalesDef { replace { anomaly: f32, wetness: f32, weirdness: f32, aether: f32, fertility: f32, variant: f32 } });
+layered!(HumiditySet for HumidityDef { replace { median: f32, spread: f32, wetness: f32, wind: f32, belts: f32 } });
+layered!(FrostSet for FrostDef {
+    replace { snow: String, powder: String, snowy_ground: String, ice: String, thick_ice: String, rare_ice: String, blanket: Vec<BlanketDef> }
+});
 
 /// Wavelengths of the regional climate's own noise fields, in blocks: how large the
 /// regions they shape are.
@@ -184,7 +342,30 @@ pub struct FrostDef {
     /// on rocks) that match one of these and are open to the sky turn into the block
     /// given, so snow covers every level down through the canopy.
     #[serde(default)]
-    pub blanket: Vec<(BlockMatch, String)>,
+    pub blanket: Vec<BlanketDef>,
+}
+
+/// One rule of the snow blanket: blocks `covers` matches, unless they carry a tag in
+/// `not`, turn into `to` where snow lies on them. Built blocks (`not: ["building"]`)
+/// keep their own look and their drops; snow stops on them.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BlanketDef {
+    pub covers: BlockMatch,
+    pub to: String,
+    #[serde(default)]
+    pub not: Vec<String>,
+}
+
+impl BlanketDef {
+    /// Whether the rule turns `def` to snow.
+    pub fn applies(&self, def: &voxmar_engine::block::BlockDef) -> bool {
+        let matched = match &self.covers {
+            BlockMatch::Name(name) => def.name == *name,
+            BlockMatch::Tag(tag) => def.has_tag(tag),
+        };
+        matched && !self.not.iter().any(|tag| def.has_tag(tag))
+    }
 }
 
 /// One block by name, or every block carrying a tag.
@@ -468,8 +649,10 @@ struct RawBiome {
     ecotone: Option<EcotoneDef>,
     weight: Option<f32>,
     rarity: Option<Rarity>,
+    level: Option<u8>,
     surface: Option<SurfaceDef>,
     stones: Option<Stones>,
+    field_stones: Option<Vec<Select>>,
     strata: Option<Vec<String>>,
     colors: Option<Colors>,
     flora: Option<FloraDef>,
@@ -491,8 +674,16 @@ pub struct BiomeDef {
     /// Its share of the cells it claims, against other claimants.
     pub weight: f32,
     pub rarity: Rarity,
+    /// How harsh, rare and aether-touched it is, 1 ..= 10 (`crate::levels`): it makes its
+    /// rarer finds commoner and, far from spawn, the biome itself likelier. 1 when left
+    /// out (and not inherited).
+    pub level: u8,
     pub surface: SurfaceDef,
     pub stones: Stones,
+    /// The stones lying on gentle open ground (boulders, rocks), where a biome wants its own
+    /// rather than the bare rock's: a bright meadow's pale or mossy stone, not dark basalt.
+    /// Empty for the rock's own. Cliffs, slopes, scree and streams keep the rock's.
+    pub field_stones: Vec<Select>,
     /// Blocks of banded rock, one block each, bottom to top, repeating up the world.
     pub strata: Vec<String>,
     pub colors: Colors,
@@ -539,6 +730,18 @@ pub enum Habitat {
     Shore,
     /// At the edge of warm shallows, rooted under water.
     Shallows,
+    /// On the banks of still lakes (not rivers or creeks), just above the water: mountain
+    /// tarns for the sky lotus.
+    LakeShore,
+}
+
+impl Habitat {
+    /// Whether it runs along the edge of water, a thin line through the land: trees of
+    /// such a habitat grow beside a forest rather than in it, and a rare herb's patches
+    /// start from it where it crosses their cell rather than at a random spot.
+    pub fn edge(self) -> bool {
+        matches!(self, Self::Water | Self::Shore | Self::Shallows | Self::LakeShore)
+    }
 }
 
 /// The climate something grows best in: inside both ranges it thrives, and it fades out
@@ -658,6 +861,52 @@ pub enum Roots {
     Stilts,
 }
 
+/// Where each wood comes from (`woods` in trees.ron), so a region's timber is its own
+/// trees': a wood named after a tree builds a tree of another family only where a tree of
+/// its own family grows too, which the base content's tests hold it to. The common woods
+/// grow almost everywhere and may build any tree anywhere.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct WoodsDef {
+    /// Woods (log blocks) that build any tree anywhere.
+    pub common: Vec<String>,
+    /// Every other wood a tree is built of, and the trees of its family.
+    pub families: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+impl WoodsDef {
+    /// Adds package `package`'s woods (names qualified) from the file at `at`: family
+    /// members join a family's, and a wood the package classes the other way (common, or
+    /// with a family) is classed its way instead, with a note. A package may not class one
+    /// wood both ways.
+    fn add(&mut self, at: &str, package: &str, other: &WoodsDef, notes: &mut Vec<String>) -> Result<(), ContentError> {
+        if let Some(wood) = other.common.iter().find(|w| other.families.contains_key(*w)) {
+            return Err(ContentError(format!("{at}: `{wood}` is listed both as a common wood and with a family")));
+        }
+        for wood in &other.common {
+            if let Some(family) = self.families.remove(wood) {
+                notes.push(format!("{package}/trees.ron makes {wood} a common wood, replacing its family {family:?}"));
+            }
+            if !self.common.contains(wood) {
+                self.common.push(wood.clone());
+            }
+        }
+        for (wood, family) in &other.families {
+            if let Some(i) = self.common.iter().position(|w| w == wood) {
+                self.common.remove(i);
+                notes.push(format!("{package}/trees.ron gives {wood} a family, replacing it as a common wood"));
+            }
+            let members = self.families.entry(wood.clone()).or_default();
+            for tree in family {
+                if !members.contains(tree) {
+                    members.push(tree.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A kind of tree: a handful of shape parameters, its blocks, and where it grows.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -773,7 +1022,31 @@ pub struct PlantDef {
     /// do not grow under snow.
     #[serde(default)]
     pub snowy: Option<String>,
+    /// Grows only in the biomes that name it (in their plants or wonders), never through a
+    /// tag, the forage sweep, a decoration's selector or the wonders every biome takes by
+    /// default: a rare herb that keeps to its one or two biomes.
+    #[serde(default)]
+    pub named_only: bool,
+    /// How it grows in the biomes that name it: in small patches, at a rate of its own
+    /// (see `Patches`), rather than by the biome's weight among its other plants.
+    #[serde(default)]
+    pub patches: Option<Patches>,
 }
+
+/// A rare herb's patches: about `rate` plants per million blocks where it can root, times
+/// the weight a biome names it with, in patches of `size` plants (1 to 25). `aim` is the
+/// rate design wants it to reach per million blocks of each biome naming it, which the
+/// census test holds it to.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Patches {
+    pub rate: f32,
+    pub size: (u32, u32),
+    pub aim: f32,
+}
+
+/// The most plants a patch may have.
+pub const PATCH_MOST: u32 = 25;
 
 /// What a biome grows, drawn from the shared pools of trees and plants.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -1114,6 +1387,44 @@ pub struct ShapeDef {
     pub strata: Vec<String>,
 }
 
+/// Tarns: small still lakes in hollows high in the hills, which the stream tier of the
+/// rivers fills where it would otherwise breach a small pit (see `crate::water`). Nothing is
+/// carved for them: the land's own hollows hold them. A later package sets only the
+/// fields it changes, including individual fields of tarn country.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TarnsDef {
+    /// The climate they lie in, on the bands of `climate.ron`, as for shapes.
+    pub climate: Vec<ClimateBox>,
+    /// The lowest a pit's bottom may lie, in blocks above the sea: tarns are a highland
+    /// thing, and lowland water never changes for them.
+    pub floor: f32,
+    /// Depth of a pit under its rim, in blocks, from which it may hold one.
+    pub depth: f32,
+    /// The smallest and largest span of the natural water footprint, in blocks.
+    pub size: (i32, i32),
+    /// The chance that such a pit in tarn country holds one, where the climate keeps lakes
+    /// full; less in drier climates, none in deserts.
+    pub chance: f32,
+    /// Tarn country: a slow noise about `scale` blocks across gathers tarns into `share`
+    /// of their climate, a lake district in places and dry rock in others; none elsewhere.
+    pub country: TarnCountryDef,
+}
+
+layered!(TarnsSet for TarnsDef {
+    replace { climate: Vec<ClimateBox>, floor: f32, depth: f32, size: (i32, i32), chance: f32 }
+    nested { country: TarnCountrySet }
+});
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TarnCountryDef {
+    pub scale: f32,
+    pub share: f32,
+}
+
+layered!(TarnCountrySet for TarnCountryDef { replace { scale: f32, share: f32 } });
+
 /// What a shape makes, and its sizes in blocks.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 pub enum ShapeKind {
@@ -1165,8 +1476,9 @@ impl ShapeKind {
 // land.ron
 
 /// The land: the large noise fields every position's parameters come from, and the fields
-/// derived from them, ending in the terrain's height (see `crate::router`). A later
-/// package's replaces an earlier one's, since there is only one land.
+/// derived from them, ending in the terrain's height (see `crate::router`). There is only
+/// one land: a later package sets it field by field ([`Layered`]), a noise, warp or field
+/// by its name.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LandDef {
@@ -1190,6 +1502,12 @@ pub struct LandDef {
     pub density: DensityDef,
 }
 
+layered!(LandSet for LandDef {
+    replace { vertical_scale: f32, elevation_boost: f32, ceiling: (f32, f32) }
+    nested { density: DensitySet }
+    named { warps: LandWarpDef, noises: LandNoiseDef, fields: ExprDef }
+});
+
 /// The 3D noise of the land's density.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -1204,6 +1522,8 @@ pub struct DensityDef {
     /// the further rock reaches out over air.
     pub above: f32,
 }
+
+layered!(DensitySet for DensityDef { replace { wavelength: f32, octaves: i32, squash: f32, above: f32 } });
 
 impl Default for DensityDef {
     fn default() -> Self {
@@ -1311,8 +1631,9 @@ struct BiomeFile {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ShapeFile {
+struct ShapeFile<T> {
     shapes: Vec<ShapeDef>,
+    tarns: Option<T>,
 }
 
 #[derive(Deserialize)]
@@ -1322,12 +1643,23 @@ struct TreeFile {
     /// replaces an earlier one's.
     #[serde(default)]
     density: Option<f32>,
+    /// Where the woods come from; each package's add to the earlier ones'.
+    #[serde(default)]
+    woods: WoodsDef,
     trees: Vec<TreeDef>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PlantFile {
+    /// How densely small plants grow (flowers, ground plants, grasses and ferns), against
+    /// the base game's (1); a later package's replaces an earlier one's.
+    #[serde(default)]
+    density: Option<f32>,
+    /// Plants the density leaves at their biomes' own rate (by tag or name): the ones
+    /// gathered for food, crafting and alchemy, so thinning the look never thins them.
+    #[serde(default)]
+    density_keeps: Vec<Select>,
     plants: Vec<PlantDef>,
 }
 
@@ -1359,6 +1691,12 @@ pub struct WorldContent {
     /// How densely trees grow in forests, a factor on every biome's tree cover (`density`
     /// in `trees.ron`).
     pub tree_density: f32,
+    /// Where each wood comes from (`woods` in `trees.ron`).
+    pub woods: WoodsDef,
+    /// How densely small plants grow, from `plants.ron` (1 when no package sets it).
+    pub plant_density: f32,
+    /// Plants `plant_density` leaves alone, by tag or name.
+    pub plant_density_keeps: Vec<Select>,
     pub plants: Vec<PlantDef>,
     pub particles: Vec<ParticleDef>,
     pub shapes: Vec<ShapeDef>,
@@ -1374,10 +1712,15 @@ pub struct WorldContent {
     pub ores: crate::ores::OresDef,
     /// Settlements (`settlements.ron`).
     pub settlements: crate::settlements::SettlementsDef,
+    /// Tarns (`terrain.ron`); none when no package defines them.
+    pub tarns: Option<TarnsDef>,
+    /// What loading noticed and allowed, for the log: a later package replacing data an
+    /// earlier one set, and what it replaced.
+    pub notes: Vec<String>,
 }
 
-/// What hiking trails are made of (`trails.ron`); a later package's replaces an earlier
-/// one's.
+/// What hiking trails are made of (`trails.ron`); a later package sets it field by field
+/// ([`Layered`]).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TrailsDef {
@@ -1396,6 +1739,10 @@ pub struct TrailsDef {
     pub cairn: Vec<Select>,
     pub waymarker: Vec<Select>,
 }
+
+layered!(TrailsSet for TrailsDef {
+    replace { laid: TrailsWhere, tread: Vec<TreadDef>, edge: String, bridge: String, log: String, stepping_stone: String, cairn: Vec<Select>, waymarker: Vec<Select> }
+});
 
 /// Where hiking trails are laid.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -1418,12 +1765,13 @@ pub struct TreadDef {
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 16] = [
+pub(crate) const BASE_FILES: [(&str, &str); 17] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("crops.ron", include_str!("../../../assets/content/base/crops.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
     ("cave_biomes.ron", include_str!("../../../assets/content/base/cave_biomes.ron")),
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
+    ("cultures.ron", include_str!("../../../assets/content/base/cultures.ron")),
     ("decorations.ron", include_str!("../../../assets/content/base/decorations.ron")),
     ("land.ron", include_str!("../../../assets/content/base/land.ron")),
     ("ores.ron", include_str!("../../../assets/content/base/ores.ron")),
@@ -1443,7 +1791,35 @@ impl WorldContent {
     pub fn load(content: &Content) -> Result<Self, ContentError> {
         let world = Self::from_files(content.files.iter(), &content.blocks)?;
         world.settlements.check_furnishings(&content.blocks)?;
+        world.settlements.people.check_against(&content.creatures, &world.settlements.works())?;
         Ok(world)
+    }
+
+    /// A fingerprint of what decides what land is made: the generator's files from every
+    /// package (mods too), in package order, and every block's name and tags in id order
+    /// (land picks blocks by tag). A world records it, so it can tell when land made from
+    /// now on may not line up with land made before. Ambient particles change no land and
+    /// are left out.
+    pub fn fingerprint<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> u64 {
+        let shapes_land = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        let mut add = |text: &str| {
+            for b in text.bytes().chain([0]) {
+                hash = (hash ^ b as u64).wrapping_mul(0x100_0000_01b3);
+            }
+        };
+        for file in files.filter(|file| shapes_land(&file.name)) {
+            [&file.package, &file.name, &file.source].into_iter().for_each(|text| add(text));
+        }
+        for id in 0..registry.len() {
+            let def = registry.def(voxmar_engine::block::BlockId(id as u16));
+            let mut tags: Vec<&str> = def.tags.iter().map(String::as_str).collect();
+            tags.sort_unstable();
+            add(&def.name);
+            tags.into_iter().for_each(&mut add);
+            add("");
+        }
+        hash
     }
 
     /// The base package's definitions alone.
@@ -1453,38 +1829,45 @@ impl WorldContent {
         Self::from_files(files.iter(), registry)
     }
 
-    /// Parses definition files given in package order. A later package's `climate.ron`
-    /// replaces an earlier one's; other definitions accumulate.
+    /// Parses definition files given in package order. Single-valued data (`climate.ron`,
+    /// `land.ron`, `trails.ron`, terrain's tarn settings, the tree and plant densities) a later package sets over an
+    /// earlier one's, field by field, with a note; other definitions accumulate.
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
-        let mut climate = None;
-        let mut trails = None;
-        let mut land = None;
-        let mut tree_density = None;
+        let mut climate: Option<(ClimateDef, Setters)> = None;
+        let mut trails: Option<(TrailsDef, Setters)> = None;
+        let mut land: Option<(LandDef, Setters)> = None;
+        let mut tree_density: Option<(f32, String)> = None;
+        let mut notes = Vec::new();
+        let mut woods = WoodsDef::default();
+        let mut plant_density: Option<(f32, String)> = None;
+        let mut plant_density_keeps = Vec::new();
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles, mut shapes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut decorations, mut rule_sets) = (Vec::new(), Vec::new());
         let mut weather = voxmar_engine::weather::WeatherTable::default();
         let mut ores = crate::ores::OresDef::default();
         let mut settlements = crate::settlements::SettlementsDef::default();
+        let mut tarns: Option<(TarnsDef, Setters)> = None;
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
             let q = |name: &str| qualify(&file.package, name);
             match file.name.as_str() {
-                "climate.ron" => {
-                    let def = parse::<ClimateDef>(&at, &file.source)?;
-                    let f = &def.frost;
-                    let frost = FrostDef {
-                        snow: q(&f.snow),
-                        powder: q(&f.powder),
-                        snowy_ground: q(&f.snowy_ground),
-                        ice: q(&f.ice),
-                        thick_ice: q(&f.thick_ice),
-                        rare_ice: q(&f.rare_ice),
-                        blanket: f.blanket.iter().map(|(m, to)| (qualify_match(&file.package, m), q(to))).collect(),
-                    };
-                    climate = Some(ClimateDef { frost, ..def });
-                }
+                "climate.ron" => lay_file(
+                    &mut climate,
+                    file,
+                    |set: &mut ClimateSet| {
+                        if let Some(f) = &mut set.frost {
+                            for name in [&mut f.snow, &mut f.powder, &mut f.snowy_ground, &mut f.ice, &mut f.thick_ice, &mut f.rare_ice].into_iter().flatten() {
+                                *name = q(name);
+                            }
+                            for b in f.blanket.iter_mut().flatten() {
+                                *b = BlanketDef { covers: qualify_match(&file.package, &b.covers), to: q(&b.to), not: b.not.clone() };
+                            }
+                        }
+                    },
+                    &mut notes,
+                )?,
                 "rocks.ron" => provinces.extend(parse::<ProvinceFile>(&at, &file.source)?.provinces.into_iter().map(|p| ProvinceDef {
                     name: q(&p.name),
                     stones: p.stones.iter().map(|s| qualify_select(&file.package, s)).collect(),
@@ -1501,10 +1884,16 @@ impl WorldContent {
                         if !(density > 0.0 && density <= 4.0) {
                             return Err(ContentError(format!("{at}: the tree density {density} is outside (0, 4]")));
                         }
-                        tree_density = Some(density);
+                        if let Some((earlier, by)) = tree_density.replace((density, file.package.clone())) {
+                            notes.push(format!("{at} replaces the tree density {by} set ({earlier} to {density})"));
+                        }
                     }
+                    let q = |n: &str| qualify(&file.package, n);
+                    woods.add(&at, &file.package, &WoodsDef {
+                        common: def.woods.common.iter().map(|n| q(n)).collect(),
+                        families: def.woods.families.iter().map(|(wood, family)| (q(wood), family.iter().map(|n| q(n)).collect())).collect(),
+                    }, &mut notes)?;
                     trees.extend(def.trees.into_iter().map(|t| {
-                        let q = |n: &str| qualify(&file.package, n);
                         TreeDef {
                             name: q(&t.name),
                             log: q(&t.log),
@@ -1519,19 +1908,55 @@ impl WorldContent {
                 "ambient.ron" => particles.extend(
                     parse::<AmbientFile>(&at, &file.source)?.particles.into_iter().map(|p| ParticleDef { name: qualify(&file.package, &p.name), ..p }),
                 ),
-                "plants.ron" => plants.extend(parse::<PlantFile>(&at, &file.source)?.plants.into_iter().map(|p| {
-                    let q = |n: &str| qualify(&file.package, n);
-                    PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), snowy: p.snowy.as_deref().map(q), ..p }
-                })),
-                "terrain.ron" => shapes.extend(parse::<ShapeFile>(&at, &file.source)?.shapes.into_iter().map(|s| ShapeDef {
-                    name: q(&s.name),
-                    surface: s.surface.map(|surface| qualify_surface(&file.package, surface)),
-                    strata: s.strata.iter().map(|n| q(n)).collect(),
-                    ..s
-                })),
-                "land.ron" => land = Some(parse::<LandDef>(&at, &file.source)?),
+                "plants.ron" => {
+                    let def = parse::<PlantFile>(&at, &file.source)?;
+                    if let Some(density) = def.density {
+                        if !(density > 0.0 && density <= 4.0) {
+                            return Err(ContentError(format!("{at}: the plant density {density} is outside (0, 4]")));
+                        }
+                        if let Some((earlier, by)) = plant_density.replace((density, file.package.clone())) {
+                            notes.push(format!("{at} replaces the plant density {by} set ({earlier} to {density})"));
+                        }
+                    }
+                    plant_density_keeps.extend(def.density_keeps.iter().map(|s| match s {
+                        Select::Name(n, w) => Select::Name(qualify(&file.package, n), *w),
+                        other => other.clone(),
+                    }));
+                    plants.extend(def.plants.into_iter().map(|p| {
+                        let q = |n: &str| qualify(&file.package, n);
+                        PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), snowy: p.snowy.as_deref().map(q), ..p }
+                    }));
+                }
+                "terrain.ron" => {
+                    let file_shapes = match &mut tarns {
+                        None => {
+                            let def = parse::<ShapeFile<TarnsDef>>(&at, &file.source)?;
+                            if let Some(mut whole) = def.tarns {
+                                let mut changed = Vec::new();
+                                whole.lay(whole.clone().into_set(), "tarns.", &mut changed);
+                                tarns = Some((whole, changed.into_iter().map(|path| (path, file.package.clone())).collect()));
+                            }
+                            def.shapes
+                        }
+                        Some((whole, setters)) => {
+                            let def = parse::<ShapeFile<TarnsSet>>(&at, &file.source)?;
+                            if let Some(set) = def.tarns {
+                                lay_set(whole, setters, set, file, "tarns.", &mut notes);
+                            }
+                            def.shapes
+                        }
+                    };
+                    shapes.extend(file_shapes.into_iter().map(|s| ShapeDef {
+                        name: q(&s.name),
+                        surface: s.surface.map(|surface| qualify_surface(&file.package, surface)),
+                        strata: s.strata.iter().map(|n| q(n)).collect(),
+                        ..s
+                    }));
+                }
+                "land.ron" => lay_file(&mut land, file, |_: &mut LandSet| {}, &mut notes)?,
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
                 "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
+                "cultures.ron" => settlements.cultures.extend(&at, &file.package, &file.source)?,
                 // Each crop's level, rarity and stages, so settlements keep to everyday crops
                 // and never grow them ripe.
                 "crops.ron" => {
@@ -1563,27 +1988,29 @@ impl WorldContent {
                     name: qualify(&file.package, &set.name),
                     rules: set.rules.into_iter().map(|r| RuleDef { when: r.when, place: qualify_layers(&file.package, r.place) }).collect(),
                 })),
-                "trails.ron" => {
-                    let def = parse::<TrailsDef>(&at, &file.source)?;
-                    let tread = def.tread.iter().map(|t| TreadDef { blocks: t.blocks.iter().map(|s| qualify_select(&file.package, s)).collect(), ..t.clone() }).collect();
-                    let stones = |s: &[Select]| s.iter().map(|s| qualify_select(&file.package, s)).collect();
-                    trails = Some(TrailsDef {
-                        laid: def.laid,
-                        tread,
-                        edge: q(&def.edge),
-                        bridge: q(&def.bridge),
-                        log: q(&def.log),
-                        stepping_stone: q(&def.stepping_stone),
-                        cairn: stones(&def.cairn),
-                        waymarker: stones(&def.waymarker),
-                    });
-                }
+                "trails.ron" => lay_file(
+                    &mut trails,
+                    file,
+                    |set: &mut TrailsSet| {
+                        let stones = |s: &[Select]| s.iter().map(|s| qualify_select(&file.package, s)).collect::<Vec<_>>();
+                        for tread in set.tread.iter_mut().flatten() {
+                            tread.blocks = stones(&tread.blocks);
+                        }
+                        for name in [&mut set.edge, &mut set.bridge, &mut set.log, &mut set.stepping_stone].into_iter().flatten() {
+                            *name = q(name);
+                        }
+                        for list in [&mut set.cairn, &mut set.waymarker].into_iter().flatten() {
+                            *list = stones(list);
+                        }
+                    },
+                    &mut notes,
+                )?,
                 _ => {}
             }
         }
-        let climate = climate.ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
-        let trails = trails.ok_or_else(|| ContentError("no content package defines trails.ron".into()))?;
-        let land = land.ok_or_else(|| ContentError("no content package defines land.ron".into()))?;
+        let climate = climate.map(|(c, _)| c).ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
+        let trails = trails.map(|(t, _)| t).ok_or_else(|| ContentError("no content package defines trails.ron".into()))?;
+        let land = land.map(|(l, _)| l).ok_or_else(|| ContentError("no content package defines land.ron".into()))?;
         let mut biomes = inherit(&raw)?;
         // Shared rule sets come before each biome's own rules.
         for biome in &mut biomes {
@@ -1612,13 +2039,50 @@ impl WorldContent {
             surface.rules = rules;
         }
         let snow_cover = weather.snow_cover().to_vec();
-        let tree_density = tree_density.unwrap_or(1.0);
-        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements };
+        let tree_density = tree_density.map_or(1.0, |(d, _)| d);
+        let plant_density = plant_density.map_or(1.0, |(d, _)| d);
+        notes.extend(settlements.cultures.notes.iter().cloned());
+        notes.extend(settlements.people.notes.iter().cloned());
+        for note in &notes {
+            tracing::info!("{note}");
+        }
+        let content = Self {
+            climate,
+            provinces,
+            biomes,
+            trees,
+            tree_density,
+            woods,
+            plant_density,
+            plant_density_keeps,
+            plants,
+            particles,
+            shapes,
+            decorations,
+            rule_sets,
+            snow_cover,
+            trails,
+            land,
+            ores,
+            settlements,
+            tarns: tarns.map(|(t, _)| t),
+            notes,
+        };
         content.ores.check(registry, &content.provinces)?;
         if !content.settlements.styles.is_empty() {
             content.settlements.check(registry)?;
         }
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
+        // Every plant the density keeps names one: a typo would thin what it meant to keep.
+        for keep in &content.plant_density_keeps {
+            let found = match keep {
+                Select::Name(name, _) => content.plants.iter().any(|p| p.name == *name),
+                Select::Tag(tag, _) => content.plants.iter().any(|p| content.plant_tags(p, registry).any(|t| t == tag)),
+            };
+            if !found {
+                return Err(ContentError(format!("plants.ron: density_keeps names {keep:?}, which no plant is or carries")));
+            }
+        }
         Ok(content)
     }
 
@@ -1694,6 +2158,12 @@ impl WorldContent {
                 return Err(ContentError(format!("climate.ron: the {:?} remap must have increasing points", remap.axis)));
             }
         }
+        self.climate.levels.check().map_err(|e| ContentError(format!("climate.ron: {e}")))?;
+        for tag in &self.climate.levels.trees {
+            if !self.trees.iter().any(|t| t.tags.contains(tag)) {
+                return Err(ContentError(format!("climate.ron: levels.trees names the tag `{tag}`, which no tree carries")));
+            }
+        }
         let frost = &self.climate.frost;
         for name in [&frost.snow, &frost.powder, &frost.snowy_ground, &frost.ice, &frost.thick_ice, &frost.rare_ice] {
             block(&climate_at, name)?;
@@ -1702,14 +2172,17 @@ impl WorldContent {
             block(&|| "weather.ron: snow_cover".to_owned(), ground)?;
             block(&|| "weather.ron: snow_cover".to_owned(), snowy)?;
         }
-        for (from, to) in &frost.blanket {
-            block(&climate_at, to)?;
-            match from {
+        for rule in &frost.blanket {
+            block(&climate_at, &rule.to)?;
+            match &rule.covers {
                 BlockMatch::Name(name) => block(&climate_at, name)?,
                 BlockMatch::Tag(tag) if registry.tagged(tag).next().is_none() => {
                     return Err(ContentError(format!("climate.ron: no block has the tag `{tag}` the snow blanket covers")));
                 }
                 BlockMatch::Tag(_) => {}
+            }
+            if let Some(tag) = rule.not.iter().find(|tag| registry.tagged(tag).next().is_none()) {
+                return Err(ContentError(format!("climate.ron: no block has the tag `{tag}` the snow blanket spares")));
             }
         }
 
@@ -1735,6 +2208,9 @@ impl WorldContent {
                 return Err(ContentError(format!("{}: defined twice", at())));
             }
             positive(&at, "weight", biome.weight)?;
+            if !(1..=MAX_LEVEL).contains(&biome.level) {
+                return Err(ContentError(format!("{}: level {} is not within 1 ..= {MAX_LEVEL}", at(), biome.level)));
+            }
             for climate in &biome.climate {
                 self.check_box(climate, &at)?;
                 let underground = climate.depth.is_some() || climate.height.is_some() || climate.provinces.is_some();
@@ -1804,6 +2280,25 @@ impl WorldContent {
                 block(&|| format!("{}, strata", at()), name)?;
             }
             self.check_surface(&biome.surface, !biome.strata.is_empty(), &|| at(), &block, &blocks)?;
+        }
+
+        if let Some(tarns) = &self.tarns {
+            let at = || "terrain.ron: tarns".to_owned();
+            if !(1..=64).contains(&tarns.size.0) || !(tarns.size.0..=64).contains(&tarns.size.1) {
+                return Err(ContentError(format!("{}: size {:?} must increase within 1..=64 blocks", at(), tarns.size)));
+            }
+            for climate in &tarns.climate {
+                if climate.aether.is_some() || climate.depth.is_some() || climate.height.is_some() || climate.provinces.is_some() {
+                    return Err(ContentError(format!("{}: tarns follow the climate bands alone", at())));
+                }
+                self.check_box(climate, &at)?;
+            }
+            let TarnCountryDef { scale, share } = tarns.country;
+            for (what, value, range) in [("floor", tarns.floor, 0.0..=256.0), ("depth", tarns.depth, 0.5..=16.0), ("chance", tarns.chance, 0.0..=1.0), ("country scale", scale, 64.0..=16384.0), ("country share", share, 0.0..=1.0)] {
+                if !range.contains(&value) {
+                    return Err(ContentError(format!("{}: the {what} {value} is outside {range:?}", at())));
+                }
+            }
         }
 
         // Terrain shapes.
@@ -1889,6 +2384,14 @@ impl WorldContent {
         (lower, upper)
     }
 
+    /// Whether the plant density leaves a plant at its biomes' own rate.
+    pub fn plant_kept(&self, plant: &PlantDef, registry: &BlockRegistry) -> bool {
+        self.plant_density_keeps.iter().any(|s| match s {
+            Select::Name(name, _) => *name == plant.name,
+            Select::Tag(tag, _) => self.plant_tags(plant, registry).any(|t| t == tag),
+        })
+    }
+
     /// Tags of a plant: its own and its block's.
     pub fn plant_tags<'a>(&'a self, plant: &'a PlantDef, registry: &'a BlockRegistry) -> impl Iterator<Item = &'a str> + Clone + 'a {
         let block = registry.id(&plant.block).map(|id| registry.def(id).tags.as_slice()).unwrap_or_default();
@@ -1949,6 +2452,21 @@ impl WorldContent {
             }
             comfort(&at, &tree.comfort)?;
         }
+        for wood in &self.woods.common {
+            block(&|| "trees.ron: the common woods".to_string(), wood)?;
+        }
+        for (wood, family) in &self.woods.families {
+            let at = || format!("trees.ron: the family of wood `{wood}`");
+            block(&at, wood)?;
+            for name in family {
+                let Some(tree) = self.trees.iter().find(|d| d.name == *name) else {
+                    return Err(ContentError(format!("{}: no tree is named `{name}`", at())));
+                };
+                if tree.log != *wood && tree.root_block.as_ref() != Some(wood) {
+                    return Err(ContentError(format!("{}: `{name}` is not built of `{wood}`", at())));
+                }
+            }
+        }
         for (i, plant) in self.plants.iter().enumerate() {
             let at = || format!("plants.ron: plant `{}`", plant.name);
             if self.plants[..i].iter().any(|p| p.name == plant.name) {
@@ -1970,6 +2488,20 @@ impl WorldContent {
                 block(&at, snowy)?;
             }
             comfort(&at, &plant.comfort)?;
+            if let Some(p) = &plant.patches {
+                if !(p.rate.is_finite() && p.rate > 0.0) {
+                    return Err(ContentError(format!("{}: the patch rate {} must be a number above 0", at(), p.rate)));
+                }
+                if !(1 <= p.size.0 && p.size.0 <= p.size.1 && p.size.1 <= PATCH_MOST) {
+                    return Err(ContentError(format!("{}: a patch has 1 to {PATCH_MOST} plants, the least first, not {:?}", at(), p.size)));
+                }
+                if !(p.aim.is_finite() && p.aim > 0.0) {
+                    return Err(ContentError(format!("{}: the patch aim {} must be a number above 0", at(), p.aim)));
+                }
+                if !plant.named_only {
+                    return Err(ContentError(format!("{}: grows in patches only where named, so it needs `named_only: true`", at())));
+                }
+            }
         }
         for (i, particles) in self.particles.iter().enumerate() {
             let at = || format!("ambient.ron: particles `{}`", particles.name);
@@ -1984,6 +2516,29 @@ impl WorldContent {
         for biome in &self.biomes {
             let file = file_of(&biome.name);
             let at = || format!("{file}: biome `{}`", biome.name);
+            // A patch plant's weight here may make at most one patch a cell (ecology.rs
+            // `in_patch`): its rate times the weight, over a mean patch, fills a cell at most.
+            // One along water (`edge_patches`) may at most grow on every column of its habitat.
+            for select in biome.flora.plants.iter().chain(biome.flora.wonders.iter().flatten()) {
+                let Select::Name(name, weight) = select else { continue };
+                let Some(plant) = self.plants.iter().find(|p| p.name == *name) else { continue };
+                let Some(p) = &plant.patches else { continue };
+                if !(weight.is_finite() && *weight > 0.0) {
+                    return Err(ContentError(format!("{}: plant `{name}` at weight {weight}: a weight must be above 0", at())));
+                }
+                if plant.habitat.edge() {
+                    let share = p.rate * weight / 1e6;
+                    if share > 1.0 {
+                        return Err(ContentError(format!("{}: plant `{name}` at weight {weight} asks for {share:.2} plants a column of its habitat; at most 1", at())));
+                    }
+                    continue;
+                }
+                let cell = (crate::ecology::PATCH_CELL * crate::ecology::PATCH_CELL) as f32;
+                let chance = p.rate * weight * cell / ((p.size.0 + p.size.1) as f32 / 2.0) / 1e6;
+                if chance > 1.0 {
+                    return Err(ContentError(format!("{}: plant `{name}` at weight {weight} asks for {chance:.2} patches a {}-block cell; at most 1", at(), crate::ecology::PATCH_CELL)));
+                }
+            }
             let air = &biome.atmosphere;
             for (what, value, range) in [("haze_density", air.haze_density, 0.0..=4.0), ("warmth", air.warmth, -1.0..=1.0), ("saturation", air.saturation, 0.0..=2.0)] {
                 if value.is_some_and(|v| !range.contains(&v)) {
@@ -2492,6 +3047,7 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
             Stones::Province => Stones::Province,
             Stones::Blocks(selects) => Stones::Blocks(selects.iter().map(|s| qualify_select(package, s)).collect()),
         }),
+        field_stones: biome.field_stones.map(|v| v.iter().map(|s| qualify_select(package, s)).collect()),
         variants: biome.variants.map(|v| v.into_iter().map(|(name, share)| (q(&name), share)).collect()),
         cave_decoration: biome.cave_decoration.map(|list| {
             list.into_iter()
@@ -2546,8 +3102,10 @@ fn inherit(raw: &[(String, RawBiome)]) -> Result<Vec<BiomeDef>, ContentError> {
                 ecotone: biome.ecotone.clone(),
                 weight: field!(weight).unwrap_or(1.0),
                 rarity: field!(rarity).unwrap_or_default(),
+                level: field!(level).unwrap_or(1),
                 surface,
                 stones: field!(stones).unwrap_or_default(),
+                field_stones: field!(field_stones).unwrap_or_default(),
                 strata: field!(strata).unwrap_or_default(),
                 colors: field!(colors).unwrap_or_default(),
                 flora: field!(flora).unwrap_or_default(),
@@ -2588,7 +3146,7 @@ mod tests {
     use super::*;
 
     fn registry() -> BlockRegistry {
-        BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap()
+        crate::test_registry()
     }
 
     fn base_files() -> Vec<ContentFile> {
@@ -2615,6 +3173,102 @@ mod tests {
         assert!(content.biomes.len() >= 10, "{} biomes", content.biomes.len());
         assert!(content.biomes.iter().all(|b| b.name.starts_with("base:")));
         assert!(content.provinces.len() >= 6);
+    }
+
+    /// A wood is found only where its tree grows: a biome grows a tree built of a wood
+    /// named after a tree of another family (lemons of jungle wood, olives of acacia)
+    /// only where a tree of the wood's own family grows too, so acacia logs never turn up
+    /// in taiga (dead snags there are `dead_log`, which breaks to sticks) and jungle
+    /// timber never in a laurel forest. Common woods build any tree anywhere, and every
+    /// wood a tree is built of is common or has a family (`woods` in trees.ron).
+    #[test]
+    fn woods_grow_only_where_their_trees_do() {
+        let content = WorldContent::base(&registry()).unwrap();
+        let woods = &content.woods;
+        let picks = |select: &Select, tree: &TreeDef| match select {
+            Select::Name(name, _) => *name == tree.name,
+            Select::Tag(tag, _) => tree.tags.contains(tag),
+        };
+        let mut failures = Vec::new();
+        for tree in &content.trees {
+            for wood in [Some(&tree.log), tree.root_block.as_ref()].into_iter().flatten() {
+                if !woods.common.contains(wood) && !woods.families.contains_key(wood) {
+                    failures.push(format!("{} is built of {wood}, which is neither common nor of a family", tree.name));
+                }
+            }
+        }
+        for biome in &content.biomes {
+            let grows: Vec<&TreeDef> = content
+                .trees
+                .iter()
+                .filter(|t| biome.flora.trees.iter().any(|s| picks(s, t)) && !t.tags.iter().any(|tag| biome.flora.exclude.contains(tag)))
+                .collect();
+            for tree in &grows {
+                for wood in [Some(&tree.log), tree.root_block.as_ref()].into_iter().flatten() {
+                    let Some(family) = woods.families.get(wood) else { continue };
+                    if !family.contains(&tree.name) && !grows.iter().any(|t| family.contains(&t.name)) {
+                        failures.push(format!("{} grows {} of {wood}, with none of {family:?}", biome.name, tree.name));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{} woods out of place:\n{}", failures.len(), failures.join("\n"));
+        let dead = content.trees.iter().find(|t| t.name == "base:dead_tree").expect("dead_tree");
+        assert_eq!(dead.log, "base:dead_log");
+        let registry = registry();
+        let log = registry.def(registry.expect("base:dead_log"));
+        assert_eq!(log.drops.as_deref(), Some("core:air"), "a dead log is never an item (it breaks to a stick: tools.ron)");
+    }
+
+    /// Every base biome, on the surface and underground, sets its own level (P15), as one
+    /// left out would quietly take its parent's or 1: the gentle land players start in is
+    /// level 1 and the fantastical lands lie high. A level outside 1 ..= 10 is refused.
+    #[test]
+    fn every_base_biome_has_its_level() {
+        for (name, source) in BASE_FILES.iter().filter(|(name, _)| name.ends_with("biomes.ron")) {
+            let file: BiomeFile = parse(name, source).unwrap();
+            for biome in &file.biomes {
+                assert!(biome.level.is_some(), "{name}: biome `{}` has no level", biome.name);
+            }
+        }
+        let content = WorldContent::base(&registry()).unwrap();
+        let level = |name: &str| content.biomes.iter().find(|b| b.name == format!("base:{name}")).unwrap().level;
+        for gentle in ["plains", "meadow", "forest", "river", "cave"] {
+            assert_eq!(level(gentle), 1, "{gentle}");
+        }
+        for biome in content.biomes.iter().filter(|b| b.tags.iter().any(|t| t == "fantastical" || t == "fantasy")) {
+            assert!(biome.level >= 7, "{} is fantastical at level {}", biome.name, biome.level);
+        }
+        let error = load_with(&biomes(&format!("(name: \"harsh\", level: 11, climate: [()], {GROUND})"))).unwrap_err();
+        assert!(error.0.contains("level 11"), "{error}");
+    }
+
+    /// The snow blanket spares what its rules say, and refuses tags no block has and
+    /// entries it cannot read.
+    #[test]
+    fn the_snow_blanket_spares_built_stone_and_checks_its_rules() {
+        let registry = registry();
+        let content = WorldContent::base(&registry).unwrap();
+        let blanket = &content.climate.frost.blanket;
+        let snowed = |name: &str| blanket.iter().any(|rule| rule.applies(registry.def(registry.expect(name))));
+        assert!(snowed("base:stone") && snowed("base:granite") && snowed("base:moss_block"));
+        for built in ["base:cobblestone", "base:stone_bricks", "base:polished_stone", "base:mossy_cobblestone", "base:cobbled_granite"] {
+            assert!(!snowed(built), "{built} turns to snow");
+        }
+        let with_blanket = |entries: &str| {
+            let mut files = base_files();
+            let climate = files.iter_mut().find(|f| f.name == "climate.ron").unwrap();
+            let start = climate.source.find("blanket: [").unwrap();
+            let end = start + climate.source[start..].find("],\n").unwrap() + 2;
+            climate.source.replace_range(start..end, &format!("blanket: [{entries}],"));
+            WorldContent::from_files(files.iter(), &registry)
+        };
+        assert!(with_blanket(r#"(covers: Tag("stone"), to: "snow_block", not: ["building"])"#).is_ok());
+        let spares = with_blanket(r#"(covers: Tag("stone"), to: "snow_block", not: ["no_such_tag"])"#).unwrap_err().0;
+        assert!(spares.contains("no_such_tag"), "{spares}");
+        assert!(with_blanket(r#"(covers: Tag("no_such_tag"), to: "snow_block")"#).is_err());
+        assert!(with_blanket(r#"(Tag("stone"), "snow_block")"#).is_err(), "the old form is refused, not misread");
+        assert!(with_blanket(r#"(covers: Tag("stone"), to: "snow_block", except: ["building"])"#).is_err());
     }
 
     #[test]
@@ -2654,6 +3308,132 @@ mod tests {
         }
     }
 
+    /// A later package may class a wood the other way, common or with a family, and it
+    /// is classed its way (with a note in the log); family members join the family.
+    #[test]
+    fn a_later_package_reclasses_a_wood() {
+        let registry = registry();
+        let mut files = base_files();
+        let source = "(woods: (common: [\"base:acacia_log\"], families: {\"base:oak_log\": [\"base:oak\"], \"base:cherry_log\": [\"base:wild_cherry\"]}), trees: [])";
+        files.push(ContentFile { package: "mod".into(), name: "trees.ron".into(), source: source.into() });
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        assert!(content.notes.iter().any(|n| n == "mod/trees.ron makes base:acacia_log a common wood, replacing its family [\"base:acacia\"]"), "{:?}", content.notes);
+        let woods = content.woods;
+        assert!(woods.common.contains(&"base:acacia_log".to_string()) && !woods.families.contains_key("base:acacia_log"));
+        assert!(!woods.common.contains(&"base:oak_log".to_string()) && woods.families["base:oak_log"] == ["base:oak"]);
+        let cherry = &woods.families["base:cherry_log"];
+        assert!(cherry.contains(&"base:cherry".to_string()) && cherry.iter().filter(|t| *t == "base:wild_cherry").count() == 1, "members join the family once: {cherry:?}");
+    }
+
+    /// A later package sets single-valued data field by field (Design draft 91): what its
+    /// file names replaces base's (a noise or field of the land by name, in place, new
+    /// ones after), everything else keeps base's values, and loading notes what it
+    /// replaced.
+    #[test]
+    fn a_later_package_sets_climate_land_and_trails_field_by_field() {
+        let registry = registry();
+        let base = WorldContent::base(&registry).unwrap();
+        let mut files = base_files();
+        for (name, source) in [
+            ("climate.ron", "(scales: (aether: 3000.0), frost: (ice: \"base:packed_ice\"), levels: (homes: (very_rare: 8)))"),
+            ("land.ron", "(vertical_scale: 1.25, density: (squash: 2.0), noises: [(\"hills\", (wavelength: 700.0, octaves: [1.0])), (\"dunes\", (wavelength: 90.0, octaves: [1.0]))])"),
+            ("trails.ron", "(edge: \"base:coarse_dirt\")"),
+            ("trees.ron", "(density: 0.5, trees: [])"),
+        ] {
+            files.push(ContentFile { package: "mod".into(), name: name.into(), source: source.into() });
+        }
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        let same = |a: &dyn std::fmt::Debug, b: &dyn std::fmt::Debug| format!("{a:?}") == format!("{b:?}");
+        // What the mod set.
+        let (climate, land, trails) = (&content.climate, &content.land, &content.trails);
+        assert_eq!((climate.scales.aether, climate.frost.ice.as_str()), (3000.0, "base:packed_ice"));
+        assert_eq!(climate.levels.homes.very_rare, 8);
+        assert_eq!(climate.levels, crate::levels::LevelsDef { homes: crate::levels::Homes { very_rare: 8, ..base.climate.levels.homes }, ..base.climate.levels.clone() }, "the rest of the levels is base's");
+        assert_eq!((land.vertical_scale, land.density.squash, trails.edge.as_str()), (1.25, 2.0, "base:coarse_dirt"));
+        let hills = land.noises.iter().position(|(n, _)| n == "hills").unwrap();
+        assert_eq!(hills, base.land.noises.iter().position(|(n, _)| n == "hills").unwrap(), "a named entry is replaced in place");
+        assert_eq!(land.noises[hills].1.wavelength, 700.0);
+        assert_eq!(land.noises.last().unwrap().0, "dunes", "a new one comes after");
+        assert_eq!(content.tree_density, 0.5);
+        // Everything else is base's.
+        let base_scales = ScalesDef { aether: 3000.0, ..base.climate.scales.clone() };
+        assert!(same(&climate.scales, &base_scales) && same(&climate.humidity, &base.climate.humidity));
+        assert!(same(&climate.temperature, &base.climate.temperature) && same(&climate.remaps, &base.climate.remaps) && climate.zones == base.climate.zones);
+        assert!(same(&FrostDef { ice: base.climate.frost.ice.clone(), ..climate.frost.clone() }, &base.climate.frost));
+        assert!(same(&DensityDef { squash: base.land.density.squash, ..land.density.clone() }, &base.land.density));
+        assert!(same(&land.fields, &base.land.fields) && same(&land.warps, &base.land.warps) && land.ceiling == base.land.ceiling);
+        assert_eq!(land.noises.len(), base.land.noises.len() + 1);
+        assert!(same(&land.noises.iter().filter(|(n, _)| n != "hills" && n != "dunes").collect::<Vec<_>>(), &base.land.noises.iter().filter(|(n, _)| n != "hills").collect::<Vec<_>>()));
+        assert_eq!(*trails, TrailsDef { edge: "base:coarse_dirt".into(), ..base.trails.clone() });
+        // And the notes say so.
+        for note in [
+            "mod/climate.ron replaces the climate.ron base set (scales.aether, frost.ice, levels.homes.very_rare)".to_owned(),
+            "mod/land.ron replaces the land.ron base set (vertical_scale, density.squash, noises.hills)".to_owned(),
+            "mod/land.ron adds to the land.ron (noises.dunes)".to_owned(),
+            "mod/trails.ron replaces the trails.ron base set (edge)".to_owned(),
+            format!("mod/trees.ron replaces the tree density base set ({} to 0.5)", base.tree_density),
+        ] {
+            assert!(content.notes.iter().any(|n| *n == note), "no note `{note}` in {:?}", content.notes);
+        }
+        assert!(base.notes.is_empty(), "base alone replaces nothing: {:?}", base.notes);
+    }
+
+    /// With three packages a note names the package whose value each field replaces, field
+    /// by field (so one note a package replaced), says what is new, and a later file that
+    /// changes nothing leaves no note.
+    #[test]
+    fn people_load_notes_follow_each_field_and_routine() {
+        let registry = registry();
+        let mut files = base_files();
+        for (package, source) in [
+            ("first", "(people: (jitter: 0.02, live: (search: 4000), routines: [(name: \"worker\", slots: [(until: 1.0, go: [(place: Home)])])] ))"),
+            ("second", "(people: (jitter: 0.01, live: (search: 3000)))"),
+            ("empty", "()"),
+        ] {
+            files.push(ContentFile { package: package.into(), name: "settlements.ron".into(), source: source.into() });
+        }
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        assert_eq!(content.settlements.people.jitter, 0.01);
+        assert_eq!(content.settlements.people.live.search, 3000);
+        for note in [
+            "first/settlements.ron replaces the settlements.ron base set (people.jitter)",
+            "first/settlements.ron replaces the settlements.ron base set (people.live.search)",
+            "first/settlements.ron replaces the settlements.ron base set (people.routines.worker)",
+            "second/settlements.ron replaces the settlements.ron first set (people.jitter)",
+            "second/settlements.ron replaces the settlements.ron first set (people.live.search)",
+        ] {
+            assert!(content.notes.iter().any(|n| n == note), "missing {note}: {:?}", content.notes);
+        }
+        assert!(!content.notes.iter().any(|n| n.contains("empty/")));
+    }
+
+    #[test]
+    fn notes_name_the_package_each_field_replaces() {
+        let registry = registry();
+        let mut files = base_files();
+        for (package, name, source) in [
+            ("first", "climate.ron", "(scales: (aether: 3000.0))"),
+            ("second", "climate.ron", "(scales: (aether: 2500.0, wetness: 1.5))"),
+            ("second", "land.ron", "(noises: [(\"dunes\", (wavelength: 90.0, octaves: [1.0]))])"),
+            ("third", "land.ron", "(noises: [(\"dunes\", (wavelength: 80.0, octaves: [1.0]))])"),
+            ("third", "trails.ron", "()"),
+        ] {
+            files.push(ContentFile { package: package.into(), name: name.into(), source: source.into() });
+        }
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        assert_eq!((content.climate.scales.aether, content.climate.scales.wetness), (2500.0, 1.5));
+        for note in [
+            "first/climate.ron replaces the climate.ron base set (scales.aether)",
+            "second/climate.ron replaces the climate.ron base set (scales.wetness)",
+            "second/climate.ron replaces the climate.ron first set (scales.aether)",
+            "second/land.ron adds to the land.ron (noises.dunes)",
+            "third/land.ron replaces the land.ron second set (noises.dunes)",
+        ] {
+            assert!(content.notes.iter().any(|n| n == note), "no note `{note}` in {:?}", content.notes);
+        }
+        assert!(!content.notes.iter().any(|n| n.contains("third/trails.ron")), "an empty file leaves no note: {:?}", content.notes);
+    }
+
     #[test]
     fn broken_trees_and_plants_are_refused() {
         let registry = registry();
@@ -2669,11 +3449,105 @@ mod tests {
             ("trees.ron", tree("leaves: \"base:oak_leaves\", lean: 3.0, crown: Palm(fronds: (2, 3), length: (6.0, 7.0))"), "reaches 10"),
             ("trees.ron", tree("crown: Bare, comfort: (temperature: (20.0, 10.0))"), "comfort range"),
             ("trees.ron", tree("crown: Bare, colour: 1"), "colour"),
+            ("land.ron", "(vertical_scal: 1.0)".into(), "mod/land.ron:"),
+            ("land.ron", "(vertical_scal: 1.0)".into(), "vertical_scal"),
+            ("climate.ron", "(scales: (aether: \"far\"))".into(), "mod/climate.ron:"),
+            ("climate.ron", "(scales: (aether_: 1.0))".into(), "mod/climate.ron:"),
+            ("climate.ron", "(scales: (aether_: 1.0))".into(), "aether_"),
+            ("climate.ron", "(levels: (homes: (rare: 6)))".into(), "strictly decreasing"),
+            ("trees.ron", "(woods: (common: [\"base:oak_lgo\"]), trees: [])".into(), "unknown block `base:oak_lgo`"),
+            ("trees.ron", "(woods: (families: {\"base:acacia_log\": [\"baobob\"]}), trees: [])".into(), "no tree is named `mod:baobob`"),
+            ("trees.ron", "(woods: (common: [\"base:acacia_log\"], families: {\"base:acacia_log\": [\"base:acacia\"]}), trees: [])".into(), "both as a common wood and with a family"),
+            ("trees.ron", "(woods: (families: {\"base:acacia_log\": [\"base:oak\"]}), trees: [])".into(), "`base:oak` is not built of `base:acacia_log`"),
             ("plants.ron", "(plants: [(name: \"p\", block: \"base:poppy\", top: \"base:poppy\", stack: (1, 2))])".into(), "a stack"),
         ];
         for (file, source, expected) in cases {
             let message = load(file, &source);
             assert!(message.contains(expected), "expected `{expected}` in: {message}");
+        }
+    }
+
+    /// A rare herb's patches are refused at load unless they make sense: a rate above 0, 1
+    /// to 25 plants a patch, an aim, `named_only`, and no biome naming it so heavily that a
+    /// cell would need more than one patch.
+    #[test]
+    fn bad_patches_are_refused() {
+        let registry = registry();
+        let load = |patches: &str, weight: f32| {
+            let mut files = base_files();
+            files.iter_mut().find(|f| f.name == "biomes.ron").unwrap().source = biomes(&format!("(name: \"herbs\", climate: [()], flora: (plants: [Name(\"mod:herb\", {weight:?})]), {GROUND})"));
+            let plant = format!("(plants: [(name: \"herb\", block: \"base:poppy\", {patches})])");
+            files.push(ContentFile { package: "mod".into(), name: "plants.ron".into(), source: plant });
+            WorldContent::from_files(files.iter(), &registry).map(|_| ()).map_err(|e| e.0)
+        };
+        assert_eq!(load("named_only: true, patches: (rate: 200.0, size: (3, 6), aim: 200.0)", 1.0), Ok(()));
+        let cases = [
+            ("named_only: true, patches: (rate: 0.0, size: (3, 6), aim: 200.0)", 1.0, "patch rate 0"),
+            ("named_only: true, patches: (rate: inf, size: (3, 6), aim: 200.0)", 1.0, "patch rate inf"),
+            ("named_only: true, patches: (rate: 200.0, size: (0, 6), aim: 200.0)", 1.0, "1 to 25 plants"),
+            ("named_only: true, patches: (rate: 200.0, size: (6, 3), aim: 200.0)", 1.0, "1 to 25 plants"),
+            ("named_only: true, patches: (rate: 200.0, size: (3, 26), aim: 200.0)", 1.0, "1 to 25 plants"),
+            ("named_only: true, patches: (rate: 200.0, size: (3, 6), aim: -1.0)", 1.0, "patch aim"),
+            ("patches: (rate: 200.0, size: (3, 6), aim: 200.0)", 1.0, "named_only"),
+            // 200 plants a million blocks at weight 30, in patches of 4.5 on average: 1.37
+            // patches a 32-block cell.
+            ("named_only: true, patches: (rate: 200.0, size: (3, 6), aim: 200.0)", 30.0, "plant `mod:herb` at weight 30"),
+        ];
+        for (patches, weight, expected) in cases {
+            let message = load(patches, weight).unwrap_err();
+            assert!(message.contains(expected), "expected `{expected}` in: {message}");
+            assert!(message.contains("mod:herb") || message.contains("`herb`"), "no plant named in: {message}");
+        }
+    }
+
+    /// Single-valued tarn settings inherit field by field, including nested country
+    /// settings. Notes must name the last setter of the field, rather than the last file.
+    #[test]
+    fn tarn_packages_inherit_each_field() {
+        let registry = registry();
+        let base = WorldContent::base(&registry).unwrap().tarns.unwrap();
+        let mut files = base_files();
+        for (package, settings) in [("tune", "chance: 0.4, size: (9, 24)"), ("country", "country: (share: 0.6)")] {
+            files.push(ContentFile { package: package.into(), name: "terrain.ron".into(), source: format!("#![enable(implicit_some)]\n(shapes: [], tarns: ({settings}))") });
+        }
+        let content = WorldContent::from_files(files.iter(), &registry).unwrap();
+        let mut expected = base;
+        expected.chance = 0.4;
+        expected.size = (9, 24);
+        expected.country.share = 0.6;
+        assert_eq!(content.tarns.unwrap(), expected);
+        assert!(content.notes.contains(&"tune/terrain.ron replaces the terrain.ron base set (tarns.size, tarns.chance)".into()));
+        assert!(content.notes.contains(&"country/terrain.ron replaces the terrain.ron base set (tarns.country.share)".into()));
+        files.retain(|f| f.name != "terrain.ron" || f.package != "base");
+        let error = WorldContent::from_files(files.iter(), &registry).unwrap_err().0;
+        assert!(error.contains("tune/terrain.ron") && error.contains("missing field"), "a partial first declaration was accepted: {error}");
+    }
+
+    /// Tarn data is refused at load unless it makes sense, naming what is wrong.
+    #[test]
+    fn bad_tarns_are_refused() {
+        let registry = registry();
+        let load = |tarns: &str| {
+            let mut files = base_files();
+            files.push(ContentFile { package: "mod".into(), name: "terrain.ron".into(), source: format!("#![enable(implicit_some)]\n(shapes: [], tarns: ({tarns}))") });
+            WorldContent::from_files(files.iter(), &registry).map(|c| {
+                assert!(c.notes.iter().any(|n| n == "mod/terrain.ron replaces the terrain.ron base set (tarns.climate, tarns.floor, tarns.depth, tarns.size, tarns.chance, tarns.country.scale, tarns.country.share)"));
+                c.tarns.unwrap().chance
+            }).map_err(|e| e.0)
+        };
+        let good = "climate: [(temperature: (\"frozen\", \"cool\"))], floor: 56.0, depth: 2.0, size: (8, 25), chance: 0.3, country: (scale: 1000.0, share: 0.5)";
+        assert_eq!(load(good), Ok(0.3), "a later package sets every tarn field");
+        for (from, to, expected) in [
+            ("chance: 0.3", "chance: 1.5", "chance 1.5"),
+            ("floor: 56.0", "floor: -3.0", "floor -3"),
+            ("depth: 2.0", "depth: 0.0", "depth 0"),
+            ("size: (8, 25)", "size: (26, 25)", "size (26, 25)"),
+            ("size: (8, 25)", "size: (0, 25)", "size (0, 25)"),
+            ("share: 0.5", "share: 2.0", "country share 2"),
+            ("\"cool\"", "\"balmy\"", "unknown Temperature band `balmy`"),
+        ] {
+            let message = load(&good.replace(from, to)).unwrap_err();
+            assert!(message.contains("terrain.ron: tarns") && message.contains(expected), "expected `{expected}` in: {message}");
         }
     }
 
@@ -2710,5 +3584,29 @@ mod tests {
             let message = load(&source).unwrap_err().0;
             assert!(message.contains(expected) && message.contains("cave_biomes.ron"), "expected `{expected}` in: {message}");
         }
+    }
+
+    /// A biome's field stones read as two stones, not one (Review on decor): where it
+    /// names two or more, the lightest and darkest differ in brightness by at least 30 of
+    /// 255. Stone and andesite, 10 apart, looked like one stone at 3840×2160.
+    #[test]
+    fn field_stones_differ_enough_to_show() {
+        let registry = registry();
+        let content = WorldContent::base(&registry).unwrap();
+        let luma = |name: &str| {
+            let [r, g, b] = registry.def(registry.expect(name)).color;
+            0.3 * r as f32 + 0.59 * g as f32 + 0.11 * b as f32
+        };
+        let mut checked = 0;
+        for biome in &content.biomes {
+            let lumas: Vec<f32> = biome.field_stones.iter().filter_map(|s| if let Select::Name(name, _) = s { Some(luma(name)) } else { None }).collect();
+            if lumas.len() < 2 {
+                continue;
+            }
+            checked += 1;
+            let spread = lumas.iter().copied().fold(f32::MIN, f32::max) - lumas.iter().copied().fold(f32::MAX, f32::min);
+            assert!(spread >= 30.0, "{}: its field stones {:?} differ by only {spread:.0} in brightness", biome.name, biome.field_stones);
+        }
+        assert!(checked >= 5, "{checked} biomes with field stones");
     }
 }

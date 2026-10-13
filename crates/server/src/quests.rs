@@ -30,7 +30,8 @@ impl Server {
             let (finished, states) = {
                 let player = &self.players[&id];
                 let (skills, blocks) = (&self.content.skills, &self.content.blocks);
-                let level = |name: &str| skills.level_of(&player.skills, name);
+                // A skill as quests name it, `mining`, is core's unless it says whose.
+                let level = |name: &str| if name.contains(':') { skills.level_of(&player.skills, name) } else { skills.level_of(&player.skills, &format!("core:{name}")) };
                 let carried = |want: &str| {
                     let matches = |item: voxmar_engine::block::BlockId| {
                         let def = blocks.def(item);
@@ -43,7 +44,8 @@ impl Server {
                     slots + player.inventory.pouched.iter().filter(|(item, _)| matches(*item)).map(|&(_, n)| n as u32).sum::<u32>()
                 };
                 let has_tag = |name: &str, tag: &str| blocks.id(name).is_some_and(|id| blocks.def(id).has_tag(tag));
-                let progress = Progress { journal: &player.journal, tallies: &player.tallies, level: &level, carried: &carried, has_tag: &has_tag, home: player.home.is_some() };
+                let drops = |name: &str| blocks.id(name).map(|id| blocks.info(id).drops).filter(|d| !d.is_air()).map(|d| blocks.def(d).name.clone());
+                let progress = Progress { journal: &player.journal, tallies: &player.tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: player.home.is_some() };
                 let finished = self.content.quests.newly_done(&player.quests_done, &progress);
                 let mut done = player.quests_done.clone();
                 done.extend(finished.iter().cloned());

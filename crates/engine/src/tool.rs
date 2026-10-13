@@ -253,4 +253,49 @@ mod tests {
         assert!(tools.rule(id("log")).is_none());
         assert_eq!(tools.first_of(iron.tool.unwrap(), 2), Some(id("stone_pickaxe")));
     }
+
+    /// A dead snag's trunk (`base:dead_log`) is never an item: it drops nothing of its own
+    /// and breaking it gives a stick instead, every time, and nothing else breaks to
+    /// sticks. It is weathered wood on every face, as its limbs and fallen trunks are made
+    /// of it too.
+    #[test]
+    fn dead_logs_break_to_sticks() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let (dead, stick) = (content.blocks.expect("base:dead_log"), content.blocks.expect("base:stick"));
+        let info = content.blocks.info(dead);
+        assert!(info.drops.is_air());
+        assert!(info.layers.iter().all(|&layer| layer == info.layers[0]), "a dead log looks the same on every face: {:?}", info.layers);
+        let rule = content.tools.rule(dead).expect("a rule for dead logs");
+        assert_eq!(rule.instead, Some((stick, 1.0)));
+        let others: Vec<&str> = content
+            .blocks
+            .ids()
+            .filter(|&b| b != dead && content.tools.rule(b).is_some_and(|r| r.instead.is_some_and(|(given, _)| given == stick)))
+            .map(|b| content.blocks.def(b).name.as_str())
+            .collect();
+        assert!(others.is_empty(), "only dead logs break to sticks, not {others:?}");
+    }
+
+    /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower
+    /// level breaks pays more than what a higher one does, so stone and coal never outpay
+    /// the ores above them.
+    #[test]
+    fn mining_pays_more_for_what_asks_more() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let mining = content.skills.id("core:mining");
+        let mut taught: Vec<(u8, f32, String)> = content
+            .blocks
+            .ids()
+            .filter_map(|b| content.tools.rule(b).filter(|r| r.skill == mining && r.xp > 0.0).map(|r| (r.level.max(1), r.xp, content.blocks.def(b).name.clone())))
+            .collect();
+        taught.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        let out_of_order: Vec<String> = taught
+            .windows(2)
+            .filter(|pair| pair[0].0 < pair[1].0 && pair[0].1 > pair[1].1)
+            .map(|pair| format!("{} (Mining {}, {} xp) pays more than {} (Mining {}, {} xp)", pair[0].2, pair[0].0, pair[0].1, pair[1].2, pair[1].0, pair[1].1))
+            .collect();
+        assert!(out_of_order.is_empty(), "Mining xp out of level order: {out_of_order:#?}");
+    }
 }

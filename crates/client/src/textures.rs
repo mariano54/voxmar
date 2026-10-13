@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use voxmar_engine::block::{RenderKind, TextureRef};
+use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, TextureRef};
 use voxmar_texgen::{Image, Library, Manifest};
 
 use crate::settings::TextureOrder;
@@ -43,6 +43,25 @@ impl Rgba {
         self.pixels.chunks(size).map(|pixels| Rgba { width: side, height: side, pixels: pixels.to_vec() }).collect()
     }
 
+    /// What [`Self::fill_transparent`] gives its clear texels: the average colour of those
+    /// at least half opaque.
+    pub fn fill_colour(&self) -> [u8; 3] {
+        let (mut sum, mut count) = ([0u32; 3], 0u32);
+        for pixel in self.pixels.as_chunks::<4>().0.iter().filter(|p| p[3] >= 128) {
+            for c in 0..3 {
+                sum[c] += pixel[c] as u32;
+            }
+            count += 1;
+        }
+        sum.map(|s| s.checked_div(count).unwrap_or(0) as u8)
+    }
+
+    /// How many of its texels are not wholly opaque, and how many are less than half.
+    fn see_through(&self) -> (usize, usize) {
+        let texels = self.pixels.as_chunks::<4>().0;
+        (texels.iter().filter(|p| p[3] != 255).count(), texels.iter().filter(|p| p[3] < 128).count())
+    }
+
     fn solid(width: u32, height: u32, color: [u8; 4]) -> Self {
         Self { width, height, pixels: color.repeat((width * height) as usize) }
     }
@@ -51,14 +70,7 @@ impl Rgba {
     /// textures drawn on full cubes (a cactus side has transparent margins in Minecraft's
     /// model), which would otherwise show holes at the edges.
     pub fn fill_transparent(&mut self) {
-        let (mut sum, mut count) = ([0u32; 3], 0u32);
-        for pixel in self.pixels.as_chunks::<4>().0.iter().filter(|p| p[3] >= 128) {
-            for c in 0..3 {
-                sum[c] += pixel[c] as u32;
-            }
-            count += 1;
-        }
-        let average = sum.map(|s| s.checked_div(count).unwrap_or(0) as u8);
+        let average = self.fill_colour();
         for pixel in self.pixels.as_chunks_mut::<4>().0 {
             if pixel[3] < 128 {
                 pixel[..3].copy_from_slice(&average);
@@ -95,6 +107,17 @@ impl Rgba {
             }
         }
         Rgba { width: size, height: size, pixels }
+    }
+
+    /// Every texel's colour multiplied by `tint` (a block's [`voxmar_engine::block::BlockTint::Fixed`]),
+    /// its transparency kept.
+    fn multiplied(mut self, tint: [u8; 3]) -> Rgba {
+        for texel in self.pixels.chunks_exact_mut(4) {
+            for (channel, &by) in texel.iter_mut().zip(&tint) {
+                *channel = (*channel as u32 * by as u32 / 255) as u8;
+            }
+        }
+        self
     }
 }
 
@@ -179,6 +202,9 @@ struct Pack {
     variants: HashMap<String, Vec<String>>,
     /// Textures this pack provided since the last log.
     served: usize,
+    /// Whether the game ships it (our default pack and Voxmar HD), which a test holds to
+    /// opaque faces with no clear texel at all (see [`see_through_warnings`]).
+    shipped: bool,
 }
 
 impl Pack {
@@ -204,7 +230,7 @@ impl Pack {
             }
         }
         let resolution = manifest.as_ref().map_or(0, |m| m.resolution);
-        Ok(Self { name: manifest.map_or(name, |m| m.name), files, recipes, resolution, variants, served: 0 })
+        Ok(Self { name: manifest.map_or(name, |m| m.name), files, recipes, resolution, variants, served: 0, shipped: false })
     }
 
     /// Whether the pack has `<path>.png`, as an image or a recipe.
@@ -284,7 +310,7 @@ impl Source {
         }
         if order == TextureOrder::VoxmarHd {
             match Pack::open(&root.join(HD_PACK)) {
-                Ok(pack) => packs.push(pack),
+                Ok(pack) => packs.push(Pack { shipped: true, ..pack }),
                 Err(e) => bevy::log::warn!("cannot open texture pack {HD_PACK}: {e}"),
             }
         }
@@ -302,7 +328,8 @@ impl Source {
             .filter(|path| path.is_dir() && !path.join(Manifest::FILE).exists())
             .collect();
         bundled.sort_by_key(|path| (path.file_name() != Some("default".as_ref()), path.clone()));
-        packs.extend(bundled.iter().filter_map(|path| Pack::open(path).ok()));
+        let default = root.join("default");
+        packs.extend(bundled.iter().filter_map(|path| Pack::open(path).ok().map(|pack| Pack { shipped: *path == default, ..pack })));
         packs.extend(minecraft);
         Self { packs }
     }
@@ -310,6 +337,17 @@ impl Source {
     /// Reads `<path>.png` from the first pack that has it.
     pub fn read(&mut self, path: &str) -> Option<Rgba> {
         self.packs.iter_mut().find_map(|pack| pack.read(path))
+    }
+
+    /// For each block texture reference, the pack that draws it (by name) and whether the
+    /// game ships that pack; none for a placeholder.
+    pub fn servers(&self, refs: &[TextureRef]) -> Vec<Option<(String, bool)>> {
+        refs.iter()
+            .map(|r| {
+                let path = format!("block/{}", r.name);
+                self.packs.iter().find(|pack| pack.contains(&path)).map(|pack| (pack.name.clone(), pack.shipped))
+            })
+            .collect()
     }
 
     /// One square texture per block texture reference, all `size`×`size`, its first frame
@@ -339,7 +377,16 @@ impl Source {
                 (frames.len() > 1).then(|| {
                     let path = format!("block/{}", r.name);
                     let ticks = self.packs.iter_mut().find(|pack| pack.contains(&path)).and_then(|pack| pack.frame_ticks(&path));
-                    Animation { frames: frames[1..].iter().map(|frame| frame.square(size)).collect(), ticks: ticks.unwrap_or(FRAME_TICKS) }
+                    Animation {
+                        frames: frames[1..]
+                            .iter()
+                            .map(|frame| match r.tint {
+                                Some(tint) => frame.square(size).multiplied(tint),
+                                None => frame.square(size),
+                            })
+                            .collect(),
+                        ticks: ticks.unwrap_or(FRAME_TICKS),
+                    }
                 })
             })
             .collect();
@@ -347,11 +394,17 @@ impl Source {
             .into_iter()
             .zip(unders)
             .zip(refs)
-            .map(|((texture, under), r)| match (texture, under) {
-                (Some(t), Some(under)) => t.square(size).over(&under.square(size)),
-                (Some(t), None) => t.square(size),
-                (None, _) if r.render == RenderKind::Plant => plant_placeholder(size, r.color, &r.name),
-                (None, _) => placeholder(size, r.color, &r.name),
+            .map(|((texture, under), r)| {
+                let drawn = match (texture, under) {
+                    (Some(t), Some(under)) => t.square(size).over(&under.square(size)),
+                    (Some(t), None) => t.square(size),
+                    (None, _) if r.render == RenderKind::Plant => plant_placeholder(size, r.color, &r.name),
+                    (None, _) => placeholder(size, r.color, &r.name),
+                };
+                match r.tint {
+                    Some(tint) => drawn.multiplied(tint),
+                    None => drawn,
+                }
             })
             .collect();
         (size, textures, animations)
@@ -374,7 +427,13 @@ impl Source {
                 let mut alternates = Vec::new();
                 for name in names {
                     match pack.read(&name) {
-                        Some(image) if image.frames().len() == 1 => alternates.push(image.square(size)),
+                        Some(image) if image.frames().len() == 1 => {
+                            let drawn = image.square(size);
+                            alternates.push(match r.tint {
+                                Some(tint) => drawn.multiplied(tint),
+                                None => drawn,
+                            });
+                        }
                         Some(_) => bevy::log::warn!("texture pack {}: variant {name} of {path} is an animation strip; leaving it out", pack.name),
                         None => bevy::log::warn!("texture pack {}: variant {name} of {path} not found", pack.name),
                     }
@@ -412,6 +471,47 @@ impl Source {
     pub fn sprite(&mut self, name: &str, fallback: (u32, u32, [u8; 4])) -> Rgba {
         self.read(&format!("gui/sprites/hud/{name}")).unwrap_or_else(|| Rgba::solid(fallback.0, fallback.1, fallback.2))
     }
+}
+
+/// For each block texture reference, the name of an opaque block one of whose faces it is,
+/// if any (the first by id).
+pub fn opaque_faces(registry: &BlockRegistry) -> Vec<Option<String>> {
+    let mut opaque = vec![None; registry.textures().len()];
+    for id in 0..registry.len() {
+        let block = BlockId(id as u16);
+        let info = registry.info(block);
+        if info.render == RenderKind::Opaque {
+            for layer in info.layers {
+                opaque[layer as usize].get_or_insert_with(|| registry.def(block).name.clone());
+            }
+        }
+    }
+    opaque
+}
+
+/// Warnings for packs we don't ship, at most one each, about an opaque block's face that is
+/// more than half see-through (a cable drawn on clear texels for a full cube): its clear
+/// texels are filled with its average colour, and the warning says which. A face with a
+/// few clear texels (a cactus side's margins) is filled without a word. By texture
+/// reference: the textures, the opaque block each is a face of, and the pack drawing it.
+pub fn see_through_warnings(refs: &[TextureRef], textures: &[Rgba], opaque: &[Option<String>], servers: &[Option<(String, bool)>]) -> Vec<String> {
+    let mut warned: Vec<&str> = Vec::new();
+    let mut warnings = Vec::new();
+    for (((r, texture), block), server) in refs.iter().zip(textures).zip(opaque).zip(servers) {
+        let (Some(block), Some((pack, false))) = (block, server) else { continue };
+        let clear = texture.see_through().1;
+        if r.under.is_some() || clear * 2 <= texture.pixels.len() / 4 || warned.contains(&pack.as_str()) {
+            continue;
+        }
+        warned.push(pack);
+        let [red, green, blue] = texture.fill_colour();
+        warnings.push(format!(
+            "texture pack {pack}: block/{}, a face of the opaque block {block}, is {}% see-through; its clear texels are filled with ({red}, {green}, {blue})",
+            r.name,
+            clear * 100 / (texture.pixels.len() / 4).max(1),
+        ));
+    }
+    warnings
 }
 
 pub fn find_minecraft_jar() -> Option<PathBuf> {
@@ -523,6 +623,140 @@ fn gradient_colormap(base: [u8; 3]) -> Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whether `pack`'s `texture` may be a face of the opaque block `block`: only if every texel
+    /// is wholly opaque, as the packs we ship keep to (a test holds them to it). An opaque face
+    /// is drawn without an alpha test (terrain.rs gives the opaque pass no `CUTOUT`), so a
+    /// see-through texel would show its own colour, black as often as not, unless filled (see
+    /// [`Rgba::fill_transparent`]). A block with see-through parts is a cut-out block or a shape.
+    fn opaque_face(pack: &str, texture: &str, block: &str, image: &Rgba) -> Result<(), String> {
+        match image.see_through().0 {
+            0 => Ok(()),
+            n => Err(format!("texture pack {pack}: {texture}, a face of the opaque block {block}, has {n} of {} texels see-through", image.pixels.len() / 4)),
+        }
+    }
+
+    /// Voxmar HD's LV cable side as it was drawn before d69412ff: a cable across clear
+    /// texels, given to a full-cube opaque block, so drawn black above and below the cable.
+    fn cable_side() -> Rgba {
+        let rows = std::iter::repeat_n(".".repeat(32), 10)
+            .chain(["a", "b", "b", "a", "a", "c", "c", "a", "a", "a", "d", "d"].map(|c| if c == "c" { "ccccaaaa".repeat(4) } else { c.repeat(32) }))
+            .chain(std::iter::repeat_n(".".repeat(32), 10));
+        let pixels = rows
+            .flat_map(|row| row.chars().collect::<Vec<_>>())
+            .flat_map(|c| match c {
+                'a' => [0x34, 0x34, 0x3a, 255],
+                'b' => [0x48, 0x48, 0x4e, 255],
+                'c' => [0xec, 0x6a, 0x50, 255],
+                'd' => [0x14, 0x14, 0x16, 255],
+                _ => [0, 0, 0, 0],
+            })
+            .collect();
+        Rgba { width: 32, height: 32, pixels }
+    }
+
+    /// Every texture the packs we ship give an opaque block's face is wholly opaque; the
+    /// check refuses one that isn't, by pack, texture and block (Voxmar HD's cable side as
+    /// it was).
+    #[test]
+    fn our_packs_give_opaque_faces_only_opaque_texels() {
+        let refusal = opaque_face("Voxmar HD", "block/lv_cable_side", "base:lv_cable", &cable_side()).unwrap_err();
+        assert_eq!(refusal, "texture pack Voxmar HD: block/lv_cable_side, a face of the opaque block base:lv_cable, has 640 of 1024 texels see-through");
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets").canonicalize().expect("assets");
+        let content = voxmar_server::load_content(&assets).expect("content");
+        let blocks = &content.blocks;
+        let opaque = opaque_faces(blocks);
+        let mut refused = Vec::new();
+        for pack in ["default", HD_PACK] {
+            let mut pack = Pack::open(&assets.join("packs").join(pack)).expect("pack opens");
+            for (r, block) in blocks.textures().iter().zip(&opaque) {
+                // An ore is drawn over its rock: its own texture is clear around the ore.
+                let (Some(block), None) = (block, &r.under) else { continue };
+                let path = format!("block/{}", r.name);
+                if let Some(texture) = pack.read(&path)
+                    && let Err(e) = opaque_face(&pack.name, &path, block, &texture)
+                {
+                    refused.push(e);
+                }
+            }
+        }
+        assert!(refused.is_empty(), "{}", refused.join("\n"));
+    }
+
+    /// A block's fixed tint multiplies its texels' colours by the colour (white leaves them,
+    /// black blackens them) and never touches their transparency.
+    #[test]
+    fn a_fixed_tint_multiplies_the_colour_and_keeps_the_alpha() {
+        let mut texture = Rgba::solid(2, 1, [200, 100, 50, 255]);
+        texture.pixels[7] = 90;
+        let tinted = texture.clone().multiplied([255, 128, 0]);
+        assert_eq!(tinted.pixels, [200, 50, 0, 255, 200, 50, 0, 90]);
+        assert_eq!(texture.clone().multiplied([255, 255, 255]).pixels, texture.pixels);
+    }
+
+    /// A pack's animated drawing retains a block's fixed colour after the first frame,
+    /// including its translucent texels and the pack's own frame time.
+    #[test]
+    fn a_fixed_tint_colours_every_animation_frame_from_a_pack() {
+        let root = std::env::temp_dir().join(format!("voxmar-tinted-animation-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("textures/block")).unwrap();
+        let pixels = [[200, 100, 50, 255].repeat(4), [120, 80, 60, 90].repeat(4)].concat();
+        image::RgbaImage::from_raw(2, 4, pixels).unwrap().save(root.join("textures/block/cloth.png")).unwrap();
+        std::fs::write(root.join("textures/block/cloth.png.mcmeta"), r#"{"animation":{"frametime":7}}"#).unwrap();
+        let mut source = Source { packs: vec![Pack::open(&root).unwrap()] };
+        let refs = [Some([255, 128, 0]), None].map(|tint| TextureRef { name: "cloth".into(), under: None, color: [0; 3], render: RenderKind::Model, tint });
+        let (size, textures, animations) = source.block_textures(&refs);
+        assert_eq!(size, 2);
+        assert_eq!(textures[0].pixels, [200, 50, 0, 255].repeat(4));
+        assert_eq!(textures[1].pixels, [200, 100, 50, 255].repeat(4));
+        let tinted = animations[0].as_ref().unwrap();
+        assert_eq!(tinted.ticks, 7);
+        assert_eq!(tinted.frames.len(), 1);
+        assert_eq!(tinted.frames[0].pixels, [120, 40, 0, 90].repeat(4));
+        assert_eq!(animations[1].as_ref().unwrap().frames[0].pixels, [120, 80, 60, 90].repeat(4));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Every face of the decor models resolves in both shipped looks, including the
+    /// separate drawings on their boxes. HD may inherit the default recipe at 32 texels.
+    #[test]
+    fn decor_faces_resolve_in_both_shipped_packs() {
+        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).expect("content");
+        let blocks = &content.blocks;
+        let decor: Vec<_> = blocks.ids().filter(|&id| blocks.def(id).has_tag("decor")).collect();
+        assert!(decor.len() >= 172, "only {} decor blocks", decor.len());
+        for name in ["default", HD_PACK] {
+            let mut pack = Pack::open(&assets.join("packs").join(name)).expect("pack");
+            for &id in &decor {
+                for &layer in blocks.info(id).layers.iter().chain(blocks.shape_layers(id)) {
+                    let reference = &blocks.textures()[layer as usize];
+                    let path = format!("block/{}", reference.name);
+                    let drawn = pack.read(&path).unwrap_or_else(|| panic!("{name}: {} has no {path}", blocks.def(id).name));
+                    assert!(drawn.pixels.chunks_exact(4).any(|p| p[3] != 0), "{name}: {path} is invisible");
+                }
+            }
+        }
+    }
+
+    /// A pack we don't ship hears once of its opaque faces more than half see-through,
+    /// with the colour they are filled with; a face with clear margins, or a pack we ship,
+    /// hears nothing.
+    #[test]
+    fn a_pack_hears_once_of_see_through_opaque_faces() {
+        let texture = |name: &str| TextureRef { name: name.into(), under: None, color: [0; 3], render: RenderKind::Opaque, tint: None };
+        let refs = [texture("lv_cable_side"), texture("mv_cable_side"), texture("cactus_side")];
+        let mut cactus = Rgba::solid(16, 16, [80, 140, 60, 255]);
+        cactus.pixels[..16 * 4].fill(0);
+        let textures = [cable_side(), cable_side(), cactus];
+        let opaque = ["base:lv_cable", "base:mv_cable", "base:cactus"].map(|b| Some(b.to_owned()));
+        let warnings = |pack: (&str, bool)| see_through_warnings(&refs, &textures, &opaque, &[Some((pack.0.to_owned(), pack.1)), Some((pack.0.to_owned(), pack.1)), Some((pack.0.to_owned(), pack.1))]);
+        assert_eq!(
+            warnings(("Cables Plus", false)),
+            ["texture pack Cables Plus: block/lv_cable_side, a face of the opaque block base:lv_cable, is 62% see-through; its clear texels are filled with (65, 54, 57)"]
+        );
+        assert!(warnings(("Voxmar HD", true)).is_empty());
+    }
 
     /// Every block texture and item icon the content uses resolves to art in the Voxmar HD
     /// look: the pack's own 32×32 art, or the default pack's (or a mod pack's) drawn as the

@@ -1,0 +1,76 @@
+// Machines built as structures (multiblocks.ron says how a pattern reads). The core is a
+// machine (machines.ron) that works only while its structure stands; right click it to
+// put in and take out, and to be told what the structure still needs.
+(
+    multiblocks: [
+        // The Bellows Bloomery, the Bronze age's gate: a bloomery at the foot of a hollow
+        // shaft of kiln bricks three high, with bellows in its ring (turned by a water
+        // wheel, windmill or treadwheel through shafts). Its first iron bloom opens the
+        // Iron age.
+        (
+            name: "bellows_bloomery", title: "Bellows Bloomery",
+            hint: "The bloomery needs kiln bricks round it with bellows in the ring, and a hollow shaft of kiln bricks two more blocks high above it.",
+            layers: [
+                ["kkk", "kBb", "kkk"],
+                ["kkk", "k k", "kkk"],
+                ["kkk", "k k", "kkk"],
+            ],
+            key: {'k': "kiln_bricks", 'B': "bloomery", 'b': "bellows"},
+            core: 'B',
+        ),
+        // The Coke Oven: a sealed chamber of kiln bricks three on a side, hollow inside,
+        // with the oven's door in the middle of one face.
+        (
+            name: "coke_oven", title: "Coke Oven",
+            hint: "The coke oven needs a chamber of kiln bricks three on a side round a hollow middle, with the oven in the middle of one side.",
+            layers: [
+                ["kkk", "kkk", "kkk"],
+                ["kkk", "k k", "kCk"],
+                ["kkk", "kkk", "kkk"],
+            ],
+            key: {'k': "kiln_bricks", 'C': "coke_oven"},
+            core: 'C',
+        ),
+        // The Blast Furnace: the bloomery's shape grown taller, a furnace at the foot of a
+        // hollow kiln-brick shaft three more blocks high, blown by bellows in its ring.
+        (
+            name: "blast_furnace", title: "Blast Furnace",
+            hint: "The blast furnace needs kiln bricks round it with bellows in the ring, and a hollow shaft of kiln bricks three more blocks high above it.",
+            layers: [
+                ["kkk", "kFb", "kkk"],
+                ["kkk", "k k", "kkk"],
+                ["kkk", "k k", "kkk"],
+                ["kkk", "k k", "kkk"],
+            ],
+            key: {'k': "kiln_bricks", 'F': "blast_furnace", 'b': "bellows"},
+            core: 'F',
+        ),
+        // The Turbine Hall, the HV age's power: a hall of HV casing five long, three
+        // wide and three high, hollow along its middle where the rotor turns, with the core at
+        // the top of one end (steam in from above, HV out of its end).
+        (
+            name: "turbine_hall", title: "Turbine Hall",
+            hint: "The turbine hall needs a hall of HV casing five long, three wide and three high, hollow along its middle, with the turbine hall in the middle of the top of one end.",
+            layers: [
+                ["ccccc", "ccccc", "ccccc"],
+                ["ccccc", "c   c", "ccccc"],
+                ["ccccc", "Tcccc", "ccccc"],
+            ],
+            key: {'c': "hv_casing", 'T': "turbine_hall"},
+            core: 'T',
+        ),
+        // The Processing Array: a cube of HV casing three on a side, hollow in the middle,
+        // with the array in the middle of one face.
+        (
+            name: "processing_array", title: "Processing Array",
+            hint: "The processing array needs a cube of HV casing three on a side, hollow in the middle, with the processing array in the middle of one face.",
+            layers: [
+                ["ccc", "ccc", "ccc"],
+                ["ccc", "P c", "ccc"],
+                ["ccc", "ccc", "ccc"],
+            ],
+            key: {'c': "hv_casing", 'P': "processing_array"},
+            core: 'P',
+        ),
+    ],
+)

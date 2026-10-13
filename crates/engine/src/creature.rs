@@ -16,6 +16,7 @@
 
 pub mod anatomy;
 pub mod brain;
+pub mod condition;
 pub mod husbandry;
 pub mod model;
 pub mod motion;
@@ -49,6 +50,9 @@ pub enum Kind {
     Fish,
     /// Only where aether is high; no body to butcher.
     Spirit,
+    /// People of settlements: placed by their settlement near players, never by the land,
+    /// never kept, and kept by the server only while a player is near their home.
+    Villager,
 }
 
 /// Where a species can be.
@@ -106,6 +110,27 @@ pub struct Attack {
     /// horns and hooves crush.
     #[serde(default)]
     pub style: crate::combat::Style,
+    /// Seconds it winds up before the blow lands, the tell a player can block or dodge
+    /// by, and seconds it recovers after, standing open to blows (unset, `combat::Feel`'s).
+    #[serde(default)]
+    pub windup: Option<f32>,
+    #[serde(default)]
+    pub recovery: Option<f32>,
+    /// A heavy blow goes through any guard: only a dodge escapes it.
+    #[serde(default)]
+    pub heavy: bool,
+    /// Blocks it lunges at its target as the blow lands, so backing off at a walk does not
+    /// escape it (unset, `combat::Feel`'s; quick animals more, big ones less).
+    #[serde(default)]
+    pub lunge: Option<f32>,
+    /// How fast it follows its target through the first part of a wind-up (unset,
+    /// `combat::Feel`'s, a run; slow creatures walk).
+    #[serde(default)]
+    pub pace: Option<crate::combat::Pace>,
+    /// What it adds to its attack roll (unset, `combat::Feel::creature_accuracy` of its
+    /// level), as a weapon's accuracy does a player's.
+    #[serde(default)]
+    pub accuracy: Option<u16>,
 }
 
 fn reach() -> f32 {
@@ -359,14 +384,27 @@ pub enum Behaviour {
     Curious { distance: f32 },
     /// Blinks a few blocks away when fleeing (supernatural).
     Blink,
+    /// Goes where its day's routine sends it (`Situation::errand`): villagers. There once
+    /// within `arrive` blocks of the spot; awake, it turns to a player within `look`.
+    Routine { arrive: f32, look: f32 },
 }
 
-/// Experience for killing one, in `skill`.
-#[derive(Clone, Debug, Default, Deserialize)]
+/// Experience for killing one, in `skill`, and how much its fights teach.
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CreatureXp {
     pub kill: f32,
     pub skill: Option<String>,
+    /// The share of the usual combat experience fighting it gives: for each point of
+    /// damage dealt it and each of its blows turned aside. 0 where a fight should teach
+    /// nothing (villagers who do not fight back).
+    pub combat: f32,
+}
+
+impl Default for CreatureXp {
+    fn default() -> Self {
+        Self { kill: 0.0, skill: None, combat: 1.0 }
+    }
 }
 
 /// A species as `creatures.ron` writes it.
@@ -428,6 +466,9 @@ pub struct CreatureDef {
     /// What kept ones give on timers.
     #[serde(default)]
     pub products: Vec<husbandry::Product>,
+    /// What kept ones need beyond food, water and their climate (docs/breeding.md).
+    #[serde(default)]
+    pub needs: condition::NeedsDef,
     /// What individuals inherit: coat colours, size, yield, temper (docs/breeding.md). At
     /// most [`crate::genes::MOST`].
     #[serde(default)]
@@ -480,6 +521,168 @@ fn leash() -> f32 {
 #[serde(deny_unknown_fields)]
 struct CreatureFile {
     creatures: Vec<CreatureDef>,
+    #[serde(default)]
+    limits: Option<SetLimits>,
+    #[serde(default)]
+    defence: Option<SetDefenceTraining>,
+    #[serde(default)]
+    condition: Option<condition::SetConditionRules>,
+}
+
+/// One package's `creatures.ron`: its species, and what it sets of the world's rules.
+#[derive(Debug)]
+pub struct CreaturePackage {
+    pub defs: Vec<CreatureDef>,
+    pub limits: Option<SetLimits>,
+    pub defence: Option<SetDefenceTraining>,
+    pub condition: Option<condition::SetConditionRules>,
+}
+
+/// What packages set for every creature in the world: how many there are, how their
+/// blows train Defence, and how kept animals' condition is reckoned. Each is single-valued data a later package replaces field by field
+/// ([`crate::content::Settable`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Rules {
+    pub limits: Limits,
+    pub defence: DefenceTraining,
+    pub condition: condition::ConditionRules,
+}
+
+/// How many creatures the world holds. A package's `creatures.ron` may set any of them
+/// (`limits`); a later package's replace an earlier one's, with a note naming both, and
+/// what none sets keeps these defaults. Wild creatures and kept animals have budgets of
+/// their own, so a rancher's herds never empty the world of wild animals and monsters for
+/// everyone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Limits {
+    /// Most alive at once, wild and kept, whatever the players: room for the wild ones and
+    /// `keepers` players' kept animals. Kept animals still waiting in the save count against
+    /// it. Past that many keepers at their cap, wild ones get fewer.
+    pub most: usize,
+    /// Most wild creatures alive at once.
+    pub wild_most: usize,
+    /// Most animals one player keeps, herds and pets together, alive or waiting in the
+    /// save: taming and births past it are refused.
+    pub kept_each: usize,
+    /// How many players' kept animals `most` makes room for, beside the wild ones.
+    pub keepers: usize,
+    /// At most this many animals, and this many monsters, near each player.
+    pub animals_near: usize,
+    pub monsters_near: usize,
+    /// The most monsters near a player during a new world's first night (until its first
+    /// dawn), so a first night in the open is a scare, not a siege.
+    pub first_night_monsters: usize,
+    /// Seconds between spawn attempts around each player, one spot an attempt.
+    pub spawn_every: f32,
+    /// How far from the player a spot may lie, in blocks: no nearer than `spawn_near` (so
+    /// nothing appears at their feet) and no further than `spawn_far`. Nearer spots put
+    /// more of what the caps allow within sight.
+    pub spawn_near: f32,
+    pub spawn_far: f32,
+    /// Nothing spawns where a player could see it appear: within this many degrees of
+    /// where they look (a half angle: 75 covers the screen) and in line of sight. 0 turns
+    /// it off.
+    pub spawn_unseen_angle: f32,
+    /// How heavy "nothing here" weighs against the species that suit a spot (each weighs
+    /// its biome, climate, rarity and the hour, about 1 for a common one at home): an
+    /// attempt where only monsters suit it (a dark place) or where animals do. Higher
+    /// leaves more spots empty.
+    pub empty_for_monsters: f32,
+    pub empty_for_animals: f32,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, first_night_monsters: 3, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, spawn_unseen_angle: 75.0, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
+    }
+}
+
+crate::content::settable! {
+    /// The limits one package sets: any of them.
+    SetLimits for Limits {
+        most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize, first_night_monsters: usize,
+        spawn_every: f32, spawn_near: f32, spawn_far: f32, spawn_unseen_angle: f32, empty_for_monsters: f32, empty_for_animals: f32,
+    }
+}
+
+impl Limits {
+    /// Whether these limits can hold: room for one wild creature, for what one player draws
+    /// near, and for every keeper's animals beside the wild ones.
+    pub fn check(&self) -> Result<(), RegistryError> {
+        let error = |why: String| Err(RegistryError(format!("creature limits: {why}")));
+        if self.wild_most == 0 {
+            return error("`wild_most` must be at least 1".into());
+        }
+        if !(self.spawn_every.is_finite() && self.spawn_every >= 0.05) {
+            return error(format!("`spawn_every` ({}) must be at least 0.05 seconds", self.spawn_every));
+        }
+        if !(self.spawn_near.is_finite() && self.spawn_near >= 0.0 && self.spawn_far.is_finite() && self.spawn_far > self.spawn_near) {
+            return error(format!("`spawn_far` ({}) must be more than `spawn_near` ({}), which is 0 or more", self.spawn_far, self.spawn_near));
+        }
+        if !(self.spawn_unseen_angle.is_finite() && (0.0..=180.0).contains(&self.spawn_unseen_angle)) {
+            return error(format!("`spawn_unseen_angle` ({}) must be from 0 to 180 degrees", self.spawn_unseen_angle));
+        }
+        if !(self.empty_for_monsters.is_finite() && self.empty_for_monsters >= 0.0 && self.empty_for_animals.is_finite() && self.empty_for_animals >= 0.0) {
+            return error("`empty_for_monsters` and `empty_for_animals` must be 0 or more".into());
+        }
+        if self.animals_near + self.monsters_near > self.wild_most {
+            return error(format!(
+                "{} animals and {} monsters near one player are more than `wild_most` ({})",
+                self.animals_near, self.monsters_near, self.wild_most
+            ));
+        }
+        let needed = self.keepers.checked_mul(self.kept_each).and_then(|kept| kept.checked_add(self.wild_most));
+        if needed.is_none_or(|needed| self.most < needed) {
+            return error(format!(
+                "`most` ({}) is less than `wild_most` ({}) and {} keepers' {} kept animals each",
+                self.most, self.wild_most, self.keepers, self.kept_each
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// When a creature's blow that misses trains the player's Defence (design wiki draft 63):
+/// only a blow from a creature the player landed a damaging blow on within
+/// `fought_within` seconds, and of at least `least_level` times their Defence level. So
+/// standing among weak monsters, or tapping a penned hen between their blows, trains
+/// nothing, and each creature feeds only the landed blows it lives through. A package's
+/// `creatures.ron` may set either (`defence`); a later package's replace an earlier one's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DefenceTraining {
+    /// Seconds a landed blow keeps the fight on.
+    pub fought_within: f32,
+    /// The least creature level that trains, as a share of the player's Defence level.
+    pub least_level: f32,
+}
+
+impl Default for DefenceTraining {
+    fn default() -> Self {
+        Self { fought_within: 10.0, least_level: 0.5 }
+    }
+}
+
+crate::content::settable! {
+    /// What one package sets of Defence training.
+    SetDefenceTraining for DefenceTraining { fought_within: f32, least_level: f32 }
+}
+
+impl DefenceTraining {
+    /// Whether these rules make sense: a fight lasts a while, and no level share is negative.
+    pub fn check(&self) -> Result<(), RegistryError> {
+        if !(self.fought_within.is_finite() && self.fought_within > 0.0) {
+            return Err(RegistryError(format!("defence: `fought_within` must be above 0 seconds, not {}", self.fought_within)));
+        }
+        if !(self.least_level.is_finite() && self.least_level >= 0.0) {
+            return Err(RegistryError(format!("defence: `least_level` must be 0 or more, not {}", self.least_level)));
+        }
+        Ok(())
+    }
+
+    /// Whether a creature of `level` is a match for a player's Defence level `defence`.
+    pub fn matches(&self, level: u8, defence: u8) -> bool {
+        level as f32 >= self.least_level * defence as f32
+    }
 }
 
 /// A species with its names resolved.
@@ -521,11 +724,13 @@ impl Creature {
 pub struct CreatureRegistry {
     creatures: Vec<Creature>,
     by_name: FxHashMap<String, CreatureId>,
+    rules: Rules,
 }
 
 impl CreatureRegistry {
-    /// Reads a package's `creatures.ron`, qualifying names with its namespace.
-    pub fn read(namespace: &str, source: &str) -> Result<Vec<CreatureDef>, RegistryError> {
+    /// Reads a package's `creatures.ron`, qualifying names with its namespace: its species,
+    /// and what it sets of the world's rules.
+    pub fn read(namespace: &str, source: &str) -> Result<CreaturePackage, RegistryError> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let file: CreatureFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/creatures.ron: {e}")))?;
         let qualify = |name: &mut String| {
@@ -533,7 +738,8 @@ impl CreatureRegistry {
                 *name = format!("{namespace}:{name}");
             }
         };
-        Ok(file
+        let (limits, defence, condition) = (file.limits, file.defence, file.condition);
+        let defs = file
             .creatures
             .into_iter()
             .map(|mut def| {
@@ -558,15 +764,22 @@ impl CreatureRegistry {
                 }
                 def
             })
-            .collect())
+            .collect();
+        Ok(CreaturePackage { defs, limits, defence, condition })
     }
 
     /// Resolves species against the blocks (items) and skills.
-    pub fn new(defs: Vec<CreatureDef>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
-        let mut registry = Self::default();
+    pub fn new(defs: Vec<CreatureDef>, rules: Rules, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
+        rules.limits.check()?;
+        rules.defence.check()?;
+        rules.condition.check()?;
+        let mut registry = Self { rules, ..Self::default() };
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
+            if def.body.skin.eye.is_some_and(|r| !r.is_finite() || r <= 0.0) {
+                return Err(error("skin.eye must be a finite positive radius".into()));
+            }
             if def.health == 0 || def.body.size.0 <= 0.0 || def.body.size.1 <= 0.0 || def.body.colours.is_empty() {
                 return Err(error("needs health, a size and at least one colour".into()));
             }
@@ -641,6 +854,21 @@ impl CreatureRegistry {
 
     pub fn get(&self, id: CreatureId) -> &Creature {
         &self.creatures[id.0 as usize]
+    }
+
+    /// How many creatures the world holds.
+    pub fn limits(&self) -> Limits {
+        self.rules.limits
+    }
+
+    /// When creatures' blows train Defence.
+    pub fn defence(&self) -> DefenceTraining {
+        self.rules.defence
+    }
+
+    /// How kept animals' condition is reckoned.
+    pub fn condition(&self) -> &condition::ConditionRules {
+        &self.rules.condition
     }
 
     pub fn id(&self, name: &str) -> Option<CreatureId> {
@@ -736,17 +964,11 @@ pub fn daylight(day: u64) -> f32 {
     ((elevation + 0.1) / 0.35).clamp(0.0, 1.0)
 }
 
-/// A creature's chance to hit, RuneScape-style: attack and defence rolls from levels.
-pub fn hit_chance(attack_level: u8, defence_level: u8) -> f32 {
-    let a = (attack_level as f32 + 8.0) * 64.0;
-    let d = (defence_level as f32 + 8.0) * 64.0;
-    if a > d { 1.0 - (d + 2.0) / (2.0 * (a + 1.0)) } else { a / (2.0 * (d + 1.0)) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::block::BlockDef;
+    use crate::content::Settable;
 
     const RABBIT: &str = r#"(creatures: [(
         name: "rabbit", health: 6, level: 1,
@@ -763,8 +985,8 @@ mod tests {
             BlockDef { name: "base:carrot".into(), ..Default::default() },
         ])
         .unwrap();
-        let defs = CreatureRegistry::read("base", RABBIT).unwrap();
-        CreatureRegistry::new(defs, &blocks, &SkillRegistry::default()).unwrap()
+        let defs = CreatureRegistry::read("base", RABBIT).unwrap().defs;
+        CreatureRegistry::new(defs, Rules::default(), &blocks, &SkillRegistry::default()).unwrap()
     }
 
     #[test]
@@ -805,8 +1027,94 @@ mod tests {
             BlockDef { name: "base:carrot".into(), ..Default::default() },
         ])
         .unwrap();
-        let defs = CreatureRegistry::read("base", &source).unwrap();
-        assert!(CreatureRegistry::new(defs, &blocks, &SkillRegistry::default()).is_err());
+        let defs = CreatureRegistry::read("base", &source).unwrap().defs;
+        assert!(CreatureRegistry::new(defs, Rules::default(), &blocks, &SkillRegistry::default()).is_err());
+    }
+
+    #[test]
+    fn eye_radius_loads_from_data_and_rejects_invalid_values() {
+        let mut defs = CreatureRegistry::read("base", &RABBIT.replace("colours:", "skin: (eyes: Front, eye: 0.065), colours:")).unwrap().defs;
+        assert_eq!(defs[0].body.skin.eye, Some(0.065));
+        // Leave unrelated item references out, so each rejection exercises skin.eye.
+        defs[0].diet = Default::default();
+        defs[0].loot.clear();
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        assert!(CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).is_ok());
+        for radius in [0.0, -0.065, f32::NAN, f32::INFINITY] {
+            defs[0].body.skin.eye = Some(radius);
+            let error = CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).unwrap_err();
+            assert!(error.0.contains("skin.eye"), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn limits_load_from_the_file_and_are_checked() {
+        let source = RABBIT.replacen("(creatures:", "(limits: (wild_most: 20, kept_each: 5, spawn_unseen_angle: 45.0), creatures:", 1);
+        let set = CreatureRegistry::read("base", &source).unwrap().limits.expect("set");
+        assert_eq!(set, SetLimits { wild_most: Some(20), kept_each: Some(5), spawn_unseen_angle: Some(45.0), ..Default::default() });
+        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().limits, None, "a file without limits leaves them to another");
+        // What a package sets replaces what was there; the rest stays.
+        let (limits, changed) = Limits::default().with(&set);
+        assert_eq!(changed, ["wild_most", "kept_each", "spawn_unseen_angle"]);
+        assert_eq!(limits.spawn_unseen_angle, 45.0);
+        assert_eq!((limits.wild_most, limits.kept_each, limits.most), (20, 5, Limits::default().most));
+        assert!(Limits::default().check().is_ok());
+        // Room for no wild ones, less than one player's surroundings draw, or less in all
+        // than the wild ones and every keeper's animals, will not load.
+        let ok = Limits::default();
+        for bad in [
+            Limits { wild_most: 0, animals_near: 0, monsters_near: 0, ..ok },
+            Limits { wild_most: 10, ..ok },
+            Limits { most: ok.wild_most + ok.keepers * ok.kept_each - 1, ..ok },
+            Limits { keepers: usize::MAX, ..ok },
+            Limits { spawn_every: 0.0, ..ok },
+            Limits { spawn_far: ok.spawn_near, ..ok },
+            Limits { spawn_near: -1.0, ..ok },
+            Limits { spawn_unseen_angle: 200.0, ..ok },
+            Limits { spawn_unseen_angle: -1.0, ..ok },
+            Limits { spawn_unseen_angle: f32::NAN, ..ok },
+            Limits { spawn_unseen_angle: f32::INFINITY, ..ok },
+            Limits { spawn_every: f32::NAN, ..ok },
+            Limits { empty_for_monsters: f32::INFINITY, ..ok },
+            Limits { empty_for_animals: -1.0, ..ok },
+        ] {
+            let blocks = BlockRegistry::new(vec![]).unwrap();
+            assert!(CreatureRegistry::new(Vec::new(), Rules { limits: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
+        }
+    }
+
+    #[test]
+    fn defence_training_loads_from_the_file_and_is_checked() {
+        let source = RABBIT.replacen("(creatures:", "(defence: (least_level: 0.75), creatures:", 1);
+        let set = CreatureRegistry::read("base", &source).unwrap().defence.expect("set");
+        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().defence, None);
+        // What it leaves out keeps what was there.
+        let (rules, changed) = DefenceTraining::default().with(&set);
+        assert_eq!((rules.fought_within, rules.least_level, changed), (10.0, 0.75, vec!["least_level"]));
+        // At least three quarters of Defence 20 is 15.
+        assert!(rules.matches(15, 20) && !rules.matches(14, 20));
+        assert!(DefenceTraining::default().matches(10, 20) && !DefenceTraining::default().matches(9, 20));
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        for bad in [(0.0, 0.5), (f32::NAN, 0.5), (10.0, -0.1), (10.0, f32::INFINITY)] {
+            let defence = DefenceTraining { fought_within: bad.0, least_level: bad.1 };
+            assert!(CreatureRegistry::new(Vec::new(), Rules { defence, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
+        }
+    }
+
+    #[test]
+    fn condition_rules_load_from_the_file_and_are_checked() {
+        let source = RABBIT.replacen("(creatures:", "(condition: (up: 0.2, fed: (0.5, 1.5)), creatures:", 1);
+        let set = CreatureRegistry::read("base", &source).unwrap().condition.expect("set");
+        // What it leaves out keeps what was there.
+        let (rules, changed) = condition::ConditionRules::default().with(&set);
+        assert_eq!((rules.up, rules.fed, rules.down), (0.2, (0.5, 1.5), 0.25));
+        assert_eq!(changed, ["up", "fed"]);
+        let source = RABBIT.replace("health: 6,", "health: 6, needs: (space: 2, shelter: false),");
+        let rabbit = &CreatureRegistry::read("base", &source).unwrap().defs[0];
+        assert_eq!((rabbit.needs.space(0.5), rabbit.needs.shelter()), (2.0, false));
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        let bad = condition::ConditionRules { tamed: 2.0, ..Default::default() };
+        assert!(CreatureRegistry::new(Vec::new(), Rules { condition: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err());
     }
 
     #[test]
@@ -816,12 +1124,5 @@ mod tests {
         assert!(daylight(0) > 0.0 && daylight(0) < 1.0);
         assert!(daylight(16_000) > 0.0 && daylight(16_000) < 1.0);
         assert_eq!(daylight(30_000), 1.0);
-    }
-
-    #[test]
-    fn hits_follow_levels() {
-        assert!((hit_chance(1, 1) - 0.4975).abs() < 0.01);
-        assert!(hit_chance(60, 1) > 0.9);
-        assert!(hit_chance(1, 60) < 0.1);
     }
 }

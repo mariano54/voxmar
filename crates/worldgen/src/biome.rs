@@ -11,6 +11,9 @@
 //! extremes, at a share set by their rarity. Weirdness varies over kilometres, so a rare
 //! biome appears as whole regions in some places and not at all in others. A claim with an
 //! aether range displaces the ordinary biomes of its cells wherever aether is that high.
+//! Away from spawn every claim's share (and every variant's) is weighed by the lean towards
+//! higher levels there (`crate::levels`), so harsher biomes grow likelier with distance,
+//! smoothly, as the lean changes over kilometres.
 //!
 //! Each biome then gives up shares of its land to its variants, by the evenly spread
 //! variant field (slots ordered by name hash, so adding one never moves the others), and
@@ -29,6 +32,7 @@ use voxmar_engine::glam::IVec2;
 
 use crate::content::{Axis, BiomeDef, Colors, Layer, Role, Stones, WorldContent};
 use crate::geology::{smoothstep, spline};
+use crate::levels::{Leans, LevelsDef};
 use crate::rarity::{Featured, Rarity, Tier, name_hash};
 use crate::rocks::{ProvinceId, Rocks};
 use crate::surface::{Palette, Surface, SurfaceRules};
@@ -43,11 +47,15 @@ pub struct Biome {
     pub layer: Layer,
     pub role: Role,
     pub rarity: Rarity,
+    /// How harsh, rare and aether-touched it is, 1 ..= 10 (`crate::levels`).
+    pub level: u8,
     /// Colours this biome sets for itself, over the climate colours.
     pub colors: Colors,
     pub(crate) surface: Surface,
     /// The biome's own stones; the rock province's when `None`.
     pub(crate) stones: Option<Palette>,
+    /// Its stones for gentle open ground (see `BiomeDef::field_stones`).
+    pub(crate) field_stones: Option<Palette>,
     pub(crate) strata: Vec<BlockId>,
     /// The centre and half-width of its first climate box on each table axis, where
     /// bounded.
@@ -63,7 +71,8 @@ impl Biome {
     }
 }
 
-/// Picker axes: the four table axes, then weirdness, aether and variant.
+/// Picker axes: the four table axes, then weirdness, aether, variant and the lean towards
+/// higher levels.
 const T: usize = 0;
 const M: usize = 1;
 const C: usize = 2;
@@ -71,11 +80,12 @@ const E: usize = 3;
 const W: usize = 4;
 const A: usize = 5;
 const V: usize = 6;
+const L: usize = 7;
 const AXES: [Axis; 4] = [Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion];
 
 /// The fields a biome is picked by at one position, in axis order.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Point(pub [f32; 7]);
+pub(crate) struct Point(pub [f32; 8]);
 
 /// Farthest a border is looked for, in blocks.
 pub const EDGE_HORIZON: f32 = 128.0;
@@ -93,6 +103,7 @@ struct Claim {
     /// Weight among the commons, or the share of the cell's weirdness range for rarer ones.
     share: f32,
     common: bool,
+    level: u8,
 }
 
 /// Where an underground claim holds within its cell, beyond aether.
@@ -116,6 +127,16 @@ struct Slot {
     start: f32,
     end: f32,
     biome: BiomeId,
+}
+
+/// A variant as its parent's land is laid out: its share, which end of the variant field
+/// it takes, and its level.
+#[derive(Clone, Copy, Debug)]
+struct VariantDef {
+    biome: BiomeId,
+    area: f32,
+    bottom: bool,
+    level: u8,
 }
 
 /// A biome on the border of two others, along one axis.
@@ -153,7 +174,11 @@ pub struct Biomes {
     rivers: Vec<Vec<Claim>>,
     /// Underground claims per cell, in the same order as land claims.
     underground: Vec<Vec<(Claim, Gate)>>,
-    variants: Vec<Vec<Slot>>,
+    /// Each biome's variants, smallest first.
+    variants: Vec<Vec<VariantDef>>,
+    levels: LevelsDef,
+    /// `levels.lean`'s natural logarithm, which weighing a point's claims needs each time.
+    ln_lean: f32,
     ecotones: FxHashMap<(BiomeId, BiomeId), Ecotone>,
     /// Ecotone half-widths along temperature and moisture, for finding the slices' edges.
     ecotone_widths: [Vec<f32>; 2],
@@ -179,6 +204,7 @@ impl Biomes {
                 layer: def.layer,
                 role: def.role,
                 rarity: def.rarity,
+                level: def.level,
                 colors: def.colors.clone(),
                 // Overworld ground keeps to its colours; caves keep their contrasts.
                 surface: rules.compile(&def.surface, registry, rocks, (def.layer == Layer::Surface).then(|| crate::hue::biome_tints(content, def)[0])),
@@ -191,6 +217,7 @@ impl Biomes {
                     };
                     block.map(|b| crate::hue::shown(registry.def(b), grass, grass))
                 },
+                field_stones: (!def.field_stones.is_empty()).then(|| Palette::new(&def.field_stones, registry)),
                 stones: match &def.stones {
                     Stones::Province => None,
                     Stones::Blocks(selects) => Some(Palette::new(selects, registry)),
@@ -216,7 +243,7 @@ impl Biomes {
                     Some((from, to)) => band(axis, from)..=band(axis, to),
                     None => 0..=counts[axis as usize] - 1,
                 });
-                let claim = Claim { biome: BiomeId(i as u16), aether: climate.aether, share: def.weight * if common { 1.0 } else { share(i) }, common };
+                let claim = Claim { biome: BiomeId(i as u16), aether: climate.aether, share: def.weight * if common { 1.0 } else { share(i) }, common, level: def.level };
                 let provinces = climate.provinces.as_ref().map_or(u64::MAX, |names| {
                     (0..rocks.len().min(64)).filter(|&p| names.iter().any(|n| rocks.matches(ProvinceId(p as u8), n))).fold(0, |m, p| m | 1 << p)
                 });
@@ -269,22 +296,7 @@ impl Biomes {
                 // in whole patches around its highs and lows rather than in thin rings
                 // around a middle value; larger ones lie next to them.
                 slots.sort_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
-                let scale = 1.0 / slots.iter().map(|s| s.2).sum::<f32>().max(1.0);
-                let (mut bottom, mut top) = (0.0f32, 1.0f32);
-                slots
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (_, biome, area))| {
-                        let width = area * scale;
-                        if i % 2 == 0 {
-                            bottom += width;
-                            Slot { start: bottom - width, end: bottom, biome }
-                        } else {
-                            top -= width;
-                            Slot { start: top, end: top + width, biome }
-                        }
-                    })
-                    .collect()
+                slots.into_iter().enumerate().map(|(i, (_, biome, area))| VariantDef { biome, area, bottom: i % 2 == 0, level: defs[biome.0 as usize].level }).collect()
             })
             .collect();
 
@@ -302,7 +314,7 @@ impl Biomes {
         }
 
         let remaps = AXES.map(|axis| content.climate.remaps.iter().find(|r| r.axis == axis).map(|r| r.points.clone()));
-        Self { list, edges, remaps, counts, land, rivers, underground, variants, ecotones, ecotone_widths }
+        Self { list, edges, remaps, counts, land, rivers, underground, variants, ln_lean: content.climate.levels.lean.ln(), levels: content.climate.levels.clone(), ecotones, ecotone_widths }
     }
 
     pub fn get(&self, id: BiomeId) -> &Biome {
@@ -347,23 +359,24 @@ impl Biomes {
     }
 
     /// The claimant of a cell at this aether and weirdness, and the span of weirdness it
-    /// holds there.
-    fn claimant(claims: &[Claim], aether: f32, weirdness: f32) -> Option<(BiomeId, f32, f32)> {
+    /// holds there, each claim's share weighed by its level's lean there (`leans`).
+    fn claimant(claims: &[Claim], aether: f32, weirdness: f32, leans: &Leans) -> Option<(BiomeId, f32, f32)> {
         let valid = |c: &Claim| c.aether.is_none_or(|(lo, hi)| lo <= aether && aether < hi);
+        let share = |c: &Claim| c.share * leans.of(c.level);
         // Where aether lets a fantastical common claim in, it displaces the ordinary ones.
         let fantastical = claims.iter().any(|c| c.common && c.aether.is_some() && valid(c));
         let common = |c: &Claim| c.common && valid(c) && c.aether.is_some() == fantastical;
-        let weight: f32 = claims.iter().filter(|c| common(c)).map(|c| c.share).sum();
+        let weight: f32 = claims.iter().filter(|c| common(c)).map(share).sum();
         // Without a common claimant, the least rare of the rest fills the cell.
         let filler = if weight > 0.0 { None } else { claims.iter().rev().find(|c| !c.common && valid(c)).map(|c| c.biome) };
         let rare = |c: &Claim| !c.common && valid(c) && Some(c.biome) != filler;
-        let rare_total: f32 = claims.iter().filter(|c| rare(c)).map(|c| c.share).sum();
+        let rare_total: f32 = claims.iter().filter(|c| rare(c)).map(share).sum();
         let scale = if rare_total > 0.5 { 0.5 / rare_total } else { 1.0 };
 
         // Rarer claimants take the extremes, alternating ends, the rarest outermost.
         let (mut bottom, mut top) = (0.0f32, 1.0f32);
         for (i, claim) in claims.iter().filter(|c| rare(c)).enumerate() {
-            let width = claim.share * scale;
+            let width = share(claim) * scale;
             let (lo, hi) = if i % 2 == 0 { (bottom, bottom + width) } else { (top - width, top) };
             if (lo..hi).contains(&weirdness) {
                 return Some((claim.biome, lo, hi));
@@ -383,7 +396,7 @@ impl Biomes {
         let mut lo = 0.0;
         let mut last = None;
         for claim in claims.iter().filter(|c| common(c)) {
-            let hi = lo + claim.share / weight;
+            let hi = lo + share(claim) / weight;
             if weirdness < hi {
                 return Some((claim.biome, lo.max(bottom), hi.min(top)));
             }
@@ -393,18 +406,24 @@ impl Biomes {
         last
     }
 
+    /// The weight each level gives a claim at a point, by the lean there.
+    fn leans(&self, p: &Point) -> Leans {
+        self.levels.leans_with(self.ln_lean, p.0[L])
+    }
+
     /// The land biome a point belongs to before variants and ecotones.
-    fn parent(&self, p: &Point) -> BiomeId {
-        Self::claimant(&self.land[self.cell(p)], p.0[A], p.0[W]).map_or(BiomeId(0), |(biome, _, _)| biome)
+    fn parent(&self, p: &Point, leans: &Leans) -> BiomeId {
+        Self::claimant(&self.land[self.cell(p)], p.0[A], p.0[W], leans).map_or(BiomeId(0), |(biome, _, _)| biome)
     }
 
     /// The biome a point belongs to.
     pub(crate) fn resolve(&self, p: &Point) -> BiomeId {
-        let parent = self.parent(p);
-        if let Some(ecotone) = self.ecotone(p, parent) {
+        let leans = self.leans(p);
+        let parent = self.parent(p, &leans);
+        if let Some(ecotone) = self.ecotone(p, parent, &leans) {
             return ecotone;
         }
-        self.variant(parent, p.0[V])
+        self.variant(parent, p.0[V], &leans)
     }
 
     /// The biome a variant belongs to; any other biome itself.
@@ -418,13 +437,34 @@ impl Biomes {
         std::array::from_fn(|a| self.edges[a].partition_point(|&edge| edge <= p.0[a]) as u8)
     }
 
-    fn variant(&self, parent: BiomeId, v: f32) -> BiomeId {
-        self.variants[parent.0 as usize].iter().find(|s| (s.start..s.end).contains(&v)).map_or(parent, |s| s.biome)
+    /// The slots of a parent's variants along the variant field where the lean weighs
+    /// levels by `leans`: each takes its share of the parent's land, wider as the lean
+    /// favours its level over its parent's, the smallest at the ends, alternating.
+    fn slots(&self, parent: BiomeId, leans: Leans) -> impl Iterator<Item = Slot> + '_ {
+        let variants = &self.variants[parent.0 as usize];
+        let own = leans.of(self.list[parent.0 as usize].level);
+        let area = move |v: &VariantDef| v.area * leans.of(v.level) / own;
+        let scale = 1.0 / variants.iter().map(area).sum::<f32>().max(1.0);
+        let (mut bottom, mut top) = (0.0f32, 1.0f32);
+        variants.iter().map(move |v| {
+            let width = area(v) * scale;
+            if v.bottom {
+                bottom += width;
+                Slot { start: bottom - width, end: bottom, biome: v.biome }
+            } else {
+                top -= width;
+                Slot { start: top, end: top + width, biome: v.biome }
+            }
+        })
+    }
+
+    fn variant(&self, parent: BiomeId, v: f32, leans: &Leans) -> BiomeId {
+        self.slots(parent, *leans).find(|s| (s.start..s.end).contains(&v)).map_or(parent, |s| s.biome)
     }
 
     /// The ecotone a point lies in: within half an ecotone's width of a band edge, where
     /// the land across the edge belongs to the ecotone's other parent.
-    fn ecotone(&self, p: &Point, parent: BiomeId) -> Option<BiomeId> {
+    fn ecotone(&self, p: &Point, parent: BiomeId, leans: &Leans) -> Option<BiomeId> {
         for axis in [T, M] {
             let widest = self.ecotone_widths[axis].iter().copied().fold(0.0, f32::max);
             if widest == 0.0 {
@@ -440,7 +480,7 @@ impl Biomes {
                 }
                 let mut across = *p;
                 across.0[axis] = edge + if value < edge { 1e-3 } else { -1e-3 };
-                if let Some(ecotone) = self.ecotones.get(&(parent, self.parent(&across)))
+                if let Some(ecotone) = self.ecotones.get(&(parent, self.parent(&across, leans)))
                     && ecotone.axis == axis
                     && gap < ecotone.half_width
                 {
@@ -453,7 +493,7 @@ impl Biomes {
 
     /// The river or lake biome of a point's climate, if any claims it.
     pub(crate) fn river(&self, p: &Point) -> Option<BiomeId> {
-        Self::claimant(&self.rivers[self.cell(p)], p.0[A], p.0[W]).map(|(biome, _, _)| biome)
+        Self::claimant(&self.rivers[self.cell(p)], p.0[A], p.0[W], &self.leans(p)).map(|(biome, _, _)| biome)
     }
 
     /// The underground biome at `p`, `depth` blocks below the surface and `height` blocks
@@ -462,7 +502,7 @@ impl Biomes {
     /// biome claims the place.
     pub(crate) fn underground(&self, p: &Point, depth: f32, height: f32, province: ProvinceId) -> Option<BiomeId> {
         const MOST: usize = 24;
-        let mut claims = [Claim { biome: BiomeId(0), aether: None, share: 0.0, common: false }; MOST];
+        let mut claims = [Claim { biome: BiomeId(0), aether: None, share: 0.0, common: false, level: 1 }; MOST];
         let mut n = 0;
         for (claim, gate) in &self.underground[self.cell(p)] {
             if n < MOST && gate.holds(depth, height, province) {
@@ -470,8 +510,9 @@ impl Biomes {
                 n += 1;
             }
         }
-        let (biome, _, _) = Self::claimant(&claims[..n], p.0[A], p.0[W])?;
-        Some(self.variant(biome, p.0[V]))
+        let leans = self.leans(p);
+        let (biome, _, _) = Self::claimant(&claims[..n], p.0[A], p.0[W], &leans)?;
+        Some(self.variant(biome, p.0[V], &leans))
     }
 
     /// Picks the biome at `p` and finds its nearest border, given the points
@@ -479,7 +520,7 @@ impl Biomes {
     pub(crate) fn pick(&self, p: &Point, around: &[Point; 4]) -> Pick {
         let home = self.resolve(p);
         let span = 2.0 * GRADIENT_STEP as f32;
-        let gradient: [f32; 7] = std::array::from_fn(|a| (around[0].0[a] - around[1].0[a]).hypot(around[2].0[a] - around[3].0[a]) / span);
+        let gradient: [f32; 8] = std::array::from_fn(|a| (around[0].0[a] - around[1].0[a]).hypot(around[2].0[a] - around[3].0[a]) / span);
 
         // Every boundary within reach, nearest first; the nearest across which the biome
         // changes is the border. Most cells are far from all of them and probe none.
@@ -507,9 +548,11 @@ impl Biomes {
                 }
             }
         }
-        // The split of the cell along weirdness, and aether ranges.
+        // The split of the cell along weirdness, and aether ranges. The lean changes over
+        // kilometres, so the split moving with it is left to the weirdness gradient.
+        let leans = self.leans(p);
         let claims = &self.land[self.cell(p)];
-        if let Some((_, lo, hi)) = Self::claimant(claims, p.0[A], p.0[W]) {
+        if let Some((_, lo, hi)) = Self::claimant(claims, p.0[A], p.0[W], &leans) {
             consider(W, lo);
             consider(W, hi);
         }
@@ -520,7 +563,7 @@ impl Biomes {
             }
         }
         // Variant slots.
-        for slot in &self.variants[self.parent(p).0 as usize] {
+        for slot in self.slots(self.parent(p, &leans), leans) {
             consider(V, slot.start);
             consider(V, slot.end);
         }
@@ -618,7 +661,7 @@ mod tests {
     use crate::rng::Rng;
 
     fn biomes() -> Biomes {
-        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = WorldContent::base(&registry).unwrap();
         let mut rules = SurfaceRules::new(1, &content, &registry);
         let featured = Featured::new(1, 0.5);
@@ -627,7 +670,7 @@ mod tests {
     }
 
     fn point(t: f32, m: f32, c: f32, e: f32, w: f32, a: f32, v: f32) -> Point {
-        Point([t, m, c, e, w, a, v])
+        Point([t, m, c, e, w, a, v, 0.0])
     }
 
     #[test]
@@ -639,7 +682,7 @@ mod tests {
             let p = point(-40.0 + 80.0 * unit(), 3.0 * unit(), -1.0 + 2.0 * unit(), unit(), unit(), unit(), unit());
             let biome = biomes.get(biomes.resolve(&p));
             assert!(biome.layer == Layer::Surface && biome.role == Role::Land, "{p:?} gives {}", biome.name);
-            assert!(Biomes::claimant(&biomes.land[biomes.cell(&p)], p.0[A], p.0[W]).is_some(), "no claimant at {p:?}");
+            assert!(Biomes::claimant(&biomes.land[biomes.cell(&p)], p.0[A], p.0[W], &Leans::NONE).is_some(), "no claimant at {p:?}");
         }
     }
 
@@ -678,7 +721,7 @@ mod tests {
 
     #[test]
     fn legendary_biomes_are_a_real_find() {
-        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let mut files: Vec<_> = crate::content::BASE_FILES.iter().map(|(name, source)| voxmar_engine::content::ContentFile { package: "base".into(), name: (*name).into(), source: (*source).into() }).collect();
         // A legendary biome that may grow in every climate.
         files.push(voxmar_engine::content::ContentFile {

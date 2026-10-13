@@ -1,0 +1,311 @@
+// Blocks drawn as boxes (`render: Model`, `shape: "<name>"`), in 16ths of a block from
+// the cell's lower corner, facing north (-z); see crate::shape. A box without textures takes
+// its block's. A turned box (`turn`, degrees about the vertical) only draws: it hides
+// nothing, and collides as its unturned bound. `cull` lets a box's faces on the cell's
+// boundary hide behind a solid neighbour.
+(
+    shapes: {
+        // The lower half of a block.
+        "slab": (boxes: [(from: (0, 0, 0), to: (16, 8, 16), cull: true)]),
+        // A slab with the back half of a block on it; the step faces north.
+        "stairs": (boxes: [
+            (from: (0, 0, 0), to: (16, 8, 16), cull: true),
+            (from: (0, 8, 8), to: (16, 16, 16), cull: true),
+        ]),
+        // A round barrel, as round as texels allow: two crossed boxes make its staves (a
+        // square with its corners cut), and two more each side stand proud as its iron
+        // hoops, where its texture draws them.
+        "barrel": (boxes: [
+            (from: (2, 0, 3), to: (14, 16, 13)),
+            (from: (3, 0, 2), to: (13, 16, 14)),
+            (from: (1.5, 4.5, 2.5), to: (14.5, 6, 13.5)),
+            (from: (2.5, 4.5, 1.5), to: (13.5, 6, 14.5)),
+            (from: (1.5, 12.5, 2.5), to: (14.5, 14, 13.5)),
+            (from: (2.5, 12.5, 1.5), to: (13.5, 14, 14.5)),
+        ]),
+        // A slatted crate: its body a texel in from the cell's sides, and a post standing
+        // proud at each corner, where its texture draws the frame.
+        "crate": (boxes: [
+            (from: (1, 0, 1), to: (15, 16, 15)),
+            (from: (0, 0, 0), to: (2, 16, 2)),
+            (from: (14, 0, 0), to: (16, 16, 2)),
+            (from: (0, 0, 14), to: (2, 16, 16)),
+            (from: (14, 0, 14), to: (16, 16, 16)),
+        ]),
+        // A full sack slumped on the ground: a wide, round belly, narrower shoulders, and
+        // a neck gathered and tied off at the top, its cloth tufting out above the tie.
+        "sack": (boxes: [
+            (from: (2, 0, 3), to: (14, 7, 13)),
+            (from: (3, 0, 2), to: (13, 7, 14)),
+            (from: (3, 7, 4), to: (13, 10, 12)),
+            (from: (4, 7, 3), to: (12, 10, 13)),
+            (from: (5.5, 10, 5.5), to: (10.5, 11, 10.5)),
+            (from: (6.5, 11, 6.5), to: (9.5, 12.5, 9.5)),
+            (from: (6, 12.5, 6), to: (10, 13.5, 10)),
+            (from: (5.5, 13.5, 5.5), to: (10.5, 15, 10.5)),
+        ]),
+
+        // Furnishings (blocks_decor.ron), every box in the greyscale drawings the block's
+        // tint colours: wood furniture in a wood's colour, cloth in a dye's. Pieces that
+        // have a front face north (-z) as authored; the rest are the same from every side.
+        // Uprights take the grain running up (`furniture_grain`), flat parts the boards.
+        "table": (boxes: [
+            (from: (0, 13, 0), to: (16, 16, 16)),
+            (from: (1, 0, 1), to: (3, 13, 3), textures: All("furniture_grain")),
+            (from: (13, 0, 1), to: (15, 13, 3), textures: All("furniture_grain")),
+            (from: (1, 0, 13), to: (3, 13, 15), textures: All("furniture_grain")),
+            (from: (13, 0, 13), to: (15, 13, 15), textures: All("furniture_grain")),
+        ]),
+        "stool": (boxes: [
+            (from: (3, 8, 3), to: (13, 10, 13)),
+            (from: (3, 0, 3), to: (5, 8, 5), textures: All("furniture_grain")),
+            (from: (11, 0, 3), to: (13, 8, 5), textures: All("furniture_grain")),
+            (from: (3, 0, 11), to: (5, 8, 13), textures: All("furniture_grain")),
+            (from: (11, 0, 11), to: (13, 8, 13), textures: All("furniture_grain")),
+        ]),
+        // The back posts run on up past the seat to hold the backrest.
+        "chair": (boxes: [
+            (from: (3, 7, 3), to: (13, 9, 13)),
+            (from: (3, 0, 3), to: (5, 7, 5), textures: All("furniture_grain")),
+            (from: (11, 0, 3), to: (13, 7, 5), textures: All("furniture_grain")),
+            (from: (3, 0, 11), to: (5, 16, 13), textures: All("furniture_grain")),
+            (from: (11, 0, 11), to: (13, 16, 13), textures: All("furniture_grain")),
+            (from: (5, 10, 11), to: (11, 15, 13)),
+        ]),
+        "bench": (boxes: [
+            (from: (0, 7, 3), to: (16, 9, 13)),
+            (from: (1, 0, 4), to: (3, 7, 12), textures: All("furniture_grain")),
+            (from: (13, 0, 4), to: (15, 7, 12), textures: All("furniture_grain")),
+        ]),
+        // Foot end north, head end south: a frame, a mattress and a pillow, a board at each end.
+        "bed": (boxes: [
+            (from: (1, 0, 2), to: (15, 5, 14)),
+            (from: (1, 5, 2), to: (15, 8, 14), textures: All("furniture_linen")),
+            (from: (3, 8, 9), to: (13, 10, 13), textures: All("furniture_linen")),
+            (from: (0, 0, 0), to: (16, 8, 2), textures: All("furniture_grain")),
+            (from: (0, 0, 14), to: (16, 15, 16), textures: All("furniture_grain")),
+        ]),
+        // Open to the north: a back, two sides and three boards.
+        "shelf": (boxes: [
+            (from: (0, 0, 14), to: (16, 16, 16)),
+            (from: (0, 0, 2), to: (2, 16, 14), textures: All("furniture_grain")),
+            (from: (14, 0, 2), to: (16, 16, 14), textures: All("furniture_grain")),
+            (from: (2, 0, 2), to: (14, 2, 14)),
+            (from: (2, 7, 2), to: (14, 9, 14)),
+            (from: (2, 14, 2), to: (14, 16, 14)),
+        ]),
+        // A shelf with rows of books standing on it, spines to the front.
+        "bookshelf": (boxes: [
+            (from: (0, 0, 14), to: (16, 16, 16)),
+            (from: (0, 0, 2), to: (2, 16, 14), textures: All("furniture_grain")),
+            (from: (14, 0, 2), to: (16, 16, 14), textures: All("furniture_grain")),
+            (from: (2, 0, 2), to: (14, 2, 14)),
+            (from: (2, 8, 2), to: (14, 10, 14)),
+            (from: (2, 14, 2), to: (14, 16, 14)),
+            (from: (2, 2, 3), to: (14, 8, 13), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_books")),
+            (from: (2, 10, 3), to: (14, 14, 13), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_books")),
+        ]),
+        // A carcass with a top that overhangs its doors.
+        "cupboard": (boxes: [
+            (from: (0, 0, 3), to: (16, 14, 16)),
+            (from: (1, 1, 1), to: (15, 13, 3), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+            (from: (0, 14, 1), to: (16, 16, 16)),
+        ]),
+        // Taller in the leg and the crown than a cupboard, narrower in the body.
+        "wardrobe": (boxes: [
+            (from: (1, 0, 3), to: (15, 3, 15), textures: All("furniture_grain")),
+            (from: (1, 3, 3), to: (15, 14, 15)),
+            (from: (2, 4, 1), to: (14, 13, 3), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+            (from: (0, 14, 2), to: (16, 16, 16)),
+        ]),
+        // A top on drawers at the left and a panel at the right, the knee space between them.
+        "desk": (boxes: [
+            (from: (0, 12, 0), to: (16, 14, 16)),
+            (from: (0, 0, 2), to: (6, 12, 16), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_drawers")),
+            (from: (14, 0, 2), to: (16, 12, 16), textures: All("furniture_grain")),
+            (from: (6, 4, 14), to: (14, 12, 16)),
+        ]),
+        // A panelled body a texel in from the cell's sides, under a top that fills them.
+        "counter": (boxes: [
+            (from: (0, 14, 0), to: (16, 16, 16)),
+            (from: (1, 0, 1), to: (15, 14, 15), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+        ]),
+        // Two casks lying one on the other between two end frames; the casks run east to west.
+        "barrel_rack": (boxes: [
+            (from: (0, 0, 2), to: (2, 15, 14), textures: All("furniture_grain")),
+            (from: (14, 0, 2), to: (16, 15, 14), textures: All("furniture_grain")),
+            (from: (2, 0, 2), to: (14, 7, 14), textures: All("furniture_cask")),
+            (from: (2, 8, 3), to: (14, 15, 13), textures: All("furniture_cask")),
+        ]),
+        "crate_stack": (boxes: [
+            (from: (0, 0, 1), to: (8, 8, 9), textures: All("furniture_crate")),
+            (from: (8, 0, 0), to: (16, 8, 8), textures: All("furniture_crate")),
+            (from: (4, 8, 1), to: (12, 15, 9), turn: 14.0, textures: All("furniture_crate")),
+            (from: (0, 0, 9), to: (7, 6, 16), textures: All("furniture_crate")),
+        ]),
+        // Two wall boards, pots standing on each.
+        "pot_shelf": (boxes: [
+            (from: (1, 3, 9), to: (15, 5, 16)),
+            (from: (1, 10, 9), to: (15, 12, 16)),
+            (from: (2, 5, 11), to: (6, 10, 15), textures: All("furniture_pot")),
+            (from: (7, 5, 12), to: (10, 8, 15), textures: All("furniture_pot")),
+            (from: (11, 5, 11), to: (14, 9, 15), textures: All("furniture_pot")),
+            (from: (3, 12, 11), to: (7, 15, 15), textures: All("furniture_pot")),
+            (from: (9, 12, 12), to: (13, 14, 15), textures: All("furniture_pot")),
+        ]),
+
+        // Cloth things (dyed). A rug is a sixteenth thick; a curtain hangs in the middle of
+        // its cell, so it fills a doorway of any wall thickness.
+        "rug": (boxes: [(from: (0, 0, 0), to: (16, 1, 16))]),
+        // Hung from a rod against the south side of its cell, so it hangs on a wall.
+        "banner": (boxes: [
+            (from: (1, 14, 13), to: (15, 16, 15), textures: All("cloth_grey")),
+            (from: (2, 0, 13.5), to: (14, 14, 14.5)),
+        ]),
+        "curtain": (boxes: [
+            (from: (0, 15, 6), to: (16, 16, 10), textures: All("cloth_grey")),
+            (from: (0, 0, 7), to: (16, 15, 9)),
+        ]),
+        // A box with a cap above and below and the cord it hangs by.
+        "paper_lantern": (boxes: [
+            (from: (4, 2, 4), to: (12, 12, 12)),
+            (from: (5, 12, 5), to: (11, 13, 11), textures: All("cloth_grey")),
+            (from: (5, 1, 5), to: (11, 2, 11), textures: All("cloth_grey")),
+            (from: (7.5, 13, 7.5), to: (8.5, 16, 8.5), textures: All("cloth_grey")),
+        ]),
+        "cushion": (boxes: [
+            (from: (2, 0, 2), to: (14, 4, 14)),
+            (from: (3, 4, 3), to: (13, 5, 13)),
+        ]),
+        // A string with four flags, hung across the middle of the cell.
+        "bunting": (boxes: [
+            (from: (0, 13, 7), to: (16, 14, 9), textures: All("cloth_grey")),
+            (from: (1, 8, 7.5), to: (4, 13, 8.5)),
+            (from: (5.5, 9, 7.5), to: (8.5, 13, 8.5)),
+            (from: (9, 8, 7.5), to: (12, 13, 8.5)),
+            (from: (13, 9, 7.5), to: (16, 13, 8.5)),
+        ]),
+        // Three steps down to the north, and a plain edge hanging at the front.
+        "awning": (boxes: [
+            (from: (0, 13, 11), to: (16, 16, 16)),
+            (from: (0, 11, 6), to: (16, 14, 11)),
+            (from: (0, 9, 1), to: (16, 12, 6)),
+            (from: (0, 6, 0), to: (16, 10, 1)),
+        ]),
+
+        // Crockery (decor on tables and shelves), each a few boxes in one clay drawing.
+        "plate": (boxes: [
+            (from: (3, 0, 3), to: (13, 1, 13)),
+            (from: (2, 0, 5), to: (14, 1, 11)),
+            (from: (5, 0, 2), to: (11, 1, 14)),
+        ]),
+        "bowl": (boxes: [
+            (from: (4, 0, 4), to: (12, 3, 12)),
+            (from: (3, 1, 5), to: (13, 4, 11)),
+            (from: (5, 1, 3), to: (11, 4, 13)),
+        ]),
+        "jar": (boxes: [
+            (from: (4, 0, 4), to: (12, 9, 12)),
+            (from: (5, 9, 5), to: (11, 11, 11)),
+            (from: (4, 11, 4), to: (12, 12, 12)),
+        ]),
+        "jug": (boxes: [
+            (from: (4, 0, 4), to: (12, 8, 12)),
+            (from: (5, 8, 5), to: (11, 12, 11)),
+            (from: (12, 3, 7), to: (14, 10, 9)),
+            (from: (4, 10, 6), to: (5, 12, 10)),
+        ]),
+        "basket": (boxes: [
+            (from: (3, 0, 3), to: (13, 5, 13)),
+            (from: (2, 5, 2), to: (14, 6, 14)),
+            (from: (3, 6, 7), to: (13, 10, 9)),
+        ]),
+
+        // Singles: lights, a hearth's pieces, a loom and its kin, graves and columns.
+        "candle": (boxes: [
+            (from: (7, 0, 7), to: (9, 5, 9)),
+            (from: (7.75, 5, 7.75), to: (8.25, 6.5, 8.25)),
+        ]),
+        // A chain, a cap, a glass-sided box and a foot.
+        "hanging_lantern": (boxes: [
+            (from: (7.5, 11, 7.5), to: (8.5, 16, 8.5)),
+            (from: (4, 10, 4), to: (12, 11, 12)),
+            (from: (5, 3, 5), to: (11, 10, 11)),
+            (from: (4, 2, 4), to: (12, 3, 12)),
+        ]),
+        "stone_lantern": (boxes: [
+            (from: (3, 0, 3), to: (13, 2, 13)),
+            (from: (6, 2, 6), to: (10, 6, 10)),
+            (from: (4, 6, 4), to: (12, 10, 12)),
+            (from: (2, 10, 2), to: (14, 12, 14)),
+            (from: (6, 12, 6), to: (10, 15, 10)),
+        ]),
+        // A bowl of coals on three legs' worth of posts.
+        "brazier": (boxes: [
+            (from: (3, 0, 3), to: (5, 6, 5)),
+            (from: (11, 0, 3), to: (13, 6, 5)),
+            (from: (3, 0, 11), to: (5, 6, 13)),
+            (from: (11, 0, 11), to: (13, 6, 13)),
+            (from: (2, 6, 2), to: (14, 9, 14)),
+            (from: (3, 9, 3), to: (13, 10, 13), textures: All("brazier_coals")),
+        ]),
+        "cauldron": (boxes: [
+            (from: (2, 1, 2), to: (14, 9, 14)),
+            (from: (1, 9, 1), to: (15, 10, 15)),
+            (from: (3, 10, 3), to: (13, 10.5, 13), textures: All("cauldron_stew")),
+            (from: (2, 0, 2), to: (4, 1, 4)),
+            (from: (12, 0, 2), to: (14, 1, 4)),
+            (from: (2, 0, 12), to: (4, 1, 14)),
+            (from: (12, 0, 12), to: (14, 1, 14)),
+        ]),
+        // A brick body with a plate on top and a chimney pipe behind.
+        "cottage_stove": (boxes: [
+            (from: (0, 0, 0), to: (16, 10, 16)),
+            (from: (0, 10, 0), to: (16, 11, 16), textures: All("stove_plate")),
+            (from: (10, 11, 10), to: (14, 16, 14), textures: All("stove_plate")),
+        ]),
+        // A frame with warp threads strung down it and a beam to wind the cloth on.
+        "loom_frame": (boxes: [
+            (from: (1, 0, 3), to: (3, 15, 5), textures: All("furniture_grain")),
+            (from: (13, 0, 3), to: (15, 15, 5), textures: All("furniture_grain")),
+            (from: (1, 0, 11), to: (3, 4, 13), textures: All("furniture_grain")),
+            (from: (13, 0, 11), to: (15, 4, 13), textures: All("furniture_grain")),
+            (from: (1, 13, 3), to: (15, 15, 5), textures: All("furniture_grain")),
+            (from: (3, 3, 3.5), to: (13, 13, 4.5), textures: All("loom_warp")),
+            (from: (3, 3, 4), to: (13, 4, 12), textures: All("furniture_grain")),
+        ]),
+        "spindle_stand": (boxes: [
+            (from: (3, 0, 6), to: (13, 2, 10), textures: All("furniture_grain")),
+            (from: (3, 2, 7), to: (5, 12, 9), textures: All("furniture_grain")),
+            (from: (7, 3, 4), to: (13, 9, 12), turn: 0.0, textures: All("furniture_cask")),
+            (from: (9, 9, 7), to: (11, 14, 9), textures: All("furniture_grain")),
+        ]),
+        // Two stones, the upper turned by a handle.
+        "quern_stones": (boxes: [
+            (from: (2, 0, 2), to: (14, 5, 14)),
+            (from: (3, 5, 3), to: (13, 8, 13)),
+            (from: (11, 8, 7), to: (13, 13, 9), textures: All("furniture_grain")),
+        ]),
+        // Prayer flags: five on a string, one colour each.
+        "wind_flags": (boxes: [
+            (from: (0, 13, 7), to: (16, 14, 9), textures: All("wind_flags")),
+            (from: (0.5, 6, 7.5), to: (3.5, 13, 8.5), textures: All("wind_flags")),
+            (from: (3.5, 7, 7.5), to: (6.5, 13, 8.5), textures: All("wind_flags")),
+            (from: (6.5, 6, 7.5), to: (9.5, 13, 8.5), textures: All("wind_flags")),
+            (from: (9.5, 7, 7.5), to: (12.5, 13, 8.5), textures: All("wind_flags")),
+            (from: (12.5, 6, 7.5), to: (15.5, 13, 8.5), textures: All("wind_flags")),
+        ]),
+        "grave_slab": (boxes: [(from: (3, 0, 1), to: (13, 2, 15))]),
+        "headstone": (boxes: [
+            (from: (4, 0, 7), to: (12, 11, 9)),
+            (from: (5, 11, 7), to: (11, 12, 9)),
+        ]),
+        // Round as the barrel is: two crossed boxes, with a base and a capital.
+        "column": (boxes: [
+            (from: (3, 2, 4), to: (13, 14, 12)),
+            (from: (4, 2, 3), to: (12, 14, 13)),
+            (from: (2, 0, 2), to: (14, 2, 14)),
+            (from: (2, 14, 2), to: (14, 16, 14)),
+        ]),
+    },
+)

@@ -579,7 +579,7 @@ impl UndergroundColumn<'_> {
                 let held = match supports[block.0 as usize].0 {
                     Support::Above => holds(at + IVec3::Y, Support::Above),
                     Support::Below => holds(at - IVec3::Y, Support::Below),
-                    Support::None => true,
+                    Support::None | Support::Wall => true,
                 };
                 if !held {
                     break;
@@ -629,7 +629,7 @@ mod tests {
     fn cave_biomes_keep_to_their_claims() {
         use crate::rarity::Featured;
         use crate::rng::Rng;
-        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = WorldContent::base(&registry).unwrap();
         let featured = Featured::new(3, 0.5);
         let rocks = Rocks::new(3, &content, &registry, &featured);
@@ -640,7 +640,7 @@ mod tests {
         for _ in 0..200_000 {
             let mut unit = || rng.unit();
             let (t, m, a) = (-25.0 + 60.0 * unit(), 2.0 * unit(), unit());
-            let p = Point([t, m, -1.0 + 2.0 * unit(), unit(), unit(), a, unit()]);
+            let p = Point([t, m, -1.0 + 2.0 * unit(), unit(), unit(), a, unit(), 0.0]);
             let (depth, height) = (200.0 * unit(), -124.0 + 250.0 * unit());
             let province = ProvinceId((unit() * rocks.len() as f32) as u8);
             let biome = biomes.underground(&p, depth, height, province).expect("plain caves claim everywhere");
