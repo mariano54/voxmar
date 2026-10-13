@@ -30,11 +30,10 @@ tests = [
 [[allow]]
 binary = "gameplay"
 seconds = 10
-why = "Plays a long chain on a server that runs at its own pace (a machine, a fishing line, a lagging server, a restart): several game seconds of waiting."
+why = "Plays a long chain on a server that runs at its own pace (a machine, a lagging server, a restart): several game seconds of waiting."
 tests = [
   "a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two_ingots_an_ore",
   "a_level_quest_waits_for_the_level_and_grants_its_experience",
-  "a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing",
   "a_world_placed_altar_drops_nothing_and_a_players_drops_itself_across_restarts",
 ]
 

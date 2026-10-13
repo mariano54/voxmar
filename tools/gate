@@ -341,18 +341,27 @@ if ((tests_failed)); then
   fail "tests (all output in $out/tests.txt)"
 fi
 # How long the tests took, against tools/test-budget.toml (docs/quality.md, "Fast tests"): the
-# slowest are listed every run, a test over its budget fails the gate. The budgets are for a
-# machine as busy as the gate usually finds it; a busier one scales them by the load it
-# averaged while the tests ran.
+# slowest are listed every run, a test over its budget fails the gate. The budgets were set
+# on the Linux box running the gate (every binary side by side); a busier machine scales them
+# by the load it averaged while the tests ran, and a slower one by its slowdown.
+#
+# The Mac's slowdown: it runs the tests at nice 10 and utility QoS beside the played session,
+# which keeps them mostly on its efficiency cores, so a calm Mac's landing gate (home #61,
+# 2026-10-13, load under the core count) took 3 to 8 times the Linux box's times for the same
+# tests, the gate's own build and tests being all its load: at most 3.5 times their budgets
+# (the glyph tests 17.4 s against 5), past the rod cast's 81 s (a wall-clock wait, since
+# fixed). 5 holds those with room for a busier day and still fails a test grown several times
+# slower. VOXMAR_TEST_SLOWDOWN sets it for another machine.
 if compgen -G "$out/test-*.txt" >/dev/null; then
+  slowdown=${VOXMAR_TEST_SLOWDOWN:-$([[ $(uname -s) == Darwin ]] && echo 5 || echo 1)}
   scale=$(awk -v c="$(getconf _NPROCESSORS_ONLN)" '{ s += $1; n++ } END { s = n ? s / n / c : 1; print (s < 1 ? 1 : s) }' "$out/load.txt")
   # What else the machine runs (an emulator, browsers) must never block a landing: with the
   # load averaged during the tests over the cores, the times are listed, not judged. Judged on
   # a calm machine, where a test's time is its own.
   if awk -v s="$scale" 'BEGIN { exit !(s > 1) }'; then
-    tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || echo "gate: test times not judged: the load during the tests was x$scale over the cores; run tools/gate on a calmer machine to hold them to tools/test-budget.toml"
+    tools/test-times "$out" $( ((full)) && echo --full) --scale "$(awk -v s="$scale" -v d="$slowdown" 'BEGIN { print s * d }')" --top 8 || echo "gate: test times not judged: the load during the tests was x$scale over the cores; run tools/gate on a calmer machine to hold them to tools/test-budget.toml"
   else
-    tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || fail "test times (tools/test-budget.toml)"
+    tools/test-times "$out" $( ((full)) && echo --full) --scale "$slowdown" --top 8 || fail "test times (tools/test-budget.toml, x$slowdown for this machine's slowdown)"
   fi
 fi
 status=$(cat "$out/game.status" 2>/dev/null || echo 0)
