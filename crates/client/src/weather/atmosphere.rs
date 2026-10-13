@@ -5,7 +5,8 @@
 //! haze and drain colour; rain grounds pollen and fireflies; wind stills hovering spores,
 //! and dust is only blown about by a real wind; pollen comes out only on some days, mostly
 //! in sunshine and where flowers are near (as the ambience's scan finds them), and
-//! fireflies only on some nights.
+//! fireflies only on some nights. Sets with wings (butterflies, moths) follow the same
+//! rules, and are flown by `crate::butterflies` instead of drawn as specks.
 //!
 //! `ClientAtmosphere` is what the renderer reads: the colour parts are applied within the
 //! active shader pack (see docs/rendering.md), and the particle sets are drawn by the
@@ -63,6 +64,8 @@ pub struct ClientAtmosphere {
     /// Ambient particle sets showing now, densest first, with how many (0..1 of the most
     /// the particle renderer shows).
     pub particles: Vec<AmbientParticles>,
+    /// Winged sets out now (butterflies, moths), for `crate::butterflies`, with how many.
+    pub wings: Vec<AmbientWings>,
     /// The land's air as last sampled, and as eased towards.
     land: Air,
     target: Air,
@@ -93,6 +96,14 @@ pub struct AmbientParticles {
     pub glow: bool,
 }
 
+/// A set of winged creatures out now: the set, and how many there are about the player.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AmbientWings {
+    pub set: ParticleDef,
+    /// Its `density` here and now times its `most`.
+    pub count: f32,
+}
+
 /// The land's air, eased: the colour parts and each particle set's density by name.
 #[derive(Clone, Debug, PartialEq)]
 struct Air {
@@ -121,6 +132,7 @@ impl Default for ClientAtmosphere {
             warmth: 0.0,
             saturation: 1.0,
             particles: Vec::new(),
+            wings: Vec::new(),
             land: air.clone(),
             target: air,
             generator: None,
@@ -147,6 +159,17 @@ impl ClientAtmosphere {
     /// Samples and eases the air as content says.
     pub fn tune(&mut self, tuning: AirTuning) {
         self.tuning = tuning;
+    }
+
+    /// The ambient particle set named `name` (`base:pollen`), once the world's generator is
+    /// made.
+    pub fn particle_set(&self, name: &str) -> Option<ParticleDef> {
+        self.generator.as_ref()?.particle_sets().iter().find(|s| s.name == name).cloned()
+    }
+
+    /// The seed of the world whose air this is, once the server has said.
+    pub fn seed(&self) -> Option<u64> {
+        self.seed
     }
 
     /// Whether the land's air where the player is has been sampled (or cannot be), so the
@@ -279,6 +302,7 @@ fn combine(
     let wind = shown.wind.length();
     let seed = air.seed.unwrap_or(0);
     let (nights_out, days_out) = (air.tuning.nights_out, air.tuning.days_out);
+    let mut wings = Vec::new();
     let mut particles: Vec<AmbientParticles> = land
         .particles
         .iter()
@@ -300,13 +324,18 @@ fn combine(
             // Night creatures come out only on some nights, pollen on some days and then
             // mostly in sunshine; dust follows the wind instead.
             let out = match set.time {
-                DayTime::Night => out_on(seed, night_index, &set.name, nights_out),
-                DayTime::Day if set.motion != Motion::Blow => out_on(seed, day_index, &set.name, days_out) * sunny,
+                DayTime::Night => out_on(seed, night_index, &set.name, set.out.unwrap_or(nights_out)),
+                DayTime::Day if set.motion != Motion::Blow => out_on(seed, day_index, &set.name, set.out.unwrap_or(days_out)) * sunny,
                 _ => 1.0,
             };
             // Sets tagged `flowers` (pollen) keep mostly to where flowers are near.
             let near = if set.tags.iter().any(|t| t == "flowers") { 0.15 + 0.85 * flowers } else { 1.0 };
             let density = density * when * weather * calm * out * near;
+            // Winged sets are flown, not drawn as specks.
+            if let Some(def) = &set.wings {
+                wings.push(AmbientWings { set: set.clone(), count: density * def.most as f32 });
+                return None;
+            }
             (density > 0.005).then(|| AmbientParticles {
                 name: set.name.clone(),
                 density,
@@ -319,6 +348,7 @@ fn combine(
         .collect();
     particles.sort_by(|a, b| b.density.total_cmp(&a.density));
     air.particles = particles;
+    air.wings = wings;
 }
 
 /// The base package's air tuning, until content says otherwise: the menus run before it

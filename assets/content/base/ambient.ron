@@ -6,7 +6,17 @@
 // or Blow; `aether` how strongly it follows the aether field (1: only where it is high).
 // Ambient particles are a seasoning, not a default: sets are faint, day and night ones come
 // out only on some days or nights, and blown dust only when the wind blows, over desert
-// (dust storms and sandstorms are weather, in weather.ron).
+// (dust storms and sandstorms are weather, in weather.ron). `out` is the share of days (or
+// nights) a Day (Night) set comes out on, the weather.ron tuning's when left out.
+//
+// Sets with `wings` are small winged creatures the client flies about the player instead of
+// specks (crates/client/src/butterflies.rs; Mariano, 2026-10-13: "Add butterflies and birds
+// (small) in the environment, depending on climate"): up to `most` of them where they suit
+// fully, `color` and `size` their wings' ground and span, `pattern` painted in `marks`. They
+// flutter `height` blocks over the ground at about `speed`, settle a while on the blocks they
+// `visits`, gather about lights if `to_light`, fly off from a player who comes close, and
+// leave when their hour or the dry weather ends. They are the client's own: nothing touches
+// them. (Small birds are creatures, in creatures_birds.ron.)
 (
     particles: [
         (
@@ -39,6 +49,70 @@
             name: "marsh_mist", tags: ["wetland"],
             density: 0.2, color: (226, 232, 230), size: 0.6, motion: Rise, time: Twilight,
             comfort: (temperature: (6.0, 32.0), moisture: (1.3, 3.0)),
+        ),
+        // --- Butterflies by day, in sunshine and calm air, most where flowers are -----------
+        (
+            // White with black tips, about every temperate garden and meadow.
+            name: "cabbage_white", tags: ["meadow", "temperate", "flowers"], out: 0.8,
+            density: 1.0, color: (244, 242, 232), size: 0.26, motion: Hover, time: Day, weather: Dry,
+            comfort: (temperature: (6.0, 28.0), moisture: (0.4, 2.0)),
+            wings: (most: 3, pattern: Tips, marks: (44, 42, 40), height: (0.4, 2.2), speed: 1.6, visits: ["tag:flower"]),
+        ),
+        (
+            // Sulphur yellow, along woodland edges.
+            name: "brimstone", tags: ["forest", "temperate", "flowers"], out: 0.7,
+            density: 1.0, color: (240, 222, 92), size: 0.3, motion: Hover, time: Day, weather: Dry,
+            comfort: (temperature: (4.0, 24.0), moisture: (0.6, 2.4)),
+            wings: (most: 2, pattern: Plain, marks: (196, 168, 64), height: (0.6, 2.8), speed: 1.4, visits: ["tag:flower"]),
+        ),
+        (
+            // Rust red with a blue eye on each wing.
+            name: "peacock_butterfly", tags: ["meadow", "temperate", "flowers"], out: 0.6,
+            density: 1.0, color: (168, 54, 40), size: 0.3, motion: Hover, time: Day, weather: Dry,
+            comfort: (temperature: (6.0, 26.0), moisture: (0.5, 2.2)),
+            wings: (most: 2, pattern: Eyes, marks: (96, 132, 210), height: (0.4, 2.0), speed: 1.5, visits: ["tag:flower"]),
+        ),
+        (
+            // Cream with a black band: big, and not often seen.
+            name: "swallowtail", tags: ["meadow", "warm", "flowers"], rarity: Uncommon, out: 0.6,
+            density: 1.0, color: (240, 222, 150), size: 0.4, motion: Hover, time: Day, weather: Dry,
+            comfort: (temperature: (12.0, 32.0), moisture: (0.4, 1.8)),
+            wings: (most: 1, pattern: Band, marks: (34, 32, 30), height: (0.8, 3.0), speed: 1.8, visits: ["tag:flower"]),
+        ),
+        (
+            // Orange spotted with black: the traveller of warm, dry country.
+            name: "painted_lady", tags: ["dry", "warm", "flowers"], out: 0.7,
+            density: 1.0, color: (228, 140, 62), size: 0.3, motion: Hover, time: Day, weather: Dry,
+            comfort: (temperature: (14.0, 40.0), moisture: (0.15, 1.4)),
+            wings: (most: 2, pattern: Spots, marks: (36, 28, 24), height: (0.4, 2.4), speed: 1.8, visits: ["tag:flower"]),
+        ),
+        (
+            // Small and sky blue, over high meadows and the cold hills.
+            name: "mountain_blue", tags: ["cold", "meadow", "flowers"], out: 0.7,
+            density: 1.0, color: (126, 164, 232), size: 0.2, motion: Hover, time: Day, weather: Dry,
+            comfort: (temperature: (-4.0, 16.0), moisture: (0.3, 2.2)),
+            wings: (most: 3, pattern: Plain, marks: (58, 64, 90), height: (0.3, 1.6), speed: 1.5, visits: ["tag:flower"]),
+        ),
+        (
+            // Shining blue, wide as a hand, gliding through the jungle's shade.
+            name: "morpho", tags: ["wetland", "warm", "forest", "flowers"], rarity: Uncommon, out: 0.8,
+            density: 1.0, color: (58, 124, 238), size: 0.46, motion: Hover, time: Day, weather: Dry,
+            comfort: (temperature: (20.0, 40.0), moisture: (1.2, 3.0)),
+            wings: (most: 2, pattern: Tips, marks: (22, 26, 44), height: (0.8, 4.0), speed: 1.6, visits: ["tag:flower"]),
+        ),
+        // --- Moths by night: drawn to torches, lamps and fires --------------------------------
+        (
+            name: "pale_moth", tags: ["meadow", "forest", "temperate", "warm"],
+            density: 1.0, color: (214, 204, 182), size: 0.2, motion: Hover, time: Night, weather: Dry,
+            comfort: (temperature: (4.0, 32.0), moisture: (0.3, 3.0)),
+            wings: (most: 4, pattern: Veins, marks: (150, 138, 116), height: (0.6, 3.0), speed: 1.8, to_light: true),
+        ),
+        (
+            // Pale green with long tails and amber eyes: a rare sight in warm, damp woods.
+            name: "luna_moth", tags: ["forest", "damp", "warm"], rarity: Rare,
+            density: 1.0, color: (178, 226, 172), size: 0.36, motion: Hover, time: Night, weather: Dry,
+            comfort: (temperature: (14.0, 34.0), moisture: (1.0, 3.0)),
+            wings: (most: 1, pattern: Eyes, marks: (220, 172, 92), height: (1.0, 4.0), speed: 1.4, to_light: true),
         ),
         (
             name: "aether_motes", tags: ["fantastical", "wonder"], rarity: Rare,

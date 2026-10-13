@@ -1,6 +1,8 @@
 //! How a creature's body moves: walking toward what its brain wants, turning at its turn
-//! rate, jumping up single steps, falling, floating in water, and drifting in the air for
-//! creatures that float. The same box collision as players (`physics::move_and_slide`),
+//! rate, jumping up single steps, falling, floating in water, drifting in the air for
+//! creatures that float, and flying for fliers: on the wing whenever they go faster than a
+//! walk, keeping their height over the land and what grows on it, and fluttering down to
+//! land when they slow. The same box collision as players (`physics::move_and_slide`),
 //! sized to the creature.
 
 use glam::{IVec3, Vec3};
@@ -13,6 +15,14 @@ const GRAVITY: f32 = 32.0;
 const TERMINAL: f32 = 60.0;
 /// Height above the ground a drifting creature floats at.
 const DRIFT_HEIGHT: f32 = 1.6;
+/// A flier takes wing when asked to go faster than this many times its walk.
+pub const TAKES_WING: f32 = 1.5;
+/// How fast a flier climbs and comes down in flight, and flutters down to land, in blocks
+/// per second; and how far ahead it looks for rising land.
+const CLIMB: f32 = 5.0;
+const DESCEND: f32 = 3.0;
+const FLUTTER_DOWN: f32 = 2.5;
+const LOOK_AHEAD: f32 = 3.0;
 
 /// A creature's moving state.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,11 +101,18 @@ fn turn(from: f32, to: f32, step: f32) -> f32 {
     from + delta.clamp(-step, step)
 }
 
+/// Whether a flier is on the wing with this drive: going somewhere faster than a walk.
+pub fn flies(movement: &Movement, drive: Drive) -> bool {
+    drive.wish != Vec3::ZERO && drive.speed > movement.walk * TAKES_WING
+}
+
 /// Advances the body by `dt` seconds.
 pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, water: Water, drive: Drive, dt: f32) {
     let feet = body.position.floor().as_ivec3();
     let middle = (body.position + Vec3::Y * body.size.1 * 0.5).floor().as_ivec3();
     body.in_water = world.water(feet) || world.water(middle);
+    let flier = movement.style == Style::Flier;
+    let flying = flier && flies(movement, drive);
     let floating = water == Water::Air || movement.style == Style::Drifter;
 
     let (start, start_yaw) = (body.position, body.yaw);
@@ -110,11 +127,23 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     let along = drive.wish.with_y(0.0).normalize_or_zero();
     let aligned = along.dot(facing).max(0.0);
     let target = along * drive.speed * (0.3 + 0.7 * aligned);
-    let control = if body.on_ground || body.in_water || floating { 10.0 } else { 2.0 };
+    let control = if body.on_ground || body.in_water || floating || flying { 10.0 } else if flier { 6.0 } else { 2.0 };
     let horizontal = body.velocity.with_y(0.0).lerp(target.with_y(0.0), (control * dt).min(1.0));
     body.velocity = horizontal.with_y(body.velocity.y);
 
-    if floating {
+    if flying {
+        // Keep its height over the land here and just ahead, so it rises over a hill or a
+        // tree before it reaches it.
+        let ahead = (body.position + facing * LOOK_AHEAD).floor().as_ivec3();
+        let top = |column: IVec3, from: i32| (0..from + 24).map(|d| column + IVec3::Y * (from - d)).find(|&c| world.solid(c) || world.water(c)).map(|c| c.y as f32 + 1.0);
+        let reach = movement.fly.ceil() as i32 + 2;
+        let ground = top(feet, 0).into_iter().chain(top(ahead, reach)).fold(f32::MIN, f32::max);
+        let want = if ground == f32::MIN { body.position.y } else { ground + movement.fly };
+        body.velocity.y = ((want - body.position.y) * 1.5).clamp(-DESCEND, CLIMB);
+    } else if flier && !body.on_ground && !body.in_water {
+        // Flutters down to land.
+        body.velocity.y = (body.velocity.y - GRAVITY * dt).max(-FLUTTER_DOWN);
+    } else if floating {
         // Float above the ground, bobbing, rising over what is in the way.
         let ground = (0..8).map(|d| feet - IVec3::Y * d).find(|&c| world.solid(c)).map_or(body.position.y - 8.0, |c| c.y as f32 + 1.0);
         let want = ground + DRIFT_HEIGHT + drive.wish.y * 2.0;
@@ -136,8 +165,8 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
             body.velocity.y = movement.jump;
         }
     }
-    // Hoppers move in hops whenever they move.
-    if movement.style == Style::Hopper && body.on_ground && target.length_squared() > 0.05 && body.velocity.y <= 0.0 {
+    // Hoppers move in hops whenever they move, and so do fliers on the ground.
+    if matches!(movement.style, Style::Hopper | Style::Flier) && body.on_ground && target.length_squared() > 0.05 && body.velocity.y <= 0.0 {
         body.velocity.y = movement.jump.min(6.0) * 0.75;
     }
 
@@ -220,6 +249,49 @@ mod tests {
         }
         assert!(body.position.x + body.reach <= 3.0 + 1e-3, "the head went into the wall at {}", body.position.x + body.reach);
         assert!(body.against_wall);
+    }
+
+    #[test]
+    fn fliers_take_wing_clear_what_rises_and_flutter_down_to_land() {
+        // Flat ground, then a wall five blocks high from x = 12.
+        struct Hill;
+        impl Surroundings for Hill {
+            fn solid(&self, cell: IVec3) -> bool {
+                cell.y < 0 || (cell.x >= 12 && cell.y < 5)
+            }
+            fn water(&self, _: IVec3) -> bool {
+                false
+            }
+        }
+        let movement = Movement { style: Style::Flier, walk: 1.0, run: 6.0, jump: 3.0, fly: 4.0, ..Movement::default() };
+        let mut body = Body::new(Vec3::new(0.5, 0.0, 0.5), -std::f32::consts::FRAC_PI_2, (0.2, 0.2));
+        let go = |body: &mut Body, speed: f32, wish: Vec3, seconds: f32, lowest: &mut f32| {
+            for _ in 0..(seconds * 20.0) as usize {
+                step(body, &Hill, &movement, Water::Land, Drive { wish, speed, face: None }, 0.05);
+                if body.position.x > 11.8 && body.position.x < 16.0 {
+                    *lowest = lowest.min(body.position.y);
+                }
+            }
+        };
+        // At a walk it hops along the ground and never leaves it for long.
+        let mut lowest = f32::MAX;
+        go(&mut body, 1.0, Vec3::X, 2.0, &mut lowest);
+        assert!(body.position.y < 1.0, "a walk took it up to {}", body.position.y);
+        // Fast, it flies at its height and rises over the wall before reaching it.
+        go(&mut body, 6.0, Vec3::X, 1.5, &mut lowest);
+        assert!(body.position.y > 3.0 && !body.on_ground, "took wing only to {}", body.position.y);
+        go(&mut body, 6.0, Vec3::X, 3.0, &mut lowest);
+        assert!(body.position.x > 16.0, "stopped at the wall at {}", body.position.x);
+        assert!(lowest >= 5.0, "flew into the wall at height {lowest}");
+        assert!((body.position.y - 9.0).abs() < 1.0, "keeps 4 over the hill top: {}", body.position.y);
+        // Stopped, it flutters down and lands, never falling hard.
+        let mut fastest = 0.0f32;
+        for _ in 0..80 {
+            step(&mut body, &Hill, &movement, Water::Land, Drive::default(), 0.05);
+            fastest = fastest.max(-body.velocity.y);
+        }
+        assert!(body.on_ground && (body.position.y - 5.0).abs() < 1e-3, "did not land: {}", body.position);
+        assert!(fastest <= FLUTTER_DOWN + 1e-3, "fell at {fastest}");
     }
 
     #[test]
