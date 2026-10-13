@@ -96,8 +96,25 @@ pub struct Tier {
     pub lakes: bool,
     /// The chance that a small pit, which would be breached, fills as a hot spring.
     pub springs: f32,
+    /// When a small pit high in the hills holds a tarn instead of being breached.
+    pub tarns: Option<TarnRule>,
     pub tunnel: Option<TunnelRule>,
     pub seed: u64,
+}
+
+/// When a small pit, which would be breached, holds a tarn: a still lake one block under its
+/// rim, in a hollow high in the hills (`content::TarnsDef`).
+pub struct TarnRule {
+    /// The lowest the pit's bottom may lie, in blocks: tarns are a highland thing, and
+    /// lowland water never changes for them.
+    pub floor: f32,
+    /// Depth of the pit below its spill point, in blocks, from which it may hold one.
+    pub depth: f32,
+    /// The span of the natural water footprint, in blocks.
+    pub size: (i32, i32),
+    /// The chance that such a pit holds one where its ground lets tarns lie fully
+    /// (`Ground::tarns`).
+    pub chance: f32,
 }
 
 /// When a deep basin drains through a tunnel under its rim instead of filling.
@@ -162,6 +179,16 @@ pub trait Ground: Sync {
     /// How humid the climate is at a cell, 0 (arid) ..= 1 (wet enough that lakes stay
     /// full).
     fn humidity(&self, cell: IVec2) -> f32;
+    /// How fully tarns may lie at a cell, 0 ..= 1: their climate and country, and a
+    /// climate humid enough to keep them full.
+    fn tarns(&self, _cell: IVec2) -> f32 {
+        0.0
+    }
+    /// The cells that fill one complete natural pool of the requested size. The
+    /// stream ground reads the land, trunks and published routing, never final geometry.
+    fn tarn_cells(&self, _pit: IVec2, _level: i32, _size: (i32, i32)) -> Option<Vec<IVec2>> {
+        None
+    }
 }
 
 /// Reads cells of any tile, keeping the tiles it has used.
@@ -389,6 +416,8 @@ pub struct Lake {
     pub clamp: Vec<IVec2>,
     /// A hot spring: a small, warm pool that never freezes, rimmed with travertine.
     pub spring: bool,
+    /// Filled by the highland tarn rule, rather than an ordinary or closed lake.
+    pub tarn: bool,
 }
 
 impl Lake {
@@ -512,6 +541,11 @@ pub struct Budget {
 pub struct Drainage {
     pub tier: Tier,
     lakes: Cache<IVec2, Arc<Lake>>,
+    /// Ordinary pit decisions and routing, before tarn geometry is considered. Stream
+    /// tarns keep the ordinary way out, so this publishes flow without asking geometry
+    /// that may itself need the completed flow.
+    ordinary_lakes: Cache<IVec2, Arc<Lake>>,
+    routing: Cache<IVec2, Arc<Basin>>,
     basins: Cache<IVec2, Arc<Basin>>,
     flows: Cache<IVec2, Arc<Flow>>,
     /// Distinguishes this drainage in the per-thread guard against loops.
@@ -585,10 +619,13 @@ thread_local! {
 impl Drainage {
     pub fn new(tier: Tier, budget: Budget) -> Self {
         static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let stages = if tier.tarns.is_some() { 2 } else { 1 };
         Self {
             tier,
-            lakes: Cache::new(budget.lakes),
-            basins: Cache::new(budget.basins),
+            lakes: Cache::new(budget.lakes / stages),
+            ordinary_lakes: Cache::new(budget.lakes / 2),
+            basins: Cache::new(budget.basins / stages),
+            routing: Cache::new(budget.basins / 2),
             flows: Cache::new(budget.flows),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
@@ -600,13 +637,22 @@ impl Drainage {
     }
 
     pub fn basin(&self, ground: &dyn Ground, region: IVec2) -> Arc<Basin> {
-        self.basins.get(region, || Arc::new(self.compute_basin(ground, region)))
+        self.basins.get(region, || Arc::new(self.compute_basin(ground, region, true)))
+    }
+
+    /// Routing and flow without a tarn's changed water level, cells or clamps. In the
+    /// stream tier (no tunnels), its ordinary and tarn paths are identical.
+    pub fn routing(&self, ground: &dyn Ground, region: IVec2) -> Arc<Basin> {
+        if self.tier.tarns.is_none() {
+            return self.basin(ground, region);
+        }
+        self.routing.get(region, || Arc::new(self.compute_basin(ground, region, false)))
     }
 
     /// A region's border record, which outlives its basin in a cache of its own, since
     /// it is small and every region downstream reads it.
     fn flow(&self, ground: &dyn Ground, region: IVec2) -> Arc<Flow> {
-        self.flows.get(region, || self.basin(ground, region).flow.clone())
+        self.flows.get(region, || self.routing(ground, region).flow.clone())
     }
 
     /// Water flowing through every cell of a basin's region, from everywhere upstream
@@ -726,10 +772,12 @@ impl Drainage {
     }
 
     /// What water does at a pit.
-    fn lake(&self, reader: &mut Reader, pit: IVec2) -> Arc<Lake> {
-        self.lakes.get(pit, || {
-            let mut lake = self.flood(reader, pit);
+    fn lake(&self, reader: &mut Reader, pit: IVec2, tarns: bool) -> Arc<Lake> {
+        let cache = if tarns { &self.lakes } else { &self.ordinary_lakes };
+        cache.get(pit, || {
+            let mut lake = self.flood(reader, pit, tarns);
             lake.cells = match lake.kind {
+                Kind::Lake if lake.tarn => lake.cells,
                 Kind::Lake | Kind::Closed => self.under(reader, pit, lake.level),
                 _ => Vec::new(),
             };
@@ -763,7 +811,7 @@ impl Drainage {
 
     /// Floods a pit until it overflows, and decides what it becomes. The cells it
     /// returns are those the flood passed, for finding tunnels; `lake` replaces them.
-    fn flood(&self, reader: &mut Reader, pit: IVec2) -> Lake {
+    fn flood(&self, reader: &mut Reader, pit: IVec2, tarns: bool) -> Lake {
         let tier = &self.tier;
         let ground = reader.ground;
         let mut at = |c: IVec2| reader.at(c);
@@ -831,7 +879,7 @@ impl Drainage {
         }
         let spill = level;
         cells.sort_unstable_by_key(|c| (c.x, c.y));
-        let mut lake = Lake { pit, kind: Kind::Closed, spill, level: 0, bottom, cells, path: Vec::new(), clamp: Vec::new(), spring: false };
+        let mut lake = Lake { pit, kind: Kind::Closed, spill, level: 0, bottom, cells, path: Vec::new(), clamp: Vec::new(), spring: false, tarn: false };
         let way_out = |outlet: IVec2| {
             // Parents form a tree rooted at the pit, so this ends there; the bound is a
             // second guard that keeps any mistake from growing without limit.
@@ -875,6 +923,25 @@ impl Drainage {
         if !big && depth >= 1.5 && unit(3) < tier.springs {
             lake.kind = Kind::Lake;
             lake.spring = true;
+            lake.path = way_out(outlet);
+            lake.level = ((spill - 1.0) * 8.0).floor() as i32;
+            return lake;
+        }
+        // High in the hills, now and then a small pit holds a tarn rather than being breached.
+        if tarns && !big
+            && let Some(rule) = &tier.tarns
+            && bottom >= rule.floor
+            && depth >= rule.depth
+            && {
+                // The cheap roll first: most pits are passed over without weighing their climate.
+                let u = unit(4);
+                u < rule.chance && u < rule.chance * ground.tarns(pit)
+            }
+            && let Some(cells) = ground.tarn_cells(pit, ((spill - 1.0) * 8.0).floor() as i32, rule.size)
+        {
+            lake.kind = Kind::Lake;
+            lake.tarn = true;
+            lake.cells = cells;
             lake.path = way_out(outlet);
             lake.level = ((spill - 1.0) * 8.0).floor() as i32;
             return lake;
@@ -947,7 +1014,7 @@ impl Drainage {
         false
     }
 
-    fn compute_basin(&self, ground: &dyn Ground, region: IVec2) -> Basin {
+    fn compute_basin(&self, ground: &dyn Ground, region: IVec2, tarns: bool) -> Basin {
         let tier = &self.tier;
         let side = tier.side;
         let halo = tier.halo();
@@ -1012,7 +1079,7 @@ impl Drainage {
             for x in origin.x - reach..origin.x + side + reach {
                 let cell = IVec2::new(x, z);
                 if raw_at(cell) == SINK {
-                    lakes.push(self.lake(&mut reader, cell));
+                    lakes.push(self.lake(&mut reader, cell, tarns));
                 }
             }
         }

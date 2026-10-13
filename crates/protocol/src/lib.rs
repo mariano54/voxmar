@@ -26,9 +26,10 @@ pub use transport::{ClientConnection, Connection, Disconnected, KEEPALIVE, Serve
 pub use voxmar_engine::weather::Weather;
 
 // 31: the server hardening's 27/28 (numbered teleports, keepalive), after main's 29 and 30 (armour).
-// 32: Ping and Pong, the round trip a fight's lag allowance reads.
-// 33: Pray and Prayers, the prayer book.
-pub const PROTOCOL_VERSION: u32 = 33;
+// 32: ClientMessage::LookedUp (the recipe viewer opened on an item, for the quest book's LookUp goals).
+// 33: Ping and Pong, the round trip a fight's lag allowance reads.
+// 34: Pray and Prayers, the prayer book.
+pub const PROTOCOL_VERSION: u32 = 34;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -71,6 +72,9 @@ pub enum ClientMessage {
     /// Creative mode's catalogue of every item (the inventory's item panel): `count` of
     /// `item`, onto the pointer (`held`) or into the inventory. Refused in survival.
     Take { item: BlockId, count: u8, held: bool },
+    /// The player opened the recipe viewer on `item` (to look up how it is made or what it
+    /// goes into): what the quest book's "look it up" goals count.
+    LookedUp { item: BlockId },
     /// The player raised (`up`) or lowered their guard (`voxmar_engine::combat`).
     Guard { up: bool },
     /// The answer to `ServerMessage::Ping` number `id`, sent as soon as it is read.

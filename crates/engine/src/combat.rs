@@ -1561,6 +1561,20 @@ mod tests {
     }
 
     #[test]
+    fn a_bite_of_food_restarts_the_meter_from_empty() {
+        let feel = Feel::default();
+        let t = sword();
+        let mut rhythm = Rhythm::default();
+        let Click::Swing(_) = rhythm.click(9.5, &t, &feel) else { panic!() };
+        rhythm.landed(9.7).unwrap();
+        rhythm.restart(10.0);
+        assert_eq!(rhythm.meter(10.0, &t), 0.0, "empty from the bite");
+        // Since the last swing (9.5) a click at 10.2 would have fired; since the bite it is too soon.
+        assert_eq!(rhythm.click(10.2, &t, &feel), Click::Ignored);
+        let Click::Swing(_) = rhythm.click(10.6, &t, &feel) else { panic!("the beat after the bite fires") };
+    }
+
+    #[test]
     fn pips_build_to_a_flourish_and_cancelling_restarts_the_meter_from_half() {
         let feel = Feel::default();
         let t = sword();

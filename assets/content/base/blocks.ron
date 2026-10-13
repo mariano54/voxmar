@@ -41,6 +41,8 @@
 //     swiftness, strength, water_breathing, fire_resistance, frost_resistance,
 //     featherfall, aether
 //   dye:<colour> (can be made into that dye), colour:<colour> (is that colour)
+//   furniture, decor (placed for looks: furniture, cloth, crockery; see blocks_furnishings.ron), seat,
+//   table, bed, shelf, cupboard, storage, cloth, rug, banner, curtain, lantern, crockery, grave
 //   fibre (cordage and cloth), thorny, glowing
 // Colours: white, light_gray, gray, black, brown, red, orange, yellow, lime, green, cyan,
 //   light_blue, blue, purple, magenta, pink

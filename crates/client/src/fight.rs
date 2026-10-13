@@ -37,8 +37,8 @@ pub struct Fighting {
     /// up, until the next.
     pub guard_toggled: bool,
     /// The player's blows the server answered lately: at which creature, for how much, what
-    /// kind, and when (app seconds).
-    pub struck: Vec<(u32, u16, Blow, f64)>,
+    /// kind, when (app seconds), and whether that exact blow killed it.
+    pub struck: Vec<(u32, u16, Blow, f64, bool)>,
     /// Creatures' blows at the player lately, and what came of each.
     pub hurt: Vec<(u32, u16, Defended, f64)>,
     /// How many blows each way the server has answered, ever: what changed since a count was
@@ -64,11 +64,11 @@ pub struct Prayers {
 impl Fighting {
     /// The player's blow at `creature` was answered, with their pips as the server counts
     /// them.
-    pub fn struck(&mut self, creature: u32, damage: u16, blow: Blow, pips: u8, now: f64) {
+    pub fn struck(&mut self, creature: u32, damage: u16, blow: Blow, pips: u8, killed: bool, now: f64) {
         self.rhythm.set_pips(pips, now);
         self.fought.insert(creature, now);
         self.struck.retain(|s| now - s.3 < KEPT);
-        self.struck.push((creature, damage, blow, now));
+        self.struck.push((creature, damage, blow, now, killed));
         self.struck_count += 1;
     }
 

@@ -50,6 +50,11 @@ pub struct Death {
     pub warded_grave: f32,
 }
 
+crate::content::settable! {
+    /// What one package's `value.ron` sets of the death rules.
+    SetDeath for Death { kept: u8, warded: u8, grave: f32, warded_grave: f32 }
+}
+
 impl Default for Death {
     fn default() -> Self {
         Self { kept: 3, warded: 4, most: 4, grave: 1800.0, warded_grave: 3600.0 }
@@ -84,7 +89,7 @@ pub struct ValueFile {
     pub crafted: Option<f32>,
     pub raw: Option<f32>,
     pub fixed: BTreeMap<String, u32>,
-    pub death: Option<Death>,
+    pub death: Option<SetDeath>,
 }
 
 /// A factor for each rarity.
@@ -104,22 +109,35 @@ impl Value {
         options.from_str(source).map_err(|e| crate::block::RegistryError(format!("{namespace}/value.ron: {e}")))
     }
 
-    /// The packages' files laid over the defaults in order.
-    pub fn merge(files: Vec<ValueFile>) -> Self {
+    /// The packages' files (with their package's name) laid over the defaults in order. A
+    /// later package's number replaces an earlier one's, and `notes` names both.
+    pub fn merge(files: Vec<(String, ValueFile)>, notes: &mut Vec<String>) -> Self {
+        use crate::content::Settable;
         let mut value = Value::default();
-        for file in files {
-            value.base = file.base.unwrap_or(value.base);
-            value.growth = file.growth.unwrap_or(value.growth);
-            value.per = file.per.unwrap_or(value.per).max(1e-3);
-            value.round_above = file.round_above.unwrap_or(value.round_above);
-            value.step = file.step.unwrap_or(value.step).max(1);
+        let mut laid = crate::content::Laid::default();
+        for (package, file) in files {
+            let mut set = Vec::new();
+            macro_rules! lay {
+                ($($field:ident $(.$clamp:ident($min:expr))?),*) => {$(
+                    if let Some(new) = file.$field {
+                        value.$field = new$(.$clamp($min))?;
+                        set.push(stringify!($field).to_owned());
+                    }
+                )*};
+            }
+            lay!(base, growth, per.max(1e-3), round_above, step.max(1), crafted.max(0.0), raw.max(0.0));
             if let Some(r) = file.rarity {
                 value.rarity = [r.common, r.uncommon, r.rare, r.very_rare, r.legendary];
+                set.push("rarity".to_owned());
             }
-            value.crafted = file.crafted.unwrap_or(value.crafted).max(0.0);
-            value.raw = file.raw.unwrap_or(value.raw).max(0.0);
+            if let Some(death) = &file.death {
+                let (laid_death, names) = value.death.with(death);
+                value.death = laid_death;
+                set.extend(names.into_iter().map(|name| format!("death.{name}")));
+            }
+            set.extend(file.fixed.keys().map(|item| format!("fixed.{item}")));
             value.fixed.extend(file.fixed);
-            value.death = file.death.unwrap_or(value.death);
+            laid.set(&package, "value.ron", "worth", set, notes);
         }
         value
     }
@@ -216,9 +234,12 @@ mod tests {
         assert_eq!(value.of(76, Rarity::Common), 195);
         assert_eq!(value.of(1, Rarity::Rare), 10);
         assert_eq!(value.of(1, Rarity::Legendary), 60);
-        let cheap = Value::merge(vec![Value::read("t", "(base: 1.0)").unwrap(), Value::read("u", "(step: 10)").unwrap()]);
+        let mut notes = Vec::new();
+        let cheap = Value::merge(vec![("t".into(), Value::read("t", "(base: 1.0, death: (kept: 2))").unwrap()), ("u".into(), Value::read("u", "(step: 10, death: (grave: 60.0))").unwrap())], &mut notes);
+        assert!(notes.is_empty(), "{notes:?}");
+        assert_eq!((cheap.death.kept, cheap.death.grave), (2, 60.0), "a later package's death number leaves the earlier one's");
         assert_eq!((cheap.base, cheap.step, cheap.growth), (1.0, 10, 2.5), "packages set field by field");
-        let kept = Value::merge(vec![Value::read("t", "(death: (kept: 2))").unwrap()]).death;
+        let kept = Value::merge(vec![("t".into(), Value::read("t", "(death: (kept: 2))").unwrap())], &mut notes).death;
         assert_eq!((kept.kept, kept.warded, kept.grave), (2, 4, 1800.0), "unset death numbers stay");
     }
 

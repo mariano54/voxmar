@@ -1,0 +1,82 @@
+// Recipes for the decor blocks (blocks_furnishings.ron; design draft 108, P58a), at a crafting
+// table. Furniture is Construction's, the first fixtures a home has (the wiki: the bed at
+// Construction 5 with the hearth's second tier) and costs at most a few planks and sticks
+// with modest experience per piece. One line makes a piece in every wood that has it.
+// Cloth, rugs and the rest are
+// Crafting's. There is no loom yet (the Farm age's machine), so a dyed cloth is a wool and
+// a flower of its dye's colour; they drop nothing when broken, and furniture only half its
+// planks, so no recipe here can be run backwards for profit.
+(
+    recipes: [
+        // Wood furniture, in whichever of birch, oak and dark oak the planks are.
+        (pattern: [["{name}_planks", "{name}_planks"], ["stick", "stick"]], output: "{name}_stool", skill: "core:construction", level: 1, xp: 2.0),
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_bench", skill: "core:construction", level: 2, xp: 3.0),
+        (pattern: [["stick", "", ""], ["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_chair", skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"], ["stick", "", "stick"]], output: "{name}_table", skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["{name}_planks", "stick", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_crate_stack", skill: "core:construction", level: 2, xp: 3.0),
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["", "", ""], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_shelf", skill: "core:construction", level: 4, xp: 4.0),
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_counter", count: 2, skill: "core:construction", level: 5, xp: 4.0),
+        (pattern: [["wool", "wool", "wool"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_bed", skill: "core:construction", level: 5, xp: 6.0),
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["{name}_planks", "stick", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_cupboard", skill: "core:construction", level: 6, xp: 6.0),
+        (pattern: [["{name}_planks", "", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"], ["{name}_planks", "", "{name}_planks"]], output: "{name}_barrel_rack", skill: "core:construction", level: 6, xp: 5.0),
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["clay_pot", "", "clay_pot"]], output: "{name}_pot_shelf", skill: "core:construction", level: 6, xp: 3.0),
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["{name}_planks", "", "{name}_planks"], ["{name}_planks", "", "{name}_planks"]], output: "{name}_desk", skill: "core:construction", level: 7, xp: 6.0),
+        // Books are bound in hide until the Farm age brings paper.
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["hide", "hide", "hide"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_bookshelf", skill: "core:construction", level: 8, xp: 8.0),
+        (ingredients: ["{name}_cupboard", "{name}_planks", "{name}_planks", "{name}_planks"], output: "{name}_wardrobe", skill: "core:construction", level: 10, xp: 6.0),
+
+        // A cloth is a wool and a flower that dyes it, until the loom (one line a dye: each
+        // dye's flowers carry a tag of the colour the wiki calls it by).
+        (ingredients: ["wool", "tag:dye:white"], output: "white_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:light_gray"], output: "cream_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:brown"], output: "ochre_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:yellow"], output: "amber_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:red"], output: "red_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:orange"], output: "rust_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:pink"], output: "rose_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:purple"], output: "mulberry_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:blue"], output: "indigo_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:light_blue"], output: "sky_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:cyan"], output: "teal_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+        (ingredients: ["wool", "tag:dye:green"], output: "green_cloth", skill: "core:crafting", level: 2, xp: 2.0),
+
+        // What cloth is made into, in its own dye.
+        (pattern: [["{name}_cloth", "{name}_cloth"]], output: "{name}_rug", count: 3, skill: "core:crafting", level: 3, xp: 3.0),
+        (pattern: [["{name}_cloth", "{name}_cloth"], ["stick", ""]], output: "{name}_curtain", count: 2, skill: "core:crafting", level: 3, xp: 3.0),
+        (pattern: [["{name}_cloth", "{name}_cloth"], ["feather", "feather"]], output: "{name}_cushion", skill: "core:crafting", level: 4, xp: 4.0),
+        (pattern: [["{name}_cloth", "{name}_cloth"], ["{name}_cloth", "{name}_cloth"], ["stick", ""]], output: "{name}_banner", count: 2, skill: "core:crafting", level: 5, xp: 6.0),
+        (pattern: [["stick"], ["{name}_cloth"], ["torch"]], output: "{name}_paper_lantern", skill: "core:crafting", level: 6, xp: 5.0),
+        (pattern: [["twine", "twine"], ["{name}_cloth", "{name}_cloth"]], output: "{name}_bunting", count: 2, skill: "core:crafting", level: 7, xp: 5.0),
+        (pattern: [["{name}_cloth", "{name}_cloth", "{name}_cloth"], ["stick", "stick", "stick"]], output: "{name}_awning", count: 3, skill: "core:crafting", level: 8, xp: 8.0),
+
+        // Crockery: fired clay shaped (a basket is twine), then glazed with a flower's dye.
+        (pattern: [["fired_clay", "fired_clay"]], output: "earthen_plate", count: 2, skill: "core:crafting", level: 2, xp: 3.0),
+        (pattern: [["fired_clay", "", "fired_clay"], ["", "fired_clay", ""]], output: "earthen_bowl", count: 2, skill: "core:crafting", level: 2, xp: 3.0),
+        (pattern: [["", "fired_clay"], ["fired_clay", "fired_clay"]], output: "earthen_jar", skill: "core:crafting", level: 3, xp: 3.0),
+        (pattern: [["fired_clay", ""], ["fired_clay", "fired_clay"], ["fired_clay", "fired_clay"]], output: "earthen_jug", skill: "core:crafting", level: 3, xp: 4.0),
+        (pattern: [["twine", "twine", "twine"], ["twine", "", "twine"]], output: "earthen_basket", skill: "core:crafting", level: 3, xp: 3.0),
+        (ingredients: ["earthen_{name}", "tag:dye:white"], output: "ivory_{name}", skill: "core:crafting", level: 4, xp: 2.0),
+        (ingredients: ["earthen_{name}", "tag:dye:blue"], output: "cobalt_{name}", skill: "core:crafting", level: 5, xp: 2.0),
+
+        // Singles. Tallow lights a candle until bees give wax; a lantern holds a torch in
+        // metal, a stone one in four blocks of stone.
+        (pattern: [["twine", ""], ["hide", "hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
+        (pattern: [["copper_ingot"], ["torch"], ["copper_ingot"]], output: "copper_hanging_lantern", skill: "core:engineering", level: 5, xp: 12.0),
+        (pattern: [["iron_ingot"], ["torch"], ["iron_ingot"]], output: "iron_hanging_lantern", skill: "core:engineering", level: 15, xp: 24.0),
+        (pattern: [["", "{name}", ""], ["{name}", "torch", "{name}"], ["", "{name}", ""]], output: "{name}_lantern", skill: "core:construction", level: 9, xp: 6.0),
+        (pattern: [["{name}"], ["{name}"], ["{name}"]], output: "{name}_column", count: 2, skill: "core:construction", level: 12, xp: 8.0),
+        (pattern: [["cobblestone", "charcoal", "cobblestone"], ["", "cobblestone", ""]], output: "brazier", skill: "core:construction", level: 8, xp: 6.0),
+        (pattern: [["iron_ingot", "", "iron_ingot"], ["iron_ingot", "", "iron_ingot"], ["iron_ingot", "iron_ingot", "iron_ingot"]], output: "cauldron", skill: "core:engineering", level: 15, xp: 20.0),
+        (pattern: [["cobblestone", "cobblestone", "cobblestone"], ["cobblestone", "campfire", "cobblestone"]], output: "cottage_stove", skill: "core:construction", level: 5, xp: 6.0),
+        // A weaver's and a miller's room, until the Farm age's machines.
+        (pattern: [["oak_planks", "stick", "oak_planks"], ["stick", "twine", "stick"], ["oak_planks", "", "oak_planks"]], output: "loom_frame", skill: "core:crafting", level: 8, xp: 8.0),
+        (pattern: [["oak_planks", "stick"], ["stick", "twine"]], output: "spindle_stand", skill: "core:crafting", level: 6, xp: 5.0),
+        (pattern: [["", "stick"], ["cobblestone", "cobblestone"], ["cobblestone", "cobblestone"]], output: "quern_stones", skill: "core:crafting", level: 5, xp: 5.0),
+        (ingredients: ["indigo_cloth", "white_cloth", "red_cloth", "green_cloth", "amber_cloth", "twine"], output: "wind_flags", skill: "core:crafting", level: 9, xp: 8.0),
+        // Graves, in stone and in mossy stone.
+        (pattern: [["stone", "stone", "stone"]], output: "stone_grave_slab", count: 2, skill: "core:construction", level: 6, xp: 3.0),
+        (pattern: [["", "stone", ""], ["stone", "stone", "stone"]], output: "stone_headstone", count: 2, skill: "core:construction", level: 6, xp: 3.0),
+        (pattern: [["mossy_cobblestone", "mossy_cobblestone", "mossy_cobblestone"]], output: "mossy_grave_slab", count: 2, skill: "core:construction", level: 6, xp: 3.0),
+        (pattern: [["", "mossy_cobblestone", ""], ["mossy_cobblestone", "mossy_cobblestone", "mossy_cobblestone"]], output: "mossy_headstone", count: 2, skill: "core:construction", level: 6, xp: 3.0),
+    ],
+)
