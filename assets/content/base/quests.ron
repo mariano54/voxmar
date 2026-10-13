@@ -130,7 +130,7 @@
         ),
         (
             name: "small_game", age: "nomad", branch: "hunter", title: "Small Game",
-            why: "Rabbits, junglefowl and other small animals are the easiest food: raw rabbit and chicken cook well at a campfire. Hunt three; a few blows are enough, and each kill trains Hunter. Then cook one of what you killed.",
+            why: "Rabbits, junglefowl and other small animals are the easiest food: raw rabbit and chicken cook well at a campfire. Look for them on open grassland. Hunt three; a few blows are enough, and each kill trains Hunter. Then cook one of what you killed.",
             tasks: [[Kill("any", 3), Cook("tag:meat", 1)]],
             after: ["something_to_swing"],
             rewards: [Xp("hunter", 80.0)],
@@ -151,7 +151,7 @@
         ),
         (
             name: "meat_and_fire", age: "nomad", branch: "cooking", title: "Meat on the Fire",
-            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: rabbit, chicken, duck or frog. A higher Cooking level burns less. Six good meals will also take you to Cooking 2.",
+            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: rabbit, chicken, duck or frog. Ducks and frogs live by rivers and in swamps. A higher Cooking level burns less. Six good meals will also take you to Cooking 2.",
             tasks: [[Cook("tag:meat", 6), Level("cooking", 2)]],
             after: ["first_night"],
             rewards: [Xp("cooking", 120.0)],
@@ -340,7 +340,7 @@
         ),
         (
             name: "carrot_patch", age: "farm", branch: "farming", title: "Carrot Patch",
-            why: "Carrots need Farming 5 and cool, moist soil. A carrot is its own seed: forage wild carrots, plant what you get, and harvest four. Rabbits love them too. Keep the four carrots you harvest.",
+            why: "Carrots need Farming 5 and cool, moist soil. A carrot is its own seed: forage wild carrots (white-flowered, thickest in flower meadows, a few on plains), plant what you get, and harvest four. Rabbits love them too. Keep the four carrots you harvest.",
             tasks: [[Pick("carrot_crop", 4), Have("carrot", 4)]],
             after: ["first_harvest"],
             rewards: [Xp("farming", 150.0), Item("carrot", 4)],
@@ -396,7 +396,7 @@
         ),
         (
             name: "a_woolly_flock", age: "farm", branch: "husbandry", title: "A Woolly Flock",
-            why: "Mouflon, the wild sheep, need Hunter 5 to tame. Hold its favourite food, approach calmly and right-click. A kept sheep grows its wool back: shear it with your shears. Have your shears made before you go.",
+            why: "Mouflon, the wild sheep, need Hunter 5 to tame; look on mountains and heath. Hold its favourite food, approach calmly and right-click. A kept sheep grows its wool back: shear it with your shears. Have your shears made before you go.",
             tasks: [[Tame("mouflon", 1), Craft("shears", 1)]],
             after: ["hens_in_a_row"],
             rewards: [Xp("hunter", 200.0), Xp("farming", 100.0)],
@@ -417,7 +417,7 @@
         ),
         (
             name: "the_milk_pail", age: "farm", branch: "husbandry", title: "The Milk Pail",
-            why: "A tamed mountain goat (Hunter 8), reindeer (10) or aurochs (12) gives milk to a pail, right-clicked. Milk heals half as fast again for a while. Collect two. Make the pail first: two planks crossed.",
+            why: "A tamed mountain goat (Hunter 8), reindeer (10) or aurochs (12) gives milk to a pail, right-clicked. Goats live on mountains, reindeer on tundra and in taiga, aurochs on plains. Milk heals half as fast again for a while. Collect two. Make the pail first: two planks crossed.",
             tasks: [[Craft("pail", 1), Have("milk", 2)]],
             after: ["a_woolly_flock"],
             rewards: [Xp("farming", 250.0)],
@@ -466,7 +466,7 @@
         ),
         (
             name: "tin_find", age: "farm", branch: "mining", title: "A Silvery Ore",
-            why: "Tin is the other half of bronze. It needs Mining 10 and a pickaxe, so keep digging coal and copper to get there. Mine three tin ore. Take three copper from the same seam: bronze wants both.",
+            why: "Tin is the other half of bronze. It needs Mining 10 and a pickaxe, so keep digging coal and copper to get there. Tin lies in the lower part of copper veins: where you found copper, dig below it. Mine three tin ore. Take three copper from the same seam: bronze wants both.",
             tasks: [[Mine("tin_ore", 3), Mine("copper_ore", 3)]],
             after: ["red_metal"],
             rewards: [Xp("mining", 200.0)],
