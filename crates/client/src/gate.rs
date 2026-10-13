@@ -5208,6 +5208,9 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let net = world.resource::<Net>();
             net.command("gamemode creative");
             net.command("time set noon");
+            // The full gate's earlier steps fill the hotbar: start from an empty pack, as the
+            // steps that give their own items do.
+            net.command("clear");
             net.command(&format!("give {} 1", SWORD.trim_start_matches("base:")));
             net.command(&format!("give {} 1", BLOCK.trim_start_matches("base:")));
             gate.advance(now);
