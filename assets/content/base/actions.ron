@@ -38,5 +38,7 @@
         // Pick the lock of a treasure chest (treasure.ron) with the lockpick in hand; with
         // anything else, be told it is locked.
         (name: "pick_lock", duration: Instant, requires: [Alive, InReach, Locked], effects: [PickLock]),
+        // Pray at an altar: an offering in hand for Magic experience, else prayer points back.
+        (name: "pray", duration: Instant, requires: [Alive, InReach, Altar], effects: [Pray]),
     ],
 )

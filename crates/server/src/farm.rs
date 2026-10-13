@@ -61,7 +61,7 @@ pub struct Farm {
 }
 
 impl Farm {
-    fn schedule(&mut self, pos: IVec3, planted: Planted) {
+    pub(crate) fn schedule(&mut self, pos: IVec3, planted: Planted) {
         self.planted.insert(pos, planted);
         if planted.due != u64::MAX {
             self.queue.push(Reverse((planted.due, pos.to_array())));

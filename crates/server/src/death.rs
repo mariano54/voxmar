@@ -1,7 +1,8 @@
 //! What dying costs (Mariano, 2026-10-06): a player keeps their three most valuable items,
 //! and everything else they carried stays where they fell, theirs alone to pick up, for
 //! 30 minutes; then it is gone. A grave-ward amulet keeps a fourth item and doubles the
-//! time. They wake at home (`Player::home`, set by a bed or hearth), or at world spawn.
+//! time; the Keepsake prayer keeps a fourth too, but never a fifth with the amulet (design
+//! d86). They wake at home (`Player::home`, set by a bed or hearth), or at world spawn.
 //! Worth is gold on the P51 curve (`voxmar_engine::value::worth`), counted a unit at a
 //! time; the numbers are content (`value.ron`'s `death`).
 
@@ -53,8 +54,12 @@ impl Server {
             }
             voxmar_engine::value::worth_in(&content, item, &mut worth)
         };
-        let (kept, left) = split(&player.inventory, usize::from(if warded { death.warded } else { death.kept }), warded, value);
+        // Keepsake keeps one more, never past `death.most` (design d86).
+        let keep = death.keeps(warded, content.prayers.keeps(&player.praying.on));
+        let (kept, left) = split(&player.inventory, usize::from(keep), warded, value);
         player.inventory = kept;
+        // Death puts out every prayer.
+        player.praying.on.clear();
         player.changed(traits::INVENTORY);
         let owner = owner_of(&player.name);
         let seconds = if warded { death.warded_grave } else { death.grave };

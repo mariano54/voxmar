@@ -1,0 +1,605 @@
+// Wandering events (engine/src/wander.rs, server/src/wandering.rs, docs/wandering.md):
+// parties that come by on their own errands, to keep the land interesting between
+// settlements. Each has a cast (who, how many, what part), a script (March past the
+// player, Patrol a ring, Camp a while, Shadow a stranger) and, for those who talk, a
+// meeting: right click one to hear it and, with something in hand, to swap or be taught.
+// Their words are lang keys `wander.base.EVENT.LINE` (`title`, `greet` and each line).
+//
+// Rare by design: one party near a player at a time, ten minutes between them, the far
+// ones (`away`) only far from where the world began, and the creature caps of the land
+// count their animals and monsters. A party with a `halt` stops for a player who comes
+// near; what a party does when struck is its `hurt`. What it teaches or sells is gated on
+// the player's own levels (`Below`, `Skill`) so it never skips a step. `/wander list`
+// names the kinds, `/wander start NAME` brings one ahead of an admin.
+(
+    rules: (
+        scan_every: 20.0,
+        chance: 0.25,
+        gap: 600.0,
+        most_near: 1,
+        near: 110.0,
+        most_total: 8,
+        people_most: 16,
+        companions_most: 24,
+        appear_near: 55.0,
+        appear_far: 85.0,
+        leave: 150.0,
+        errand_every: 0.5,
+        first_days: 0.4,
+        speak_reach: 4.0,
+        repeat_weight: 0.15,
+        repeat_memory: 1800.0,
+    ),
+    // How kinds of creature answer what a player holds, in any event (docs/wandering.md,
+    // "Reactions"): one rule here is every party's, now and in the events to come. The
+    // tag must be one some item has.
+    reactions: [
+        // Bandits lying in wait know a seasoned fighter with a weapon in hand when they see
+        // one, and let them by; a beginner they do not fear.
+        (held: "weapon", range: 18.0, kinds: [Monster], response: Wary, combat: (14, 255)),
+        // Wild things keep from a flame, the spirits of the night most of all.
+        (held: "fire", range: 9.0, kinds: [Animal, Spirit], response: Shy),
+        // And they come to a hand with food in it.
+        (held: "edible", range: 12.0, kinds: [Animal], response: Draw),
+    ],
+    events: [
+        // A mage on the road with apprentices, far from towns. Teaches Magic by the mote, but
+        // only what a beginner needs: past level 15 it asks three motes for a harder lesson,
+        // and past 35 it has nothing left to teach.
+        (
+            name: "mage_tutors", weight: 0.35,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.6), ("tag:fantastical", 1.5)],
+            daylight: (0.35, 1.0), needs: (days: 0.8, away: Some((140.0, 100000.0))),
+            cast: [(species: "mage"), (species: "villager", count: (1, 2), role: Follow)],
+            script: March(pass: (14.0, 26.0), length: 150.0, pace: 0.9),
+            halt: (near: 7.0, seconds: (25.0, 40.0)),
+            meetings: [(who: 0, greets: 3, lines: [
+                (name: "master", needs: [Skill("magic", 35)]),
+                (name: "adept", needs: [Skill("magic", 15), Below("magic", 35)], wants: ("aether_mote", 3), gives: [Xp("magic", 45.0), Effect("focused", 300.0)], once: Player),
+                (name: "grown", needs: [Skill("magic", 15)]),
+                (name: "lesson_pair", needs: [Below("magic", 15)], wants: ("aether_mote", 2), gives: [Xp("magic", 32.0), Effect("focused", 300.0)], once: Player),
+                (name: "lesson", needs: [Below("magic", 15)], wants: ("aether_mote", 1), gives: [Xp("magic", 15.0), Effect("focused", 300.0)], once: Player),
+            ])],
+        ),
+        // A pedlar and their hound, swapping what they carry for what the road gives.
+        (
+            name: "pedlar_and_hound", weight: 1.0,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.4, 1.0),
+            cast: [(species: "pedlar"), (species: "hound", role: Pet(0))],
+            script: March(pass: (10.0, 22.0), length: 130.0, pace: 1.0),
+            halt: (near: 6.0, seconds: (20.0, 35.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "swap_hide", wants: ("hide", 2), gives: [Item("twine", (6, 6))]),
+                (name: "swap_bone", wants: ("bone", 3), gives: [Item("seed_mix", (4, 4))]),
+                (name: "swap_feather", wants: ("feather", 6), gives: [Item("bread", (2, 2))]),
+            ])],
+        ),
+        // Pilgrims bound for some far shrine, slowly. The priest blesses those who ask.
+        (
+            name: "pilgrims", weight: 0.6,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:mountain", 0.4)],
+            daylight: (0.3, 1.0), needs: (days: 0.6, away: Some((60.0, 100000.0))),
+            cast: [(species: "priest"), (species: "pilgrim", count: (2, 4), role: Follow), (species: "child", count: (0, 1), role: Follow)],
+            script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.85),
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "mend", needs: [Hurt], gives: [Heal(8)], once: Player),
+                (name: "blessing", gives: [Effect("sustained", 600.0)], once: Player),
+            ])],
+        ),
+        // Someone out for a walk with their dog.
+        (
+            name: "stroll_with_dog", weight: 1.4,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.4)],
+            daylight: (0.5, 1.0),
+            cast: [(species: "villager"), (species: "hound", role: Pet(0))],
+            script: March(pass: (8.0, 18.0), length: 90.0, pace: 0.8),
+            halt: (near: 5.0, seconds: (8.0, 15.0)),
+            meetings: [(who: 0, lines: [
+                (name: "treat", wants: ("bone", 1), gives: [Item("twine", (1, 2))], once: Player),
+            ])],
+        ),
+        // Bandits walking a ring round their camp, who go for anyone who comes near. They
+        // keep to the wild, and leave a player with no home yet alone.
+        (
+            name: "bandit_patrol", weight: 0.6,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:rocky", 0.5)],
+            daylight: (0.0, 0.7), needs: (days: 1.5, home: true, combat: (3, 40), away: Some((80.0, 100000.0))),
+            cast: [(species: "raider"), (species: "raider", count: (1, 2), role: Flank)],
+            script: Patrol(radius: 22.0, stops: 4, pause: (4.0, 9.0), laps: 2),
+            hurt: Ignore,
+        ),
+        // A wolf pack on its night round.
+        (
+            name: "wolf_prowl", weight: 0.5,
+            biomes: [("tag:forest", 1.0), ("tag:cold", 1.0), ("tag:tundra", 0.6)],
+            daylight: (0.0, 0.3), needs: (days: 1.0),
+            cast: [(species: "wolf"), (species: "wolf", count: (1, 3), role: Follow)],
+            script: Patrol(radius: 28.0, stops: 5, pause: (5.0, 12.0), laps: 2),
+            hurt: Ignore,
+        ),
+        // A hooded stranger who keeps their distance and stands still when watched. Walk up
+        // to them and they are not so shy.
+        (
+            name: "hooded_stranger", weight: 0.4,
+            daylight: (0.0, 0.35), needs: (days: 1.5),
+            cast: [(species: "stranger")],
+            script: Shadow(keep: (12.0, 20.0), seconds: 150.0),
+            meetings: [(who: 0, lines: [
+                (name: "light", gives: [Item("torch", (1, 2))], once: Player),
+            ])],
+        ),
+        // A tinker's camp: a trader, a helper or two and a dog, resting a while by the road.
+        (
+            name: "tinker_camp", weight: 0.6,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.6)],
+            daylight: (0.2, 1.0), needs: (days: 1.2, away: Some((50.0, 100000.0))),
+            cast: [(species: "trader"), (species: "villager", count: (1, 2), role: Follow), (species: "hound", role: Pet(0))],
+            script: Camp(near: 26.0, stay: (240.0, 420.0), mill: 5.0, away: 140.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "swap_hide", wants: ("hide", 4), gives: [Item("bread", (6, 6))]),
+                (name: "swap_wool", wants: ("wool", 3), gives: [Item("twine", (8, 8))]),
+                (name: "swap_fang", wants: ("fang", 1), gives: [Item("seed_mix", (6, 6))]),
+            ])],
+        ),
+        // Singers and their hangers-on, walking the road from fair to fair.
+        (
+            name: "bard_band", weight: 0.6,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.4, 1.0),
+            cast: [(species: "bard"), (species: "villager", count: (1, 3), role: Follow)],
+            script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.95),
+            halt: (near: 8.0, seconds: (20.0, 30.0)),
+            meetings: [(who: 0, lines: [
+                (name: "song", gives: [Effect("refreshed", 240.0)], once: Player),
+            ])],
+        ),
+        // A prisoner marched through the wild by two or three jailers. They are no bandits:
+        // they leave you be, until struck. Kill them all and the prisoner is free; hand them
+        // three gold coins and they look the other way; cut the ropes with a knife and the
+        // jailers turn on you. A freed prisoner follows whoever freed them half the time
+        // (settling by that player's home if they have one), else wanders off alone.
+        (
+            name: "prison_convoy", weight: 0.3,
+            biomes: [("tag:open", 1.0), ("tag:forest", 1.0), ("tag:mountain", 0.5), ("tag:rocky", 0.5)],
+            daylight: (0.35, 1.0), needs: (days: 1.5, home: true, combat: (4, 45), away: Some((100.0, 100000.0))),
+            cast: [(species: "jailer"), (species: "jailer", count: (1, 2), role: Flank), (species: "captive", role: Captive)],
+            script: March(pass: (12.0, 24.0), length: 140.0, pace: 0.8),
+            halt: (near: 9.0, seconds: (6.0, 10.0)),
+            hurt: Avenge,
+            freed: (follow: 0.5, follow_for: 600.0, thanks: [Item("gold_coin", (1, 3))]),
+            meetings: [
+                (who: 0, greet: "jailer_greet", greets: 2, lines: [
+                    (name: "bribe", wants: ("gold_coin", 3), gives: [Free], once: Party),
+                ]),
+                (who: 2, greet: "captive_greet", greets: 2, lines: [
+                    (name: "cut", needs: [Holds("knife")], gives: [Free, Anger], once: Party),
+                ]),
+            ],
+        ),
+        // A shepherd drifting a flock over the grass with a dog at heel. Stand still and the
+        // flock comes round you; run and it scatters. A kind word and a crust teach Farming
+        // to a beginner, and the shepherd shears for bread. (Tame one of the mouflon with the
+        // usual food and it is yours, and leaves the flock.)
+        (
+            name: "shepherd_and_flock", weight: 0.9,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.5)],
+            daylight: (0.35, 0.95), needs: (days: 0.8),
+            cast: [(species: "herder"), (species: "mouflon", count: (4, 6), role: Herd), (species: "hound", role: Pet(0))],
+            script: Drift(leg: (7.0, 14.0), pause: (6.0, 20.0), seconds: 420.0),
+            halt: (near: 6.0, seconds: (15.0, 25.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "tip", needs: [Below("farming", 12)], wants: ("tag:edible", 1), gives: [Xp("farming", 12.0)], once: Player),
+                (name: "swap_bread", wants: ("bread", 2), gives: [Item("wool", (3, 5))]),
+            ])],
+        ),
+        // A child who followed a butterfly too far. Feed them and they walk with you to the
+        // nearest settlement; their family pays what it can. Strike them and they run, lost
+        // again. Far from any town they are in more danger, and it is a long walk.
+        (
+            name: "lost_child", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.7)],
+            daylight: (0.35, 0.9), needs: (days: 0.8, away: Some((60.0, 100000.0))),
+            cast: [(species: "child")],
+            script: Roam(radius: 14.0, pause: (4.0, 12.0), rest: false, seconds: 600.0),
+            guide: (follow_for: 900.0, arrive: Town, thanks: [Item("gold_coin", (1, 2)), Item("bread", (2, 3))]),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "comfort", wants: ("tag:edible", 1), gives: [Befriend], once: Party),
+            ])],
+        ),
+        // A hound with no one: thin, curious, ready to bolt. Feed it meat and, with enough of
+        // a hunter's patience (Hunter 2), it takes to you and is yours.
+        (
+            name: "stray_hound", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:grassland", 0.8)],
+            daylight: (0.2, 1.0), needs: (days: 0.6, away: Some((40.0, 100000.0))),
+            cast: [(species: "hound")],
+            script: Roam(radius: 18.0, pause: (6.0, 16.0), rest: false, seconds: 600.0),
+        ),
+        // A hunter hurt by a boar, sitting out the day. Share food and they show you how to
+        // read a track (Hunter, to level 15) and press on you the flints they carry.
+        (
+            name: "wounded_hunter", weight: 0.4,
+            biomes: [("tag:forest", 1.0), ("tag:mountain", 0.5), ("tag:grassland", 0.3)],
+            daylight: (0.3, 1.0), needs: (days: 1.0, away: Some((50.0, 100000.0))),
+            cast: [(species: "hunter")],
+            script: Roam(radius: 0.0, pause: (30.0, 60.0), rest: true, seconds: 700.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "grown", needs: [Skill("hunter", 15)]),
+                (name: "meal", wants: ("tag:edible", 1), gives: [Xp("hunter", 12.0), Item("flint", (2, 3))], once: Player),
+            ])],
+        ),
+        // A cutpurse runs from the town watch across the land, and the watch runs him down.
+        // Stand clear and they catch him, hold him a while and march him off. Land a blow on
+        // him as he passes and they say so, with the town's coin; kill him and the purse he
+        // stole is yours. Strike the watch instead and they answer in kind, and the thief
+        // runs free.
+        (
+            name: "thief_chase", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.7), ("tag:grassland", 0.8)],
+            daylight: (0.35, 1.0), needs: (days: 1.2, away: Some((50.0, 100000.0))),
+            cast: [(species: "thief"), (species: "constable", count: (1, 2), role: Chaser)],
+            script: Chase(pass: (4.0, 14.0), length: 150.0, pace: 1.8, gain: 1.18, hold: (14.0, 22.0)),
+            hurt: Ignore,
+            meetings: [
+                (who: 0, greet: "thief_greet", greets: 2, lines: [
+                    (name: "thief_caught", needs: [When(Caught)]),
+                ]),
+                (who: 1, greet: "constable_greet", greets: 2, lines: [
+                    (name: "reward", needs: [When(Caught), Struck(0)], gives: [Item("gold_coin", (1, 2)), Xp("attack", 8.0)], once: Player),
+                    (name: "caught", needs: [When(Caught)]),
+                ]),
+            ],
+        ),
+        // A wounded traveller sits by the road, and the men who left him there lie in the
+        // rocks beside it. Go to him and the trap springs. A fighter they know better than to
+        // cross (combat 14, a weapon in hand) is let by; three coins slipped to a raider in
+        // the moment before buys the road; or fight, and the traveller thanks the winner.
+        (
+            name: "wounded_traveller", weight: 0.4,
+            biomes: [("tag:forest", 1.0), ("tag:open", 0.7), ("tag:mountain", 0.3)],
+            daylight: (0.3, 1.0), needs: (days: 2.0, home: true, combat: (4, 60), away: Some((70.0, 100000.0))),
+            cast: [(species: "traveller"), (species: "raider", count: (2, 3), role: Lurk)],
+            script: Ambush(near: 22.0, trigger: 7.0, delay: (6.0, 10.0), patience: 360.0, away: 120.0, hold: (30.0, 60.0)),
+            hurt: Avenge,
+            meetings: [
+                (who: 0, greet: "traveller_greet", greets: 2, lines: [
+                    (name: "thanks", needs: [When(Won)], gives: [Item("gold_coin", (2, 3)), Xp("defence", 12.0)], once: Player),
+                    (name: "won", needs: [When(Won)]),
+                ]),
+                (who: 1, greet: "raider_greet", greets: 2, lines: [
+                    (name: "pay", needs: [When(Waiting)], wants: ("gold_coin", 3), gives: [Leave], once: Party),
+                ]),
+            ],
+        ),
+        // A white stag stands at the edge of the wood, watching. Come near and it walks on,
+        // keeping ahead; follow it the whole way (it waits if you fall behind, and gives
+        // you up if you do not come) and it leads you to a glade and a gift. Strike it and
+        // it bolts; hunt it down and it is only a deer.
+        (
+            name: "white_stag", weight: 0.3,
+            biomes: [("tag:forest", 1.0), ("tag:grassland", 0.4)],
+            daylight: (0.3, 0.75), needs: (days: 1.5, away: Some((60.0, 100000.0))),
+            cast: [(species: "white_stag")],
+            script: Lure(keep: (6.0, 16.0), length: 130.0, pace: 1.0, patience: 150.0, linger: 6.0),
+            hurt: Scatter,
+            reveal: [Item("antler", (1, 1)), Xp("hunter", 40.0), Effect("refreshed", 300.0)],
+        ),
+        // A pale light drifts low over the marsh by night, and keeps ahead of anyone who
+        // follows. It does not like a torch: hold one up and it hangs back until you put it
+        // away. At the end of its path it dips into a hollow and goes out, leaving what the
+        // night keeps.
+        (
+            name: "wisp_trail", weight: 0.3,
+            biomes: [("tag:forest", 0.8), ("tag:wetland", 1.0)],
+            daylight: (0.0, 0.25), needs: (days: 1.5, away: Some((60.0, 100000.0))),
+            cast: [(species: "wisp")],
+            script: Lure(keep: (5.0, 14.0), length: 110.0, pace: 0.9, patience: 120.0, linger: 5.0),
+            hurt: Scatter,
+            reveal: [Item("aether_mote", (2, 3)), Xp("magic", 30.0)],
+        ),
+        // A fox with a hen's feathers on its whiskers, and a farmer after it with a rake. Turn
+        // the fox with a blow as it runs and the farmer pays in eggs; they catch it on their
+        // own soon enough.
+        (
+            name: "fox_and_farmer", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:forest", 0.4)],
+            daylight: (0.3, 0.9), needs: (days: 0.8, away: Some((40.0, 100000.0))),
+            cast: [(species: "fox"), (species: "farmer", role: Chaser)],
+            script: Chase(pass: (4.0, 14.0), length: 130.0, pace: 1.8, gain: 1.2, hold: (8.0, 14.0)),
+            hurt: Ignore,
+            meetings: [(who: 1, greet: "farmer_greet", greets: 2, lines: [
+                (name: "reward", needs: [When(Caught), Struck(0)], gives: [Item("egg", (3, 4)), Xp("farming", 10.0)], once: Player),
+                (name: "caught", needs: [When(Caught)]),
+            ])],
+        ),
+        // Batch 4: the early land (Nomad and Farm ages). Folk at work a new player can walk
+        // up to, and wild families that answer how they are approached.
+        //
+        // Berry pickers spread over a patch of bushes, each to their own, crouched at it a
+        // while. Pick the bush one is working and they move to the next. They know the land:
+        // ask, and they say where mushrooms grow, true to what is there. Eight berries of
+        // your own buy a loaf from their basket.
+        (
+            name: "berry_pickers", weight: 0.9,
+            biomes: [("tag:forest", 1.0), ("base:forest_steppe", 1.0), ("tag:grassland", 0.6), ("tag:open", 0.6)],
+            daylight: (0.3, 0.9), needs: (days: 0.4),
+            cast: [(species: "villager"), (species: "villager", count: (1, 2), role: Follow), (species: "child", count: (0, 1), role: Follow)],
+            script: Gather(reach: 20.0, work: (8.0, 16.0), visits: 10),
+            seek: ["tag:berry"],
+            halt: (near: 6.0, seconds: (14.0, 24.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "swap", wants: ("sweet_berry", 8), gives: [Item("bread", (1, 1))]),
+                (name: "mushrooms", gives: [Point("tag:fungus", 96.0)], once: Player),
+            ])],
+        ),
+        // An old herb gatherer working the flowers and roots of a meadow. Show them a herb
+        // you picked and they tell you what it is good for (Alchemy, for a beginner). Those who
+        // know a little are told where roots grow; those who know more, where the wonders do,
+        // if any grow near.
+        (
+            name: "herb_gatherer", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("base:forest_steppe", 0.8), ("tag:forest", 0.5), ("tag:wetland", 0.6)],
+            daylight: (0.3, 0.85), needs: (days: 0.6, away: Some((30.0, 100000.0))),
+            cast: [(species: "elder")],
+            script: Gather(reach: 24.0, work: (10.0, 20.0), visits: 6),
+            seek: ["tag:herb"],
+            halt: (near: 6.0, seconds: (16.0, 26.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "lore", needs: [Below("alchemy", 10)], wants: ("tag:herb", 1), gives: [Xp("alchemy", 10.0)], once: Player),
+                (name: "wonders", needs: [Skill("alchemy", 20)], gives: [Point("tag:wonder", 128.0)], once: Player),
+                (name: "roots", needs: [Skill("alchemy", 5)], gives: [Point("tag:root", 96.0)], once: Player),
+            ])],
+        ),
+        // Fisher folk walk down to the water and stand at the edge with their lines. A
+        // beginner who brings three sticks gets line enough for a rod; one with a rod in hand
+        // is shown how to hold it; one who is hurt is given a fish. Four fish of your own
+        // buy more line.
+        (
+            name: "fisher_folk", weight: 0.8,
+            biomes: [("tag:river", 1.5), ("tag:wetland", 1.0), ("tag:open", 0.6), ("tag:forest", 0.5), ("tag:grassland", 0.5)],
+            daylight: (0.2, 0.85), needs: (days: 0.4),
+            cast: [(species: "fisher"), (species: "fisher", count: (0, 1), role: Follow), (species: "child", count: (0, 1), role: Follow)],
+            script: Gather(reach: 24.0, work: (20.0, 40.0), visits: 6),
+            seek: ["water"],
+            halt: (near: 6.0, seconds: (14.0, 24.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "rod_tip", needs: [Holds("rod"), Below("fishing", 12)], gives: [Xp("fishing", 12.0)], once: Player),
+                (name: "line", needs: [Below("fishing", 5)], wants: ("stick", 3), gives: [Item("twine", (2, 2))], once: Player),
+                (name: "swap", wants: ("tag:fish", 4), gives: [Item("twine", (3, 3))]),
+                (name: "share", needs: [Hurt], gives: [Item("raw_cod", (1, 1))], once: Player),
+            ])],
+        ),
+        // A wild sow with her piglets, rooting through the wood. Come near and she stands
+        // and grunts a warning; stay, or come close, and she charges while the piglets run.
+        // A torch held up sends the family off, food held out lets you near (feed a piglet
+        // long enough and it is yours, the usual taming), and the sow is a fight a beginner
+        // may lose.
+        (
+            name: "boar_sounder", weight: 0.7,
+            biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("base:forest_steppe", 0.6), ("tag:grassland", 0.3)],
+            daylight: (0.15, 0.85), needs: (days: 0.6),
+            cast: [(species: "wild_sow"), (species: "wild_boar", count: (2, 4), role: Herd, young: true)],
+            script: Drift(leg: (5.0, 10.0), pause: (8.0, 20.0), seconds: 480.0),
+            guard: (near: 9.0, warn: 3.0, calm: 16.0),
+            hurt: Avenge,
+        ),
+        // A herd of red deer grazing along, a stag at its head. Walk up and they bolt; stand
+        // still and they graze on round you; a hunter's quiet step gets closer than most, and a
+        // still hand holding food is let near. Strike one and they scatter.
+        (
+            name: "deer_herd", weight: 0.7,
+            biomes: [("tag:forest", 1.0), ("tag:grassland", 0.8), ("base:forest_steppe", 1.0)],
+            daylight: (0.1, 0.6), needs: (days: 0.5),
+            cast: [(species: "red_deer"), (species: "red_deer", count: (2, 4), role: Herd), (species: "red_deer", count: (0, 2), role: Herd, young: true)],
+            script: Drift(leg: (6.0, 12.0), pause: (6.0, 18.0), seconds: 480.0),
+            startle: (near: 22.0, least: 8.0, still: 6.0, stalk: Some(("hunter", 0.35))),
+        ),
+        // A travelling cook camps at dusk with a pot on. Hand over raw meat or fish and it
+        // comes back cooked (the cook keeps one for the pot); show them what you cooked
+        // yourself and a beginner learns a thing or two; the hurt are sat down and fed.
+        (
+            name: "travelling_cook", weight: 0.6,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 0.8), ("tag:forest", 0.6)],
+            daylight: (0.1, 0.55), needs: (days: 0.8),
+            cast: [(species: "baker"), (species: "villager", count: (0, 1), role: Follow), (species: "hound", role: Pet(0))],
+            script: Camp(near: 24.0, stay: (240.0, 360.0), mill: 4.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "lesson", needs: [Below("cooking", 10), Holds("cooked")], gives: [Xp("cooking", 15.0)], once: Player),
+                (name: "cook", wants: ("tag:raw", 2), gives: [Cook("campfire", 8, 1)]),
+                (name: "supper", needs: [Hurt], gives: [Heal(6)], once: Player),
+            ])],
+        ),
+        // A cowherd driving a few aurochs and a calf to new grass, a dog at heel. Hold out a
+        // pail and you may milk one. To a player with a home and the hand for beasts (the
+        // Hunter level it takes to tame an aurochs) they sell the calf for four coins: it is
+        // yours from then on, and grows up as kept young do.
+        (
+            name: "cowherd", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8)],
+            daylight: (0.3, 0.9), needs: (days: 1.5, home: true),
+            cast: [(species: "herder"), (species: "aurochs", count: (2, 3), role: Herd), (species: "aurochs", role: Herd, young: true), (species: "hound", role: Pet(0))],
+            script: Drift(leg: (6.0, 12.0), pause: (10.0, 24.0), seconds: 480.0),
+            halt: (near: 6.0, seconds: (16.0, 28.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "milk", needs: [Holds("pail")], gives: [Item("milk", (1, 1)), Xp("farming", 6.0)], once: Player),
+                (name: "calf", needs: [Skill("hunter", 12)], wants: ("gold_coin", 4), gives: [Hand(2)], once: Party),
+                (name: "calf_offer", needs: [Skill("hunter", 12)]),
+                (name: "green", needs: [Below("hunter", 12)]),
+            ])],
+        ),
+        // Batch 5 (docs/wandering.md): carrying, and the farm age's ladder of crops.
+        // Woodcutters work the trees about a clearing and carry each load back to their
+        // pile. They buy logs once, cheap; they tell where fruit trees grow; an axe in a
+        // beginner's hand gets a word on felling.
+        (
+            name: "woodcutters", weight: 0.6,
+            biomes: [("tag:forest", 1.2), ("base:forest_steppe", 1.0), ("tag:open", 0.3)],
+            daylight: (0.25, 0.85), needs: (days: 0.8),
+            cast: [(species: "woodcutter"), (species: "woodcutter", count: (0, 1), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
+            script: Gather(reach: 20.0, work: (10.0, 18.0), visits: 6, carry: Some((set: (2.0, 4.0)))),
+            seek: ["tag:log"],
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "buy", wants: ("tag:log", 8), gives: [Item("gold_coin", (4, 4))], once: Player),
+                (name: "axe", needs: [Holds("axe"), Below("construction", 10)], gives: [Xp("construction", 10.0)], once: Player),
+                (name: "fruit", gives: [Point("tag:fruit_leaves", 128.0)], once: Player),
+            ])],
+        ),
+        // Water carriers fill pails at the water and carry them to the nearest field, to a
+        // player with a home: the crops they water grow on a stage. Only where there is
+        // water and tilled land together.
+        (
+            name: "water_carriers", weight: 0.8,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:river", 1.0), ("tag:forest", 0.4)],
+            daylight: (0.2, 0.85), needs: (days: 1.0, home: true),
+            cast: [(species: "farmer"), (species: "farmer", count: (0, 1), role: Follow), (species: "child", count: (0, 1), role: Follow)],
+            script: Gather(reach: 24.0, work: (3.0, 6.0), visits: 8, carry: Some((set: (3.0, 5.0), tend: Some((2.5, 1))))),
+            seek: ["water"],
+            deliver: ["farmland"],
+            halt: (near: 6.0, seconds: (10.0, 18.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "tip", needs: [Below("farming", 8)], gives: [Xp("farming", 8.0)], once: Player),
+                (name: "drink", needs: [Hurt], gives: [Heal(4)], once: Player),
+            ])],
+        ),
+        // A farming family on the move with what they grew. Each crop they carry is the next
+        // a farmer can sow: wheat buys rye seed at Farming 3, rye buys carrots at 5, carrots
+        // buy chickpeas at 7, once each; a beginner with seed in hand learns to sow.
+        (
+            name: "harvest_family", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("base:steppe", 0.6)],
+            daylight: (0.3, 0.85), needs: (days: 1.2, home: true),
+            cast: [(species: "farmer"), (species: "farmer", count: (0, 1), role: Follow), (species: "child", count: (1, 2), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
+            script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.75),
+            halt: (near: 6.0, seconds: (14.0, 24.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "chickpea", needs: [Skill("farming", 7)], wants: ("carrot", 6), gives: [Item("chickpea", (2, 3))], once: Player),
+                (name: "carrot", needs: [Skill("farming", 5)], wants: ("rye", 6), gives: [Item("carrot", (2, 3))], once: Player),
+                (name: "rye", needs: [Skill("farming", 3)], wants: ("wheat", 6), gives: [Item("rye", (2, 3))], once: Player),
+                (name: "sow", needs: [Below("farming", 6), Holds("seed")], gives: [Xp("farming", 8.0)], once: Player),
+            ])],
+        ),
+        // Charcoal burners camp by their smoking mound for a while. A dozen logs buy two
+        // charcoal, once; they say where coal shows at the surface (an ore sample).
+        (
+            name: "charcoal_burners", weight: 0.5,
+            biomes: [("tag:forest", 1.0), ("base:forest_steppe", 0.8), ("tag:mountain", 0.4)],
+            daylight: (0.0, 1.0), needs: (days: 1.5),
+            cast: [(species: "woodcutter"), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 24.0, stay: (300.0, 480.0), mill: 4.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "burn", wants: ("tag:log", 12), gives: [Item("charcoal", (2, 2))], once: Player),
+                (name: "coal", gives: [Point("coal_ore_sample", 128.0)], once: Player),
+            ])],
+        ),
+        // A wandering healer: mends the hurt once, and three herbs buy a salve (soothed)
+        // and a little Alchemy.
+        (
+            name: "wandering_healer", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:grassland", 0.8), ("tag:wetland", 0.6)],
+            daylight: (0.3, 1.0), needs: (days: 0.8, away: Some((40.0, 100000.0))),
+            cast: [(species: "elder"), (species: "villager", count: (0, 1), role: Follow)],
+            script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.7),
+            halt: (near: 6.0, seconds: (12.0, 22.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "mend", needs: [Hurt], gives: [Heal(10)], once: Player),
+                (name: "salve", wants: ("tag:herb", 3), gives: [Effect("soothed", 600.0), Xp("alchemy", 6.0)], once: Player),
+            ])],
+        ),
+        // A story teller camps at dusk with listeners. The tale is of something strange
+        // and near, true to the land (once), and a listener leaves focused.
+        (
+            name: "story_teller", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 0.8), ("tag:forest", 0.6)],
+            daylight: (0.05, 0.45), needs: (days: 1.0),
+            cast: [(species: "elder"), (species: "child", count: (1, 2), role: Follow), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 24.0, stay: (240.0, 360.0), mill: 3.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "tale", gives: [Point("tag:supernatural", 128.0), Effect("focused", 300.0)], once: Player),
+            ])],
+        ),
+        // Batch 6 (docs/wandering.md): asks, a party wanting one of several things, picked
+        // by its seed, so the same kind need not want the same twice.
+        // A hermit camps far off the path. Each asks for something different; bring it and
+        // the hermit tells of a wonder near and teaches a little Magic, once.
+        (
+            name: "hermit", weight: 0.4,
+            biomes: [("tag:forest", 1.0), ("tag:mountain", 1.0), ("tag:wetland", 0.6), ("tag:open", 0.3)],
+            daylight: (0.0, 1.0), needs: (days: 1.0, away: Some((80.0, 100000.0))),
+            cast: [(species: "elder")],
+            script: Camp(near: 24.0, stay: (480.0, 720.0), mill: 2.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "riddle", asks: [("feather", 3), ("bone", 2), ("flint", 2), ("egg", 2), ("mint", 2), ("nettle", 2)], gives: [Point("tag:wonder", 128.0), Xp("magic", 15.0)], once: Player),
+            ])],
+        ),
+        // A goose girl drives her ducks to water. Seed thrown to them earns feathers, once;
+        // to a player with the Hunter level that taming a duck takes (3), two coins buy a
+        // duckling.
+        (
+            name: "goose_girl", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:wetland", 1.0), ("tag:river", 1.0)],
+            daylight: (0.3, 0.85), needs: (days: 0.8),
+            cast: [(species: "child"), (species: "mallard", count: (3, 5), role: Herd), (species: "mallard", role: Herd, young: true)],
+            script: Drift(leg: (5.0, 10.0), pause: (8.0, 18.0), seconds: 420.0),
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "seed", wants: ("wheat_seeds", 4), gives: [Item("feather", (2, 3)), Xp("farming", 4.0)], once: Player),
+                (name: "duckling", needs: [Skill("hunter", 3)], wants: ("gold_coin", 2), gives: [Hand(2)], once: Party),
+            ])],
+        ),
+        // A prospector works the ore that shows at the surface. A pickaxe in a beginner's
+        // hand gets a lesson; at Mining 5 they say where more ore shows.
+        (
+            name: "prospector", weight: 0.6,
+            biomes: [("tag:mountain", 1.2), ("tag:open", 0.6), ("tag:forest", 0.5), ("base:steppe", 0.8)],
+            daylight: (0.25, 0.85), needs: (days: 1.0),
+            cast: [(species: "smith"), (species: "hound", count: (0, 1), role: Pet(0))],
+            script: Gather(reach: 24.0, work: (8.0, 14.0), visits: 4),
+            seek: ["tag:ore_sample"],
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "lesson", needs: [Holds("pickaxe"), Below("mining", 10)], gives: [Xp("mining", 10.0)], once: Player),
+                (name: "vein", needs: [Skill("mining", 5)], gives: [Point("tag:ore_sample", 128.0)], once: Player),
+            ])],
+        ),
+        // A travelling alchemist after one herb in particular (each a different one): two of
+        // it buy Alchemy and a clear head, once.
+        (
+            name: "travelling_alchemist", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:grassland", 0.8), ("tag:wetland", 0.6)],
+            daylight: (0.3, 0.9), needs: (days: 1.0, away: Some((40.0, 100000.0))),
+            cast: [(species: "elder"), (species: "hound", role: Pet(0))],
+            script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.7),
+            halt: (near: 6.0, seconds: (12.0, 22.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "herb", asks: [("lavender", 2), ("chamomile", 2), ("yarrow", 2), ("sage", 2), ("thyme", 2), ("sorrel", 2)], gives: [Xp("alchemy", 12.0), Effect("focused", 300.0)], once: Player),
+            ])],
+        ),
+        // A wedding party walks to the shrine. A flower given is a gift returned in kind.
+        (
+            name: "wedding", weight: 0.4,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.4)],
+            daylight: (0.4, 1.0), needs: (days: 1.5),
+            cast: [(species: "priest"), (species: "villager", count: (2, 2), role: Follow), (species: "villager", count: (1, 3), role: Rear), (species: "child", count: (0, 2), role: Follow)],
+            script: March(pass: (14.0, 26.0), length: 140.0, pace: 0.6),
+            halt: (near: 6.0, seconds: (10.0, 16.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "gift", wants: ("tag:flower", 1), gives: [Effect("refreshed", 600.0), Item("bread", (1, 1))], once: Player),
+            ])],
+        ),
+        // A funeral walks slowly to a grave and does not stop. A flower laid with them is a
+        // little Magic (prayer), once.
+        (
+            name: "funeral", weight: 0.3,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.2, 0.8), needs: (days: 2.0),
+            cast: [(species: "priest"), (species: "villager", count: (2, 4), role: Follow), (species: "elder", count: (0, 1), role: Rear)],
+            script: March(pass: (14.0, 26.0), length: 120.0, pace: 0.45),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "respects", wants: ("tag:flower", 1), gives: [Xp("magic", 8.0)], once: Player),
+            ])],
+        ),
+    ],
+)

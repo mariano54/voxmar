@@ -31,7 +31,7 @@ impl Plugin for InteractPlugin {
             .init_resource::<crate::fight::Fighting>()
             .add_systems(
                 Update,
-                (select_slot.after(player::zoom), find_target, crate::creatures::aim, pick_block, break_and_place, crate::fight::guard, draw_target)
+                (select_slot.after(player::zoom), find_target, crate::creatures::aim, pick_block, break_and_place, crate::fight::guard, crate::fight::quick_prayers, draw_target)
                     .chain()
                     .in_set(InteractSystems)
                     .run_if(in_state(crate::menu::Screen::InGame)),

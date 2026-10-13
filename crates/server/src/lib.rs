@@ -22,11 +22,13 @@ mod inspect;
 mod fluids;
 mod items;
 mod player;
+mod prayers;
 mod process;
 mod rules;
 mod treasure;
 pub mod save;
 mod villagers;
+mod wandering;
 mod weather;
 mod wear;
 
@@ -97,6 +99,11 @@ pub struct ServerConfig {
     /// the clock. What the server judges by arrival stamps (a break, a blow) keeps the
     /// clock's pace, since players' messages carry theirs.
     pub tick_speedup: u32,
+    /// Whether wandering events start by chance near players (`try_wandering`). Off only
+    /// in tests, whose quick ticks would otherwise bring a party beside the player some
+    /// game days in, when a test slowed by load is still running; `/wander start` and
+    /// the wandering tests start theirs by hand either way.
+    pub wandering_starts: bool,
 }
 
 /// How much any one connection may ask of the server: a server operator's numbers, read
@@ -210,6 +217,7 @@ impl Default for ServerConfig {
             lag: Lag::default(),
             cut_saves: false,
             tick_speedup: 1,
+            wandering_starts: true,
         }
     }
 }
@@ -498,6 +506,8 @@ pub(crate) struct Server {
     creatures: creatures::Creatures,
     /// The people of settlements near players.
     villagers: villagers::Villagers,
+    /// Parties that come by on their own errands (`wandering`).
+    wandering: wandering::Wandering,
     /// A new player's health and kit, and what falls, lava, fires and water do.
     survival: Arc<rules::SurvivalRules>,
     /// Swings, guards, dodges and creatures' wind-ups (`fight`).
@@ -615,6 +625,7 @@ impl Server {
             heard: None,
             creatures: creatures::Creatures::default(),
             villagers: villagers::Villagers::restore(state.villagers),
+            wandering: Default::default(),
             survival,
             fights: fight::Fights::default(),
             processes,
@@ -639,6 +650,7 @@ impl Server {
         };
         server.show_grown_crops(spawn_column);
         server.restore_creatures(state.creatures);
+        server.restore_companions(state.companions);
         server.restore_machines(state.machines);
         server
     }
@@ -808,6 +820,7 @@ impl Server {
         self.tick_creatures();
         self.tick_fights();
         self.ping_players();
+        self.tick_prayers();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
@@ -889,6 +902,9 @@ impl Server {
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
             failed("creatures", e);
+        }
+        if let Err(e) = save.write_companions(&self.saved_companions()) {
+            failed("settled companions", e);
         }
         if let Err(e) = save.write_villagers(&self.villagers.saved()) {
             failed("who of the villagers died", e);

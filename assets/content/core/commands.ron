@@ -129,8 +129,8 @@
         (name: "night", usage: "", help: "Sets the time to night: /time set night.", permission: Admin, run: Alias(["time set night"])),
         (
             name: "summon",
-            usage: "<creature> [count] [x y z]",
-            help: "Puts creatures of a species (rabbit, wolf, moonhare…) on the ground in front of you, or at a block (~ is where you are), one unless you say, up to 16.",
+            usage: "<creature> [count] [x y z] [held]",
+            help: "Puts creatures of a species (rabbit, wolf, moonhare…) on the ground in front of you, or at a block (~ is where you are), one unless you say, up to 16; held, they stand still for a minute.",
             permission: Admin,
             run: Summon,
         ),
@@ -139,6 +139,13 @@
             usage: "[tame | ready | hasten | hold | kill | remove] [creature] | populate | disperse",
             help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, kill them, or take away the ones they keep; only of one species, if they name it. Populate tries natural spawning nearby and holds arrivals for a minute; disperse removes nearby wild creatures.",
             run: Creatures,
+        ),
+        (
+            name: "wander",
+            usage: "[list | start <event> | end]",
+            help: "Tells which wandering parties are about (the people, animals and monsters that come by on their own errands), lists the kinds there are, starts one 40 blocks ahead of you where you look, or sends every party away.",
+            permission: Admin,
+            run: Wander,
         ),
         (
             name: "skill",

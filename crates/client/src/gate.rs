@@ -302,6 +302,11 @@ enum Step {
     Cook,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
+    /// `/wander start tinker_camp` brings a travelling party: its trader and hound reach the
+    /// client and draw; a right click on the trader gets a greeting in chat; four hides held
+    /// out are swapped for loaves (the party's trade, taken from the hand); `/wander end`
+    /// sends them away.
+    Party,
     /// `/locate ore` finds a sample of ore on the ground, and the server's world there has
     /// it, with its vein's ore below it.
     Ore,
@@ -344,6 +349,10 @@ enum Step {
     Guides,
     /// The journal key opens the journal, whose Plants page lists what there is to find.
     Journal,
+    /// C opens the character screen and its Prayers button the prayer book, which has a row for
+    /// every prayer; a click on Bark Skin turns it on as the server says, the strip over the
+    /// hotbar names it once the screen is shut, and its quick key turns it off again.
+    Prayers,
     /// A sleeping bag with a torch beside it, slept in, is a camp: the Camp chip comes on, the
     /// chat says so with what to add next, and the sleep is a rest.
     Home,
@@ -496,6 +505,8 @@ struct Gate {
     /// or none was, and the nearest the player came to it.
     tame_aim: [u32; 3],
     tame_nearest: f32,
+    /// The newest creature id when the party step began: what is newer is the party's.
+    party_after: u32,
     breaks: Breaks,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
@@ -619,6 +630,7 @@ impl Gate {
             food_moved: false,
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
+            party_after: 0,
             breaks: Breaks::default(),
             mining_before: None,
             struck_heights: (f32::MAX, f32::MIN),
@@ -996,6 +1008,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Torches crafted for a pinned quest, waited on in the server's seconds, and a quest
         // done left to drop off.
         Step::Quests => 60.0,
+        // A party walks in, is talked to, traded with and sent away, each in server seconds.
+        Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 45.0,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
@@ -1244,6 +1258,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
+        Step::Party => party(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Tarns => tarns(world, gate, now, in_phase),
         Step::Settlements => settlements(world, gate, now, in_phase),
@@ -1258,6 +1273,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Look => look_name(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Journal => journal(world, gate, now, in_phase),
+        Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
@@ -4098,6 +4114,111 @@ fn journal(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let found = world.resource::<LocalPlayer>().journal.entries().count();
             gate.check("journal", if open { Ok(format!("J opened the journal ({found} things found so far, {cells} buttons drawn)")) } else { Err("J did not open the journal".into()) });
             world.resource_mut::<UiState>().journal_open = false;
+            gate.next(Step::Prayers, now);
+        }
+    }
+}
+
+/// The prayer book, played: C opens the character screen and its Prayers button the book, a
+/// row for every prayer; a click on Bark Skin turns it on as the server says (waited for by
+/// its clock); with the screen shut the strip over the hotbar names it; and the first quick
+/// key turns it off again.
+fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::prayers::{PrayerBook, book_rows, open_button, row_of, strip_names};
+    let (character, quick) = {
+        let settings = world.resource::<crate::settings::Settings>();
+        (settings.character_key.0, settings.prayer_keys[0].0)
+    };
+    let Some(bark) = world.resource::<Launch>().content.prayers.id("base:bark_skin") else {
+        gate.check("prayers", Err("the content lacks base:bark_skin".into()));
+        gate.next(Step::Home, now);
+        return;
+    };
+    let on = world.resource::<crate::fight::Fighting>().prayers.on.contains(&bark);
+    let quit = |world: &mut World, gate: &mut Gate, what: &str, why: String| {
+        gate.check(what, Err(why));
+        key(world, character, false);
+        key(world, quick, false);
+        world.resource_mut::<UiState>().character_open = false;
+        world.resource_mut::<PrayerBook>().0 = false;
+        gate.next(Step::Home, now);
+    };
+    match gate.phase {
+        0 => {
+            // The server tells the points once a player is in; the book has nothing to show before.
+            if world.resource::<crate::fight::Fighting>().prayers.most == 0 {
+                if gate.server_in_phase() > UNANSWERED {
+                    quit(world, gate, "prayers: points", "the server never told the prayer points".into());
+                }
+                return;
+            }
+            key(world, character, true);
+            gate.advance(now);
+        }
+        1 => {
+            key(world, character, false);
+            let button = open_button(world);
+            if !world.resource::<UiState>().character_open || button.is_none() {
+                if in_phase < 2.0 {
+                    return;
+                }
+                quit(world, gate, "prayers: screen", "the character key did not open the screen with its Prayers button".into());
+                return;
+            }
+            world.resource_mut::<UiClicks>().next = button.map(|button| (button, MouseButton::Left));
+            gate.advance(now);
+        }
+        2 => {
+            let (rows, wanted) = (book_rows(world), world.resource::<Launch>().content.prayers.len());
+            let open = world.resource::<PrayerBook>().0;
+            if !open || rows != wanted {
+                if in_phase < 2.0 {
+                    return;
+                }
+                quit(world, gate, "prayers: book", format!("the Prayers button opened the book {open}, with {rows} rows of {wanted} prayers"));
+                return;
+            }
+            gate.check("prayers: book", Ok(format!("the Prayers button opened the book, a row for each of {wanted} prayers")));
+            world.resource_mut::<UiClicks>().next = row_of(world, bark).map(|row| (row, MouseButton::Left));
+            gate.advance(now);
+        }
+        3 => {
+            if !on {
+                if gate.server_in_phase() < UNANSWERED {
+                    return;
+                }
+                quit(world, gate, "prayers: click", "a click on Bark Skin's row did not turn it on".into());
+                return;
+            }
+            gate.check("prayers: click", Ok("a click on Bark Skin's row turned it on, as the server says".into()));
+            world.resource_mut::<UiState>().character_open = false;
+            gate.advance(now);
+        }
+        4 => {
+            let name = world.resource::<Locale>().prayer("base:bark_skin");
+            let shown = strip_names(world);
+            if !shown.as_ref().is_some_and(|names| names.contains(&name)) {
+                if in_phase < 2.0 {
+                    return;
+                }
+                quit(world, gate, "prayers: strip", format!("the strip over the hotbar reads {shown:?}, not {name}"));
+                return;
+            }
+            gate.check("prayers: strip", Ok(format!("the strip over the hotbar names {name}")));
+            key(world, quick, true);
+            gate.advance(now);
+        }
+        _ => {
+            key(world, quick, false);
+            if on {
+                if gate.server_in_phase() < UNANSWERED {
+                    return;
+                }
+                let locked = world.resource::<UiState>().cursor_locked;
+                quit(world, gate, "prayers: quick key", format!("the quick key did not turn Bark Skin off (cursor locked {locked})"));
+                return;
+            }
+            gate.check("prayers: quick key", Ok("the quick key turned Bark Skin off again".into()));
             gate.next(Step::Home, now);
         }
     }
@@ -4606,6 +4727,9 @@ enum View {
     Debug,
     Inventory,
     Character,
+    /// The prayer book over the character screen, and the strip over the hotbar naming as
+    /// many prayers as can be on together.
+    Prayers,
     /// The character screen with one skill's guide open.
     Guide(usize),
     /// The journal on one page.
@@ -4648,7 +4772,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Recipes(3), View::Character]
+        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Recipes(3), View::Character, View::Prayers]
             .into_iter()
             .chain((0..skills).map(View::Guide))
             .chain([View::Quests, View::FirstNight])
@@ -4704,6 +4828,35 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     gate.advance(now);
 }
 
+/// The player's own prayers while [`fit_prayers`] shows others, and those it shows.
+#[derive(Resource)]
+struct KeptPrayers(crate::fight::Prayers, crate::fight::Prayers);
+
+/// With `full`, the strip over the hotbar shows as many prayers as can be on together (each
+/// turned on in the book's order, as the server turns them on) and its meter half full;
+/// without, the player's own come back, unless the server has told new ones since.
+fn fit_prayers(world: &mut World, full: bool) {
+    if !full {
+        if let Some(KeptPrayers(kept, shown)) = world.remove_resource::<KeptPrayers>() {
+            let mut fighting = world.resource_mut::<crate::fight::Fighting>();
+            if fighting.prayers == shown {
+                fighting.prayers = kept;
+            }
+        }
+        return;
+    }
+    if world.contains_resource::<KeptPrayers>() {
+        return;
+    }
+    let book = &world.resource::<Launch>().content.prayers;
+    let on = book.all().fold(Vec::new(), |on, (id, _)| book.turn_on(&on, id));
+    let kept = world.resource::<crate::fight::Fighting>().prayers.clone();
+    let most = kept.most.max(10);
+    let shown = crate::fight::Prayers { points: most / 2, most, on };
+    world.resource_mut::<crate::fight::Fighting>().prayers = shown.clone();
+    world.insert_resource(KeptPrayers(kept, shown));
+}
+
 /// Opens one view of [`fit`]'s tour, or closes every screen.
 fn show_view(world: &mut World, view: Option<View>, now: f32) {
     let screen = match view {
@@ -4728,7 +4881,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
     (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open, ui.journal_open, ui.quests_open) = (false, false, false, false, false, false);
     match view {
         Some(View::Inventory) => ui.inventory_open = true,
-        Some(View::Character | View::Guide(_)) => ui.character_open = true,
+        Some(View::Character | View::Prayers | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
         Some(View::Journal(_)) => ui.journal_open = true,
         Some(View::Quests | View::FirstNight) => ui.quests_open = true,
@@ -4739,6 +4892,11 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
     if !matches!(view, Some(View::Recipes(_))) {
         ui.recipes_open = false;
     }
+    let book = matches!(view, Some(View::Prayers));
+    if world.resource::<crate::hud::prayers::PrayerBook>().0 != book {
+        world.resource_mut::<crate::hud::prayers::PrayerBook>().0 = book;
+    }
+    fit_prayers(world, book);
     if let Some(View::Quests) = view {
         // A quest still waiting on another, so its page reads so, beside those done and open.
         use crate::hud::quests::{QuestView, Standing, standing};
@@ -7036,7 +7194,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 _ if gate.server_in_phase() > 10.0 => {
                     gate.check("tame", Err("the junglefowl or the wheat never came".into()));
-                    gate.next(Step::Ore, now);
+                    gate.next(Step::Party, now);
                 }
                 _ => {}
             }
@@ -7044,7 +7202,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         2 => {
             let Some(view) = hen(world) else {
                 gate.check("tame", Err("the junglefowl went".into()));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
                 return;
             };
             let me = world.resource::<crate::creatures::Creatures>().me;
@@ -7062,7 +7220,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     "25 server seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left; the crosshair was on it {on} frames, on another creature {other}, on none {none}; nearest {:.1} blocks",
                     gate.tame_nearest
                 )));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             } else {
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
                 key(world, KeyCode::KeyW, far);
@@ -7091,7 +7249,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if in_phase > 3.0 {
                 let detail = format!("aimed at the tamed junglefowl, it read {:?} {:?} with tags {tags:?}", readout.name, readout.level);
                 gate.check("readout: kept", Err(detail));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             }
         }
         4 => {
@@ -7110,7 +7268,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if gate.server_in_phase() > 3.0 {
                 mouse(world, MouseButton::Right, false);
                 gate.check("condition", Err(format!("3 server seconds of looking closely at our junglefowl read none of {lines:?}")));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             } else if let Some(view) = hen(world) {
                 // A hotbar slot holding nothing it eats: an empty one first.
                 let free = {
@@ -7135,7 +7293,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Err("the junglefowl went before it was let go".into()));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
                 return;
             };
             if !view.kept {
@@ -7143,13 +7301,13 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Ok(format!("the junglefowl went wild again after {in_phase:.1}s")));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             } else if gate.server_in_phase() > 8.0 {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Err("8 server seconds of Shift and right clicks on our junglefowl did not let it go".into()));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             } else {
                 // It wanders (up to 7 blocks from home) and reach is 5: walk toward it while far.
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
@@ -7158,6 +7316,148 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::ShiftLeft, true);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
                 mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A tinker's camp started on the pad's far side: its trader and hound must reach the client
+/// and draw, a right click on the trader gets a greeting, four hides held out are swapped
+/// for loaves, and `/wander end` sends the party away.
+fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let content = world.resource::<Launch>().content.clone();
+    let (Some(trader), Some(hound)) = (content.creatures.find("base:trader"), content.creatures.find("base:hound")) else {
+        gate.check("party", Err("no `base:trader` or `base:hound` in the content".into()));
+        gate.next(Step::Ore, now);
+        return;
+    };
+    let after = gate.party_after;
+    let speaker = |world: &World| {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        creatures.views().filter(|v| v.species == trader && v.id > after).max_by_key(|v| v.id).copied()
+    };
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    // Back on the pad, whatever went wrong.
+    let leave = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Right, false);
+        let net = world.resource::<Net>();
+        net.command("wander end");
+        net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+        gate.next(Step::Ore, now);
+    };
+    match gate.phase {
+        0 => {
+            gate.party_after = world.resource::<crate::creatures::Creatures>().views().map(|v| v.id).max().unwrap_or(0);
+            gate.count_before = item_count(world, "base:bread");
+            let net = world.resource::<Net>();
+            net.command("time set noon");
+            net.command("wander end");
+            net.command("wander start tinker_camp");
+            net.command("give hide 4");
+            gate.advance(now);
+        }
+        // The party reaches the client, and is drawn.
+        1 => {
+            let hounds = world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == hound && v.id > after).count();
+            if let Some(view) = speaker(world)
+                && hounds > 0
+            {
+                let drawn = world.resource::<crate::creatures::Creatures>().alive();
+                gate.check("party: arrives", Ok(format!("a trader and {hounds} hound reached the client after {:.1}s ({drawn} creatures drawn)", gate.server_in_phase())));
+                // Beside the trader, facing it: tp puts the player on the spot, a few blocks off.
+                let at = view.position + Vec3::new(0.0, 0.0, 3.0);
+                world.resource::<Net>().command(&format!("tp {} {} {}", at.x, at.y, at.z));
+                gate.advance(now);
+            } else if gate.server_in_phase() > 20.0 {
+                let trader_seen = speaker(world).is_some();
+                gate.check("party: arrives", Err(format!("/wander start tinker_camp gave the client no trader and hound in 20 server seconds (trader seen {trader_seen}, hounds {hounds})")));
+                leave(world, gate);
+            }
+        }
+        // A right click on the trader with nothing to trade: a greeting in chat.
+        2 => {
+            let Some(view) = speaker(world) else {
+                gate.check("party: greeting", Err("the trader went before it was spoken to".into()));
+                leave(world, gate);
+                return;
+            };
+            let greetings: Vec<String> = {
+                let locale = world.resource::<crate::lang::Locale>();
+                ["wander.base.tinker_camp.greet", "wander.base.tinker_camp.greet_2"].map(|key| locale.get(key).to_owned()).into()
+            };
+            let said = world.resource::<crate::hud::console::Console>().since(gate.phase_since).find(|line| greetings.iter().any(|g| line.contains(g.as_str()))).map(str::to_owned);
+            if let Some(line) = said {
+                mouse(world, MouseButton::Right, false);
+                key(world, KeyCode::KeyW, false);
+                gate.check("party: greeting", Ok(format!("a right click on the trader read \"{line}\" after {:.1}s", gate.server_in_phase())));
+                gate.advance(now);
+            } else if gate.server_in_phase() > 15.0 {
+                gate.check("party: greeting", Err(format!("15 server seconds of right clicks on the trader read none of {greetings:?}")));
+                leave(world, gate);
+            } else {
+                // A slot holding no hides (they would be offered as a swap): an empty one first.
+                let hide = content.blocks.id("base:hide");
+                let free = {
+                    let player = world.resource::<LocalPlayer>();
+                    let slots = 0..voxmar_engine::inventory::HOTBAR_SLOTS;
+                    slots.clone().find(|&s| player.inventory.get(s).is_none()).or_else(|| slots.into_iter().find(|&s| player.inventory.get(s).is_some_and(|stack| Some(stack.item) != hide)))
+                };
+                if let Some(slot) = free {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                }
+                let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.5;
+                key(world, KeyCode::KeyW, far);
+                aim_at(world, view.position + Vec3::Y * 0.9);
+                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
+        // The same click with four hides in hand: the party's trade, loaves for them.
+        3 => {
+            let Some(view) = speaker(world) else {
+                gate.check("party: trade", Err("the trader went before it was traded with".into()));
+                leave(world, gate);
+                return;
+            };
+            let bread = item_count(world, "base:bread");
+            let swap = world.resource::<crate::lang::Locale>().get("wander.base.tinker_camp.swap_hide").to_owned();
+            let said = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|line| line.contains(swap.as_str()));
+            if said && bread > gate.count_before {
+                mouse(world, MouseButton::Right, false);
+                key(world, KeyCode::KeyW, false);
+                gate.check("party: trade", Ok(format!("four hides held out for the trader came back as {} loaves after {:.1}s", bread - gate.count_before, gate.server_in_phase())));
+                gate.advance(now);
+            } else if gate.server_in_phase() > 15.0 {
+                gate.check("party: trade", Err(format!("15 server seconds with four hides in hand got no swap from the trader: the line spoken {said}, loaves {} (had {}), hides held {}", bread, gate.count_before, item_count(world, "base:hide"))));
+                leave(world, gate);
+            } else if let Some(hide) = content.blocks.id("base:hide")
+                && let Some(slot) = in_hotbar(world, &mut gate.food_moved, hide)
+            {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.5;
+                key(world, KeyCode::KeyW, far);
+                aim_at(world, view.position + Vec3::Y * 0.9);
+                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
+        // Sent away: the party goes from the client.
+        4 => {
+            if in_phase < 0.1 {
+                world.resource::<Net>().command("wander end");
+                return;
+            }
+            let (party, hounds) = {
+                let creatures = world.resource::<crate::creatures::Creatures>();
+                (creatures.views().filter(|v| v.species == trader && v.id > after).count(), creatures.views().filter(|v| v.species == hound && v.id > after).count())
+            };
+            if party + hounds == 0 {
+                gate.check("party: ends", Ok(format!("/wander end took the party from the client after {:.1}s", gate.server_in_phase())));
+                leave(world, gate);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("party: ends", Err(format!("10 server seconds after /wander end, {party} traders and {hounds} hounds of the party were still drawn")));
+                leave(world, gate);
             }
         }
         _ => {}

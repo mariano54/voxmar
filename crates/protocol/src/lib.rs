@@ -30,7 +30,8 @@ pub use voxmar_engine::weather::Weather;
 // 33: Ping and Pong, the round trip a fight's lag allowance reads.
 // 34: ClientMessage::ClaimQuest (a finished quest's rewards are claimed in the quest screen), and
 // QuestState::claimed.
-pub const PROTOCOL_VERSION: u32 = 34;
+// 35: Pray and Prayers, the prayer book.
+pub const PROTOCOL_VERSION: u32 = 35;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -84,6 +85,8 @@ pub enum ClientMessage {
     Guard { up: bool },
     /// The answer to `ServerMessage::Ping` number `id`, sent as soon as it is read.
     Pong { id: u32 },
+    /// The player turned a prayer on or off (`voxmar_engine::prayer`).
+    Pray { prayer: voxmar_engine::prayer::PrayerId, on: bool },
 }
 
 /// The client's predicted movement state, sent every tick. The server checks it against
@@ -174,6 +177,9 @@ pub enum ServerMessage {
     /// Asks for a `ClientMessage::Pong` straight back: the round trip it takes is how late
     /// the player sees what happens and answers it (fights judge guards and dodges by it).
     Ping { id: u32 },
+    /// The player's prayer points (whole, of `most`) and the prayers they have on, sent
+    /// when either changes.
+    Prayers { points: u16, most: u16, on: Vec<voxmar_engine::prayer::PrayerId> },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

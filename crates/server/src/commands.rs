@@ -44,7 +44,7 @@ const MAX_FILL: i64 = 32_768;
 const MAX_FILL_SIDE: i32 = 128;
 
 /// What a command says back: words for the console, or why it could not run.
-type Reply = Result<Words, Words>;
+pub(crate) type Reply = Result<Words, Words>;
 
 /// Who runs a command: a player, or the dedicated server's own console, which is an admin
 /// and stands at the world's spawn.
@@ -197,6 +197,7 @@ impl Server {
             },
             Run::Skill => self.skill_command(id, args),
             Run::Machine => self.machine_command(id, args),
+            Run::Wander => self.wander_command(id, args),
             Run::Home => self.home_command(id),
         };
         let (Ok(text) | Err(text)) = &reply;
@@ -483,6 +484,12 @@ impl Server {
     /// `/summon <creature> [count]`: creatures on the ground a few blocks in front of the
     /// player.
     fn summon(&mut self, id: Source, args: &[String]) -> Reply {
+        // `held` last stands them still for a minute from the tick they arrive, as
+        // `/creatures hold` would: a hold sent after would find them already moved.
+        let (args, held) = match args {
+            [rest @ .., last] if last == "held" => (rest, true),
+            _ => (args, false),
+        };
         let (name, count, at) = match args {
             [name] => (name, "1", None),
             [name, count] => (name, count.as_str(), None),
@@ -520,7 +527,10 @@ impl Server {
             // just after joining): load the column first, as /drop does.
             self.load_area(cell, cell);
             let Some(spot) = self.standing_spot(cell.x, cell.z, cell.y) else { continue };
-            if self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), self.tick ^ i as u64).is_some() {
+            if let Some(id) = self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), self.tick ^ i as u64) {
+                if held && let Some(creature) = self.creatures.live.get_mut(&id) {
+                    creature.held_until = self.tick + 60 * TICKS_PER_SECOND as u64;
+                }
                 placed += 1;
             }
         }
@@ -1145,7 +1155,7 @@ fn compass_point(direction: Vec2) -> &'static str {
 }
 
 /// The compass point nearest a direction, in words.
-fn compass(direction: Vec2) -> Words {
+pub(crate) fn compass(direction: Vec2) -> Words {
     Words::key(&format!("compass.{}", compass_point(direction)))
 }
 

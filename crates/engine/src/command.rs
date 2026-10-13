@@ -76,6 +76,8 @@ pub enum Run {
     Skill,
     /// Tells how the machine at a block is doing.
     Machine,
+    /// Lists, starts and ends wandering parties (`wandering.ron`).
+    Wander,
     /// Tells where the player's home is, how far its furnishing has come and what the next
     /// step lacks.
     Home,

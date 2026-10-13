@@ -90,6 +90,12 @@ pub struct Live {
     /// Once kept and let go (`release`): taming it again pays no Hunter xp and counts for
     /// no quest. Only wild creatures carry it, and those are never saved.
     pub was_kept: bool,
+    /// Came with a wandering party (`wandering`), and so is never one of the settlements'
+    /// people, in the party or let go from it.
+    pub wanderer: bool,
+    /// A wanderer led to a player's home and left to live there (`wandering`): saved with
+    /// the world and never despawned for distance.
+    pub companion: bool,
     /// Seconds without getting nearer its goal, to notice being stuck.
     pub stuck: f32,
     /// The player who keeps it, by name (tamed or bred), and the id they have now.
@@ -262,7 +268,7 @@ impl Server {
         self.content.skills.id(name)
     }
 
-    fn level(&self, player: PlayerId, skill: Option<SkillId>) -> u8 {
+    pub(crate) fn level(&self, player: PlayerId, skill: Option<SkillId>) -> u8 {
         let Some(skill) = skill else { return 1 };
         self.players.get(&player).map_or(1, |p| self.content.skills.level(p.skills.xp(skill)))
     }
@@ -274,7 +280,7 @@ impl Server {
     }
 
     /// Daylight now, 0..=1.
-    fn daylight(&self) -> f32 {
+    pub(crate) fn daylight(&self) -> f32 {
         creature::daylight(self.day as u64)
     }
 
@@ -295,6 +301,7 @@ impl Server {
             self.despawn_far();
         }
         self.tick_villagers();
+        self.tick_wandering();
         self.think_and_move();
         self.tick_husbandry();
         self.drop_fallen_loot();
@@ -372,7 +379,7 @@ impl Server {
                     food,
                     mate,
                     kept: creature.owner.is_some(),
-                    errand: self.villagers.errand(id, handoff),
+                    errand: self.villagers.errand(id, handoff).or_else(|| self.wandering.errand(id)),
                     dt: every as f32 * dt,
                     seed: mix(creature.seed, self.tick),
                 };
@@ -590,8 +597,14 @@ impl Server {
             return Some(0);
         }
         let defence_skill = self.skill("core:defence");
-        let defence = self.level(player, defence_skill);
         let [hit, amount] = combat_roll(self.tick, species.0 as u32, player as u64 ^ 0xa7);
+        // A Defence boost (a prayer) raises the level the blow is rolled against.
+        let book = &self.content.prayers;
+        let boost = 1.0 + book.boost(&target.praying.on, voxmar_engine::prayer::Stat::Defence);
+        let defence = voxmar_engine::combat::by_chance(self.level(player, defence_skill) as f32 * boost, unit_from(mix(hit.to_bits() as u64, 0xdef))).min(u8::MAX as u16) as u8;
+        // A ward up against the blow's style stops its share; with a guard, the larger stop.
+        let share = if book.warded(&target.praying.on, attack.style) { share.min(1.0 - book.rules.ward) } else { share };
+        let last_breath = book.last_breath(&target.praying.on);
         let (low, high) = attack.damage;
         // Worn armour adds to the defence roll, by the wearer's own Defence level.
         let armour = self.content.combat.armour_of(target.held(), &target.inventory.worn, attack.style, |skill| self.content.skills.level(target.skills.xp(skill)));
@@ -605,6 +618,16 @@ impl Server {
         let target = self.players.get_mut(&player).expect("checked above");
         if target.health.damage(damage) {
             target.connection.send(ServerMessage::Died);
+        }
+        // Last Breath: left under its share of health, a share comes back, and every prayer
+        // point goes.
+        if let Some((below, heal)) = last_breath.filter(|_| target.health.alive()) {
+            let most = target.health.max as f32;
+            if (target.health.current as f32) < below * most {
+                target.health.heal(((heal * most).round() as u8).max(1));
+                target.praying.points = 0.0;
+                target.praying.on.clear();
+            }
         }
         target.changed(traits::HEALTH);
         Some(damage as u16)
@@ -659,13 +682,19 @@ impl Server {
         let calm = self.villager_struck(id, player);
         let creature = self.creatures.live.get(&id)?;
         let species = self.content.creatures.get(creature.species);
-        let attack = self.level(player, weapon.skill);
+        // Accuracy and Strength boosts (prayers) raise the level a hit is rolled with and
+        // the max hit.
+        let on = self.players.get(&player).map_or(&[][..], |p| &p.praying.on[..]);
+        let book = &self.content.prayers;
+        let (accurate, strong) = (1.0 + book.boost(on, voxmar_engine::prayer::Stat::Accuracy), 1.0 + book.boost(on, voxmar_engine::prayer::Stat::Strength));
+        let level = self.level(player, weapon.skill);
         let sunder = self.fights.sunder(id);
         let defence = voxmar_engine::combat::defence_against(species.def.defence, species.def.weak, weapon.style);
         let [hit, amount] = combat_roll(self.tick, id, player as u64 ^ 0x5717);
         // Shares of a level or a max hit round by chance, so a small one still counts.
         let defence = voxmar_engine::combat::by_chance(defence as f32 * (1.0 - sunder), unit_from(mix(hit.to_bits() as u64, 0x5d)))
             .min(u8::MAX as u16) as u8;
+        let attack = voxmar_engine::combat::by_chance(level as f32 * accurate, unit_from(mix(hit.to_bits() as u64, 0xacc))).min(u8::MAX as u16) as u8;
         if !stroke.certain && hit >= voxmar_engine::combat::hit_chance_with(attack, weapon.accuracy, defence, 0, stroke.accuracy) {
             let creature = self.creatures.live.get_mut(&id).expect("checked above");
             if !calm {
@@ -674,7 +703,8 @@ impl Server {
             self.struck(player, id, 0, false, stroke.blow);
             return Some(0);
         }
-        let max_hit = stroke.max_hit(weapon.max_hit(attack), unit_from(mix(amount.to_bits() as u64, 0x3a7)));
+        let max_hit = voxmar_engine::combat::by_chance(weapon.max_hit(level) as f32 * strong, unit_from(mix(amount.to_bits() as u64, 0x57e)));
+        let max_hit = stroke.max_hit(max_hit, unit_from(mix(amount.to_bits() as u64, 0x3a7)));
         let full = (1 + (amount * max_hit as f32) as u16).min(max_hit);
         // A blow struck sooner than the buffer lands lighter (`combat`).
         let damage = voxmar_engine::combat::scaled(full, stroke.strength, unit_from(mix(amount.to_bits() as u64, 0x5e1f)));
@@ -714,6 +744,7 @@ impl Server {
             target.changed(traits::SKILLS);
         }
         let killed = self.creatures.live[&id].health == 0;
+        self.wandering_hurt(id, player);
         self.struck(player, id, damage, killed, blow);
         if killed {
             self.creature_dies(id);
@@ -727,6 +758,7 @@ impl Server {
         self.creatures.gone.push(CreatureGone { id, died: true });
         // One of a settlement's people: noted dead now, so no save misses it.
         self.villager_died(id);
+        self.wandering_died(id);
         let species = self.content.creatures.get(creature.species);
         let killer = creature.hurt_by.and_then(|p| self.players.get(&p));
         let tool: Vec<String> = killer.and_then(|p| p.held()).map_or_else(Vec::new, |item| self.content.blocks.def(item).tags.clone());
@@ -796,15 +828,25 @@ impl Server {
     }
 
     fn spawn_seeded_unseen(&mut self, species: CreatureId, at: Vec3, seed: u64, angle: f32) -> Option<u32> {
-        let people = self.creatures.live.values().filter(|c| self.content.creatures.get(c.species).def.kind == Kind::Villager).count();
+        // Settlements' people and the land's animals each have a budget; the people and
+        // animals of wandering parties (`wandering`) have their own, so they use up
+        // neither.
+        let people = self.creatures.live.keys().filter(|id| self.content.creatures.get(self.creatures.live[*id].species).def.kind == Kind::Villager);
+        let (all, settled) = people.fold((0, 0), |(all, settled), id| (all + 1, settled + usize::from(!self.creatures.live[id].wanderer)));
         let full = if self.content.creatures.get(species).def.kind == Kind::Villager {
-            people >= self.overworld.settlement_people().live.most
+            settled >= self.overworld.settlement_people().live.most
         } else {
-            self.creatures.live.len() - people >= self.content.creatures.limits().most
+            self.creatures.live.len() - all >= self.content.creatures.limits().most
         };
         if full {
             return None;
         }
+        self.place_creature(species, at, seed, angle)
+    }
+
+    /// Puts a creature of `species` at `at` whose looks and mind come from `seed`, if its
+    /// body is not seen appearing; the caller has judged whether the world has room.
+    pub(crate) fn place_creature(&mut self, species: CreatureId, at: Vec3, seed: u64, angle: f32) -> Option<u32> {
         let id = self.creatures.next;
         let genome = self.wild_genome(species, at, seed);
         let def = &self.content.creatures.get(species).def;
@@ -836,6 +878,8 @@ impl Server {
             hurt_by: None,
             fought: None,
             was_kept: false,
+            wanderer: false,
+            companion: false,
             stuck: 0.0,
             owner: None,
             owner_id: None,
@@ -878,6 +922,14 @@ impl Server {
         genes::Population::of(defs, self.meta.seed, key, region, site.temperature, site.aether).individual(defs, seed)
     }
 
+    /// Most monsters near a player now: a new world's first night brings only a few, until
+    /// its first dawn: the world begins at sunrise, so that is the first day, and any
+    /// darkness that runs on past its end.
+    pub(crate) fn monsters_cap(&self) -> usize {
+        let limits = self.content.creatures.limits();
+        if first_night(self.day, self.daylight()) { limits.monsters_near.min(limits.first_night_monsters) } else { limits.monsters_near }
+    }
+
     /// Tries a spot around a player, and puts there a group of whatever suits it best,
     /// if anything does and the player has room for more around them.
     pub(crate) fn spawn_near(&mut self, player: PlayerId, salt: u64) {
@@ -897,7 +949,7 @@ impl Server {
         let (animals, monsters, birds) = (nearby(Budget::Animal), nearby(Budget::Monster), nearby(Budget::Bird));
         // A new world's first night brings only a few, until its first dawn: the world begins
         // at sunrise, so that is the first day, and any darkness that runs on past its end.
-        let monsters_cap = if first_night(self.day, self.daylight()) { limits.monsters_near.min(limits.first_night_monsters) } else { limits.monsters_near };
+        let monsters_cap = self.monsters_cap();
         let room_of = |of: Budget| match of {
             Budget::Animal => (animals, limits.animals_near),
             Budget::Bird => (birds, limits.birds_near),
@@ -928,7 +980,7 @@ impl Server {
         for (id, species) in self.content.creatures.iter() {
             let def = &species.def;
             // People come with their settlements (`villagers`), never from the land.
-            if def.kind == Kind::Villager {
+            if def.kind == Kind::Villager || def.habitat.party_only {
                 continue;
             }
             let monster = def.kind == Kind::Monster;
@@ -1018,7 +1070,7 @@ impl Server {
 
     /// Every joined player's nearby budget applies, including where two players' areas
     /// overlap. Count accepted members again so a group cannot cross either cap.
-    fn nearby_room(&self, at: Vec3, of: Budget, cap: usize) -> bool {
+    pub(crate) fn nearby_room(&self, at: Vec3, of: Budget, cap: usize) -> bool {
         self.players.values().filter(|p| p.joined && p.position.distance(at) < NEAR).all(|player| {
             self.creatures
                 .live
@@ -1113,13 +1165,13 @@ impl Server {
     }
 
     /// Wild creatures far from every player, or in columns that went, go.
-    fn despawn_far(&mut self) {
+    pub(crate) fn despawn_far(&mut self) {
         let players: Vec<Vec3> = self.players.values().filter(|p| p.joined).map(|p| p.position).collect();
         let gone: Vec<u32> = self
             .creatures
             .live
             .iter()
-            .filter(|(id, c)| c.owner.is_none() && !self.villagers.manages(**id))
+            .filter(|(id, c)| c.owner.is_none() && !c.companion && !self.villagers.manages(**id) && !self.wandering.manages(**id))
             .filter(|(_, c)| {
                 let far = players.iter().all(|p| p.distance(c.body.position) > DESPAWN);
                 far || !self.world.contains(ColumnPos::of_block(c.body.position.floor().as_ivec3()))
@@ -1200,13 +1252,13 @@ pub(crate) fn product_ticks(minutes: f32, seed: u64, index: usize) -> u64 {
 /// The budget near a player a species is counted against (`Limits`): villagers come with
 /// their settlements and count against none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Budget {
+pub(crate) enum Budget {
     Animal,
     Bird,
     Monster,
 }
 
-fn budget(def: &creature::CreatureDef) -> Option<Budget> {
+pub(crate) fn budget(def: &creature::CreatureDef) -> Option<Budget> {
     match def.kind {
         Kind::Villager => None,
         Kind::Monster => Some(Budget::Monster),

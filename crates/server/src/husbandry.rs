@@ -60,7 +60,7 @@ pub struct SavedCreature {
 }
 
 impl Server {
-    fn player_name(&self, player: PlayerId) -> Option<String> {
+    pub(crate) fn player_name(&self, player: PlayerId) -> Option<String> {
         self.players.get(&player).map(|p| p.name.clone())
     }
 

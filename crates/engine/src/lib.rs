@@ -37,6 +37,7 @@ pub mod mesh;
 pub mod movement;
 pub mod multiblock;
 pub mod physics;
+pub mod prayer;
 pub mod quest;
 pub mod recipe_book;
 pub mod regrowth;
@@ -49,6 +50,7 @@ pub mod treasure;
 pub mod value;
 pub mod vitals;
 pub mod visibility;
+pub mod wander;
 pub mod weather;
 pub mod world;
 

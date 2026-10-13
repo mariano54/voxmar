@@ -27,6 +27,8 @@ struct Client {
     skills: voxmar_engine::skill::Skills,
     /// Experience earned, in tenths, in the order it was.
     earned: Vec<u32>,
+    /// Prayer points, the most, and the prayers on, as last told.
+    prayers: Option<(u16, u16, Vec<voxmar_engine::prayer::PrayerId>)>,
     world: VoxelWorld,
     position: Vec3,
     admin: bool,
@@ -93,6 +95,9 @@ fn real_time(why: &str) {
 /// Starts a server as the game does, its ticks `TICK_SPEEDUP` times as quick unless the test
 /// is about the clock (`real_time`) or makes the server run behind on purpose (`lag`).
 fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
+    // No wandering party comes by chance: at these ticks one may arrive while a test slowed
+    // by load is still running, and stand (or fight) beside its player.
+    config.wandering_starts = false;
     if config.lag == voxmar_server::Lag::default() && !REAL_TIME.get() {
         config.tick_speedup = TICK_SPEEDUP;
     }
@@ -187,6 +192,7 @@ impl Client {
             collected: Vec::new(),
             skills: Default::default(),
             earned: Vec::new(),
+            prayers: None,
             world: VoxelWorld::default(),
             position: Vec3::ZERO,
             admin: false,
@@ -302,6 +308,7 @@ impl Client {
                 self.skills = skills;
             }
             ServerMessage::Xp { tenths, .. } => self.earned.push(tenths),
+            ServerMessage::Prayers { points, most, on } => self.prayers = Some((points, most, on)),
             ServerMessage::Weather { weather, quick, .. } => {
                 self.weather = Some(weather);
                 self.quick = quick;
@@ -1702,6 +1709,93 @@ fn a_player_rejoining_in_another_case_keeps_their_animals_and_their_drops() {
 }
 
 #[test]
+fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
+    real_time("combat is judged on the clock, and the ward drains by the server's seconds while the bear winds up");
+    use voxmar_engine::combat::Defended;
+    let mut client = Client::join();
+    let book = client.content.prayers.clone();
+    let [ward, keepsake] = ["base:ward_melee", "base:keepsake"].map(|n| book.id(n).unwrap());
+    client.ok("/gamemode survival");
+    client.ok("/skill hitpoints 60");
+    // Below a prayer's Magic level it stays off.
+    client.ok("/skill magic 45");
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.1 == 55));
+    client.connection.send(ClientMessage::Pray { prayer: ward, on: true });
+    client.wait_server(1);
+    assert!(client.prayers.as_ref().unwrap().2.is_empty(), "Ward Melee is Magic 46");
+    // Points are 10 and one a Magic level, full for a new player.
+    client.ok("/skill magic 46");
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.1 == 56));
+    let (id, slot) = beside_a_bear(&mut client);
+    client.connection.send(ClientMessage::Pray { prayer: ward, on: true });
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.2 == vec![ward]));
+    // A ward stops 80% of a creature's blow in its styles: a bear's 2 to 6 lets 1.2 at most
+    // through, which rounds by chance to 2 at most.
+    let bear = client.content.creatures.find("brown_bear").unwrap();
+    let high = client.content.creatures.get(bear).def.attack.unwrap().damage.1;
+    let let_through = (high as f32 * (1.0 - book.rules.ward)).ceil() as u16;
+    assert!(let_through < high as u16 / 2, "a ward lets {let_through} of a bear's {high} through");
+    for _ in 0..3 {
+        let before = provoke_until_it_winds_up(&mut client, id, slot, "bear");
+        client.pump_until(|c| c.hurt.len() > before);
+        let (damage, defended) = client.hurt[before];
+        assert!(defended != Defended::Hit || damage <= let_through, "a warded bear's blow did {damage}");
+    }
+    // Ward Melee drains 24 a minute: some are gone.
+    let (points, most, _) = client.prayers.clone().unwrap();
+    assert!(points < most, "{points} of {most} after a fight warded");
+    // Off; at an altar they come back in full, and a bone in hand is offered for Magic
+    // experience (16 a bone).
+    client.connection.send(ClientMessage::Pray { prayer: ward, on: false });
+    client.ok("/creatures kill");
+    let altar = client.position.floor().as_ivec3() + IVec3::new(0, 0, 2);
+    client.ok("/setblock ~ ~ ~2 stone_altar");
+    client.ok("/give bone 1");
+    let bone = client.content.blocks.expect("base:bone");
+    client.pump_until(|c| c.world.block(altar) == c.content.blocks.id("base:stone_altar") && c.inventory.slots.iter().flatten().any(|s| s.item == bone));
+    let bone_slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == bone)).expect("the bone in the hotbar");
+    let yaw = yaw_toward(client.position, altar.as_vec3() + 0.5);
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.3, selected_slot: bone_slot as u8, flying: false }));
+    client.wait_server(1);
+    let earned = client.earned.len();
+    client.propose("base:pray", ActionTarget::Block { block: altar, face: Face::NegZ });
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.0 == p.1) && c.earned.len() > earned);
+    assert!(client.earned[earned..].contains(&160), "a bone offered: {:?}", &client.earned[earned..]);
+    // Keepsake keeps a fourth thing through death.
+    client.connection.send(ClientMessage::Pray { prayer: keepsake, on: true });
+    for line in ["/clear", "/give iron_pickaxe 1", "/give iron_ingot 5", "/give dirt 30"] {
+        client.ok(line);
+    }
+    let carried = |c: &Client| c.inventory.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| carried(c) == 36 && c.prayers.as_ref().is_some_and(|p| p.2 == vec![keepsake]));
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0 && carried(c) == 4);
+    // Death puts every prayer out.
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.2.is_empty()));
+}
+
+#[test]
+fn a_dead_players_prayers_stay_on_until_death_counts_the_keepsake() {
+    let mut client = Client::join();
+    let keepsake = client.content.prayers.id("base:keepsake").unwrap();
+    client.ok("/gamemode survival");
+    client.ok("/skill magic 25");
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.1 == 35));
+    client.connection.send(ClientMessage::Pray { prayer: keepsake, on: true });
+    for line in ["/clear", "/give iron_pickaxe 1", "/give iron_ingot 5", "/give dirt 30"] {
+        client.ok(line);
+    }
+    let carried = |c: &Client| c.inventory.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| carried(c) == 36 && c.prayers.as_ref().is_some_and(|p| p.2 == vec![keepsake]));
+    // Turned off in the same breath as the death, after it: the dead cannot, so the
+    // Keepsake still counts and a fourth thing is kept.
+    client.connection.send(ClientMessage::Command { line: "/kill".into() });
+    client.connection.send(ClientMessage::Pray { prayer: keepsake, on: false });
+    client.pump_until(|c| c.health == 0 && carried(c) <= 4);
+    assert_eq!(carried(&client), 4, "Keepsake keeps a fourth even when prayers were turned off after death");
+}
+
+#[test]
 fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
     let mut client = Client::join();
     let (near, far) = (client.position.floor().as_ivec3() + IVec3::new(2, 0, 0), client.position.floor().as_ivec3() + IVec3::new(-2, 0, 0));
@@ -1728,8 +1822,9 @@ fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
 /// An animal is found only from close up with nothing in between (`seen_within` in
 /// journal.ron, 3 blocks for animals): not across the floor, not through a wall right
 /// beside it, and at once when the wall goes. The rabbit is the one summoned (told apart
-/// from any wild one by its id and height), held still (`/creatures hold` reaches 8 blocks,
-/// so it is summoned well inside that), and every wait is a count of server ticks.
+/// from any wild one by its id and height), held still from the tick it arrives (`/summon
+/// ... held`: a hold sent after it could land when it had already fled, at these quick
+/// ticks), and every wait is a count of server ticks.
 #[test]
 fn an_animal_is_found_only_from_close_up_in_plain_view() {
     use voxmar_engine::journal::Page;
@@ -1737,8 +1832,7 @@ fn an_animal_is_found_only_from_close_up_in_plain_view() {
     let at = client.position.floor().as_ivec3();
     let rabbit = client.content.creatures.find("rabbit").expect("rabbits in the content");
     let before: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
-    client.ok(&format!("/summon rabbit 1 {} {} {}", at.x + 7, at.y, at.z));
-    client.ok("/creatures hold rabbit");
+    client.ok(&format!("/summon rabbit 1 {} {} {} held", at.x + 7, at.y, at.z));
     let ours = move |c: &Client| c.creatures.iter().find(|(id, v)| v.species == rabbit && !before.contains(id) && (v.position.y - at.y as f32).abs() < 1.0).map(|(&id, _)| id);
     client.pump_until(|c| ours(c).is_some());
     let id = ours(&client).unwrap();
@@ -3045,14 +3139,14 @@ fn unreadable_world_files_are_set_aside_and_the_world_still_opens() {
     let column_file = dir.join(format!("columns/{}.{}.bin", column.0.x, column.0.y));
     assert!(column_file.is_file());
     std::fs::write(&column_file, b"vxc4 not zlib").unwrap();
-    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron", "villagers.ron"] {
+    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron", "villagers.ron", "companions.ron"] {
         std::fs::write(dir.join(file), "[(oops").unwrap();
     }
     let client = Client::join_with(config());
     drop(client);
     assert_eq!(set_aside(&dir.join("columns")).len(), 1, "the bad column is set aside");
     let aside = set_aside(&dir);
-    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron", "villagers.ron"] {
+    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron", "villagers.ron", "companions.ron"] {
         assert!(aside.iter().any(|n| n.starts_with(&format!("{file}.corrupt-"))), "{file} was not set aside: {aside:?}");
         assert_ne!(std::fs::read_to_string(dir.join(file)).unwrap(), "[(oops", "{file} is written afresh");
     }
@@ -4408,7 +4502,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
         "/setblock ~5 ~ ~ bellows",
         "/setblock ~6 ~ ~ shaft",
         "/setblock ~7 ~ ~ treadwheel",
-        "/summon aurochs 1 ~7 ~ ~2",
+        "/summon aurochs 1 ~7 ~ ~2 held",
         "/creatures tame aurochs",
         "/creatures hold aurochs",
         "/give iron_ore 2",
@@ -4479,7 +4573,7 @@ fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two
         "/setblock ~5 ~ ~ bellows",
         "/setblock ~6 ~ ~ shaft",
         "/setblock ~7 ~ ~ treadwheel",
-        "/summon aurochs 1 ~7 ~ ~2",
+        "/summon aurochs 1 ~7 ~ ~2 held",
         "/creatures tame aurochs",
         "/creatures hold aurochs",
         "/give coal_ore 1",
@@ -5174,7 +5268,7 @@ fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_whee
         "/setblock ~4 ~ ~ steam_crusher",
         "/fill ~2 ~ ~3 ~4 ~1 ~5 air",
         "/setblock ~3 ~ ~4 treadwheel",
-        "/summon aurochs 1 ~3 ~ ~5",
+        "/summon aurochs 1 ~3 ~ ~5 held",
         "/creatures tame aurochs",
         "/creatures hold aurochs",
         "/give coal_ore 2",
@@ -5261,7 +5355,7 @@ fn a_treadwheel_a_player_placed_is_walked_only_by_their_own_animals() {
     owner.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
     owner.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
     // Another player's aurochs beside it does not walk it.
-    for line in ["/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+    for line in ["/summon aurochs 1 ~3 ~ ~2 held", "/creatures tame aurochs", "/creatures hold aurochs"] {
         other.ok(line);
     }
     machine_says(&mut owner, &at, "needs a kept animal", 10);
@@ -5314,7 +5408,7 @@ fn a_full_hopper_leaves_the_stack_in_hand_and_gives_nothing_back() {
 fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_it_is_fed() {
     let mut client = Client::join();
     let aurochs = client.content.creatures.find("aurochs").expect("aurochs in the content");
-    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/setblock ~3 ~ ~ treadwheel", "/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/setblock ~3 ~ ~ treadwheel", "/summon aurochs 1 ~3 ~ ~2 held", "/creatures tame aurochs", "/creatures hold aurochs"] {
         client.ok(line);
     }
     let start = client.position.floor().as_ivec3();
@@ -5775,7 +5869,7 @@ fn creatures_kill_spares_another_players_kept_animals_whatever_the_case_of_their
     let rabbit = ann.content.creatures.find("rabbit").expect("rabbits in the content");
     let kept = |c: &Client| c.creatures.values().find(|v| v.species == rabbit && v.kept).map(|v| v.id);
     // Held still beside the players while it is tamed and the host tries it.
-    ann.ok("/summon rabbit 1 ~ ~ ~-2");
+    ann.ok("/summon rabbit 1 ~ ~ ~-2 held");
     ann.ok("/creatures hold rabbit");
     ann.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
     ann.ok("/creatures tame rabbit");
@@ -5824,6 +5918,29 @@ fn a_kept_animal_whose_species_is_gone_waits_in_the_save() {
     assert_eq!(saved.matches("base:rabbit").count(), 1, "the rabbit is in the save once: {saved}");
     // The rabbit came back into the world, so it is saved with the genes it was given there.
     assert_eq!(saved.replace(' ', "").matches("genome:Some").count(), 1, "only the rabbit came back with genes: {saved}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A freed prisoner who settled at a player's home is in `companions.ron`, and a world that
+/// opens with one there has them standing where they were left, saved again at the end.
+#[test]
+fn a_settled_companion_is_back_when_the_world_opens_again() {
+    let dir = world_dir("companions");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let client = Client::join_with(config());
+    let spawn = client.position;
+    drop(client);
+    let path = dir.join("companions.ron");
+    assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "[]", "nobody has settled yet");
+    let at = format!("({}, {}, {})", spawn.x + 3.0, spawn.y, spawn.z);
+    std::fs::write(&path, format!("[(species: \"base:captive\", seed: 9, position: {at}, yaw: 0.0, health: 5), (species: \"lostmod:ghost\", seed: 10, position: {at}, yaw: 0.0, health: 5)]")).unwrap();
+    let mut client = Client::join_with(config());
+    let captive = client.content.creatures.find("captive").expect("the captive in the content");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == captive));
+    drop(client);
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(saved.matches("base:captive").count(), 1, "the captive is saved again, once: {saved}");
+    assert_eq!(saved.matches("lostmod:ghost").count(), 1, "and the one whose species is gone waits: {saved}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

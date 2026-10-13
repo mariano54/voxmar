@@ -387,6 +387,7 @@ impl Server {
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
                 (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
                 (Effect::PickLock, ActionTarget::Block { block, .. }) => self.pick_lock(agent, block),
+                (Effect::Pray, ActionTarget::Block { .. }) => self.pray_at_altar(agent),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => self.sleep(agent, block),
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);

@@ -74,6 +74,9 @@ impl Plugin for SettingsPlugin {
     }
 }
 
+/// How many quick prayers have a key.
+pub const QUICK_PRAYERS: usize = 5;
+
 /// The player's choices. Fields missing from the file keep their defaults.
 #[derive(Resource, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -172,6 +175,9 @@ pub struct Settings {
     pub uses_key: Key,
     /// Key that copies the frame to the clipboard and saves it (`screenshot`).
     pub screenshot_key: Key,
+    /// Quick prayers: each key turns its prayer (by name, as content calls it) on or off.
+    pub prayer_keys: [Key; QUICK_PRAYERS],
+    pub quick_prayers: [String; QUICK_PRAYERS],
     /// The language's code (`en`, `ja`), or empty to follow the system's.
     pub language: String,
 }
@@ -371,6 +377,9 @@ impl Default for Settings {
             recipes_key: Key(KeyCode::KeyR),
             uses_key: Key(KeyCode::KeyU),
             screenshot_key: Key(KeyCode::F2),
+            // The design's X C V B N, with G for C, which shows the character.
+            prayer_keys: [KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyB, KeyCode::KeyN, KeyCode::KeyG].map(Key),
+            quick_prayers: ["base:bark_skin", "base:ember_arm", "base:keen_mind", "base:mending", "base:keepsake"].map(String::from),
             language: String::new(),
         }
     }
@@ -891,19 +900,28 @@ enum Binding {
     Recipes,
     Uses,
     Screenshot,
+    /// A quick prayer's key, by its place.
+    Prayer(usize),
 }
 
 impl Binding {
-    const ALL: [Binding; 9] = [
+    const ALL: [Binding; 16] = [
         Binding::Sprint,
+        Binding::Dodge,
         Binding::Zoom,
         Binding::Chat,
         Binding::Inventory,
         Binding::Character,
         Binding::Journal,
+        Binding::Quests,
         Binding::Recipes,
         Binding::Uses,
         Binding::Screenshot,
+        Binding::Prayer(0),
+        Binding::Prayer(1),
+        Binding::Prayer(2),
+        Binding::Prayer(3),
+        Binding::Prayer(4),
     ];
 
     /// Binds `key`. A key another binding has trades places with it, so both still work;
@@ -934,6 +952,7 @@ impl Binding {
             Binding::Recipes => "settings.key.recipes",
             Binding::Uses => "settings.key.uses",
             Binding::Screenshot => "settings.key.screenshot",
+            Binding::Prayer(i) => ["settings.key.prayer_1", "settings.key.prayer_2", "settings.key.prayer_3", "settings.key.prayer_4", "settings.key.prayer_5"][i],
         }
     }
 
@@ -950,6 +969,7 @@ impl Binding {
             Binding::Recipes => settings.recipes_key,
             Binding::Uses => settings.uses_key,
             Binding::Screenshot => settings.screenshot_key,
+            Binding::Prayer(i) => settings.prayer_keys[i],
         }
     }
 
@@ -966,6 +986,7 @@ impl Binding {
             Binding::Recipes => &mut settings.recipes_key,
             Binding::Uses => &mut settings.uses_key,
             Binding::Screenshot => &mut settings.screenshot_key,
+            Binding::Prayer(i) => &mut settings.prayer_keys[i],
         } = key;
     }
 }
@@ -1101,6 +1122,11 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Key(Binding::Sprint),
             Control::Key(Binding::Dodge),
             Control::Key(Binding::Zoom),
+            Control::Key(Binding::Prayer(0)),
+            Control::Key(Binding::Prayer(1)),
+            Control::Key(Binding::Prayer(2)),
+            Control::Key(Binding::Prayer(3)),
+            Control::Key(Binding::Prayer(4)),
         ],
     ),
     (
@@ -2045,13 +2071,30 @@ mod tests {
     }
 
     #[test]
+    fn the_quick_prayer_keys_are_taken_like_any_other_binding() {
+        let mut settings = Settings::default();
+        // The uses key onto the first quick prayer's X: the two trade places.
+        let prayer = Binding::Prayer(0).get(&settings);
+        assert!(Binding::Uses.bind(&mut settings, prayer));
+        assert_eq!((settings.uses_key, settings.prayer_keys[0]), (prayer, Key(KeyCode::KeyU)));
+        // A file putting the journal on a quick prayer's key reads back with the prayer keeping
+        // it, and the quests and dodge keys count as taken too.
+        let (read, _) = Settings::parse("(journal_key: \"KeyV\", quests_key: \"KeyB\", dodge_key: \"KeyN\")", || false);
+        assert_eq!(read.prayer_keys[1..4], [Key(KeyCode::KeyV), Key(KeyCode::KeyB), Key(KeyCode::KeyN)]);
+        let keys = Binding::ALL.map(|b| b.get(&read));
+        for key in keys {
+            assert_eq!(keys.iter().filter(|&&k| k == key).count(), 1, "{key:?} is on two actions: {keys:?}");
+        }
+    }
+
+    #[test]
     fn colliding_bindings_in_a_file_read_back_at_their_defaults() {
         // A hand-edited file: the journal on E (the inventory's) and the character screen on W.
         let (read, _) = Settings::parse("(journal_key: \"KeyE\", character_key: \"KeyW\")", || false);
         assert_eq!((read.journal_key, read.inventory_key, read.character_key), (Key(KeyCode::KeyJ), Key(KeyCode::KeyE), Key(KeyCode::KeyC)));
         // Two moved bindings on one key: the later yields.
-        let (read, _) = Settings::parse("(recipes_key: \"KeyG\", uses_key: \"KeyG\")", || false);
-        assert_eq!((read.recipes_key, read.uses_key), (Key(KeyCode::KeyG), Key(KeyCode::KeyU)));
+        let (read, _) = Settings::parse("(recipes_key: \"KeyY\", uses_key: \"KeyY\")", || false);
+        assert_eq!((read.recipes_key, read.uses_key), (Key(KeyCode::KeyY), Key(KeyCode::KeyU)));
         // Chat on the inventory's E and the journal on chat's T: chat cannot go back to T,
         // so it goes to the first key nobody holds.
         let (read, _) = Settings::parse("(chat_key: \"KeyE\", journal_key: \"KeyT\")", || false);
