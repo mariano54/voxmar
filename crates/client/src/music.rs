@@ -564,6 +564,7 @@ fn start_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Musi
     let Some(mut music) = music else { return };
     music.fade_out(&mut commands);
     music.next_at = Some(time.elapsed() + music.gap(&time, false));
+    music.fighting = false;
 }
 
 /// Back in the menus, the game's music fades out and the menu's starts again soon.
@@ -571,6 +572,7 @@ fn leave_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Musi
     let Some(mut music) = music else { return };
     music.fade_out(&mut commands);
     music.next_at = Some(time.elapsed() + Duration::from_secs_f32(random_in(&time, 0, music.rules.first_menu_delay)));
+    music.fighting = false;
 }
 
 fn fade_out(
