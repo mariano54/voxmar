@@ -719,23 +719,37 @@ mod tests {
 
     /// Every face of the decor models resolves in both shipped looks, including the
     /// separate drawings on their boxes. HD may inherit the default recipe at 32 texels.
+    /// One test a look, so the two draw side by side.
     #[test]
-    fn decor_faces_resolve_in_both_shipped_packs() {
+    fn decor_faces_resolve_in_the_default_pack() {
+        decor_faces_resolve_in("default");
+    }
+
+    #[test]
+    fn decor_faces_resolve_in_the_hd_pack() {
+        decor_faces_resolve_in(HD_PACK);
+    }
+
+    fn decor_faces_resolve_in(name: &str) {
         let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
         let content = voxmar_server::load_content(&assets).expect("content");
         let blocks = &content.blocks;
         let decor: Vec<_> = blocks.ids().filter(|&id| blocks.def(id).has_tag("decor")).collect();
         assert!(decor.len() >= 172, "only {} decor blocks", decor.len());
-        for name in ["default", HD_PACK] {
-            let mut pack = Pack::open(&assets.join("packs").join(name)).expect("pack");
-            for &id in &decor {
-                for &layer in blocks.info(id).layers.iter().chain(blocks.shape_layers(id)) {
-                    let reference = &blocks.textures()[layer as usize];
-                    let path = format!("block/{}", reference.name);
-                    let drawn = pack.read(&path).unwrap_or_else(|| panic!("{name}: {} has no {path}", blocks.def(id).name));
-                    assert!(drawn.pixels.chunks_exact(4).any(|p| p[3] != 0), "{name}: {path} is invisible");
+        // Each drawing once (many decor blocks share theirs), named by the first block using it.
+        let mut paths: Vec<(String, &str)> = Vec::new();
+        for &id in &decor {
+            for &layer in blocks.info(id).layers.iter().chain(blocks.shape_layers(id)) {
+                let path = format!("block/{}", blocks.textures()[layer as usize].name);
+                if !paths.iter().any(|(p, _)| *p == path) {
+                    paths.push((path, blocks.def(id).name.as_str()));
                 }
             }
+        }
+        let mut pack = Pack::open(&assets.join("packs").join(name)).expect("pack");
+        for (path, block) in &paths {
+            let drawn = pack.read(path).unwrap_or_else(|| panic!("{name}: {block} has no {path}"));
+            assert!(drawn.pixels.chunks_exact(4).any(|p| p[3] != 0), "{name}: {path} is invisible");
         }
     }
 
