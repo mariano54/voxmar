@@ -1674,18 +1674,50 @@ fn lay_and_craft(world: &mut World, cells: &[(usize, &str)]) -> bool {
     true
 }
 
-/// Selects the hotbar slot holding `name`, swapping it in from the pack first if need be.
+/// An item `select` moved into the hand, the player states the client had been sent then,
+/// and the server's tick: until a later state has it in the hotbar, it is not yet in hand
+/// as the server sees it. A state already on its way when the move went out (another
+/// item given) puts it back where it was, and a click then would be made empty handed.
+#[derive(Resource)]
+struct Moving {
+    item: String,
+    states: u32,
+    tick: u64,
+}
+
+/// Server seconds after which a move into the hand no state confirmed is proposed again.
+const MOVE_UNANSWERED: f32 = 2.0;
+
+/// Takes item `name` in hand: selects its hotbar slot, or moves it into `TOOL_SLOT` and
+/// selects that. True once it is in the hotbar as the server last said; false while there
+/// is none, and while a move into the hand waits for the server's word (see `Moving`).
 fn select(world: &mut World, name: &str) -> bool {
     let Some(slot) = holding(world, name).1 else { return false };
+    let states = world.resource::<LocalPlayer>().states;
+    let tick = world.resource::<Net>().server().map_or(0, |server| server.ticks());
+    if let Some(moving) = world.get_resource::<Moving>()
+        && moving.item == name
+    {
+        let waited = tick.saturating_sub(moving.tick) as f32 / voxmar_protocol::TICKS_PER_SECOND as f32;
+        if states == moving.states && waited < MOVE_UNANSWERED {
+            return false;
+        }
+        if slot >= voxmar_engine::inventory::HOTBAR_SLOTS && waited < MOVE_UNANSWERED {
+            // A state sent before the move came first: the next one has it moved.
+            return false;
+        }
+        world.remove_resource::<Moving>();
+    }
     if slot >= voxmar_engine::inventory::HOTBAR_SLOTS {
         let actions = world.resource::<crate::Actions>().0.clone();
         let target = voxmar_engine::action::ActionTarget::Slots { from: slot as u8, to: TOOL_SLOT as u8, count: u8::MAX };
         world.resource::<Net>().propose(actions.expect("core:transfer"), target);
         world.resource_mut::<LocalPlayer>().inventory.move_items(slot, TOOL_SLOT, u8::MAX);
         world.resource_mut::<LocalPlayer>().selected = TOOL_SLOT;
-    } else {
-        world.resource_mut::<LocalPlayer>().selected = slot;
+        world.insert_resource(Moving { item: name.to_owned(), states, tick });
+        return false;
     }
+    world.resource_mut::<LocalPlayer>().selected = slot;
     true
 }
 
