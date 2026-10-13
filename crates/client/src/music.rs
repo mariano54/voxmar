@@ -131,6 +131,8 @@ struct Music {
     room_blocks: Vec<BlockId>,
     /// Whether a boss's room was near when last looked, and when that was.
     room: (bool, Option<Duration>),
+    /// Whether the player was in a boss fight when last scheduled.
+    fighting: bool,
 }
 
 impl Music {
@@ -260,6 +262,7 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         bosses,
         room_blocks,
         room: (false, None),
+        fighting: false,
     });
 }
 
@@ -457,14 +460,6 @@ fn schedule_music(
     if !(player.joined || in_menu) || music.tracks.is_empty() || !music.enabled || settings.music_volume == 0 {
         return;
     }
-    // A finished track despawns itself; schedule the next one after a quiet gap.
-    if let Some(entity) = music.playing
-        && playing.get(entity).is_err()
-    {
-        music.playing = None;
-        music.current = None;
-        music.next_at = Some(time.elapsed() + music.gap(&time, in_menu));
-    }
     let boss = !in_menu && in_boss_fight(&mut music, &time, player.position, creatures.as_deref(), world.as_deref());
     let underground = &music.rules.underground;
     let context = match &surroundings {
@@ -473,14 +468,31 @@ fn schedule_music(
         Some(around) if around.depth >= underground.depth && around.sky <= underground.max_sky => Context::Underground,
         _ => Context::Game,
     };
-    // A boss fight starting ends the calm track playing, and its music comes soon; one
-    // ending ends the boss's track, and quiet follows.
-    if let Some(index) = music.current
-        && (context == Context::Boss) != music.tracks[index].contexts.contains(&Context::Boss)
+    let soon = time.elapsed() + Duration::from_secs_f32(music.rules.resume_after);
+    // A finished track despawns itself; schedule the next one after a quiet gap, or soon
+    // in a boss fight.
+    if let Some(entity) = music.playing
+        && playing.get(entity).is_err()
     {
-        music.fade_out(&mut commands);
-        let after = if context == Context::Boss { Duration::from_secs_f32(music.rules.resume_after) } else { music.gap(&time, in_menu) };
-        music.next_at = Some(time.elapsed() + after);
+        music.playing = None;
+        music.current = None;
+        music.next_at = Some(if boss { soon } else { time.elapsed() + music.gap(&time, in_menu) });
+    }
+    // A boss fight starting ends the calm track playing, and its music comes soon, even
+    // in a quiet gap; one ending ends the boss's track, and quiet follows.
+    if boss != music.fighting {
+        music.fighting = boss;
+        if let Some(index) = music.current
+            && boss != music.tracks[index].contexts.contains(&Context::Boss)
+        {
+            music.fade_out(&mut commands);
+            if !boss {
+                music.next_at = Some(time.elapsed() + music.gap(&time, in_menu));
+            }
+        }
+        if boss {
+            music.next_at = Some(music.next_at.map_or(soon, |at| at.min(soon)));
+        }
     }
     if music.playing.is_some() || music.loading.is_some() {
         return;
