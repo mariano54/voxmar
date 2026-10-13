@@ -614,7 +614,10 @@ impl Overworld {
     /// as culture regions. Reading their smooth fields must not plan distant rivers or
     /// sample local slopes and vegetation, which only a settlement's own site needs.
     pub(crate) fn regional_biome(&self, x: i32, z: i32) -> (&Biome, f32) {
-        let sampler = self.sampler(IVec2::new(x, z), IVec2::new(x, z));
+        // Probes kilometres apart: no tile of the climate lattice is read twice.
+        let margin = biome::CELL + GRADIENT_STEP;
+        let at = IVec2::new(x, z);
+        let sampler = Sampler { world: self, grid: ClimateGrid::alone(&self.geology, at - margin, at + margin), picks: None };
         let home = sampler.pick(x, z).home;
         (self.biomes.get(home), sampler.grid.at(x, z).temperature())
     }
