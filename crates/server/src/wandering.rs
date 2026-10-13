@@ -114,6 +114,9 @@ pub struct Wandering {
     /// Companions from the save whose species is not in the content (a mod turned off):
     /// saved again as they were, for when it comes back.
     waiting: Vec<SavedCompanion>,
+    /// An admin's `/wander hold`: no event begins by chance until `/wander allow`. Kept only
+    /// while the server runs.
+    held: bool,
 }
 
 struct Instance {
@@ -398,6 +401,9 @@ impl Server {
     /// not in the gap after the last, and the world and their surroundings have room.
     fn wandering_welcome(&self, player: PlayerId) -> bool {
         let rules = self.content.wandering.rules();
+        if self.wandering.held {
+            return false;
+        }
         let Some(p) = self.players.get(&player).filter(|p| p.joined && p.health.alive()) else { return false };
         if self.day / (voxmar_protocol::TICKS_PER_DAY as f64) < rules.first_days as f64 || self.tick < self.wandering.quiet_until.get(&player).copied().unwrap_or(0) {
             return false;
@@ -1734,6 +1740,7 @@ impl Server {
                 if let (Some(who), Some(p)) = (self.speaker_name(leader), self.players.get(&player)) {
                     p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("arrived"))) });
                 }
+                self.tally(player, "met", &event.def.name, 1);
                 self.hand_out(player, leader, &event.reveal);
             }
         }
@@ -2206,39 +2213,54 @@ impl Server {
                     .collect(),
             )),
             Some("end") => Ok(Words::key("command.wander.ended").with("count", Words::text(self.end_all_events()))),
-            Some("start") => {
-                let name = args.get(1).ok_or_else(|| Words::key("command.wander.what"))?;
-                let event = registry.find(name).ok_or_else(|| Words::key("command.wander.unknown").with("name", name.as_str()))?;
-                let (player, feet, look) = match source {
-                    Source::Player(p) => {
-                        let player = self.players.get(&p).ok_or_else(|| Words::key("command.wander.what"))?;
-                        (Some(p), player.position, player.look().with_y(0.0).normalize_or(Vec3::NEG_Z))
-                    }
-                    Source::Console => (None, self.spawn, Vec3::NEG_Z),
-                };
-                // Ahead of them, out of the way, or nearer where the land ahead falls away or
-                // rises out of reach: an admin's start never fails for want of a spot while
-                // they stand on something.
-                let spot = ADMIN_SPOT_AHEAD.into_iter().find_map(|ahead| {
-                    let at = (feet + look * ahead).floor().as_ivec3();
-                    self.load_area(at, at);
-                    self.standing_spot(at.x, at.z, at.y)
-                });
-                let name = &registry.get(event).def.name;
-                let Some(spot) = spot else {
-                    tracing::info!("wandering: /wander start {name} refused: no standing room ahead of {feet} or at it");
-                    return Err(Words::key("command.wander.no_room"));
-                };
-                // Seen or not: the admin asked for it.
-                let seed = mix(self.meta.seed, self.tick);
-                if self.begin_event_at(player, event, spot, seed, true).is_none() {
-                    tracing::info!("wandering: /wander start {name} refused: no cast could be brought to {spot}");
-                    return Err(Words::key("command.wander.no_room"));
-                }
-                Ok(Words::key("command.wander.started").with("event", Words::key(&registry.get(event).title_key())))
+            Some("hold") => {
+                self.wandering.held = true;
+                Ok(Words::key("command.wander.held"))
             }
+            Some("allow") => {
+                self.wandering.held = false;
+                Ok(Words::key("command.wander.allowed"))
+            }
+            Some("start") => self.wander_start(args, source).inspect_err(|why| {
+                // Every refusal reaches the log, so a gate session that started nothing says why.
+                tracing::info!("wandering: /wander start {:?} refused: {why:?}", &args[1..]);
+            }),
             Some(_) => Err(Words::key("command.wander.what")),
         }
+    }
+
+    /// An admin's /wander start: the party nearest ahead that has room, or why not.
+    fn wander_start(&mut self, args: &[String], source: Source) -> Result<Words, Words> {
+        let registry = self.content.wandering.clone();
+        let name = args.get(1).ok_or_else(|| Words::key("command.wander.what"))?;
+        let event = registry.find(name).ok_or_else(|| Words::key("command.wander.unknown").with("name", name.as_str()))?;
+        let (player, feet, look) = match source {
+            Source::Player(p) => {
+                let player = self.players.get(&p).ok_or_else(|| Words::key("command.wander.what"))?;
+                (Some(p), player.position, player.look().with_y(0.0).normalize_or(Vec3::NEG_Z))
+            }
+            Source::Console => (None, self.spawn, Vec3::NEG_Z),
+        };
+        // Ahead of them, out of the way, or nearer where the land ahead falls away or
+        // rises out of reach: an admin's start never fails for want of a spot while
+        // they stand on something.
+        let spot = ADMIN_SPOT_AHEAD.into_iter().find_map(|ahead| {
+            let at = (feet + look * ahead).floor().as_ivec3();
+            self.load_area(at, at);
+            self.standing_spot(at.x, at.z, at.y)
+        });
+        let name = &registry.get(event).def.name;
+        let Some(spot) = spot else {
+            tracing::info!("wandering: no standing room ahead of {feet} or at it for {name}");
+            return Err(Words::key("command.wander.no_room"));
+        };
+        // Seen or not: the admin asked for it.
+        let seed = mix(self.meta.seed, self.tick);
+        if self.begin_event_at(player, event, spot, seed, true).is_none() {
+            tracing::info!("wandering: no cast of {name} could be brought to {spot}");
+            return Err(Words::key("command.wander.no_room"));
+        }
+        Ok(Words::key("command.wander.started").with("event", Words::key(&registry.get(event).title_key())))
     }
 
     /// A wandering party member died: the rest of the party may mind (not yet).
@@ -2550,6 +2572,21 @@ mod tests {
             let at = server.creatures.live[&member.creature].body.position;
             assert!(at.y >= 240.0 && (at - Vec3::new(128.5, at.y, 128.5)).length() < 8.0, "a member stands at {at}, not on the pad");
         }
+    }
+
+    /// `/wander hold` keeps parties from setting out by chance, `/wander allow` lets them
+    /// again; an admin's own start still comes while they are held.
+    #[test]
+    fn held_parties_set_out_only_when_an_admin_starts_one() {
+        let mut server = fixture();
+        assert!(server.wandering_welcome(1), "the fixture's player could meet a party");
+        server.wander_command(Source::Player(1), &["hold".into()]).unwrap();
+        assert!(!server.wandering_welcome(1), "held: none by chance");
+        start(&mut server, "stroll_with_dog", (110, 128));
+        server.wander_command(Source::Player(1), &["end".into()]).unwrap();
+        server.wander_command(Source::Player(1), &["allow".into()]).unwrap();
+        server.wandering.quiet_until.clear();
+        assert!(server.wandering_welcome(1), "allowed again");
     }
 
     /// Clears the world of parties and creatures between tries on one server.
@@ -4696,6 +4733,7 @@ mod tests {
         let trader = members_of(&server, id, 0)[0];
         assert!(server.meet(1, trader));
         assert!(says(&told(&client), "wander.base.market_folk.there"), "and they say where the market is");
+        assert_eq!(server.players[&1].tallies.get("met:base:market_folk"), Some(&1), "the walk is a dealing for quests; the words at the end are not");
     }
 
     #[test]
@@ -4707,6 +4745,7 @@ mod tests {
         server.players.get_mut(&1).unwrap().position = Vec3::new(44.5, 200.0, 200.5);
         assert!(run_until(&mut server, id, 200, |inst| inst.stage == Stage::Arrived), "they reach the town");
         assert_eq!(count_of(&server, "base:bread"), 0, "met at the end is not walked with");
+        assert_eq!(server.players[&1].tallies.get("met:base:market_folk"), None, "nor dealt with");
     }
 
     #[test]

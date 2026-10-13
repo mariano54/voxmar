@@ -107,7 +107,7 @@ test's milestones) stays as it was. Rewards are unchanged.
 
 ## Quests that meet the rest of the game
 
-Oct 13: sixteen quests tie the first two ages to what came after the quest book was written,
+Oct 13: twenty-two quests tie the first two ages to what came after the quest book was written,
 so that what the game already does is something the book points to:
 
 - **Wanderers** (`Met`). Nomad: Folk of the Road (deal with anyone), A Kind Turn (feed the lost
@@ -122,3 +122,9 @@ so that what the game already does is something the book points to:
 - **The altar** (`Offered`, `Prayed`). Altar Rites (three bones offered and Bark Skin turned
   on) and A Prayer in the Fight (Ember Arm and Bark Skin on, ten creatures defeated).
 - **Cooking**: A Varied Table (meat, fish and bread together).
+- **Batch 9 wanderers** (`Met` on one kind each). Nomad: To Market (sell wheat to the
+  market folk on the road, or walk with them to town: the arrival counts too, but only for
+  those who kept them company) and Caught in the Rain (warm the drenched travellers with a
+  torch, or share food). Farm: Neighbourly (the neighbours call once the hearth is lit),
+  The Rain Dance (watch the rainmakers or pay them), Filled Again (the shrine bearer) and A
+  Share of the Hunt (strike first at a hunting party's, trapper's or wolf hunters' quarry).
