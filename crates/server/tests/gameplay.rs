@@ -1233,10 +1233,13 @@ fn creatures_are_struck_when_the_server_runs_behind() {
 fn strike_a_snail(mut client: Client) {
     let snail = client.content.creatures.find("lumen_snail").expect("a lumen snail in the content");
     let slime = client.content.blocks.id("base:lumen_slime").unwrap();
+    // Attack 9, a fist's max hit 2: a blow behind a stall costs a second or more, and the
+    // snail's four health took four blows at level 1.
+    client.ok("/skill attack 9");
     client.ok("/summon lumen_snail 1 ~ ~ ~");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == snail));
     let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == snail).unwrap();
-    // Stand beside it, and strike until it dies: four health, a hit in two at level 1.
+    // Stand beside it, and strike until it dies: four health, a hit in two.
     // Each blow waits for the server's answer, so a server running behind only slows it.
     let mut at = view.position;
     client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
