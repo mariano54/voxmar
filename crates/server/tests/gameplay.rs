@@ -3190,7 +3190,14 @@ fn a_guard_and_a_dodge_count_from_when_the_player_saw_the_wind_up() {
         let dodge = combat.dodge_of(&client.inventory.worn).clone();
         // Answers the bear's next blow `after` seconds after its wind-up is seen to begin,
         // answering pings meanwhile; returns what came of it.
+        // The pokes that provoke it, and the counter, are sword blows, and a slow machine
+        // takes more of them: each try has a bear of its own, at full health.
         let answer = |client: &mut Client, after: f32, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| -> Defended {
+            client.ok("/creatures kill brown_bear");
+            client.pump_until(|c| c.creatures.values().all(|v| v.species != bear));
+            client.ok("/summon brown_bear 1 ~ ~ ~");
+            client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
+            let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).expect("summoned");
             let before = provoke_until_it_winds_up(client, id, slot, "bear");
             let seen = Instant::now();
             client.pump_until(|_| seen.elapsed().as_secs_f32() >= after);
