@@ -161,6 +161,16 @@ impl RemotePlayers {
         self.players.get(&id).map(|(view, _)| view.name.as_str())
     }
 
+    /// The player nearest along the look ray within `within` blocks of the eye, and how far.
+    pub fn looked_at(&self, eye: Vec3, look: Vec3, within: f32) -> Option<(PlayerId, f32)> {
+        use voxmar_engine::physics::{Aabb, player};
+        self.players
+            .iter()
+            .filter_map(|(&id, (view, _))| Some((id, crate::creatures::ray_box(eye, look, &Aabb::standing(view.position, player::WIDTH, player::HEIGHT))?)))
+            .filter(|&(_, distance)| distance <= within)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
     /// Where another player stands, if they are in sight.
     pub fn position(&self, id: PlayerId) -> Option<Vec3> {
         self.players.get(&id).map(|(view, _)| view.position)
@@ -434,5 +444,18 @@ mod tests {
         assert_eq!(admin_token_for("play.example.org", tokens).as_deref(), Some("open-sesame"));
         assert_eq!(admin_token_for("192.168.1.4:25665", "192.168.1.4=bare").as_deref(), Some("bare"));
         assert_eq!(admin_token_for("::1", "[::1]:25665=six").as_deref(), Some("six"));
+    }
+
+    #[test]
+    fn a_player_is_looked_at_within_range_and_aim() {
+        let mut players = RemotePlayers::default();
+        let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0 };
+        players.players.insert(9, (view, None));
+        let eye = Vec3::new(0.0, 1.62, 0.0);
+        let (who, distance) = players.looked_at(eye, Vec3::NEG_Z, 24.0).unwrap();
+        assert_eq!(who, 9);
+        assert!((distance - 9.7).abs() < 1e-4, "met at their near face: {distance}");
+        assert_eq!(players.looked_at(eye, Vec3::NEG_Z, 8.0), None, "further than they are named from");
+        assert_eq!(players.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 24.0), None, "looking past them");
     }
 }

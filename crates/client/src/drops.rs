@@ -90,6 +90,23 @@ impl Drops {
         self.items.iter().filter(|(_, item)| item.collected.is_none()).map(|(&id, item)| (id, item.stack, item.told))
     }
 
+    /// The item lying nearest along the look ray within `within` blocks of the eye, and how
+    /// far, met by a box `width` across (an item is small, and hard to aim at). The box is
+    /// where the item is drawn, which runs a little behind the server's word while it moves.
+    pub fn looked_at(&self, eye: Vec3, look: Vec3, within: f32, width: f32) -> Option<(ItemStack, f32)> {
+        let half = Vec3::new(width, width, width) / 2.0;
+        self.items
+            .values()
+            .filter(|item| item.collected.is_none())
+            .filter_map(|item| {
+                let middle = item.position + Vec3::Y * (SIZE / 2.0);
+                let hit = crate::creatures::ray_box(eye, look, &voxmar_engine::physics::Aabb { min: middle - half, max: middle + half })?;
+                Some((item.stack, hit))
+            })
+            .filter(|&(_, distance)| distance <= within)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
     /// Applies the server's news, at `now` seconds.
     pub fn receive(&mut self, changed: Vec<ItemView>, gone: Vec<ItemGone>, now: f32) {
         for view in changed {
@@ -320,5 +337,26 @@ mod tests {
         // Gone without a collector (merged, despawned, out of sight): at once.
         drops.receive(vec![ItemView { id: 4, ..view }], vec![ItemGone { id: 4, collector: None }], 1.0);
         assert!(!drops.items.contains_key(&4));
+    }
+
+    #[test]
+    fn a_lying_item_is_looked_at_within_range_and_aim() {
+        let mut drops = Drops::default();
+        let stack = ItemStack { item: voxmar_engine::block::BlockId(1), count: 5 };
+        drops.receive(vec![ItemView { id: 1, stack, position: Vec3::new(0.0, 0.0, -4.0), velocity: Vec3::ZERO }], vec![], 0.0);
+        let eye = Vec3::new(0.0, SIZE / 2.0, 0.0);
+        let (seen, distance) = drops.looked_at(eye, Vec3::NEG_Z, 6.0, 0.6).unwrap();
+        assert_eq!(seen, stack);
+        assert!((distance - 3.7).abs() < 1e-4, "met at the box's near face, not its middle: {distance}");
+        // An item still flying is met where it is drawn, not where the server last put it.
+        drops.items.get_mut(&1).unwrap().position = Vec3::new(2.0, 0.0, -4.0);
+        assert_eq!(drops.looked_at(eye, Vec3::NEG_Z, 6.0, 0.6), None);
+        assert!(drops.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 6.0, 0.6).is_some());
+        drops.items.get_mut(&1).unwrap().position = Vec3::new(0.0, 0.0, -4.0);
+        // Not at all out of range, or aimed a hand's breadth beside it, or when it is picked up.
+        assert_eq!(drops.looked_at(eye, Vec3::NEG_Z, 3.0, 0.6), None);
+        assert_eq!(drops.looked_at(eye + Vec3::X, Vec3::NEG_Z, 6.0, 0.6), None);
+        drops.receive(vec![], vec![ItemGone { id: 1, collector: Some(7) }], 1.0);
+        assert_eq!(drops.looked_at(eye, Vec3::NEG_Z, 6.0, 0.6), None);
     }
 }

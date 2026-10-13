@@ -328,6 +328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let content = voxmar_server::load_content(&assets)?;
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
+    let look = hud::target::LookStyle::load(&content.files)?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -466,7 +467,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(look);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }

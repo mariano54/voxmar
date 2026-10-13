@@ -327,6 +327,9 @@ enum Step {
     /// An effect that comes on pops up with its name, and the first look at the inventory
     /// brings its tip.
     Tips,
+    /// The name of what the crosshair rests on shows at the top left: a block close by, a
+    /// creature further than a blow reaches, and not through a wall.
+    Look,
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
@@ -1214,6 +1217,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Identity => identity(world, gate, now),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
+        Step::Look => look_name(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
@@ -3723,7 +3727,123 @@ fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let again = showing(world).filter(|name| *name == "inventory");
             gate.check("tips: once", if again.is_none() { Ok("seen once, it does not come back".into()) } else { Err("the inventory tip came back".into()) });
             world.resource_mut::<UiState>().inventory_open = false;
-            gate.next(Step::Guides, now);
+            gate.next(Step::Look, now);
+        }
+        _ => {}
+    }
+}
+
+/// Looking at a plank block beside the player names it ("Oak Planks"); looking at a lumen
+/// snail seven blocks off, past any blow's reach, names it with its level; a stone wall put
+/// between hides it again, and the block named is the wall's. Shots `look-block` and
+/// `look-creature` show the label at the top left.
+fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    let planks = pad + IVec3::new(1, 0, 2);
+    let species = world.resource::<Launch>().content.creatures.find(CREATURE);
+    let Some(species) = species else {
+        gate.check("look", Err(format!("no `{CREATURE}` in the content")));
+        gate.next(Step::Guides, now);
+        return;
+    };
+    let snail = |world: &World| world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
+    let named = |world: &World| world.resource::<crate::hud::target::Readout>().clone();
+    match gate.phase {
+        // On the creatures' pad (clear stone, air above): a plank block close by, once what the
+        // creatures step left there (a grazer or two in the walls) is gone, since a wanderer on
+        // the look ray would take the name.
+        0 => {
+            let net = world.resource::<Net>();
+            for species in ["mouflon", "rabbit", "lumen_snail", "shambler"] {
+                net.command(&format!("creatures remove {species}"));
+            }
+            net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+            net.command(&format!("setblock {} {} {} oak_planks", planks.x, planks.y, planks.z));
+            net.command("time set noon");
+            gate.advance(now);
+        }
+        1 if in_phase > 0.5 => {
+            // Nothing alive on the pad before the first look (given a few server seconds to go).
+            let middle = pad.as_vec3();
+            let crowded = world.resource::<crate::creatures::Creatures>().views().any(|v| v.position.distance(middle) < 12.0);
+            if crowded && gate.server_in_phase() < 6.0 {
+                return;
+            }
+            let client = world.resource::<ClientWorld>();
+            let Some(block) = client.block(planks).filter(|b| !b.is_air()) else {
+                if gate.server_in_phase() > 10.0 {
+                    gate.check("look: block", Err("the plank block never reached the client".into()));
+                    gate.next(Step::Guides, now);
+                }
+                return;
+            };
+            let wanted = world.resource::<crate::lang::Locale>().block(client.registry.def(block));
+            aim(world, planks);
+            let readout = named(world);
+            if readout.name != wanted && in_phase < 5.0 {
+                return;
+            }
+            if gate.shot(world, "look-block").is_some() {
+                let result = if readout.name == wanted && readout.creature.is_none() {
+                    Ok(format!("the block looked at is named {:?} at the top left", readout.name))
+                } else {
+                    Err(format!("looking at the planks the label read {:?}, not {wanted:?}", readout.name))
+                };
+                gate.check("look: block", result);
+                world.resource::<Net>().command(&format!("summon {CREATURE} 1 {} {} {}", pad.x, pad.y, pad.z - 3));
+                gate.advance(now);
+            }
+        }
+        2 => {
+            let Some(view) = snail(world) else {
+                if gate.server_in_phase() > 10.0 {
+                    gate.check("look: creature", Err("the snail never reached the client".into()));
+                    gate.next(Step::Guides, now);
+                }
+                return;
+            };
+            aim_at(world, view.position + Vec3::Y * 0.2);
+            let readout = named(world);
+            let distance = world.resource::<LocalPlayer>().eye().distance(view.position);
+            let reach = world.resource::<Launch>().content.combat.feel.touch;
+            if readout.creature != Some(view.id) && in_phase < 5.0 {
+                return;
+            }
+            if gate.shot(world, "look-creature").is_some() {
+                let wanted = {
+                    let (launch, locale) = (world.resource::<Launch>(), world.resource::<crate::lang::Locale>());
+                    locale.creature(&launch.content.creatures.get(species).def)
+                };
+                let result = if readout.creature == Some(view.id) && readout.name == wanted && !readout.level.is_empty() && distance > reach {
+                    Ok(format!("a snail {distance:.1} blocks off is named {:?}, {}", readout.name, readout.level))
+                } else {
+                    Err(format!("looking at a snail {distance:.1} blocks off (reach {reach}) the label read {:?} {:?} for creature {:?}", readout.name, readout.level, readout.creature))
+                };
+                gate.check("look: creature", result);
+                // A wall put between: two blocks wide, three high.
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {} {} {} {} {} stone", pad.x - 1, pad.y, pad.z, pad.x + 1, pad.y + 2, pad.z));
+                gate.advance(now);
+            }
+        }
+        3 if in_phase > 1.0 => {
+            let wall = pad + IVec3::new(0, 1, 0);
+            if world.resource::<ClientWorld>().block(wall).is_none_or(|b| b.is_air()) && gate.server_in_phase() < 10.0 {
+                return;
+            }
+            let Some(view) = snail(world) else { return };
+            aim_at(world, view.position + Vec3::Y * 0.2);
+            let readout = named(world);
+            let result = if readout.creature.is_none() {
+                Ok(format!("the snail behind a wall is not named; the wall is: {:?}", readout.name))
+            } else {
+                Err(format!("the snail behind a wall was named {:?}", readout.name))
+            };
+            if in_phase > 1.5 {
+                gate.check("look: wall hides", result);
+                world.resource::<Net>().command("creatures remove lumen_snail");
+                gate.next(Step::Guides, now);
+            }
         }
         _ => {}
     }
