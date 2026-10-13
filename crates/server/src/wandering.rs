@@ -8,7 +8,9 @@
 //! and a script walks them. The script is a plan the leader follows and an errand for each
 //! member, handed over every `errand_every` seconds: the same `Errand` villagers follow, so
 //! the `Routine` behaviour of the species walks it, and anything else the species does
-//! (flee when struck, hunt a player who comes near) still beats the walk. Members keep their
+//! (fight when struck, hunt a player who comes near) still beats the walk. The errand is
+//! `steady` until a player turns the party: till then a member runs only when its script
+//! says, after that its own fear may run it. Members keep their
 //! formation round the leader by role; a pet circles its owner.
 //!
 //! Plans find their own way over open ground by probing: a stride of a few blocks ahead
@@ -274,8 +276,17 @@ fn xz(v: Vec3) -> Vec2 {
     Vec2::new(v.x, v.z)
 }
 
+/// How far a party walks off when it gives up or is sent on its way: an ambush's own
+/// `away`, else 80 blocks.
+fn leaves(script: Script) -> f32 {
+    match script {
+        Script::Ambush { away, .. } => away,
+        _ => 80.0,
+    }
+}
+
 fn errand(to: Vec3, last: bool, pose: Pose, face: Option<Vec3>, pace: f32) -> Errand {
-    Errand { to, last, pose, face, chase: None, pace }
+    Errand { to, last, pose, face, chase: None, pace, steady: true }
 }
 
 impl Server {
@@ -482,11 +493,12 @@ impl Server {
 
     /// Whether another of species `species` fits: people have their own budget, animals
     /// and monsters the creature caps of the land near every player.
-    fn wandering_room(&self, species: CreatureId, at: Vec3) -> bool {
+    /// `placing` people of a party being brought are not counted yet.
+    fn wandering_room(&self, species: CreatureId, at: Vec3, placing: usize) -> bool {
         let def = &self.content.creatures.get(species).def;
         let limits = self.content.creatures.limits();
         match def.kind {
-            Kind::Villager => self.wandering.people(self) < self.content.wandering.rules().people_most,
+            Kind::Villager => self.wandering.people(self) + placing < self.content.wandering.rules().people_most,
             kind => {
                 let monster = kind == Kind::Monster;
                 let cap = if monster { self.monsters_cap() } else { limits.animals_near };
@@ -522,11 +534,13 @@ impl Server {
                     let Some(cell) = self.standing_spot((at.x + a.cos() * r).floor() as i32, (at.z + a.sin() * r).floor() as i32, spot.y) else { continue };
                     cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
                 };
-                if !self.wandering_room(*species, stand) {
+                let placing = members.iter().filter(|m| self.content.creatures.get(self.creatures.live[&m.creature].species).def.kind == Kind::Villager).count();
+                if !self.wandering_room(*species, stand, placing) {
                     continue;
                 }
                 let member_seed = mix(seed, 1000 + (g * 16 + i as usize) as u64);
                 let Some(creature) = self.place_creature(*species, stand, member_seed, angle) else { continue };
+                self.creatures.live.get_mut(&creature).expect("just made").wanderer = true;
                 if group.young {
                     self.make_young(creature);
                 }
@@ -633,6 +647,14 @@ impl Server {
         inst.members.retain(|m| self.creatures.live.get(&m.creature).is_some_and(|c| c.owner.is_none()));
         let live: Vec<u32> = inst.members.iter().map(|m| m.creature).collect();
         self.wandering.by_creature.retain(|c, (i, _)| *i != id || live.contains(c));
+        // The leader gone, the next who can lead takes over; a pet, a flock or a captive cannot.
+        let event = self.content.wandering.get(inst.event);
+        let leads = |m: &Member| !matches!(event.groups[m.group].1.role, Role::Pet(_) | Role::Herd | Role::Captive | Role::Free);
+        if !inst.freed && inst.members.first().is_some_and(|m| !leads(m))
+            && let Some(next) = inst.members.iter().position(leads)
+        {
+            inst.members.swap(0, next);
+        }
         for (i, m) in inst.members.iter().enumerate() {
             self.wandering.by_creature.insert(m.creature, (id, i));
         }
@@ -663,7 +685,7 @@ impl Server {
             let seconds = hold.0 + unit_from(mix(inst.seed, self.tick ^ 0x3c0)) * (hold.1 - hold.0);
             let lead = positions.first().copied().unwrap_or(Vec3::ZERO);
             let nearest = players.iter().map(|&(_, p)| p).min_by(|a, b| a.distance(lead).total_cmp(&b.distance(lead)));
-            let away = self.march_away(lead, nearest, Vec2::X, 0.9);
+            let away = self.march_away(lead, nearest, Vec2::X, 0.9, leaves(event.def.script));
             inst.plan = Plan::Held { until: self.tick + ticks(seconds), next: Box::new(away) };
         }
         // Left with no captors, a captive is free.
@@ -673,6 +695,11 @@ impl Server {
                 let by = inst.last_blow;
                 self.free_captive(&mut inst, by);
             }
+        }
+        // With nobody left to lead (a pet or a flock whose person was killed), the rest are let go.
+        let event = self.content.wandering.get(inst.event);
+        if !inst.freed && !inst.members.iter().any(|m| !matches!(event.groups[m.group].1.role, Role::Pet(_) | Role::Herd | Role::Captive | Role::Free)) {
+            inst.release = true;
         }
         if !inst.release {
             self.walk_plan(&mut inst, &players);
@@ -686,9 +713,9 @@ impl Server {
 
     /// The plan of walking off from the nearest player (or on along `heading`), `pace` of a
     /// walk, for 80 blocks.
-    fn march_away(&self, lead: Vec3, nearest: Option<Vec3>, heading: Vec2, pace: f32) -> Plan {
+    fn march_away(&self, lead: Vec3, nearest: Option<Vec3>, heading: Vec2, pace: f32, far: f32) -> Plan {
         let away = nearest.map_or(heading, |p| (xz(lead) - xz(p)).try_normalize().unwrap_or(heading));
-        Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * 80.0, pace }
+        Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * far, pace }
     }
 
     /// How the party's `kind` answers what the players round `at` hold (`Reaction`).
@@ -789,7 +816,8 @@ impl Server {
         let plan = follows.map(|player| Plan::Follow { player, until: self.tick + ticks(freed.follow_for), arrive: Arrival::Home, guided: false });
         let mut me = self.detach(inst, at);
         let target = me.as_mut().unwrap_or(inst);
-        target.freed = true;
+        // Its own journey from now, on a clock of its own.
+        (target.freed, target.born) = (true, self.tick);
         target.members[0].errand = None;
         match plan {
             Some(plan) => target.plan = plan,
@@ -819,7 +847,8 @@ impl Server {
         let Some(at) = inst.members.iter().position(|m| m.creature == creature) else { return };
         let mut me = self.detach(inst, at);
         let target = me.as_mut().unwrap_or(inst);
-        target.guided = true;
+        // Its own journey from now, on a clock of its own.
+        (target.guided, target.born) = (true, self.tick);
         (target.provoked, target.members[0].errand) = (None, None);
         target.plan = Plan::Follow { player, until: self.tick + ticks(guide.follow_for), arrive: guide.arrive, guided: true };
         if let Some(me) = me {
@@ -1376,7 +1405,7 @@ impl Server {
             inst.stage = Stage::Passing;
         }
         if leaving {
-            inst.plan = self.march_away(lead, nearest, heading, 1.0);
+            inst.plan = self.march_away(lead, nearest, heading, 1.0, leaves(script));
             inst.stage = Stage::Passing;
         }
         if let Some(player) = spring {
@@ -1528,7 +1557,7 @@ impl Server {
         if let (Plan::Gather { anchor }, Script::Gather { reach, work, visits, carry }) = (&inst.plan, script) {
             let anchor = *anchor;
             if inst.worked >= visits as u16 && !halted {
-                inst.plan = self.march_away(lead, nearest, heading, 0.9);
+                inst.plan = self.march_away(lead, nearest, heading, 0.9, leaves(script));
             } else {
                 let mut taken: Vec<IVec3> = inst.members.iter().filter_map(|m| m.work.map(|w| w.block)).chain(inst.skipped.iter().copied()).collect();
                 let mut idle = 0;
@@ -1609,14 +1638,24 @@ impl Server {
                 }
             }
         }
+        // A party nobody has turned walks its script and nothing else; once a player has
+        // (a scatter, a sprung ambush) each member's own fear has its say again.
+        let steady = inst.provoked.is_none();
         for (member, errand) in inst.members.iter_mut().zip(errands) {
-            member.errand = errand;
+            member.errand = errand.map(|e| Errand { steady, ..e });
         }
     }
 
     /// `player` right-clicks creature `id`: if it speaks for a wandering party, it answers
     /// (and gives), and the click is spent. Returns whether it did. A party that has been
     /// struck, or whose captive has been freed, says what suits that.
+    /// Whether `player` stands near enough to wandering creature `id` to be heard
+    /// (`speak_reach`).
+    pub(crate) fn within_speech(&self, player: PlayerId, id: u32) -> bool {
+        let (Some(p), Some(c)) = (self.players.get(&player), self.creatures.live.get(&id)) else { return false };
+        flat(p.position, c.body.position) <= self.content.wandering.rules().speak_reach && (p.position.y - c.body.position.y).abs() <= self.content.wandering.rules().speak_reach
+    }
+
     pub(crate) fn meet(&mut self, player: PlayerId, id: u32) -> bool {
         let Some(&(instance, member)) = self.wandering.by_creature.get(&id) else { return false };
         let Some(inst) = self.wandering.active.get(&instance) else { return false };
@@ -1634,6 +1673,8 @@ impl Server {
         // among what the player keeps.
         let kept_room = self.player_name(player).is_some_and(|name| self.kept_by(&name) < self.content.creatures.limits().kept_each);
         let can_hand = |group: usize| kept_room && inst.members.iter().any(|m| m.group == group && self.creatures.live.get(&m.creature).is_some_and(|c| c.owner.is_none()));
+        // A line that frees a captive is for a party that still holds one.
+        let holds_captive = inst.members.iter().any(|m| event.groups[m.group].1.role == Role::Captive && self.creatures.live.contains_key(&m.creature));
         let line = meeting.lines.iter().enumerate().filter(|_| !inst.freed).find(|(i, line)| {
             let used = match line.once {
                 Once::Always => false,
@@ -1666,6 +1707,7 @@ impl Server {
                             }
                     })
                 })
+                && (holds_captive || !line.gives.contains(&ResolvedReward::Free))
         });
         let variant = ((unit_from(mix(self.tick, id as u64 ^ 0x6e37)) * meeting.greets as f32) as u8).min(meeting.greets - 1);
         let (words, gives, wants, mark) = match line {
@@ -1744,7 +1786,7 @@ impl Server {
         {
             let lead = inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map_or(Vec3::ZERO, |c| c.body.position);
             let from = self.players.get(&player).map(|p| p.position);
-            inst.plan = self.march_away(lead, from, Vec2::X, 1.0);
+            inst.plan = self.march_away(lead, from, Vec2::X, 1.0, leaves(event.def.script));
             inst.stage = Stage::Passing;
             inst.provoked = None;
             inst.done = false;
@@ -2054,7 +2096,7 @@ mod tests {
             server.spawn_creature(hound, Vec3::new(128.5, 200.0, 128.5 + i as f32), i as u64);
         }
         assert!(!server.nearby_room(Vec3::new(128.5, 200.0, 128.5), false, cap));
-        assert!(!server.wandering_room(hound, Vec3::new(128.5, 200.0, 128.5)), "no room for another dog");
+        assert!(!server.wandering_room(hound, Vec3::new(128.5, 200.0, 128.5), 0), "no room for another dog");
     }
 
     /// Clears the world of parties and creatures between tries on one server.
@@ -2207,6 +2249,117 @@ mod tests {
     }
 
     #[test]
+    fn a_party_beyond_despawn_range_stays_until_it_leaves() {
+        let mut server = fixture();
+        let id = start(&mut server, "pedlar_and_hound", (68, 128));
+        let members = members_of(&server, id, 0).into_iter().chain(members_of(&server, id, 1)).collect::<Vec<_>>();
+        // Further than the land's own creatures are kept, nearer than the party's `leave`.
+        server.players.get_mut(&1).unwrap().position = leader_at(&server, id).unwrap() + Vec3::new(140.0, 0.0, 0.0);
+        server.despawn_far();
+        assert!(members.iter().all(|m| server.creatures.live.contains_key(m)), "the party is not despawned as if wild");
+    }
+
+    #[test]
+    fn the_next_jailer_leads_when_the_first_is_killed() {
+        let mut server = fixture();
+        let id = start(&mut server, "prison_convoy", (68, 128));
+        let lead = members_of(&server, id, 0)[0];
+        let flank = members_of(&server, id, 1)[0];
+        server.creatures.live.remove(&lead);
+        server.wandering_died(lead);
+        server.update_event(id);
+        assert_eq!(server.wandering.active[&id].members[0].creature, flank, "a jailer leads, not the prisoner");
+    }
+
+    #[test]
+    fn a_hound_whose_pedlar_is_killed_is_let_go() {
+        let mut server = fixture();
+        let id = start(&mut server, "pedlar_and_hound", (68, 128));
+        let (pedlar, hound) = (members_of(&server, id, 0)[0], members_of(&server, id, 1)[0]);
+        server.creatures.live.remove(&pedlar);
+        server.wandering_died(pedlar);
+        server.update_event(id);
+        assert!(!server.wandering.active.contains_key(&id), "nobody leads it now");
+        assert!(server.creatures.live.contains_key(&hound) && !server.wandering.manages(hound), "the hound is an animal of the land");
+    }
+
+    #[test]
+    fn a_speaker_is_heard_only_within_speak_reach() {
+        let mut server = fixture();
+        let id = start(&mut server, "pedlar_and_hound", (68, 128));
+        let pedlar = members_of(&server, id, 0)[0];
+        let reach = server.content.wandering.rules().speak_reach;
+        put_next_to(&mut server, pedlar, Vec3::new(reach + 2.0, 0.0, 0.0));
+        assert!(!server.within_speech(1, pedlar));
+        put_next_to(&mut server, pedlar, Vec3::new(reach - 1.0, 0.0, 0.0));
+        assert!(server.within_speech(1, pedlar));
+    }
+
+    #[test]
+    fn no_bribe_is_taken_once_the_prisoner_is_gone() {
+        let mut server = fixture();
+        let id = start(&mut server, "prison_convoy", (68, 128));
+        let jailer = members_of(&server, id, 0)[0];
+        let captive = members_of(&server, id, 2)[0];
+        // Killed just now: the party has not yet counted its members again.
+        server.creatures.live.remove(&captive);
+        server.wandering_died(captive);
+        give_held(&mut server, "base:gold_coin", 3);
+        assert!(server.meet(1, jailer), "the jailer still talks");
+        assert_eq!(count_of(&server, "base:gold_coin"), 3, "but takes no coins for nobody");
+    }
+
+    #[test]
+    fn parties_together_never_bring_more_people_than_the_budget() {
+        let mut server = fixture();
+        let most = server.content.wandering.rules().people_most;
+        let pilgrims = event(&server, "pilgrims");
+        for seed in 0..40u64 {
+            let spot = server.standing_spot(20 + (seed as i32 % 8) * 28, 20 + (seed as i32 / 8) * 40, 200).unwrap();
+            server.begin_event_at(None, pilgrims, spot, seed, true);
+        }
+        assert!(server.wandering.people(&server) <= most, "{} people, {most} allowed", server.wandering.people(&server));
+    }
+
+    #[test]
+    fn a_freed_prisoner_is_a_wanderer_and_never_one_of_a_settlements_people() {
+        let mut server = fixture();
+        let id = start(&mut server, "prison_convoy", (68, 128));
+        let captive = members_of(&server, id, 2)[0];
+        server.free_in_test(id);
+        assert!(server.creatures.live[&captive].wanderer, "it came with a party, so the settlements' cap never counts it");
+    }
+
+    #[test]
+    fn a_freed_prisoner_follows_on_a_clock_of_its_own() {
+        let mut server = fixture();
+        let lifetime = server.content.wandering.get(event(&server, "prison_convoy")).def.lifetime;
+        for seed in 0..40u64 {
+            clear(&mut server);
+            let event = event(&server, "prison_convoy");
+            let spot = server.standing_spot(100, 128, 200).unwrap();
+            let id = server.begin_event_at(Some(1), event, spot, seed, true).unwrap();
+            let captive = members_of(&server, id, 2)[0];
+            // Its jailers are killed late in the convoy's life; the player freed it.
+            for jailer in members_of(&server, id, 0).into_iter().chain(members_of(&server, id, 1)) {
+                server.creatures.live.remove(&jailer);
+                server.wandering_died(jailer);
+            }
+            server.tick += ticks(lifetime - 5.0);
+            server.wandering.active.get_mut(&id).unwrap().last_blow = Some(1);
+            server.update_event(id);
+            if !server.wandering.by_creature.contains_key(&captive) {
+                continue;
+            }
+            run(&mut server, 20 * 30);
+            assert!(server.creatures.live.contains_key(&captive), "the convoy's end does not take it away mid-walk");
+            assert!(server.wandering.by_creature.contains_key(&captive), "and it still follows");
+            return;
+        }
+        panic!("some seed has the prisoner follow");
+    }
+
+    #[test]
     fn three_coins_buy_the_prisoners_freedom_without_a_fight() {
         let mut server = fixture();
         let id = start(&mut server, "prison_convoy", (68, 128));
@@ -2340,6 +2493,33 @@ mod tests {
     }
 
     #[test]
+    fn a_child_fed_late_in_its_wandering_follows_on_a_clock_of_its_own() {
+        let mut server = fixture();
+        let id = start(&mut server, "lost_child", (110, 128));
+        let child = members_of(&server, id, 0)[0];
+        let lifetime = server.content.wandering.get(event(&server, "lost_child")).def.lifetime;
+        server.tick += ticks(lifetime - 5.0);
+        give_held(&mut server, "base:bread", 1);
+        assert!(server.meet(1, child));
+        run(&mut server, 20 * 30);
+        assert!(server.creatures.live.contains_key(&child), "the wandering's end does not take it away mid-walk");
+        assert!(server.wandering.by_creature.contains_key(&child), "and it still follows");
+    }
+
+    #[test]
+    fn a_flock_whose_shepherd_is_killed_is_let_go() {
+        let mut server = fixture();
+        let id = start(&mut server, "shepherd_and_flock", (68, 128));
+        let shepherd = members_of(&server, id, 0)[0];
+        let flock: Vec<u32> = server.wandering.active[&id].members.iter().skip(1).map(|m| m.creature).collect();
+        server.creatures.live.remove(&shepherd);
+        server.wandering_died(shepherd);
+        server.update_event(id);
+        assert!(!server.wandering.active.contains_key(&id), "no sheep leads the march");
+        assert!(flock.iter().all(|s| !server.wandering.manages(*s)), "the flock are animals of the land");
+    }
+
+    #[test]
     fn striking_a_guided_child_sends_it_running_lost_again() {
         let mut server = fixture();
         let id = start(&mut server, "lost_child", (110, 128));
@@ -2431,6 +2611,28 @@ mod tests {
         assert_eq!(count_of(&server, "base:gold_coin"), gold, "and only once: after that, the plain word");
         // After the hold they march him off.
         assert!(run_until(&mut server, id, 60, |i| i.stage == Stage::Passing && matches!(i.plan, Plan::March { .. })), "the hold ends");
+    }
+
+    #[test]
+    fn a_thief_struck_by_a_player_beside_him_runs_on_into_the_watch() {
+        let mut server = fixture();
+        let id = start(&mut server, "thief_chase", (60, 128));
+        let thief = members_of(&server, id, 0)[0];
+        // A real blow, from beside him as he runs past: his fear is the chase's, not a bolt
+        // of his own.
+        run(&mut server, 20);
+        let at = server.creatures.live[&thief].body.position;
+        server.players.get_mut(&1).unwrap().position = at + Vec3::new(1.5, 0.0, 0.0);
+        server.hurt_creature(1, thief, 1, None, voxmar_engine::combat::Blow::Plain);
+        assert!(run_until(&mut server, id, 240, |i| i.stage == Stage::Caught), "the watch still catch him");
+        // Walking up to him while he is held does not set him running.
+        let held = server.creatures.live[&thief].body.position;
+        server.players.get_mut(&1).unwrap().position = held + Vec3::new(1.5, 0.0, 0.0);
+        run(&mut server, 20 * 4);
+        assert!(flat(server.creatures.live[&thief].body.position, held) < 4.0, "he stays held");
+        let constable = members_of(&server, id, 1)[0];
+        assert!(server.meet(1, constable));
+        assert!(count_of(&server, "base:gold_coin") > 0, "and the bounty is paid");
     }
 
     #[test]
@@ -2556,8 +2758,11 @@ mod tests {
         near_bait(&mut server, id, 5.0);
         run(&mut server, 20 * 15);
         assert_eq!(server.wandering.active[&id].stage, Stage::Waiting, "armed and seasoned: no spring");
-        run(&mut server, 20 * 15);
-        assert!(matches!(server.wandering.active[&id].plan, Plan::March { .. }), "they give it up");
+        assert!(run_until(&mut server, id, 15, |i| matches!(i.plan, Plan::March { .. })), "they give it up");
+        let inst = &server.wandering.active[&id];
+        let Plan::March { goal, .. } = inst.plan else { unreachable!() };
+        let lead = server.creatures.live[&inst.members[0].creature].body.position;
+        assert!((110.0..=130.0).contains(&flat(goal, lead)), "they go the script's `away` (120 blocks), not a fixed march");
         // The same player with empty hands would have been sprung on.
         let mut server = fixture();
         let id = walk_to_waiting(&mut server);
@@ -2566,6 +2771,18 @@ mod tests {
         skill_to(&mut server, "core:hitpoints", 25);
         near_bait(&mut server, id, 5.0);
         assert!(run_until(&mut server, id, 15, |i| i.stage == Stage::Sprung), "nothing in the hand: not feared");
+    }
+
+    #[test]
+    fn the_bait_lies_still_when_a_player_walks_right_up_to_it() {
+        let mut server = fixture();
+        let id = walk_to_waiting(&mut server);
+        let bait = server.wandering.active[&id].members[0].creature;
+        let at = server.creatures.live[&bait].body.position;
+        near_bait(&mut server, id, 2.0);
+        run(&mut server, 20 * 3);
+        assert_eq!(server.wandering.active[&id].stage, Stage::Waiting);
+        assert!(flat(at, server.creatures.live[&bait].body.position) < 1.0, "lying hurt is its errand: it does not bolt from a stranger");
     }
 
     #[test]
@@ -2601,9 +2818,9 @@ mod tests {
         assert_eq!(server.wandering.active[&id].stage, Stage::Passing);
         let hunter = server.content.skills.id("core:hunter").unwrap();
         let xp = server.players[&1].skills.xp(hunter);
-        // A follower ten blocks behind: it walks on, the whole way.
+        // A follower seven blocks behind, near enough to scare a wild stag: it walks on, the whole way.
         for _ in 0..400 {
-            follow(&mut server, id, 10.0);
+            follow(&mut server, id, 7.0);
             run(&mut server, 20);
             if server.wandering.active.get(&id).is_none_or(|i| i.stage == Stage::Arrived) {
                 break;
@@ -2617,6 +2834,20 @@ mod tests {
         // And once it has shown its gift, it goes.
         run(&mut server, 20 * 10);
         assert!(!server.wandering.active.contains_key(&id) && !server.creatures.live.contains_key(&stag), "gone without a death");
+    }
+
+    #[test]
+    fn a_struck_stag_bolts_on_its_own_fear_not_at_a_walk() {
+        let mut server = fixture();
+        let id = start(&mut server, "white_stag", (60, 128));
+        let stag = server.wandering.active[&id].members[0].creature;
+        run(&mut server, 20);
+        assert!(server.wandering.active[&id].members[0].errand.is_some_and(|e| e.steady), "leading: the script's walk");
+        server.wandering_hurt(stag, 1);
+        run(&mut server, 20);
+        let inst = &server.wandering.active[&id];
+        assert!(matches!(inst.plan, Plan::March { .. }), "it scatters");
+        assert!(inst.members[0].errand.is_some_and(|e| !e.steady), "and its fear may run it");
     }
 
     #[test]

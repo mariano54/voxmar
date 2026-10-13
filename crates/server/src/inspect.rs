@@ -25,7 +25,7 @@ const NOTABLE: f32 = 0.8;
 impl Server {
     pub(crate) fn inspect(&mut self, player: PlayerId, id: u32) {
         // A wandering party's speaker answers instead (`wandering::meet`).
-        if self.meet(player, id) {
+        if self.within_speech(player, id) && self.meet(player, id) {
             return;
         }
         // A kept one's needs as they are now, not as last reckoned.
