@@ -27,7 +27,7 @@
 //! `--fov DEGREES`, `--language CODE` (`en`, `ja`; overrides the setting, and captures are in
 //! English without it), `--weather KIND[:INTENSITY]` (show that instead of the server's
 //! weather; the kinds are in `weather.ron`, intensities 0..1 or light|moderate|heavy|max), `--command LINE` (run a console command once in game, such as
-//! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
+//! `"/time set noon"`, the `/` optional; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings. Captures are silent, and so is
 //! any run with the environment variable `VOXMAR_MUTE` set.
 
