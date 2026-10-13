@@ -432,7 +432,7 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref() };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done };
         let given = effects.given_by_sleep(&situation);
         // The best rest it gives (the one the others are hidden by) is the one it says.
         let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
@@ -496,7 +496,7 @@ impl Server {
         let Some(player) = self.players.get(&agent) else { return false };
         let held = player.held();
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
-        let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block);
+        let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block) + player.modifiers.finds;
         let info = self.content.blocks.info(block);
         let [roll, kick, ..] = crate::items::random3(self.tick, pos, agent ^ 0xd1ce);
         // Never a furnishing's: it gives itself back only where a player placed it.

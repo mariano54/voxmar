@@ -411,7 +411,11 @@ impl Content {
             }
         }
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
-        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks })?;
+        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps() })?;
+        // An effect that waits on a quest nobody can finish would never come on.
+        if let Some(quest) = effects.quests().iter().find(|quest| quests.get(quest).is_none()) {
+            return Err(RegistryError(format!("effects.ron: an effect waits for the quest `{quest}`, which no package has")));
+        }
         crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
         crate::inventory::set_worn_slots(combat.worn_slots());
@@ -879,7 +883,10 @@ mod tests {
                         }
                         Goal::Built(name, _) => {
                             let name = if name.contains(':') { name.clone() } else { format!("base:{name}") };
-                            route.build(&name);
+                            // A ladder step (a home's) is earned by what stands around it, not built.
+                            if content.multiblocks.get(&name).is_some() {
+                                route.build(&name);
+                            }
                         }
                         Goal::Visit(_) | Goal::LookUp(_) => {}
                         Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Thriving(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),

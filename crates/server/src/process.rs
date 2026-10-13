@@ -124,7 +124,7 @@ impl Process for Survival {
         let seconds = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
         let effects = server.content.effects.clone();
         let hitpoints = server.content.skills.id("core:hitpoints");
-        // Steps of a home reached this second, counted for quests (`Built("home_snug", 1)`).
+        // Steps of a home reached this second, counted for quests (`Built("home_snug", 1)`, qualified by the effect's package).
         let mut reached: Vec<(PlayerId, String)> = Vec::new();
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
@@ -162,7 +162,7 @@ impl Process for Survival {
             // Warmth from what was eaten and the weather counts before the bands of warmth
             // are judged: soaked through, a mild day feels chilly.
             let biome = server.overworld.biome_at(feet.x, feet.z);
-            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref() };
+            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done };
             let first = effects.active(&situation, &player.timed_effects);
             situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
             let active = effects.active(&situation, &player.timed_effects);
@@ -212,7 +212,8 @@ impl Process for Survival {
             player.announced.extend(&gained);
             for effect in gained {
                 let def = effects.get(effect);
-                reached.push((id, format!("home_{}", def.name.rsplit(':').next().unwrap_or_default())));
+                let (package, own) = def.name.split_once(':').unwrap_or(("", &def.name));
+                reached.push((id, format!("{package}:{}_{own}", def.ladder)));
                 let key = voxmar_engine::lang::def_key("effect", &def.name);
                 let mut words = Words::key("effect.gained").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
                 if !def.next.is_empty() {

@@ -286,7 +286,7 @@ impl QuestRegistry {
     /// quest that never finishes or a reward that never comes. Journal pages are checked as
     /// the file is read.
     pub fn resolve(&mut self, named: &Named) -> Result<(), RegistryError> {
-        let Named { blocks, skills, creatures, fishing, multiblocks } = *named;
+        let Named { blocks, skills, creatures, fishing, multiblocks, steps } = *named;
         let block_ids: Vec<BlockId> = blocks.ids().collect();
         let fish_ids: Vec<BlockId> = fishing.iter().map(|c| c.item).collect();
         let names = |ids: &[BlockId]| ids.iter().map(|&id| blocks.def(id).name.as_str()).collect::<Vec<_>>();
@@ -294,6 +294,7 @@ impl QuestRegistry {
         let creature_names: Vec<&str> = creatures.iter().map(|(_, c)| c.def.name.as_str()).collect();
         let tameable: Vec<&str> = creatures.iter().filter(|(_, c)| c.def.taming.is_some()).map(|(_, c)| c.def.name.as_str()).collect();
         let multiblock_names: Vec<&str> = multiblocks.iter().map(|m| m.name.as_str()).collect();
+        let built_names: Vec<&str> = multiblock_names.iter().copied().chain(steps.iter().map(String::as_str)).collect();
         // What a goal's name may be: one of these, `any` where the goal counts anything, and
         // `tag:TAG` where one of these blocks has the tag.
         struct Kind<'a> {
@@ -310,6 +311,7 @@ impl QuestRegistry {
         let creature = Kind { what: "creature", names: &creature_names, any: true, tagged: &[] };
         let tame = Kind { what: "tameable creature", names: &tameable, ..creature };
         let multiblock = Kind { what: "multiblock", names: &multiblock_names, ..creature };
+        let built = Kind { what: "multiblock or ladder step", names: &built_names, ..creature };
         let reward = Kind { tagged: &[], ..item };
         for quest in &mut self.quests {
             let namespace = quest.name.split(':').next().unwrap_or("").to_owned();
@@ -341,7 +343,7 @@ impl QuestRegistry {
                     Goal::Catch(name, _) => find(name, &fish)?,
                     Goal::Kill(name, _) => find(name, &creature)?,
                     Goal::Tame(name, _) => find(name, &tame)?,
-                    Goal::Built(name, _) => find(name, &multiblock)?,
+                    Goal::Built(name, _) => find(name, &built)?,
                     Goal::Lit(name, _) => find(name, &multiblock)?,
                     Goal::CookAt(name, _, _) => find(name, &made)?,
                     Goal::Thriving(..) => {}
@@ -417,6 +419,8 @@ pub struct Named<'a> {
     pub creatures: &'a CreatureRegistry,
     pub fishing: &'a FishingRegistry,
     pub multiblocks: &'a MultiblockRegistry,
+    /// The announced steps of effect ladders (`base:home_snug`), which `Built` may name too.
+    pub steps: &'a [String],
 }
 
 /// The one of `names` a quest in package `namespace` means by `name`: a full name as
@@ -619,7 +623,7 @@ mod tests {
         let multiblocks = MultiblockRegistry::new(vec![MultiblockRegistry::read("base", kiln).unwrap()], &blocks).unwrap();
         let source = format!("(quests: [{quest}])");
         let mut quests = QuestRegistry::new(vec![QuestRegistry::read(namespace, &source).unwrap()])?;
-        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks })?;
+        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[] })?;
         Ok(quests)
     }
 
@@ -646,7 +650,7 @@ mod tests {
         assert_eq!(refused(r#"Pick("popy", 1)"#, ""), Some("quest base:dig names the plant `popy`, which no package has".to_owned()));
         assert_eq!(refused(r#"Mine("coper_ore", 1)"#, ""), Some("quest base:dig names the block `coper_ore`, which no package has".to_owned()));
         assert_eq!(refused(r#"Mine("tag:ores", 1)"#, ""), Some("quest base:dig names the tag `ores`, which no package has".to_owned()));
-        assert_eq!(refused(r#"Built("kil", 1)"#, ""), Some("quest base:dig names the multiblock `kil`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Built("kil", 1)"#, ""), Some("quest base:dig names the multiblock or ladder step `kil`, which no package has".to_owned()));
         // A page no journal has is refused as the file is read.
         let page = quest(r#"Discover(Spells, 1)"#, "");
         assert!(QuestRegistry::read("base", &format!("(quests: [{page}])")).is_err());

@@ -58,12 +58,16 @@ All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST`
 Home tiers use `heal`, `warmth` and `xp` only: a location effect that changed maximum health
 would cost health every time the player stepped out.
 
-## Quest hooks (for the quests thread)
+## Quest hooks (written, in base/quests.ron)
 
-`Built("home_camp", 1)` ... as above. Suggested chapters: Nomad "Make Camp" (sleep in a bag
-with a torch beside it), "Hearthside" (light the hearth, already `Home`), "Snug" (roof it);
-Farm "Homely", "Cosy", "Heart of the Home", each a multi-part quest (craft the pieces, then
-reach the step).
+`Built("home_camp", 1)` and the other steps are real goals (a step is tallied as
+`base:home_NAME`, and quests write it short). The home branch: Make Camp (Nomad: sleep in a
+bag with a torch beside it); Snug for Winter, A Homely Home, A Cosy Home and Heart of the
+Home (Farm), each with routes that also accept any higher step, because a player who first
+reaches a higher step never gets the lower one announced; they come after the craft quests
+that make the pieces (seats, a table, shelves, rugs, crockery, candles) and A Stove and a
+Quern, Books and Banners, the two parts the last step needs. Hearthside is the Homestead
+Hearth quest itself.
 
 ## Not built (ideas)
 

@@ -53,11 +53,11 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
         HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), wanted.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() }
     };
     let top = |survey: &HomeSurvey, outdoors: bool| {
-        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey) };
+        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[] };
         effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).collect::<Vec<_>>()
     };
     let rest = |survey: &HomeSurvey, outdoors: bool| {
-        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey) };
+        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[] };
         effects.given_by_sleep(&situation).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
     };
     for step in LADDER {

@@ -8,7 +8,10 @@
 // `when` is what brings it on, checked every second: how warm you feel, a fire nearby, and the weather where you stand (rain, snow, hail, dust and storms only out in
 // it, under open sky; wind anywhere). An effect without one comes only from what you do:
 // food with an `effect:NAME:SECONDS` tag gives it for that long (base/effects.ron).
-// `replaces` hides milder effects while a stronger one lasts.
+// `replaces` hides milder effects while a stronger one lasts. `finds` adds to the chance of an
+// extra piece from natural rock and soil. `Done("quest")` holds once that quest is finished
+// (a perk that stays), and `announce` makes a step say so in chat once, counted for quests as
+// `Built("LADDER_NAME", 1)` (`ladder` is `home` unless given); see base/effects.ron.
 (
     effects: [
         // Warmth.
