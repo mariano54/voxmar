@@ -32,8 +32,12 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   `Lurk` (lies in wait about the leader, in an `Ambush`).
 - **Scripts.** The script decides where the leader goes; every other member gets a formation
   slot from its role. The server hands each member an `Errand`, the same handoff villagers
-  use, so the creature brain still decides how to walk it (and still flees, fights or looks
-  around when its modules say so).
+  use, so the creature brain still decides how to walk it (and still fights or looks around
+  when its modules say so). A party's errand is `steady`: the brain's own `Flee` waits while
+  it holds one, so a member runs only when its script says (a chase, a scatter, a lure
+  hurrying on), and a wild stag or a hurt traveller does not bolt from the player the script
+  is meant to meet. Freeing, scattering and release clear the errand, and the brain is
+  itself again.
   - `March(pass, length, pace)`: a line that passes the player at `pass` blocks and walks on.
   - `Patrol(radius, stops, pause, laps)`: a ring of stops, each paused at, then marches off.
   - `Camp(near, stay, mill, away)`: settles near the player, mills about (rests at night),
@@ -54,7 +58,7 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
     seconds later (time to talk, pay, or run): the lurkers turn on that player (`Sprung`,
     `Avenge`), the bait is afraid. Every lurker gone is `Won`: the bait stays `hold` seconds
     to be thanked. Nobody comes in `patience` seconds, or a `Wary` player stands by (see
-    Reactions) for twenty, and they go `away`.
+    Reactions) for twenty, and they march `away` blocks off (a paid toll or a won fight the same).
   - `Lure(keep, length, pace, patience, linger)`: the leader stands watching where it appeared
     until a player comes within `keep.1` blocks, then leads off along a line `length` blocks
     long, away from them, hurrying if they come nearer than `keep.0`, waiting (alert) if they
@@ -119,9 +123,19 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   by killing the jailers, by a bribe, or by a knife (which the jailers see).
 - **Persistence.** A party is a passing thing and is not saved. A freed prisoner who settles
   stays while players are near like any creature of the land; a restart does not keep them.
-- **Ending.** An event ends when no player is within `leave`, after its `lifetime`, when its
-  march is walked and nobody is within 40 blocks, or when its leader is gone. Its people are
-  taken away without a death. Killed members leave the party; the party goes on.
+- **Ending.** An event ends when no player is within `leave`, after its `lifetime`, or when its
+  march is walked and nobody is within 40 blocks. Its people are taken away without a death.
+  Killed members leave the party and the party goes on: when the leader is killed, the next
+  member who can lead (not a pet, a flock, a captive or a `Free` one) takes over, and when
+  nobody who can lead is left (a hound whose pedlar was killed, a shepherd's flock) the rest
+  are let go as creatures of the land. Party members are never despawned for distance like
+  wild creatures; the event takes them away. A freed captive, or a befriended one, follows
+  on a clock of its own from the moment it is freed or befriended.
+- **Speech.** A speaker answers a right click only within `speak_reach`. A line that frees a
+  captive (`Free`) is offered only while the party still holds one, so a bribe is never taken
+  for nobody. Short skill names in lines mean the event's own package's skill first, then
+  core's. Everyone who came with a party, freed or let go, stays outside the settlements'
+  people budget.
 - **Admin.** `/wander` lists the parties about, `/wander list` the kinds, `/wander start
   NAME` begins one ahead of you, `/wander end` sends them all away.
 
