@@ -520,7 +520,8 @@ Breaking a block (`client/src/breaking.rs`) uses it as Minecraft does:
 
 Particles are lit with a sky light estimated once per burst from the columns around the
 block, by the engine's rule (straight down from the sky, less through water and leaves,
-stopped by solid blocks, then one level less per block sideways, up to three), and a block
+stopped by solid blocks, then one level less per block sideways, up to three, only
+through what lets light by, so a cave a block inside a cliff is not lit through it), and a block
 light from the torches and glowing blocks within seven blocks (`breaking::light_at`, the
 dropped items' `block_light`), or the block's own glow if that is more, since the client
 keeps no light field outside the mesher. Pieces breaking from a block in a cave by a torch
