@@ -1107,39 +1107,17 @@ mod tests {
         println!("mean {:.2} ms per column", total.as_secs_f64() * 1000.0 / count as f64);
     }
 
-    /// Generates the `count`×`count` columns from `first` on all cores.
-    /// The columns at `positions`, generated on all cores, in their order.
+    /// The columns at `positions`, generated on the test threads' pool (`RAYON_NUM_THREADS`,
+    /// which the gate sets to the cores it leaves the tests), in their order.
     pub(crate) fn generate_columns(world: &Overworld, positions: &[ColumnPos]) -> Vec<Column> {
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-        let mut columns: Vec<Option<Column>> = positions.iter().map(|_| None).collect();
-        let chunk = columns.len().div_ceil(threads).max(1);
-        std::thread::scope(|scope| {
-            for (slots, part) in columns.chunks_mut(chunk).zip(positions.chunks(chunk)) {
-                scope.spawn(move || {
-                    for (slot, &pos) in slots.iter_mut().zip(part) {
-                        *slot = Some(world.generate(pos));
-                    }
-                });
-            }
-        });
-        columns.into_iter().map(Option::unwrap).collect()
+        use rayon::prelude::*;
+        positions.par_iter().map(|&pos| world.generate(pos)).collect()
     }
 
+    /// Generates the `count`×`count` columns from `first`, as [`generate_columns`] does.
     pub(crate) fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-        let mut columns: Vec<Option<Column>> = (0..count * count).map(|_| None).collect();
-        let chunk = columns.len().div_ceil(threads);
-        std::thread::scope(|scope| {
-            for (part, slots) in columns.chunks_mut(chunk).enumerate() {
-                scope.spawn(move || {
-                    for (i, slot) in slots.iter_mut().enumerate() {
-                        let i = (part * chunk + i) as i32;
-                        *slot = Some(world.generate(first.offset(i % count, i / count)));
-                    }
-                });
-            }
-        });
-        columns.into_iter().map(Option::unwrap).collect()
+        let positions: Vec<ColumnPos> = (0..count * count).map(|i| first.offset(i % count, i / count)).collect();
+        generate_columns(world, &positions)
     }
 
     /// Rivers are traced region by region and cached; nothing may depend on which column,
@@ -1962,7 +1940,9 @@ mod tests {
         };
         // Only the columns of chunks the biome reaches into (seen every four blocks) are
         // generated: a biome in scattered pockets costs no more than its own land.
+        use rayon::prelude::*;
         let positions: Vec<ColumnPos> = (0..chunks * chunks)
+            .into_par_iter()
             .map(|i| first.offset(i % chunks, i / chunks))
             .filter(|&pos| {
                 let (sampler, corner) = (sampler(pos), pos.origin());
@@ -1970,8 +1950,9 @@ mod tests {
             })
             .collect();
         let area = generate_columns(world, &positions);
-        let (mut columns, mut placed) = (0u64, vec![Vec::new(); count]);
-        for (&pos, column) in positions.iter().zip(&area) {
+        // Each column of chunks counted on its own core, summed in order.
+        let counted: Vec<(u64, Vec<Vec<(i32, i32)>>)> = positions.par_iter().zip(&area).map(|(&pos, column)| {
+            let (mut columns, mut placed) = (0u64, vec![Vec::new(); count]);
             let corner = pos.origin();
             let sampler = sampler(pos);
             // A census needs home, height and water only. Sample the full river area once,
@@ -1989,6 +1970,14 @@ mod tests {
                         placed[k].push((corner.x + x, corner.z + z));
                     }
                 }
+            }
+            (columns, placed)
+        }).collect();
+        let (mut columns, mut placed) = (0u64, vec![Vec::new(); count]);
+        for (n, found) in counted {
+            columns += n;
+            for (all, found) in placed.iter_mut().zip(found) {
+                all.extend(found);
             }
         }
         Some((columns, placed))
@@ -2537,15 +2526,17 @@ mod tests {
             let world = Overworld::new(seeds, registry.clone());
             let open: Vec<usize> = (0..biomes.len()).filter(|&b| !done(&tally, b)).collect();
             println!("seed {seeds}: counting {}", open.iter().map(|&b| biomes[b].as_str()).collect::<Vec<_>>().join(", "));
-            for b in open {
-                for from in PLACES {
-                    let Some((columns, placed)) = biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()) else { continue };
-                    tally[b].0 += 1;
-                    tally[b].1 += columns;
-                    for (k, placed) in placed.iter().enumerate() {
-                        tally[b].2[k].0 += placed.len();
-                        tally[b].2[k].1 += patches(placed).len();
-                    }
+            // Every place of every open biome side by side, counted in order.
+            use rayon::prelude::*;
+            let wanted: Vec<(usize, IVec2)> = open.iter().flat_map(|&b| PLACES.map(|from| (b, from))).collect();
+            let areas: Vec<_> = wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect();
+            for (b, area) in areas {
+                let Some((columns, placed)) = area else { continue };
+                tally[b].0 += 1;
+                tally[b].1 += columns;
+                for (k, placed) in placed.iter().enumerate() {
+                    tally[b].2[k].0 += placed.len();
+                    tally[b].2[k].1 += patches(placed).len();
                 }
             }
         }
