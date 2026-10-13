@@ -132,10 +132,11 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   `/weather` does, from a line only; `Prayer(points)`: restores prayer points up to the
   player's most, said only to one short of them; `Grow(reach, stages)`: the crops planted
   within `reach` blocks of the speaker grow on `stages`, as water carried to a field does,
-  said only with one there still growing). A
+  said only with one there still growing; `Spar(down_to, seconds)`: the speaker, one that
+  fights, spars with the player: see Bouts). A
   line can also need `When(stage)` (the party is at that
   stage of its script: `Caught`, `Waiting`, `Sprung`, `Won`, `Leading`, `Arrived`, `Took`; the stage
-  must belong to the event's script) or `Struck(group)` (this player struck a member of that
+  must belong to the event's script, or be `Won` or `Lost` of a bout) or `Struck(group)` (this player struck a member of that
   group of the cast, and the party did not turn on them for it). A line with only such needs
   and no `wants` is the stage's own greeting. `once` is `Always`, `Player` or `Party`. The speech is the lang key `wander.<package>.<event>.<line>`; the greeting
   (when no line applies) is `.greet`, or with `greets: 3` one of `.greet`, `.greet_2`,
@@ -158,6 +159,14 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   its spot: a player who stands within `near` blocks of its leader for `seconds` together
   is given `gives` (items, XP, effects, healing), once each, with the event's `show`
   line. One who walks off starts the count again; a party struck or startled shows nothing.
+- **Bouts.** A line that gives `Spar(down_to, seconds)` starts a bout between its speaker and
+  the player: fought for real, by the fighter's own nature and the player's weapon, but no
+  blow between the two takes either below `down_to` of their health, so neither falls. The
+  first brought down to it loses: the stage is `Won` (the player won) or `Lost`, the fighter
+  says `bout_won` or `bout_lost`, bears no grudge and binds its scrapes, and the party goes
+  on with what it was doing. After `seconds`, or with the player 16 blocks off, the bout
+  ends with nobody the winner. A blow on the fighter in a bout is the bout, not an offence;
+  one after it is. Nobody talks mid-bout.
 - **Young.** A group with `young: true` comes young (piglets, a calf, fawns) and grows up as
   kept young do.
 - **Being struck.** `hurt` says what a party does when a player strikes one of its own:
@@ -458,6 +467,76 @@ line can want either.
 | has no field near | n/a | the sheaf is not taken | n/a | n/a |
 | strikes one | scatter | scatter | scatter | scatter |
 
+## Batch 11 (implemented, six kinds): bouts, clear skies and folk of the lanes
+
+The new piece is the bout (`Spar`, and the `Lost` stage): a fight for real that ends at a
+share of either's health, so a beginner can learn by losing. Used by two kinds here, and by
+the knight errant to come.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| sparring master | Camp, Spar | An old soldier offers a beginner with a weapon in hand (Attack below 20) a bout to seven tenths of health, once. Lose and you learn a little Defence; win and you learn Attack and Defence. Past Attack 20 he has nothing to teach. Struck outside a bout, he fights in earnest. |
+| village champion | Camp, Spar, town | Holds a ring near a town. Two coins wagered for a bout to half health, once; win and the wager comes back doubled. |
+| stargazers | Camp, show, dry | Only on a clear night. Lie and watch the sky with them (25 s) for Focused and a little Magic; a coin for a look through the tube, and they point to a wonder near. |
+| chimney sweep | March, near home | On their round of folk's homes. Shake a sweep's hand for luck, once: a coin, Refreshed, or word of a wonder near. |
+| quack doctor | Camp, town | Tonics near a town. A coin buys one, once: healing or one of four buffs, by chance, never harm. |
+| stuck cart | Camp, show, wet | Only in rain: a farmer's cart sunk to the axles. Stand by it 12 s (a shoulder to the wheel) and it comes free: a coin and a loaf. |
+
+| the player | sparring master | village champion | stuck cart |
+| --- | --- | --- | --- |
+| holds a weapon | a bout, once (a beginner) | n/a | n/a |
+| wagers two coins | n/a | a bout, once | n/a |
+| wins the bout | Attack and Defence | four coins | n/a |
+| loses the bout | a little Defence | nothing | n/a |
+| walks off mid-bout | no winner | no winner, the wager kept | the push starts again |
+| strikes outside a bout | he fights in earnest | the same | they scatter |
+
+## Batch 12 (implemented, six kinds): the home's fields, first crafts and the road
+
+No new mechanics: each kind is the framework and data, and each answers something the first
+two ages already have (a home's crops, wheat seed, flint and hides, the marsh at night, the
+road to town).
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| wassailers | Camp, near home, night | Singers come at night to one at home. A loaf and they toast the fields: unripe crops within 24 blocks grow a stage, and a little Farming (once for the party; only where something grows). |
+| thatchers | March, near home | Two on their way to a roof. A beginner builder (Construction below 10) gives four wheat and learns how straw is laid, once. |
+| seed swappers | Camp | Four wheat seeds swap for two of a crop the player can sow, again and again: rye from Farming 3, carrot or chickpea too from Farming 7. A beginner learns when to sow. |
+| flint knappers | Camp | At a gravel bank. Two flints and a beginner (Crafting below 8) learns to knap, once; a beginner miner is told where gravel lies; a hide buys three or four flints. |
+| frog giggers | Hunt, night, marsh | Hunt frogs and toads with a lantern; first blood on one they take is shared (Hunter); a beginner learns to still the light. |
+| messenger | Journey (fast) | Runs a letter to town at half again a walk. Keep up the whole way and they stand you a coin and some Hitpoints. On the road they pass on news of a wonder, once. |
+
+| the player | wassailers | seed swappers | messenger |
+| --- | --- | --- | --- |
+| gives what's asked | the fields grow a stage | seed of another crop | n/a |
+| has nothing growing near | no toast taken | n/a | n/a |
+| is a beginner | n/a | told when to sow, no swap | n/a |
+| keeps up to town | n/a | n/a | a coin and Hitpoints |
+| falls behind | n/a | n/a | nothing at the town |
+| strikes one | they scatter | they scatter | they scatter |
+
+## Batch 13 (implemented, six kinds): ore and fire, pots, and nights near home
+
+No new mechanics. Each kind answers something early play is already doing: first ores and
+the crucible, fired pots, a flame held up at night, a home at night, rain.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| sleepwalker | Roam, near home, night | A neighbour wandering in their sleep near a player's home. Wake them and they give a coin and go home (once for the party). |
+| ore assayer | Camp | Where rock shows. A beginner miner (Mining below 12) holding ore learns to read it, once; four copper ore buy a coin, once. |
+| bloomery smelters | Camp | Smelt two to four copper ore in their crucible once, keeping one ingot: a first look at metal before your own Crucible Kiln. A beginner learns what bellows are for. |
+| moth netters | Camp, night, dry | Hold up a flame (a torch, anything tagged fire) and they net the moths that come: a coin and a little Hunter, once. |
+| potter | March (halts) | Four fired pots buy two coins, once; a beginner (Crafting below 12) holding one is shown how to burnish. |
+| snail racers | Camp, show, wet | Children race snails in the rain. Watch a race through (20 s) for Refreshed; bet a coin once: two back or only a laugh. |
+
+| the player | sleepwalker | bloomery smelters | snail racers |
+| --- | --- | --- | --- |
+| gives what's asked | a coin, they go home | copper ingots, less one | two coins or a laugh |
+| holds too little | n/a | no fire lit for one lump | n/a |
+| is a beginner | n/a | told about bellows | n/a |
+| stays to watch | n/a | n/a | Refreshed |
+| strikes one | they scatter | they scatter | they scatter |
+
 ## Quest hooks
 
 Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
@@ -475,6 +554,17 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **Harvest home** (harvest home): give a sheaf to the dolly and see the field grow.
 - **Coal by road** (coal carters): walk the coal to town; the first coal for torchlight.
 - **The piper's tune** (rat catcher): follow the piper to the end of his tune.
+- **A first bout** (sparring master): spar with a wandering soldier, win or lose.
+- **Ring champion** (village champion): win a wager in the champion's ring.
+- **Under the stars** (stargazers): watch the sky with the stargazers.
+- **A toast to the fields** (wassailers): share a loaf with the wassailers and see a field grow.
+- **New seed** (seed swappers): swap wheat seed for another crop and sow it.
+- **Keep up** (messenger): run with a messenger all the way to town.
+- **Sleepwalking** (sleepwalker): wake a neighbour wandering in their sleep and see them home.
+- **First metal** (bloomery smelters): have copper smelted at a travelling bloomery.
+- **To the light** (moth netters): hold a flame up for the moth netters.
+- **Sound pots** (potter): sell four fired pots to a travelling potter.
+- **The green one** (snail racers): watch a snail race in the rain.
 
 ## Catalogue of 100
 
@@ -528,14 +618,14 @@ are the mechanics later batches add, each used by several kinds.
 | 42 | caravan | pack animals, guards and a merchant on a long road | March | 3 | later |
 | 43 | refugees | see batch 7 | Guide | 2 | done |
 | 44 | soldiers on the march | two columns that do not stop for a player | March | 3 | later |
-| 45 | knight errant | duels for a coin; wins a favour | Duel | 3 | later |
+| 45 | knight errant | duels for a coin; wins a favour | Spar (batch 11) | 3 | later |
 | 46 | wandering monk | see batch 7 | Meeting | 2 | done |
 | 47 | travelling alchemist | see batch 6 | Asks | 2 | done |
 | 48 | rat catcher | see batch 10 (a piper and field mice) | Lure | 2 | done |
 | 49 | fortune teller | see batch 8 | OneOf | 2 | done |
 | 50 | puppeteers | see batch 7 | Show | 2 | done |
 | 51 | circus | acrobats, a bear on a chain; scares animals | Camp | 3 | later |
-| 52 | messenger | runs between settlements; a letter for a coin | Errand | 2 | later |
+| 52 | messenger | see batch 12 | Journey | 2 | done |
 | 53 | postman with mule | delivers to a player's home mailbox | Errand | 3 | later |
 | 54 | cartographer | see batch 7 | Town | 2 | done |
 | 55 | prospector | see batch 6 | Gather | 2 | done |
@@ -567,7 +657,7 @@ are the mechanics later batches add, each used by several kinds.
 | 81 | lost mage | a mage whose spell went wrong; fetch three motes | Meeting | 3 | later |
 | 82 | mage duel | two mages cast at each other and ignore you | Duel | 4 | later |
 | 83 | archmage and pupils | a tutor with five pupils; a tougher lesson | March | 4 | later |
-| 84 | star gazers | at night, with a brass tube; shows the sky for a bonus | Camp | 3 | later |
+| 84 | star gazers | see batch 11 | Camp | 1 | done |
 | 85 | rainmakers | see batch 9 | Weather | 2 | done |
 | 86 | storm chasers | follow lightning and gather a charged rock | Chase | 4 | later |
 | 87 | frost caravan | in the cold biomes; furs to swap | March | 3 | later |
@@ -595,6 +685,22 @@ are the mechanics later batches add, each used by several kinds.
 | 109 | coal carters | see batch 10 | Journey | 1 | done |
 | 110 | tanner | see batch 10 | Camp | 1 | done |
 | 111 | benighted miners | see batch 10 | night | 1 | done |
+| 112 | sparring master | see batch 11 | Spar | 1 | done |
+| 113 | village champion | see batch 11 | Spar | 2 | done |
+| 114 | chimney sweep | see batch 11 | near home | 2 | done |
+| 115 | quack doctor | see batch 11 | OneOf | 1 | done |
+| 116 | stuck cart | see batch 11 | wet, show | 1 | done |
+| 117 | wassailers | see batch 12 | Grow | 2 | done |
+| 118 | thatchers | see batch 12 | near home | 1 | done |
+| 119 | seed swappers | see batch 12 | OneOf | 2 | done |
+| 120 | flint knappers | see batch 12 | Point | 1 | done |
+| 121 | frog giggers | see batch 12 | Hunt | 1 | done |
+| 122 | sleepwalker | see batch 13 | near home | 2 | done |
+| 123 | ore assayer | see batch 13 | Camp | 1 | done |
+| 124 | bloomery smelters | see batch 13 | Cook | 2 | done |
+| 125 | moth netters | see batch 13 | Holds | 1 | done |
+| 126 | potter | see batch 13 | March | 1 | done |
+| 127 | snail racers | see batch 13 | wet, show | 1 | done |
 
 ## Mechanics the next batches add
 

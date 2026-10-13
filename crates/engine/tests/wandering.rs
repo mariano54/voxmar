@@ -15,7 +15,7 @@ fn dir() -> std::path::PathBuf {
 #[test]
 fn every_event_word_is_a_key_in_both_languages() {
     let content = Content::load(&dir()).unwrap();
-    assert!(content.wandering.len() >= 64, "the first ten batches load");
+    assert!(content.wandering.len() >= 82, "the first thirteen batches load");
     for code in ["en", "ja"] {
         let lang = Lang::load(&dir(), code);
         for (_, event) in content.wandering.iter() {
@@ -129,4 +129,25 @@ fn journeys_weather_prayer_and_the_new_needs_are_checked_as_they_load() {
     assert!(load(&format!("{roam}, needs: (wet: Some(true), near_home: Some(48.0))")).is_ok());
     assert!(load(&format!("{roam}, needs: (near_home: Some(48.0), home: Some(false))")).is_err(), "near a home it has not");
     assert!(load(&format!("{roam}, needs: (near_home: Some(4.0))")).is_err());
+}
+
+#[test]
+fn bouts_are_checked_as_they_load() {
+    use voxmar_engine::wander::{Rules, WanderRegistry};
+    let content = Content::load(&dir()).unwrap();
+    let load = |species: &str, rest: &str| {
+        let event = format!("(name: \"x\", cast: [(species: \"{species}\")], script: Roam(radius: 4.0, pause: (2.0, 3.0), rest: false, seconds: 60.0), {rest})");
+        let package = WanderRegistry::read("base", &format!("(events: [{event}])")).expect("parses");
+        WanderRegistry::new(vec![package], Rules::default(), &content.creatures, &content.blocks, &content.skills, &content.effects, &content.cooking, &content.weather)
+    };
+    let lines = |lines: &str| format!("meetings: [(lines: [{lines}])]");
+    let spar = r#"(name: "spar", gives: [Spar(0.5, 60.0)])"#;
+    assert!(load("guard", &lines(spar)).is_ok());
+    assert!(load("trader", &lines(spar)).is_err(), "a speaker who does not fight spars with nobody");
+    assert!(load("guard", &lines(r#"(name: "spar", gives: [Spar(0.05, 60.0)])"#)).is_err(), "not to the last breath");
+    assert!(load("guard", &lines(r#"(name: "spar", gives: [Spar(0.5, 5.0)])"#)).is_err(), "a bout lasts a while");
+    let won = format!(r#"{spar}, (name: "won", needs: [When(Won)]), (name: "lost", needs: [When(Lost)])"#);
+    assert!(load("guard", &lines(&won)).is_ok(), "a bout's ends are its stages");
+    assert!(load("guard", &lines(r#"(name: "lost", needs: [When(Lost)])"#)).is_err(), "no bout, no end of one");
+    assert!(load("guard", &format!("show: (near: 5.0, seconds: 5.0, gives: [Spar(0.5, 60.0)])")).is_err(), "a bout only from a line");
 }

@@ -615,6 +615,14 @@ impl Server {
         }
         let rolled = low + ((amount * (high - low + 1) as f32) as u8).min(high - low);
         let damage = voxmar_engine::combat::scaled(rolled as u16, share, unit_from(mix(amount.to_bits() as u64, 0x6a4d))) as u8;
+        // In a bout, no blow takes the player below the share they spar down to.
+        let damage = match self.bout_floor(creature, player) {
+            Some(down_to) => {
+                let health = &self.players[&player].health;
+                damage.min(health.current.saturating_sub((health.max as f32 * down_to).ceil() as u8))
+            }
+            None => damage,
+        };
         let target = self.players.get_mut(&player).expect("checked above");
         if target.health.damage(damage) {
             target.connection.send(ServerMessage::Died);
@@ -716,11 +724,14 @@ impl Server {
     /// (RuneScape). Returns the damage done, `None` if it is gone.
     pub(crate) fn hurt_creature(&mut self, player: PlayerId, id: u32, damage: u16, skill: Option<SkillId>, blow: voxmar_engine::combat::Blow) -> Option<u16> {
         let calm = self.villager_struck(id, player);
+        let bout = self.bout_floor(id, player);
         let creature = self.creatures.live.get_mut(&id)?;
         let species = self.content.creatures.get(creature.species);
         // No knockback: the creature stays where the blow found it (its model flinches).
         creature.changed = true;
-        let damage = damage.min(creature.health);
+        // In a bout, no blow takes it below the share it spars down to.
+        let floor = bout.map_or(0, |down_to| (species.def.health as f32 * down_to).ceil() as u16);
+        let damage = damage.min(creature.health.saturating_sub(floor));
         creature.health -= damage;
         creature.hurt_by = Some(player);
         // A blow that hurt it keeps the fight on, for Defence (`creature_strikes`).
