@@ -3753,14 +3753,16 @@ fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let named = |world: &World| world.resource::<crate::hud::target::Readout>().clone();
     match gate.phase {
         // On the creatures' pad (clear stone, air above): a plank block close by, once what the
-        // creatures step left there (a grazer or two in the walls) is gone, since a wanderer on
-        // the look ray would take the name.
+        // creatures step left there (a grazer or two in the walls, the bird) is gone, since a
+        // wanderer on the look ray would take the name.
         0 => {
             let net = world.resource::<Net>();
-            for species in ["mouflon", "rabbit", "lumen_snail", "shambler"] {
+            for species in ["mouflon", "rabbit", "lumen_snail", "shambler", "goldfinch"] {
                 net.command(&format!("creatures remove {species}"));
             }
             net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+            // The bird flies about its home on the pad, out of reach of the first remove.
+            net.command("creatures remove goldfinch");
             net.command(&format!("setblock {} {} {} oak_planks", planks.x, planks.y, planks.z));
             net.command("time set noon");
             gate.advance(now);

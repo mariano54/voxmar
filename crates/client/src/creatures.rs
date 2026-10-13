@@ -66,6 +66,9 @@ const WINGBEATS: f32 = 24.0;
 const WING_SPREAD: f32 = 1.35;
 const WING_REACH: f32 = 1.6;
 const FALLS: f32 = 6.0;
+/// The most blocks one that died in the air falls before it goes anyway (over an unloaded
+/// column, or the void).
+const FALLS_MOST: f32 = 48.0;
 
 /// Where a flier is in its bounding flight: its rise (−1..1) and how hard it is beating its
 /// wings (0..1), climbing on a burst of wingbeats and dipping in a glide, each bird to its own
@@ -229,6 +232,8 @@ struct Shown {
     crouch: f32,
     /// How far a flier's wings are spread, 0 (folded, on the ground) ..= 1 (in flight).
     spread: f32,
+    /// Blocks one that died in the air has fallen so far.
+    fell: f32,
     /// Hearts over it, made when first needed: trust filling while it is tamed, and all
     /// red while a kept one is ready to breed.
     hearts: Vec<Entity>,
@@ -732,6 +737,7 @@ fn show(
                 look: 0.0,
                 crouch: 0.0,
                 spread: 0.0,
+                fell: 0.0,
                 hearts: Vec::new(),
             },
         );
@@ -796,7 +802,9 @@ fn show(
         let flier = def.movement.style == Style::Flier;
         let aloft = flier && !world.is_solid((shown.position - Vec3::Y * 0.1).floor().as_ivec3());
         shown.spread += (f32::from(u8::from(aloft && shown.dying.is_none())) - shown.spread) * (8.0 * dt).min(1.0);
-        if aloft && shown.dying.is_some() {
+        let falling = aloft && shown.dying.is_some() && shown.fell < FALLS_MOST;
+        if falling {
+            shown.fell += FALLS * dt;
             shown.position.y -= FALLS * dt;
             shown.view.position = shown.position;
             shown.view.velocity = Vec3::ZERO;
@@ -818,14 +826,16 @@ fn show(
             .with_rotation(Quat::from_rotation_y(shown.yaw))
             .with_scale(Vec3::splat(scale));
         if let Some(dying) = shown.dying.as_mut() {
-            *dying += dt;
+            // One that died in the air rolls over as it falls, and sinks away only once it is
+            // down, however high it flew.
+            let death = &def.death;
+            *dying = if falling { (*dying + dt).min(death.seconds * 0.5) } else { *dying + dt };
             // It falls away from the eye: rolled toward the eye at melee range, its back
             // came through the camera and showed the inside of the body.
             if shown.fall_side == 0.0 {
                 let local = Quat::from_rotation_y(shown.yaw).inverse() * (eye - shown.position);
                 shown.fall_side = if local.x >= 0.0 { 1.0 } else { -1.0 };
             }
-            let death = &def.death;
             let t = (*dying / death.seconds.max(0.05)).min(1.0);
             root.rotation *= Quat::from_rotation_z(shown.fall_side * (t * 2.0).min(1.0) * death.roll.to_radians());
             // How far it strays from where it stood as it falls, in heights, for the gate
