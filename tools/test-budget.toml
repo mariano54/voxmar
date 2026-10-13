@@ -1,0 +1,273 @@
+# Test time budgets, checked by tools/test-times (docs/quality.md, "Fast tests").
+#
+# Times are those of the test harness while the gate runs all the test binaries side by side,
+# so a test may take its budget times how loaded the machine is (the gate passes that).
+per_test_seconds = 5
+# The slowest test binary, in seconds: worldgen's, whose tests run on all cores. Aim: 60.
+# Lower these in the change that makes the tests faster. `full_suite_seconds` is for
+# `tools/gate --full`, which also runs the tests the default gate skips.
+suite_seconds = 400
+full_suite_seconds = 900
+#
+# A test over `per_test_seconds` is named here, with the seconds it may take (one and a half
+# times what it took when measured on 2026-10-13, up to the next of 10, 20, 45, 70, 100, 150,
+# 200, 300, 500, 900 or 1500) and why. Before adding one, ask whether the test can be made
+# cheaper. Delete its entry in the change that makes it cheap: test-times fails on an entry
+# the test no longer needs.
+
+
+[[allow]]
+binary = "gameplay"
+seconds = 10
+why = "Judged by the wall clock (combat, timed actions, movement and idle checks stamp arrivals in real seconds), so the test is run with real_time() and its waits are real seconds. Gone with a virtual server clock."
+tests = [
+  "a_player_silent_in_mid_jump_lands_without_being_pulled_back",
+  "a_swing_is_dropped_when_its_weapon_leaves_the_hand",
+  "fires_warm_and_water_chills",
+]
+
+[[allow]]
+binary = "gameplay"
+seconds = 10
+why = "Plays a long chain on a server that runs at its own pace (a machine, a fishing line, a lagging server, a restart): several game seconds of waiting."
+tests = [
+  "a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two_ingots_an_ore",
+  "a_level_quest_waits_for_the_level_and_grants_its_experience",
+  "a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing",
+  "a_world_placed_altar_drops_nothing_and_a_players_drops_itself_across_restarts",
+]
+
+[[allow]]
+binary = "gameplay"
+seconds = 20
+why = "Judged by the wall clock (combat, timed actions, movement and idle checks stamp arrivals in real seconds), so the test is run with real_time() and its waits are real seconds. Gone with a virtual server clock."
+tests = [
+  "a_dodge_needs_the_ground_and_one_refused_puts_the_player_back",
+  "a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass",
+  "a_shield_guards_wider_than_a_sword_but_not_below_its_level_or_beside_a_spear",
+  "a_villager_killed_drops_nothing_and_teaches_nothing",
+  "a_windup_wait_does_not_strike_a_creature_that_is_already_fighting",
+  "going_silent_does_not_buy_more_time_hovering",
+  "guards_come_for_a_player_who_strikes_a_villager",
+  "ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining",
+]
+
+[[allow]]
+binary = "gameplay"
+seconds = 20
+why = "Plays a long chain on a server that runs at its own pace (a machine, a fishing line, a lagging server, a restart): several game seconds of waiting."
+tests = [
+  "creatures_are_struck_when_the_server_runs_behind",
+]
+
+[[allow]]
+binary = "gameplay"
+seconds = 45
+why = "Judged by the wall clock (combat, timed actions, movement and idle checks stamp arrivals in real seconds), so the test is run with real_time() and its waits are real seconds. Gone with a virtual server clock."
+tests = [
+  "a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes",
+  "a_player_who_sends_nothing_but_keepalives_is_kept",
+  "a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it",
+  "backing_off_at_a_walk_does_not_escape_a_creatures_blow",
+  "guards_give_up_on_a_player_they_cannot_reach",
+]
+
+[[allow]]
+binary = "regional_crops"
+seconds = 70
+why = "A census of every regional crop in the biomes of several worlds: generating and sampling those worlds is the cost."
+tests = [
+  "regional_crops_are_regional",
+]
+
+[[allow]]
+binary = "voxmar"
+seconds = 20
+why = "Shapes every text of every language in every interface font."
+tests = [
+  "lang::tests::no_text_shows_a_missing_glyph_box",
+]
+
+[[allow]]
+binary = "voxmar_server"
+seconds = 10
+why = "Runs minutes of game time of creature spawning and weather over many ticks."
+tests = [
+  "creatures::density_tests::a_player_in_the_open_has_company_by_day_and_a_threat_by_night",
+  "weather::tests::effects_spread_from_everyday_to_rare",
+]
+
+[[allow]]
+binary = "voxmar_server"
+seconds = 20
+why = "Runs minutes of game time of creature spawning and weather over many ticks."
+tests = [
+  "creatures::density_tests::the_first_night_is_light_and_torches_keep_monsters_away",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 10
+why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
+tests = [
+  "ores::tests::ore_lies_in_veins_under_its_samples",
+  "tests::grass_is_kept_in_check",
+  "tests::locate_lands_inside_the_biome",
+  "trails::tests::grid_patches_sample_the_land",
+  "water::tests::freshwater_absent_channels_skip_geology_and_reset_false_answers",
+  "water::tests::site_work_preserves_exact_sampler_keys",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 20
+why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
+tests = [
+  "tests::biomes_are_deterministic_in_any_sampler",
+  "tests::caves_are_decorated",
+  "tests::ground_plants_keep_off_carved_mouths",
+  "tests::plains_are_carpeted_and_flowers_stay_sparse",
+  "tests::trees_keep_off_the_rims_of_cave_mouths",
+  "water::tests::freshwater_query_matches_full_grid_circle",
+  "water::tests::tarn_query_finds_visible_rule_pools",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 20
+why = "Plans the settlements of one or many worlds (a village is about a second of planning, cached once per world, and the culture tests search seeds and regions) and walks what they build."
+tests = [
+  "settlements::plan::level_tests::house_water_absence_keeps_original_spokes_and_full_samples",
+  "settlements::tests::culture_plan_weight_counts_spare_allocations",
+  "settlements::tests::near_settlements_have_names_of_their_own",
+  "settlements::tests::no_snow_falls_indoors",
+  "settlements::tests::servers_on_one_world_share_its_planning",
+  "settlements::tests::settlement_wells_hold_water_and_crops_are_everyday",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 45
+why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
+tests = [
+  "generated_water::tarns_do_not_move",
+  "geology::tests::lands_match_land_alone",
+  "tests::biome_census_keeps_site_fields",
+  "tests::borders_blend_smoothly",
+  "tests::forests_have_trees",
+  "tests::hanging_blocks_hang_from_rock",
+  "tests::plant_density_thins_the_look_not_the_harvest",
+  "tests::rivers_never_depend_on_generation_order",
+  "tests::selection_fields_are_smooth_and_evenly_spread",
+  "tests::shapes_follow_the_climate_and_not_the_other_way",
+  "tests::temperature_changes_smoothly_and_in_order",
+  "trails::tests::trails_near_settlements_never_depend_on_order",
+  "water::tests::freshwater_grid_reuses_exact_samples",
+  "water::tests::planning_samples_match_standalone_across_water_boundaries_and_worlds",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 45
+why = "Hashes a fixed area of generated output against its golden; the generator is the cost."
+tests = [
+  "perf::light_is_unchanged",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 45
+why = "Plans the settlements of one or many worlds (a village is about a second of planning, cached once per world, and the culture tests search seeds and regions) and walks what they build."
+tests = [
+  "settlements::tests::culture_generation_is_independent_of_order_and_threads",
+  "settlements::tests::culture_quirks_are_applied_before_style_selection",
+  "settlements::tests::culture_regions_do_not_plan_distant_rivers",
+  "settlements::tests::every_settlement_is_joined_to_the_trails",
+  "settlements::tests::lanes_keep_off_wells_and_centrepieces",
+  "settlements::tests::settlements_never_depend_on_order",
+  "settlements::tests::slopes_never_bury_walls",
+  "settlements::tests::spawn_needs_only_so_much_planning",
+  "settlements::tests::the_spawn_plans_each_square_once",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 70
+why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
+tests = [
+  "generated_water::water_still_settles_at_the_next_version",
+  "tests::crags_overhang_and_keep_their_tops",
+  "tests::fluids_are_contained",
+  "tests::rivers_never_loop_across_regions",
+  "tests::the_air_follows_climate_and_biome",
+  "tests::waterfalls_pour",
+  "trails::tests::trails_never_depend_on_order",
+  "water::tests::tarn_geometry_preserves_routing_and_uses_complete_flow",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 70
+why = "Hashes a fixed area of generated output against its golden; the generator is the cost."
+tests = [
+  "perf::output_is_unchanged",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 100
+why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
+tests = [
+  "tests::deserts_never_border_snow",
+  "tests::geodes_are_hollow_and_lined",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 150
+why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
+tests = [
+  "generated_water::generated_water_does_not_move",
+  "tests::decorations_rest_on_the_ground",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 150
+why = "Plans the settlements of one or many worlds (a village is about a second of planning, cached once per world, and the culture tests search seeds and regions) and walks what they build."
+tests = [
+  "settlements::tests::a_culture_is_a_function_of_the_seed_and_the_place",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 200
+why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
+tests = [
+  "tests::wood_never_floats",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 300
+why = "Plans the settlements of one or many worlds (a village is about a second of planning, cached once per world, and the culture tests search seeds and regions) and walks what they build."
+tests = [
+  "settlements::tests::a_settlement_stands_near_spawn",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 500
+why = "Plans the settlements of one or many worlds (a village is about a second of planning, cached once per world, and the culture tests search seeds and regions) and walks what they build."
+tests = [
+  "settlements::tests::neighbouring_places_share_a_family",
+  "settlements::tests::snowy_villages_keep_their_built_stone",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 900
+why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
+tests = [
+  "tests::rare_herbs_grow_at_their_rates",
+]

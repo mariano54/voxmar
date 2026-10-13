@@ -92,6 +92,11 @@ pub struct ServerConfig {
     /// Cuts every save short once its machines are written, as a crash would. Only in
     /// tests.
     pub cut_saves: bool,
+    /// How many times faster than real time the server's ticks run: 1 for a game, more
+    /// only in tests, whose waits are judged by ticks (`ServerHandle::ticks`) and not by
+    /// the clock. What the server judges by arrival stamps (a break, a blow) keeps the
+    /// clock's pace, since players' messages carry theirs.
+    pub tick_speedup: u32,
 }
 
 /// How much any one connection may ask of the server: a server operator's numbers, read
@@ -198,6 +203,7 @@ impl Default for ServerConfig {
             limits: Limits::default(),
             lag: Lag::default(),
             cut_saves: false,
+            tick_speedup: 1,
         }
     }
 }
@@ -613,7 +619,8 @@ impl Server {
     /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are
     /// handled as soon as they arrive so actions feel immediate.
     fn run(mut self, stop: &AtomicBool, tick_times: &Mutex<VecDeque<Duration>>, ticks: &AtomicU64) {
-        let tick_length = Duration::from_secs(1) / TICKS_PER_SECOND;
+        let real_tick = Duration::from_secs(1) / TICKS_PER_SECOND;
+        let tick_length = real_tick / self.config.tick_speedup.max(1);
         let mut next_tick = Instant::now();
         while !stop.load(Ordering::Relaxed) {
             self.accept_connections();
@@ -638,7 +645,7 @@ impl Server {
                 }
                 std::thread::sleep(self.config.lag.of_tick(self.tick));
                 next_tick += tick_length;
-                if now > next_tick + tick_length * 10 {
+                if now > next_tick + real_tick * 10 {
                     tracing::warn!("server is running behind, skipping ticks");
                     next_tick = now;
                 }

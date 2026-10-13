@@ -262,13 +262,8 @@ run='
     (VOXMAR_MUTE=1 $GATE_PREFIX target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
   fi
   lower=(nice -n 10)
-  # Each test time (libtest reports it, asking for RUSTC_BOOTSTRAP on a stable toolchain), when
-  # the test binaries take the flags: the gate lists the slow ones afterwards.
-  TIMES=
-  first=$(head -n1 "$out/tests.list" | cut -f2)
-  [[ -n $first ]] && RUSTC_BOOTSTRAP=1 "$first" -Z unstable-options --report-time --list >/dev/null 2>&1 && TIMES="-Z unstable-options --report-time"
   while IFS=$(printf "\t") read -r dir exe; do
-    (cd "$dir" && RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" "$@" $TIMES >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
+    (cd "$dir" && RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" -Z unstable-options --report-time "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
   done <"$out/tests.list"
   wait'
 : >"$out/tests.list"
@@ -329,13 +324,6 @@ if [[ $(fingerprint) != "$his_before" ]]; then
   ps -A -o args= | awk '{ n = split($1, p, "/") } p[n] == "voxmar" && !/--capture|--gate/ { found = 1 } END { exit !found }' ||
     fail "Mariano's settings ($his_settings) changed during the run, and his game was not running"
 fi
-# The tests that took long, so a slow one is seen the day it is added (not a failure: the
-# time of a test on a loaded machine says little, but one that is slow on a calm one costs
-# every landing that reaches its crate). A test over SLOW_SECONDS and not in SLOW_TESTS.
-SLOW_SECONDS=20
-slow=$(grep -hE '^test .* \.\.\. ok <[0-9.]+s>$' "$out"/test-*.txt 2>/dev/null |
-  sed -E 's/^test (.*) \.\.\. ok <([0-9.]+)s>$/\2 \1/' | sort -rn | awk -v limit=$SLOW_SECONDS '$1 > limit' | head -8)
-[[ -n $slow ]] && echo "gate: slow tests (over ${SLOW_SECONDS}s, at this machine's load; the budget is docs/quality.md's):" && sed 's/^/gate:   /' <<<"$slow"
 tests_failed=0
 for f in "$out"/test-*.status; do
   [[ -e $f ]] || continue
@@ -345,6 +333,13 @@ done
 if ((tests_failed)); then
   grep -E '^test .* FAILED|^failures:|panicked|^error' "$out/tests.txt" | head -40
   fail "tests (all output in $out/tests.txt)"
+fi
+# How long the tests took, against tools/test-budget.toml (docs/quality.md, "Fast tests"): the
+# slowest are listed every run, a test over its budget fails the gate. The budgets are for a
+# machine as busy as the gate usually finds it; a busier one scales them by its load.
+if compgen -G "$out/test-*.txt" >/dev/null; then
+  scale=$(awk -v l="$(load_now)" -v c="$(getconf _NPROCESSORS_ONLN)" 'BEGIN { s = l / c; print (s < 1 ? 1 : s) }')
+  tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || fail "test times (tools/test-budget.toml)"
 fi
 status=$(cat "$out/game.status" 2>/dev/null || echo 0)
 ((session)) && [[ ! -e $out/game.status ]] && fail "the session never ran ($out/run.txt)"
