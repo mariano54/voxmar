@@ -5380,11 +5380,13 @@ mod tests {
         assert_eq!(count_of(&server, "base:wheat_seeds"), 8, "no swap for a beginner (Farming 3)");
         skill_to(&mut server, "core:farming", 3);
         assert!(server.meet(1, farmer));
-        assert_eq!(count_of(&server, "base:wheat_seeds"), 4);
-        let other = ["base:rye", "base:carrot", "base:chickpea"].iter().map(|crop| count_of(&server, crop)).sum::<u32>();
-        assert_eq!(other, 2, "two of another crop to sow");
+        assert_eq!((count_of(&server, "base:wheat_seeds"), count_of(&server, "base:rye")), (4, 2), "rye, the one crop sown at Farming 3");
+        // Carrot and chickpea are sown from Farming 7, and offered only then.
+        skill_to(&mut server, "core:farming", 7);
         assert!(server.meet(1, farmer));
         assert_eq!(count_of(&server, "base:wheat_seeds"), 0, "a swap is a swap, again and again");
+        let other = ["base:rye", "base:carrot", "base:chickpea"].iter().map(|crop| count_of(&server, crop)).sum::<u32>();
+        assert_eq!(other, 4, "two more of a crop to sow");
     }
 
     #[test]

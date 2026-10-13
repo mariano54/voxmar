@@ -1076,8 +1076,8 @@
             ])],
         ),
         // Seed swappers camp with sacks of what grew well for them. A farmer who has grown
-        // a little (Farming 3) swaps four wheat seeds for a few of another crop to sow; a
-        // beginner is told when to sow.
+        // a little swaps four wheat seeds for another crop only one they can sow: rye from
+        // Farming 3, carrot or chickpea too from 7. A beginner is told when to sow.
         (
             name: "seed_swappers", weight: 0.5,
             biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:temperate", 0.6)],
@@ -1086,7 +1086,8 @@
             script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
                 (name: "sow", needs: [Below("farming", 5)], gives: [Xp("farming", 6.0)], once: Player),
-                (name: "swap", needs: [Skill("farming", 3)], wants: ("wheat_seeds", 4), gives: [OneOf([Item("rye", (2, 2)), Item("carrot", (2, 2)), Item("chickpea", (2, 2))])]),
+                (name: "swap_more", needs: [Skill("farming", 7)], wants: ("wheat_seeds", 4), gives: [OneOf([Item("rye", (2, 2)), Item("carrot", (2, 2)), Item("chickpea", (2, 2))])]),
+                (name: "swap", needs: [Skill("farming", 3)], wants: ("wheat_seeds", 4), gives: [Item("rye", (2, 2))]),
             ])],
         ),
         // Flint knappers at a gravel bank, chipping blades. A beginner who brings two flints

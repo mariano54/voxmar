@@ -499,7 +499,7 @@ road to town).
 | --- | --- | --- |
 | wassailers | Camp, near home, night | Singers come at night to one at home. A loaf and they toast the fields: unripe crops within 24 blocks grow a stage, and a little Farming (once for the party; only where something grows). |
 | thatchers | March, near home | Two on their way to a roof. A beginner builder (Construction below 10) gives four wheat and learns how straw is laid, once. |
-| seed swappers | Camp | A farmer who has grown a little (Farming 3) swaps four wheat seeds for two rye, carrot or chickpea to sow, again and again; a beginner learns when to sow. |
+| seed swappers | Camp | Four wheat seeds swap for two of a crop the player can sow, again and again: rye from Farming 3, carrot or chickpea too from Farming 7. A beginner learns when to sow. |
 | flint knappers | Camp | At a gravel bank. Two flints and a beginner (Crafting below 8) learns to knap, once; a beginner miner is told where gravel lies; a hide buys three or four flints. |
 | frog giggers | Hunt, night, marsh | Hunt frogs and toads with a lantern; first blood on one they take is shared (Hunter); a beginner learns to still the light. |
 | messenger | Journey (fast) | Runs a letter to town at half again a walk. Keep up the whole way and they stand you a coin and some Hitpoints. On the road they pass on news of a wonder, once. |
