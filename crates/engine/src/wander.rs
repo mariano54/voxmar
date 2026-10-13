@@ -293,6 +293,12 @@ pub struct Needs {
     pub wet: Option<bool>,
     /// It comes only to a player within this many blocks of their home.
     pub near_home: Option<f32>,
+    /// It comes only while a party of this kind is about, within so many blocks of where
+    /// it would appear: those who come after another (the keepers after a poacher).
+    pub after: Option<(String, f32)>,
+    /// It comes only to a player who has met a party of this kind before (spoken with it,
+    /// walked with it, freed it): one visit sets up the next.
+    pub met: Option<String>,
 }
 
 /// A party that stops for a player: when one comes within `near` blocks of its leader, it
@@ -659,7 +665,7 @@ pub enum Reward {
     /// (cooking.ron), never burnt: up to the second number of what is in hand, keeping the
     /// third of the cooked for the speaker's pot. Said only with something it cooks in hand.
     Cook(String, u8, u8),
-    /// One of these (items, experience, effects, healing, a `Point` or a `Town`), picked
+    /// One of these (items, experience, effects, healing, a `Point`, a `Town` or a `Toward`), picked
     /// by chance among those that have something to tell where the speaker stands: a
     /// fortune. Said only when one of them has.
     OneOf(Vec<Reward>),
@@ -677,6 +683,9 @@ pub enum Reward {
     /// or when the player walks off. Won or lost, the party's stage says so (`Won`,
     /// `Lost`). From a line only; the speaker must be one that fights.
     Spar(f32, f32),
+    /// Tells the player which way, and about how far, the nearest party of this kind is,
+    /// within so many blocks of the speaker (16 to 256). Said only when one is.
+    Toward(String, f32),
 }
 
 /// A kind of event with its names resolved.
@@ -777,6 +786,8 @@ pub enum ResolvedReward {
     Grow(f32, u8),
     /// The share of health either may be brought down to, and the bout's seconds.
     Spar(f32, f32),
+    /// The full name of a kind of party, and how far to look for one.
+    Toward(String, f32),
 }
 
 /// A block name or a `tag:` selector, resolved: what a `seek` or a `Point` looks for.
@@ -831,6 +842,9 @@ fn resolve_reward_in(
         Reward::Point(name, reach) => ResolvedReward::Point(selector(name, blocks)?, *reach),
         Reward::Town(reach) if !(64.0..=1000.0).contains(reach) => return Err(format!("names a settlement within {reach} blocks: 64 to 1000")),
         Reward::Town(reach) => ResolvedReward::Town(*reach),
+        Reward::Toward(_, reach) if !(16.0..=256.0).contains(reach) => return Err(format!("tells of a party within {reach} blocks: 16 to 256")),
+        // The kind is checked once every event is read, by `WanderRegistry::new`.
+        Reward::Toward(event, reach) => ResolvedReward::Toward(event.clone(), *reach),
         // The group is checked against the cast, and the station against the recipes, by the caller.
         Reward::Hand(group) => ResolvedReward::Hand(*group),
         Reward::Cook(_, most, keep) if *most == 0 || keep >= most => return Err(format!("cooks up to {most} and keeps {keep}: it must give some back")),
@@ -840,8 +854,8 @@ fn resolve_reward_in(
             choices
                 .iter()
                 .map(|choice| match choice {
-                    Reward::Item(..) | Reward::Xp(..) | Reward::Effect(..) | Reward::Heal(_) | Reward::Point(..) | Reward::Town(_) => resolve_reward_in(choice, namespace, blocks, skills, effects, false, weather),
-                    _ => Err("`OneOf` picks among items, experience, effects, healing, `Point`s and `Town`s".into()),
+                    Reward::Item(..) | Reward::Xp(..) | Reward::Effect(..) | Reward::Heal(_) | Reward::Point(..) | Reward::Town(_) | Reward::Toward(..) => resolve_reward_in(choice, namespace, blocks, skills, effects, false, weather),
+                    _ => Err("`OneOf` picks among items, experience, effects, healing, `Point`s, `Town`s and `Toward`s".into()),
                 })
                 .collect::<Result<_, _>>()?,
         ),
@@ -870,6 +884,7 @@ fn qualify_reward(reward: &mut Reward, qualify: &impl Fn(&mut String)) {
         Reward::Item(item, _) | Reward::Point(item, _) => qualify(item),
         Reward::Effect(effect, _) => qualify(effect),
         Reward::OneOf(choices) => choices.iter_mut().for_each(|c| qualify_reward(c, qualify)),
+        Reward::Toward(event, _) => qualify(event),
         _ => {}
     }
 }
@@ -953,6 +968,12 @@ impl WanderRegistry {
         let mut events = file.events;
         for event in &mut events {
             qualify(&mut event.name);
+            if let Some((after, _)) = &mut event.needs.after {
+                qualify(after);
+            }
+            if let Some(met) = &mut event.needs.met {
+                qualify(met);
+            }
             event.cast.iter_mut().for_each(|g| qualify(&mut g.species));
             event.seek.iter_mut().for_each(qualify);
             event.deliver.iter_mut().for_each(qualify);
@@ -1253,7 +1274,7 @@ impl WanderRegistry {
                     return Err(error(format!("a show is watched from 2 to 16 blocks for 3 to 120 seconds and gives something, not {} blocks for {} s", def_show.near, def_show.seconds)));
                 }
                 for reward in &def_show.gives {
-                    if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Spar(..) | Reward::Point(..) | Reward::Town(_) | Reward::OneOf(_)) {
+                    if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Spar(..) | Reward::Point(..) | Reward::Town(_) | Reward::Toward(..) | Reward::OneOf(_)) {
                         return Err(error("a show gives items, experience, effects or healing only".into()));
                     }
                     show.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("show: {why}")))?);
@@ -1385,6 +1406,37 @@ impl WanderRegistry {
             }
             registry.by_name.insert(def.name.clone(), registry.events.len());
             registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk, show, quarry, share });
+        }
+        // Parties that come after, or tell of, another kind: that kind must be one read.
+        for event in &registry.events {
+            let error = |why: String| RegistryError(format!("wandering event `{}`: {why}", event.def.name));
+            if let Some((after, reach)) = &event.def.needs.after {
+                if !registry.by_name.contains_key(after) || *after == event.def.name {
+                    return Err(error(format!("comes after `{after}`, which is no other event")));
+                }
+                if !(16.0..=256.0).contains(reach) {
+                    return Err(error(format!("comes after a party within {reach} blocks: 16 to 256")));
+                }
+            }
+            if let Some(met) = &event.def.needs.met
+                && (!registry.by_name.contains_key(met) || *met == event.def.name)
+            {
+                return Err(error(format!("comes to those who met `{met}`, which is no other event")));
+            }
+            fn told(reward: &ResolvedReward, out: &mut Vec<String>) {
+                match reward {
+                    ResolvedReward::Toward(name, _) => out.push(name.clone()),
+                    ResolvedReward::OneOf(choices) => choices.iter().for_each(|c| told(c, out)),
+                    _ => {}
+                }
+            }
+            let mut named = Vec::new();
+            for reward in event.meetings.iter().flat_map(|m| m.lines.iter()).flat_map(|l| l.gives.iter()).chain(&event.thanks).chain(&event.guide_thanks).chain(&event.reveal).chain(&event.share) {
+                told(reward, &mut named);
+            }
+            if let Some(name) = named.iter().find(|name| !registry.by_name.contains_key(*name)) {
+                return Err(error(format!("tells of `{name}`, which is no event")));
+            }
         }
         Ok(registry)
     }
