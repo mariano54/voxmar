@@ -539,6 +539,22 @@ impl Server {
         let name = self.players[&player].name.clone();
         let tick = self.tick;
         let mut count = 0;
+        // Bounded natural attempts for inspecting birth positions, without bypassing
+        // visibility, darkness or budgets. Only the admitted creatures are held.
+        if what == "populate" && species.is_none() {
+            let count = self.populate_near(player);
+            return Ok(Words::key("command.creatures.populated").with("count", Words::text(count)));
+        }
+        if what == "disperse" && species.is_none() {
+            let wild: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| {
+                c.owner.is_none() && self.content.creatures.get(c.species).def.kind != voxmar_engine::creature::Kind::Villager
+                    && c.body.position.distance(at) < 64.0
+            }).map(|(&id, _)| id).collect();
+            for &id in &wild {
+                self.creatures.take_away(id);
+            }
+            return Ok(Words::key("command.creatures.dispersed").with("count", Words::text(wild.len())));
+        }
         let only = match species {
             Some(species) => Some(self.content.creatures.find(species).ok_or_else(|| Words::key("command.summon.unknown").with("name", species))?),
             None => None,
@@ -621,7 +637,7 @@ impl Server {
         let player = Self::me(id)?;
         let [skill, level] = args else { return Err(Words::key("command.skill.what")) };
         let skills = self.content.skills.clone();
-        let found = skills.id(skill).or_else(|| skills.id(&format!("core:{skill}"))).ok_or_else(|| Words::key("command.skill.unknown").with("name", skill.as_str()))?;
+        let found = skills.named("core", skill).ok_or_else(|| Words::key("command.skill.unknown").with("name", skill.as_str()))?;
         let level: u8 = level.parse().ok().filter(|l| (1..=skills.max_level()).contains(l)).ok_or_else(|| Words::key("command.skill.level"))?;
         let target = skills.xp_for(level);
         let p = self.players.get_mut(&player).expect("a player");
@@ -762,6 +778,7 @@ impl Server {
         match nearest {
             Some((offset, s)) => Ok(Words::key("command.locate.settlement")
                 .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
+                .with("culture", Words::Name(vec![("en".into(), s.culture.title.0.clone()), ("ja".into(), s.culture.title.1.clone())]))
                 .with("size", Words::key(&format!("settlement.size.{}", s.size)))
                 .with("place", format!("{} {} {}", s.centre.x, s.centre.y, s.centre.z))
                 .with("distance", Words::text(format!("{:.0}", offset.as_vec2().length())))

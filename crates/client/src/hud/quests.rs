@@ -36,7 +36,7 @@ impl Plugin for QuestsPlugin {
         app.init_resource::<QuestView>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, draw).chain().after(ScreenSystems), (retire, track).chain()).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, turn_ways, draw).chain().after(ScreenSystems), (retire, track).chain()).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -45,6 +45,9 @@ impl Plugin for QuestsPlugin {
 pub struct QuestView {
     pub chapter: usize,
     pub picked: Option<String>,
+    /// Which way of making an item each goal's inline recipe shows (a goal by its quest,
+    /// task and place), where it has several.
+    pub ways: std::collections::BTreeMap<String, usize>,
 }
 
 /// A quest to open the book on (`--quests`, for captures).
@@ -174,7 +177,7 @@ fn qualified(package: &str, name: &str) -> [String; 2] {
 }
 
 fn item_id(content: &Content, package: &str, name: &str) -> Option<BlockId> {
-    qualified(package, name).iter().find_map(|name| content.blocks.id(name))
+    qualified(package, name).iter().find_map(|name| content.blocks.item_named(name))
 }
 
 /// An item by a quest's name for it: `any`, `tag:TAG` or an item's name.
@@ -228,7 +231,7 @@ fn quest_icon(content: &Content, images: &HudImages, quest: &QuestDef) -> Handle
     let given = quest.rewards.iter().find_map(|r| if let Reward::Item(name, _) = r { item(name) } else { None });
     let asked = || {
         quest.tasks.iter().flatten().find_map(|goal| match goal {
-            Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) => item(name),
+            Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item(name),
             _ => None,
         })
     };
@@ -266,6 +269,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Have(item, _) => locale.format("quest.goal.have", &[("item", &item_words(locale, content, package, item))]),
         Goal::Home => return locale.get("quest.goal.home").to_owned(),
         Goal::Built(name, _) => locale.format("quest.goal.built", &[("item", &multiblock_words(locale, content, package, name))]),
+        Goal::LookUp(item) => locale.format("quest.goal.lookup", &[("item", &item_words(locale, content, package, item))]),
     };
     if need > 1 { locale.format("quest.progress", &[("goal", &what), ("have", &have.min(need)), ("need", &need)]) } else { what }
 }
@@ -373,12 +377,19 @@ struct QuestNode(String);
 struct Detail;
 #[derive(Component)]
 struct PinButton;
+/// An arrow turning to another way of making what a goal asks for.
+#[derive(Component)]
+struct WayStep {
+    key: String,
+    step: i32,
+    of: usize,
+}
 
 /// The panel's width, the chapters' column, the web's height and the page's.
 const WIDTH: f32 = 540.0 * PX;
 const CHAPTERS: f32 = 80.0 * PX;
 const WEB_HEIGHT: f32 = 170.0 * PX;
-const DETAIL_HEIGHT: f32 = 120.0 * PX;
+const DETAIL_HEIGHT: f32 = 160.0 * PX;
 /// The web's room across and down (inside its well), and its quests' least and most step.
 const WEB_ROOM: Vec2 = Vec2::new(WIDTH - CHAPTERS - 4.0 * space::OUTER, WEB_HEIGHT - 2.0 * space::GAP);
 const STEP_LEAST: Vec2 = Vec2::new(SLOT + 10.0 * PX, SLOT + 5.0 * PX);
@@ -423,7 +434,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
 
 fn show(ui: Res<UiState>, mut root: Query<&mut Visibility, With<QuestScreen>>) {
     if let Ok(mut visibility) = root.single_mut() {
-        visibility.set_if_neq(if ui.quests_open { Visibility::Inherited } else { Visibility::Hidden });
+        visibility.set_if_neq(if ui.quests_open && !ui.recipes_open { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 
@@ -459,6 +470,16 @@ fn pick(
     }
 }
 
+/// The arrows by an inline recipe turn to its other ways.
+fn turn_ways(steps: Query<(&WayStep, &Interaction), Changed<Interaction>>, mut view: ResMut<QuestView>) {
+    for (way, interaction) in &steps {
+        if *interaction == Interaction::Pressed {
+            let now = view.ways.get(&way.key).copied().unwrap_or(0);
+            view.ways.insert(way.key.clone(), (now as i32 + way.step).rem_euclid(way.of as i32) as usize);
+        }
+    }
+}
+
 /// Pins a quest, or unpins it; pinning past the tracker's room does nothing.
 pub fn toggle_pin(settings: &mut Settings, content: &Content, name: &str) {
     if toggle(&mut settings.pinned_quests, content, name) {
@@ -491,16 +512,17 @@ fn draw(
     font: Res<UiFont>,
     images: Res<HudImages>,
     settings: Res<Settings>,
+    viewer: Res<super::recipes::RecipeViewer>,
     chapters_column: Query<Entity, With<Chapters>>,
     web: Query<Entity, With<Web>>,
     detail: Query<Entity, With<Detail>>,
-    mut drawn: Local<Option<(QuestView, u32, Vec<String>)>>,
+    mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool)>>,
 ) {
     if !ui.quests_open {
         *drawn = None;
         return;
     }
-    let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone());
+    let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some());
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
         return;
     }
@@ -665,7 +687,33 @@ fn draw(
                         (_, true) => GOLD,
                         _ => TEXT,
                     };
-                    detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, goal_line(&locale, content, quest, goal, progress, met), BODY, color)));
+                    let line = text(font, goal_line(&locale, content, quest, goal, progress, met), BODY, color);
+                    // The item it asks for, to click for its recipes (a right click, its uses).
+                    let asked = match goal {
+                        Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item_id(content, package(quest), name),
+                        _ => None,
+                    };
+                    let Some(item) = asked else {
+                        detail.spawn((Node { flex_shrink: 0.0, ..default() }, line));
+                        continue;
+                    };
+                    detail.spawn(Node { flex_shrink: 0.0, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
+                        super::recipes::item_cell(row, font, &images, Some(item), None);
+                        row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, line));
+                    });
+                    // How to make it, the way the recipe viewer draws it, for what a goal
+                    // makes.
+                    if matches!(goal, Goal::Craft(..) | Goal::Cook(..) | Goal::Have(..))
+                        && let Some(book) = viewer.book()
+                    {
+                        let ways = book.making(item);
+                        if !ways.is_empty() {
+                            let key = format!("{}/{t}/{g}", quest.name);
+                            let shown = view.ways.get(&key).copied().unwrap_or(0) % ways.len();
+                            let entry = ways[shown];
+                            way_card(detail, font, &images, content, &locale, entry, (key, shown, ways.len()));
+                        }
+                    }
                 }
             }
             if !quest.rewards.is_empty() {
@@ -679,9 +727,42 @@ fn draw(
                     .collect();
                 detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized("quest.rewards"), shadowed(font, "", BODY, ACCENT)));
                 detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, gives.join(locale.get("language.comma")), BODY, SOFT)));
+                // The items it gives, to click for their recipes.
+                let items: Vec<(BlockId, u8)> = quest.rewards.iter().filter_map(|r| if let Reward::Item(item, count) = r { item_id(content, package(quest), item).map(|id| (id, *count)) } else { None }).collect();
+                if !items.is_empty() {
+                    detail.spawn(Node { flex_shrink: 0.0, column_gap: Val::Px(PX), ..default() }).with_children(|row| {
+                        for (item, count) in items {
+                            super::recipes::item_cell(row, font, &images, Some(item), (count > 1).then(|| count.to_string()));
+                        }
+                    });
+                }
             }
         });
     }
+}
+
+/// One way of making an item, small, under the goal that asks for it: what goes in, an
+/// arrow, what comes out, and, where there are several ways, arrows to turn to the next
+/// with "1/3" between them.
+fn way_card(detail: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &Content, locale: &Locale, entry: &voxmar_engine::recipe_book::Entry, (key, shown, of): (String, usize, usize)) {
+    let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, ..default() };
+    detail.spawn((card, Piece::Well.image())).with_children(|card| {
+        super::recipes::way_inputs(card, font, images, content, &entry.method, None, 0);
+        card.spawn(shadowed(font, "→", BODY, GOLD));
+        let (low, high) = entry.count;
+        super::recipes::item_cell(card, font, images, Some(entry.output), (high > 1 && low == high).then(|| high.to_string()));
+        if of > 1 {
+            let arrow = |card: &mut ChildSpawnerCommands, label: &str, step: i32| {
+                let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), justify_content: JustifyContent::Center, align_items: AlignItems::Center, flex_shrink: 0.0, ..default() };
+                card.spawn((Button, crate::ui::widgets::HoverLight, WayStep { key: key.clone(), step, of }, node, Piece::Well.image())).with_children(|b| {
+                    b.spawn((shadowed(font, label.to_owned(), BODY, TEXT), TightLine));
+                });
+            };
+            arrow(card, "◂", -1);
+            card.spawn((text(font, locale.format("recipes.page", &[("page", &(shown + 1)), ("pages", &of)]), BODY, SOFT), TightLine));
+            arrow(card, "▸", 1);
+        }
+    });
 }
 
 /// The pinned quests at the right of the screen.
@@ -823,7 +904,7 @@ mod tests {
             let item = |name: &str| name == "any" || name.starts_with("tag:") || item_id(&content, package, name).is_some();
             for goal in quest.tasks.iter().flatten() {
                 let known = match goal {
-                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) => item(name),
+                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
                     Goal::Catch(name, _) => name == "Kinds" || item(name),
                     Goal::Kill(name, _) | Goal::Tame(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                     Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),

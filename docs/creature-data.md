@@ -48,8 +48,9 @@ one's, and the load log names both packages and the numbers replaced, so a mod t
 without forking base (the project-wide rule for single-valued data, Design draft 91):
 
 ```ron
-limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8,
-         spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, empty_for_monsters: 1.5, empty_for_animals: 2.5),
+limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, first_night_monsters: 3,
+         spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0,
+         spawn_unseen_angle: 75.0, empty_for_monsters: 1.5, empty_for_animals: 2.5),
 ```
 
 Wild creatures and kept animals have budgets of their own, so a big ranch never stops wild
@@ -67,7 +68,12 @@ animals and monsters spawning for anyone:
   Wild ones (spawned or summoned) and births also stop short of it by the kept animals
   still waiting in the save, so those always have room to come back; past `keepers`
   players at their cap, wild ones get fewer.
-- `animals_near` and `monsters_near` cap each kind within 64 blocks of a player.
+- `animals_near` and `monsters_near` cap each kind within 64 blocks of a player;
+  `first_night_monsters` is the lower cap on monsters until the world's first dawn (a world
+  begins at sunrise: its first day, and any darkness running past its end), when the first
+  night is a new player's first meeting with them.
+- A spot with a block giving light within 5 blocks is never dark: torches and lit bases keep
+  monsters from spawning there, on the surface as underground.
 - `spawn_every` is the seconds between spawn attempts around each player (one spot an
   attempt), `spawn_near` and `spawn_far` how far from the player the spot lies (20 to 40
   blocks: nearer puts more of what the caps allow within sight), and `empty_for_animals` /
@@ -76,6 +82,11 @@ animals and monsters spawning for anyone:
   Together with the caps these set how full the land feels, and how fast it refills: with
   these numbers a player's surroundings fill in 10 to 30 seconds of standing still, not the
   minutes to an hour older notes assumed. Fast refill is intended.
+- `spawn_unseen_angle` is the half angle in degrees around where any joined player looks
+  (75 covers the screen; 0 is off). Natural spawns, including every group member, wait
+  while a player could see them appear. The individual's gene-scaled body is checked at
+  its centre and corners, so heads above walls and flanks round their edges count too.
+  Behind a hill or trees is fine. Explicit summons and settlement people are unaffected.
 
 What no package sets keeps the defaults above.
 
@@ -279,7 +290,8 @@ Content fails to load, with the file and a reason, when:
   and `monsters_near` together are more than `wild_most`, or `most` is less than
   `wild_most` and `keepers` players' `kept_each`; `spawn_every` is under 0.05 s or not a
   number, `empty_for_animals` or `empty_for_monsters` is negative or not finite, or
-  `spawn_far` is not more than `spawn_near` (which must be 0 or more);
+  `spawn_far` is not more than `spawn_near` (which must be 0 or more), or
+  `spawn_unseen_angle` is not finite or is outside 0 to 180;
 - `defence` makes a fight last no time (`fought_within` 0 or less) or asks a negative
   `least_level`;
 - the condition rules have a share outside 0..1, a need met counting less than partly
@@ -321,3 +333,5 @@ large seeded sample of spawn spots, near 20%; every skill has unlocks through 99
 4. **Populations**: regional counts, hunting pressure, regrowth.
 5. **Cooking**: stations, recipes, dishes and effects on top of vitals.
 6. **Behaviour generation**: the ecology rules, quirks, regional modulation.
+
+For admin inspection, `/creatures populate` makes a bounded batch of ordinary natural spawn attempts and holds new arrivals still for a minute. It obeys visibility, darkness and all population budgets. `/creatures disperse` removes wild creatures within 64 blocks without loot, leaving kept animals alone. The game gate compares dark births on a clear pad with a pad lit by a sparse torch grid after dispersing the first population, so a full budget cannot falsely pass the light check.

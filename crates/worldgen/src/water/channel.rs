@@ -77,6 +77,9 @@ pub struct Style {
 /// One edge of a river, from a cell to the one it drains into.
 pub struct Edge {
     points: [Vec2; SUB + 1],
+    /// Immutable projection values, included in the channel cache's byte weight.
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    segments: Option<Segments>,
     /// River surface at each end, in eighths of a block.
     from: i32,
     to: i32,
@@ -99,6 +102,21 @@ impl Edge {
     /// Distance from `p` to the edge's line, where along it (0..1) the nearest point
     /// lies, and the direction of flow there.
     fn nearest(&self, p: Vec2) -> (f32, f32, Vec2) {
+        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+        if let Some(segments) = self.segments.as_ref().filter(|_| p.abs().cmple(Vec2::splat(1e15)).all()) {
+            // This bound keeps subtraction, both dot products and division finite,
+            // even at the minimum denominator. Other values keep the scalar path.
+            // SAFETY: this path requires NEON at compile time; the helper reads
+            // only its four-element arrays and performs the same unfused operations.
+            let (distances, fractions) = unsafe { nearest_four(segments, p) };
+            let mut best = (f32::MAX, 0.0, Vec2::X);
+            for k in 0..SUB {
+                if distances[k] < best.0 {
+                    best = (distances[k], (k as f32 + fractions[k]) / SUB as f32, self.points[k + 1] - self.points[k]);
+                }
+            }
+            return best;
+        }
         let mut best = (f32::MAX, 0.0, Vec2::X);
         for k in 0..SUB {
             let (a, b) = (self.points[k], self.points[k + 1]);
@@ -128,6 +146,60 @@ impl Edge {
     /// How much of a slot gorge the river runs in at `t` along the edge, 0 ..= 1.
     fn gorge(&self, t: f32) -> f32 {
         self.gorge[0] + (self.gorge[1] - self.gorge[0]) * t.clamp(0.0, 1.0)
+    }
+}
+
+/// The four immutable segments, one per lane. Preparing them at edge creation
+/// avoids transposing the same curve and recomputing its denominators per column.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+struct Segments {
+    ax: [f32; SUB],
+    az: [f32; SUB],
+    dx: [f32; SUB],
+    dz: [f32; SUB],
+    length: [f32; SUB],
+}
+
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+impl Segments {
+    fn new(points: &[Vec2; SUB + 1]) -> Option<Self> {
+        if !points.iter().all(|p| p.abs().cmple(Vec2::splat(1e15)).all()) { return None; }
+        let ab: [Vec2; SUB] = std::array::from_fn(|k| points[k + 1] - points[k]);
+        Some(Self {
+            ax: std::array::from_fn(|k| points[k].x),
+            az: std::array::from_fn(|k| points[k].y),
+            dx: ab.map(|v| v.x),
+            dz: ab.map(|v| v.y),
+            length: ab.map(|v| v.length_squared().max(1e-6)),
+        })
+    }
+}
+
+/// Projection and square root retain their original per-segment arithmetic; the
+/// caller still selects in segment order.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+unsafe fn nearest_four(segments: &Segments, p: Vec2) -> ([f32; SUB], [f32; SUB]) {
+    use std::arch::aarch64::*;
+    // SAFETY: all loads and stores address four initialized floats. Every vector
+    // operation uses NEON, enabled by this helper's target-feature condition.
+    unsafe {
+        let (ax, az) = (vld1q_f32(segments.ax.as_ptr()), vld1q_f32(segments.az.as_ptr()));
+        let (dx, dz) = (vld1q_f32(segments.dx.as_ptr()), vld1q_f32(segments.dz.as_ptr()));
+        let length = vld1q_f32(segments.length.as_ptr());
+        let (px, pz) = (vdupq_n_f32(p.x), vdupq_n_f32(p.y));
+        let dot = vaddq_f32(vmulq_f32(vsubq_f32(px, ax), dx), vmulq_f32(vsubq_f32(pz, az), dz));
+        let mut s = vdivq_f32(dot, length);
+        let (zero, one) = (vdupq_n_f32(0.0), vdupq_n_f32(1.0));
+        // Strict comparisons also preserve the scalar clamp's signed zeros.
+        s = vbslq_f32(vcltq_f32(s, zero), zero, s);
+        s = vbslq_f32(vcgtq_f32(s, one), one, s);
+        let ex = vsubq_f32(px, vaddq_f32(ax, vmulq_f32(dx, s)));
+        let ez = vsubq_f32(pz, vaddq_f32(az, vmulq_f32(dz, s)));
+        let d = vsqrtq_f32(vaddq_f32(vmulq_f32(ex, ex), vmulq_f32(ez, ez)));
+        let (mut distances, mut fractions) = ([0.0; SUB], [0.0; SUB]);
+        vst1q_f32(distances.as_mut_ptr(), d);
+        vst1q_f32(fractions.as_mut_ptr(), s);
+        (distances, fractions)
     }
 }
 
@@ -161,6 +233,16 @@ pub struct Channels {
 }
 
 impl Channels {
+    /// A conservative possibility test before sampling land for a freshwater-only
+    /// query. With no indexed edge or home lake/shore/salt cell, carving cannot set
+    /// a body or wetness, regardless of the original terrain's height.
+    pub(super) fn may_have_water(&self, x: i32, z: i32) -> bool {
+        if self.near(x, z).next().is_some() { return true; }
+        if IVec2::new(x, z).div_euclid(IVec2::splat(super::REGION)) != self.region { return false; }
+        let lake = self.lake(x, z);
+        lake.water > 0 || lake.shore > 0 || lake.salt
+    }
+
     /// Places along the region's rivers that run deep in a slot gorge: a point near the
     /// deeper end of each such edge, the height of its top water block, and how much of a
     /// gorge it is there, 0 ..= 1.
@@ -231,6 +313,8 @@ impl Channels {
                 };
                 let mut edge = Edge {
                     points,
+                    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+                    segments: Segments::new(&points),
                     from,
                     to,
                     fall,
@@ -594,4 +678,100 @@ fn current(edge: &Edge, along: Vec2, n: f32, t: f32) -> Current {
     // Slack water by the banks.
     let speed = if n > 0.75 { speed.saturating_sub(1).max(1) } else { speed };
     Current { direction, speed }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearest_segments_keep_original_bits_and_ties() {
+        fn original(edge: &Edge, p: Vec2) -> (f32, f32, Vec2) {
+            let mut best = (f32::MAX, 0.0, Vec2::X);
+            for k in 0..4 {
+                let (a, b) = (edge.points[k], edge.points[k + 1]);
+                let ab = b - a;
+                let s = ((p - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
+                let d = p.distance(a + ab * s);
+                if d < best.0 { best = (d, (k as f32 + s) / 4.0, ab); }
+            }
+            best
+        }
+        let bits = |(d, t, v): (f32, f32, Vec2)| [d.to_bits(), t.to_bits(), v.x.to_bits(), v.y.to_bits()];
+        let check = |edge: &Edge, p: Vec2| {
+            #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+            {
+                let bounded = edge.points.iter().all(|q| q.x.abs() <= 1e15 && q.y.abs() <= 1e15);
+                assert_eq!(edge.segments.is_some(), bounded, "real bounded curves must use prepared segments");
+                if let Some(segments) = &edge.segments {
+                    for k in 0..4 {
+                        let a = edge.points[k];
+                        let ab = edge.points[k + 1] - a;
+                        let actual = [segments.ax[k], segments.az[k], segments.dx[k], segments.dz[k], segments.length[k]];
+                        let expected = [a.x, a.y, ab.x, ab.y, ab.length_squared().max(1e-6)];
+                        assert_eq!(actual.map(f32::to_bits), expected.map(f32::to_bits));
+                    }
+                }
+            }
+            assert_eq!(bits(edge.nearest(p)), bits(original(edge, p)), "{:?} at {p:?}", edge.points);
+        };
+        let mut edge = Edge { points: [Vec2::ZERO; 5],
+            #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+            segments: Segments::new(&[Vec2::ZERO; 5]),
+            from: 0, to: 0, fall: -1.0, half: 1.0,
+            depth: 1.0, reach: 2.0, tunnel: false, body: Body::Creek, slope: 0.0, gorge: [0.0; 2] };
+        let set_points = |edge: &mut Edge, points| {
+            edge.points = points;
+            #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+            { edge.segments = Segments::new(&points); }
+        };
+        let curves = [
+            [Vec2::ZERO; 5],
+            [Vec2::new(-0.0, 0.0), Vec2::new(0.0, -0.0), Vec2::ZERO, Vec2::ONE, Vec2::ZERO],
+            [Vec2::new(-2.0, -2.0), Vec2::new(2.0, -2.0), Vec2::new(2.0, 2.0), Vec2::new(-2.0, 2.0), Vec2::new(-2.0, -2.0)],
+            [Vec2::new(-7.0, 3.0), Vec2::new(1.0, 1.0), Vec2::new(1.0, 1.0), Vec2::new(3.0, -5.0), Vec2::new(-7.0, 3.0)],
+            [Vec2::splat(1e-20), Vec2::splat(-1e-20), Vec2::ZERO, Vec2::splat(1e-4), Vec2::splat(-1e-4)],
+            [Vec2::splat(1e15), Vec2::splat(-1e15), Vec2::ZERO, Vec2::splat(1e15), Vec2::splat(-1e15)],
+            [Vec2::splat(1e30), Vec2::splat(-1e30), Vec2::ZERO, Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)],
+            [Vec2::new(f32::NAN, 0.0), Vec2::ZERO, Vec2::ONE, Vec2::new(0.0, f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)],
+        ];
+        for curve in curves {
+            for shift in [Vec2::ZERO, Vec2::new(-1031.0, 1019.0), Vec2::splat(16_777_216.0)] {
+                set_points(&mut edge, curve.map(|p| p + shift));
+                for z in -8..=8 {
+                    for x in -8..=8 {
+                        let p = shift + Vec2::new(x as f32 * 0.5, z as f32 * 0.5);
+                        check(&edge, p);
+                    }
+                }
+                for q in edge.points {
+                    for p in [q, q + Vec2::splat(0.5), q - Vec2::splat(0.5), Vec2::splat(1e15), Vec2::splat(1e30), Vec2::new(f32::NAN, 0.0), Vec2::new(0.0, f32::NAN), Vec2::splat(f32::INFINITY)] {
+                        check(&edge, p);
+                    }
+                }
+            }
+        }
+        // At the centre of this square, all distances tie. The first segment wins.
+        set_points(&mut edge, curves[2]);
+        assert_eq!(edge.nearest(Vec2::ZERO), (2.0, 0.125, Vec2::new(4.0, 0.0)));
+
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let mut actual_edges = 0;
+        for (seed, at) in [(7, IVec2::new(-1776, 752)), (14, IVec2::new(656, -304))] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            let (trunks, streams) = world.rivers.tiers(world.stages(), at - 1, at + 1);
+            for channels in trunks.list().iter().chain(streams.list()).flatten() {
+                for edge in &channels.edges {
+                    actual_edges += 1;
+                    for k in 0..SUB {
+                        for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                            let p = edge.points[k] + (edge.points[k + 1] - edge.points[k]) * t;
+                            for offset in [Vec2::ZERO, Vec2::splat(0.5), Vec2::new(-7.0, 7.0)] { check(edge, p + offset); }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(actual_edges > 0, "the oracle must include real generated river curves");
+    }
 }

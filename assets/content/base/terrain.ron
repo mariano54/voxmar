@@ -118,4 +118,19 @@
             climate: [(continentalness: ("ocean", "inland"))],
         ),
     ],
+    // Tarns: small still lakes high on the slopes of cold ranges (the mountains and their
+    // alpine meadows), where the rivers would otherwise breach a small hollow: some of the
+    // hollows `depth` blocks deep or more whose bottom lies `floor` blocks or more above the
+    // sea hold one, a block under the rim, 8 to 25 blocks across (sky lotus grows on their
+    // banks). A slow noise `scale` blocks across gathers them into tarn country, `share` of
+    // their climate (about 20 a square kilometre there, none elsewhere): a lake district in
+    // places, dry rock in others (design draft 96). Nothing is carved for them.
+    tarns: (
+        climate: [(temperature: ("frozen", "cool"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "slopes"))],
+        floor: 56.0,
+        depth: 1.5,
+        size: (8, 25),
+        chance: 1.0,
+        country: (scale: 1000.0, share: 0.5),
+    ),
 )

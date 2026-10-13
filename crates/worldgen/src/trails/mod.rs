@@ -76,6 +76,40 @@ pub enum Marker {
 pub trait Land: Sync {
     fn sample(&self, x: i32, z: i32) -> GeoSample;
 
+    /// The same sample, sharing temporary terrain calculations within one planner.
+    /// Synthetic land can keep the standalone implementation.
+    fn sample_cached(&self, x: i32, z: i32, _scratch: &mut crate::water::Samples) -> GeoSample {
+        self.sample(x, z)
+    }
+
+    /// At most 32 exact centre samples, sharing terrain calculations where supported.
+    fn samples_cached(&self, points: &[(i32, i32)], scratch: &mut crate::water::Samples) -> Vec<GeoSample> {
+        assert!(points.len() <= crate::water::SAMPLE_BATCH);
+        points.iter().map(|&(x, z)| self.sample_cached(x, z, scratch)).collect()
+    }
+
+    /// Prove freshwater absent without a terrain sample, where supported. False
+    /// means unknown, so synthetic land keeps its original full-sample predicate.
+    fn freshwater_absent_cached(&self, _at: IVec2, _scratch: &mut crate::water::Samples) -> bool {
+        false
+    }
+
+    /// Whether the close-look grid's circle contains freshwater. Synthetic land keeps
+    /// its grid implementation; real river land can stop before unused terrain reads.
+    /// Like settlement definitions, callers supply radius >= 0 and step >= 1.
+    fn freshwater_near(&self, centre: IVec2, radius: i32, step: i32, _cache: &mut crate::water::Freshwater) -> bool {
+        let first = centre - radius;
+        let size = radius * 2 / step + 1;
+        self.grid(first, step, size).iter().enumerate().any(|(i, g)| {
+            let p = first + IVec2::new(i as i32 % size, i as i32 / size) * step;
+            p.as_vec2().distance(centre.as_vec2()) <= radius as f32 && crate::water::freshwater(g)
+        })
+    }
+
+    /// Reuse this land's already sampled grid in close-water queries where supported.
+    /// Synthetic implementations keep their original full-grid query behaviour.
+    fn remember_freshwater_grid(&self, _origin: IVec2, _step: i32, _size: i32, _samples: &[GeoSample], _cache: &mut crate::water::Freshwater) {}
+
     /// The `size`×`size` samples `step` blocks apart from `origin`, row by row: the same
     /// as sampling each, but free to share the work.
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
@@ -546,8 +580,7 @@ mod tests {
 
     /// A world with trails laid everywhere, as they will be near settlements.
     fn world(seed: u64) -> Overworld {
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let mut content = crate::content::WorldContent::base(&registry).unwrap();
         content.trails.laid = TrailsWhere::Everywhere;
         Overworld::with_content(seed, registry, &content)
@@ -581,8 +614,7 @@ mod tests {
     #[test]
     fn trails_near_settlements_never_depend_on_order() {
         use crate::Generator;
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = || Overworld::new(1, registry.clone());
         let (a, b) = (world(), world());
         // Round the gate nearest spawn that two trails leave (their ends within a block of
@@ -590,7 +622,9 @@ mod tests {
         let third = world();
         let spawn = third.spawn_point();
         let centre = IVec2::new(spawn.x, spawn.z);
-        let (lines, places) = third.trails_in(centre - 600, centre + 600);
+        // Culture layouts move the gates; include the settlements just beyond spawn's
+        // first square while still requiring a real shared gate, not merely any trail.
+        let (lines, places) = third.trails_in(centre - 1200, centre + 1200);
         let centre = centre.as_vec2();
         let ends: Vec<Vec2> = lines.iter().filter(|l| l.len() > 1).flat_map(|l| [l[0].0, l[l.len() - 1].0]).collect();
         let gate = |e: Vec2| places.iter().any(|p| p.kind == Kind::Settlement && p.at().as_vec2().distance(e) <= CELL as f32);
@@ -716,8 +750,7 @@ mod sights {
     #[ignore]
     fn trail_sights() {
         let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = Overworld::new(seed, registry);
         let spawn = world.spawn_point();
         let eye = spawn.as_vec3() + voxmar_engine::glam::Vec3::Y * 1.62;
@@ -788,8 +821,7 @@ mod patch {
     fn trail_patch() {
         let env = |name: &str, default: i32| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
         let seed = env("SEED", 7) as u64;
-        let source = include_str!("../../../../assets/content/base/blocks.ron");
-        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let registry = std::sync::Arc::new(crate::test_registry());
         let world = Overworld::new(seed, registry.clone());
         const SIZE: i32 = 160;
         const PIXEL: i32 = 4;

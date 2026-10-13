@@ -1,6 +1,7 @@
 // How players move, in blocks and seconds, tuned to feel like Minecraft. The client
 // predicts its player with these numbers and the server checks movement against them, so
-// both read this one file. A package may ship its own movement.ron only if no other does.
+// both read this one file. A later package's movement.ron names only the numbers it
+// changes (inside checks too); they replace these, and the load log names both packages.
 (
     // Minecraft walks at 4.3 and sprints at 1.3 times that; ours is a little brisker.
     walk_speed: 4.7,
