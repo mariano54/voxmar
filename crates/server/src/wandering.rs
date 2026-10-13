@@ -1523,6 +1523,21 @@ mod tests {
     }
 
     #[test]
+    fn every_event_comes_to_biomes_the_world_has() {
+        let server = fixture();
+        let biomes = server.overworld.biomes();
+        for (_, event) in server.content.wandering.iter() {
+            for (selector, _) in &event.def.biomes {
+                let known = match selector.strip_prefix("tag:") {
+                    Some(tag) => biomes.iter().any(|(_, b)| b.tags.iter().any(|t| t == tag)),
+                    None => biomes.iter().any(|(_, b)| b.name == *selector || b.name.rsplit(':').next() == selector.rsplit(':').next()),
+                };
+                assert!(known, "{} comes to `{selector}`, which no biome is or carries", event.def.name);
+            }
+        }
+    }
+
+    #[test]
     fn a_march_passes_the_player_and_is_done() {
         let mut server = fixture();
         let id = start(&mut server, "pedlar_and_hound", (68, 128));
