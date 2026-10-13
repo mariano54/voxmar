@@ -2214,39 +2214,46 @@ impl Server {
                 self.wandering.held = false;
                 Ok(Words::key("command.wander.allowed"))
             }
-            Some("start") => {
-                let name = args.get(1).ok_or_else(|| Words::key("command.wander.what"))?;
-                let event = registry.find(name).ok_or_else(|| Words::key("command.wander.unknown").with("name", name.as_str()))?;
-                let (player, feet, look) = match source {
-                    Source::Player(p) => {
-                        let player = self.players.get(&p).ok_or_else(|| Words::key("command.wander.what"))?;
-                        (Some(p), player.position, player.look().with_y(0.0).normalize_or(Vec3::NEG_Z))
-                    }
-                    Source::Console => (None, self.spawn, Vec3::NEG_Z),
-                };
-                // Ahead of them, out of the way, or nearer where the land ahead falls away or
-                // rises out of reach: an admin's start never fails for want of a spot while
-                // they stand on something.
-                let spot = ADMIN_SPOT_AHEAD.into_iter().find_map(|ahead| {
-                    let at = (feet + look * ahead).floor().as_ivec3();
-                    self.load_area(at, at);
-                    self.standing_spot(at.x, at.z, at.y)
-                });
-                let name = &registry.get(event).def.name;
-                let Some(spot) = spot else {
-                    tracing::info!("wandering: /wander start {name} refused: no standing room ahead of {feet} or at it");
-                    return Err(Words::key("command.wander.no_room"));
-                };
-                // Seen or not: the admin asked for it.
-                let seed = mix(self.meta.seed, self.tick);
-                if self.begin_event_at(player, event, spot, seed, true).is_none() {
-                    tracing::info!("wandering: /wander start {name} refused: no cast could be brought to {spot}");
-                    return Err(Words::key("command.wander.no_room"));
-                }
-                Ok(Words::key("command.wander.started").with("event", Words::key(&registry.get(event).title_key())))
-            }
+            Some("start") => self.wander_start(args, source).inspect_err(|why| {
+                // Every refusal reaches the log, so a gate session that started nothing says why.
+                tracing::info!("wandering: /wander start {:?} refused: {why:?}", &args[1..]);
+            }),
             Some(_) => Err(Words::key("command.wander.what")),
         }
+    }
+
+    /// An admin's /wander start: the party nearest ahead that has room, or why not.
+    fn wander_start(&mut self, args: &[String], source: Source) -> Result<Words, Words> {
+        let registry = self.content.wandering.clone();
+        let name = args.get(1).ok_or_else(|| Words::key("command.wander.what"))?;
+        let event = registry.find(name).ok_or_else(|| Words::key("command.wander.unknown").with("name", name.as_str()))?;
+        let (player, feet, look) = match source {
+            Source::Player(p) => {
+                let player = self.players.get(&p).ok_or_else(|| Words::key("command.wander.what"))?;
+                (Some(p), player.position, player.look().with_y(0.0).normalize_or(Vec3::NEG_Z))
+            }
+            Source::Console => (None, self.spawn, Vec3::NEG_Z),
+        };
+        // Ahead of them, out of the way, or nearer where the land ahead falls away or
+        // rises out of reach: an admin's start never fails for want of a spot while
+        // they stand on something.
+        let spot = ADMIN_SPOT_AHEAD.into_iter().find_map(|ahead| {
+            let at = (feet + look * ahead).floor().as_ivec3();
+            self.load_area(at, at);
+            self.standing_spot(at.x, at.z, at.y)
+        });
+        let name = &registry.get(event).def.name;
+        let Some(spot) = spot else {
+            tracing::info!("wandering: no standing room ahead of {feet} or at it for {name}");
+            return Err(Words::key("command.wander.no_room"));
+        };
+        // Seen or not: the admin asked for it.
+        let seed = mix(self.meta.seed, self.tick);
+        if self.begin_event_at(player, event, spot, seed, true).is_none() {
+            tracing::info!("wandering: no cast of {name} could be brought to {spot}");
+            return Err(Words::key("command.wander.no_room"));
+        }
+        Ok(Words::key("command.wander.started").with("event", Words::key(&registry.get(event).title_key())))
     }
 
     /// A wandering party member died: the rest of the party may mind (not yet).

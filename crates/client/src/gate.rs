@@ -7500,7 +7500,9 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if gate.server_in_phase() > 20.0 {
                 let trader_seen = speaker(world).is_some();
-                gate.check("party: arrives", Err(format!("/wander start tinker_camp gave the client no trader and hound in 20 server seconds (trader seen {trader_seen}, hounds {hounds})")));
+                // What the server answered the commands, a refusal's reason among it.
+                let said: Vec<String> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).map(str::to_owned).collect();
+                gate.check("party: arrives", Err(format!("/wander start tinker_camp gave the client no trader and hound in 20 server seconds (trader seen {trader_seen}, hounds {hounds}); the server said {said:?}")));
                 leave(world, gate);
             }
         }
