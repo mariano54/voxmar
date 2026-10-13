@@ -402,6 +402,14 @@ impl Gate {
     fn lagging(&self) -> bool {
         self.step.lagged() && (self.step != Step::Feel || (FEEL_BLOCK..=FEEL_DODGE).contains(&self.phase))
     }
+
+    /// How many times the game's pace the server ticks now: the workshop's machine stages
+    /// (the boiler and crusher on to the iron age) wait on their recipes' server time, a
+    /// bloom and its dust taking half a minute of it, so they run at `MACHINES_HURRIED`.
+    /// Every wait in them is by the server's clock, so they prove the same sooner.
+    fn hurried(&self) -> u32 {
+        if self.step == Step::Workshop && (16..=19).contains(&self.phase) { MACHINES_HURRIED } else { 1 }
+    }
 }
 
 #[derive(Resource)]
@@ -870,6 +878,7 @@ fn run(world: &mut World) {
         gate.server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
         if let Some(server) = net.server() {
             server.set_lagging(gate.lagging());
+            server.set_hurried(gate.hurried());
         }
     }
     // The wall clock, for what ends a session whose other clocks stopped (`guard`).
@@ -919,6 +928,9 @@ fn run(world: &mut World) {
     }
     world.insert_resource(gate);
 }
+
+/// How many times the game's pace the workshop's machine stages tick (`Gate::hurried`).
+const MACHINES_HURRIED: u32 = 4;
 
 /// The workshop's machine phases that play only in the full gate, and the seconds each
 /// adds to the session there (measured on a loaded Mac, with room): the session's limits,
