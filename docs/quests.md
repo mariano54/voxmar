@@ -171,4 +171,3 @@ on the spine gated by a side quest, and a quest that is several steps shown as s
 Left as they are: Timber stays off the spine (branch `start`, with An Axe to It), since the
 main-line walk test models only the spine's goals; Crafting Table stays a root so a player
 who already has a table finds it done.
-
