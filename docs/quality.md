@@ -86,7 +86,9 @@ mesa-vulkan-drivers`), as a look: frames take half a second, so the steps that t
 4. a scripted session in the real game (`voxmar --gate DIR`, crates/client/src/gate.rs) in
    a small world, headless and silent, with the integrated server made to run behind as
    on a busy machine (`gate::SERVER_LAG`: 60 ms more a tick, a 400 ms stall every ninth
-   with messages waiting, and a 600 ms stall as every other action is proposed). It also
+   with messages waiting, and a 600 ms stall as every other action is proposed) in the
+   steps that play against it: placing, digging, breaking, the workshop, fights and cooking
+   (`Step::lagged`); the rest run at full speed, three times sooner. It also
    fails when placing or digging hitches (a frame over 150 ms, or six times the median: the
    first break once compiled three pipelines on the spot); on a machine asked for more
    than all its cores (load average over the core count) the bar rises by how far over it
@@ -171,7 +173,9 @@ into the code under test. Each check gives a reason when it fails. Keep the sess
 (about half a minute now): poll for what a step waits on rather than sleeping, and never
 add a fixed wait of more than a second.
 
-The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loaded, so:
+The server runs behind on purpose (`SERVER_LAG`, in the steps `Step::lagged` names; a new
+step that times actions against a busy server joins them), and the machine is usually
+loaded, so:
 
 - Wait on the server by its own clock, `gate.server_now` and `gate.server_in_phase()`
   (its ticks, `ServerHandle::ticks`), never by the game's seconds: anything the server
