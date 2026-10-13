@@ -179,4 +179,33 @@ mod tests {
         assert_eq!(server.players[&1].inventory.get(0).unwrap().item, burnt);
         assert!(!server.players[&1].tallies.keys().any(|key| key.starts_with("cooked")), "a burnt output counted");
     }
+
+    /// A full pack fires its clay as long as the fired clay has room: a crack gives back
+    /// the clay into the stack it came from.
+    #[test]
+    fn a_full_pack_fires_clay_whether_it_cracks_or_not() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let kiln = server.spawn.floor().as_ivec3() + IVec3::Y * 4;
+        server.set_block(kiln, server.content.blocks.expect("base:pit_kiln"));
+        let (clay, fired, stone) = (server.content.blocks.expect("base:clay"), server.content.blocks.expect("base:fired_clay"), server.content.blocks.expect("base:cobblestone"));
+        let recipe = server.content.cooking.for_item(clay, &server.content.blocks.def(server.content.blocks.expect("base:pit_kiln")).tags).unwrap();
+        let burn = recipe.burn_chance(1);
+        assert!(burn > 0.0 && recipe.burnt == Some(clay), "clay cracks back to clay at level 1");
+        for cracks in [true, false] {
+            let tick = (server.tick..server.tick + 1000).find(|&tick| (crate::items::random3(tick, kiln, 1 ^ 0xc00c)[0] < burn) == cracks).unwrap();
+            server.tick = tick;
+            let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
+            for slot in inventory.slots.iter_mut() {
+                *slot = Some(ItemStack { item: stone, count: 64 });
+            }
+            inventory.slots[0] = Some(ItemStack { item: clay, count: 64 });
+            inventory.slots[1] = Some(ItemStack { item: fired, count: 10 });
+            server.players.get_mut(&1).unwrap().selected = 0;
+            server.cook(1, kiln);
+            let inventory = &server.players[&1].inventory;
+            let (clay_left, fired_now) = (inventory.get(0).unwrap().count, inventory.get(1).unwrap().count);
+            assert_eq!((clay_left, fired_now), if cracks { (64, 10) } else { (63, 11) }, "cracks: {cracks}");
+        }
+    }
 }
