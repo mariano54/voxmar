@@ -100,6 +100,13 @@
             when: Some(All([Done("a_pile_of_stone"), InBiome("mountain")])), modifiers: (finds: 0.05)),
         (name: "anglers_knack", kind: Buff, title: "Angler's knack", description: "A supper caught and cooked: you read the water, and casts land a tenth more often.",
             when: Some(Done("a_fish_supper")), modifiers: (fishing: 1.1)),
+        (name: "deft_angler", kind: Buff, title: "Deft angler", description: "Patience paid off: casts land a fifth more often.",
+            when: Some(Done("patient_angler")), replaces: ["anglers_knack"], modifiers: (fishing: 1.2)),
+        (name: "prospector", kind: Buff, title: "Prospector", description: "A good run of ore taught you where it lies: a twentieth faster, and extras turn up more.",
+            when: Some(Done("ore_run")), modifiers: (mining: 1.05, finds: 0.04)),
+        // What the farm gives the home: fed and settled, you heal better where you live.
+        (name: "settled_and_fed", kind: Buff, title: "Settled and fed", description: "Your animals thrive and your table is set: at home you heal a tenth faster.",
+            when: Some(All([Done("food_enough"), AtHome])), modifiers: (heal: 1.1)),
     ],
     foods: [
         (tags: ["meat", "cooked"], effect: "hearty", seconds: 300),
