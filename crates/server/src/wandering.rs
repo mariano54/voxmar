@@ -1677,11 +1677,13 @@ impl Server {
         let can_hand = |group: usize| kept_room && inst.members.iter().any(|m| m.group == group && self.creatures.live.get(&m.creature).is_some_and(|c| c.owner.is_none()));
         // A line that frees a captive is for a party that still holds one.
         let holds_captive = inst.members.iter().any(|m| event.groups[m.group].1.role == Role::Captive && self.creatures.live.contains_key(&m.creature));
-        let line = meeting.lines.iter().enumerate().filter(|_| !inst.freed).find(|(i, line)| {
+        let seed = inst.seed;
+        // Whether line `i` applies, and (with `held_too`) the player holds what it takes.
+        let applies = |i: usize, line: &voxmar_engine::wander::Line, held_too: bool| {
             let used = match line.once {
                 Once::Always => false,
-                Once::Player => inst.told.contains(&(player, *i + meeting.who * 64)),
-                Once::Party => inst.spent.contains(&(*i + meeting.who * 64)),
+                Once::Player => inst.told.contains(&(player, i + meeting.who * 64)),
+                Once::Party => inst.spent.contains(&(i + meeting.who * 64)),
             };
             !used
                 && line.needs.iter().all(|need| match need {
@@ -1700,23 +1702,33 @@ impl Server {
                     ResolvedReward::Point(want, reach) => self.creatures.live.get(&id).is_some_and(|c| self.point_at(c.body.position, want, *reach).is_some()),
                     _ => true,
                 })
-                && line.wants.as_ref().is_none_or(|(want, count)| {
-                    held.is_some_and(|h| {
-                        h.count >= *count
-                            && match want {
-                                Want::Item(item) => h.item == *item,
-                                Want::Tag(tag) => self.content.blocks.def(h.item).has_tag(tag),
-                            }
-                    })
-                })
+                && (!held_too
+                    || line.wants_of(seed).is_none_or(|(want, count)| {
+                        held.is_some_and(|h| {
+                            h.count >= count
+                                && match want {
+                                    Want::Item(item) => h.item == item,
+                                    Want::Tag(tag) => self.content.blocks.def(h.item).has_tag(&tag),
+                                }
+                        })
+                    }))
                 && (holds_captive || !line.gives.contains(&ResolvedReward::Free))
-        });
+        };
+        let line = meeting.lines.iter().enumerate().filter(|_| !inst.freed).find(|&(i, line)| applies(i, line, true));
+        // With no line to say, one that asks for what the player lacks says what it asks.
+        let asked = match line {
+            None if !inst.freed => meeting.lines.iter().enumerate().find(|&(i, line)| !line.asks.is_empty() && applies(i, line, false)).and_then(|(_, line)| {
+                let (item, count) = line.ask_of(seed)?;
+                Some(Words::key(&event.key(&format!("{}_ask", line.name))).with("thing", Words::Block(self.content.blocks.def(item).name.clone())).with("count", Words::text(count)))
+            }),
+            _ => None,
+        };
         let variant = ((unit_from(mix(self.tick, id as u64 ^ 0x6e37)) * meeting.greets as f32) as u8).min(meeting.greets - 1);
         let (words, gives, wants, mark) = match line {
-            Some((i, line)) => (event.key(&line.name), line.gives.clone(), line.wants.clone(), Some((i + meeting.who * 64, line.once))),
-            None if inst.freed => (event.key("freed"), Vec::new(), None, None),
-            None if inst.guided => (event.key("company"), Vec::new(), None, None),
-            None => (event.greeting(meeting, variant), Vec::new(), None, None),
+            Some((i, line)) => (Words::key(&event.key(&line.name)), line.gives.clone(), line.wants_of(seed), Some((i + meeting.who * 64, line.once))),
+            None if inst.freed => (Words::key(&event.key("freed")), Vec::new(), None, None),
+            None if inst.guided => (Words::key(&event.key("company")), Vec::new(), None, None),
+            None => (asked.unwrap_or_else(|| Words::key(&event.greeting(meeting, variant))), Vec::new(), None, None),
         };
         let who = self.speaker_name(id);
         let halts = event.def.halt.is_some();
@@ -1760,7 +1772,7 @@ impl Server {
             }
         }
         if let (Some(who), Some(p)) = (who, self.players.get(&player)) {
-            p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&words)) });
+            p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", words) });
         }
         self.hand_out(player, id, &gives);
         if gives.contains(&ResolvedReward::Free)
@@ -3512,5 +3524,130 @@ mod tests {
         assert!(has_effect(&server, "focused"));
         assert!(server.meet(1, teller));
         assert!(told(&client).iter().all(|(key, _)| key != "wander.point"), "once");
+    }
+
+    #[test]
+    fn each_hermit_asks_for_its_own_thing_and_says_what() {
+        let mut server = fixture();
+        let hermit_kind = event(&server, "hermit");
+        let line = &server.content.wandering.get(hermit_kind).meetings[0].lines[0];
+        let picks: std::collections::BTreeSet<_> = (0..64u64).filter_map(|seed| line.ask_of(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15))).collect();
+        assert!(picks.len() >= 3, "parties ask different things: {picks:?}");
+        let id = start(&mut server, "hermit", (110, 128));
+        let hermit = members_of(&server, id, 0)[0];
+        let at = server.creatures.live[&hermit].body.position;
+        server.world.set_block(IVec3::new(at.x as i32, 200, at.z as i32 + 40), tagged(&server, "wonder"));
+        let (item, count) = server.content.wandering.get(hermit_kind).meetings[0].lines[0].ask_of(server.wandering.active[&id].seed).unwrap();
+        let name = server.content.blocks.def(item).name.clone();
+        // Empty-handed: the riddle, naming the thing and how many.
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, hermit));
+        let said = told(&client);
+        let ask = said.iter().find_map(|(_, args)| args.iter().find(|(n, _)| n == "text").map(|(_, w)| w.clone())).expect("said");
+        assert_eq!(ask, Words::key("wander.base.hermit.riddle_ask").with("thing", Words::Block(name.clone())).with("count", Words::text(count)));
+        // Bring it: taken, a wonder pointed to, and Magic, once.
+        give_held(&mut server, &name, count + 1);
+        assert!(server.meet(1, hermit));
+        let said = told(&client);
+        assert!(says(&said, "wander.base.hermit.riddle"), "{said:?}");
+        assert!(said.iter().any(|(key, _)| key == "wander.point"));
+        assert_eq!(count_of(&server, &name), 1);
+        let magic = server.content.skills.id("core:magic").unwrap();
+        assert!(server.players[&1].skills.xp(magic) > 0);
+        assert!(server.meet(1, hermit));
+        assert_eq!(count_of(&server, &name), 1, "once");
+    }
+
+    #[test]
+    fn the_alchemist_wants_its_own_herb_not_any_herb() {
+        let mut server = fixture();
+        let id = start(&mut server, "travelling_alchemist", (110, 128));
+        let alchemist = members_of(&server, id, 0)[0];
+        let kind = server.wandering.active[&id].event;
+        let (item, count) = server.content.wandering.get(kind).meetings[0].lines[0].ask_of(server.wandering.active[&id].seed).unwrap();
+        let wanted = server.content.blocks.def(item).name.clone();
+        let other = ["base:lavender", "base:chamomile"].into_iter().find(|n| *n != wanted).unwrap();
+        give_held(&mut server, other, 4);
+        let client = listen(&mut server);
+        assert!(server.meet(1, alchemist));
+        let said = told(&client);
+        assert!(said.iter().any(|(_, args)| args.iter().any(|(n, w)| n == "text" && *w == Words::key("wander.base.travelling_alchemist.herb_ask").with("thing", Words::Block(wanted.clone())).with("count", Words::text(count)))), "it says which: {said:?}");
+        assert_eq!(count_of(&server, other), 4, "another herb is not taken");
+        give_held(&mut server, &wanted, count);
+        assert!(server.meet(1, alchemist));
+        assert_eq!(count_of(&server, &wanted), 0);
+        assert!(has_effect(&server, "focused"));
+        let alchemy = server.content.skills.id("core:alchemy").unwrap();
+        assert!(server.players[&1].skills.xp(alchemy) > 0);
+    }
+
+    #[test]
+    fn the_goose_girl_trades_feathers_for_seed_and_sells_a_duckling_to_a_hunter() {
+        let mut server = fixture();
+        let id = start(&mut server, "goose_girl", (110, 128));
+        let girl = members_of(&server, id, 0)[0];
+        let ducklings = members_of(&server, id, 2);
+        assert_eq!(ducklings.len(), 1);
+        assert!(server.creatures.live[&ducklings[0]].grows_up.is_some(), "the duckling is young");
+        give_held(&mut server, "base:wheat_seeds", 4);
+        assert!(server.meet(1, girl));
+        assert!((2..=3).contains(&count_of(&server, "base:feather")));
+        give_held(&mut server, "base:gold_coin", 2);
+        assert!(server.meet(1, girl));
+        assert_eq!(count_of(&server, "base:gold_coin"), 2, "not to a beginner (Hunter 3)");
+        skill_to(&mut server, "core:hunter", 3);
+        assert!(server.meet(1, girl));
+        assert_eq!(count_of(&server, "base:gold_coin"), 0);
+        assert_eq!(server.creatures.live[&ducklings[0]].owner_id, Some(1), "the duckling is theirs");
+    }
+
+    #[test]
+    fn the_prospector_works_surface_ore_and_points_the_skilled_to_more() {
+        let mut server = fixture();
+        server.players.get_mut(&1).unwrap().position = Vec3::new(100.5, 200.0, 100.5);
+        place(&mut server, "base:coal_ore_sample", IVec3::new(146, 200, 128));
+        let id = start(&mut server, "prospector", (134, 128));
+        assert!(run_until(&mut server, id, 60, |i| i.members[0].work.is_some_and(|w| w.until.is_some())), "at the ore");
+        let prospector = members_of(&server, id, 0)[0];
+        let mining = server.content.skills.id("core:mining").unwrap();
+        give_held(&mut server, "base:stone_pickaxe", 1);
+        assert!(server.meet(1, prospector));
+        assert!(server.players[&1].skills.xp(mining) > 0, "a lesson for a pickaxe in hand");
+        let at = server.creatures.live[&prospector].body.position;
+        place(&mut server, "base:iron_ore_sample", IVec3::new(at.x as i32 + 60, 200, at.z as i32));
+        skill_to(&mut server, "core:mining", 5);
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, prospector));
+        let said = told(&client);
+        assert!(says(&said, "wander.base.prospector.vein"), "{said:?}");
+        assert!(said.iter().any(|(key, _)| key == "wander.point"));
+    }
+
+    #[test]
+    fn a_flower_for_the_wedding_returns_bread_and_luck_and_for_the_funeral_a_prayer() {
+        let mut server = fixture();
+        let flower = tagged(&server, "flower");
+        let name = server.content.blocks.def(flower).name.clone();
+        let id = start(&mut server, "wedding", (110, 128));
+        let priest = members_of(&server, id, 0)[0];
+        give_held(&mut server, &name, 1);
+        assert!(server.meet(1, priest));
+        assert_eq!((count_of(&server, &name), count_of(&server, "base:bread")), (0, 1));
+        assert!(has_effect(&server, "refreshed"));
+        let mut server = fixture();
+        let id = start(&mut server, "funeral", (110, 128));
+        let priest = members_of(&server, id, 0)[0];
+        // A funeral does not stop for a player walking up.
+        let at = server.creatures.live[&priest].body.position;
+        server.players.get_mut(&1).unwrap().position = at + Vec3::new(3.0, 0.0, 0.0);
+        run(&mut server, 40);
+        assert_eq!(server.wandering.active[&id].halt.0, 0, "the procession walks on");
+        give_held(&mut server, &name, 1);
+        assert!(server.meet(1, priest));
+        let magic = server.content.skills.id("core:magic").unwrap();
+        assert!(server.players[&1].skills.xp(magic) > 0);
+        assert_eq!(count_of(&server, &name), 0);
     }
 }

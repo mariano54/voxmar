@@ -495,6 +495,12 @@ pub struct LineDef {
     /// What the player must hold in hand, which it takes.
     #[serde(default)]
     pub wants: Option<(String, u8)>,
+    /// Instead of `wants`: items (and how many) of which each party asks for one, picked
+    /// by its seed, so two meetings with a kind need not ask the same. Until the player
+    /// holds it, a speaker whose line otherwise applies says what it asks (the line's
+    /// `NAME_ask` words, with `{thing}` and `{count}`) in place of its greeting.
+    #[serde(default)]
+    pub asks: Vec<(String, u8)>,
     #[serde(default)]
     pub gives: Vec<Reward>,
     #[serde(default)]
@@ -630,8 +636,22 @@ pub struct Line {
     pub name: String,
     pub needs: Vec<ResolvedNeed>,
     pub wants: Option<(Want, u8)>,
+    /// What a party may ask instead, one picked by its seed (see `LineDef::asks`).
+    pub asks: Vec<(BlockId, u8)>,
     pub gives: Vec<ResolvedReward>,
     pub once: Once,
+}
+
+impl Line {
+    /// What the line takes from a party with `seed`: its `wants`, or the ask picked for it.
+    pub fn wants_of(&self, seed: u64) -> Option<(Want, u8)> {
+        self.wants.clone().or_else(|| self.ask_of(seed).map(|(item, count)| (Want::Item(item), count)))
+    }
+
+    /// The ask picked for a party with `seed`, if the line asks.
+    pub fn ask_of(&self, seed: u64) -> Option<(BlockId, u8)> {
+        (!self.asks.is_empty()).then(|| self.asks[(seed.rotate_left(17) ^ 0x9e37_79b9) as usize % self.asks.len()])
+    }
 }
 
 /// What a line takes from the player's hand.
@@ -807,6 +827,7 @@ impl WanderRegistry {
                     if let Some((item, _)) = &mut line.wants {
                         qualify(item);
                     }
+                    line.asks.iter_mut().for_each(|(item, _)| qualify(item));
                     for reward in &mut line.gives {
                         match reward {
                             Reward::Item(item, _) | Reward::Point(item, _) => qualify(item),
@@ -1110,6 +1131,16 @@ impl WanderRegistry {
                         )),
                         None => None,
                     };
+                    if !line.asks.is_empty() && line.wants.is_some() {
+                        return Err(at("a line `wants` one thing or `asks` for one of several, not both".into()));
+                    }
+                    let mut asks = Vec::new();
+                    for (name, count) in &line.asks {
+                        if !(1..=64).contains(count) {
+                            return Err(at(format!("asks {count} of `{name}`: 1 to 64")));
+                        }
+                        asks.push((item(name)?, *count));
+                    }
                     let mut gives = Vec::new();
                     for reward in &line.gives {
                         if let Reward::Hand(group) = reward
@@ -1118,7 +1149,7 @@ impl WanderRegistry {
                             return Err(at(format!("`Hand({group})` hands over a group of the cast that can be kept, not the speaker's own")));
                         }
                         if let Reward::Cook(station, ..) = reward {
-                            if line.wants.is_none() {
+                            if line.wants.is_none() && line.asks.is_empty() {
                                 return Err(at("`Cook` cooks what the line `wants`, and it wants nothing".into()));
                             }
                             if !cooking.iter().any(|(_, r)| r.def.station == *station) {
@@ -1128,7 +1159,10 @@ impl WanderRegistry {
                         gives.push(resolve_reward(reward, namespace, blocks, skills, effects, captives == 1).map_err(&at)?);
                     }
                     names.push(line.name.clone());
-                    lines.push(Line { name: line.name.clone(), needs, wants, gives, once: line.once });
+                    if !asks.is_empty() {
+                        names.push(format!("{}_ask", line.name));
+                    }
+                    lines.push(Line { name: line.name.clone(), needs, wants, asks, gives, once: line.once });
                 }
                 meetings.push(ResolvedMeeting { who: meeting.who, greet: meeting.greet.clone(), greets: meeting.greets, lines });
             }

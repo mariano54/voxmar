@@ -88,7 +88,10 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   first asks the party. Each speaking group has a meeting. The first line whose needs hold
   (`Skill` at least, `Below` a level, `Home`, `Hurt`, `Holds` an item with a tag, which is
   not taken) and whose `wants` the player holds is said, takes what it wants and gives its
-  rewards (items, XP, an effect, healing, `Free`, `Anger`, `Leave`: the party gives up what it
+  rewards. A line may `asks` instead of `wants`: a list of items with counts, of which each
+  party asks for one, picked by its seed; until the player holds it, a speaker whose line
+  otherwise applies says what it asks (`NAME_ask`, with `{thing}` and `{count}`) in place
+  of a greeting. The rewards are (items, XP, an effect, healing, `Free`, `Anger`, `Leave`: the party gives up what it
   was about and goes, no grudge; `Point(selector, reach)`: tells the player which way, and
   about how far, the nearest block of that name or `tag:` lies within `reach` of the speaker,
   true to the land (a line that points is said only when something of the kind is near, so
@@ -301,6 +304,21 @@ now waits until there is something to point to.
 | holds what they want | logs buy coins, once | n/a | crops buy the next crop, by level |
 | strikes one | scatter and will not talk | the same | the same |
 
+## Batch 6 (implemented, six kinds): asks, and the rites of the road
+
+The farm age's people: a hermit and a travelling alchemist who each want something
+different, a goose girl, a prospector, and the processions of village life. The new piece
+is `asks` on a line, so two meetings with one kind can want different things and say so.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| hermit | Camp | Camps far from home (80 blocks or more). Each asks for its own thing (three feathers, two bones, two flints, two eggs, two mint, two nettles) and says so; bring it and the hermit points to a wonder near and teaches a little Magic, once. Only where a wonder is near. |
+| goose girl | Drift, Herd, Hand | A child drives ducks and a duckling to water. Four wheat seeds earn feathers, once; at Hunter 3 (taming a duck), two coins buy the duckling. |
+| prospector | Gather | Works the ore that shows at the surface. A pickaxe in a beginner's hand (Mining below 10) gets a lesson; at Mining 5 they point to more surface ore, if any is near. Only where surface ore is. |
+| travelling alchemist | March | Each wants two of one herb (lavender, chamomile, yarrow, sage, thyme or sorrel) and says which; bring it for Alchemy and Focused, once. Another herb is not taken. |
+| wedding | March | A priest, the couple and guests walk to the shrine. A flower given returns bread and Refreshed, once. |
+| funeral | March | A slow procession that does not stop for a player. A flower laid with them is a little Magic, once. |
+
 ## Catalogue of 100
 
 Status: `done` is in a batch above, `next` is the second batch (ages 1 and 2: Nomad and Farm
@@ -322,7 +340,7 @@ are the mechanics later batches add, each used by several kinds.
 | 11 | lost child | see batch 2 | Roam, Guide | 1 | done |
 | 12 | shepherd with flock | see batch 2 | Drift, Herd | 2 | done |
 | 13 | cowherd | see batch 4 | Herd | 2 | done |
-| 14 | goose girl | geese on a march to water | Herd | 2 | next |
+| 14 | goose girl | see batch 6 | Herd | 2 | done |
 | 15 | berry pickers | see batch 4 | Forage | 1 | done |
 | 16 | fisher folk | see batch 4 | Gather | 1 | done |
 | 17 | woodcutters | see batch 5 | Carry | 2 | done |
@@ -331,7 +349,7 @@ are the mechanics later batches add, each used by several kinds.
 | 20 | harvest family | see batch 5 | | 2 | done |
 | 21 | herb gatherer | see batch 4 | Forage | 1 | done |
 | 22 | wandering healer | see batch 5 | | 1 | done |
-| 23 | hermit | lives off the path; a riddle gives a recipe | Vigil | 1 | next |
+| 23 | hermit | see batch 6 | Asks | 1 | done |
 | 24 | travelling smith | repairs held tools for coin | Camp | 2 | next |
 | 25 | travelling cook | see batch 4 | Camp | 1 | done |
 | 26 | story teller | see batch 5 | Camp | 1 | done |
@@ -346,8 +364,8 @@ are the mechanics later batches add, each used by several kinds.
 | 35 | night watchman | walks a village ring with a lantern | Patrol | 2 | later |
 | 36 | village guard patrol | guards walk a loop between settlements | Patrol | 2 | later |
 | 37 | tax collector | asks coin from a player with a home; refusing makes guards hostile for a day | Meeting | 2 | later |
-| 38 | wedding procession | villagers walk to the shrine with flowers; a gift is returned in kind | March | 2 | later |
-| 39 | funeral procession | a quiet march to a grave | March | 2 | later |
+| 38 | wedding procession | see batch 6 | | 2 | done |
+| 39 | funeral procession | see batch 6 | | 2 | done |
 | 40 | festival drummers | drums and a dance ring; a refreshed effect | Dance | 2 | later |
 | 41 | dance circle | villagers circle a bonfire at night | Dance | 2 | later |
 | 42 | caravan | pack animals, guards and a merchant on a long road | March | 3 | later |
@@ -355,7 +373,7 @@ are the mechanics later batches add, each used by several kinds.
 | 44 | soldiers on the march | two columns that do not stop for a player | March | 3 | later |
 | 45 | knight errant | duels for a coin; wins a favour | Duel | 3 | later |
 | 46 | wandering monk | a vow of silence; sells a blessing for a mote | Meeting | 2 | later |
-| 47 | alchemist's mule | a laden mule; a reagent swap | March | 2 | later |
+| 47 | travelling alchemist | see batch 6 | Asks | 2 | done |
 | 48 | rat catcher | a piper followed by rats | Lure | 2 | later |
 | 49 | gypsy wagon | a wagon camps; fortunes told (a journal hint) | Camp | 2 | later |
 | 50 | puppeteers | a cart that opens into a stage | Camp | 2 | later |
@@ -363,7 +381,7 @@ are the mechanics later batches add, each used by several kinds.
 | 52 | messenger | runs between settlements; a letter for a coin | Errand | 2 | later |
 | 53 | postman with mule | delivers to a player's home mailbox | Errand | 3 | later |
 | 54 | cartographer | sells a sketched map of nearby ruins | Meeting | 2 | later |
-| 55 | prospector | with a pick and a donkey; points at a vein | Forage | 2 | later |
+| 55 | prospector | see batch 6 | Gather | 2 | done |
 | 56 | miners' shift | a row of miners with lamps walk to a mine mouth | March | 3 | later |
 | 57 | stonecutters | haul a block; leave a cut stone | Haul | 3 | later |
 | 58 | lamplighter | at dusk lights lamps along a road | Errand | 3 | later |

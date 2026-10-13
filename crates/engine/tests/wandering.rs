@@ -15,7 +15,7 @@ fn dir() -> std::path::PathBuf {
 #[test]
 fn every_event_word_is_a_key_in_both_languages() {
     let content = Content::load(&dir()).unwrap();
-    assert!(content.wandering.len() >= 32, "the first five batches load");
+    assert!(content.wandering.len() >= 38, "the first six batches load");
     for code in ["en", "ja"] {
         let lang = Lang::load(&dir(), code);
         for (_, event) in content.wandering.iter() {
@@ -23,6 +23,7 @@ fn every_event_word_is_a_key_in_both_languages() {
             for meeting in &event.meetings {
                 keys.extend((0..meeting.greets).map(|n| event.greeting(meeting, n)));
                 keys.extend(meeting.lines.iter().map(|line| event.key(&line.name)));
+                keys.extend(meeting.lines.iter().filter(|line| !line.asks.is_empty()).map(|line| event.key(&format!("{}_ask", line.name))));
             }
             if event.has_captive() {
                 keys.extend([event.key("thanks"), event.key("freed")]);
