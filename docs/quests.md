@@ -66,3 +66,17 @@ complete these stricter goals for an unfinished quest.
 
 A package's `tracker` may name `start_pins`: quests pinned for a player whose book is new
 (nothing done, nothing pinned), once per install (remembered in the settings). A later package replaces the list.
+
+## Multi-part quests
+
+A task is a list of goals that must all hold, so one quest can ask for a gather, a craft
+and a cook together. Quests that were a single count are two-part where the second part is
+what the player does next anyway (Oct 13, Mariano: "a bit too simple"): Small Game (kill,
+then cook one), Hide and Seek (hides and bones), Rod and Line (craft, then land a fish),
+A Fish Supper (catch three, cook three), Meat on the Fire (six cooked, Cooking 2), Sharpening
+Up (Attack 4 and five kills), First Harvest and Carrot Patch (harvest, keep the crop), A
+Field of Gold (24 harvests, Farming 5), Herb Garden (planter and six plants), Seed Mix (the
+mix and the wheat to make it from), Fresh Eggs (six eggs, fry one), A Woolly Flock (tame,
+and shears made), The Milk Pail (the pail, then the milk), A Silvery Ore (tin and copper from
+one seam), Many Kinds (three kinds, six cooked). The main line of each age (the pacing
+test's milestones) stays as it was. Rewards are unchanged.
