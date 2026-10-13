@@ -13,8 +13,12 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::RegistryError;
+use crate::block::{BlockId, BlockRegistry, RegistryError};
+use crate::creature::CreatureRegistry;
+use crate::fishing::FishingRegistry;
 use crate::journal::{Journal, Page};
+use crate::multiblock::MultiblockRegistry;
+use crate::skill::SkillRegistry;
 
 /// Something a player must have done.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -238,6 +242,83 @@ impl QuestRegistry {
         Ok(Self { quests, tracker })
     }
 
+    /// Checks every name the quests' goals and rewards hold (skills, items, tags, fish,
+    /// creatures, plants, ores, multiblocks) against the loaded content, and writes each as
+    /// the full name it found, so the server looks names up exactly. A name nothing has (a
+    /// typo in a mod's quests.ron) is refused with the quest it is in, rather than leaving a
+    /// quest that never finishes or a reward that never comes. Journal pages are checked as
+    /// the file is read.
+    pub fn resolve(&mut self, named: &Named) -> Result<(), RegistryError> {
+        let Named { blocks, skills, creatures, fishing, multiblocks } = *named;
+        let block_ids: Vec<BlockId> = blocks.ids().collect();
+        let fish_ids: Vec<BlockId> = fishing.iter().map(|c| c.item).collect();
+        let names = |ids: &[BlockId]| ids.iter().map(|&id| blocks.def(id).name.as_str()).collect::<Vec<_>>();
+        let (block_names, fish_names) = (names(&block_ids), names(&fish_ids));
+        let creature_names: Vec<&str> = creatures.iter().map(|(_, c)| c.def.name.as_str()).collect();
+        let tameable: Vec<&str> = creatures.iter().filter(|(_, c)| c.def.taming.is_some()).map(|(_, c)| c.def.name.as_str()).collect();
+        let multiblock_names: Vec<&str> = multiblocks.iter().map(|m| m.name.as_str()).collect();
+        // What a goal's name may be: one of these, `any` where the goal counts anything, and
+        // `tag:TAG` where one of these blocks has the tag.
+        struct Kind<'a> {
+            what: &'a str,
+            names: &'a [&'a str],
+            any: bool,
+            tagged: &'a [BlockId],
+        }
+        let item = Kind { what: "item", names: &block_names, any: false, tagged: &block_ids };
+        let made = Kind { any: true, ..item };
+        let plant = Kind { what: "plant", ..made };
+        let rock = Kind { what: "block", ..made };
+        let fish = Kind { what: "fish", names: &fish_names, any: true, tagged: &fish_ids };
+        let creature = Kind { what: "creature", names: &creature_names, any: true, tagged: &[] };
+        let tame = Kind { what: "tameable creature", names: &tameable, ..creature };
+        let multiblock = Kind { what: "multiblock", names: &multiblock_names, ..creature };
+        let reward = Kind { tagged: &[], ..item };
+        for quest in &mut self.quests {
+            let namespace = quest.name.split(':').next().unwrap_or("").to_owned();
+            let refuse = |what: &str, name: &str| RegistryError(format!("quest {} names the {what} `{name}`, which no package has", quest.name));
+            let skill = |name: &mut String| -> Result<(), RegistryError> {
+                *name = skills.named(&namespace, name).map(|id| skills.get(id).name.clone()).ok_or_else(|| refuse("skill", name))?;
+                Ok(())
+            };
+            let find = |name: &mut String, kind: &Kind| -> Result<(), RegistryError> {
+                if kind.any && name == "any" {
+                    return Ok(());
+                }
+                if let Some(tag) = name.strip_prefix("tag:")
+                    && !kind.tagged.is_empty()
+                {
+                    return if kind.tagged.iter().any(|&id| blocks.def(id).has_tag(tag)) { Ok(()) } else { Err(refuse("tag", tag)) };
+                }
+                *name = full_name(kind.names, &namespace, name).ok_or_else(|| refuse(kind.what, name))?;
+                Ok(())
+            };
+            for goal in quest.tasks.iter_mut().flatten() {
+                match goal {
+                    Goal::Level(name, _) => skill(name)?,
+                    Goal::Have(name, _) => find(name, &item)?,
+                    Goal::Craft(name, _) | Goal::Cook(name, _) => find(name, &made)?,
+                    Goal::Pick(name, _) => find(name, &plant)?,
+                    Goal::Mine(name, _) => find(name, &rock)?,
+                    Goal::Catch(name, _) if name == "Kinds" => {}
+                    Goal::Catch(name, _) => find(name, &fish)?,
+                    Goal::Kill(name, _) => find(name, &creature)?,
+                    Goal::Tame(name, _) => find(name, &tame)?,
+                    Goal::Built(name, _) => find(name, &multiblock)?,
+                    Goal::LookUp(name) => find(name, &made)?,
+                    Goal::Visit(_) | Goal::Discover(..) | Goal::Home => {}
+                }
+            }
+            for given in &mut quest.rewards {
+                match given {
+                    Reward::Xp(name, _) => skill(name)?,
+                    Reward::Item(name, _) => find(name, &reward)?,
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// How the interface follows pinned quests.
     pub fn tracker(&self) -> Tracker {
         self.tracker
@@ -285,6 +366,34 @@ impl QuestRegistry {
                 tasks: q.tasks.iter().map(|t| t.iter().map(|g| progress.goal(g)).collect()).collect(),
             })
             .collect()
+    }
+}
+
+/// What quests' names are checked against (`QuestRegistry::resolve`).
+#[derive(Clone, Copy)]
+pub struct Named<'a> {
+    pub blocks: &'a BlockRegistry,
+    pub skills: &'a SkillRegistry,
+    pub creatures: &'a CreatureRegistry,
+    pub fishing: &'a FishingRegistry,
+    pub multiblocks: &'a MultiblockRegistry,
+}
+
+/// The one of `names` a quest in package `namespace` means by `name`: a full name as
+/// written, else the package's own of that name, else the one of that name in any package
+/// (two packages' are refused rather than guessed between).
+fn full_name(names: &[&str], namespace: &str, name: &str) -> Option<String> {
+    if name.contains(':') {
+        return names.contains(&name).then(|| name.to_owned());
+    }
+    let own = format!("{namespace}:{name}");
+    if names.contains(&own.as_str()) {
+        return Some(own);
+    }
+    let mut named = names.iter().filter(|full| full.rsplit(':').next() == Some(name));
+    match (named.next(), named.next()) {
+        (Some(only), None) => Some((*only).to_owned()),
+        _ => None,
     }
 }
 
@@ -387,6 +496,95 @@ mod tests {
         assert!(QuestRegistry::new(vec![none]).is_err());
         let clear = QuestRegistry::read("core", "(tracker: (backing_alpha: 1.5))").unwrap();
         assert!(QuestRegistry::new(vec![clear]).is_err());
+    }
+
+    /// Content to check quests against: blocks (a log tagged, fish, a kiln's pieces), core
+    /// skills and sky's own, a tameable rabbit and a wild wolf, trout to catch and a kiln.
+    fn resolved(namespace: &str, quest: &str) -> Result<QuestRegistry, RegistryError> {
+        let blocks: &[(&str, &[&str])] = &[
+            ("base:torch", &[]),
+            ("base:oak_log", &["log"]),
+            ("base:stone_pickaxe", &[]),
+            ("base:stone_axe", &[]),
+            ("base:copper_ore", &["ore"]),
+            ("base:poppy", &["flower"]),
+            ("base:raw_trout", &["fish"]),
+            ("base:brick", &["multiblock_core"]),
+            ("sky:torch", &[]),
+            ("sky:cloud", &[]),
+        ];
+        let defs = blocks.iter().map(|(name, tags)| crate::block::BlockDef { name: name.to_string(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() }).collect();
+        let blocks = BlockRegistry::new(defs).unwrap();
+        let mut skills = SkillRegistry::default();
+        let core = r#"(curve: RuneScape(max: 99), skills: [(name: "mining", title: "", description: ""), (name: "cooking", title: "", description: ""), (name: "fishing", title: "", description: ""), (name: "hunter", title: "", description: "")])"#;
+        skills.extend("core", core).unwrap();
+        skills.extend("sky", r#"(skills: [(name: "gliding", title: "", description: ""), (name: "fishing", title: "", description: "")])"#).unwrap();
+        let body = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
+        let creatures = format!(r#"(creatures: [(name: "rabbit", health: 3, {body}, taming: (xp: 10.0)), (name: "wolf", health: 8, {body})])"#);
+        let creatures = CreatureRegistry::new(CreatureRegistry::read("base", &creatures).unwrap().defs, Default::default(), &blocks, &skills).unwrap();
+        let fishing = FishingRegistry::new(vec![FishingRegistry::read("base", r#"(catches: [(item: "raw_trout", level: 1, xp: 10.0)])"#).unwrap()], Default::default(), &blocks, &skills).unwrap();
+        let kiln = r#"(multiblocks: [(name: "kiln", layers: [["bbb", "bBb", "bbb"]], key: {'b': "brick", 'B': "brick"}, core: 'B')])"#;
+        let multiblocks = MultiblockRegistry::new(vec![MultiblockRegistry::read("base", kiln).unwrap()], &blocks).unwrap();
+        let source = format!("(quests: [{quest}])");
+        let mut quests = QuestRegistry::new(vec![QuestRegistry::read(namespace, &source).unwrap()])?;
+        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks })?;
+        Ok(quests)
+    }
+
+    #[test]
+    fn a_name_no_package_has_is_refused_naming_the_quest() {
+        let quest = |tasks: &str, rewards: &str| format!(r#"(name: "dig", age: "nomad", branch: "main", title: "", why: "", tasks: [[{tasks}]], rewards: [{rewards}])"#);
+        let refused = |tasks: &str, rewards: &str| resolved("base", &quest(tasks, rewards)).err().map(|e| e.0);
+        assert_eq!(refused(r#"Level("minning", 10)"#, ""), Some("quest base:dig names the skill `minning`, which no package has".to_owned()));
+        assert_eq!(refused("Home", r#"Xp("cookin", 5.0)"#), Some("quest base:dig names the skill `cookin`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Have("tourch", 1)"#, ""), Some("quest base:dig names the item `tourch`, which no package has".to_owned()));
+        assert_eq!(refused("Home", r#"Item("base:tourch", 1)"#), Some("quest base:dig names the item `base:tourch`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Have("tag:logs", 1)"#, ""), Some("quest base:dig names the tag `logs`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Craft("stone_shovel", 1)"#, ""), Some("quest base:dig names the item `stone_shovel`, which no package has".to_owned()));
+        // `any` counts anything only where a goal counts things made; nobody carries "any".
+        assert!(refused(r#"Cook("any", 1)"#, "").is_none());
+        assert!(refused(r#"Have("any", 1)"#, "").is_some());
+        assert_eq!(refused("Home", r#"Item("tag:log", 1)"#), Some("quest base:dig names the item `tag:log`, which no package has".to_owned()), "a reward is an item, never a tag");
+        // Every other kind of goal, one typo each.
+        assert_eq!(refused(r#"Catch("raw_trou", 1)"#, ""), Some("quest base:dig names the fish `raw_trou`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Catch("torch", 1)"#, ""), Some("quest base:dig names the fish `torch`, which no package has".to_owned()), "nothing catches torches");
+        assert_eq!(refused(r#"Catch("tag:ore", 1)"#, ""), Some("quest base:dig names the tag `ore`, which no package has".to_owned()), "no fish is an ore");
+        assert_eq!(refused(r#"Kill("wolff", 1)"#, ""), Some("quest base:dig names the creature `wolff`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Tame("wolf", 1)"#, ""), Some("quest base:dig names the tameable creature `wolf`, which no package has".to_owned()), "a wolf cannot be tamed");
+        assert_eq!(refused(r#"Pick("popy", 1)"#, ""), Some("quest base:dig names the plant `popy`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Mine("coper_ore", 1)"#, ""), Some("quest base:dig names the block `coper_ore`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Mine("tag:ores", 1)"#, ""), Some("quest base:dig names the tag `ores`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Built("kil", 1)"#, ""), Some("quest base:dig names the multiblock `kil`, which no package has".to_owned()));
+        // A page no journal has is refused as the file is read.
+        let page = quest(r#"Discover(Spells, 1)"#, "");
+        assert!(QuestRegistry::read("base", &format!("(quests: [{page}])")).is_err());
+        // What they ask for spelled right, `any`, kinds of fish, visits and pages, pass.
+        let fine = r#"Catch("Kinds", 3), Catch("raw_trout", 1), Catch("tag:fish", 1), Kill("wolf", 1), Kill("any", 2), Tame("rabbit", 1), Pick("tag:flower", 1), Mine("copper_ore", 1), Built("kiln", 1), Visit(2), Discover(Plants, 1)"#;
+        assert_eq!(refused(fine, ""), None);
+    }
+
+    #[test]
+    fn short_names_become_the_full_names_the_server_looks_up() {
+        let base = resolved("base", r#"(name: "dig", age: "nomad", branch: "main", title: "", why: "", tasks: [[Level("mining", 5), Have("tag:log", 2), Craft("stone_pickaxe", 1)]], rewards: [Xp("cooking", 9.0), Item("stone_axe", 1), Item("torch", 2)])"#).unwrap();
+        let dig = base.get("base:dig").unwrap();
+        assert_eq!(dig.tasks, vec![vec![Goal::Level("core:mining".into(), 5), Goal::Have("tag:log".into(), 2), Goal::Craft("base:stone_pickaxe".into(), 1)]]);
+        assert_eq!(dig.rewards, vec![Reward::Xp("core:cooking".into(), 9.0), Reward::Item("base:stone_axe".into(), 1), Reward::Item("base:torch".into(), 2)]);
+        // A package's own skill and block of a name come before core's and others'; a block
+        // only one package has is that one; a name two others share is refused, not guessed.
+        let sky = resolved("sky", r#"(name: "fly", age: "nomad", branch: "main", title: "", why: "", tasks: [[Level("fishing", 2), Level("gliding", 2), Have("torch", 1), Have("stone_axe", 1)]])"#).unwrap();
+        assert_eq!(sky.get("sky:fly").unwrap().tasks[0], vec![Goal::Level("sky:fishing".into(), 2), Goal::Level("sky:gliding".into(), 2), Goal::Have("sky:torch".into(), 1), Goal::Have("base:stone_axe".into(), 1)]);
+        let caught = resolved("base", r#"(name: "hunt", age: "nomad", branch: "main", title: "", why: "", tasks: [[Catch("raw_trout", 1), Kill("wolf", 1), Tame("rabbit", 1), Pick("poppy", 1), Mine("copper_ore", 1), Built("kiln", 1)]])"#).unwrap();
+        let full = ["base:raw_trout", "base:wolf", "base:rabbit", "base:poppy", "base:copper_ore", "base:kiln"];
+        let written: Vec<&str> = caught.get("base:hunt").unwrap().tasks[0]
+            .iter()
+            .map(|goal| match goal {
+                Goal::Catch(n, _) | Goal::Kill(n, _) | Goal::Tame(n, _) | Goal::Pick(n, _) | Goal::Mine(n, _) | Goal::Built(n, _) => n.as_str(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(written, full);
+        let elsewhere = r#"(name: "far", age: "nomad", branch: "main", title: "", why: "", tasks: [[Have("torch", 1)]])"#;
+        assert!(resolved("deep", elsewhere).is_err());
     }
 
     #[test]
