@@ -13,4 +13,8 @@
     swim: ["sounds/swim_1.mp3", "sounds/swim_2.mp3", "sounds/swim_3.mp3", "sounds/swim_4.mp3", "sounds/swim_5.mp3", "sounds/swim_6.mp3"],
     // Jumping or falling into water.
     splash: ["sounds/splash_1.mp3", "sounds/splash_2.mp3", "sounds/splash_3.mp3"],
+    // A quest finished, and a finished quest's rewards claimed. None listed: the game plays
+    // its own synthesized chimes. A package that lists some (here or in a mod) replaces them.
+    quest_done: [],
+    quest_claim: [],
 )

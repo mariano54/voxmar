@@ -75,9 +75,11 @@ pub struct Player {
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
-    /// Quests finished, tallies of what quests count (`crafted:base:torch`), and the quest
-    /// states last sent (`quests`).
+    /// Quests finished, those of them whose rewards were claimed (`quests::claim_quest`),
+    /// tallies of what quests count (`crafted:base:torch`), and the quest states last sent
+    /// (`quests`).
     pub quests_done: Vec<String>,
+    pub quests_claimed: Vec<String>,
     pub tallies: rustc_hash::FxHashMap<String, u32>,
     pub quests_sent: Vec<voxmar_engine::quest::QuestState>,
     pub food_clock: f32,
@@ -156,6 +158,7 @@ impl Player {
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),
+            quests_claimed: Vec::new(),
             tallies: Default::default(),
             quests_sent: Vec::new(),
             food_clock: 0.0,
@@ -256,6 +259,7 @@ impl Player {
             bed: self.bed.map(|b| b.to_array()),
             journal: self.journal.entries().cloned().collect(),
             quests: self.quests_done.clone(),
+            quests_claimed: self.quests_claimed.clone(),
             tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
         }
     }
@@ -294,6 +298,7 @@ impl Server {
             ClientMessage::Guard { up } => self.raise_guard(id, up),
             ClientMessage::Pong { id: number } => self.pong(id, number, at),
             ClientMessage::LookedUp { item } => self.looked_up(id, item),
+            ClientMessage::ClaimQuest { name } => self.claim_quest(id, &name),
         }
     }
 
@@ -492,6 +497,7 @@ impl Server {
                 player.bed = saved.bed.map(Vec3::from_array);
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
                 player.quests_done = saved.quests;
+                player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
             }
@@ -506,6 +512,7 @@ impl Server {
                 player.skills = restore_skills(&saved.skills, &skill_ids);
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
                 player.quests_done = saved.quests;
+                player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
             }
             // The coin purse in the pack's last slot, out of the hotbar's way, and the kit
@@ -550,7 +557,9 @@ impl Server {
     /// that have not said hello in time.
     pub(crate) fn limit_players(&mut self) {
         let (tick, limits) = (self.tick, &self.config.limits);
-        let hello_ticks = (limits.hello_seconds * TICKS_PER_SECOND as f32) as u64;
+        // Counted in ticks, so a server running behind does not cut off a slow hello; a server
+        // whose ticks run quicker than the clock (`tick_speedup`) counts as many more.
+        let hello_ticks = (limits.hello_seconds * TICKS_PER_SECOND as f32) as u64 * self.config.tick_speedup.max(1) as u64;
         self.players.retain(|_, player| {
             player.messages_left = limits.messages_per_tick;
             player.joined || tick.saturating_sub(player.connected_tick) <= hello_ticks

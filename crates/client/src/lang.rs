@@ -925,9 +925,24 @@ mod tests {
 
     /// Every text the game writes, shaped as the game shapes it (in each interface font,
     /// falling back to the smooth fonts for the CJK scripts, see `fall_back_to_smooth_fonts`),
-    /// has a glyph for every character: no missing-glyph boxes in any language or font.
+    /// has a glyph for every character: no missing-glyph boxes in any language or font. One
+    /// test a font, so the three shape side by side.
     #[test]
-    fn no_text_shows_a_missing_glyph_box() {
+    fn no_text_shows_a_missing_glyph_box_in_the_ledger_font() {
+        no_text_shows_a_missing_glyph_box("ledger.txt");
+    }
+
+    #[test]
+    fn no_text_shows_a_missing_glyph_box_in_the_block_font() {
+        no_text_shows_a_missing_glyph_box("block.txt");
+    }
+
+    #[test]
+    fn no_text_shows_a_missing_glyph_box_in_the_voxmar_font() {
+        no_text_shows_a_missing_glyph_box("voxmar.txt");
+    }
+
+    fn no_text_shows_a_missing_glyph_box(file: &str) {
         use parley::fontique::{Blob, FallbackKey, FontInfoOverride, Script};
         use parley::{FontFamily, PositionedLayoutItem, StyleProperty};
         let fonts = assets().join("ui/fonts");
@@ -959,7 +974,7 @@ mod tests {
                 .flat_map(|line| line.items().collect::<Vec<_>>())
                 .any(|item| matches!(item, PositionedLayoutItem::GlyphRun(run) if run.glyphs().any(|glyph| glyph.id == 0)))
         };
-        for file in ["ledger.txt", "block.txt", "voxmar.txt"] {
+        {
             let mut font = voxmar_texgen::font::PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
             font.fill_from(&fallback);
             let family = format!("test {file}");

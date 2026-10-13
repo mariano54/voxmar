@@ -17,6 +17,28 @@ Each slipped between checks that tested one side at a time, in quiet conditions.
 answer is one gate that every landing passes, which plays the real game, client and
 server together, as he does, under load, and judges it by what reaches the screen.
 
+## The landing bar (Mariano, 2026-10-13)
+
+Speed is a feature: a landing that takes hours costs more than the bugs its ceremony
+catches. The bar is:
+
+- **A green `tools/gate` is the landing bar.** `tools/land` runs it on the merged tip, and a
+  change that passes it lands. No evidence bundles, no mutation proofs, no hash-pinned
+  status files, no separate review chat per phase, no lock queue in front of `tools/land`
+  (the gate's own one-at-a-time rules in this file are enough).
+- **One review pass, by one Sonnet session, only for a change that touches the server
+  tick, saves, the network protocol or balance numbers** (anything that can corrupt a
+  world, desync two players or move the economy). It reads the diff and the tests and
+  answers GO or a list of blockers; findings are fixed on the branch, and the gate runs
+  again. Every other change lands on the gate alone.
+- A visible change adds a gate step (see below), not a screenshot bundle: the step is the
+  evidence, and it runs at every landing from then on.
+- **A failing check is never a flake.** A check that failed once and passed on a retry has
+  a race; the fix is a wait on server ticks or a state, never a retry loop or a wider bar.
+- A cloud thread pushes its branch and opens a draft PR; the Mac landing thread lands it
+  after the gate. A cloud thread can run `tools/gate` itself, on software Vulkan (below),
+  to hand over a branch that is already green.
+
 ## The gates: `tools/gate`
 
 Two gates share one script. Forced checks must be quick, or they slow every thread down,
@@ -29,8 +51,23 @@ branch (main moves on GitHub too: the GPU box pushes straight to origin, so the 
 can be behind), runs `tools/gate` on the result, fast-forwards main to it, pushes main and
 fetches it back to check that origin has the commit. When main moved meanwhile, here or on origin, it merges
 again, up to three times; it never forces. Only its last line, `land: <commit> landed`,
-means landed; anything else, the push included, failed and says why. On a typical change
-it takes well under a minute.
+means landed; anything else, the push included, failed and says why. A tree that already
+passed costs nothing; otherwise a landing takes the build and the tests of the crates the
+change reaches, played side by side with the session (about 6 to 10 minutes on the Mac).
+
+What a change reaches (`crates_for` in `tools/gate`, checked by `reach_self_check`): code
+reaches its crate and what depends on it; assets reach the crates that read them. Music,
+sounds and shader packs are the client's alone; texture packs and fonts are texgen's and the
+client's; a content file that nothing in worldgen reads (quests, recipes, skills, combat,
+lang: anything worldgen names in its sources, the blocks and the creatures are the rest)
+skips worldgen's tests, which are most of the suite's time. Add a file worldgen starts to
+read by naming it in worldgen's sources, and the gate follows.
+
+On a machine with no display (a cloud container) the gate builds and runs the tests, says so,
+and records no pass: the Mac's gate is the landing bar. `VOXMAR_GATE_SOFTWARE=1` also plays
+the session there on a virtual display with Mesa's software Vulkan (`apt install xvfb
+mesa-vulkan-drivers`), as a look: frames take half a second, so the steps that time the game
+(natural births, perfect block, dodge) fail on speed and the run stops at the first.
 
 1. Hygiene: `git diff main --check`, no conflict markers, and no new wall-clock wait in a
    test (`tools/test-waits`). A test that waits until `Instant::now()` passes a deadline,
@@ -96,15 +133,20 @@ changes don't move it, and checks:
 | workshop | crafts sticks and a crafting table in the two-by-two grid, places the table and right clicks it, crafts a stone pickaxe in its three-by-three grid, clicks an iron ore at Mining 1, then at 15 holds the button on it, right clicks dirt with a hoe, is given three loaves, casts a rod into the pool, fires a boiler with coal and puts copper ore in the steam crusher beside it; in the full gate only, then an MV ore washer on a turbine and transformer, a Bellows Bloomery worked by a kept aurochs on a treadwheel with a hopper line into a chest, and a Coke Oven and Blast Furnace | sticks and a table come back with Engineering experience; the table is on both sides and its grid shows nine cells; the ore refuses with "Needs Mining 15", then breaks on both sides with Mining experience; the dirt turns to farmland on both sides; three loaves given take three slots; holding right click with a rod over the pool catches a fish; the crusher gives two dust for the ore; (full) the dry washer says it needs water and gives three dust once wet, the bloomery gives an iron bloom and the chest gets four dust, the oven says it is making coke and the furnace iron (shot `iron_age`) |
 | swim | holds forward and jump in a pool against a step | climbs out onto the step; the server has the player where the client does |
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
+| music | Esc, clicks the audio tab, clicks the first category of music's switch, then clicks it again, Esc; then M, M (the gate's music is picked and started though silent, `music::Rehearse`) | the audio page shows one switch for each category in `music.ron` the player can hear (Voxmar's own; Minecraft's too with Minecraft assets on), all on; the first click turns that category off in the settings and its switch reads Off, the second turns it back on; after M turns music back on a track starts and the top right reads "Now playing: <title> (<category>)", with one of the switches' names, and the line fades away by itself |
 | overlay | F3, then F3 again | the debug overlay opens and closes, and PostUpdate (UI layout among it) takes no longer with it open than closed: within 0.5 ms in the median |
+| look | on the creatures' pad, looks at a plank block beside them, then at a lumen snail seven blocks off, then at the snail with a stone wall put between | the top-left label names the planks as the language does (shot `look-block`); names the snail with its level from further than a blow or a tending reaches (shot `look-creature`); with the wall between, it no longer names the snail, and names the wall |
 | weather | `/weather storm`, `/weather snow`, `/weather clear` | each arrives and changes the view (rain, snow, their particles), and out in it the player gets a weather effect (soaked, snowblown…); from joining to here, no weather fraction shown changed in a frame by more than easing allows (`weather::Easing::fastest`: a full swing over six seconds at the quickest, after a command) |
+| depths | `/weather fog` over the test ground, then down a shaft eleven deep and open to the sky; then, in a sealed room deep in stone, mines its wall just until its cracks show (letting go at once, or after 3 s without them), sets a glowstone beside it and mines the same block again | the air has ground fog or the weather's fog on the open ground, and neither at the foot of the shaft (its sky light is full, so only the share of sky in view tells it from open land); the cracks in the dark room are lit by nothing (sky 0, block 0) and their light edges are gone, with the glowstone beside them the face has block light 10 or more and the edges show in full; shots `mist-open`, `mist-shaft`, `crack-dark`, `crack-lit` to look at |
 | sky | looks at the morning sun, flies above the world's top, looks towards and away from the setting sun, then at the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, a lit sky from above the world, a sunset sky warmer towards the sun than away, stars |
 | tree | at noon, a small tree with an apple among its leaves is filled in | it reaches the client and draws, leaves, leaf cards and fruit, changing the view |
+| held | looks up at the open sky and takes an empty hand, an iron sword and a stone block in turn, a shot each; then seals itself in a stone box and shoots the sword, and the empty hand, again | the sword and the block each change the lower right of the view by at least 1 level (and differ from each other by as much), and the rest of the view by under 0.5; in the dark box the sword changes the lower right by under half what it did under the sky (the hand takes the light where the player stands) |
 | cook | a campfire on the pad, raw rabbit used on it, then counts the fire's particles for 1.5 s | cooked (or burnt) food comes back two seconds later, within 15 server seconds; at least 4 particles (smoke, embers, sparks) rise from the fire, a count that holds at any frame rate |
 | party | `/wander start tinker_camp` ahead of the pad, then goes to its trader, right clicks it with nothing to trade, again with four hides in hand, and `/wander end` | the trader and a hound reach the client and draw within 20 server seconds; the click is answered in chat by one of the camp's greetings; the hides are taken and loaves come back with the trader's swap line (the trade read from the hand, through the real inspect path); the party is gone from the client within 10 s of the end. The first run on the Mac is this step's first run anywhere (the cloud has no GPU) |
 | ore | `/locate ore`, then goes there and looks down | the server's world has a sample of ore there on solid ground, with ore of the same kind below it within seven blocks across (its vein), the client has the sample, and no more than one in thirty of the ore blocks around lies alone (no other ore within two blocks) |
 | gorge | `/locate gorge`, then goes there | the server's world has water there between walls standing six blocks over it on both sides, within eight blocks |
 | tarns | finds a visible pool filled by the tarn rule near the highlands, then visits it on both peers | at least twenty connected source-water or ice surface columns match on the client and observer; an ordinary high lake cannot replace a missing tarn (shot `tarn`) |
+| quests | crafts ten twine to finish Twine and Thong, opens the quest book (L), holds W and Esc with it open, pins the torch quest and crafts torches for it, pins the finished Crafting Table quest, then opens the book on Twine and Thong and clicks its Claim button | the book opens on a quest; W does not walk with it open and walks with it shut; the tracker counts torches as the server does and reads "Done! Claim it." for a finished quest that pays, then drops it after `done_stays`; the finished quest is waiting to be claimed (a Claim button shows), and after the click the server says it is claimed and its Crafting experience came (shots `quests-en`, `quests-ja`, and `quests-claim`: the book filling most of the window, the picked quest's page with its Claim button and rewards in the sidebar at the right) |
 | pipelines | everything from the world loading to leaving it | no pipeline compiles meanwhile: on Metal each is a hitch in the frame it is first needed, a few hundred ms on a fresh build. What shows only now and then is warmed at load (`render::warm`: other players, creatures, breaking, the menu blur); something new drawn on first use fails this until it is warmed too |
 | leave | quits to the title screen | the world closes cleanly |
 
@@ -157,6 +199,46 @@ The server runs behind on purpose (`SERVER_LAG`), and the machine is usually loa
   dies (the workshop's own `/kill` sets `killed_on_purpose`).
 - `VOXMAR_GATE_STALL=1` with `--server-lag 150` runs the session as a machine loaded far
   past its cores would: a new step should pass that way too.
+
+## Fast tests
+
+Fast tests are a standing rule: the suites run on every landing and every edit, so a slow
+test costs the whole project. Nothing is made fast by weakening it: no test is skipped,
+shrunk below what proves its claim or stripped of its negative side to save time.
+
+`tools/test-budget.toml` holds the numbers and `tools/test-times DIR` checks them against a
+run's output (`DIR/test-*.txt`, the test binaries run with `-Z unstable-options
+--report-time`, which needs `RUSTC_BOOTSTRAP=1` off nightly): a test may take
+`per_test_seconds` (5 now, measured while the gate runs every binary side by side, times how
+much busier than idle the machine is), the slowest test binary `suite_seconds` (`--full`:
+`full_suite_seconds`, with the slow tests the default gate skips), and a test
+over its budget is listed in `[[allow]]` with its own `seconds` and the reason. It prints the
+slowest tests every time. It fails on a test over its budget and on a binary over the suite
+budget; with `--strict`, run on the Linux box the budgets were set on, also on an allowance a
+test no longer needs (it ran back under the default), so the list only shrinks as tests get
+cheaper (a faster machine would find many unneeded, so the gate only notes them). The scale is the load averaged while the tests ran; past the core count the gate lists the times and does not judge them (what else the machine runs must never block a landing; a calm machine holds the budgets). A new test over the default is made cheaper first;
+an entry is the last resort, with a reason a reader can check.
+
+How the tests are kept cheap:
+
+- Time in a test is work or waiting. Waiting is judged on the server's ticks, never on the
+  clock (no `sleep`, no wall-clock asserts; poll with `after_ticks` and `pump_until`). The
+  gameplay tests start their servers with `ServerConfig.tick_speedup` (20), so a wait of
+  twenty ticks takes a tick's worth of time; the hello limit and every tick-judged system
+  scale with it. What the server judges by the wall clock (combat, timed actions, the
+  movement hover grace, idle and chat limits: arrival stamps, `Connection::send_at`) cannot
+  speed up, and a test of one calls `real_time("why")` first to get a normal server. Such a
+  test is slow by nature until the server reads a clock the test can drive; each one is in
+  the allow-list under that reason.
+- The gameplay tests share one generated world per seed (`keep_world`), because planning the
+  spawn village costs more than a second the first time a world is asked where spawn is.
+  The settlements tests do the same for the tests that only read a world (`shared_world`);
+  a test that counts what a world plans, or compares a fresh world with another, builds its
+  own (`base_world`).
+- A loop that asks the generator for the same answer on every block asks once per column
+  and keeps it (`decorations_rest_on_the_ground` asked `height` 440 000 times).
+- The generator's own cost (a column 13 to 18 ms, `site()` 0.15 to 0.5 ms, a village a
+  second of planning) is most of what is left in the worldgen suite: that is where to win more.
 
 ## The FPS benchmark: `tools/bench fps`
 
@@ -236,11 +318,14 @@ running: on 2026-10-06 that turned the play binary and a thread's build into six
   after his game (voxmar not as a capture or gate, or Minecraft) exits, so everything
   waiting starts as soon as he quits; if his game never appears, the flag holds two hours
   after it was written.
-- Everything memcap runs is at background priority: on a Mac, background QoS, which keeps
-  it to the efficiency cores (6 of the 18 are performance cores); elsewhere `nice 19`. At
-  his look-down pose, a full build alongside gave a 326 ms worst frame at normal priority
-  and 57 ms at background QoS (p99 43 against 27 ms), and the build still went at about
-  nine tenths of its speed. Timing runs (`VOXMAR_TIMING=1`) and the benchmark's timed runs
+- Everything memcap runs a step below his game: on a Mac, utility QoS, which may use the
+  performance cores his game leaves free (6 of the 18); elsewhere `nice 10`.
+  `VOXMAR_QOS=background` keeps a job to the efficiency cores (`nice 19`). That was the
+  default until 2026-10-13: at his look-down pose a full build alongside gave a 326 ms
+  worst frame at normal priority and 57 ms at background QoS (p99 43 against 27 ms), but a
+  landing's build took 25 minutes on the efficiency cores alone, and the clamp bought
+  nothing while he is not playing, since PLAYING stops every job and is written only when
+  he plays. Timing runs (`VOXMAR_TIMING=1`) and the benchmark's timed runs
   (`VOXMAR_FOREGROUND=1`) run as his game does, and a timing run takes no slot.
 - Everything memcap runs is muted (`VOXMAR_MUTE=1`): no run of ours ever plays a sound.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new

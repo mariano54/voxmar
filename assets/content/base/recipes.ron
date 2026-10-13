@@ -31,7 +31,7 @@
         // A sleeping bag three ways: wool and hide, pelts, or feathers and hide.
         (pattern: [["wool", "wool", "wool"], ["hide", "hide", ""]], output: "sleeping_bag", level: 5, xp: 30.0),
         (pattern: [["tag:fur", "tag:fur"], ["tag:fur", "tag:fur"]], output: "sleeping_bag", level: 5, xp: 30.0),
-        (pattern: [["feather", "feather", "feather", ], ["feather", "hide", "feather"], ["feather", "hide", "feather"]], output: "sleeping_bag", level: 1, xp: 30.0),
+        (pattern: [["feather", "feather"], ["hide", "hide"]], output: "sleeping_bag", level: 1, xp: 30.0),
         // A herb planter: a box of soil herbs grow back in.
         (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:construction", level: 3, xp: 10.0),
         // Ore smelted with coal or charcoal, by hand for now (a furnace comes later).

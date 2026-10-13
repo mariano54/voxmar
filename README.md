@@ -820,16 +820,26 @@ update, and never more than 2 ms in one tick.
 
 ## Sound
 
-Music is in `assets/music` and plays now and then with long quiet gaps; `M` toggles it. All of it
-is AI-generated, from two sources (recorded 7 October 2026 from the commits that added the tracks
+Music is in `assets/music`, a folder for each category, and plays now and then: in a world, 10 to
+20 minutes of quiet between tracks, as in Minecraft. As a track starts, its title and category show
+small at the top right for a few seconds. `M` toggles it, and the audio settings switch each
+category on and off. The categories
+are listed in `assets/content/base/music.ron`: `suno`, `lyria` and `elevenlabs` are our own tracks
+(ElevenLabs' general ones play anywhere, its biomes' only in their biomes, its boss tracks only in
+a boss fight), and with
+Minecraft assets on, the tracks of the player's own Prism Launcher instance (read where they are,
+never copied) join `minecraft_menu`, `minecraft_world`, `minecraft_deep` or `minecraft_records` by
+the rules there. A mod adds a category in its own `music.ron`. All of our own music is
+AI-generated, from two sources (recorded 7 October 2026 from the commits that added the tracks
 and the tags inside the files):
 
 | tracks | source | terms |
 | --- | --- | --- |
-| `dawn_meadow`, `highland_wind`, `lantern_village`, `old_forest`, `rain_on_stone`, `starlit_night` | Google Lyria 3 (`google/lyria-3-pro-preview`) through OpenRouter, by `tools/generate_music.py` (c100fc6) | Google does not claim ownership of generated output; use is subject to Google's generative AI terms and Prohibited Use Policy, and the files carry Google's SynthID watermark |
-| `moonlit_quest`, `moonlit_quest_2`, `quiet_sky`, `skyward_serenity` | made with Suno, added by Mariano in 5197578 (each file's tags hold its Suno id and creation time, 3 October 2026) | under Suno's terms, songs made on a paid plan (Pro or Premier) may be used commercially, while songs made on the free plan are for non-commercial use only and Suno keeps their rights; which plan made these is not recorded |
+| `lyria/`: `dawn_meadow`, `highland_wind`, `lantern_village`, `old_forest`, `rain_on_stone`, `starlit_night` | Google Lyria 3 (`google/lyria-3-pro-preview`) through OpenRouter, by `tools/generate_music.py` (c100fc6) | Google does not claim ownership of generated output; use is subject to Google's generative AI terms and Prohibited Use Policy, and the files carry Google's SynthID watermark |
+| `suno/`: `moonlit_quest`, `moonlit_quest_2`, `quiet_sky`, `skyward_serenity` | made with Suno, added by Mariano in 5197578 (each file's tags hold its Suno id and creation time, 3 October 2026) | under Suno's terms, songs made on a paid plan (Pro or Premier) may be used commercially, while songs made on the free plan are for non-commercial use only and Suno keeps their rights; which plan made these is not recorded |
+| `elevenlabs/`: rounds 4 (forest, snow, desert, fantasy) and 5 (general, and one boss track each for forest, snow, desert and fantasy) | ElevenLabs Music (`music_v2_5`) by `tools/music/elevenlabs/forest_gen.py`, added 13 October 2026; each track's exact prompt and settings are in the `.json` beside it, and `tools/music/elevenlabs/NOTES.md` says how they were made | under ElevenLabs' terms, which depend on the plan of the account that made them; which plan made these is not recorded |
 
-Purely AI-generated audio generally has no copyright of its own, so neither source gives us
+Purely AI-generated audio generally has no copyright of its own, so no source gives us
 exclusive rights to these tracks. The loading screen's picture, `assets/ui/loading.png`, is our
 own: 36 frames of the game itself, captured along the coast near spawn, then cropped, softened,
 tinted and tiled (801915d). Starting a game fades the menu's music out, so a world

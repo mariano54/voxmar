@@ -134,7 +134,7 @@
                 forest: 0.07,
                 trees: [Name("oak", 1.0), Name("big_oak", 0.3), Name("birch", 0.2), Name("shrub", 0.8), Name("apple_tree", 0.15), Name("pear_tree", 0.1), Name("wild_cherry", 0.1), Name("hazel", 0.25)],
                 cover: 0.85, flowers: 0.021,
-                plants: [Tag("meadow", 1.0), Name("tall_grass", 0.22), Name("dead_bush", 0.09), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
+                plants: [Name("wild_wheat", 0.3), Tag("meadow", 1.0), Name("tall_grass", 0.22), Name("dead_bush", 0.09), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
             ),
             surface: (
                 include: ["soil_slopes"],
@@ -158,7 +158,7 @@
                 forest: 0.03,
                 trees: [Name("oak", 1.0), Name("shrub", 1.0), Name("apple_tree", 0.25), Name("plum_tree", 0.2), Name("pear_tree", 0.1), Name("wild_cherry", 0.1)],
                 cover: 0.7, flowers: 0.3, bloom: 0.22,
-                plants: [Tag("meadow", 1.0), Name("tall_grass", 0.11), Tag("forage", 0.02)],
+                plants: [Name("wild_wheat", 0.2), Tag("meadow", 1.0), Name("tall_grass", 0.11), Tag("forage", 0.02)],
             ),
         ),
         (
@@ -174,7 +174,7 @@
                 forest: 0.2,
                 trees: [Name("oak", 1.0), Name("birch", 1.0), Name("pine", 0.4), Name("shrub", 0.8), Name("pear_tree", 0.12), Name("wild_cherry", 0.12), Name("hazel", 0.3)],
                 cover: 0.8, flowers: 0.014,
-                plants: [Tag("meadow", 0.6), Tag("steppe", 0.6), Name("short_grass", 2.0), Name("tall_grass", 0.22), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
+                plants: [Name("wild_wheat", 0.3), Tag("meadow", 0.6), Tag("steppe", 0.6), Name("short_grass", 2.0), Name("tall_grass", 0.22), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
             ),
             ecotone: (between: ("steppe", "plains"), axis: Moisture, width: 0.06),
         ),
@@ -192,7 +192,7 @@
                 forest: 0.06,
                 trees: [Name("big_oak", 1.0), Name("oak", 0.6), Name("maple", 0.2), Name("willow", 1.0), Name("apple_tree", 0.25), Name("pear_tree", 0.15), Name("plum_tree", 0.15), Name("walnut", 0.5), Name("hazel", 0.3), Name("alder", 0.5)],
                 cover: 0.95, flowers: 0.035,
-                plants: [Name("tall_grass", 1.2), Name("short_grass", 1.0), Tag("meadow", 0.6), Name("raspberry_bush", 0.4), Name("wild_rose_bush", 0.6), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
+                plants: [Name("wild_wheat", 0.25), Name("tall_grass", 1.2), Name("short_grass", 1.0), Tag("meadow", 0.6), Name("raspberry_bush", 0.4), Name("wild_rose_bush", 0.6), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
             ),
             surface: (
                 include: ["soil_slopes"],
@@ -490,7 +490,7 @@
                 forest: 0.05,
                 trees: [Name("pine", 1.0), Name("shrub", 1.0), Name("dead_tree", 0.3), Name("almond", 0.4)],
                 cover: 0.75, flowers: 0.01,
-                plants: [Name("short_grass", 2.0), Name("tall_grass", 0.28), Tag("grass", 0.6), Tag("steppe", 0.6), Tag("meadow", 0.3), Name("dead_bush", 0.3), Name("wild_wheat", 1.5), Tag("forage", 0.02)],
+                plants: [Name("short_grass", 2.0), Name("tall_grass", 0.28), Tag("grass", 0.6), Tag("steppe", 0.6), Tag("meadow", 0.3), Name("dead_bush", 0.3), Name("wild_wheat", 0.4), Tag("forage", 0.02)],
             ),
             variants: [("pine_heath", 0.4)],
             surface: (
@@ -1092,7 +1092,7 @@
                 cover: 0.75, flowers: 0.007,
                 // Straw-coloured grass, one warm surface; pampas plumes and wild
                 // wheat only in drifts.
-                plants: [Name("short_grass", 3.0), Name("tall_grass", 0.55), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 1.0), Name("dead_bush", 0.3), Tag("wild_crop", 0.4), Tag("forage", 0.02), Name("wild_millet", 0.4), Name("zinnia", 0.3), Name("lemongrass", 0.3), Name("wild_melon", 0.2)],
+                plants: [Name("short_grass", 3.0), Name("tall_grass", 0.55), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 0.15), Name("dead_bush", 0.3), Tag("wild_crop", 0.4), Tag("forage", 0.02), Name("wild_millet", 0.4), Name("zinnia", 0.3), Name("lemongrass", 0.3), Name("wild_melon", 0.2)],
             ),
             surface: (
                 include: ["soil_slopes", "washes"],
@@ -1117,7 +1117,7 @@
                 forest: 0.12,
                 trees: [Name("baobab", 2.0), Name("acacia", 0.4), Name("shrub", 0.3), Name("marula", 0.5), Name("tamarind", 0.4)],
                 cover: 0.75, flowers: 0.007,
-                plants: [Name("short_grass", 3.0), Name("tall_grass", 0.44), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 1.0), Name("dead_bush", 0.3), Tag("forage", 0.02), Name("wild_millet", 0.4), Name("zinnia", 0.3), Name("lemongrass", 0.3), Name("wild_melon", 0.2)],
+                plants: [Name("short_grass", 3.0), Name("tall_grass", 0.44), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 0.15), Name("dead_bush", 0.3), Tag("forage", 0.02), Name("wild_millet", 0.4), Name("zinnia", 0.3), Name("lemongrass", 0.3), Name("wild_melon", 0.2)],
             ),
             variants: [],
         ),
@@ -1338,7 +1338,7 @@
                 forest: 0.04,
                 trees: [Name("oak", 1.0), Name("shrub", 0.5)],
                 cover: 0.8, flowers: 0.12,
-                plants: [Name("short_grass", 2.0), Name("wild_wheat", 1.0), Name("sunspire", 300.0), Name("starlily", 0.42), Name("marigold", 1.0), Name("goldenrod", 1.0), Name("sunpetal", 0.4)],
+                plants: [Name("short_grass", 2.0), Name("wild_wheat", 0.2), Name("sunspire", 300.0), Name("starlily", 0.42), Name("marigold", 1.0), Name("goldenrod", 1.0), Name("sunpetal", 0.4)],
                 wonders: [],
             ),
             surface: (

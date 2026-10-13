@@ -418,6 +418,7 @@ fn update(
     mut drops: Query<(&Drops, &MeshMaterial3d<PrecipitationMaterial>, &mut Visibility)>,
     mut materials: ResMut<Assets<PrecipitationMaterial>>,
     mut fallen: Local<Fallen>,
+    (pack, sky_open): (Res<super::pack::ActivePack>, Res<super::exposure::SkyOpen>),
 ) {
     let Ok((camera, ambient, fog)) = camera.single() else { return };
     let Some(handle) = drops.iter().next().map(|(_, material, _)| material.0.clone()) else { return };
@@ -426,7 +427,8 @@ fn update(
     let rain = shown.precipitation * (1.0 - shown.snow);
     let drips = (rain * 1.5 + shown.wetness * 0.6 - 0.05).clamp(0.0, 1.0);
     let glints = glints(shown);
-    let mist = mist(shown);
+    // Puffs of mist hang in the open air only: none dug down, in a cave or in a room.
+    let mist = mist(shown) * pack.mist_share(sky_open.shown);
     // Rain and snow ground the glowing motes and wisps (ball lightning in a storm would be
     // a few orbs, which these are not): nothing glows in the rain.
     let dry = 1.0 - ((shown.precipitation - 0.02) / 0.18).clamp(0.0, 1.0);
@@ -467,7 +469,8 @@ fn update(
     let eye = camera.translation();
     let column = eye.xz().floor().as_ivec2();
     map.age += time.delta_secs();
-    if (column - (map.origin + MAP / 2)).abs().max_element() > RECENTER || map.age > REFRESH {
+    // A map never read has no origin to measure from (its sentinel would overflow).
+    if map.origin == IVec2::MAX || (column - (map.origin + MAP / 2)).abs().max_element() > RECENTER || map.age > REFRESH {
         map.refresh(&world, column);
     }
 

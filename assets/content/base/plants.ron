@@ -112,7 +112,10 @@
         // Pale plumes that read as blooms from afar: in drifts, like flowers.
         (name: "pampas_grass", block: "pampas_grass", spread: Drifts, habitat: Open, comfort: (temperature: (14.0, 36.0), moisture: (0.3, 1.2))),
         (name: "cotton_grass", block: "cotton_grass", habitat: Open, comfort: (temperature: (-10.0, 10.0), moisture: (1.25, 8.0))),
-        (name: "wild_wheat", block: "wild_wheat", spread: Drifts, habitat: Open, comfort: (temperature: (4.0, 26.0), moisture: (0.25, 1.0))),
+        // The staple every first day leans on (bread, twine, seeds for the first field): a
+        // tuft here and there on open grass, alone rather than in flower drifts so it never
+        // waits on a bloom, and placed only where a biome names it (or by `forage`).
+        (name: "wild_wheat", block: "wild_wheat", spread: Alone, habitat: Open, comfort: (temperature: (4.0, 26.0), moisture: (0.25, 1.2)), tags: ["forage"]),
         (name: "cattail", block: "cattail", spread: Alone, habitat: Water, comfort: (temperature: (4.0, 30.0)), ground: [Soil, Sand]),
         (name: "papyrus", block: "papyrus", spread: Alone, habitat: Water, comfort: (temperature: (20.0, 40.0)), ground: [Soil, Sand]),
         (name: "rush", block: "rush", spread: Alone, habitat: Water, comfort: (temperature: (0.0, 30.0)), ground: [Soil, Sand]),

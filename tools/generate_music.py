@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates the game's background music with Google Lyria 3 through OpenRouter.
 
-Run once offline; the tracks are written to assets/music/ and shipped with the game, so
+Run once offline; the tracks are written to assets/music/lyria/ and shipped with the game, so
 nothing calls the API at runtime. Existing tracks are skipped, so re-running only fills
 gaps. Needs OPENROUTER_KEY in the environment or in .env, and ffmpeg to re-encode.
 
@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "assets" / "music"
+OUT = ROOT / "assets" / "music" / "lyria"
 MODEL = "google/lyria-3-pro-preview"
 STYLE = (
     "Instrumental only, absolutely no vocals or singing. Calm, gentle background music for a "

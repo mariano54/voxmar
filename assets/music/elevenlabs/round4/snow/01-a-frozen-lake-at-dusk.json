@@ -1,0 +1,28 @@
+{
+  "leads": [
+    "warm solo violin"
+  ],
+  "support": [
+    "music box",
+    "double bass"
+  ],
+  "texture": "airy string pad",
+  "opener": "Calm, cozy instrumental",
+  "space": "dry, close-miked and intimate, very little reverb",
+  "form": "a simple, memorable melody that returns as a motif",
+  "percussion": null,
+  "hint": "like an old storybook being read by lamplight",
+  "vibes": [
+    "nostalgic, like an old memory",
+    "melancholic but comforting"
+  ],
+  "touch": null,
+  "biome": "snow",
+  "scene": "a frozen lake at dusk",
+  "bpm": 54,
+  "key": "E minor",
+  "length_s": 161,
+  "prompt": "Calm, cozy instrumental for a snowy scene: a frozen lake at dusk, like an old storybook being read by lamplight. Mood: nostalgic, like an old memory, melancholic but comforting. Lead melody on warm solo violin, accompanied by music box, double bass, over airy string pad. Structure: a simple, memorable melody that returns as a motif; a clear, singable melody, and rests and silences are welcome. Sound: dry, close-miked and intimate, very little reverb. Slow, unhurried tempo around 54 BPM in E minor, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 72
+}

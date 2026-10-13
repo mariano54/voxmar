@@ -238,11 +238,14 @@ fn complete(console: &mut Console, launch: &Launch, admin: bool, now: f32) {
     }
 }
 
-/// Sends `--command` lines once the server has welcomed us.
+/// Sends `--command` lines once the server has welcomed us. Each is a command, with or
+/// without its `/`: typed bare (`--command "fill ..."`) it once went out as chat, said and
+/// never run, and a capture showed the world without what it asked for.
 fn send_pending(mut console: ResMut<Console>, net: Res<Net>, player: Res<LocalPlayer>) {
     if player.joined && !console.pending.is_empty() {
         for line in std::mem::take(&mut console.pending) {
-            send(&net, line.trim());
+            let line = line.trim();
+            net.command(line.strip_prefix('/').unwrap_or(line));
         }
     }
 }
