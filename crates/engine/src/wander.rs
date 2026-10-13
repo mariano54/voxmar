@@ -59,6 +59,10 @@ pub struct Rules {
     /// weight), for as many seconds.
     pub repeat_weight: f32,
     pub repeat_memory: f32,
+    /// Seconds after a party began before one that comes after it (`needs.after`) may
+    /// join it near the same player: such a follower comes through the `gap` and past
+    /// `most_near`, once for each party it follows, or a chain could never be met alone.
+    pub follow_after: f32,
 }
 
 impl Default for Rules {
@@ -80,6 +84,7 @@ impl Default for Rules {
             speak_reach: 4.0,
             repeat_weight: 0.15,
             repeat_memory: 1800.0,
+            follow_after: 90.0,
         }
     }
 }
@@ -90,7 +95,7 @@ crate::content::settable! {
         scan_every: f32, chance: f32, gap: f32, most_near: usize, near: f32, most_total: usize, people_most: usize,
         companions_most: usize,
         appear_near: f32, appear_far: f32, leave: f32, errand_every: f32, first_days: f32, speak_reach: f32,
-        repeat_weight: f32, repeat_memory: f32,
+        repeat_weight: f32, repeat_memory: f32, follow_after: f32,
     }
 }
 
@@ -103,6 +108,9 @@ impl Rules {
         }
         if !(0.0..=1.0).contains(&self.chance) || !(0.0..=1.0).contains(&self.repeat_weight) {
             return error("`chance` and `repeat_weight` are shares from 0 to 1".into());
+        }
+        if !(self.follow_after.is_finite() && self.follow_after >= 0.0) {
+            return error(format!("`follow_after` ({}) must be 0 seconds or more", self.follow_after));
         }
         if !(self.errand_every.is_finite() && self.errand_every >= 0.1) {
             return error(format!("`errand_every` ({}) must be at least 0.1 seconds", self.errand_every));
@@ -182,7 +190,9 @@ pub struct EventDef {
     /// is anywhere.
     #[serde(default)]
     pub biomes: Vec<(String, f32)>,
-    /// The daylight (0 at night, 1 by day) it comes in, least and most.
+    /// The daylight (0 at night, 1 by day) it comes in, least and most. Daylight is a full
+    /// 1 for more than half the day and 0 for most of the night, so a day party's window
+    /// ends at 1: one that ends short of it comes only at dawn and dusk.
     #[serde(default = "any_light")]
     pub daylight: (f32, f32),
     /// What the player must have reached.

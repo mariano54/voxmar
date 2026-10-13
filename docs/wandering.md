@@ -13,7 +13,7 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
 ## How it runs
 
 - **Spawning.** Every `scan_every` seconds each joined player gets one try at `chance`. A
-  try needs: past `first_days`, out of the `gap` (ten minutes) after the last event began
+  try needs: past `first_days`, out of the `gap` (fifteen minutes) after the last event began
   near them, fewer than `most_near` parties within `near`, fewer than `most_total` on the
   server. The spot is
   a standable cell at `appear_near` to `appear_far` blocks, out of every player's view. The
@@ -23,7 +23,10 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   blocks of a settlement of the world's plan, so the town watch keeps to its town's land;
   `wet`: only while rain or snow falls where it would appear, or only while none does; and
   `near_home`: only to a player within so many blocks of their home); a kind met in the
-  last `repeat_memory` seconds weighs `repeat_weight` of itself.
+  last `repeat_memory` seconds weighs `repeat_weight` of itself. A kind that comes after
+  another (`needs.after`) is the one exception to the gap and `most_near`: once that party
+  has been near a player `follow_after` seconds, each scan also tries a follower for it,
+  which joins it once (a chain could never be met alone otherwise).
 - **Budgets.** People of a party count against `people_most`, not against the settlements'
   villager cap. Animals and monsters of a party count against the usual land caps near
   every player (12 animals, the monster cap), so a party can never crowd the land. A chance
@@ -201,6 +204,64 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   ahead), `/wander end` sends them all away, and `/wander hold` keeps any from setting out
   by chance until `/wander allow` (the gate holds them through its session).
 
+## How often (audit, 2026-10-13)
+
+`cargo test -p voxmar_server wandering_audit -- --ignored --nocapture` walks a new player
+through six hours of real generated land on twelve seeds: fifteen minutes in each place,
+spiralling out from spawn, home every other stop once the hearth is lit (45 minutes in);
+combat about level 10 at two hours and 20 at six; wild things spawning and the sky moving
+as in play; the game's own start, spot, pick and fit rules at every scan; each party about
+for as long as its script keeps it (a march soon passes, a camp stays its time); and half
+the parties dealt with (for `met`). Game time; a world day is 20 minutes.
+
+| seed | first party (min) | met in 2 h | met in 6 h | kinds in 6 h | after-kinds | met-kinds | biomes |
+|---|---|---|---|---|---|---|---|
+| 0x5eed | 10 | 7 | 19 | 18 | 0 | 0 | bog, maple_forest, meadow, plains, river |
+| 0x1 | 15 | 7 | 20 | 18 | 0 | 0 | forest, maple_forest, plains, river |
+| 0x2 | 10 | 6 | 18 | 16 | 0 | 0 | forest_steppe, heath, maple_forest, mixed_forest, ocean, plains, taiga |
+| 0x3 | 13 | 7 | 22 | 19 | 1 | 0 | birch_forest, laurel_forest, maple_forest, ocean, savanna |
+| 0x2a | 22 | 5 | 15 | 11 | 2 | 0 | forest, heath, mixed_forest, ocean, plains, taiga |
+| 0x309 | 7 | 8 | 21 | 17 | 0 | 0 | forest_steppe, mixed_forest, ocean, plains, steppe |
+| 0x9 | 8 | 6 | 18 | 15 | 0 | 0 | dark_forest, maple_forest, mixed_forest, mountains, ocean, plains |
+| 0xa | 7 | 6 | 21 | 19 | 0 | 0 | laurel_forest, ocean, old_growth_forest, plains |
+| 0xb | 10 | 6 | 19 | 16 | 0 | 0 | heath, laurel_forest, maple_forest, ocean, plains |
+| 0xc | 8 | 7 | 21 | 19 | 0 | 0 | meadow, ocean, plains |
+| 0xd | 10 | 7 | 19 | 17 | 0 | 0 | ocean, old_growth_forest, plains, swamp |
+| 0xe | 11 | 8 | 22 | 20 | 2 | 0 | forest_steppe, mixed_forest, plains, river, steppe |
+
+Mean 6.7 parties in the first two hours and 19.6 in six, the first at 7 to 22 minutes:
+a handful in the first days, never a crowd (one party near a player at a time). 73 of the
+100 kinds came in the 72 hours walked. Never met: 27 kinds: bandit_patrol, wounded_traveller, water_carriers, goose_girl, prospector, travelling_alchemist, hunting_party, poacher, night_watchman, wolf_hunters, clay_diggers, village_champion, stuck_cart, frog_giggers, messenger, sleepwalker, snail_racers, mushroom_pickers, hedge_witch, gamekeepers, gossip, refugee_kin, christening, poachers_gang, grateful_parents, journeyman, beaters. These are
+the rare ones by design: town kinds away from towns, hunts that need game in reach, rain
+kinds in a dry spell, and the answers to parties that were themselves rare.
+
+What the audit found, and what changed:
+
+- **Day kinds came only at dawn and dusk.** Daylight is a full 1 for 58% of the day and 0
+  for 31%; only a tenth of the day is in between. A window like `(0.3, 0.9)` (45 kinds)
+  therefore came about 6% of the day. Day windows now end at 1.0, the white stag's too;
+  eight dusk kinds (deer, travelling cook, story teller, poacher, fortune teller, rat
+  catcher, gamekeepers, poachers' gang) reach on into the night instead of a minute of
+  twilight.
+- **Chains never reached a lone player.** A follower (`after`) needs its forerunner about,
+  but the gap and `most_near` held every new party off while it was. New rule
+  `follow_after` (45 s): see Spawning above. Rival pedlars, stragglers, late pupils and
+  highwaymen now follow in the walks.
+- **Too many parties for an uncrowded world.** At a 10 minute gap a new player met 8.8 in
+  two hours and 27 in six; the gap is now 15 minutes.
+- **Answers were rarer than what they answer.** Kinds that come only to a player who met
+  another (`met`) now weigh 2.5 (refugee kin, christening, grateful parents, journeyman;
+  the poachers' gang 1.5): they come to nobody else, so this crowds nothing.
+- **Hunts rarely had game in reach** of where a party appears (55 to 85 blocks off, game
+  mostly within 40 of the player): hunt reaches are 48 to 64 now.
+- **A torch before coal.** The hooded stranger gave torches; the torch is the main line's
+  Torchlight make. It now gives a lump of coal. The test
+  `no_party_does_a_main_quest_step_for_the_player` holds the rule: no gift is something a
+  main quest asks the player to make, and what one asks them to cook, mine or carry is
+  never given in full or over and over. Every other gift is an ages 1 and 2 material
+  (coins, bread, seed, wool, twine, flint, coal, charcoal, eggs, milk); the one magic
+  thing, aether, is the wisp's night wonder and the hedge witch's at Alchemy 5.
+
 ## Reactions
 
 `reactions` in `wandering.ron` are rules every kind inherits: how a *kind* of creature
@@ -258,7 +319,7 @@ Mariano's brief for the whole set, which a new kind is checked against:
 | 4 | stroll with a dog | March | A villager and their dog; a bone from the player's hand earns twine. The dog circles its person. |
 | 5 | bandit patrol | Patrol | Raiders walk a ring of stops, two laps, and hunt anyone within sight. Only for players with a home and combat level 3 to 40, after day 1.5. |
 | 6 | wolf prowl | Patrol | A pack circles a hunting ground at night in forests and cold land. |
-| 7 | hooded stranger | Shadow | A shy figure that keeps 12 to 20 blocks off and freezes when looked at. Gives a torch, once, to whoever reaches it. |
+| 7 | hooded stranger | Shadow | A shy figure that keeps 12 to 20 blocks off and freezes when looked at. Gives a lump of coal (for a torch of their own), once, to whoever reaches it. |
 | 8 | tinker camp | Camp | A trader, villagers and a hound settle near the player for a while. Three swaps. |
 | 9 | bard band | March | Musicians pass by; a song refreshes the player. |
 | 10 | prison convoy | March | Two or three jailers march a prisoner. They leave you be until struck. Kill them, bribe them (three gold coins), or cut the ropes with a knife and the jailers turn on you. The freed prisoner follows you half the time and settles by your home, or goes off alone. |
