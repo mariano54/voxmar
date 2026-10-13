@@ -290,8 +290,14 @@ his_settings=$(if [[ $(uname -s) == Darwin ]]; then echo ~/Library/Application\ 
 fingerprint() { [[ -e $his_settings ]] && shasum "$his_settings" | cut -d' ' -f1 || echo none; }
 his_before=$(fingerprint)
 mkdir -p "$out/config"
+# The load average is sampled while the tests run (a measure taken afterwards would only see
+# the quiet at the end, where the slowest binary runs alone), for the time budgets below.
+: >"$out/load.txt"
+( while :; do cut -d' ' -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg | awk '{ print $2 }'; sleep 10; done >>"$out/load.txt" ) &
+sampler=$!
 VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
   $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
+kill "$sampler" 2>/dev/null
 
 # A check the session skipped (a hitch, on a machine too loaded for a long frame to say
 # anything about the game) is not a pass, or a landing could go in untested: once the
@@ -336,9 +342,10 @@ if ((tests_failed)); then
 fi
 # How long the tests took, against tools/test-budget.toml (docs/quality.md, "Fast tests"): the
 # slowest are listed every run, a test over its budget fails the gate. The budgets are for a
-# machine as busy as the gate usually finds it; a busier one scales them by its load.
+# machine as busy as the gate usually finds it; a busier one scales them by the load it
+# averaged while the tests ran.
 if compgen -G "$out/test-*.txt" >/dev/null; then
-  scale=$(awk -v l="$(load_now)" -v c="$(getconf _NPROCESSORS_ONLN)" 'BEGIN { s = l / c; print (s < 1 ? 1 : s) }')
+  scale=$(awk -v c="$(getconf _NPROCESSORS_ONLN)" '{ s += $1; n++ } END { s = n ? s / n / c : 1; print (s < 1 ? 1 : s) }' "$out/load.txt")
   tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || fail "test times (tools/test-budget.toml)"
 fi
 status=$(cat "$out/game.status" 2>/dev/null || echo 0)
