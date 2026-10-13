@@ -699,12 +699,22 @@ impl Server {
     /// Whether `player` holds what the party's `kind` keeps from or comes to (a `Shy` or
     /// `Draw` reaction), at any range: a guard is not raised against them.
     fn calms(&self, kind: Kind, player: PlayerId) -> bool {
+        self.holds_for(kind, player, |r| matches!(r, Response::Shy | Response::Draw))
+    }
+
+    /// Whether `player` holds what draws the party's `kind` (a `Draw` reaction), at any range.
+    fn draws(&self, kind: Kind, player: PlayerId) -> bool {
+        self.holds_for(kind, player, |r| matches!(r, Response::Draw))
+    }
+
+    /// Whether `player` holds an item some reaction of `kind` passing `response` answers to.
+    fn holds_for(&self, kind: Kind, player: PlayerId, response: impl Fn(&Response) -> bool) -> bool {
         let Some(p) = self.players.get(&player) else { return false };
         let Some(held) = p.inventory.get(p.selected) else { return false };
         let def = self.content.blocks.def(held.item);
         self.content.wandering.reactions().iter().any(|r| {
             r.kinds.contains(&kind)
-                && matches!(r.response, Response::Shy | Response::Draw)
+                && response(&r.response)
                 && def.has_tag(&r.held)
                 && r.combat.is_none_or(|(low, high)| (low..=high).contains(&self.combat_level(player)))
         })
@@ -802,7 +812,9 @@ impl Server {
                     let from = self.creatures.live.get(&source).map(|c| c.body.position).or_else(|| self.players.get(&player).map(|p| p.position));
                     let (Some(from), Some(p)) = (from, self.players.get(&player)) else { return };
                     let ids = want.blocks(&self.content.blocks);
-                    let text = match self.nearest_block(from, reach, &ids, POINT_PAST, &[]) {
+                    // Past the few blocks around, so the way is worth telling; nearer only if nothing else.
+                    let found = self.nearest_block(from, reach, &ids, POINT_PAST, &[]).or_else(|| self.nearest_block(from, reach, &ids, 0.0, &[]));
+                    let text = match found {
                         Some(cell) => {
                             let to = xz(cell.as_vec3() + Vec3::splat(0.5)) - xz(from);
                             let far = ((to.length() / 10.0).round().max(1.0) * 10.0) as u32;
@@ -963,7 +975,7 @@ impl Server {
                 let still = tick >= since.1 + ticks(startle.still_for);
                 let skill = event.stalk.map_or(0.0, |(skill, per)| self.players.get(&id).map_or(0.0, |p| self.content.skills.level(p.skills.xp(skill)) as f32 * per));
                 let reach = if still { startle.still } else { (startle.near - skill).max(startle.least) };
-                let drawn = still && mood.draw.is_some_and(|to| flat(to, at) < 0.5);
+                let drawn = still && self.draws(kind, id);
                 if d <= reach && !drawn {
                     bolt = Some(at);
                     break;
@@ -2726,8 +2738,13 @@ mod tests {
         // And where there is none, it says so.
         let fungus = voxmar_engine::wander::Want::Tag("fungus".into());
         server.world.set_block(IVec3::new(at.x as i32 - 30, 200, at.z as i32 - 30), BlockId::AIR);
-        server.hand_out(1, picker, &[ResolvedReward::Point(fungus, 96.0)]);
+        server.hand_out(1, picker, &[ResolvedReward::Point(fungus.clone(), 96.0)]);
         assert!(told(&client).iter().any(|(key, _)| key == "wander.point_none"));
+        // One only a step away is still told of, not taken for none.
+        place(&mut server, "base:chanterelle", IVec3::new(at.x as i32 + 3, 200, at.z as i32));
+        server.hand_out(1, picker, &[ResolvedReward::Point(fungus, 96.0)]);
+        let said = told(&client);
+        assert!(said.iter().any(|(key, _)| key == "wander.point"), "a near one is pointed to: {said:?}");
     }
 
     #[test]
@@ -2874,6 +2891,23 @@ mod tests {
         let at = server.players[&1].position;
         walk_player(&mut server, at + Vec3::new(3.0, 0.0, 0.0), 1);
         assert!(server.wandering.active[&id].startled, "a moving hand is no still one");
+    }
+
+    #[test]
+    fn every_still_hand_with_food_is_let_near_not_only_the_one_the_lead_heeds() {
+        let mut server = fixture();
+        let (id, at) = herd(&mut server, 3.0);
+        give_held(&mut server, "base:bread", 1);
+        // A second player on the other side, also still, also holding food out.
+        let (client, connection) = voxmar_protocol::local_pair();
+        let _keep = client;
+        let mut other = crate::player::Player::new(2, connection, Vec3::new(at.x - 5.0, 200.0, at.z), 2, server.tick, server.survival.max_health, &server.config.limits);
+        other.joined = true;
+        other.selected = 0;
+        assert_eq!(other.inventory.add(server.content.blocks.expect("base:bread"), 1), 0);
+        server.players.insert(2, other);
+        run(&mut server, 20 * 4);
+        assert!(!server.wandering.active[&id].startled, "neither still hand with food startles the herd");
     }
 
     #[test]
