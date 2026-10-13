@@ -2754,6 +2754,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
+/// Server seconds each HV-age shot waits after its teleport, on top of the player standing
+/// there with the pick in hand for three frames and the cable as the shot wants it.
+const HV_SHOT_SETTLE: f32 = 0.5;
+
 /// The HV source, processors and treasure played with the real server. Inputs must first
 /// arrive in hand and then leave it; machine replies must show power/progress, not merely
 /// a queued recipe. Every wait on the server uses its clock.
@@ -2877,7 +2881,7 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
                 world.resource::<Net>().command(&format!("tp {}", at(position)));
                 empty_hand(world);
                 gate.advance(now);
-            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0
+            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > HV_SHOT_SETTLE
                 && world.resource::<ClientWorld>().block(rel(-1, 2, 3)) == content.blocks.id(if i / 2 == 1 { "core:air" } else { "base:hv_cable" }) {
                 aim(world, target);
                 if select(world, pick) {
@@ -5362,6 +5366,9 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("depths: no mist in a shaft", Ok(format!("{} ({open:.2} of the sky in view)", mist(&air))));
             let room = format!("tp {} {} {}", room_floor.x as f32 + 0.5, room_floor.y, room_floor.z as f32 + 0.5);
             world.resource::<Net>().command(&room);
+            // The fog has been seen in the open and not in the shaft: it lifts while the
+            // cracks are tried in the sealed room, where none reaches.
+            world.resource::<Net>().command("weather clear 600");
             gate.advance(now);
         }
         // In the sealed room, before the wall is touched: the face is dark.
@@ -5444,7 +5451,6 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("a glowstone beside the wall does not light the cracks: sky {}, block {}, light edges {highlight:.2}", light[0], light[1]))
             };
             gate.check("depths: crack by a glowstone", result);
-            world.resource::<Net>().command("weather clear 600");
             gate.advance(now);
         }
         // The shot of the lit cracks is in.
