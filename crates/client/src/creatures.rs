@@ -318,6 +318,11 @@ impl Creatures {
     /// Takes what the server sent.
     pub fn receive(&mut self, changed: Vec<CreatureView>, gone: Vec<CreatureGone>) {
         self.inbox.extend(changed);
+        // Gone drops what was told of it before and not yet shown: the gone are taken a
+        // frame before the views, so an older view would bring it back for good (a creature
+        // that moved and was dispersed by the next message, both in one frame). A view told
+        // after the gone (one coming back into sight) stays.
+        self.inbox.retain(|view| !gone.iter().any(|g| g.id == view.id));
         self.left.extend(gone);
     }
 
@@ -1140,6 +1145,36 @@ mod tests {
         // A dying body hides within its height, where it may lie.
         assert!(eye_inside(&parts, Vec3::new(1.2, 0.5, 0.0), Vec3::ZERO, 0.0, 1.0, 1.4, true));
         assert!(!eye_inside(&parts, Vec3::new(2.0, 0.5, 0.0), Vec3::ZERO, 0.0, 1.0, 1.4, true));
+    }
+
+    #[test]
+    fn a_creature_gone_is_not_brought_back_by_a_view_told_before_it() {
+        let view = |id| CreatureView {
+            id,
+            species: creature::CreatureId(0),
+            position: Vec3::ZERO,
+            velocity: Vec3::ZERO,
+            yaw: 0.0,
+            pose: creature::brain::Pose::Idle,
+            health: 4,
+            scale: 1.0,
+            seed: 0,
+            kept: false,
+            owner: None,
+            young: false,
+            ready: false,
+            trust: 0,
+            genes: [0; voxmar_engine::genes::MOST],
+        };
+        let mut creatures = Creatures::default();
+        // Moved, then dispersed, both reaching the client in one frame.
+        creatures.receive(vec![view(1), view(2)], vec![]);
+        creatures.receive(vec![], vec![CreatureGone { id: 1, died: false }]);
+        assert_eq!(creatures.inbox.iter().map(|v| v.id).collect::<Vec<_>>(), [2]);
+        // Gone, then back in sight: the later view is shown.
+        creatures.receive(vec![], vec![CreatureGone { id: 2, died: false }]);
+        creatures.receive(vec![view(2)], vec![]);
+        assert_eq!(creatures.inbox.iter().map(|v| v.id).collect::<Vec<_>>(), [2]);
     }
 
     #[test]

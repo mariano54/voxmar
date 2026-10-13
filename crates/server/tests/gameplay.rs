@@ -1243,10 +1243,13 @@ fn creatures_are_struck_when_the_server_runs_behind() {
 fn strike_a_snail(mut client: Client) {
     let snail = client.content.creatures.find("lumen_snail").expect("a lumen snail in the content");
     let slime = client.content.blocks.id("base:lumen_slime").unwrap();
+    // Attack 9, a fist's max hit 2: a blow behind a stall costs a second or more, and the
+    // snail's four health took four blows at level 1.
+    client.ok("/skill attack 9");
     client.ok("/summon lumen_snail 1 ~ ~ ~");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == snail));
     let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == snail).unwrap();
-    // Stand beside it, and strike until it dies: four health, a hit in two at level 1.
+    // Stand beside it, and strike until it dies: four health, a hit in two.
     // Each blow waits for the server's answer, so a server running behind only slows it.
     let mut at = view.position;
     client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
@@ -4161,16 +4164,16 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     client.pump_until(|c| c.kinds.len() > blows);
     assert_eq!(client.kinds[blows], Blow::Counter);
     assert!(client.damage[blows] > 0, "a counter cannot miss");
-    // Staggered after its recovery: its next blow comes no sooner than both, and a wind-up.
+    // A dodge just before the blow: it passes through. Tried first on the staggered bear's
+    // next blow, which a dodge does not hasten or delay.
     face(&mut client, id, slot, false);
-    let next = wait_for_blow(&mut client, id, perfect + 1);
+    let dodged = answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
+    assert_eq!(client.hurt[dodged].0, 0, "a dodged blow takes nothing");
+    // Staggered after its recovery: its next blow came no sooner than both, and a wind-up.
+    let next = blow_from(&client.hurt_by, id, perfect + 1).expect("the bear struck again");
     let gap = client.hurt_at[next] - client.hurt_at[perfect];
     let least = recovery + feel.stagger + windup;
     assert!(gap.as_secs_f32() > least - 0.1, "its next blow came {:.2}s after the perfect block: under {least:.2}s", gap.as_secs_f32());
-    // A dodge just before the blow: it passes through.
-    client.wait_server(1);
-    let dodged = answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
-    assert_eq!(client.hurt[dodged].0, 0, "a dodged blow takes nothing");
 }
 
 #[test]

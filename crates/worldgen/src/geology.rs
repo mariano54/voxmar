@@ -190,7 +190,7 @@ pub struct Geology {
     density: Density,
     /// The world's scale for heights above the sea, from its mountain height.
     vertical: f32,
-    climate: Climate,
+    pub(crate) climate: Climate,
     shapes: Shapes,
     /// The regional climate at the lattice points of each tile, plus the next row and
     /// column, so any position interpolates within one tile.
@@ -751,6 +751,22 @@ mod tests {
             let batch = world.geology.climate.regionals(&world.geology, group);
             for (k, &(x, z)) in group.iter().enumerate() {
                 assert_eq!(format!("{:?}", batch[k]), format!("{:?}", world.geology.climate.regional(&world.geology, x, z)), "at ({x}, {z})");
+            }
+        }
+    }
+
+    /// A climate grid worked out point by point reads as the one from the cached tiles.
+    #[test]
+    fn a_grid_alone_matches_the_tiles() {
+        let registry = std::sync::Arc::new(crate::test_registry());
+        let world = crate::Overworld::new(3, registry);
+        let mut rng = crate::rng::Rng::new(3, 4, 5, 7);
+        for _ in 0..40 {
+            let min = IVec2::new(rng.range(-30_000, 30_000), rng.range(-30_000, 30_000));
+            let max = min + IVec2::new(rng.range(0, 300), rng.range(0, 300));
+            let (tiles, alone) = (climate::ClimateGrid::new(&world.geology, min, max), climate::ClimateGrid::alone(&world.geology, min, max));
+            for (x, z) in [(min.x, min.y), (max.x, max.y), ((min.x + max.x) / 2, (min.y + max.y) / 2)] {
+                assert_eq!(format!("{:?}", tiles.at(x, z)), format!("{:?}", alone.at(x, z)), "at ({x}, {z})");
             }
         }
     }

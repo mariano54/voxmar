@@ -42,6 +42,12 @@ pub(crate) fn set_enabled(enabled: bool) {
 /// Calls `f` on every item, on the calling thread and on helpers (up to one per other
 /// core, as the cap allows), each taking the next item in order.
 pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
+    // Under test, the cores the tests were given (`RAYON_NUM_THREADS`, the gate's share
+    // for them), not the whole machine's: eight tests each taking a helper a core ran an
+    // 18-core machine three times over.
+    #[cfg(test)]
+    let cores = rayon::current_num_threads();
+    #[cfg(not(test))]
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
     let limit = LIMIT.load(Ordering::Relaxed);
     let wanted = cores.min(items.len()).saturating_sub(1);
