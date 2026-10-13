@@ -1003,15 +1003,17 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
         _ => STEP_LIMIT,
     };
-    // A step in the world is timed by the server's clock, as its own waits are: a server
-    // running behind takes longer, not too long, and one that hangs runs into TIME_LIMIT.
+    // A step in the world is too long only by both the server's clock, as its own waits
+    // are, and the game's, as its frames are: a server running behind takes longer, not too
+    // long, as does a machine drawing slowly against a server at full speed (`Step::lagged`),
+    // and one that hangs runs into TIME_LIMIT.
     // Loading and leaving have no server ticking for them. The text-fit tours are judged
     // view by view: sixty views at a settle each take most of a step's time on their own,
     // and a lagging machine draws each later, not wrongly.
     let (taken, clock) = match gate.step {
         Step::Fit | Step::FitJournal | Step::FitMenus => (now - gate.phase_since, "s"),
         Step::Load | Step::Leave => (now - gate.since, "s"),
-        _ => (gate.server_in_step(), " server s"),
+        _ => (gate.server_in_step().min(now - gate.since), " s by the server's clock and the game's"),
     };
     if taken > limit {
         return Err(format!("{:?} took longer than {limit}{clock}", gate.step));
