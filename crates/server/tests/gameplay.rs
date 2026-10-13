@@ -6169,7 +6169,14 @@ struct Mark {
     name: &'static str,
     at: f32,
     acts: [f32; 4],
+    /// The player's levels then, by skill, as the client last heard.
+    levels: Vec<(&'static str, u8)>,
+    /// Side quests the way finished by then, claimed with it.
+    side: Vec<String>,
 }
+
+/// The skills the first two ages train, as the timeline shows them.
+const PACED_SKILLS: &[&str] = &["mining", "crafting", "engineering", "cooking", "construction"];
 
 /// A player at the start of a survival game, and the plot built beside them to stand in for
 /// terrain the test cannot walk to.
@@ -6233,9 +6240,18 @@ impl Fresh {
     /// levels come from).
     fn mark(&mut self, name: &'static str) {
         let (at, acts) = (self.secs(), self.acts.map(|t| t as f32 / TICKS_PER_SECOND as f32));
-        self.marks.push(Mark { name, at, acts });
+        let c = &self.c;
+        let levels = PACED_SKILLS.iter().map(|&skill| (skill, c.content.skills.id(&format!("core:{skill}")).map_or(0, |id| c.content.skills.level(c.skills.xp(id))))).collect();
+        self.marks.push(Mark { name, at, acts, levels, side: Vec::new() });
         if let Some(&(_, quest)) = FRESH_QUESTS.iter().find(|(mark, _)| *mark == name) {
             self.claim(quest);
+        }
+        // And any other the way finished meanwhile, as a player opening the book claims
+        // what it shows done.
+        let waiting: Vec<String> = self.c.quests.iter().filter(|q| q.done && !q.claimed).map(|q| q.name.trim_start_matches("base:").to_owned()).collect();
+        for quest in waiting {
+            self.claim(&quest);
+            self.marks.last_mut().expect("marked").side.push(quest);
         }
     }
 
@@ -6977,9 +6993,18 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
     f.mark("red_metal");
 
-    // Brick by Brick: nineteen kiln bricks, four fired clay each in the grid (Crafting 5).
-    f.fire_clay(&site, 76);
-    f.craft(&[(0, fired, 19), (1, fired, 19), (3, fired, 19), (4, fired, 19)], bricks, 19);
+    // Brick by Brick: nineteen kiln bricks in hand, four fired clay each in the grid
+    // (Crafting 5). A Kiln Load falls on the way, done at forty clay fired in all, and pays
+    // the first four.
+    while !quest_status(&f.c, "a_kiln_load").0 {
+        let more = f.have(fired) + 1;
+        f.fire_clay(&site, more);
+    }
+    f.mark("a_kiln_load");
+    let short = 19u32.saturating_sub(f.have(bricks));
+    f.fire_clay(&site, short * 4);
+    let k = short as u8;
+    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, short);
     f.mark("brick_by_brick");
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).
@@ -7007,8 +7032,25 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     assert_eq!(f.c.died, 0, "the player died on the way");
     let missed: Vec<&str> = QUEST_BOOK_ORDER.iter().copied().filter(|q| !quest_status(&f.c, q).0).collect();
     assert!(missed.is_empty(), "quests of the line not done: {missed:?}");
-    let marks: Vec<String> = f.marks.iter().map(|m| format!("{} {:.0}", m.name, m.at)).collect();
-    eprintln!("a new player to the lit Crucible Kiln, server seconds: {}; {:.1} s of wall time", marks.join(", "), wall.elapsed().as_secs_f32());
+    eprintln!("{}", timeline(&f));
+    eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
+}
+
+/// Each milestone's server seconds, the phase before it and what that went on, and the
+/// levels after it: the timeline docs/first-days.md keeps.
+fn timeline(f: &Fresh) -> String {
+    let mut out = String::from("milestone           at s   phase s  mining walking hunting cooking other  levels after\n");
+    let mut before = (0.0f32, [0.0f32; 4]);
+    for m in &f.marks {
+        let spent: Vec<f32> = m.acts.iter().zip(before.1).map(|(now, then)| now - then).collect();
+        let phase = m.at - before.0;
+        let other = (phase - spent.iter().sum::<f32>()).max(0.0);
+        let levels: Vec<String> = m.levels.iter().map(|(skill, level)| format!("{skill} {level}")).collect();
+        let side = if m.side.is_empty() { String::new() } else { format!("; side quests {}", m.side.join(", ")) };
+        out += &format!("{:<18} {:>6.1} {:>8.1} {:>7.0} {:>7.0} {:>7.0} {:>7.0} {:>5.0}  {}{side}\n", m.name, m.at, phase, spent[0], spent[1], spent[2], spent[3], other, levels.join(", "));
+        before = (m.at, m.acts);
+    }
+    out
 }
 
 /// What the server says of a quest: whether it is done, and whether one of its tasks holds.
@@ -7030,6 +7072,7 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("pit_kiln", "a_pit_kiln"),
     ("fire_the_clay", "fire_the_clay"),
     ("the_potter", "the_potter"),
+    ("a_kiln_load", "a_kiln_load"),
     ("charcoal", "charcoal"),
     ("red_metal", "red_metal"),
     ("brick_by_brick", "brick_by_brick"),
