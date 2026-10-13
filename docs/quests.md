@@ -171,3 +171,35 @@ on the spine gated by a side quest, and a quest that is several steps shown as s
 Left as they are: Timber stays off the spine (branch `start`, with An Axe to It), since the
 main-line walk test models only the spine's goals; Crafting Table stays a root so a player
 who already has a table finds it done.
+
+## Readable to a newcomer (Oct 13)
+
+Every Nomad and Farm quest was read as someone who has never played would: does its text
+say what to make, where to find it, and which tool or station to use, and can everything
+it asks for be come by by then? `early_quests.rs`
+`every_early_quest_asks_for_what_the_land_and_recipes_give` now checks the second half on
+every build: it walks from what the land, crops, catches and animals give through every
+crafting and cooking recipe (a station counts only once it can be made) and fails on any
+item a Nomad or Farm quest asks for that nothing reaches. Run it with
+`VOXMAR_QUEST_REACH=1 -- --nocapture` for each asked item's cheapest way and level.
+
+| Quest | Gap | Fix |
+| --- | --- | --- |
+| A Place to Pray | Nothing gave stone (stone breaks to cobblestone), so stone bricks, and the altar, could not be made; the text gave the wrong shape | Cobblestone fires to stone in the pit kiln (`cooking.ron`, Construction 1, never cracks). The quest comes after A Pit Kiln and says the chain: cobblestone fired to stone, four stone to four bricks, seven bricks to the altar in its real shape |
+| A Pit Kiln | Said five cobblestones; the recipe takes four | Four, and where each goes |
+| Workshop and Stove | Said six cobblestones for the stove (it takes five); no recipe for the quern, spindle or loom | Five, and each workshop piece's recipe and level |
+| Ducks on the Pond | "Hold its favourite food" named no food | Wheat seeds or wheat; rivers and wetlands |
+| The Milk Pail | Did not say how to tame a goat, reindeer or aurochs | Each one's food: wheat or an apple, a mushroom, wheat |
+| Copper Arms | No recipe for the copper shield | Six ingots round a plank |
+| Earthenware | No recipe for any piece | Plates, bowls, jars, jugs and the basket, with levels |
+| A Friend in the Wild, Hens in a Row | Wheat seeds with no source | Break wild wheat (or your own field) for them |
+| A Seat by the Fire, A Proper Bed | Furniture comes in oak, birch and dark oak only; a player with spruce planks was stuck | Both name the three woods, and the crafting table |
+| First Bronze | "Put the blend in the crucible" | Hold the blend and right-click the lit kiln's crucible; four blend from one craft |
+| Food Enough | Rye with no source | Rye seed comes from village fields |
+| The Potter, Copper Mail | No station | At the crafting table, with the shape or level |
+| Torchlight | Did not say what breaks coal | Any pickaxe, even a wooden one |
+
+The Crucible Kiln is now three parts, as Homestead Hearth is: the crucible made, the kiln
+standing (`Built`, counted when its crucible is right-clicked whole, which also names the
+fuel it wants), and the kiln lit (`Lit`). Lighting always counts both, so a kiln lit
+before this still reads done, and `quests_done` keeps finished quests finished.
