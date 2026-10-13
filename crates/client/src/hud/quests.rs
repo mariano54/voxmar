@@ -36,7 +36,7 @@ impl Plugin for QuestsPlugin {
         app.init_resource::<QuestView>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, turn_ways, draw).chain().after(ScreenSystems), (retire, track).chain()).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, turn_ways, draw).chain().after(ScreenSystems), (seed_pins, retire, track).chain()).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -91,6 +91,27 @@ fn open_start(
         ui.quests_open = true;
     }
     commands.remove_resource::<StartQuest>();
+}
+
+/// What `Settings::tips_seen` remembers once a new player's pins have been looked at.
+const START_PINS_SEEN: &str = "start_pins";
+
+/// A new player (nothing done, nothing pinned) starts with the content's `start_pins`
+/// pinned, so the first thing on screen is what to do. Once for this install, the first
+/// time a world's quests arrive, however that went: a player who unpins them keeps their
+/// choice in every world after.
+fn seed_pins(player: Res<LocalPlayer>, launch: Res<Launch>, mut settings: ResMut<Settings>) {
+    if player.quests.is_empty() || settings.tips_seen.iter().any(|seen| seen == START_PINS_SEEN) {
+        return;
+    }
+    settings.tips_seen.push(START_PINS_SEEN.to_owned());
+    if settings.pinned_quests.is_empty() && player.quests.iter().all(|quest| !quest.done) {
+        let content = &launch.content;
+        for name in content.quests.start_pins() {
+            toggle_pin(&mut settings, content, name);
+        }
+    }
+    settings.save();
 }
 
 /// Only quests the content has stay pinned, and no more than the tracker shows.
@@ -231,7 +252,7 @@ fn quest_icon(content: &Content, images: &HudImages, quest: &QuestDef) -> Handle
     let given = quest.rewards.iter().find_map(|r| if let Reward::Item(name, _) = r { item(name) } else { None });
     let asked = || {
         quest.tasks.iter().flatten().find_map(|goal| match goal {
-            Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item(name),
+            Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item(name),
             _ => None,
         })
     };
@@ -251,6 +272,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
     let package = package(quest);
     let what = match goal {
         Goal::Craft(item, _) => locale.format("quest.goal.craft", &[("item", &item_words(locale, content, package, item))]),
+        Goal::CookAt(item, station, _) => locale.format("quest.goal.cook_at", &[("item", &item_words(locale, content, package, item)), ("station", &item_words(locale, content, package, station))]),
         Goal::Cook(item, _) => locale.format("quest.goal.cook", &[("item", &item_words(locale, content, package, item))]),
         Goal::Catch(fish, _) if fish == "Kinds" => locale.get("quest.goal.kinds").to_owned(),
         Goal::Catch(fish, _) => locale.format("quest.goal.catch", &[("item", &item_words(locale, content, package, fish))]),
@@ -268,7 +290,14 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         }
         Goal::Have(item, _) => locale.format("quest.goal.have", &[("item", &item_words(locale, content, package, item))]),
         Goal::Home => return locale.get("quest.goal.home").to_owned(),
+        Goal::Thriving(..) => locale.get("quest.goal.thriving").to_owned(),
         Goal::Built(name, _) => locale.format("quest.goal.built", &[("item", &multiblock_words(locale, content, package, name))]),
+        Goal::Lit(name, _) => {
+            let fuels = qualified(package, name).iter().find_map(|name| content.multiblocks.get(name)).map(|m| {
+                m.fuels.iter().map(|&(item, count)| locale.format("multiblock.fuel_stack", &[("count", &count), ("item", &locale.block(content.blocks.def(item)))])).collect::<Vec<_>>().join(locale.get("multiblock.fuel_or"))
+            }).unwrap_or_default();
+            locale.format("quest.goal.lit", &[("item", &multiblock_words(locale, content, package, name)), ("fuels", &fuels)])
+        },
         Goal::LookUp(item) => locale.format("quest.goal.lookup", &[("item", &item_words(locale, content, package, item))]),
     };
     if need > 1 { locale.format("quest.progress", &[("goal", &what), ("have", &have.min(need)), ("need", &need)]) } else { what }
@@ -690,7 +719,7 @@ fn draw(
                     let line = text(font, goal_line(&locale, content, quest, goal, progress, met), BODY, color);
                     // The item it asks for, to click for its recipes (a right click, its uses).
                     let asked = match goal {
-                        Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item_id(content, package(quest), name),
+                        Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item_id(content, package(quest), name),
                         _ => None,
                     };
                     let Some(item) = asked else {
@@ -703,7 +732,7 @@ fn draw(
                     });
                     // How to make it, the way the recipe viewer draws it, for what a goal
                     // makes.
-                    if matches!(goal, Goal::Craft(..) | Goal::Cook(..) | Goal::Have(..))
+                    if matches!(goal, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::Have(..))
                         && let Some(book) = viewer.book()
                     {
                         let ways = book.making(item);
@@ -904,10 +933,10 @@ mod tests {
             let item = |name: &str| name == "any" || name.starts_with("tag:") || item_id(&content, package, name).is_some();
             for goal in quest.tasks.iter().flatten() {
                 let known = match goal {
-                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
+                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
                     Goal::Catch(name, _) => name == "Kinds" || item(name),
                     Goal::Kill(name, _) | Goal::Tame(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
-                    Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
+                    Goal::Built(name, _) | Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
                     Goal::Level(skill, _) => skill_id(&content, skill).is_some(),
                     _ => true,
                 };
@@ -925,7 +954,7 @@ mod tests {
                 }
             }
             let pictured = quest.rewards.iter().any(|r| matches!(r, Reward::Item(..) | Reward::Xp(..)))
-                || quest.tasks.iter().flatten().any(|g| matches!(g, Goal::Craft(..) | Goal::Cook(..) | Goal::Have(..) | Goal::Pick(..) | Goal::Mine(..) | Goal::Catch(..) | Goal::Level(..)));
+                || quest.tasks.iter().flatten().any(|g| matches!(g, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::Have(..) | Goal::Pick(..) | Goal::Mine(..) | Goal::Catch(..) | Goal::Level(..)));
             if !pictured {
                 wrong.push(format!("{}: nothing to draw it with", quest.name));
             }

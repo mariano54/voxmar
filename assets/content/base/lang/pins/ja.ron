@@ -308,6 +308,8 @@
     "quest.base.earthenware.why": ("Fired clay makes plates, bowls, jars and jugs for the shelf, and a basket is twine. Make three pieces of crockery at the crafting table.", "焼き粘土から、棚に並べる皿、鉢、壺、水差しが作れる。かごはより糸でできる。作業台で器を3つ作ろう。"),
     "quest.base.candlelight": ("Candlelight", "ろうそくの明かり"),
     "quest.base.candlelight.why": ("Twine and two hides make two candles (Crafting 3): a softer light than a torch for a table or shelf.", "より糸と皮2枚でろうそくが2本できる（工作レベル3）。テーブルや棚に置くと、松明より柔らかな明かりになる。"),
+    "quest.base.food_enough": ("Food Enough", "食うに困らず"),
+    "quest.base.food_enough.why": ("Food that lasts is a farm that works. Show any one: harvest twelve wheat and six carrots or rye, keep four animals well fed and housed (condition at least 75), or land forty fish. Ten loaves of bread are your reward.", "食べ物が絶えないのは、畑と家畜がうまく回っている証だ。次のどれかを示そう：小麦12とニンジンかライ麦6を収穫する、動物4頭を餌と住まいに恵まれた良い状態（コンディション75以上）で飼う、魚を40匹釣る。ごほうびにパンが10個もらえる。"),
     "multiblock.base.bellows_bloomery": ("Bellows Bloomery", "ふいご付き塊鉄炉"),
     "multiblock.base.bellows_bloomery.hint": ("The bloomery needs kiln bricks round it with bellows in the ring, and a hollow shaft of kiln bricks two more blocks high above it.", "塊鉄炉には、ふいごを含む窯レンガの囲いと、その上に2ブロック高い窯レンガの中空の煙突が必要です。"),
     "multiblock.base.coke_oven": ("Coke Oven", "コークス炉"),
