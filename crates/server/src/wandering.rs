@@ -1727,6 +1727,7 @@ impl Server {
                 if let (Some(who), Some(p)) = (self.speaker_name(leader), self.players.get(&player)) {
                     p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("arrived"))) });
                 }
+                self.tally(player, "met", &event.def.name, 1);
                 self.hand_out(player, leader, &event.reveal);
             }
         }
@@ -4655,6 +4656,7 @@ mod tests {
         let trader = members_of(&server, id, 0)[0];
         assert!(server.meet(1, trader));
         assert!(says(&told(&client), "wander.base.market_folk.there"), "and they say where the market is");
+        assert_eq!(server.players[&1].tallies.get("met:base:market_folk"), Some(&1), "the walk is a dealing for quests; the words at the end are not");
     }
 
     #[test]
@@ -4666,6 +4668,7 @@ mod tests {
         server.players.get_mut(&1).unwrap().position = Vec3::new(44.5, 200.0, 200.5);
         assert!(run_until(&mut server, id, 200, |inst| inst.stage == Stage::Arrived), "they reach the town");
         assert_eq!(count_of(&server, "base:bread"), 0, "met at the end is not walked with");
+        assert_eq!(server.players[&1].tallies.get("met:base:market_folk"), None, "nor dealt with");
     }
 
     #[test]
