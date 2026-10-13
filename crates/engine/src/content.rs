@@ -382,11 +382,25 @@ impl Content {
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
+        for structure in multiblocks.iter() {
+            for &(fuel, count) in &structure.fuels {
+                if !machines.burn_seconds(fuel).is_some_and(|seconds| seconds.is_finite() && seconds > 0.0 && (seconds * count as f32).is_finite()) {
+                    return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} needs a positive finite burn time in machines.ron", structure.name, blocks.def(fuel).name)));
+                }
+            }
+        }
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
         }
         let value = crate::value::Value::merge(value, &mut notes);
         let limits = stack_limits(&blocks, &stacking)?;
+        for structure in multiblocks.iter() {
+            for &(fuel, count) in &structure.fuels {
+                if count > limits[fuel.0 as usize] {
+                    return Err(RegistryError(format!("multiblock {}: its {}-item fuel charge exceeds {}'s stack limit", structure.name, count, blocks.def(fuel).name)));
+                }
+            }
+        }
         let treasure = crate::treasure::Treasure::new(treasure, &blocks, &value, &limits, &mut notes)?;
         // An opened chest becomes a bin with room for all it can give.
         for (block, chest) in treasure.chests() {
@@ -566,9 +580,10 @@ mod tests {
     /// cooking (its Cook), or either (what goes into something else, a multiblock's pieces,
     /// what a quest asks to Have).
     #[derive(Clone, Copy, PartialEq)]
-    enum Way {
+    enum Way<'a> {
         Grid,
         Cooked,
+        CookedAt(&'a str),
         Either,
     }
 
@@ -632,7 +647,7 @@ mod tests {
         }
 
         /// The easiest recipe making `id` the given way, if any.
-        fn recipe(&self, id: BlockId, way: Way) -> Option<Batch> {
+        fn recipe(&self, id: BlockId, way: Way<'_>) -> Option<Batch> {
             let content = self.content;
             let grid = || {
                 content.recipes.iter().filter(|r| r.output == id).min_by_key(|r| r.level).map(|r| Batch {
@@ -645,20 +660,20 @@ mod tests {
                 })
             };
             let cooked = || {
-                let r = content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id).min_by_key(|r| r.def.level)?;
+                let r = content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id && match way { Way::CookedAt(station) => r.def.station == station, _ => true }).min_by_key(|r| r.def.level)?;
                 let inputs = content.cooking.iter().filter(|(_, other)| std::ptr::eq(*other, r)).map(|(input, _)| input).collect();
                 Some(Batch { skill: r.skill, level: r.def.level, xp: r.def.xp, count: 1, cells: vec![inputs], station: Some(r.def.station.clone()) })
             };
             match way {
                 Way::Grid => grid(),
-                Way::Cooked => cooked(),
+                Way::Cooked | Way::CookedAt(_) => cooked(),
                 Way::Either => grid().or_else(cooked),
             }
         }
 
         /// Makes `k` more of `id`, `way`: the easiest recipe, at its station, from what its
         /// cells take (used up from what is in hand, or made, mined or gathered first).
-        fn produce(&mut self, id: BlockId, k: u32, way: Way) {
+        fn produce(&mut self, id: BlockId, k: u32, way: Way<'_>) {
             let name = self.name(id);
             let Some(batch) = self.recipe(id, way) else { panic!("{}: no recipe makes `{name}` that way", self.quest) };
             let batches = k.div_ceil(batch.count);
@@ -811,6 +826,32 @@ mod tests {
                 let mut route = walk.clone();
                 for goal in task {
                     match goal {
+                        Goal::CookAt(item, station, n) => {
+                            // Model an actual successful food recipe at the promised station,
+                            // including its ingredients, skill and crafted station. Availability
+                            // in the world and burn losses still belong to fresh-survival proof.
+                            let matches = |id: BlockId| item == "any" || item.strip_prefix("tag:").map_or_else(
+                                || content.blocks.def(id).name.rsplit(':').next() == Some(item.as_str()) || content.blocks.def(id).name == *item,
+                                |tag| content.blocks.def(id).has_tag(tag));
+                            let id = content.cooking.iter().map(|(_, r)| r).filter(|r| r.def.station == *station && matches(r.output))
+                                .min_by_key(|r| r.def.level).unwrap_or_else(|| panic!("{}: no recipe for {goal:?}", quest.name)).output;
+                            route.produce(id, *n, Way::CookedAt(station));
+                        }
+                        Goal::Lit(name, _) => {
+                            let name = if name.contains(':') { name.clone() } else { format!("base:{name}") };
+                            route.build(&name);
+                            let fuels = &content.multiblocks.get(&name).expect("built").fuels;
+                            if !fuels.is_empty() {
+                                let mut fuel_routes: Option<Walk> = None;
+                                for &(fuel, count) in fuels {
+                                    let mut firing = route.clone();
+                                    firing.consume(&[fuel], count as u32, &name);
+                                    assert_eq!(firing.walls.len(), route.walls.len(), "{}: fuel route {} is blocked: {:?}", quest.name, content.blocks.def(fuel).name, firing.walls);
+                                    fuel_routes = Some(match fuel_routes { Some(before) => before.least(firing), None => firing });
+                                }
+                                route = fuel_routes.expect("fuel routes");
+                            }
+                        }
                         Goal::Craft(item, _) | Goal::Cook(item, _) if item == "any" => {}
                         Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::Have(item, _) if item.starts_with("tag:") => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                         Goal::Craft(item, n) | Goal::Cook(item, n) => {
@@ -841,7 +882,7 @@ mod tests {
                             route.build(&name);
                         }
                         Goal::Visit(_) | Goal::LookUp(_) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Thriving(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {

@@ -23,6 +23,8 @@ reward, shown first), tasks, after, rewards. Goals:
 | Goal | Reads |
 | --- | --- |
 | `Craft(item, n)`, `Cook(item, n)` | the player's tallies of things made and cooked |
+| `CookAt(item, station, n)` | successful cooking tallies for a station tag; First Night asks for edible food at a campfire, plus crafting the campfire |
+| `Built(structure, n)`, `Lit(structure, n)` | standing construction and successful fuelled lighting, separately; factory construction never supplies lighting credit |
 | `Tame(creature, n)` | the tally of animals tamed |
 | `Catch(fish, n)`, `Catch("Kinds", n)` | the journal's Fish page |
 | `Kill(creature, n)` | the journal's Animals and Monsters pages |
@@ -32,6 +34,7 @@ reward, shown first), tasks, after, rewards. Goals:
 | `Have(item, n)` | what the player carries, pouches too |
 | `Home` | a lit Homestead Hearth |
 | `LookUp(item)` | the recipe viewer was opened on the item (the client says so once, `ClientMessage::LookedUp`; tally `lookedup:<item>`) |
+| `Thriving(n, percent)` | the player keeps n animals right now at a condition of at least that percent (read live from the kept animals, not tallied; a newly tamed one starts at 60) |
 
 Items and creatures may be `any` or `tag:TAG`. Rewards are `Xp(skill, xp)` and
 `Item(item, count)`. Titles and reasons are translated as `quest.<package>.<name>` and
@@ -51,3 +54,15 @@ and the pit kiln to the lit Crucible Kiln. Each has at least thirty quests
 (`crates/engine/tests/early_quests.rs` keeps that floor and checks every name they use). The
 loop through the first days, and what a new player is and is not told, is in
 [first-days.md](first-days.md). The rest of quest book v2 joins as its content lands.
+
+The Crucible Kiln needs a standing pattern and a complete charge held in the hand:
+32 charcoal or 24 coal. Right-clicking its core lights it and consumes that charge.
+Its burn time uses the fuel times in `machines.ron`, measured by server ticks; the
+remaining fire is saved in `world.ron`. Cooking needs both the standing pattern and a
+live fire. Removing a required piece quenches it; rebuilding requires a new charge.
+Completed quests in older saves stay completed. Older `cooked` and `built` tallies do
+not establish which station cooked food or whether fuel was paid, so they cannot
+complete these stricter goals for an unfinished quest.
+
+A package's `tracker` may name `start_pins`: quests pinned for a player whose book is new
+(nothing done, nothing pinned), once per install (remembered in the settings). A later package replaces the list.
