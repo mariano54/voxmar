@@ -1412,6 +1412,9 @@ mod tests {
             let origin = first.origin();
             let size = 3 * voxmar_engine::coords::CHUNK_SIZE;
             let inside = |p: IVec3| (0..size).contains(&(p.x - origin.x)) && (0..size).contains(&(p.z - origin.z));
+            // The ground's height over the area, sampled once: it is asked for at every block.
+            let heights: Vec<i32> = (0..size * size).map(|i| world.height(origin.x + i % size, origin.z + i / size)).collect();
+            let ground = |x: i32, z: i32| heights[((z - origin.z) * size + (x - origin.x)) as usize];
             let block = |p: IVec3| {
                 let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
                 columns[(cz * 3 + cx) as usize].block(p.with_x(p.x & 31).with_z(p.z & 31))
@@ -1420,7 +1423,7 @@ mod tests {
             let leafy = |b: BlockId| registry.def(b).name.ends_with("leaves");
             // Solid blocks above the ground that are not leaves, nor ice, which floats on the
             // water it froze from.
-            let lifted = |p: IVec3| inside(p) && p.y > world.height(p.x, p.z) && p.y < WORLD_HEIGHT_FOR_TESTS && {
+            let lifted = |p: IVec3| inside(p) && p.y > ground(p.x, p.z) && p.y < WORLD_HEIGHT_FOR_TESTS && {
                 let b = block(p);
                 info(b).solid && !leafy(b) && b != registry.expect("base:water") && !registry.def(b).name.ends_with("ice")
             };
@@ -1428,7 +1431,7 @@ mod tests {
             let (mut pieces, mut plants) = (0, 0);
             for z in origin.z..origin.z + size {
                 for x in origin.x..origin.x + size {
-                    let h = world.height(x, z);
+                    let h = ground(x, z);
                     for y in h + 1..(h + 48).min(WORLD_HEIGHT_FOR_TESTS) {
                         let p = IVec3::new(x, y, z);
                         let b = block(p);
@@ -1447,7 +1450,7 @@ mod tests {
                         while let Some(q) = stack.pop() {
                             for d in [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z] {
                                 let n = q + d;
-                                if !inside(n) || (n.y <= world.height(n.x, n.z) && info(block(n)).solid) {
+                                if !inside(n) || (n.y <= ground(n.x, n.z) && info(block(n)).solid) {
                                     grounded = true;
                                 } else if lifted(n) && seen.insert(n) {
                                     stack.push(n);

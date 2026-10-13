@@ -28,8 +28,10 @@ pub use voxmar_engine::weather::Weather;
 // 31: the server hardening's 27/28 (numbered teleports, keepalive), after main's 29 and 30 (armour).
 // 32: ClientMessage::LookedUp (the recipe viewer opened on an item, for the quest book's LookUp goals).
 // 33: Ping and Pong, the round trip a fight's lag allowance reads.
-// 34: Pray and Prayers, the prayer book.
-pub const PROTOCOL_VERSION: u32 = 34;
+// 34: ClientMessage::ClaimQuest (a finished quest's rewards are claimed in the quest screen), and
+// QuestState::claimed.
+// 35: Pray and Prayers, the prayer book.
+pub const PROTOCOL_VERSION: u32 = 35;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -75,6 +77,10 @@ pub enum ClientMessage {
     /// The player opened the recipe viewer on `item` (to look up how it is made or what it
     /// goes into): what the quest book's "look it up" goals count.
     LookedUp { item: BlockId },
+    /// The player claims the rewards (items and experience) of a finished quest from the quest
+    /// screen. Refused, with a chat line and the reward still waiting, if the pack cannot
+    /// hold its items; ignored if the quest is not finished or was claimed.
+    ClaimQuest { name: String },
     /// The player raised (`up`) or lowered their guard (`voxmar_engine::combat`).
     Guard { up: bool },
     /// The answer to `ServerMessage::Ping` number `id`, sent as soon as it is read.

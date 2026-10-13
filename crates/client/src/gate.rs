@@ -132,6 +132,7 @@ impl Plugin for GatePlugin {
         app.insert_resource(Gate::new(dir))
             .init_resource::<UiClicks>()
             .insert_resource(crate::creatures::InspectEyes)
+            .insert_resource(crate::music::Rehearse)
             .add_systems(PostStartup, render_offscreen)
             .add_systems(PreUpdate, ui_clicks.after(bevy::ui::UiSystems::Focus))
             .add_systems(Update, crate::capture::target_ui)
@@ -247,11 +248,18 @@ enum Step {
     Swim,
     /// Esc opens and closes the menu, E the inventory.
     Screens,
+    /// On the menu's audio page, a switch for each category of music the player can hear;
+    /// clicking one turns that category off, and again on. A track starting is named, with
+    /// its category, at the top right, and the line fades.
+    Music,
     /// F3 opens the debug overlay, and PostUpdate (UI layout among it) takes no longer with
     /// it open than closed.
     Overlay,
     /// A storm and a snowfall come, drawn with their particles, then clear again.
     Weather,
+    /// Mist shows in the open and is gone in a shaft dug down; a crack on a block in a
+    /// sealed dark room is lit by what lights that face, and by a glowstone beside it.
+    Depths,
     /// The sun by day, the moon and stars by night.
     Sky,
     /// A small tree with an apple among its leaves, drawn with its leaf cards and fruit.
@@ -259,6 +267,10 @@ enum Step {
     /// Blocks drawn as shapes (a slab, stairs both ways up, a barrel, a crate and a sack)
     /// reach the client and draw.
     Shapes,
+    /// The item in the hand is drawn in first person: an iron sword, a stone block and an
+    /// empty hand each give a different view, only in the lower right; and sealed in a
+    /// stone box with no light the sword is far darker than under the open sky.
+    Held,
     /// Natural births arrive out of view; a torch-lit pad rejects monsters.
     NaturalSpawns,
     /// Creatures summoned on a pad beside the test ground reach the client and draw.
@@ -323,6 +335,9 @@ enum Step {
     /// An effect that comes on pops up with its name, and the first look at the inventory
     /// brings its tip.
     Tips,
+    /// The name of what the crosshair rests on shows at the top left: a block close by, a
+    /// creature further than a blow reaches, and not through a wall.
+    Look,
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
@@ -1188,10 +1203,13 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::HvAge => hv_age(world, gate, now),
         Step::Swim => swim(world, gate, now, in_phase),
         Step::Screens => screens(world, gate, now, in_phase),
+        Step::Music => music(world, gate, now, in_phase),
         Step::Overlay => overlay(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
+        Step::Depths => depths(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Shapes => shapes(world, gate, now, in_phase),
+        Step::Held => held(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
         Step::NaturalSpawns => natural_spawns(world, gate, now),
         Step::Creatures => creatures(world, gate, now, in_phase),
@@ -1213,6 +1231,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Identity => identity(world, gate, now),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
+        Step::Look => look_name(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
@@ -3159,13 +3178,156 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let count: u32 = inventory.slots.iter().flatten().filter(|s| Some(s.item) == planks).map(|s| s.count as u32).sum();
             if count >= 4 {
                 gate.check("craft", Ok(format!("the crafting grid turned a log into {count} planks")));
-                gate.next(Step::Overlay, now);
+                gate.next(Step::Music, now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft", Err(format!("after crafting a log there are {count} planks and the grid holds {:?}", inventory.grid())));
-                gate.next(Step::Overlay, now);
+                gate.next(Step::Music, now);
             }
         }
         _ => {}
+    }
+}
+
+/// The menu's audio page shows a switch for each category of music there is to hear (its
+/// own tracks, or Minecraft's with Minecraft assets on), and clicking the first turns its
+/// category off in the settings, saying so beside it, and clicking again turns it back on.
+/// Then M turns the music off and on, and the track that comes soon after is named at the
+/// top right with its category, and the line fades away (the gate's music is picked and
+/// started though silent, `music::Rehearse`).
+fn music(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let ui = world.resource::<UiState>();
+    let (menu, locked) = (ui.menu_open, ui.cursor_locked);
+    let words = |world: &World, on: bool| world.resource::<Locale>().get(if on { "settings.value.on" } else { "settings.value.off" }).to_owned();
+    let off = |world: &World| world.resource::<crate::settings::Settings>().music_off.clone();
+    match gate.phase {
+        0 => {
+            key(world, KeyCode::Escape, true);
+            gate.advance(now);
+        }
+        1 => {
+            key(world, KeyCode::Escape, false);
+            if menu && in_phase > 0.2 {
+                match crate::settings::tab_button(world, "settings.tab.audio") {
+                    Some(tab) => {
+                        world.resource_mut::<UiClicks>().next = Some((tab, MouseButton::Left));
+                        gate.advance(now);
+                    }
+                    None => {
+                        gate.check("music: switches", Err("the menu has no audio tab".into()));
+                        gate.next(Step::Overlay, now);
+                    }
+                }
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: switches", Err("Esc did not open the menu".into()));
+                gate.next(Step::Overlay, now);
+            }
+        }
+        2 => {
+            if in_phase < 0.3 {
+                return;
+            }
+            let minecraft = world.resource::<crate::settings::Settings>().minecraft_assets;
+            let wanted: Vec<String> = world
+                .get_resource::<crate::music::MusicCategories>()
+                .map(|c| c.0.iter().filter(|c| minecraft || !c.borrowed_only()).map(|c| c.name.clone()).collect())
+                .unwrap_or_default();
+            let shown = crate::settings::music_switches_shown(world);
+            let names: Vec<String> = shown.iter().map(|(name, _, _)| name.clone()).collect();
+            let all_on = shown.iter().all(|(_, _, said)| *said == words(world, true)) && off(world).is_empty();
+            let result = if wanted.is_empty() {
+                Err("the content lists no categories of music".into())
+            } else if names != wanted {
+                Err(format!("the audio page shows switches for {names:?}, not {wanted:?}"))
+            } else if !all_on {
+                Err(format!("not every category reads on: {:?}, off in the settings {:?}", shown.iter().map(|s| &s.2).collect::<Vec<_>>(), off(world)))
+            } else {
+                Ok(format!("a switch for each of {}, all on", names.join(", ")))
+            };
+            let ok = result.is_ok();
+            gate.check("music: switches", result);
+            match shown.first().filter(|_| ok) {
+                Some((_, switch, _)) => {
+                    world.resource_mut::<UiClicks>().next = Some((*switch, MouseButton::Left));
+                    gate.advance(now);
+                }
+                None => close(world, gate, now),
+            }
+        }
+        3 => {
+            let Some((name, switch, said)) = crate::settings::music_switches_shown(world).first().cloned() else { return };
+            if off(world) == [name.clone()] && said == words(world, false) {
+                gate.check("music: switch off", Ok(format!("clicked, {name} is off and reads {said}")));
+                world.resource_mut::<UiClicks>().next = Some((switch, MouseButton::Left));
+                gate.advance(now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: switch off", Err(format!("after a click on {name}'s switch it reads {said:?} and the settings have {:?} off", off(world))));
+                world.resource_mut::<crate::settings::Settings>().music_off.clear();
+                close(world, gate, now);
+            }
+        }
+        4 => {
+            let Some((name, _, said)) = crate::settings::music_switches_shown(world).first().cloned() else { return };
+            if off(world).is_empty() && said == words(world, true) {
+                gate.check("music: switch on", Ok(format!("clicked again, {name} is back on")));
+                close(world, gate, now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: switch on", Err(format!("after a second click {name} reads {said:?} and the settings have {:?} off", off(world))));
+                world.resource_mut::<crate::settings::Settings>().music_off.clear();
+                close(world, gate, now);
+            }
+        }
+        5 => {
+            key(world, KeyCode::Escape, false);
+            if !menu && locked {
+                // M turns the music off and on again, and a track comes soon after.
+                key(world, KeyCode::KeyM, true);
+                gate.advance(now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: close", Err("Esc did not close the menu".into()));
+                gate.next(Step::Overlay, now);
+            }
+        }
+        6 | 7 => {
+            key(world, KeyCode::KeyM, gate.phase == 7);
+            gate.advance(now);
+        }
+        8 => {
+            key(world, KeyCode::KeyM, false);
+            if let Some(line) = crate::music::now_playing_shown(world) {
+                let locale = world.resource::<Locale>();
+                let named = world
+                    .get_resource::<crate::music::MusicCategories>()
+                    .and_then(|c| c.0.iter().map(|c| locale.get(&format!("music.{}", c.name)).to_owned()).find(|name| line.contains(&format!("({name})"))));
+                let result = match named {
+                    Some(category) if line.starts_with("Now playing: ") && line.len() > "Now playing: ".len() + category.len() + 3 => {
+                        Ok(format!("M off and on started a track, shown at the top right as {line:?} ({category})"))
+                    }
+                    _ => Err(format!("the line reads {line:?}, not a title and a category's name")),
+                };
+                gate.check("music: now playing", result);
+                gate.advance(now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: now playing", Err("no track was named within 10 s of turning the music back on with M".into()));
+                gate.next(Step::Overlay, now);
+            }
+        }
+        _ => {
+            // The line fades out by itself.
+            if crate::music::now_playing_shown(world).is_none() {
+                gate.check("music: now playing fades", Ok(format!("gone {in_phase:.1} s after it was checked")));
+                gate.next(Step::Overlay, now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: now playing fades", Err("still shown 10 s after it was checked".into()));
+                gate.next(Step::Overlay, now);
+            }
+        }
+    }
+
+    /// Esc, then on to the phase waiting for the menu to close.
+    fn close(world: &mut World, gate: &mut Gate, now: f32) {
+        key(world, KeyCode::Escape, true);
+        gate.phase = 4;
+        gate.advance(now);
     }
 }
 
@@ -3723,7 +3885,123 @@ fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let again = showing(world).filter(|name| *name == "inventory");
             gate.check("tips: once", if again.is_none() { Ok("seen once, it does not come back".into()) } else { Err("the inventory tip came back".into()) });
             world.resource_mut::<UiState>().inventory_open = false;
-            gate.next(Step::Guides, now);
+            gate.next(Step::Look, now);
+        }
+        _ => {}
+    }
+}
+
+/// Looking at a plank block beside the player names it ("Oak Planks"); looking at a lumen
+/// snail seven blocks off, past any blow's reach, names it with its level; a stone wall put
+/// between hides it again, and the block named is the wall's. Shots `look-block` and
+/// `look-creature` show the label at the top left.
+fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    let planks = pad + IVec3::new(1, 0, 2);
+    let species = world.resource::<Launch>().content.creatures.find(CREATURE);
+    let Some(species) = species else {
+        gate.check("look", Err(format!("no `{CREATURE}` in the content")));
+        gate.next(Step::Guides, now);
+        return;
+    };
+    let snail = |world: &World| world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
+    let named = |world: &World| world.resource::<crate::hud::target::Readout>().clone();
+    match gate.phase {
+        // On the creatures' pad (clear stone, air above): a plank block close by, once what the
+        // creatures step left there (a grazer or two in the walls) is gone, since a wanderer on
+        // the look ray would take the name.
+        0 => {
+            let net = world.resource::<Net>();
+            for species in ["mouflon", "rabbit", "lumen_snail", "shambler"] {
+                net.command(&format!("creatures remove {species}"));
+            }
+            net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+            net.command(&format!("setblock {} {} {} oak_planks", planks.x, planks.y, planks.z));
+            net.command("time set noon");
+            gate.advance(now);
+        }
+        1 if in_phase > 0.5 => {
+            // Nothing alive on the pad before the first look (given a few server seconds to go).
+            let middle = pad.as_vec3();
+            let crowded = world.resource::<crate::creatures::Creatures>().views().any(|v| v.position.distance(middle) < 12.0);
+            if crowded && gate.server_in_phase() < 6.0 {
+                return;
+            }
+            let client = world.resource::<ClientWorld>();
+            let Some(block) = client.block(planks).filter(|b| !b.is_air()) else {
+                if gate.server_in_phase() > 10.0 {
+                    gate.check("look: block", Err("the plank block never reached the client".into()));
+                    gate.next(Step::Guides, now);
+                }
+                return;
+            };
+            let wanted = world.resource::<crate::lang::Locale>().block(client.registry.def(block));
+            aim(world, planks);
+            let readout = named(world);
+            if readout.name != wanted && in_phase < 5.0 {
+                return;
+            }
+            if gate.shot(world, "look-block").is_some() {
+                let result = if readout.name == wanted && readout.creature.is_none() {
+                    Ok(format!("the block looked at is named {:?} at the top left", readout.name))
+                } else {
+                    Err(format!("looking at the planks the label read {:?}, not {wanted:?}", readout.name))
+                };
+                gate.check("look: block", result);
+                world.resource::<Net>().command(&format!("summon {CREATURE} 1 {} {} {}", pad.x, pad.y, pad.z - 3));
+                gate.advance(now);
+            }
+        }
+        2 => {
+            let Some(view) = snail(world) else {
+                if gate.server_in_phase() > 10.0 {
+                    gate.check("look: creature", Err("the snail never reached the client".into()));
+                    gate.next(Step::Guides, now);
+                }
+                return;
+            };
+            aim_at(world, view.position + Vec3::Y * 0.2);
+            let readout = named(world);
+            let distance = world.resource::<LocalPlayer>().eye().distance(view.position);
+            let reach = world.resource::<Launch>().content.combat.feel.touch;
+            if readout.creature != Some(view.id) && in_phase < 5.0 {
+                return;
+            }
+            if gate.shot(world, "look-creature").is_some() {
+                let wanted = {
+                    let (launch, locale) = (world.resource::<Launch>(), world.resource::<crate::lang::Locale>());
+                    locale.creature(&launch.content.creatures.get(species).def)
+                };
+                let result = if readout.creature == Some(view.id) && readout.name == wanted && !readout.level.is_empty() && distance > reach {
+                    Ok(format!("a snail {distance:.1} blocks off is named {:?}, {}", readout.name, readout.level))
+                } else {
+                    Err(format!("looking at a snail {distance:.1} blocks off (reach {reach}) the label read {:?} {:?} for creature {:?}", readout.name, readout.level, readout.creature))
+                };
+                gate.check("look: creature", result);
+                // A wall put between: two blocks wide, three high.
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {} {} {} {} {} stone", pad.x - 1, pad.y, pad.z, pad.x + 1, pad.y + 2, pad.z));
+                gate.advance(now);
+            }
+        }
+        3 if in_phase > 1.0 => {
+            let wall = pad + IVec3::new(0, 1, 0);
+            if world.resource::<ClientWorld>().block(wall).is_none_or(|b| b.is_air()) && gate.server_in_phase() < 10.0 {
+                return;
+            }
+            let Some(view) = snail(world) else { return };
+            aim_at(world, view.position + Vec3::Y * 0.2);
+            let readout = named(world);
+            let result = if readout.creature.is_none() {
+                Ok(format!("the snail behind a wall is not named; the wall is: {:?}", readout.name))
+            } else {
+                Err(format!("the snail behind a wall was named {:?}", readout.name))
+            };
+            if in_phase > 1.5 {
+                gate.check("look: wall hides", result);
+                world.resource::<Net>().command("creatures remove lumen_snail");
+                gate.next(Step::Guides, now);
+            }
         }
         _ => {}
     }
@@ -3918,6 +4196,12 @@ fn tracked(world: &World) -> (u32, u32) {
     player.quests.iter().find(|q| q.name == TRACKED).and_then(|q| q.tasks.first()?.first().copied()).unwrap_or((0, 1))
 }
 
+/// What the tracker says of a quest finished and not yet claimed, or finished and paying
+/// nothing.
+fn done_words(world: &World, quest: &voxmar_engine::quest::QuestDef) -> String {
+    world.resource::<Locale>().get(if quest.pays() { "quest.tracker.ready" } else { "quest.tracker.done" }).to_owned()
+}
+
 /// The words the tracker shows for the torch quest at `have` torches, or done.
 fn tracker_words(world: &World, have: u32) -> String {
     let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
@@ -3925,7 +4209,7 @@ fn tracker_words(world: &World, have: u32) -> String {
     let Some(goal) = quest.tasks.first().and_then(|t| t.first()) else { return String::new() };
     let need = if let voxmar_engine::quest::Goal::Craft(_, need) = goal { *need } else { 1 };
     if have >= need {
-        return locale.get("quest.tracker.done").to_owned();
+        return done_words(world, quest);
     }
     let met = locale.get("quest.mark.todo");
     format!("{met} {}", crate::hud::quests::goal_words(locale, &launch.content, quest, goal, (have, need)))
@@ -4125,7 +4409,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         11 => {
-            let done = world.resource::<Locale>().get("quest.tracker.done").to_owned();
+            let done = world.resource::<Launch>().content.quests.get(DONE_QUEST).map(|quest| done_words(world, quest)).unwrap_or_default();
             let lines = tracker_lines(world);
             if !lines.as_ref().is_some_and(|lines| lines.contains(&done)) {
                 if waited > 2.0 {
@@ -4136,7 +4420,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("quests: done", Ok(format!("{DONE_QUEST} pinned reads {done:?}")));
             gate.advance(now);
         }
-        _ => {
+        12 => {
             // It stays its while, counted from when it was pinned done, then goes.
             let stays = world.resource::<Launch>().content.quests.tracker().done_stays;
             let since = now - gate.quest_pinned;
@@ -4153,8 +4437,64 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if pinned || lines.is_some() { Err(format!("{since:.1} s after it was pinned done, still pinned: {pinned}; the tracker reads {lines:?}")) } else { Ok(format!("done, it stayed and dropped off by {since:.1} s ({stays} s asked), and the tracker went")) },
             );
             world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
+            gate.advance(now);
+        }
+        // The finished quest pays only when claimed in the book: it opens on the quest with
+        // its reward waiting (Twine and Thong, finished at the start), its Claim button is
+        // clicked, and the server's word comes back claimed with the experience given.
+        13 => {
+            let content = world.resource::<Launch>().content.clone();
+            let Some(reward) = content.quests.get(DONE_FIRST).and_then(|q| q.rewards.iter().find_map(|r| if let voxmar_engine::quest::Reward::Xp(skill, xp) = r { Some((skill.clone(), *xp)) } else { None })) else {
+                return quit(world, gate, "quests: claim", format!("{DONE_FIRST} has no experience to claim"));
+            };
+            if !crate::hud::quests::claimable(world.resource::<LocalPlayer>(), DONE_FIRST) {
+                return quit(world, gate, "quests: claim", format!("{DONE_FIRST} was finished, yet its reward is not waiting to be claimed"));
+            }
+            let skill = content.skills.id(&reward.0);
+            gate.count_before = skill.map_or(0, |skill| world.resource::<LocalPlayer>().skills.xp(skill));
+            *world.resource_mut::<QuestView>() = QuestView { picked: Some(DONE_FIRST.into()), ..default() };
+            world.resource_mut::<UiState>().quests_open = true;
+            gate.advance(now);
+        }
+        14 => {
+            let button = world.query_filtered::<(Entity, &InheritedVisibility), With<crate::hud::quests::ClaimButton>>().iter(world).find(|(_, v)| v.get()).map(|(entity, _)| entity);
+            let Some(button) = button else {
+                if in_phase > 2.0 {
+                    quit(world, gate, "quests: claim", format!("the book open on {DONE_FIRST} shows no Claim button"));
+                }
+                return;
+            };
+            // The book as it stands with a reward waiting: the web filling most of the
+            // window, the picked quest's page in the sidebar at the right with its Claim
+            // button and its rewards.
+            if in_phase < 0.5 || gate.shot(world, "quests-claim").is_none() {
+                return;
+            }
+            world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
+            gate.advance(now);
+        }
+        15 => {
+            let content = world.resource::<Launch>().content.clone();
+            let player = world.resource::<LocalPlayer>();
+            let claimed = player.quests.iter().any(|q| q.name == DONE_FIRST && q.done && q.claimed);
+            if !claimed {
+                if waited > QUEST_WAIT {
+                    let state = player.quests.iter().find(|q| q.name == DONE_FIRST).cloned();
+                    quit(world, gate, "quests: claim", format!("Claim clicked, {waited:.1} server s on the quest stands {state:?}"));
+                }
+                return;
+            }
+            let Some((skill, xp)) = content.quests.get(DONE_FIRST).and_then(|q| q.rewards.iter().find_map(|r| if let voxmar_engine::quest::Reward::Xp(skill, xp) = r { content.skills.id(skill).map(|id| (id, *xp)) } else { None })) else { return };
+            let gained = player.skills.xp(skill).saturating_sub(gate.count_before);
+            // The experience comes in the same message as the state, or just after it.
+            if gained < (xp * 10.0) as u32 && waited <= QUEST_WAIT {
+                return;
+            }
+            gate.check("quests: claim", if gained >= (xp * 10.0) as u32 { Ok(format!("Claim paid {DONE_FIRST}: the quest reads claimed and {} xp came", gained as f32 / 10.0)) } else { Err(format!("claimed, yet only {} of {xp} xp came", gained as f32 / 10.0)) });
+            world.resource_mut::<UiState>().quests_open = false;
             gate.next(Step::Catalogue, now);
         }
+        _ => gate.next(Step::Catalogue, now),
     }
 }
 
@@ -4544,7 +4884,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
                     gate.check("weather: pose", Err("the open test-ground teleport did not settle".into()));
-                    gate.next(Step::Sky, now);
+                    gate.next(Step::Depths, now);
                 }
                 return;
             }
@@ -4591,16 +4931,262 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         3 if shown.precipitation < 0.05 && shown.cover < 0.2 => {
             eased(gate);
-            gate.next(Step::Sky, now);
+            gate.next(Step::Depths, now);
         }
         3 if gate.server_in_phase() > 12.0 => {
             gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
             eased(gate);
-            gate.next(Step::Sky, now);
+            gate.next(Step::Depths, now);
         }
         _ => {}
     }
 }
+
+/// Dug down, in a cave or in a room, mist is gone; cracks are lit as the face under them is.
+///
+/// A fog comes over the open test ground, and the renderer's air has ground fog and the
+/// weather's fog in it. The player then goes down a shaft eleven deep, open to the sky (the
+/// sky light there is full all the way down, so only looking for the sky tells it from open
+/// land), and the air has none of either. Then in a sealed room deep in stone, with no light
+/// at all, a wall is mined just until its cracks show: they are lit by nothing and catch no
+/// light (their light edges are gone); a glowstone set beside the wall and the same block
+/// mined again, they are lit by it and glint. Each stint lets go of the button as soon as
+/// the cracks show, and after [`CRACK_HOLD`] seconds without them: a button held on a block
+/// that never cracks floods the lagging server with proposals. Both shots are kept for a look.
+fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::render::atmosphere::Atmosphere;
+    use crate::render::cracks::Crack;
+    // The rig stands apart from everything else: stone nineteen blocks across, thirteen
+    // wide and seventeen deep, level with the test ground, with a shaft down its middle and
+    // a sealed room below whose walls are four blocks thick or more, so no sky light reaches
+    // in beside it and mining one opens nothing.
+    let middle = gate.feet + IVec3::new(-28, 0, 0);
+    let top = gate.feet.y - 1;
+    let shaft_foot = IVec3::new(middle.x, top - 11, middle.z);
+    let room_floor = IVec3::new(middle.x - 3, top - 15, middle.z);
+    let wall = IVec3::new(middle.x - 5, top - 14, middle.z);
+    // The air in front of the face being mined, and the glowstone's place beside the wall.
+    let face = wall + IVec3::X;
+    let glow = IVec3::new(middle.x - 5, top - 13, middle.z);
+    let shown = world.resource::<crate::weather::ClientWeather>().current.clone();
+    let air = *world.resource::<Atmosphere>();
+    let mist = |air: &Atmosphere| format!("ground fog {:.3}, the weather's fog {:.5}", air.mist.x, air.fog.w);
+    let stand = |world: &World, at: IVec3| {
+        let player = world.resource::<LocalPlayer>();
+        player.on_ground && player.position.distance(at.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) < 0.3
+    };
+    // The light on the face being mined as the cracks take it, and how much of their
+    // light edges show in it.
+    let lit = |world: &World| {
+        let crack = world.resource::<Crack>();
+        let scene = world.resource::<crate::render::SceneLight>().at(crack.light[0], crack.light[1]);
+        let pack = world.resource::<crate::render::pack::ActivePack>();
+        (crack.light, pack.crack_highlight(scene.red * 0.2126 + scene.green * 0.7152 + scene.blue * 0.0722))
+    };
+    let face_light = |world: &World| crate::breaking::light_at(world.resource::<ClientWorld>(), face);
+    let bail = |world: &mut World, gate: &mut Gate, name: &str, why: String| {
+        gate.check(name, Err(why));
+        mouse(world, MouseButton::Left, false);
+        world.resource::<Net>().command("weather clear 600");
+        // Back up to the test ground, and the fog lifting.
+        gate.phase = 9;
+        gate.phase_since = now;
+        gate.phase_server = gate.server_now;
+        gate.settled = 0;
+    };
+    match gate.phase {
+        // Build the rig and bring a fog over the test ground.
+        0 => {
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
+            if !open_scene_pose(world, gate) {
+                if gate.server_in_phase() > 15.0 {
+                    gate.check("depths: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.next(Step::Sky, now);
+                }
+                return;
+            }
+            look(world, 0.0, 5.0);
+            let net = world.resource::<Net>();
+            let (x, z) = (middle.x, middle.z);
+            for line in [
+                format!("fill {} {} {} {} {} {} stone", x - 9, top - 16, z - 6, x + 9, top, z + 6),
+                format!("fill {x} {} {z} {x} {top} {z} air", top - 11),
+                format!("fill {} {} {} {} {} {} air", x - 4, top - 15, z - 1, x + 4, top - 13, z + 1),
+                "time set noon".to_owned(),
+                "weather fog 300".into(),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        // The fog is over the test ground and the rig is there: the air has mist in it.
+        1 => {
+            let built = world.resource::<ClientWorld>().block(shaft_foot).is_some_and(|b| b.is_air())
+                && world.resource::<ClientWorld>().block(shaft_foot - IVec3::Y).is_some_and(|b| !b.is_air())
+                && world.resource::<ClientWorld>().block(wall).is_some_and(|b| !b.is_air())
+                && world.resource::<ClientWorld>().block(room_floor - IVec3::Y).is_some_and(|b| !b.is_air());
+            let foggy = shown.ground_fog > 0.3 || shown.fog > 0.3;
+            if !(built && foggy) {
+                if gate.server_in_phase() > 20.0 {
+                    bail(world, gate, "depths: fog", format!("it did not come, or the rig did not build: {} (built {built})", shown.summary()));
+                }
+                return;
+            }
+            // Let the air settle on it, then the shot.
+            if in_phase < 1.0 {
+                return;
+            }
+            let Some(_) = gate.shot(world, "mist-open") else { return };
+            let result = if air.mist.x > 0.0 || air.fog.w > 0.0 {
+                Ok(mist(&air))
+            } else {
+                Err(format!("in the open under {} the air has {}", shown.summary(), mist(&air)))
+            };
+            gate.check("depths: mist in the open", result);
+            world.resource::<Net>().command(&format!("tp {} {} {}", shaft_foot.x as f32 + 0.5, shaft_foot.y, shaft_foot.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // At the foot of the shaft: its light is full, and there is no mist.
+        2 => {
+            if !stand(world, shaft_foot) {
+                if gate.server_in_phase() > 15.0 {
+                    bail(world, gate, "depths: shaft", "the player never stood at the foot of the shaft".into());
+                }
+                return;
+            }
+            look(world, 0.0, 80.0);
+            let gone = air.mist.x == 0.0 && air.fog.w == 0.0;
+            if !gone {
+                // The eye eases onto the new view over a second or so.
+                if in_phase > 8.0 {
+                    let open = world.resource::<crate::render::exposure::SkyOpen>().shown;
+                    bail(world, gate, "depths: no mist in a shaft", format!("eleven deep and open to the sky, the air has {} ({open:.2} of the sky in view)", mist(&air)));
+                }
+                return;
+            }
+            let Some(_) = gate.shot(world, "mist-shaft") else { return };
+            let open = world.resource::<crate::render::exposure::SkyOpen>().shown;
+            gate.check("depths: no mist in a shaft", Ok(format!("{} ({open:.2} of the sky in view)", mist(&air))));
+            let room = format!("tp {} {} {}", room_floor.x as f32 + 0.5, room_floor.y, room_floor.z as f32 + 0.5);
+            world.resource::<Net>().command(&room);
+            gate.advance(now);
+        }
+        // In the sealed room, before the wall is touched: the face is dark.
+        3 => {
+            let dark = face_light(world) == [0, 0];
+            if !(stand(world, room_floor) && dark) {
+                if gate.server_in_phase() > 15.0 {
+                    let [sky, block] = face_light(world);
+                    bail(world, gate, "depths: room", format!("the player never stood in the sealed room, or its wall's face was lit (sky {sky}, block {block})"));
+                }
+                return;
+            }
+            aim_at(world, wall.as_vec3() + 0.5);
+            mouse(world, MouseButton::Left, true);
+            gate.advance(now);
+        }
+        // Mining the wall in the dark: the cracks show, lit by nothing. The shot is of this
+        // frame, so the button is let go at once.
+        4 => {
+            aim_at(world, wall.as_vec3() + 0.5);
+            if world.resource::<Crack>().at.is_none() {
+                if in_phase > CRACK_HOLD {
+                    bail(world, gate, "depths: crack in the dark", format!("mining the wall showed no crack in {CRACK_HOLD} s"));
+                } else {
+                    mouse(world, MouseButton::Left, true);
+                }
+                return;
+            }
+            let (light, highlight) = lit(world);
+            gate.shot(world, "crack-dark");
+            mouse(world, MouseButton::Left, false);
+            let result = if highlight == 0.0 && light[1] == 0 {
+                Ok(format!("sky light {}, block light {}: the cracks darken and catch no light", light[0], light[1]))
+            } else {
+                Err(format!("in a sealed room with no light the cracks are lit: sky {}, block {}, light edges {highlight:.2}", light[0], light[1]))
+            };
+            gate.check("depths: crack in the dark", result);
+            // The glowstone, and the wall as it was in case the stint broke it.
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} stone", wall.x, wall.y, wall.z));
+            net.command(&format!("setblock {} {} {} glowstone", glow.x, glow.y, glow.z));
+            gate.advance(now);
+        }
+        // The glowstone beside the wall lights its face; the shot of the dark cracks is in.
+        5 => {
+            let glowstone = world.resource::<ClientWorld>().registry.id("base:glowstone");
+            let ready = glowstone.is_some()
+                && world.resource::<ClientWorld>().block(glow) == glowstone
+                && world.resource::<ClientWorld>().block(wall).is_some_and(|b| !b.is_air())
+                && world.resource::<Crack>().at.is_none()
+                && face_light(world)[1] >= 10;
+            if !(ready && gate.shot(world, "crack-dark").is_some()) {
+                if gate.server_in_phase() > 15.0 {
+                    let [sky, block] = face_light(world);
+                    bail(world, gate, "depths: crack by a glowstone", format!("the glowstone never lit the wall's face (sky {sky}, block {block})"));
+                }
+                return;
+            }
+            aim_at(world, wall.as_vec3() + 0.5);
+            mouse(world, MouseButton::Left, true);
+            gate.advance(now);
+        }
+        // The same block mined again: the cracks are lit by the glowstone.
+        6 => {
+            aim_at(world, wall.as_vec3() + 0.5);
+            if world.resource::<Crack>().at.is_none() {
+                if in_phase > CRACK_HOLD {
+                    bail(world, gate, "depths: crack by a glowstone", format!("mining the wall showed no crack in {CRACK_HOLD} s"));
+                } else {
+                    mouse(world, MouseButton::Left, true);
+                }
+                return;
+            }
+            let (light, highlight) = lit(world);
+            gate.shot(world, "crack-lit");
+            mouse(world, MouseButton::Left, false);
+            let result = if highlight >= 0.99 && light[1] >= 10 {
+                Ok(format!("sky light {}, block light {}: the cracks catch the light (edges {highlight:.2})", light[0], light[1]))
+            } else {
+                Err(format!("a glowstone beside the wall does not light the cracks: sky {}, block {}, light edges {highlight:.2}", light[0], light[1]))
+            };
+            gate.check("depths: crack by a glowstone", result);
+            world.resource::<Net>().command("weather clear 600");
+            gate.advance(now);
+        }
+        // The shot of the lit cracks is in.
+        7 => {
+            if gate.shot(world, "crack-lit").is_some() || gate.server_in_phase() > 15.0 {
+                gate.advance(now);
+            }
+        }
+        // Back to the test ground.
+        8 | 9 => {
+            if !open_scene_pose(world, gate) {
+                if gate.server_in_phase() > 15.0 {
+                    gate.check("depths: back", Err("the open test-ground teleport did not settle".into()));
+                    gate.next(Step::Sky, now);
+                }
+                return;
+            }
+            gate.phase = 9;
+            gate.advance(now);
+        }
+        // The fog lifts before the sky is judged.
+        _ => {
+            if shown.fog < 0.02 && shown.ground_fog < 0.02 {
+                gate.next(Step::Sky, now);
+            } else if gate.server_in_phase() > 20.0 {
+                gate.check("depths: clear", Err(format!("the fog did not lift: {}", shown.summary())));
+                gate.next(Step::Sky, now);
+            }
+        }
+    }
+}
+
+/// Seconds the depths step holds the button for a crack to show before it lets go.
+const CRACK_HOLD: f32 = 3.0;
 
 /// Whether every change of weather so far (the commands' storm, snow and clearing among
 /// them) eased in without a jump.
@@ -4704,11 +5290,128 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the shaped blocks barely show: the view changed by {change:.1} levels")),
             };
             gate.check("shapes", result);
+            gate.next(Step::Held, now);
+        }
+        _ => {}
+    }
+}
+
+/// The lower right of the view, where the hand is (fractions of the frame: x from, x to, y
+/// from, y to; y down).
+const HAND_AREA: [f32; 4] = [0.5, 1.0, 0.45, 1.0];
+/// The rest of the view, which holding something must leave as it was: sky above the hand,
+/// clear of the quest cards, the chat and any leaves, which sway in the wind between shots.
+const OUT_OF_HAND: [f32; 4] = [0.5, 0.8, 0.0, 0.35];
+
+/// The item in the hand, seen in first person: looking up at the open sky, an empty hand,
+/// an iron sword and a stone block each give a shot; the sword and the block each change
+/// the lower right and leave the upper left alone, and differ from each other. Then in a
+/// stone box with no light, the sword in hand is much darker (the hand takes the light where
+/// the player stands).
+fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    const SWORD: &str = "base:iron_sword";
+    const BLOCK: &str = "base:stone";
+    let feet = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let hold = |world: &mut World, name: &str| select(world, name);
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command("time set noon");
+            // The full gate's earlier steps fill the hotbar: start from an empty pack, as the
+            // steps that give their own items do.
+            net.command("clear");
+            net.command(&format!("give {} 1", SWORD.trim_start_matches("base:")));
+            net.command(&format!("give {} 1", BLOCK.trim_start_matches("base:")));
+            gate.advance(now);
+        }
+        1 => {
+            look(world, 0.0, 40.0);
+            if holding(world, SWORD).1.is_some() && holding(world, BLOCK).1.is_some() && empty_hand(world) {
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("held", Err("the sword, the stone or a free hotbar slot never came".into()));
+                gate.next(Step::NaturalSpawns, now);
+            }
+        }
+        2 if in_phase > 0.5 => {
+            if gate.shot(world, "held-empty").is_some() {
+                hold(world, SWORD);
+                gate.advance(now);
+            }
+        }
+        // The hand comes up from below in a quarter of a second, and its light settles.
+        3 if in_phase > 0.8 => {
+            if gate.shot(world, "held-sword").is_some() {
+                hold(world, BLOCK);
+                gate.advance(now);
+            }
+        }
+        4 if in_phase > 0.8 => {
+            if gate.shot(world, "held-block").is_some() {
+                let (x, y, z) = (feet.x, feet.y, feet.z);
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {y} {} {} {} {} stone", x - 3, z - 3, x + 3, y + 5, z + 3));
+                net.command(&format!("fill {} {} {} {} {} {} air", x - 2, y, z - 2, x + 2, y + 4, z + 2));
+                hold(world, SWORD);
+                gate.advance(now);
+            }
+        }
+        // Sealed in: a roof over the eye and nothing alight.
+        5 => {
+            let roof = feet + IVec3::new(0, 5, 0);
+            let sealed = world.resource::<ClientWorld>().block(roof).is_some_and(|b| !b.is_air());
+            if (sealed && in_phase > SETTLE) || gate.server_in_phase() > 10.0 {
+                gate.advance(now);
+            }
+        }
+        6 if in_phase > 1.0 => {
+            if gate.shot(world, "held-sword-dark").is_some() {
+                empty_hand(world);
+                gate.advance(now);
+            }
+        }
+        7 if in_phase > 0.8 => {
+            let Some(empty_dark) = gate.shot(world, "held-empty-dark") else { return };
+            let (x, y, z) = (feet.x, feet.y, feet.z);
+            world.resource::<Net>().command(&format!("fill {} {y} {} {} {} {} air", x - 3, z - 3, x + 3, y + 5, z + 3));
+            let shots: Vec<Option<Image>> = ["held-empty", "held-sword", "held-block", "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
+            let [Some(empty), Some(sword), Some(block), Some(sword_dark)] = shots.as_slice() else {
+                gate.check("held", Err("a shot of the hand was never taken".into()));
+                gate.next(Step::NaturalSpawns, now);
+                return;
+            };
+            let in_hand = |a: &Image, b: &Image| change_in(a, b, HAND_AREA);
+            let (sword_seen, block_seen) = (in_hand(empty, sword), in_hand(empty, block));
+            let apart = in_hand(sword, block);
+            let (left_sword, left_block) = (change_in(empty, sword, OUT_OF_HAND), change_in(empty, block, OUT_OF_HAND));
+            let dark_seen = in_hand(&empty_dark, sword_dark);
+            let result = if sword_seen < HELD_SEEN {
+                Err(format!("the sword barely shows in the lower right: it changed the view there by {sword_seen:.2} levels"))
+            } else if block_seen < HELD_SEEN {
+                Err(format!("the block barely shows in the lower right: it changed the view there by {block_seen:.2} levels"))
+            } else if apart < HELD_SEEN {
+                Err(format!("the sword and the block look alike in hand: they differ by {apart:.2} levels"))
+            } else if left_sword > HELD_ELSEWHERE || left_block > HELD_ELSEWHERE {
+                Err(format!("holding something changed the rest of the view: by {left_sword:.2} (sword) and {left_block:.2} (block) levels"))
+            } else if dark_seen > sword_seen * 0.5 {
+                Err(format!("the sword is as bright in a sealed dark box ({dark_seen:.2} levels from the empty hand) as under the sky ({sword_seen:.2})"))
+            } else {
+                Ok(format!(
+                    "sword {sword_seen:.1} and block {block_seen:.1} levels in the lower right (differing by {apart:.1}), the rest unchanged ({left_sword:.2}, {left_block:.2}); in the dark box the sword shows {dark_seen:.1}"
+                ))
+            };
+            gate.check("held", result);
             gate.next(Step::NaturalSpawns, now);
         }
         _ => {}
     }
 }
+
+/// Levels the lower right must change by for the item in hand to count as drawn, and the
+/// most the rest of the view may.
+const HELD_SEEN: f32 = 1.0;
+const HELD_ELSEWHERE: f32 = 0.5;
 
 /// Births through ordinary spawning, driven through admin console inputs. The clear
 /// pad makes view-cone rejection observable from replicated birth poses; positive dark
@@ -5008,9 +5711,12 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     // Watched over several frames, not one: three samples of every joint. The
                     // tip over lasts half its death's 0.9 s, so three frames need frames under
                     // 150 ms: a machine drawing slower saw fewer, which is known, not a fault,
-                    // as long as it saw the body fall at all.
+                    // as long as it saw the body fall at all. The frames that count are those
+                    // of the tip itself (`Fall::slowest`): the last frames before this check
+                    // come after the corpse watch, seconds later, and a loaded machine's slow
+                    // frames during the fall once failed it with "frames up to 15 ms".
                     let joints = fall.joints.max(1);
-                    let slowest = gate.frame_ms.iter().rev().take(30).copied().fold(0.0, f32::max);
+                    let slowest = fall.slowest * 1000.0;
                     let few = fall.samples < 3 * joints;
                     let result = if fall.samples < joints || (few && slowest < FALL_FRAME_MS) {
                         Err(format!("its fall was hardly seen: {} joint samples for {} joints (frames up to {slowest:.0} ms)", fall.samples, fall.joints))
@@ -5882,7 +6588,7 @@ const MARKS_WAIT: f32 = 0.6;
 const MARKS_TELLS: u32 = 3;
 
 const FALLEN_SECONDS: f32 = 0.2;
-const FALLEN_WAIT: f32 = 2.0;
+const FALLEN_WAIT: f32 = 6.0;
 
 /// Hold the actual killed target in view, with native movement/attack inputs released.
 /// Only its currently visible mark ends the watch; an absent/hidden mark times out.
@@ -7591,6 +8297,26 @@ fn change(a: &Image, b: &Image, inset: f32) -> f32 {
     sum as f32 / n.max(1) as f32
 }
 
+/// Mean change between two shots of the same size, in levels of 255, within `area` (x from,
+/// x to, y from, y to, as fractions of the frame, y down).
+fn change_in(a: &Image, b: &Image, area: [f32; 4]) -> f32 {
+    let (Ok((w, h, da)), Ok((wb, hb, db))) = (pixels(a), pixels(b)) else { return 0.0 };
+    if (w, h) != (wb, hb) {
+        return 0.0;
+    }
+    let [x0, x1, y0, y1] = area;
+    let (x0, x1, y0, y1) = ((w as f32 * x0) as usize, (w as f32 * x1) as usize, (h as f32 * y0) as usize, (h as f32 * y1) as usize);
+    let (mut sum, mut n) = (0u64, 0u64);
+    for y in y0..y1.min(h) {
+        for x in x0..x1.min(w) {
+            let i = (y * w + x) * 4;
+            sum += (0..3).map(|c| da[i + c].abs_diff(db[i + c]) as u64).sum::<u64>();
+            n += 3;
+        }
+    }
+    sum as f32 / n.max(1) as f32
+}
+
 /// Turns the player to look at the middle of the top of `block`, as moving the mouse
 /// would.
 fn aim(world: &mut World, block: IVec3) {
@@ -7679,6 +8405,36 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A shot of grey pixels, `grey(x, y)` each.
+    fn grey_shot(w: u32, h: u32, grey: impl Fn(u32, u32) -> u8) -> Image {
+        let mut data = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                data.extend([grey(x, y), grey(x, y), grey(x, y), 255]);
+            }
+        }
+        Image::new(
+            bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            bevy::render::render_resource::TextureDimension::D2,
+            data,
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            default(),
+        )
+    }
+
+    #[test]
+    fn the_hand_check_sees_only_the_lower_right() {
+        let empty = grey_shot(100, 100, |_, _| 100);
+        // An item in the hand's corner: 40 levels brighter over 30 by 30 pixels there.
+        let held = grey_shot(100, 100, |x, y| if x >= 70 && y >= 70 { 140 } else { 100 });
+        let seen = change_in(&empty, &held, HAND_AREA);
+        assert!((seen - 40.0 * 900.0 / 2750.0).abs() < 1e-3, "{seen}");
+        assert!(seen >= HELD_SEEN, "{seen}");
+        assert_eq!(change_in(&empty, &held, OUT_OF_HAND), 0.0);
+        // A shot of another size is no comparison.
+        assert_eq!(change_in(&empty, &grey_shot(50, 50, |_, _| 0), HAND_AREA), 0.0);
+    }
 
     #[test]
     fn an_already_received_blow_never_queues_a_late_native_defence_edge() {

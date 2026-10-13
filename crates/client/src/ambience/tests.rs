@@ -366,7 +366,7 @@ fn leaving_a_world_forgets_the_surroundings() {
     use bevy::ecs::system::RunSystemOnce;
     use bevy::prelude::World;
     let mut world = World::new();
-    world.insert_resource(super::Surroundings { flowers: 0.6, depth: 40.0, sky: 0.0 });
+    world.insert_resource(super::Surroundings { flowers: 0.6, depth: 40.0, sky: 0.0, biome: Vec::new() });
     world.run_system_once(super::leave).unwrap();
     let left = world.resource::<super::Surroundings>();
     let fresh = super::Surroundings::default();

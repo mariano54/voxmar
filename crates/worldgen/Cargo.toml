@@ -15,3 +15,5 @@ rustc-hash.workspace = true
 [dev-dependencies]
 # Thread CPU time for the generation benchmark, which stays meaningful on a busy machine.
 libc = "0.2"
+# The tests that sweep a world sample it on every core: the gate waits for the slowest one.
+rayon.workspace = true

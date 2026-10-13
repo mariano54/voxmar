@@ -47,7 +47,7 @@ pub struct InteractSystems;
 pub struct Target {
     pub hit: Option<RayHit>,
     /// The block under the crosshair whether or not a creature is in front of it.
-    block_hit: Option<RayHit>,
+    pub block_hit: Option<RayHit>,
     /// The creature under the crosshair, nearer than any block (see `creatures::aim`).
     pub creature: Option<u32>,
     /// The right press this frame did something (a table, a bed, cooking, eating), so it

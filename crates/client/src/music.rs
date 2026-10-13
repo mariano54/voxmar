@@ -1,15 +1,19 @@
 //! Background music, played now and then like Minecraft's: a track starts soon on the title
-//! screen, then long quiet gaps separate tracks. Starting a game fades the menu's music out,
+//! screen, then quiet gaps separate tracks, far longer in a world (`gap` in `music.ron`)
+//! than a track, so a world is mostly quiet. Starting a game fades the menu's music out,
 //! so a world opens in quiet and its first track comes after a gap like any other;
 //! returning to the menus fades the game's music out and the menu's starts again soon. `M`
-//! mutes or unmutes.
+//! mutes or unmutes. As a track starts, its name and category show small at the top right
+//! for a moment (`NowPlayingLine`).
 //!
-//! Voxmar's own tracks are the files in `assets/music` (generated offline by
-//! `tools/generate_music.py`). With the `minecraft_assets` setting on, the tracks of the
-//! player's own Prism Launcher instance join them (`prism`), each read from where it is
-//! as it is about to play. Each track suits some moments (the menus, the world above,
-//! deep underground), as `music.ron` says (`rules`); a pick is among those suiting the
-//! moment, passing over the ones played lately. A borrowed track is checked to decode
+//! Music comes in categories (`music.ron`), which the audio settings turn on and off.
+//! Voxmar's own tracks are the files in their category's folder of `assets/music`
+//! (`suno`, made with Suno; `lyria`, generated offline by `tools/generate_music.py`). With
+//! the `minecraft_assets` setting on, the tracks of the player's own Prism Launcher
+//! instance join them (`prism`), each read from where it is as it is about to play. Each
+//! track suits some moments (the menus, the world above, deep underground), as
+//! `music.ron` says (`rules`); a pick is among those suiting the moment and in a category
+//! that is on, passing over the ones played lately. A borrowed track is checked to decode
 //! before it plays; one that does not (empty, cut short, another codec) leaves the
 //! rotation.
 
@@ -24,13 +28,19 @@ use crossbeam_channel::{Receiver, TryRecvError, bounded};
 
 use crate::ambience::Surroundings;
 use crate::menu::{InMenu, Screen};
+use crate::creatures::Creatures;
+use crate::lang::Locale;
 use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
 use crate::settings::Settings;
-use crate::sfx::Audible;
+use crate::sfx::sound_on;
+use crate::world::ClientWorld;
+use voxmar_engine::block::BlockId;
+use voxmar_engine::creature::CreatureId;
+use crate::ui::widgets::{BODY, SHADOW, SOFT, UiFont, shadowed, space};
 
 use self::prism::{Found, Place, TrackFile};
-use self::rules::{Context, MusicRules};
+use self::rules::{Category, Context, MusicRules, NowPlaying};
 
 pub mod prism;
 pub mod rules;
@@ -40,15 +50,17 @@ pub struct MusicPlugin;
 impl Plugin for MusicPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_tracks)
+            .add_systems(PostStartup, spawn_now_playing)
             .add_systems(OnEnter(Screen::InGame), start_game)
             .add_systems(OnExit(Screen::InGame), leave_game)
             .add_systems(
                 Update,
                 (
                     toggle_music,
-                    (receive_found, schedule_music, start_loaded).chain().in_set(Audible),
+                    (receive_found, schedule_music, start_loaded).chain().run_if(sound_on.or_else(resource_exists::<Rehearse>)),
+                    show_now_playing,
                     fade_out,
-                    set_volume.run_if(resource_changed::<Settings>),
+                    (set_volume, stop_switched_off).run_if(resource_changed::<Settings>),
                 ),
             );
     }
@@ -61,6 +73,10 @@ struct Track {
     weight: f32,
     /// What the log calls it.
     name: String,
+    /// Its category's name (`music.ron`).
+    category: String,
+    /// Biome tags where it plays, one enough; none for anywhere.
+    biomes: Vec<String>,
 }
 
 enum Source {
@@ -72,7 +88,26 @@ impl Track {
     fn own(&self) -> bool {
         matches!(self.source, Source::Own(_))
     }
+
+    /// Whether its category is on in the settings.
+    fn on(&self, settings: &Settings) -> bool {
+        !settings.music_off.contains(&self.category)
+    }
+
+    /// Whether it plays in a biome with these tags.
+    fn plays_in(&self, biome: &[String]) -> bool {
+        self.biomes.is_empty() || self.biomes.iter().any(|tag| biome.contains(tag))
+    }
 }
+
+/// Music picked and started in a silent run as in a heard one, for the gate to see a track
+/// named as it starts.
+#[derive(Resource)]
+pub struct Rehearse;
+
+/// The categories of music, in the settings' order, for the audio settings' switches.
+#[derive(Resource, Clone, Default)]
+pub struct MusicCategories(pub Vec<Category>);
 
 #[derive(Resource)]
 struct Music {
@@ -87,12 +122,25 @@ struct Music {
     found: Option<Receiver<Found>>,
     /// A borrowed track being read, to play once it is.
     loading: Option<(usize, Receiver<Result<AudioSource, String>>)>,
+    /// The last track started and when, for the line naming it.
+    started: Option<(usize, Duration)>,
+    /// The track playing (or being read).
+    current: Option<usize>,
+    /// The species that are bosses, and the blocks of bosses' rooms.
+    bosses: Vec<CreatureId>,
+    room_blocks: Vec<BlockId>,
+    /// Whether a boss's room was near when last looked, and when that was.
+    room: (bool, Option<Duration>),
+    /// Whether the player was in a boss fight when last scheduled.
+    fighting: bool,
 }
 
 impl Music {
     /// Fades the playing track out, if there is one, and forgets one being read.
     fn fade_out(&mut self, commands: &mut Commands) {
         self.loading = None;
+        self.started = None;
+        self.current = None;
         if let Some(entity) = self.playing.take() {
             commands.entity(entity).try_insert(FadingOut(self.rules.fade_out));
         }
@@ -103,12 +151,47 @@ impl Music {
         let borrowed = if own { 1.0 } else { self.rules.borrowed_volume };
         self.rules.volume * borrowed * settings.music_volume as f32 / 100.0
     }
+
+    /// Seconds of quiet before the next track, in the menus or in a world.
+    fn gap(&self, time: &Time, in_menu: bool) -> Duration {
+        let gap = if in_menu { self.rules.menu_gap } else { self.rules.gap };
+        Duration::from_secs_f32(random_in(time, 0, gap))
+    }
+
+    /// Plays track `index` from `source`, and names it.
+    fn start(&mut self, commands: &mut Commands, time: &Time, settings: &Settings, index: usize, source: Handle<AudioSource>) {
+        let track = &self.tracks[index];
+        let level = self.level(settings, track.own());
+        let entity = commands.spawn((MusicTrack { own: track.own(), category: track.category.clone() }, AudioPlayer(source), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(level)))).id();
+        self.playing = Some(entity);
+        self.current = Some(index);
+        self.started = Some((index, time.elapsed()));
+        info!("music: {} ({})", track.name, track.category);
+    }
 }
 
-/// A track playing, and whether it is one of Voxmar's own.
+/// What a track is called: one of Voxmar's own as the languages say (`music.track.<its
+/// file name>`), a borrowed one by the last part of its location, `calm1` as Calm1.
+fn title(track: &Track, locale: &Locale) -> String {
+    let file = track.name.rsplit(['/', ':']).next().unwrap_or(&track.name);
+    let stem = file.rsplit_once('.').filter(|_| track.own()).map_or(file, |(stem, _)| stem);
+    let words: Vec<String> = stem
+        .split(['_', '-', ' '])
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut letters = word.chars();
+            letters.next().map_or_else(String::new, |first| first.to_uppercase().chain(letters).collect())
+        })
+        .collect();
+    let words = words.join(" ");
+    if track.own() { locale.get_or(&format!("music.track.{stem}"), &words).to_owned() } else { words }
+}
+
+/// A track playing, whether it is one of Voxmar's own, and its category.
 #[derive(Component)]
 struct MusicTrack {
     own: bool,
+    category: String,
 }
 
 /// A track on its way out, with the seconds it has left.
@@ -125,24 +208,36 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         None => MusicRules::default(),
     };
     let directory = voxmar_server::assets_dir().join("music");
-    let mut names: Vec<String> = std::fs::read_dir(&directory)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.ends_with(".mp3") || name.ends_with(".ogg"))
-        .collect();
-    names.sort();
-    info!("{} music tracks", names.len());
-    let tracks = names
-        .into_iter()
-        .map(|name| Track {
-            source: Source::Own(assets.load(format!("music/{name}"))),
-            contexts: rules.own_contexts.clone(),
-            weight: 1.0,
-            name,
+    let mut tracks = Vec::new();
+    let mut counts = Vec::new();
+    for category in &rules.categories {
+        let Some(folder) = &category.folder else { continue };
+        let names = own_tracks(&directory, folder);
+        counts.push(format!("{} {}", category.name, names.len()));
+        tracks.extend(names.into_iter().map(|name| {
+            let rule = category.track_rule(&name);
+            Track {
+                source: Source::Own(assets.load(format!("music/{name}"))),
+                contexts: rule.map_or_else(|| category.contexts.clone(), |rule| rule.contexts.clone()),
+                weight: rule.map_or(1.0, |rule| rule.weight),
+                biomes: rule.map(|rule| rule.biomes.clone()).unwrap_or_default(),
+                name,
+                category: category.name.clone(),
+            }
+        }));
+    }
+    let content = launch.as_ref().map(|launch| &launch.content);
+    let bosses = content.map(|content| content.creatures.iter().filter(|(_, c)| c.def.boss).map(|(id, _)| id).collect()).unwrap_or_default();
+    let room_blocks = content
+        .map(|content| {
+            rules.boss.rooms.iter().filter_map(|name| content.blocks.id(name).or_else(|| {
+                warn!("music: no block {name} for a boss's room");
+                None
+            })).collect()
         })
-        .collect();
+        .unwrap_or_default();
+    info!("{} music tracks ({})", tracks.len(), counts.join(", "));
+    commands.insert_resource(MusicCategories(rules.categories.clone()));
     // Looking through a modpack's jars takes a moment; Voxmar's own tracks play meanwhile.
     let found = settings.minecraft_assets.then(|| {
         let (tx, rx) = bounded(1);
@@ -153,7 +248,42 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         });
         rx
     });
-    commands.insert_resource(Music { rules, tracks, next_at: None, playing: None, recent: VecDeque::new(), enabled: true, found, loading: None });
+    commands.insert_resource(Music {
+        rules,
+        tracks,
+        next_at: None,
+        playing: None,
+        recent: VecDeque::new(),
+        enabled: true,
+        found,
+        loading: None,
+        started: None,
+        current: None,
+        bosses,
+        room_blocks,
+        room: (false, None),
+        fighting: false,
+    });
+}
+
+/// The tracks in `folder` of `directory` and the folders in it, by their path from
+/// `directory` (`elevenlabs/round5/forest/boss-01.mp3`), in order.
+fn own_tracks(directory: &std::path::Path, folder: &str) -> Vec<String> {
+    fn walk(directory: &std::path::Path, path: String, names: &mut Vec<String>) {
+        for entry in std::fs::read_dir(directory.join(&path)).into_iter().flatten().flatten() {
+            let Ok(name) = entry.file_name().into_string() else { continue };
+            let inner = format!("{path}/{name}");
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                walk(directory, inner, names);
+            } else if name.ends_with(".mp3") || name.ends_with(".ogg") {
+                names.push(inner);
+            }
+        }
+    }
+    let mut names = Vec::new();
+    walk(directory, folder.to_owned(), &mut names);
+    names.sort();
+    names
 }
 
 /// Adds the borrowed tracks once found, each where its rule says it plays.
@@ -183,7 +313,14 @@ fn receive_found(mut music: ResMut<Music>) {
             Some((_, count)) => *count += 1,
             None => categories.push((rule.category.clone(), 1)),
         }
-        added.push(Track { source: Source::Borrowed(track.file), contexts: rule.contexts.clone(), weight: rule.weight, name: track.location });
+        added.push(Track {
+            source: Source::Borrowed(track.file),
+            contexts: rule.contexts.clone(),
+            weight: rule.weight,
+            name: track.location,
+            category: rule.category.clone(),
+            biomes: rule.biomes.clone(),
+        });
     }
     let places: Vec<String> = found.counts.iter().map(|(place, count)| format!("{place} {count}")).collect();
     let categories: Vec<String> = categories.iter().map(|(category, count)| format!("{category} {count}")).collect();
@@ -226,14 +363,22 @@ fn random_in(time: &Time, salt: u64, (low, high): (f32, f32)) -> f32 {
     low + (high - low) * (mixed as f32 / (1u64 << 24) as f32)
 }
 
-/// The track to play next where the player is: Voxmar's own `own_share` of the time when
-/// borrowed tracks suit too, then by weight, passing over the ones played lately while
-/// others suit. `rolls` are two numbers in 0..1.
-fn pick(tracks: &[Track], context: Context, recent: &VecDeque<usize>, own_share: f32, rolls: [f32; 2]) -> Option<usize> {
-    let suits = |context: Context| -> Vec<usize> { (0..tracks.len()).filter(|&i| tracks[i].contexts.contains(&context)).collect() };
-    let mut suiting = suits(context);
+/// The track to play next where the player is, among those whose category is on: Voxmar's
+/// own `own_share` of the time when borrowed tracks suit too, then by weight, passing over
+/// the ones played lately while others suit. `rolls` are two numbers in 0..1.
+fn pick(tracks: &[Track], context: Context, biome: &[String], settings: &Settings, recent: &VecDeque<usize>, own_share: f32, rolls: [f32; 2]) -> Option<usize> {
+    let suits = |context: Context, anywhere: bool| -> Vec<usize> {
+        (0..tracks.len())
+            .filter(|&i| tracks[i].contexts.contains(&context) && tracks[i].on(settings) && (anywhere || tracks[i].plays_in(biome)))
+            .collect()
+    };
+    let mut suiting = suits(context, false);
     if suiting.is_empty() && context == Context::Underground {
-        suiting = suits(Context::Game);
+        suiting = suits(Context::Game, false);
+    }
+    // A boss fight where no boss track belongs takes one from anywhere.
+    if suiting.is_empty() && context == Context::Boss {
+        suiting = suits(Context::Boss, true);
     }
     let (own, borrowed): (Vec<usize>, Vec<usize>) = suiting.into_iter().partition(|&i| tracks[i].own());
     let mut group = match (own.is_empty(), borrowed.is_empty()) {
@@ -267,6 +412,37 @@ fn pick(tracks: &[Track], context: Context, recent: &VecDeque<usize>, own_share:
     group.last().copied()
 }
 
+/// Whether the player is in a boss fight: a boss alive near, or a block of a boss's room
+/// (looked for once a second).
+fn in_boss_fight(music: &mut Music, time: &Time, feet: Vec3, creatures: Option<&Creatures>, world: Option<&ClientWorld>) -> bool {
+    let boss = music.rules.boss.clone();
+    let near = creatures.is_some_and(|creatures| {
+        creatures.living().any(|(_, species, at)| music.bosses.contains(&species) && at.distance(feet) <= boss.within)
+    });
+    if near {
+        return true;
+    }
+    let (Some(world), false) = (world, music.room_blocks.is_empty()) else { return false };
+    let due = music.room.1.is_none_or(|at| time.elapsed() >= at + Duration::from_secs(1));
+    if due {
+        let centre = feet.floor().as_ivec3();
+        let reach = boss.room_reach.max(0);
+        let mut found = false;
+        'look: for dy in -reach..=reach {
+            for dz in -reach..=reach {
+                for dx in -reach..=reach {
+                    if world.block(centre + IVec3::new(dx, dy, dz)).is_some_and(|block| music.room_blocks.contains(&block)) {
+                        found = true;
+                        break 'look;
+                    }
+                }
+            }
+        }
+        music.room = (found, Some(time.elapsed()));
+    }
+    music.room.0
+}
+
 #[allow(clippy::too_many_arguments)]
 fn schedule_music(
     mut commands: Commands,
@@ -275,6 +451,8 @@ fn schedule_music(
     menu: Option<Res<State<InMenu>>>,
     settings: Res<Settings>,
     surroundings: Option<Res<Surroundings>>,
+    creatures: Option<Res<Creatures>>,
+    world: Option<Res<ClientWorld>>,
     mut music: ResMut<Music>,
     playing: Query<(), With<MusicTrack>>,
 ) {
@@ -282,12 +460,34 @@ fn schedule_music(
     if !(player.joined || in_menu) || music.tracks.is_empty() || !music.enabled || settings.music_volume == 0 {
         return;
     }
-    // A finished track despawns itself; schedule the next one after a quiet gap.
+    let boss = !in_menu && in_boss_fight(&mut music, &time, player.position, creatures.as_deref(), world.as_deref());
+    let underground = &music.rules.underground;
+    let context = match &surroundings {
+        _ if in_menu => Context::Menu,
+        _ if boss => Context::Boss,
+        Some(around) if around.depth >= underground.depth && around.sky <= underground.max_sky => Context::Underground,
+        _ => Context::Game,
+    };
+    let soon = time.elapsed() + Duration::from_secs_f32(music.rules.resume_after);
+    // A finished track despawns itself; schedule the next one after a quiet gap, or soon
+    // in a boss fight.
     if let Some(entity) = music.playing
         && playing.get(entity).is_err()
     {
         music.playing = None;
-        music.next_at = Some(time.elapsed() + Duration::from_secs_f32(random_in(&time, 0, music.rules.gap)));
+        music.current = None;
+        music.next_at = Some(if boss { soon } else { time.elapsed() + music.gap(&time, in_menu) });
+    }
+    // A boss fight starting ends the calm track playing, and its music comes once that has
+    // faded, even in a quiet gap; one ending ends the boss's track, and quiet follows.
+    if boss != music.fighting {
+        music.fighting = boss;
+        if let Some(index) = music.current
+            && boss != music.tracks[index].contexts.contains(&Context::Boss)
+        {
+            music.fade_out(&mut commands);
+        }
+        music.next_at = Some(if boss { soon } else { time.elapsed() + music.gap(&time, in_menu) });
     }
     if music.playing.is_some() || music.loading.is_some() {
         return;
@@ -297,16 +497,11 @@ fn schedule_music(
     if time.elapsed() < next_at {
         return;
     }
-    let underground = &music.rules.underground;
-    let context = match &surroundings {
-        _ if in_menu => Context::Menu,
-        Some(around) if around.depth >= underground.depth && around.sky <= underground.max_sky => Context::Underground,
-        _ => Context::Game,
-    };
+    let biome = surroundings.as_ref().map_or(&[][..], |around| around.biome.as_slice());
     let rolls = [random_in(&time, 1, (0.0, 1.0)), random_in(&time, 2, (0.0, 1.0))];
-    let Some(index) = pick(&music.tracks, context, &music.recent, music.rules.own_share, rolls) else {
+    let Some(index) = pick(&music.tracks, context, biome, &settings, &music.recent, music.rules.own_share, rolls) else {
         // Nothing suits here; look again after a gap.
-        music.next_at = Some(time.elapsed() + Duration::from_secs_f32(random_in(&time, 0, music.rules.gap)));
+        music.next_at = Some(time.elapsed() + music.gap(&time, in_menu));
         return;
     };
     music.recent.push_back(index);
@@ -316,8 +511,7 @@ fn schedule_music(
     match music.tracks[index].source {
         Source::Own(ref handle) => {
             let handle = handle.clone();
-            let entity = spawn_track(&mut commands, handle, true, music.level(&settings, true));
-            music.playing = Some(entity);
+            music.start(&mut commands, &time, &settings, index, handle);
         }
         Source::Borrowed(ref file) => {
             // Read off the main thread: a track is several megabytes, perhaps out of a big zip.
@@ -327,12 +521,9 @@ fn schedule_music(
                 let _ = tx.send(read_track(&file, max_bytes));
             });
             music.loading = Some((index, rx));
+            music.current = Some(index);
         }
     }
-}
-
-fn spawn_track(commands: &mut Commands, source: Handle<AudioSource>, own: bool, level: f32) -> Entity {
-    commands.spawn((MusicTrack { own }, AudioPlayer(source), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(level)))).id()
 }
 
 /// Plays a borrowed track once it has been read.
@@ -351,11 +542,11 @@ fn start_loaded(
         Err(TryRecvError::Disconnected) => Err("its reader stopped".to_owned()),
     };
     music.loading = None;
+    music.current = None;
     match read {
         Ok(source) => {
             let source = sources.add(source);
-            let entity = spawn_track(&mut commands, source, false, music.level(&settings, false));
-            music.playing = Some(entity);
+            music.start(&mut commands, &time, &settings, index, source);
         }
         Err(e) => {
             // It leaves the rotation, so the next pick is another track.
@@ -372,7 +563,8 @@ fn start_loaded(
 fn start_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Music>>) {
     let Some(mut music) = music else { return };
     music.fade_out(&mut commands);
-    music.next_at = Some(time.elapsed() + Duration::from_secs_f32(random_in(&time, 0, music.rules.gap)));
+    music.next_at = Some(time.elapsed() + music.gap(&time, false));
+    music.fighting = false;
 }
 
 /// Back in the menus, the game's music fades out and the menu's starts again soon.
@@ -380,6 +572,7 @@ fn leave_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Musi
     let Some(mut music) = music else { return };
     music.fade_out(&mut commands);
     music.next_at = Some(time.elapsed() + Duration::from_secs_f32(random_in(&time, 0, music.rules.first_menu_delay)));
+    music.fighting = false;
 }
 
 fn fade_out(
@@ -416,6 +609,67 @@ fn set_volume(
     }
 }
 
+/// A category switched off in the settings fades out its track playing (or forgets one
+/// being read), and another, from a category still on, comes soon.
+fn stop_switched_off(
+    mut commands: Commands,
+    time: Res<Time>,
+    settings: Res<Settings>,
+    music: Option<ResMut<Music>>,
+    playing: Query<&MusicTrack, Without<FadingOut>>,
+) {
+    let Some(mut music) = music else { return };
+    let loading_off = music.loading.as_ref().is_some_and(|(index, _)| !music.tracks[*index].on(&settings));
+    let playing_off = music.playing.and_then(|entity| playing.get(entity).ok()).is_some_and(|track| settings.music_off.contains(&track.category));
+    if loading_off || playing_off {
+        music.fade_out(&mut commands);
+        music.next_at = Some(time.elapsed() + Duration::from_secs_f32(music.rules.resume_after));
+    }
+}
+
+/// The line at the top right naming the track that has just started, and its category.
+#[derive(Component)]
+pub struct NowPlayingLine;
+
+fn spawn_now_playing(mut commands: Commands, font: Res<UiFont>) {
+    // Above the pinned quests, clear of the look-at plate at the top left.
+    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(space::SECTION), top: Val::Px(space::SECTION), ..default() };
+    commands.spawn((corner, GlobalZIndex(1))).with_child((NowPlayingLine, shadowed(&font.0, "", BODY, SOFT), Visibility::Hidden));
+}
+
+/// Shows the line for `now_playing.shown` seconds after a track starts, fading in and out,
+/// in the player's language.
+fn show_now_playing(
+    time: Res<Time>,
+    locale: Res<Locale>,
+    music: Option<Res<Music>>,
+    mut line: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Visibility), With<NowPlayingLine>>,
+) {
+    let Some(music) = music else { return };
+    let Ok((mut text, mut color, mut shadow, mut visibility)) = line.single_mut() else { return };
+    let NowPlaying { shown, fade } = music.rules.now_playing;
+    let showing = music.started.map(|(index, at)| (index, (time.elapsed() - at).as_secs_f32())).filter(|(_, age)| *age < shown);
+    let Some((index, age)) = showing else {
+        visibility.set_if_neq(Visibility::Hidden);
+        return;
+    };
+    let track = &music.tracks[index];
+    let words = locale.format("music.now_playing", &[("title", &title(track, &locale)), ("category", &locale.get(&format!("music.{}", track.category)))]);
+    if text.0 != words {
+        text.0 = words;
+    }
+    let alpha = (age / fade.max(f32::EPSILON)).min((shown - age) / fade.max(f32::EPSILON)).clamp(0.0, 1.0);
+    color.set_if_neq(TextColor(SOFT.with_alpha(alpha)));
+    shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
+    visibility.set_if_neq(Visibility::Inherited);
+}
+
+/// For the gate: the line naming the track playing, while it shows.
+pub fn now_playing_shown(world: &mut World) -> Option<String> {
+    let mut line = world.query_filtered::<(&Text, &Visibility), With<NowPlayingLine>>();
+    line.iter(world).find(|(_, visibility)| **visibility != Visibility::Hidden).map(|(text, _)| text.0.clone())
+}
+
 fn toggle_music(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -428,6 +682,8 @@ fn toggle_music(
     }
     music.enabled = !music.enabled;
     music.loading = None;
+    music.started = None;
+    music.current = None;
     if let Some(entity) = music.playing.take() {
         commands.entity(entity).despawn();
     }
@@ -441,7 +697,8 @@ mod tests {
 
     fn track(own: bool, contexts: &[Context], weight: f32) -> Track {
         let source = if own { Source::Own(Handle::default()) } else { Source::Borrowed(TrackFile::Loose("x.ogg".into())) };
-        Track { source, contexts: contexts.to_vec(), weight, name: String::new() }
+        let category = if own { "ours" } else { "borrowed" }.to_owned();
+        Track { source, contexts: contexts.to_vec(), weight, name: String::new(), category, biomes: Vec::new() }
     }
 
     #[test]
@@ -454,27 +711,87 @@ mod tests {
             track(false, &[Underground], 3.0),
         ];
         let none = VecDeque::new();
+        let all = Settings::default();
         // In the menus: own below the share, else the one borrowed menu track.
-        assert_eq!(pick(&tracks, Menu, &none, 0.25, [0.1, 0.5]), Some(0));
-        assert_eq!(pick(&tracks, Menu, &none, 0.25, [0.9, 0.5]), Some(1));
+        assert_eq!(pick(&tracks, Menu, &[], &all, &none, 0.25, [0.1, 0.5]), Some(0));
+        assert_eq!(pick(&tracks, Menu, &[], &all, &none, 0.25, [0.9, 0.5]), Some(1));
         // Underground, by weight: one in four the world's track, else the deep one.
-        assert_eq!(pick(&tracks, Underground, &none, 0.25, [0.9, 0.2]), Some(2));
-        assert_eq!(pick(&tracks, Underground, &none, 0.25, [0.9, 0.3]), Some(3));
+        assert_eq!(pick(&tracks, Underground, &[], &all, &none, 0.25, [0.9, 0.2]), Some(2));
+        assert_eq!(pick(&tracks, Underground, &[], &all, &none, 0.25, [0.9, 0.3]), Some(3));
         // Never the deep track above ground.
         for roll in [0.0, 0.5, 0.99] {
-            assert_eq!(pick(&tracks, Game, &none, 0.25, [0.9, roll]), Some(2));
+            assert_eq!(pick(&tracks, Game, &[], &all, &none, 0.25, [0.9, roll]), Some(2));
         }
         // Played lately is passed over while others suit, but a lone track still plays,
         // and only the very last is avoided when every one was played lately.
         let lately = VecDeque::from([3]);
-        assert_eq!(pick(&tracks, Underground, &lately, 0.25, [0.9, 0.9]), Some(2));
-        assert_eq!(pick(&tracks, Game, &VecDeque::from([2]), 0.25, [0.9, 0.5]), Some(2));
-        assert_eq!(pick(&tracks, Underground, &VecDeque::from([3, 2]), 0.25, [0.9, 0.0]), Some(3));
+        assert_eq!(pick(&tracks, Underground, &[], &all, &lately, 0.25, [0.9, 0.9]), Some(2));
+        assert_eq!(pick(&tracks, Game, &[], &all, &VecDeque::from([2]), 0.25, [0.9, 0.5]), Some(2));
+        assert_eq!(pick(&tracks, Underground, &[], &all, &VecDeque::from([3, 2]), 0.25, [0.9, 0.0]), Some(3));
         // Nothing borrowed: always Voxmar's own; nothing at all: none.
-        assert_eq!(pick(&tracks[..1], Menu, &none, 0.0, [0.9, 0.9]), Some(0));
-        assert_eq!(pick(&[], Game, &none, 0.25, [0.5, 0.5]), None);
+        assert_eq!(pick(&tracks[..1], Menu, &[], &all, &none, 0.0, [0.9, 0.9]), Some(0));
+        assert_eq!(pick(&[], Game, &[], &all, &none, 0.25, [0.5, 0.5]), None);
         // Underground with nothing for it falls back to the world's tracks.
-        assert_eq!(pick(&[track(false, &[Game], 1.0)], Underground, &none, 0.25, [0.5, 0.5]), Some(0));
+        assert_eq!(pick(&[track(false, &[Game], 1.0)], Underground, &[], &all, &none, 0.25, [0.5, 0.5]), Some(0));
+        // A category switched off is never picked; with Voxmar's own off, the borrowed play
+        // whatever the share, and with everything off, nothing does.
+        let ours_off = Settings { music_off: vec!["ours".into()], ..Settings::default() };
+        for roll in [0.0, 0.5, 0.99] {
+            assert_eq!(pick(&tracks, Menu, &[], &ours_off, &none, 0.25, [roll, roll]), Some(1));
+        }
+        let all_off = Settings { music_off: vec!["ours".into(), "borrowed".into()], ..Settings::default() };
+        assert_eq!(pick(&tracks, Game, &[], &all_off, &none, 0.25, [0.5, 0.5]), None);
+    }
+
+    /// A track for some biomes plays only in them; a boss's only in a boss fight, its own
+    /// biome's first, else any boss's.
+    #[test]
+    fn biomes_and_boss_fights_choose_among_tracks() {
+        use Context::*;
+        let all = Settings::default();
+        let none = VecDeque::new();
+        let place = |contexts: &[Context], biomes: &[&str]| Track { biomes: biomes.iter().map(|b| b.to_string()).collect(), ..track(true, contexts, 1.0) };
+        let tracks = [
+            place(&[Menu, Game], &[]),
+            place(&[Game], &["forest"]),
+            place(&[Boss], &["forest"]),
+            place(&[Boss], &["frozen", "cold"]),
+        ];
+        let forest = ["forest".to_owned(), "temperate".to_owned()];
+        let desert = ["desert".to_owned(), "hot".to_owned()];
+        // In the forest both calm tracks may play; in the desert only the general one.
+        assert_eq!(pick(&tracks, Game, &forest, &all, &none, 0.0, [0.5, 0.9]), Some(1));
+        for roll in [0.0, 0.5, 0.99] {
+            assert_eq!(pick(&tracks, Game, &desert, &all, &none, 0.0, [0.5, roll]), Some(0));
+            // Boss tracks never play outside a fight, and calm ones never in one.
+            assert!(pick(&tracks, Game, &forest, &all, &none, 0.0, [0.5, roll]).is_some_and(|i| i < 2));
+            assert_eq!(pick(&tracks, Boss, &forest, &all, &none, 0.0, [0.5, roll]), Some(2));
+            // A desert boss has no track of its own biome: any boss's plays.
+            assert!(pick(&tracks, Boss, &desert, &all, &none, 0.0, [0.5, roll]).is_some_and(|i| i >= 2));
+        }
+        assert_eq!(pick(&tracks[..2], Boss, &forest, &all, &none, 0.0, [0.5, 0.5]), None);
+    }
+
+    /// Voxmar's own tracks are named by the languages, each of them, and a borrowed one by
+    /// the last part of its location.
+    #[test]
+    fn tracks_are_named_by_the_languages_or_their_location() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let rules = MusicRules::load(&content.files).unwrap();
+        let english = Locale::load(&assets.join("content"), "en");
+        let named = |name: &str, own: bool| title(&Track { name: name.into(), ..track(own, &[], 1.0) }, &english);
+        assert_eq!(named("suno/moonlit_quest_2.mp3", true), "Moonlit Quest 2");
+        assert_eq!(named("lyria/rain_on_stone.mp3", true), "Rain on Stone");
+        assert_eq!(named("zmod/a_new-song.ogg", true), "A New Song");
+        assert_eq!(named("minecraft:music/game/calm1", false), "Calm1");
+        assert_eq!(named("horizonmelodies:music_and_melody/music/overworld/wild_hills", false), "Wild Hills");
+        for folder in rules.categories.iter().filter_map(|c| c.folder.as_ref()) {
+            for name in own_tracks(&assets.join("music"), folder) {
+                let stem = name.rsplit('/').next().unwrap().rsplit_once('.').unwrap().0;
+                assert!(english.find(&format!("music.track.{stem}")).is_some(), "{name} has no music.track.{stem}");
+            }
+        }
     }
 
     /// A borrowed file that is empty or not audio is refused before it reaches Bevy's

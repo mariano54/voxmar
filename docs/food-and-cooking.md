@@ -159,9 +159,12 @@ many things, which pulls them into farming, hunting and foraging.
 
 ## Quality and burning
 
-- **Burning.** Each recipe has a level where you start (often burning) and a level where
-  you stop burning it, as RuneScape. A good station (an oven over a campfire) lowers the
-  chance. Burnt food goes to the compost.
+- **Burning.** Each recipe has a level where you start (burning a quarter of the time, or
+  the recipe's `burn_start`) and a level where you stop burning it (the mid-teens for the
+  first foods: `stop_burning` 15 for meat, fish and potatoes, 12 for eggs and clay), the
+  chance falling in a straight line between, as RuneScape. A good station (an oven over a
+  campfire) lowers the chance. Burnt food goes to the compost. A cracked clay is clay again
+  (`burnt: "clay"` in cooking.ron), so firing it costs time, not the dig.
 - **Quality.** Normal, fine, exquisite. The chance of better quality rises with level, the
   quality of the ingredients (a well-kept cow's milk, a crop grown in its comfort) and the
   station. Quality multiplies healing and effect duration.

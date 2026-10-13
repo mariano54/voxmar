@@ -6,6 +6,7 @@
 //! everywhere and is held to none of that; rye out-grows it where the cold holds wheat
 //! back. `CENSUS=1` prints the shares.
 
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_engine::content::Content;
 use voxmar_engine::crop::{self, Conditions};
@@ -45,22 +46,22 @@ fn regional_crops_are_regional() {
                 below_best[i] += 1;
             }
         }
-        for dz in 0..SIDE {
-            for dx in 0..SIDE {
-                let at = IVec3::new(spawn.x + (dx - SIDE / 2) * STEP, 0, spawn.z + (dz - SIDE / 2) * STEP);
-                let site = world.site(at.x, at.z);
-                sampled += 1;
-                if site.height <= SEA_LEVEL {
-                    continue;
-                }
-                let rates = grows(&site);
-                if site.temperature < crops[4].comfort.temperature.0 {
-                    cold += 1;
-                    rye_wins += (rates[0] > rates[4]) as usize;
-                }
-                let bits = rates.iter().enumerate().filter(|(_, r)| **r > 0.0).fold(0u8, |bits, (i, _)| bits | 1 << i);
-                land.push((world.biomes().get(site.biome).name.clone(), bits));
+        // The sites are sampled on every core (in order, so the census is the same).
+        let cells: Vec<Option<(f32, Vec<f32>, String)>> = (0..SIDE * SIDE).into_par_iter().map(|i| {
+            let (dx, dz) = (i % SIDE, i / SIDE);
+            let at = IVec3::new(spawn.x + (dx - SIDE / 2) * STEP, 0, spawn.z + (dz - SIDE / 2) * STEP);
+            let site = world.site(at.x, at.z);
+            (site.height > SEA_LEVEL).then(|| (site.temperature, grows(&site), world.biomes().get(site.biome).name.clone()))
+        }).collect();
+        for cell in cells {
+            sampled += 1;
+            let Some((temperature, rates, biome)) = cell else { continue };
+            if temperature < crops[4].comfort.temperature.0 {
+                cold += 1;
+                rye_wins += (rates[0] > rates[4]) as usize;
             }
+            let bits = rates.iter().enumerate().filter(|(_, r)| **r > 0.0).fold(0u8, |bits, (i, _)| bits | 1 << i);
+            land.push((biome, bits));
         }
     }
     let total = land.len() as f32;

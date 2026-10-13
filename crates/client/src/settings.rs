@@ -19,6 +19,7 @@ use voxmar_protocol::MAX_FLY_SPEED;
 use crate::keys::Key;
 use crate::lang::{Locale, Localized};
 use crate::menu::Screen;
+use crate::music::MusicCategories;
 use crate::ui::skin::{InterfaceFont, PX, Piece};
 use crate::ui::sound::{Silent, UiSounds};
 use crate::ui::widgets::{
@@ -89,6 +90,9 @@ pub struct Settings {
     pub sensitivity: i32,
     /// Music volume, in percent.
     pub music_volume: i32,
+    /// The categories of music switched off (`music.ron`), by name; every other one plays,
+    /// a mod's new category too.
+    pub music_off: Vec<String>,
     /// Sound effects volume, in percent.
     pub sound_volume: i32,
     /// Ambient sound volume (wind, birds, water), in percent of the sound effects'.
@@ -331,6 +335,7 @@ impl Default for Settings {
             fov: 90,
             sensitivity: 100,
             music_volume: 100,
+            music_off: Vec::new(),
             sound_volume: 100,
             ambience_volume: 100,
             debug_overlay: false,
@@ -665,6 +670,32 @@ enum Toggle {
     DoubleTapSprint,
     FovEffects,
     MinecraftAssets,
+    /// A category of music (`music.ron`).
+    Music(MusicSwitch),
+}
+
+/// A category of music's switch: its name, and the key of what the languages call it.
+/// Categories come from the content, so these are made once, as the menu is built
+/// (`music_switches`), and live as long as the game.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct MusicSwitch {
+    name: &'static str,
+    key: &'static str,
+    /// Its tracks all come from Minecraft, so it shows only with Minecraft assets on.
+    borrowed_only: bool,
+}
+
+/// The switches of the music's categories, in their order.
+fn music_switches(categories: &MusicCategories) -> Vec<MusicSwitch> {
+    categories
+        .0
+        .iter()
+        .map(|category| MusicSwitch {
+            name: Box::leak(category.name.clone().into_boxed_str()),
+            key: Box::leak(format!("music.{}", category.name).into_boxed_str()),
+            borrowed_only: category.borrowed_only(),
+        })
+        .collect()
 }
 
 impl Toggle {
@@ -680,6 +711,7 @@ impl Toggle {
             Toggle::DoubleTapSprint => "settings.double_tap_sprint",
             Toggle::FovEffects => "settings.fov_effects",
             Toggle::MinecraftAssets => "settings.minecraft_assets",
+            Toggle::Music(category) => category.key,
         }
     }
 
@@ -695,10 +727,18 @@ impl Toggle {
             Toggle::DoubleTapSprint => settings.double_tap_sprint,
             Toggle::FovEffects => settings.fov_effects,
             Toggle::MinecraftAssets => settings.minecraft_assets,
+            Toggle::Music(category) => !settings.music_off.iter().any(|off| off == category.name),
         }
     }
 
     fn set(self, settings: &mut Settings, on: bool) {
+        if let Toggle::Music(category) = self {
+            settings.music_off.retain(|off| off != category.name);
+            if !on {
+                settings.music_off.push(category.name.to_owned());
+            }
+            return;
+        }
         *match self {
             Toggle::Vsync => &mut settings.vsync,
             Toggle::VolumetricLight => &mut settings.volumetric_light,
@@ -710,6 +750,7 @@ impl Toggle {
             Toggle::DoubleTapSprint => &mut settings.double_tap_sprint,
             Toggle::FovEffects => &mut settings.fov_effects,
             Toggle::MinecraftAssets => &mut settings.minecraft_assets,
+            Toggle::Music(_) => return,
         } = on;
         // Without the install, its textures cannot come first.
         if !settings.minecraft_assets && settings.textures == TextureOrder::Minecraft {
@@ -1125,6 +1166,8 @@ enum ShownWhen {
     /// For admins in game, and always on the title screen, where it applies to the next
     /// world.
     Admin,
+    /// With Minecraft assets on.
+    MinecraftAssets,
 }
 /// A tab, by its index in `SECTIONS`.
 #[derive(Component)]
@@ -1208,9 +1251,55 @@ const HINT_LINES: usize = 2;
 /// The faint light on the row under the pointer.
 const ROW_LIT: Color = Color::srgba(0.37, 0.88, 0.82, 0.06);
 
-fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
+/// For the gate: the tab of the page whose name's key is `key`.
+pub(crate) fn tab_button(world: &mut World, key: &str) -> Option<Entity> {
+    let index = SECTIONS.iter().position(|(name, _)| *name == key)?;
+    world.query::<(Entity, &SectionTab)>().iter(world).find(|(_, tab)| tab.0 == index).map(|(entity, _)| entity)
+}
+
+/// For the gate: the music's categories whose switches are on screen, by name, in the
+/// order they show, each with its switch and the words beside it (on or off).
+pub(crate) fn music_switches_shown(world: &mut World) -> Vec<(String, Entity, String)> {
+    let mut labels = world.query::<(&SwitchLabel, &Text)>();
+    let labels: Vec<(Toggle, String)> = labels.iter(world).map(|(label, text)| (label.0, text.0.clone())).collect();
+    let mut switches = world.query::<(Entity, &Switch, &ComputedNode, &bevy::ui::UiGlobalTransform)>();
+    let mut shown: Vec<(f32, String, Entity, String)> = switches
+        .iter(world)
+        .filter(|(_, _, node, _)| node.size().x > 0.0)
+        .filter_map(|(entity, switch, _, at)| match switch.0 {
+            Toggle::Music(category) => {
+                let words = labels.iter().find(|(toggle, _)| *toggle == switch.0).map(|(_, words)| words.clone()).unwrap_or_default();
+                Some((at.translation.y, category.name.to_owned(), entity, words))
+            }
+            _ => None,
+        })
+        .collect();
+    shown.sort_by(|a, b| a.0.total_cmp(&b.0));
+    shown.into_iter().map(|(_, name, entity, words)| (name, entity, words)).collect()
+}
+
+/// The settings page the music's categories are switched on and off in, after its own.
+const MUSIC_PAGE: &str = "settings.tab.audio";
+
+/// The controls of each page: its own, and on the audio page a switch for each category of
+/// music.
+fn pages(music: &[MusicSwitch]) -> Vec<(&'static str, Vec<Control>)> {
+    SECTIONS
+        .iter()
+        .map(|(name, controls)| {
+            let mut controls = controls.to_vec();
+            if *name == MUSIC_PAGE {
+                controls.extend(music.iter().map(|&category| Control::Switch(Toggle::Music(category))));
+            }
+            (*name, controls)
+        })
+        .collect()
+}
+
+fn spawn_menu(mut commands: Commands, font: Res<UiFont>, categories: Option<Res<MusicCategories>>) {
     let font = &font.0;
-    let tallest = SECTIONS.iter().map(|(_, controls)| controls.len()).max().unwrap_or(0) as f32;
+    let pages = pages(&categories.map(|categories| music_switches(&categories)).unwrap_or_default());
+    let tallest = pages.iter().map(|(_, controls)| controls.len()).max().unwrap_or(0) as f32;
     commands.spawn((MenuRoot, screen(SCRIM), GlobalZIndex(1), Visibility::Hidden)).with_children(|root| {
         root.spawn(panel(PANEL_WIDTH)).with_children(|panel| {
             let title = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
@@ -1230,11 +1319,11 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
                         });
                     }
                 });
-                body.spawn(Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, ..default() }).with_children(|pages| {
-                    for (index, (_, controls)) in SECTIONS.iter().enumerate() {
+                body.spawn(Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, ..default() }).with_children(|pages_node| {
+                    for (index, (_, controls)) in pages.iter().enumerate() {
                         let page = Node { flex_direction: FlexDirection::Column, display: Display::None, ..default() };
-                        pages.spawn((SectionPage(index), page)).with_children(|page| {
-                            for &control in *controls {
+                        pages_node.spawn((SectionPage(index), page)).with_children(|page| {
+                            for &control in controls {
                                 spawn_row(page, font, control);
                             }
                         });
@@ -1265,6 +1354,11 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
     let mut row = panel.spawn((Button, Silent, SettingRow(control), node, BackgroundColor(Color::NONE)));
     if control == Control::Slider(Slider::FlySpeed) {
         row.insert(ShownWhen::Admin);
+    }
+    if let Control::Switch(Toggle::Music(category)) = control
+        && category.borrowed_only
+    {
+        row.insert(ShownWhen::MinecraftAssets);
     }
     row.with_children(|row| {
         row.spawn((Localized(control.key()), text(font, "", BODY, TEXT)));
@@ -1725,6 +1819,7 @@ fn show_menu(
             ShownWhen::InGame => in_game,
             ShownWhen::OnTitle => !in_game,
             ShownWhen::Admin => player.admin || !in_game,
+            ShownWhen::MinecraftAssets => settings.minecraft_assets,
         };
         let display = if shown { Display::Flex } else { Display::None };
         if node.display != display {
@@ -1870,6 +1965,11 @@ mod tests {
         let content = dir.join("../../content");
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
         let fallback = crate::ui::skin::read_fallback(&dir);
+        // The music's categories' switches too, as the shipped content lists them.
+        let shipped = voxmar_server::load_content(&dir.join("../..")).unwrap();
+        let categories = crate::music::rules::MusicRules::load(&shipped.files).unwrap().categories;
+        assert!(!categories.is_empty());
+        let pages = pages(&music_switches(&MusicCategories(categories)));
         for file in ["ledger.txt", "block.txt", "voxmar.txt"] {
             let mut font = PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
             font.fill_from(&fallback);
@@ -1881,8 +1981,8 @@ mod tests {
             let room = (PANEL_WIDTH - 28.0 * PX) / scale;
             for language in voxmar_engine::lang::languages(&content) {
                 let locale = voxmar_engine::lang::Lang::load(&content, &language.code);
-                for (_, controls) in SECTIONS {
-                    for &control in controls.iter() {
+                for (_, controls) in &pages {
+                    for &control in controls {
                         let hint = locale.get(&control.hint()).to_owned();
                         // Lines break between words, and anywhere between kanji and kana.
                         let units = hint.split(' ').flat_map(|word| {
@@ -1909,6 +2009,32 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A category's switch turns it off and on again by name, a file from before the
+    /// switches reads every category as on, and one switched off stays off when saved.
+    #[test]
+    fn music_categories_switch_off_and_on_by_name() {
+        let switches = music_switches(&MusicCategories(vec![
+            crate::music::rules::Category { name: "suno".into(), folder: Some("suno".into()), contexts: Vec::new(), tracks: Vec::new() },
+            crate::music::rules::Category { name: "minecraft_world".into(), folder: None, contexts: Vec::new(), tracks: Vec::new() },
+        ]));
+        assert_eq!(switches.iter().map(|s| (s.key, s.borrowed_only)).collect::<Vec<_>>(), [("music.suno", false), ("music.minecraft_world", true)]);
+        let (suno, world) = (Toggle::Music(switches[0]), Toggle::Music(switches[1]));
+        let old: Settings = ron::from_str("(fov: 80)").unwrap();
+        assert!(old.music_off.is_empty() && suno.get(&old) && world.get(&old));
+        let mut settings = Settings::default();
+        suno.set(&mut settings, false);
+        suno.set(&mut settings, false);
+        assert_eq!(settings.music_off, ["suno"]);
+        assert!(!suno.get(&settings) && world.get(&settings));
+        let saved: Settings = ron::from_str(&ron::to_string(&settings).unwrap()).unwrap();
+        assert!(!suno.get(&saved));
+        suno.set(&mut settings, true);
+        assert!(settings.music_off.is_empty() && suno.get(&settings));
+        // The audio page lists them after its own controls.
+        let audio = pages(&switches).into_iter().find(|(name, _)| *name == MUSIC_PAGE).unwrap().1;
+        assert!(audio[audio.len() - 2..] == [Control::Switch(suno), Control::Switch(world)]);
     }
 
     #[test]

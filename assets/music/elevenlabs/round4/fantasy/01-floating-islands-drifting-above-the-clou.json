@@ -1,0 +1,28 @@
+{
+  "leads": [
+    "cello"
+  ],
+  "support": [
+    "celesta",
+    "glockenspiel"
+  ],
+  "texture": "singing bowl",
+  "opener": "Soft, cozy ambient instrumental",
+  "space": "dry, close-miked and intimate, very little reverb",
+  "form": "a simple, memorable melody that returns as a motif",
+  "percussion": null,
+  "hint": "like the last hour before sleep",
+  "vibes": [
+    "tender, like a lullaby",
+    "storybook wonder"
+  ],
+  "touch": null,
+  "biome": "fantasy",
+  "scene": "floating islands drifting above the clouds",
+  "bpm": 62,
+  "key": "G major",
+  "length_s": 164,
+  "prompt": "Soft, cozy ambient instrumental for an enchanted fantasy scene: floating islands drifting above the clouds, like the last hour before sleep. Mood: tender, like a lullaby, storybook wonder. Lead melody on cello, accompanied by celesta, glockenspiel, over singing bowl. Structure: a simple, memorable melody that returns as a motif; a clear, singable melody, and rests and silences are welcome. Sound: dry, close-miked and intimate, very little reverb. Slow, unhurried tempo around 62 BPM in G major, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 73
+}

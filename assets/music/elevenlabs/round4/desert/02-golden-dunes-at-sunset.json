@@ -1,0 +1,29 @@
+{
+  "leads": [
+    "duduk"
+  ],
+  "support": [
+    "oud",
+    "ney flute",
+    "soft muted saxophone"
+  ],
+  "texture": null,
+  "opener": "Calm, cozy instrumental",
+  "space": "dry, close-miked and intimate, very little reverb",
+  "form": "sparse phrases with real rests and moments of near silence between them",
+  "percussion": null,
+  "hint": null,
+  "vibes": [
+    "vast and solitary",
+    "intimate chamber-music warmth"
+  ],
+  "touch": null,
+  "biome": "desert",
+  "scene": "golden dunes at sunset",
+  "bpm": 51,
+  "key": "D Dorian",
+  "length_s": 172,
+  "prompt": "Calm, cozy instrumental for a desert scene: golden dunes at sunset. Mood: vast and solitary, intimate chamber-music warmth. Lead melody on duduk, accompanied by oud, ney flute, soft muted saxophone, with no background pad or drone, just the instruments and the space between notes. Structure: sparse phrases with real rests and moments of near silence between them; a clear, singable melody, and rests and silences are welcome. Sound: dry, close-miked and intimate, very little reverb. Slow, unhurried tempo around 51 BPM in D Dorian, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 74
+}

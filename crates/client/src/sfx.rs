@@ -324,12 +324,16 @@ const RECORDED_GAIN: f32 = 0.6;
 /// Later packages add to the lists.
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-struct Recordings {
+pub(crate) struct Recordings {
     thunder: ThunderRecordings,
     /// Strokes while swimming.
     swim: Vec<String>,
     /// Jumping or falling into water.
     splash: Vec<String>,
+    /// A quest finished, and a quest's rewards claimed. Without any, the interface
+    /// synthesizes a chime (`ui::sound`); a package that lists some replaces it.
+    pub(crate) quest_done: Vec<String>,
+    pub(crate) quest_claim: Vec<String>,
 }
 
 /// Thunder by how far off the lightning struck (see [`Reach`]).
@@ -343,7 +347,7 @@ struct ThunderRecordings {
 
 impl Recordings {
     /// The lists of every package, each path made an asset path (`content/base/sounds/…`).
-    fn load(files: &[ContentFile]) -> Result<Self, String> {
+    pub(crate) fn load(files: &[ContentFile]) -> Result<Self, String> {
         let mut all = Recordings::default();
         for file in files.iter().filter(|f| f.name == RECORDINGS) {
             let def: Recordings = ron::from_str(&file.source).map_err(|e| format!("{}/{RECORDINGS}: {e}", file.package))?;
@@ -353,6 +357,8 @@ impl Recordings {
             all.thunder.far.extend(path(def.thunder.far));
             all.swim.extend(path(def.swim));
             all.splash.extend(path(def.splash));
+            all.quest_done.extend(path(def.quest_done));
+            all.quest_claim.extend(path(def.quest_claim));
         }
         Ok(all)
     }
