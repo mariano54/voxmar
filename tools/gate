@@ -261,7 +261,7 @@ run='
   if [[ $session == 1 ]]; then
     (VOXMAR_MUTE=1 $GATE_PREFIX target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
   fi
-  lower=(nice -n 10)
+  lower=(nice -n 10 env RAYON_NUM_THREADS=$TEST_POOL)
   while IFS=$(printf "\t") read -r dir exe; do
     (cd "$dir" && RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" -Z unstable-options --report-time "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
   done <"$out/tests.list"
@@ -295,6 +295,13 @@ mkdir -p "$out/config"
 : >"$out/load.txt"
 ( while :; do cut -d' ' -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg | awk '{ print $2 }'; sleep 10; done >>"$out/load.txt" ) &
 sampler=$!
+# Each test binary's own threads (worlds made side by side, a test's seeds side by side) take
+# at most half the cores: eight test threads to a binary keep the rest busy, and the session's
+# server, land generation and renderer, running at full speed outside its lagged steps, keep
+# the other half. With every core to each binary, the worldgen tests took 106 s, then 159
+# and 194 s on the Mac as the session sped up (and the Mac was busy besides).
+TEST_POOL=$(( $(getconf _NPROCESSORS_ONLN) / 2 > 1 ? $(getconf _NPROCESSORS_ONLN) / 2 : 1 ))
+export TEST_POOL
 VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
   $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
 kill "$sampler" 2>/dev/null

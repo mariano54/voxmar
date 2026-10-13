@@ -1818,22 +1818,22 @@ mod density_tests {
     }
 
     /// The first night of a new world brings 3 at most (docs/creatures.md); torches keep
-    /// monsters from spawning where they light, on the surface too.
+    /// monsters from spawning where they light, on the surface too. One server stands for
+    /// all three (`density` clears its players and creatures, and the first night is told
+    /// by the time of day alone), so the land around the spot is made once; the torches
+    /// come last.
     #[test]
     fn the_first_night_is_light_and_torches_keep_monsters_away() {
-        let spot_of = |server: &Server| find_biome(server, "plains").expect("plains");
         let midnight = (0..24_000u64).step_by(100).min_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
         let mut server = crate::test_server();
-        let spot = spot_of(&server);
+        let spot = find_biome(&server, "plains").expect("plains");
         let [_, _, _, first, _] = density(&mut server, spot, midnight, 3, false);
         assert!((1..=3).contains(&first), "{first} monsters on the first night");
         // Darkness that runs on past the first 24000 ticks is still the first night.
         if let Some(dawn) = (TICKS_PER_DAY..TICKS_PER_DAY * 3 / 2).find(|&t| creature::daylight(t) >= 0.25).filter(|&t| t > TICKS_PER_DAY) {
-            let mut server = crate::test_server();
             let [_, _, _, late, _] = density(&mut server, spot, dawn - 1, 3, false);
             assert!(late <= 3, "{late} monsters in the first night's last dark before dawn");
         }
-        let mut server = crate::test_server();
         let [_, _, _, lit, _] = density(&mut server, spot, midnight + LATER, 3, true);
         assert_eq!(lit, 0, "{lit} monsters among torches");
     }

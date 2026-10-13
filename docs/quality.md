@@ -87,7 +87,7 @@ mesa-vulkan-drivers`), as a look: frames take half a second, so the steps that t
    a small world, headless and silent, with the integrated server made to run behind as
    on a busy machine (`gate::SERVER_LAG`: 60 ms more a tick, a 400 ms stall every ninth
    with messages waiting, and a 600 ms stall as every other action is proposed) in the
-   steps that play against it: placing, digging, breaking, the workshop, fights and cooking
+   steps that play against it: placing, digging, breaking and the fight's guard and dodge
    (`Step::lagged`); the rest run at full speed, three times sooner. It also
    fails when placing or digging hitches (a frame over 150 ms, or six times the median: the
    first break once compiled three pipelines on the spot); on a machine asked for more
