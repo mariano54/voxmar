@@ -864,16 +864,23 @@ enum Binding {
 }
 
 impl Binding {
-    const ALL: [Binding; 9] = [
+    const ALL: [Binding; 16] = [
         Binding::Sprint,
+        Binding::Dodge,
         Binding::Zoom,
         Binding::Chat,
         Binding::Inventory,
         Binding::Character,
         Binding::Journal,
+        Binding::Quests,
         Binding::Recipes,
         Binding::Uses,
         Binding::Screenshot,
+        Binding::Prayer(0),
+        Binding::Prayer(1),
+        Binding::Prayer(2),
+        Binding::Prayer(3),
+        Binding::Prayer(4),
     ];
 
     /// Binds `key`. A key another binding has trades places with it, so both still work;
@@ -1938,13 +1945,30 @@ mod tests {
     }
 
     #[test]
+    fn the_quick_prayer_keys_are_taken_like_any_other_binding() {
+        let mut settings = Settings::default();
+        // The uses key onto the first quick prayer's X: the two trade places.
+        let prayer = Binding::Prayer(0).get(&settings);
+        assert!(Binding::Uses.bind(&mut settings, prayer));
+        assert_eq!((settings.uses_key, settings.prayer_keys[0]), (prayer, Key(KeyCode::KeyU)));
+        // A file putting the journal on a quick prayer's key reads back with the prayer keeping
+        // it, and the quests and dodge keys count as taken too.
+        let (read, _) = Settings::parse("(journal_key: \"KeyV\", quests_key: \"KeyB\", dodge_key: \"KeyN\")", || false);
+        assert_eq!(read.prayer_keys[1..4], [Key(KeyCode::KeyV), Key(KeyCode::KeyB), Key(KeyCode::KeyN)]);
+        let keys = Binding::ALL.map(|b| b.get(&read));
+        for key in keys {
+            assert_eq!(keys.iter().filter(|&&k| k == key).count(), 1, "{key:?} is on two actions: {keys:?}");
+        }
+    }
+
+    #[test]
     fn colliding_bindings_in_a_file_read_back_at_their_defaults() {
         // A hand-edited file: the journal on E (the inventory's) and the character screen on W.
         let (read, _) = Settings::parse("(journal_key: \"KeyE\", character_key: \"KeyW\")", || false);
         assert_eq!((read.journal_key, read.inventory_key, read.character_key), (Key(KeyCode::KeyJ), Key(KeyCode::KeyE), Key(KeyCode::KeyC)));
         // Two moved bindings on one key: the later yields.
-        let (read, _) = Settings::parse("(recipes_key: \"KeyG\", uses_key: \"KeyG\")", || false);
-        assert_eq!((read.recipes_key, read.uses_key), (Key(KeyCode::KeyG), Key(KeyCode::KeyU)));
+        let (read, _) = Settings::parse("(recipes_key: \"KeyY\", uses_key: \"KeyY\")", || false);
+        assert_eq!((read.recipes_key, read.uses_key), (Key(KeyCode::KeyY), Key(KeyCode::KeyU)));
         // Chat on the inventory's E and the journal on chat's T: chat cannot go back to T,
         // so it goes to the first key nobody holds.
         let (read, _) = Settings::parse("(chat_key: \"KeyE\", journal_key: \"KeyT\")", || false);

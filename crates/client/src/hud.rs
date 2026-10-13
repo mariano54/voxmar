@@ -11,6 +11,7 @@ pub mod guide;
 pub mod inventory;
 pub mod journal;
 pub mod levels;
+pub mod prayers;
 pub mod quests;
 pub mod screens;
 pub mod recipes;
@@ -43,7 +44,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
-            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin, combat::CombatHudPlugin))
+            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin, combat::CombatHudPlugin, prayers::PrayersPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
@@ -217,6 +218,8 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             // The effects on you, then health across the hotbar's width.
             let chips = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), row_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::INNER)), flex_wrap: FlexWrap::Wrap, ..default() };
             bottom.spawn((chips, EffectChips));
+            // The prayer points and the prayers on, while any is.
+            prayers::spawn_strip(bottom, font, width);
             // Health, the one meter: food heals rather than fills a stomach.
             let meters = Node { width: Val::Px(width), margin: UiRect::bottom(Val::Px(space::INNER)), ..default() };
             bottom.spawn(meters).with_children(|meters| spawn_signed_meter(meters, font, Piece::Heart, Piece::BarHealth, Val::Percent(100.0), HealthMeter));

@@ -328,6 +328,10 @@ enum Step {
     Guides,
     /// The journal key opens the journal, whose Plants page lists what there is to find.
     Journal,
+    /// C opens the character screen and its Prayers button the prayer book, which has a row for
+    /// every prayer; a click on Bark Skin turns it on as the server says, the strip over the
+    /// hotbar names it once the screen is shut, and its quick key turns it off again.
+    Prayers,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
@@ -1211,6 +1215,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Journal => journal(world, gate, now, in_phase),
+        Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -3769,6 +3774,111 @@ fn journal(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let found = world.resource::<LocalPlayer>().journal.entries().count();
             gate.check("journal", if open { Ok(format!("J opened the journal ({found} things found so far, {cells} buttons drawn)")) } else { Err("J did not open the journal".into()) });
             world.resource_mut::<UiState>().journal_open = false;
+            gate.next(Step::Prayers, now);
+        }
+    }
+}
+
+/// The prayer book, played: C opens the character screen and its Prayers button the book, a
+/// row for every prayer; a click on Bark Skin turns it on as the server says (waited for by
+/// its clock); with the screen shut the strip over the hotbar names it; and the first quick
+/// key turns it off again.
+fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::prayers::{PrayerBook, book_rows, open_button, row_of, strip_names};
+    let (character, quick) = {
+        let settings = world.resource::<crate::settings::Settings>();
+        (settings.character_key.0, settings.prayer_keys[0].0)
+    };
+    let Some(bark) = world.resource::<Launch>().content.prayers.id("base:bark_skin") else {
+        gate.check("prayers", Err("the content lacks base:bark_skin".into()));
+        gate.next(Step::Quests, now);
+        return;
+    };
+    let on = world.resource::<crate::fight::Fighting>().prayers.on.contains(&bark);
+    let quit = |world: &mut World, gate: &mut Gate, what: &str, why: String| {
+        gate.check(what, Err(why));
+        key(world, character, false);
+        key(world, quick, false);
+        world.resource_mut::<UiState>().character_open = false;
+        world.resource_mut::<PrayerBook>().0 = false;
+        gate.next(Step::Quests, now);
+    };
+    match gate.phase {
+        0 => {
+            // The server tells the points once a player is in; the book has nothing to show before.
+            if world.resource::<crate::fight::Fighting>().prayers.most == 0 {
+                if gate.server_in_phase() > UNANSWERED {
+                    quit(world, gate, "prayers: points", "the server never told the prayer points".into());
+                }
+                return;
+            }
+            key(world, character, true);
+            gate.advance(now);
+        }
+        1 => {
+            key(world, character, false);
+            let button = open_button(world);
+            if !world.resource::<UiState>().character_open || button.is_none() {
+                if in_phase < 2.0 {
+                    return;
+                }
+                quit(world, gate, "prayers: screen", "the character key did not open the screen with its Prayers button".into());
+                return;
+            }
+            world.resource_mut::<UiClicks>().next = button.map(|button| (button, MouseButton::Left));
+            gate.advance(now);
+        }
+        2 => {
+            let (rows, wanted) = (book_rows(world), world.resource::<Launch>().content.prayers.len());
+            let open = world.resource::<PrayerBook>().0;
+            if !open || rows != wanted {
+                if in_phase < 2.0 {
+                    return;
+                }
+                quit(world, gate, "prayers: book", format!("the Prayers button opened the book {open}, with {rows} rows of {wanted} prayers"));
+                return;
+            }
+            gate.check("prayers: book", Ok(format!("the Prayers button opened the book, a row for each of {wanted} prayers")));
+            world.resource_mut::<UiClicks>().next = row_of(world, bark).map(|row| (row, MouseButton::Left));
+            gate.advance(now);
+        }
+        3 => {
+            if !on {
+                if gate.server_in_phase() < UNANSWERED {
+                    return;
+                }
+                quit(world, gate, "prayers: click", "a click on Bark Skin's row did not turn it on".into());
+                return;
+            }
+            gate.check("prayers: click", Ok("a click on Bark Skin's row turned it on, as the server says".into()));
+            world.resource_mut::<UiState>().character_open = false;
+            gate.advance(now);
+        }
+        4 => {
+            let name = world.resource::<Locale>().prayer("base:bark_skin");
+            let shown = strip_names(world);
+            if !shown.as_ref().is_some_and(|names| names.contains(&name)) {
+                if in_phase < 2.0 {
+                    return;
+                }
+                quit(world, gate, "prayers: strip", format!("the strip over the hotbar reads {shown:?}, not {name}"));
+                return;
+            }
+            gate.check("prayers: strip", Ok(format!("the strip over the hotbar names {name}")));
+            key(world, quick, true);
+            gate.advance(now);
+        }
+        _ => {
+            key(world, quick, false);
+            if on {
+                if gate.server_in_phase() < UNANSWERED {
+                    return;
+                }
+                let locked = world.resource::<UiState>().cursor_locked;
+                quit(world, gate, "prayers: quick key", format!("the quick key did not turn Bark Skin off (cursor locked {locked})"));
+                return;
+            }
+            gate.check("prayers: quick key", Ok("the quick key turned Bark Skin off again".into()));
             gate.next(Step::Quests, now);
         }
     }

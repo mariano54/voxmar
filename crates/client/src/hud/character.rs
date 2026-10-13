@@ -151,6 +151,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     spawn_condition(left, font);
                     // Pushed to the bottom of the section.
                     left.spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, CombatLine, shadowed(font, "", BODY, GOLD)));
+                    super::prayers::spawn_open_button(left, font);
                 });
                 // Skills, or one skill's guide laid over them: the tiles set the height, so
                 // the panel keeps its size whichever shows, in either language.
@@ -190,14 +191,14 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     });
 }
 
-fn show(ui: Res<UiState>, mut root: Query<&mut Visibility, With<CharacterScreen>>, mut guide: ResMut<Guide>, mut was_open: Local<bool>) {
+fn show(ui: Res<UiState>, book: Res<super::prayers::PrayerBook>, mut root: Query<&mut Visibility, With<CharacterScreen>>, mut guide: ResMut<Guide>, mut was_open: Local<bool>) {
     if *was_open && !ui.character_open {
         guide.0 = None;
     }
     *was_open = ui.character_open;
     if let Ok(mut visibility) = root.single_mut() {
         // The recipe viewer takes the screen while it is open.
-        visibility.set_if_neq(if ui.character_open && !ui.recipes_open { Visibility::Inherited } else { Visibility::Hidden });
+        visibility.set_if_neq(if ui.character_open && !ui.recipes_open && !book.0 { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 

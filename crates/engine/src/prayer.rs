@@ -30,6 +30,17 @@ pub enum Stat {
     Accuracy,
 }
 
+impl Stat {
+    /// Its lang key's last part (`prayer.effect.boost.<key>`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Stat::Defence => "defence",
+            Stat::Strength => "strength",
+            Stat::Accuracy => "accuracy",
+        }
+    }
+}
+
 /// What a prayer does while it is on.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub enum Effect {

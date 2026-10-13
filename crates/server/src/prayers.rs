@@ -26,9 +26,13 @@ impl Server {
         let Some(def) = book.get(prayer) else { return };
         let level = self.level(id, book.skill);
         let Some(player) = self.players.get_mut(&id) else { return };
+        // The dead keep their prayers on until death has counted what they keep (Keepsake).
+        if !player.health.alive() {
+            return;
+        }
         if !on {
             player.praying.on.retain(|&p| p != prayer);
-        } else if player.health.alive() && level >= def.level && player.praying.points > 0.0 {
+        } else if level >= def.level && player.praying.points > 0.0 {
             player.praying.on = book.turn_on(&player.praying.on, prayer);
         }
     }

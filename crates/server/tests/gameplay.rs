@@ -1737,6 +1737,27 @@ fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
 }
 
 #[test]
+fn a_dead_players_prayers_stay_on_until_death_counts_the_keepsake() {
+    let mut client = Client::join();
+    let keepsake = client.content.prayers.id("base:keepsake").unwrap();
+    client.ok("/gamemode survival");
+    client.ok("/skill magic 25");
+    client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.1 == 35));
+    client.connection.send(ClientMessage::Pray { prayer: keepsake, on: true });
+    for line in ["/clear", "/give iron_pickaxe 1", "/give iron_ingot 5", "/give dirt 30"] {
+        client.ok(line);
+    }
+    let carried = |c: &Client| c.inventory.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| carried(c) == 36 && c.prayers.as_ref().is_some_and(|p| p.2 == vec![keepsake]));
+    // Turned off in the same breath as the death, after it: the dead cannot, so the
+    // Keepsake still counts and a fourth thing is kept.
+    client.connection.send(ClientMessage::Command { line: "/kill".into() });
+    client.connection.send(ClientMessage::Pray { prayer: keepsake, on: false });
+    client.pump_until(|c| c.health == 0 && carried(c) <= 4);
+    assert_eq!(carried(&client), 4, "Keepsake keeps a fourth even when prayers were turned off after death");
+}
+
+#[test]
 fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
     let mut client = Client::join();
     let (near, far) = (client.position.floor().as_ivec3() + IVec3::new(2, 0, 0), client.position.floor().as_ivec3() + IVec3::new(-2, 0, 0));

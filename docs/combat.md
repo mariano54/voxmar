@@ -111,5 +111,12 @@ draining points a minute while on. Points are `points` + `per_level` × Magic (1
 | Death | Keepsake keeps one more item, never past the worth rule's most (4 with a grave ward); death puts out every prayer. |
 | Last Breath | A blow that leaves the player under its share of health heals a share, then costs every point. |
 
+The book is a page of the character screen (its Prayers button, `client/src/hud/prayers.rs`): the points as a meter, then a
+row per prayer with the Magic level it opens at, its drain a minute, what it does (written from its effects and the rules'
+wards through the `prayer.effect.*` lines, so a mod's prayer reads right with only its name) and its quick key. A click turns
+a prayer on or off as its quick key does; the server decides. Over the hotbar a strip shows the points and the names of the
+prayers on while any is on or the points are down. A dead player's Pray is ignored, so turning prayers off after dying cannot
+lose the Keepsake.
+
 Still to come in phase 4, in order: food timing; ranged weapons, ammunition and projectiles; then modifications (P42). The
-prayer book's screen and the spell bar's drawing are the UI's; the vows come with the temple rites.
+vows come with the temple rites.

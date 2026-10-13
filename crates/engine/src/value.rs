@@ -52,7 +52,7 @@ pub struct Death {
 
 crate::content::settable! {
     /// What one package's `value.ron` sets of the death rules.
-    SetDeath for Death { kept: u8, warded: u8, grave: f32, warded_grave: f32 }
+    SetDeath for Death { kept: u8, warded: u8, most: u8, grave: f32, warded_grave: f32 }
 }
 
 impl Default for Death {
@@ -270,9 +270,10 @@ mod tests {
         // Design d86: the amulet and the Keepsake prayer don't stack; four kept at most.
         let death = Value::default().death;
         assert_eq!([death.keeps(false, 0), death.keeps(false, 1), death.keeps(true, 0), death.keeps(true, 1)], [3, 4, 4, 4]);
-        let most = |source: &str| Value::merge(vec![Value::read("t", source).unwrap()]).check();
+        let merged = |source: &str| Value::merge(vec![("t".to_owned(), Value::read("t", source).unwrap())], &mut Vec::new());
+        let most = |source: &str| merged(source).check();
         assert!(most("(death: (most: 3))").is_err(), "under what the amulet keeps");
         assert!(most("(death: (most: 5))").is_ok());
-        assert_eq!(Value::merge(vec![Value::read("t", "(death: (most: 5))").unwrap()]).death.keeps(true, 1), 5);
+        assert_eq!(merged("(death: (most: 5))").death.keeps(true, 1), 5);
     }
 }
