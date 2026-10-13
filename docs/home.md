@@ -43,13 +43,82 @@ workshop is the loom frame, spindle stand and quern. All are craftable in the fi
 (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
 crafting, not a grind.
 
+## Rooms (side branches)
+
+Beside the ladder, a home can grow a use. They come on at home beside the ladder's step, each
+announced in chat with a **Next:** line, and the better one hides the other:
+
+| Room | Needs (tags) | Gives while at home |
+| --- | --- | --- |
+| Workbench | crafting table, a seat, a light | crafting and construction checks count 1 level higher (`boosts`) |
+| Workshop | + roof, 2 lights, a loom, spindle stand or quern, 2 storage | crafting and construction +2, engineering +1 |
+| Pantry | 2 storage, a hearth or any heat block | the good effects of a meal last x1.25 (`meal_time`) |
+| Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
+
+`boosts` are the effect vocabulary's own (they stop at +6 and recipes marked firm ignore
+them); `meal_heal` and `meal_time` are two new modifiers, applied as the meal is eaten from
+the modifiers of the last second. Raw meat's queasiness is not lengthened.
+
+## Reactions (what a home does with what is around it)
+
+A home also answers other content, as plain effects with a condition, no code of their own:
+
+| Reaction | Needs | Gives while at home |
+| --- | --- | --- |
+| Sheltered | indoors, a fire (hearth or heat block), and rain, snow, hail, dust or a storm falling outside | heal x1.2, learn x1.05 |
+| Company | 1 animal the player keeps within the home's reach | heal x1.1 |
+| Full house | 4 such animals (hides Company) | heal x1.2, learn x1.05 |
+| Kitchen garden | 4 crop plants (any stage) within reach | meals heal x1.1 (`meal_heal`, stacks with a larder) |
+
+How they work, for mod authors: `Condition::Sheltered(inner)` holds under a roof while `inner`
+(a weather condition, which is normally true only out in the open) holds in the open, so the
+weather is judged as the sky sees it, not as the player's roof lets them feel it. The home tag
+`kept` is not a block tag: the survey counts the player's own kept animals (`owner_id`) whose
+position is inside the home box (`survey_around(anchor, keeper)`); a mod can ask
+`HomeHas("kept", n)` like any other tag, and content load accepts it. `crop` is the block tag
+every crop stage carries, so a garden needs no new tag. Other players' animals never count.
+
+Ideas left: species rules (`kept:hen` for eggs, a cat for fewer mice), wandering visitors
+who stop at a lit home (needs hooks from the wandering events work), a herb nook.
+
+## Home perks (know-how kept at home)
+
+A finished home quest teaches something that stays, through `Done("quest")` (see
+`docs/early-upgrades.md`), and it works where it is used: `AtHome` and the furnishing it is
+about. They are effects with `ladder: "homecraft"` (announced once in chat, countable by
+quests as `Built("homecraft_NAME", 1)`, and left out of `/home`, which tells only the home's
+own steps):
+
+| Perk | Quest | Where it works | Gives |
+| --- | --- | --- | --- |
+| Banked fire | Make Camp | at home, a hearth or heat block | 3° warmer |
+| Snowed in | Snug for Winter | indoors at home while snow or hail falls outside | heal x1.15, learn x1.1 |
+| Everything in its place | A Homely Home | at home with 2 storage | construction +1 level |
+| Home cooking | A Stove and a Quern | at home with a stove or cauldron | meals heal x1.1, last x1.1 |
+| Studious | Books and Banners | indoors at home with a bookshelf | learn x1.05 |
+| Hearthkeeper | Heart of the Home | at home | crafting and cooking +1 level |
+
+They stack with the ladder, the rooms and the reactions: a Snug home in snow with Snug for
+Winter done gets the ladder's heal, Snowed in's and, with a fire, Sheltered's. Rooms are
+steps too: `Built("home_workbench", 1)`, `home_larder`, `home_company`, `home_kitchen_garden`
+and the rest work as quest goals, written short and tallied in full (`base:home_larder`).
+
+## `/home`
+
+`/home` tells where the home is and, for each chain of steps (the ladder, and with the rooms
+the workbench and the larder), the highest step reached and what the next one lacks, judged
+as if you stood in it: "Camp reached. Next, Hearthside: it needs hearth 0/1." What a step
+lacks is read off its own condition (`Condition::lacks`), so a mod's steps are covered with no
+extra work; a block tag shows by `home.tag.<tag>` in the language files, else as the tag.
+It is a console command, so it needs no protocol change.
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the
 `sleeps` rules): Rested (10 minutes) anywhere, Well rested (15) if the bed is in a Snug home,
 Deep rest (20) in a Cosy one (a game day is 20 minutes). Rest gives a little heal, xp,
-mining and speed wherever you go, and you cannot sleep again until it wears off ("You are not
-tired yet"), so it is a once-a-day habit, not a button to hold. Timed effects count down
+mining and speed wherever you go, and a bed always works as a bed (it sets where you wake and your home) but gives no new rest
+while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
 ## Numbers and tuning
@@ -58,16 +127,21 @@ All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST`
 Home tiers use `heal`, `warmth` and `xp` only: a location effect that changed maximum health
 would cost health every time the player stepped out.
 
-## Quest hooks (for the quests thread)
+## Quest hooks (written, in base/quests.ron)
 
-`Built("home_camp", 1)` ... as above. Suggested chapters: Nomad "Make Camp" (sleep in a bag
-with a torch beside it), "Hearthside" (light the hearth, already `Home`), "Snug" (roof it);
-Farm "Homely", "Cosy", "Heart of the Home", each a multi-part quest (craft the pieces, then
-reach the step).
+`Built("home_camp", 1)` and the other steps are real goals (a step is tallied as
+`base:home_NAME`, and quests write it short). The home branch: Make Camp (Nomad: sleep in a
+bag with a torch beside it); Snug for Winter, A Homely Home, A Cosy Home and Heart of the
+Home (Farm), each with routes that also accept any higher step, because a player who first
+reaches a higher step never gets the lower one announced; they come after the craft quests
+that make the pieces (seats, a table, shelves, rugs, crockery, candles) and A Stove and a
+Quern, Books and Banners, the two parts the last step needs. Hearthside is the Homestead
+Hearth quest itself.
 
 ## Not built (ideas)
 
-- A `/home` command listing what is still missing for the next step.
+- A herb nook (hanging herbs, jars) boosting Alchemy and Farming: `hanging_herbs` is only a
+  village prop today, with no recipe.
 - Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
   protocol to take a slot count.
 - Passing the night by sleeping, and a visible Rested icon (effects use the plain buff icon).

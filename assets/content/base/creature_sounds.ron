@@ -352,6 +352,15 @@
             hurt: (clips: ["sounds/creatures/parrot/hurt_1.ogg"]),
             death: (clips: ["sounds/creatures/parrot/death_1.ogg"]),
         ),
+        // Small birds: chirps and calls a little higher for each smaller kind, and their
+        // wingbeats for steps, on the ground and in the air.
+        "songbird": (
+            like: "wings",
+            size: 0.3,
+            idle: (clips: ["sounds/creatures/quail/idle_1.ogg", "sounds/creatures/quail/idle_2.ogg", "sounds/creatures/quail/idle_3.ogg", "sounds/creatures/quail/idle_4.ogg"], gain: 0.6),
+            call: (clips: ["sounds/creatures/quail/call_1.ogg", "sounds/creatures/quail/call_2.ogg", "sounds/creatures/quail/call_3.ogg", "sounds/creatures/quail/call_4.ogg", "sounds/creatures/quail/call_5.ogg"], gain: 0.6),
+            hurt: (clips: ["sounds/creatures/quail/hurt_1.ogg"]),
+        ),
         // Wingbeats, for fliers.
         "wings": (
             ground: false,
@@ -407,6 +416,14 @@
         "moonhare": (voice: "rabbit"),
         "junglefowl": (voice: "fowl"),
         "quail": (voice: "quail"),
+        "goldfinch": (voice: "songbird"),
+        "song_thrush": (voice: "songbird"),
+        "crossbill": (voice: "songbird"),
+        "snow_bunting": (voice: "songbird"),
+        "desert_lark": (voice: "songbird"),
+        "wagtail": (voice: "songbird"),
+        "swallow": (voice: "songbird"),
+        "parakeet": (voice: "parrot", pitch: 1.3),
         "pheasant": (voice: "pheasant"),
         "mallard": (voice: "duck"),
         "grey_heron": (voice: "heron"),

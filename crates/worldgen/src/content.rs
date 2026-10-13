@@ -1335,6 +1335,68 @@ pub struct ParticleDef {
     /// is high).
     #[serde(default)]
     pub aether: f32,
+    /// Drawn as small winged creatures (butterflies, moths) instead of specks: the client
+    /// keeps a few on the wing about the player, `density` times `most` where they suit fully,
+    /// `color` their wings' ground and `size` their wingspan.
+    #[serde(default)]
+    pub wings: Option<WingsDef>,
+    /// The share of days (for a `Day` set) or nights (`Night`) it comes out on; the air
+    /// tuning's `days_out` or `nights_out` (weather.ron) when left out.
+    #[serde(default)]
+    pub out: Option<f32>,
+}
+
+/// The most of one set of winged creatures the client keeps about the player.
+pub const WINGS_MOST: u8 = 12;
+
+/// How a set of winged creatures looks and behaves (`ParticleDef::wings`). They are the
+/// client's own: nobody else sees the same ones, and nothing can touch them.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WingsDef {
+    /// Most about the player at once, where they suit fully.
+    pub most: u8,
+    /// The wing pattern, painted in `marks` (sRGB) over the set's `color`.
+    pub pattern: WingPattern,
+    pub marks: (u8, u8, u8),
+    /// Blocks over the ground they flutter at, the least first.
+    #[serde(default = "wing_height")]
+    pub height: (f32, f32),
+    /// Blocks per second.
+    #[serde(default = "wing_speed")]
+    pub speed: f32,
+    /// Blocks they go to and settle on a while, by name or `tag:` (flowers).
+    #[serde(default)]
+    pub visits: Vec<String>,
+    /// Drawn to light: they gather about torches, lamps and fires (moths at night).
+    #[serde(default)]
+    pub to_light: bool,
+}
+
+fn wing_height() -> (f32, f32) {
+    (0.5, 2.5)
+}
+
+fn wing_speed() -> f32 {
+    1.5
+}
+
+/// How a winged creature's wings are marked.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum WingPattern {
+    /// One colour, `marks` only on the edges.
+    #[default]
+    Plain,
+    /// A few round spots.
+    Spots,
+    /// A band across both wings.
+    Band,
+    /// An eye on each wing: a ring of `marks` round a dark centre.
+    Eyes,
+    /// The wingtips.
+    Tips,
+    /// Fine veins.
+    Veins,
 }
 
 /// A biome's air: haze, a nudge to the sky and the colour grading, and ambient particles.
@@ -2510,6 +2572,27 @@ impl WorldContent {
             }
             if !(0.0..=1.0).contains(&particles.density) || !(0.0..=1.0).contains(&particles.aether) || !(particles.size > 0.0 && particles.size <= 4.0) {
                 return Err(ContentError(format!("{}: density and aether must be in 0..=1 and size in (0, 4]", at())));
+            }
+            if particles.out.is_some_and(|out| !(0.0..=1.0).contains(&out)) {
+                return Err(ContentError(format!("{}: `out` is a share of days or nights, 0 to 1", at())));
+            }
+            if let Some(wings) = &particles.wings {
+                let (low, high) = wings.height;
+                if wings.most == 0 || wings.most > WINGS_MOST || !(0.0 <= low && low <= high && high <= 16.0) || !(wings.speed > 0.0 && wings.speed <= 8.0) || particles.size > 1.0 {
+                    return Err(ContentError(format!(
+                        "{}: wings need `most` 1 to {WINGS_MOST}, `height` from 0 to 16 blocks with the least first, `speed` above 0 and up to 8, and `size` up to 1",
+                        at()
+                    )));
+                }
+                for visit in &wings.visits {
+                    let known = match visit.strip_prefix("tag:") {
+                        Some(tag) => registry.tagged(tag).next().is_some(),
+                        None => registry.id(visit).is_some(),
+                    };
+                    if !known {
+                        return Err(ContentError(format!("{}: visits `{visit}`, which no block is (a block's full name, or `tag:` and a tag)", at())));
+                    }
+                }
             }
             comfort(&at, &particles.comfort)?;
         }

@@ -197,6 +197,7 @@ impl Server {
             },
             Run::Skill => self.skill_command(id, args),
             Run::Machine => self.machine_command(id, args),
+            Run::Home => self.home_command(id),
         };
         let (Ok(text) | Err(text)) = &reply;
         tracing::debug!("/{}: {}", def.short_name(), self.english(text));
@@ -680,6 +681,39 @@ impl Server {
                 .with("doing", Words::Own(format!("creature.doing.{doing}"), doing.replace('_', " ")))
         });
         Words::Lines(std::iter::once(Words::key("command.creatures.title")).chain(lines).collect())
+    }
+
+    /// `/home`: where the player's home is (the lit hearth, else the bed last slept in), the
+    /// highest step of each chain it has reached (the ladder, the rooms) and what the next
+    /// one lacks, judged as if the player stood in it.
+    fn home_command(&self, id: Source) -> Reply {
+        let player = self.players.get(&Self::me(id)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        let Some(home) = player.home.or(player.bed) else { return Err(Words::key("home.none")) };
+        let anchor = home.floor().as_ivec3();
+        let survey = self.survey_around(anchor, Some(Self::me(id)?));
+        let calm = voxmar_engine::weather::Weather::NONE;
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done };
+        let effects = &self.content.effects;
+        let name = |effect| {
+            let def = effects.get(effect);
+            Words::Own(voxmar_engine::lang::def_key("effect", &def.name), def.title.clone())
+        };
+        let away = player.position.distance(home).round();
+        let mut lines = vec![Words::key("home.at").with("x", Words::text(anchor.x)).with("y", Words::text(anchor.y)).with("z", Words::text(anchor.z)).with("away", Words::text(away))];
+        // Out of the loaded world its blocks read as nothing: say so rather than misjudge it.
+        if self.block(anchor).is_none() {
+            lines.push(Words::key("home.far"));
+            return Ok(Words::Lines(lines));
+        }
+        for chain in effects.home_progress(&situation) {
+            lines.push(match (chain.reached, chain.next) {
+                (Some(reached), Some((next, lacks))) => Words::key("home.step").with("step", name(reached)).with("next", name(next)).with("needs", home_needs(&lacks)),
+                (Some(reached), None) => Words::key("home.step_last").with("step", name(reached)),
+                (None, Some((next, lacks))) => Words::key("home.step_first").with("next", name(next)).with("needs", home_needs(&lacks)),
+                (None, None) => continue,
+            });
+        }
+        Ok(Words::Lines(lines))
     }
 
     fn biome(&self, id: Source) -> Words {
@@ -1231,4 +1265,20 @@ mod tests {
         assert_eq!(axis("64", 0.0, false), Ok(64.0));
         assert!(axis("x", 0.0, true).is_err() && axis("~y", 0.0, true).is_err() && axis("inf", 0.0, true).is_err());
     }
+}
+
+/// What a home lacks, in words: "roof overhead, seat 1/2".
+fn home_needs(lacks: &[voxmar_engine::effect::Lack]) -> Words {
+    use voxmar_engine::effect::Lack;
+    Words::List(
+        lacks
+            .iter()
+            .map(|lack| match lack {
+                Lack::Roof => Words::key("home.lack.roof"),
+                Lack::Away => Words::key("home.lack.away"),
+                Lack::Tag { tag, have, need } => Words::key("home.lack.tag").with("tag", Words::Own(format!("home.tag.{tag}"), tag.replace('_', " "))).with("have", Words::text(have)).with("need", Words::text(need)),
+                Lack::OneOf(options) => Words::key("home.lack.either").with("options", Words::List(options.iter().map(|o| home_needs(o)).collect())),
+            })
+            .collect(),
+    )
 }

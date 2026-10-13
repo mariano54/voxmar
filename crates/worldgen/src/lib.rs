@@ -59,7 +59,7 @@ use voxmar_engine::world::Column;
 
 pub use atmosphere::{Atmosphere, ParticleId};
 pub use biome::{Biome, BiomeId, Biomes};
-pub use content::{DayTime, Motion, ParticleDef, WeatherWhen};
+pub use content::{DayTime, Motion, ParticleDef, WeatherWhen, WingPattern, WingsDef, WINGS_MOST};
 pub use caves::{CaveStyle, LAVA_LEVEL};
 pub use climate::LAPSE_RATE;
 pub use content::{ContentError, Select, WorldContent};

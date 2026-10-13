@@ -153,6 +153,11 @@
             help: "Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.",
             run: Machine,
         ),
+        (
+            name: "home",
+            help: "Tells where your home is, how far its furnishing has come, and what the next step needs.",
+            run: Home,
+        ),
     ],
     // Real minutes a whole day takes at normal speed: the sun is up for two thirds of it.
     // Longer than Minecraft's 20, so the first night comes less soon (Mariano, 2026-10-07:

@@ -157,6 +157,7 @@ Numbers in data, read by one locomotion system:
 | Lumberer | slow, heavy, long pauses, short fast charges |
 | Creeper | low and slow (snails, crawlers, shamblers) |
 | Drifter | floats above the ground, bobbing (wisps) |
+| Flier | hops about the ground pecking; takes wing to go further or faster than a walk (fleeing, or now and then across its range), keeps `fly` blocks over the land and the treetops ahead, and flutters down to land when it slows (small birds, `creatures_birds.ron`); spreads its wings and beats them in bursts in flight, and falls when it dies in the air |
 
 The client animates from the same numbers: leg swing from ground speed, a crouch for
 stalking, the head down for grazing and up when alert, tails swaying.

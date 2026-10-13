@@ -11,8 +11,9 @@
         back under the default) is listed as a note, and fails with --strict: budgets are set on
         a slow machine, so a fast one finds many unneeded; run --strict on the Linux box that set them.
         --full: the run included the slow tests the default gate skips (`full_suite_seconds`).
-        --scale X: how much slower than an idle machine this one is running (the gate passes
-        the load over the cores, at least 1), since a busy machine slows every test alike.
+        --scale X: how much slower than the machine the budgets were set on this one is running
+        (the gate passes its slowdown, times the load over the cores when that is over 1),
+        since a busy or slower machine slows every test alike.
 
 Times come from the test harness, so they are wall-clock times: a test that waits is slow
 however little work it does, which is what these budgets are for.
@@ -124,7 +125,7 @@ def main(argv):
         limit = float(entry["seconds"]) if entry else per_test
         if seconds > limit * scale:
             what = f"allowed {limit:g} s" if entry else f"budget {limit:g} s"
-            problems.append(f"{seconds:6.1f} s  {binary} {name}: over its {what}" + (f" (x{scale:.1f} for this machine's load)" if scale > 1 else ""))
+            problems.append(f"{seconds:6.1f} s  {binary} {name}: over its {what}" + (f" (x{scale:.1f} for this machine's load and slowdown)" if scale > 1 else ""))
     # An allowance the test no longer needs: it ran, and under the default.
     notes = []
     for (binary, name), entry in allowed.items():

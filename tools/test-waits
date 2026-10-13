@@ -41,7 +41,6 @@ TIMING_TESTS = [
     "a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it",
     "placing_or_throwing_while_mining_does_not_cancel_the_mining",
     "a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks",
-    "a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing",
 ]
 
 TEST_FILES = re.compile(r"^crates/[^/]+/tests/.*\.rs$")

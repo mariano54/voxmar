@@ -449,6 +449,7 @@ pub(super) mod tests {
     use crate::block::BlockRegistry;
     use crate::creature::{CreatureId, CreatureRegistry};
     use crate::skill::SkillRegistry;
+    use crate::creature::motion;
 
     pub(super) fn species(source: &str) -> Creature {
         let defs = CreatureRegistry::read("test", source).unwrap().defs;
@@ -484,6 +485,35 @@ pub(super) mod tests {
         let decision = think(&rabbit, &mut mind, &situation(&carrot));
         assert_eq!(doing(&rabbit, &mind), "tempted");
         assert!(decision.goal.unwrap().x > 4.0);
+    }
+
+    #[test]
+    fn birds_take_wing_from_players_and_hop_or_fly_about() {
+        let finch = species(&format!(
+            "(creatures: [(name: \"finch\", health: 1, leash: 30.0, {BODY}, movement: (style: Flier, walk: 1.0, run: 7.0, jump: 3.0, fly: 5.0), temperament: (fear: 0.9), behaviours: [(do: Wander(radius: 6.0)), (do: Flee(radius: 8.0))])])"
+        ));
+        let flight = |speed: f32| motion::flies(&finch.def.movement, motion::Drive { wish: Vec3::X, speed, face: None });
+        // Flushed by a player, it flies well clear: fast enough to be on the wing.
+        let mut mind = Mind::new(&finch.def.temperament, 1);
+        let near = [player(Vec3::new(3.0, 0.0, 0.0))];
+        let decision = think(&finch, &mut mind, &situation(&near));
+        assert_eq!(doing(&finch, &mind), "flee");
+        assert!(decision.goal.unwrap().x < -15.0 && flight(decision.speed), "{decision:?}");
+        // Left alone, it mostly hops a little way and now and then flies off across its range.
+        let (mut hops, mut flights) = (0, 0);
+        for seed in 0..200 {
+            let mut mind = Mind::new(&finch.def.temperament, seed);
+            let decision = think(&finch, &mut mind, &Situation { seed, ..situation(&[]) });
+            let Some(goal) = decision.goal else { continue };
+            if flight(decision.speed) {
+                assert!(goal.length() > 6.0, "flew to a near goal {goal}");
+                flights += 1;
+            } else {
+                assert!(goal.length() <= 3.0 + 1e-3, "walked to a far goal {goal}");
+                hops += 1;
+            }
+        }
+        assert!(hops > flights && flights > 10, "{hops} hops, {flights} flights");
     }
 
     #[test]
