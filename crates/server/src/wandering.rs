@@ -8,7 +8,9 @@
 //! and a script walks them. The script is a plan the leader follows and an errand for each
 //! member, handed over every `errand_every` seconds: the same `Errand` villagers follow, so
 //! the `Routine` behaviour of the species walks it, and anything else the species does
-//! (flee when struck, hunt a player who comes near) still beats the walk. Members keep their
+//! (fight when struck, hunt a player who comes near) still beats the walk. The errand is
+//! `steady` until a player turns the party: till then a member runs only when its script
+//! says, after that its own fear may run it. Members keep their
 //! formation round the leader by role; a pet circles its owner.
 //!
 //! Plans find their own way over open ground by probing: a stride of a few blocks ahead
@@ -1288,8 +1290,11 @@ impl Server {
                 errands[i] = Some(errand(inst.members[i].mill_at, there, if night && there { Pose::Resting } else { Pose::Idle }, Some(*spot), 1.0));
             }
         }
+        // A party nobody has turned walks its script and nothing else; once a player has
+        // (a scatter, a sprung ambush) each member's own fear has its say again.
+        let steady = inst.provoked.is_none();
         for (member, errand) in inst.members.iter_mut().zip(errands) {
-            member.errand = errand;
+            member.errand = errand.map(|e| Errand { steady, ..e });
         }
     }
 
@@ -2430,6 +2435,20 @@ mod tests {
         // And once it has shown its gift, it goes.
         run(&mut server, 20 * 10);
         assert!(!server.wandering.active.contains_key(&id) && !server.creatures.live.contains_key(&stag), "gone without a death");
+    }
+
+    #[test]
+    fn a_struck_stag_bolts_on_its_own_fear_not_at_a_walk() {
+        let mut server = fixture();
+        let id = start(&mut server, "white_stag", (60, 128));
+        let stag = server.wandering.active[&id].members[0].creature;
+        run(&mut server, 20);
+        assert!(server.wandering.active[&id].members[0].errand.is_some_and(|e| e.steady), "leading: the script's walk");
+        server.wandering_hurt(stag, 1);
+        run(&mut server, 20);
+        let inst = &server.wandering.active[&id];
+        assert!(matches!(inst.plan, Plan::March { .. }), "it scatters");
+        assert!(inst.members[0].errand.is_some_and(|e| !e.steady), "and its fear may run it");
     }
 
     #[test]
