@@ -951,43 +951,51 @@ impl Server {
                 choices.push((id, weight));
             }
         }
-        // Sometimes nothing: some spots stay empty, so there are gaps between herds.
-        let total: f32 = choices.iter().map(|c| c.1).sum();
-        let nothing = if choices.iter().all(|&(id, _)| self.content.creatures.get(id).def.kind == Kind::Monster) { limits.empty_for_monsters } else { limits.empty_for_animals };
-        let mut pick = unit_from(mix(seed, 2)) * (total + nothing);
-        let Some(&(species, _)) = choices.iter().find(|c| {
-            pick -= c.1;
-            pick <= 0.0
-        }) else {
-            return;
-        };
-        // Groups vary: even herd animals turn up alone or in pairs now and then.
-        let group = self.content.creatures.get(species).def.group.size;
-        let roll = unit_from(mix(seed, 4));
-        let count = if roll < 0.18 {
-            1
-        } else if roll < 0.32 {
-            group.1.min(2)
-        } else {
-            group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
-        };
-        // Never past the cap: a herd arriving near it comes smaller.
-        let def = &self.content.creatures.get(species).def;
-        let (monster, of) = (def.kind == Kind::Monster, budget(def).expect("not a villager"));
-        let (here, cap) = room_of(of);
-        let room = cap.saturating_sub(here);
-        let count = count.min(room.max(1).min(wild_room).min(u8::MAX as usize) as u8);
-        for i in 0..count.max(1) {
-            let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
-            let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
-            if (monster && self.lit_near(cell)) || self.seen_by_a_player(cell, limits.spawn_unseen_angle) {
-                continue;
+        // Birds are drawn apart from what walks, with a draw of their own at the same spot, so
+        // they add to the animals about instead of taking their places.
+        let (birds, ground): (Vec<_>, Vec<_>) = choices.into_iter().partition(|&(id, _)| budget(&self.content.creatures.get(id).def) == Some(Budget::Bird));
+        for (choices, seed) in [(ground, seed), (birds, mix(seed, 0xb1d5))] {
+            if self.wild_room() == 0 {
+                break;
             }
-            let position = cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
-            if !self.nearby_room(position, of, cap) {
+            // Sometimes nothing: some spots stay empty, so there are gaps between herds.
+            let total: f32 = choices.iter().map(|c| c.1).sum();
+            let nothing = if choices.iter().all(|&(id, _)| self.content.creatures.get(id).def.kind == Kind::Monster) { limits.empty_for_monsters } else { limits.empty_for_animals };
+            let mut pick = unit_from(mix(seed, 2)) * (total + nothing);
+            let Some(&(species, _)) = choices.iter().find(|c| {
+                pick -= c.1;
+                pick <= 0.0
+            }) else {
                 continue;
+            };
+            // Groups vary: even herd animals turn up alone or in pairs now and then.
+            let group = self.content.creatures.get(species).def.group.size;
+            let roll = unit_from(mix(seed, 4));
+            let count = if roll < 0.18 {
+                1
+            } else if roll < 0.32 {
+                group.1.min(2)
+            } else {
+                group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
+            };
+            // Never past the cap: a herd arriving near it comes smaller.
+            let def = &self.content.creatures.get(species).def;
+            let (monster, of) = (def.kind == Kind::Monster, budget(def).expect("not a villager"));
+            let (here, cap) = room_of(of);
+            let room = cap.saturating_sub(here);
+            let count = count.min(room.max(1).min(self.wild_room()).min(u8::MAX as usize) as u8);
+            for i in 0..count.max(1) {
+                let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
+                let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
+                if (monster && self.lit_near(cell)) || self.seen_by_a_player(cell, limits.spawn_unseen_angle) {
+                    continue;
+                }
+                let position = cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+                if !self.nearby_room(position, of, cap) {
+                    continue;
+                }
+                self.spawn_unseen(species, position, seed ^ i as u64, limits.spawn_unseen_angle);
             }
-            self.spawn_unseen(species, position, seed ^ i as u64, limits.spawn_unseen_angle);
         }
     }
 
