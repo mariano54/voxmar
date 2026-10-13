@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Tint};
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
@@ -1591,7 +1592,8 @@ fn a_settlement_stands_near_spawn() {
     let (mut far, mut excused) = (Vec::new(), Vec::new());
     // 0x5eed: the world a new game makes unless told otherwise.
     let seeds: Vec<u64> = (0..20).chain([42, 99, 0x5eed]).collect();
-    for &seed in &seeds {
+    // Each world on its own core, its outcome kept in seed order.
+    let outcomes: Vec<(u64, Option<Result<(), String>>)> = seeds.par_iter().map(|&seed| {
         let world = base_world(seed);
         let within = world.settlements.def.rules.spawn_settlement_within as f32;
         let spawn = world.spawn_point();
@@ -1599,14 +1601,21 @@ fn a_settlement_stands_near_spawn() {
         assert!(!world.settlements.covers(&world, spawn.x, spawn.z), "seed {seed}: spawn at {spawn} is inside a settlement");
         let nearest = world.settlements_near(at, 2048).iter().map(|s| IVec2::new(s.centre.x, s.centre.z).as_vec2().distance(at.as_vec2())).fold(f32::MAX, f32::min);
         if nearest <= within {
-            continue;
+            return (seed, None);
         }
         let sites = world.settlements.spawn_has_sites(&world);
         eprintln!("seed {seed}: none within {within} of spawn at {spawn}; spots in reach: {sites}");
         if sites {
-            far.push(format!("seed {seed}: the nearest settlement is {nearest:.0} blocks from spawn at {spawn}, though the land has spots for one"));
+            (seed, Some(Err(format!("seed {seed}: the nearest settlement is {nearest:.0} blocks from spawn at {spawn}, though the land has spots for one"))))
         } else {
-            excused.push(seed);
+            (seed, Some(Ok(())))
+        }
+    }).collect();
+    for (seed, outcome) in outcomes {
+        match outcome {
+            Some(Err(why)) => far.push(why),
+            Some(Ok(())) => excused.push(seed),
+            None => {}
         }
     }
     assert!(far.is_empty(), "{}", far.join("\n"));
@@ -1776,7 +1785,11 @@ fn snowy_villages_keep_their_built_stone() {
     let natural_stone = |b: BlockId| def(b).has_tag("stone") && !def(b).has_tag("building");
     let (snow, grass, snowy_grass) = (registry.expect("base:snow_block"), registry.expect("base:grass_block"), registry.expect("base:snowy_grass_block"));
     let (mut villages, mut kept, mut snowed_stone, mut snowed_sod) = (0, 0, 0, 0);
-    'seeds: for seed in 1u64..=60 {
+    // Seeds known to have snowy settlements that between them prove everything below come
+    // first (18: kept stone, snowed stone and sod; 1: more), so the walk usually ends in two
+    // worlds; the others are the search it falls back to when content moves the snow.
+    const SNOWY: [u64; 2] = [18, 1];
+    'seeds: for seed in SNOWY.into_iter().chain((1u64..=60).filter(|seed| !SNOWY.contains(seed))) {
         let world = Overworld::with_content(seed, registry.clone(), &content);
         let spawn = world.spawn_point();
         for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 4000) {
@@ -2173,37 +2186,37 @@ fn rolled(world: &Overworld, cell: IVec2, at: IVec2, fresh: bool) -> super::cult
 fn a_culture_is_a_function_of_the_seed_and_the_place() {
     let (a, b) = (base_world(7), base_world(7));
     let da = &a.settlements.def.cultures;
-    let (mut made, mut second, mut borrowed, mut claimed) = (0, 0, 0, 0);
-    for cz in -6..6 {
-        for cx in -6..6 {
-            let cell = IVec2::new(cx, cz);
-            let at = cell * 1024 + 512;
-            let (x, y) = (rolled(&a, cell, at, true), rolled(&b, cell, at, true));
-            assert_eq!(x, y, "{cell}: rolled differently");
-            assert!(x.axes.iter().all(|v| (0.0..=1.0).contains(v)), "{cell}: axes {:?}", x.axes);
-            let f = &da.families[x.family];
-            assert!(x.dropped.len() <= da.rules.drop.1 as usize, "{cell}: dropped {}", x.dropped.len());
-            assert!(x.dropped.iter().all(|e| f.entries.contains(e) && e.mult > 1.0), "{cell}: dropped what the family does not favour");
-            assert!(x.borrowed.len() <= da.rules.borrow as usize, "{cell}: borrowed {}", x.borrowed.len());
-            for (donor, e) in &x.borrowed {
-                assert!(*donor != x.family && da.families[*donor].entries.contains(e), "{cell}: borrowed {e:?} from {donor}, which does not have it");
-            }
-            let kept = x.palette.materials().iter().map(|m| m.0.len()).sum::<usize>();
-            assert!((da.rules.keep.0 as usize..=da.rules.keep.1 as usize).contains(&kept), "{cell}: kept {kept} colours");
-            assert!((1..=2).contains(&x.quirks.len()), "{cell}: {} quirks", x.quirks.len());
-            if let Some(s) = &x.second {
-                assert!(s.family != x.family && (0.1..=0.45).contains(&s.share) || x.claimed && s.share == 0.3, "{cell}: second family {} share {}", s.family, s.share);
-            }
-            second += usize::from(x.second.is_some());
-            borrowed += usize::from(!x.borrowed.is_empty());
-            claimed += usize::from(x.claimed);
-            made += 1;
+    // The 144 cells, each on its own core (a roll reads the land's level); the counts are
+    // taken from the results in cell order.
+    let cells: Vec<IVec2> = (-6..6).flat_map(|cz| (-6..6).map(move |cx| IVec2::new(cx, cz))).collect();
+    let counted: Vec<(bool, bool, bool)> = cells.par_iter().map(|&cell| {
+        let at = cell * 1024 + 512;
+        let (x, y) = (rolled(&a, cell, at, true), rolled(&b, cell, at, true));
+        assert_eq!(x, y, "{cell}: rolled differently");
+        assert!(x.axes.iter().all(|v| (0.0..=1.0).contains(v)), "{cell}: axes {:?}", x.axes);
+        let f = &da.families[x.family];
+        assert!(x.dropped.len() <= da.rules.drop.1 as usize, "{cell}: dropped {}", x.dropped.len());
+        assert!(x.dropped.iter().all(|e| f.entries.contains(e) && e.mult > 1.0), "{cell}: dropped what the family does not favour");
+        assert!(x.borrowed.len() <= da.rules.borrow as usize, "{cell}: borrowed {}", x.borrowed.len());
+        for (donor, e) in &x.borrowed {
+            assert!(*donor != x.family && da.families[*donor].entries.contains(e), "{cell}: borrowed {e:?} from {donor}, which does not have it");
         }
-    }
+        let kept = x.palette.materials().iter().map(|m| m.0.len()).sum::<usize>();
+        assert!((da.rules.keep.0 as usize..=da.rules.keep.1 as usize).contains(&kept), "{cell}: kept {kept} colours");
+        assert!((1..=2).contains(&x.quirks.len()), "{cell}: {} quirks", x.quirks.len());
+        if let Some(s) = &x.second {
+            assert!(s.family != x.family && (0.1..=0.45).contains(&s.share) || x.claimed && s.share == 0.3, "{cell}: second family {} share {}", s.family, s.share);
+        }
+        (x.second.is_some(), !x.borrowed.is_empty(), x.claimed)
+    }).collect();
+    let made = counted.len();
+    let second = counted.iter().filter(|c| c.0).count();
+    let borrowed = counted.iter().filter(|c| c.1).count();
+    let claimed = counted.iter().filter(|c| c.2).count();
     assert_eq!(made, 144);
     assert!(second > 5 && borrowed > 5 && claimed > 5, "{second} with a second family, {borrowed} borrowing, {claimed} claimed by river folk, of {made}");
     // The planned settlements carry the same culture in two worlds of one seed.
-    let (pa, pb) = (a.settlements_near(IVec2::ZERO, 4096), b.settlements_near(IVec2::ZERO, 4096));
+    let (pa, pb) = rayon::join(|| a.settlements_near(IVec2::ZERO, 4096), || b.settlements_near(IVec2::ZERO, 4096));
     assert!(pa.len() > 3, "{} settlements near", pa.len());
     assert_eq!(pa.iter().map(|s| &s.culture).collect::<Vec<_>>(), pb.iter().map(|s| &s.culture).collect::<Vec<_>>());
 }
@@ -2219,12 +2232,15 @@ fn neighbouring_places_share_a_family() {
         let world = shared_world(seed);
         let families = cell_families(&world);
         let region = |at: IVec2| world.settlements.def.cultures.region_at(world.settlements.seed, at, &families).0;
-        for k in 0..400u64 {
+        // Each pair on its own core (a region lookup is a few milliseconds).
+        let regions: Vec<(usize, usize)> = (0..400u64).into_par_iter().map(|k| {
             let h = crate::rng::hash3(seed, k as i32, 3, 99);
             let at = IVec2::new((h % 160_000) as i32 - 80_000, ((h >> 20) % 160_000) as i32 - 80_000);
             let angle = (h >> 40) as f32 / 1e6;
             let other = at + IVec2::new((angle.cos() * 3000.0) as i32, (angle.sin() * 3000.0) as i32);
-            let (a, b) = (region(at), region(other));
+            (region(at), region(other))
+        }).collect();
+        for (a, b) in regions {
             seen.insert(a);
             pairs += 1;
             same += usize::from(a == b);
@@ -2238,9 +2254,8 @@ fn neighbouring_places_share_a_family() {
     // Settlements near one another, as planned (some claimed by river folk, which is why
     // this one counts the region's family, the second of a claimed place).
     let (mut near_same, mut near_pairs) = (0, 0);
-    for seed in [1u64, 42] {
-        let world = shared_world(seed);
-        let all = world.settlements_near(IVec2::ZERO, 12_000);
+    let planned: Vec<_> = [1u64, 42].into_par_iter().map(|seed| shared_world(seed).settlements_near(IVec2::ZERO, 12_000)).collect();
+    for all in planned {
         let region = |c: &super::CultureInfo| if c.family == "river" { c.second.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { c.family.clone() };
         for (i, a) in all.iter().enumerate() {
             for b in &all[i + 1..] {

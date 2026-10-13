@@ -266,12 +266,15 @@ const EXPECTED: [u64; 4] = [0x4c3793e5d1742b58, 0x708d39cdd2dc0c0e, 0x73c709cebc
 /// changed.
 #[test]
 fn output_is_unchanged() {
+    use rayon::prelude::*;
     let registry = registry();
+    // Every column on its own core, mixed in order.
     let hashes: Vec<u64> = GOLDEN
         .iter()
         .map(|(seed, columns)| {
             let world = Overworld::new(*seed, registry.clone());
-            columns.iter().fold(0, |h, &(x, z)| mix(h ^ column_hash(&world.generate(ColumnPos::new(x, z)), &registry)))
+            let each: Vec<u64> = columns.par_iter().map(|&(x, z)| column_hash(&world.generate(ColumnPos::new(x, z)), &registry)).collect();
+            each.into_iter().fold(0, |h, column| mix(h ^ column))
         })
         .collect();
     let printed = hashes.iter().map(|h| format!("{h:#018x}")).collect::<Vec<_>>().join(", ");
@@ -290,12 +293,14 @@ const LIGHT: u64 = 0x2923024e18114411;
 /// purpose this changes with it; set `LIGHT` to the hash this test prints.
 #[test]
 fn light_is_unchanged() {
+    use rayon::prelude::*;
     let registry = registry();
     let mut hash = 0;
     for (seed, columns) in GOLDEN {
         let world = Overworld::new(seed, registry.clone());
         let centre = ColumnPos::new(columns[0].0, columns[0].1);
-        let around: [Arc<Column>; 9] = std::array::from_fn(|k| Arc::new(world.generate(centre.offset(k as i32 % 3 - 1, k as i32 / 3 - 1))));
+        let around: Vec<Arc<Column>> = (0..9).into_par_iter().map(|k| Arc::new(world.generate(centre.offset(k as i32 % 3 - 1, k as i32 / 3 - 1)))).collect();
+        let around: [Arc<Column>; 9] = around.try_into().ok().expect("nine columns");
         let region = LitRegion::compute(&registry, &around);
         for y in 0..voxmar_engine::coords::WORLD_HEIGHT {
             for z in -1..33 {

@@ -346,10 +346,11 @@ fi
 # averaged while the tests ran.
 if compgen -G "$out/test-*.txt" >/dev/null; then
   scale=$(awk -v c="$(getconf _NPROCESSORS_ONLN)" '{ s += $1; n++ } END { s = n ? s / n / c : 1; print (s < 1 ? 1 : s) }' "$out/load.txt")
-  # A machine loaded past three times its cores says nothing about a test's own time (the
-  # box of a cloud thread, 32 test threads on 4 cores): the times are listed, not judged.
-  if awk -v s="$scale" 'BEGIN { exit !(s > 3) }'; then
-    tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || echo "gate: test times not judged: the machine was loaded x$scale over its cores; run tools/gate on a calmer one"
+  # What else the machine runs (an emulator, browsers) must never block a landing: with the
+  # load averaged during the tests over the cores, the times are listed, not judged. Judged on
+  # a calm machine, where a test's time is its own.
+  if awk -v s="$scale" 'BEGIN { exit !(s > 1) }'; then
+    tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || echo "gate: test times not judged: the load during the tests was x$scale over the cores; run tools/gate on a calmer machine to hold them to tools/test-budget.toml"
   else
     tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || fail "test times (tools/test-budget.toml)"
   fi

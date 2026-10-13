@@ -4369,6 +4369,7 @@ fn a_processing_array_works_only_inside_its_cube_of_hv_casing() {
 
 #[test]
 fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformers_bring_it_to_lv() {
+    real_time("it asserts the macerator loses power within two server seconds of the break, which a client busy on a loaded machine outlasts when ticks run twenty times quicker");
     let mut client = Client::join();
     let p = client.position.floor().as_ivec3();
     let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);

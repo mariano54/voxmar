@@ -73,13 +73,6 @@ tests = [
   "guards_give_up_on_a_player_they_cannot_reach",
 ]
 
-[[allow]]
-binary = "regional_crops"
-seconds = 70
-why = "A census of every regional crop in the biomes of several worlds: generating and sampling those worlds is the cost."
-tests = [
-  "regional_crops_are_regional",
-]
 
 [[allow]]
 binary = "voxmar"
@@ -151,7 +144,6 @@ binary = "voxmar_worldgen"
 seconds = 45
 why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
 tests = [
-  "generated_water::tarns_do_not_move",
   "geology::tests::lands_match_land_alone",
   "tests::biome_census_keeps_site_fields",
   "tests::borders_blend_smoothly",
@@ -196,7 +188,6 @@ binary = "voxmar_worldgen"
 seconds = 70
 why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
 tests = [
-  "generated_water::water_still_settles_at_the_next_version",
   "tests::crags_overhang_and_keep_their_tops",
   "tests::fluids_are_contained",
   "tests::rivers_never_loop_across_regions",
@@ -206,13 +197,6 @@ tests = [
   "water::tests::tarn_geometry_preserves_routing_and_uses_complete_flow",
 ]
 
-[[allow]]
-binary = "voxmar_worldgen"
-seconds = 70
-why = "Hashes a fixed area of generated output against its golden; the generator is the cost."
-tests = [
-  "perf::output_is_unchanged",
-]
 
 [[allow]]
 binary = "voxmar_worldgen"
@@ -228,17 +212,9 @@ binary = "voxmar_worldgen"
 seconds = 150
 why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
 tests = [
-  "generated_water::generated_water_does_not_move",
   "tests::decorations_rest_on_the_ground",
 ]
 
-[[allow]]
-binary = "voxmar_worldgen"
-seconds = 150
-why = "Plans the settlements of one or many worlds (a village is about a second of planning, cached once per world, and the culture tests search seeds and regions) and walks what they build."
-tests = [
-  "settlements::tests::a_culture_is_a_function_of_the_seed_and_the_place",
-]
 
 [[allow]]
 binary = "voxmar_worldgen"
@@ -248,22 +224,7 @@ tests = [
   "tests::wood_never_floats",
 ]
 
-[[allow]]
-binary = "voxmar_worldgen"
-seconds = 300
-why = "Plans the settlements of one or many worlds (a village is about a second of planning, cached once per world, and the culture tests search seeds and regions) and walks what they build."
-tests = [
-  "settlements::tests::a_settlement_stands_near_spawn",
-]
 
-[[allow]]
-binary = "voxmar_worldgen"
-seconds = 500
-why = "Plans the settlements of one or many worlds (a village is about a second of planning, cached once per world, and the culture tests search seeds and regions) and walks what they build."
-tests = [
-  "settlements::tests::neighbouring_places_share_a_family",
-  "settlements::tests::snowy_villages_keep_their_built_stone",
-]
 
 [[allow]]
 binary = "voxmar_worldgen"
@@ -271,4 +232,42 @@ seconds = 900
 why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
 tests = [
   "tests::rare_herbs_grow_at_their_rates",
+]
+
+[[allow]]
+binary = "gameplay"
+seconds = 45
+why = "Judged by the wall clock (the macerator must lose power within two server seconds of the break, which a client busy on a loaded machine outlasts at twenty-fold ticks), so it runs with real_time(): 19 s measured."
+tests = [
+  "a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformers_bring_it_to_lv",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 20
+why = "Sweeps several worlds' sites, columns and regions, each sweep on every core (rayon), so the time is the machine's cores over the generator's cost (a column 13 to 18 ms, a site() 0.15 to 0.5 ms): 8 to 12 s measured on four cores, a few seconds on a Mac."
+tests = [
+  "settlements::tests::a_culture_is_a_function_of_the_seed_and_the_place",
+  "settlements::tests::snowy_villages_keep_their_built_stone",
+]
+
+[[allow]]
+binary = "voxmar_worldgen"
+seconds = 45
+why = "As above, longer sweeps: 14 to 40 s measured on four cores (the water tests side by side), a few seconds on a Mac."
+tests = [
+  "generated_water::generated_water_does_not_move",
+  "generated_water::tarns_do_not_move",
+  "generated_water::water_still_settles_at_the_next_version",
+  "perf::output_is_unchanged",
+  "settlements::tests::a_settlement_stands_near_spawn",
+  "settlements::tests::neighbouring_places_share_a_family",
+]
+
+[[allow]]
+binary = "regional_crops"
+seconds = 45
+why = "A census of every regional crop over 120 000 sites of three worlds, on every core: 20 s measured on four cores."
+tests = [
+  "regional_crops_are_regional",
 ]

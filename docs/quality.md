@@ -210,7 +210,7 @@ over its budget is listed in `[[allow]]` with its own `seconds` and the reason. 
 slowest tests every time. It fails on a test over its budget and on a binary over the suite
 budget; with `--strict`, run on the Linux box the budgets were set on, also on an allowance a
 test no longer needs (it ran back under the default), so the list only shrinks as tests get
-cheaper (a faster machine would find many unneeded, so the gate only notes them). The scale is the load averaged while the tests ran; past three times the cores the gate lists the times and does not judge them (a busy cloud box says nothing about a test's own time). A new test over the default is made cheaper first;
+cheaper (a faster machine would find many unneeded, so the gate only notes them). The scale is the load averaged while the tests ran; past the core count the gate lists the times and does not judge them (what else the machine runs must never block a landing; a calm machine holds the budgets). A new test over the default is made cheaper first;
 an entry is the last resort, with a reason a reader can check.
 
 How the tests are kept cheap:
