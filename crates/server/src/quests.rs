@@ -19,6 +19,15 @@ impl Server {
         }
     }
 
+    /// How many animals `keeper` keeps, in the world or waiting in the save, with a condition
+    /// of at least `least` (0 to 1).
+    fn thriving(&self, keeper: &str, least: f32) -> u32 {
+        let tamed = self.content.creatures.condition().tamed;
+        let live = self.creatures.live.values().filter(|c| c.owner.as_deref() == Some(keeper) && c.condition >= least).count();
+        let saved = self.creatures.unplaced.iter().filter(|s| s.owner == keeper && s.condition.unwrap_or(tamed) >= least).count();
+        (live + saved) as u32
+    }
+
     /// Once a second: finishes quests whose tasks hold, gives their rewards, and sends each
     /// player their quests' states when they changed.
     pub(crate) fn check_quests(&mut self) {
@@ -45,7 +54,8 @@ impl Server {
                 };
                 let has_tag = |name: &str, tag: &str| blocks.id(name).is_some_and(|id| blocks.def(id).has_tag(tag));
                 let drops = |name: &str| blocks.id(name).map(|id| blocks.info(id).drops).filter(|d| !d.is_air()).map(|d| blocks.def(d).name.clone());
-                let progress = Progress { journal: &player.journal, tallies: &player.tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: player.home.is_some() };
+                let thriving = |percent: u8| self.thriving(&player.name, percent as f32 / 100.0);
+                let progress = Progress { journal: &player.journal, tallies: &player.tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &thriving, home: player.home.is_some() };
                 let finished = self.content.quests.newly_done(&player.quests_done, &progress);
                 let mut done = player.quests_done.clone();
                 done.extend(finished.iter().cloned());
