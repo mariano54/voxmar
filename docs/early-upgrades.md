@@ -23,6 +23,9 @@ gathering quests is itself the upgrade:
 | Copper Kit (Farm) | Copper hands | nearly a third faster, an extra piece 6 times in 100 |
 | A Pile of Stone | Stonewise (mountain biomes) | an extra piece 5 times in 100 more |
 | A Fish Supper | Angler's knack | casts land a tenth more often |
+| Patient Angler (Farm) | Deft angler | casts land a fifth more often (replaces Angler's knack) |
+| An Ore Run (Farm) | Prospector | a twentieth faster, an extra piece 4 times in 100 more |
+| Food Enough (Farm), at home | Settled and fed | heal a tenth faster within reach of home |
 
 Each step of the ladder says so in chat once and names the next quest to climb
 (`Next: carry a full stone kit...`). They stack with the tool, the skill, food and the place
