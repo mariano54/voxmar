@@ -434,12 +434,14 @@ pub enum ResolvedReward {
 }
 
 /// A reward with its names resolved, or what is wrong with it.
-fn resolve_reward(reward: &Reward, blocks: &BlockRegistry, skills: &SkillRegistry, effects: &EffectRegistry, captive: bool) -> Result<ResolvedReward, String> {
+/// A reward of an event of package `namespace`, whose short skill names are that package's
+/// own skill first, then core's (`SkillRegistry::named`).
+fn resolve_reward(reward: &Reward, namespace: &str, blocks: &BlockRegistry, skills: &SkillRegistry, effects: &EffectRegistry, captive: bool) -> Result<ResolvedReward, String> {
     Ok(match reward {
         Reward::Item(name, (low, high)) if low > high || *high == 0 => return Err(format!("gives {low} to {high} of `{name}`")),
         Reward::Item(name, count) => ResolvedReward::Item(blocks.id(name).ok_or_else(|| format!("no item `{name}`"))?, *count),
         Reward::Xp(name, xp) if !(xp.is_finite() && *xp > 0.0 && *xp <= 500.0) => return Err(format!("gives {xp} experience in `{name}`: 0 to 500")),
-        Reward::Xp(name, xp) => ResolvedReward::Xp(skills.id(name).ok_or_else(|| format!("no skill `{name}`"))?, *xp),
+        Reward::Xp(name, xp) => ResolvedReward::Xp(skills.named(namespace, name).ok_or_else(|| format!("no skill `{name}`"))?, *xp),
         Reward::Effect(name, seconds) => ResolvedReward::Effect(effects.find(name).ok_or_else(|| format!("no effect `{name}`"))?, *seconds),
         Reward::Heal(health) => ResolvedReward::Heal(*health),
         Reward::Free if !captive => return Err("frees a captive, but there is none".into()),
@@ -531,7 +533,6 @@ impl WanderRegistry {
                 for reward in &mut freed.thanks {
                     match reward {
                         Reward::Item(item, _) => qualify(item),
-                        Reward::Xp(skill, _) if !skill.contains(':') => *skill = format!("core:{skill}"),
                         Reward::Effect(effect, _) => qualify(effect),
                         _ => {}
                     }
@@ -545,16 +546,8 @@ impl WanderRegistry {
                     for reward in &mut line.gives {
                         match reward {
                             Reward::Item(item, _) => qualify(item),
-                            Reward::Xp(skill, _) if !skill.contains(':') => *skill = format!("core:{skill}"),
-                            Reward::Effect(effect, _) => qualify(effect),
+                                Reward::Effect(effect, _) => qualify(effect),
                             _ => {}
-                        }
-                    }
-                    for need in &mut line.needs {
-                        if let Need::Skill(skill, _) | Need::Below(skill, _) = need
-                            && !skill.contains(':')
-                        {
-                            *skill = format!("core:{skill}");
                         }
                     }
                 }
@@ -657,12 +650,13 @@ impl WanderRegistry {
             if captives == 1 {
                 names.extend(["thanks".into(), "freed".into()]);
             }
+            let namespace = def.name.split_once(':').map_or("core", |(ns, _)| ns);
             let mut thanks = Vec::new();
             for reward in def.freed.iter().flat_map(|f| &f.thanks) {
                 if matches!(reward, Reward::Free | Reward::Anger) {
                     return Err(error("a captive's `thanks` gives items, experience, effects or healing only".into()));
                 }
-                thanks.push(resolve_reward(reward, blocks, skills, effects, true).map_err(|why| error(format!("thanks: {why}")))?);
+                thanks.push(resolve_reward(reward, namespace, blocks, skills, effects, true).map_err(|why| error(format!("thanks: {why}")))?);
             }
             for meeting in &def.meetings {
                 if meeting.who >= def.cast.len() || matches!(def.cast[meeting.who].role, Role::Free) && meeting.who != 0 {
@@ -691,7 +685,7 @@ impl WanderRegistry {
                         return Err(at("another line or a greeting has this name (`title` is reserved)".into()));
                     }
                     let item = |name: &str| blocks.id(name).ok_or_else(|| at(format!("no item `{name}`")));
-                    let skill = |name: &str| skills.id(name).ok_or_else(|| at(format!("no skill `{name}`")));
+                    let skill = |name: &str| skills.named(namespace, name).ok_or_else(|| at(format!("no skill `{name}`")));
                     let mut needs = Vec::new();
                     for need in &line.needs {
                         needs.push(match need {
@@ -710,7 +704,7 @@ impl WanderRegistry {
                     };
                     let mut gives = Vec::new();
                     for reward in &line.gives {
-                        gives.push(resolve_reward(reward, blocks, skills, effects, captives == 1).map_err(&at)?);
+                        gives.push(resolve_reward(reward, namespace, blocks, skills, effects, captives == 1).map_err(&at)?);
                     }
                     names.push(line.name.clone());
                     lines.push(Line { name: line.name.clone(), needs, wants, gives, once: line.once });

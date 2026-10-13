@@ -68,9 +68,18 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   health), kept out of the settlements' people budget, never despawned for distance, and put
   back at the next start. At most `companions_most` stay; later ones go their own way, and
   so does anyone let go anywhere else, who is a creature of the land like any other.
-- **Ending.** An event ends when no player is within `leave`, after its `lifetime`, when its
-  march is walked and nobody is within 40 blocks, or when its leader is gone. Its people are
-  taken away without a death. Killed members leave the party; the party goes on.
+- **Ending.** An event ends when no player is within `leave`, after its `lifetime`, or when its
+  march is walked and nobody is within 40 blocks. Its people are taken away without a death.
+  Killed members leave the party and the party goes on: when the leader is killed, the next
+  member who can lead (not a pet, a captive or a `Free` one) takes over, and when nobody who
+  can lead is left (a hound whose pedlar was killed) the rest are let go as creatures of the
+  land. Party members are never despawned for distance like wild creatures; the event takes
+  them away. A freed captive follows on a clock of its own from the moment it is freed.
+- **Speech.** A speaker answers a right click only within `speak_reach`. A line that frees a
+  captive (`Free`) is offered only while the party still holds one, so a bribe is never taken
+  for nobody. Short skill names in lines mean the event's own package's skill first, then
+  core's. Everyone who came with a party, freed or let go, stays outside the settlements'
+  people budget.
 - **Admin.** `/wander` lists the parties about, `/wander list` the kinds, `/wander start
   NAME` begins one ahead of you, `/wander end` sends them all away.
 

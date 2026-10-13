@@ -199,7 +199,7 @@ impl Server {
             let creature = self.creatures.live.get_mut(&id).expect("just made");
             creature.body.yaw = s.yaw;
             creature.health = s.health.min(creature.health).max(1);
-            creature.companion = true;
+            (creature.companion, creature.wanderer) = (true, true);
         }
     }
 }
@@ -337,11 +337,12 @@ impl Server {
 
     /// Whether another of species `species` fits: people have their own budget, animals
     /// and monsters the creature caps of the land near every player.
-    fn wandering_room(&self, species: CreatureId, at: Vec3) -> bool {
+    /// `placing` people of a party being brought are not counted yet.
+    fn wandering_room(&self, species: CreatureId, at: Vec3, placing: usize) -> bool {
         let def = &self.content.creatures.get(species).def;
         let limits = self.content.creatures.limits();
         match def.kind {
-            Kind::Villager => self.wandering.people(self) < self.content.wandering.rules().people_most,
+            Kind::Villager => self.wandering.people(self) + placing < self.content.wandering.rules().people_most,
             kind => {
                 let monster = kind == Kind::Monster;
                 let cap = if monster { self.monsters_cap() } else { limits.animals_near };
@@ -377,11 +378,13 @@ impl Server {
                     let Some(cell) = self.standing_spot((at.x + a.cos() * r).floor() as i32, (at.z + a.sin() * r).floor() as i32, spot.y) else { continue };
                     cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
                 };
-                if !self.wandering_room(*species, stand) {
+                let placing = members.iter().filter(|m| self.content.creatures.get(self.creatures.live[&m.creature].species).def.kind == Kind::Villager).count();
+                if !self.wandering_room(*species, stand, placing) {
                     continue;
                 }
                 let member_seed = mix(seed, 1000 + (g * 16 + i as usize) as u64);
                 let Some(creature) = self.place_creature(*species, stand, member_seed, angle) else { continue };
+                self.creatures.live.get_mut(&creature).expect("just made").wanderer = true;
                 // The rest of the leader's own group walk behind it.
                 let role = if group.role == Role::Lead && !members.is_empty() { Role::Follow } else { group.role };
                 members.push(Member { creature, group: g, slot: voxmar_engine::wander::slot(role, i as usize, count as usize, member_seed), errand: None, mill_until: 0, mill_at: stand });
@@ -465,6 +468,14 @@ impl Server {
         inst.members.retain(|m| self.creatures.live.contains_key(&m.creature));
         let live: Vec<u32> = inst.members.iter().map(|m| m.creature).collect();
         self.wandering.by_creature.retain(|c, (i, _)| *i != id || live.contains(c));
+        // The leader gone, the next who can lead takes over; a pet or a captive cannot.
+        let event = self.content.wandering.get(inst.event);
+        let leads = |m: &Member| !matches!(event.groups[m.group].1.role, Role::Pet(_) | Role::Captive | Role::Free);
+        if !inst.freed && inst.members.first().is_some_and(|m| !leads(m))
+            && let Some(next) = inst.members.iter().position(leads)
+        {
+            inst.members.swap(0, next);
+        }
         for (i, m) in inst.members.iter().enumerate() {
             self.wandering.by_creature.insert(m.creature, (id, i));
         }
@@ -487,6 +498,11 @@ impl Server {
                 self.free_captive(&mut inst, by);
             }
         }
+        // With nobody left to lead (a pet whose person was killed), the rest are let go.
+        let event = self.content.wandering.get(inst.event);
+        if !inst.freed && !inst.members.iter().any(|m| !matches!(event.groups[m.group].1.role, Role::Pet(_) | Role::Captive | Role::Free)) {
+            inst.release = true;
+        }
         if !inst.release {
             self.walk_plan(&mut inst, &players);
         }
@@ -496,7 +512,8 @@ impl Server {
     /// Puts an instance back among the running, or lets its members go when it is released.
     fn keep(&mut self, inst: Instance) {
         if inst.release {
-            let room = self.content.wandering.rules().companions_most.saturating_sub(self.creatures.live.values().filter(|c| c.companion).count());
+            // Those waiting in the save for their species count too, so they always fit back.
+            let room = self.content.wandering.rules().companions_most.saturating_sub(self.creatures.live.values().filter(|c| c.companion).count() + self.wandering.waiting.len());
             for (i, member) in inst.members.iter().enumerate() {
                 self.wandering.by_creature.remove(&member.creature);
                 if let Some(creature) = self.creatures.live.get_mut(&member.creature) {
@@ -569,7 +586,8 @@ impl Server {
             })
         };
         let target = me.as_mut().unwrap_or(inst);
-        target.freed = true;
+        // Its own journey from now, on a clock of its own.
+        (target.freed, target.born) = (true, self.tick);
         target.members[0].errand = None;
         match plan {
             Some(plan) => target.plan = plan,
@@ -954,6 +972,13 @@ impl Server {
     /// `player` right-clicks creature `id`: if it speaks for a wandering party, it answers
     /// (and gives), and the click is spent. Returns whether it did. A party that has been
     /// struck, or whose captive has been freed, says what suits that.
+    /// Whether `player` stands near enough to wandering creature `id` to be heard
+    /// (`speak_reach`).
+    pub(crate) fn within_speech(&self, player: PlayerId, id: u32) -> bool {
+        let (Some(p), Some(c)) = (self.players.get(&player), self.creatures.live.get(&id)) else { return false };
+        flat(p.position, c.body.position) <= self.content.wandering.rules().speak_reach && (p.position.y - c.body.position.y).abs() <= self.content.wandering.rules().speak_reach
+    }
+
     pub(crate) fn meet(&mut self, player: PlayerId, id: u32) -> bool {
         let Some(&(instance, member)) = self.wandering.by_creature.get(&id) else { return false };
         let Some(inst) = self.wandering.active.get(&instance) else { return false };
@@ -967,6 +992,8 @@ impl Server {
         let held = p.inventory.get(p.selected);
         let level = |skill| self.content.skills.level(p.skills.xp(skill));
         let (has_home, hurt) = (p.home.is_some(), p.health.current < p.health.max);
+        // A line that frees a captive is for a party that still holds one.
+        let holds_captive = inst.members.iter().any(|m| event.groups[m.group].1.role == Role::Captive && self.creatures.live.contains_key(&m.creature));
         let line = meeting.lines.iter().enumerate().filter(|_| !inst.freed).find(|(i, line)| {
             let used = match line.once {
                 Once::Always => false,
@@ -982,6 +1009,7 @@ impl Server {
                     ResolvedNeed::Holds(tag) => held.is_some_and(|h| self.content.blocks.def(h.item).has_tag(tag)),
                 })
                 && line.wants.is_none_or(|(item, count)| held.is_some_and(|h| h.item == item && h.count >= count))
+                && (holds_captive || !line.gives.contains(&ResolvedReward::Free))
         });
         let variant = ((unit_from(mix(self.tick, id as u64 ^ 0x6e37)) * meeting.greets as f32) as u8).min(meeting.greets - 1);
         let (words, gives, wants, mark) = match line {
@@ -1311,7 +1339,7 @@ mod tests {
             server.spawn_creature(hound, Vec3::new(128.5, 200.0, 128.5 + i as f32), i as u64);
         }
         assert!(!server.nearby_room(Vec3::new(128.5, 200.0, 128.5), false, cap));
-        assert!(!server.wandering_room(hound, Vec3::new(128.5, 200.0, 128.5)), "no room for another dog");
+        assert!(!server.wandering_room(hound, Vec3::new(128.5, 200.0, 128.5), 0), "no room for another dog");
     }
 
     /// Clears the world of parties and creatures between tries on one server.
@@ -1552,6 +1580,129 @@ mod tests {
         assert_eq!(server.creatures.live.values().filter(|c| c.companion).count(), most);
         let last = settled_prisoner(&mut server, home);
         assert!(!server.creatures.live.get(&last).is_some_and(|c| c.companion), "the world is full of companions");
+    }
+
+    #[test]
+    fn companions_waiting_for_their_species_keep_their_places() {
+        let mut server = fixture();
+        let most = server.content.wandering.rules().companions_most;
+        let gone = |n: u64| SavedCompanion { species: "lostmod:ghost".into(), seed: n, position: [128.5, 200.0, 140.5], yaw: 0.0, health: 5 };
+        server.restore_companions((0..most as u64).map(gone).collect());
+        assert_eq!(server.wandering.waiting.len(), most);
+        let led = settled_prisoner(&mut server, Vec3::new(150.5, 200.0, 128.5));
+        assert!(!server.creatures.live[&led].companion, "every place is kept for those who will come back");
+        assert_eq!(server.saved_companions().len(), most);
+    }
+
+    #[test]
+    fn a_party_beyond_despawn_range_stays_until_it_leaves() {
+        let mut server = fixture();
+        let id = start(&mut server, "pedlar_and_hound", (68, 128));
+        let members = members_of(&server, id, 0).into_iter().chain(members_of(&server, id, 1)).collect::<Vec<_>>();
+        // Further than the land's own creatures are kept, nearer than the party's `leave`.
+        server.players.get_mut(&1).unwrap().position = leader_at(&server, id).unwrap() + Vec3::new(140.0, 0.0, 0.0);
+        server.despawn_far();
+        assert!(members.iter().all(|m| server.creatures.live.contains_key(m)), "the party is not despawned as if wild");
+    }
+
+    #[test]
+    fn the_next_jailer_leads_when_the_first_is_killed() {
+        let mut server = fixture();
+        let id = start(&mut server, "prison_convoy", (68, 128));
+        let lead = members_of(&server, id, 0)[0];
+        let flank = members_of(&server, id, 1)[0];
+        server.creatures.live.remove(&lead);
+        server.wandering_died(lead);
+        server.update_event(id);
+        assert_eq!(server.wandering.active[&id].members[0].creature, flank, "a jailer leads, not the prisoner");
+    }
+
+    #[test]
+    fn a_hound_whose_pedlar_is_killed_is_let_go() {
+        let mut server = fixture();
+        let id = start(&mut server, "pedlar_and_hound", (68, 128));
+        let (pedlar, hound) = (members_of(&server, id, 0)[0], members_of(&server, id, 1)[0]);
+        server.creatures.live.remove(&pedlar);
+        server.wandering_died(pedlar);
+        server.update_event(id);
+        assert!(!server.wandering.active.contains_key(&id), "nobody leads it now");
+        assert!(server.creatures.live.contains_key(&hound) && !server.wandering.manages(hound), "the hound is an animal of the land");
+    }
+
+    #[test]
+    fn a_speaker_is_heard_only_within_speak_reach() {
+        let mut server = fixture();
+        let id = start(&mut server, "pedlar_and_hound", (68, 128));
+        let pedlar = members_of(&server, id, 0)[0];
+        let reach = server.content.wandering.rules().speak_reach;
+        put_next_to(&mut server, pedlar, Vec3::new(reach + 2.0, 0.0, 0.0));
+        assert!(!server.within_speech(1, pedlar));
+        put_next_to(&mut server, pedlar, Vec3::new(reach - 1.0, 0.0, 0.0));
+        assert!(server.within_speech(1, pedlar));
+    }
+
+    #[test]
+    fn no_bribe_is_taken_once_the_prisoner_is_gone() {
+        let mut server = fixture();
+        let id = start(&mut server, "prison_convoy", (68, 128));
+        let jailer = members_of(&server, id, 0)[0];
+        let captive = members_of(&server, id, 2)[0];
+        // Killed just now: the party has not yet counted its members again.
+        server.creatures.live.remove(&captive);
+        server.wandering_died(captive);
+        give_held(&mut server, "base:gold_coin", 3);
+        assert!(server.meet(1, jailer), "the jailer still talks");
+        assert_eq!(count_of(&server, "base:gold_coin"), 3, "but takes no coins for nobody");
+    }
+
+    #[test]
+    fn parties_together_never_bring_more_people_than_the_budget() {
+        let mut server = fixture();
+        let most = server.content.wandering.rules().people_most;
+        let pilgrims = event(&server, "pilgrims");
+        for seed in 0..40u64 {
+            let spot = server.standing_spot(20 + (seed as i32 % 8) * 28, 20 + (seed as i32 / 8) * 40, 200).unwrap();
+            server.begin_event_at(None, pilgrims, spot, seed, true);
+        }
+        assert!(server.wandering.people(&server) <= most, "{} people, {most} allowed", server.wandering.people(&server));
+    }
+
+    #[test]
+    fn a_freed_prisoner_is_a_wanderer_and_never_one_of_a_settlements_people() {
+        let mut server = fixture();
+        let id = start(&mut server, "prison_convoy", (68, 128));
+        let captive = members_of(&server, id, 2)[0];
+        server.free_in_test(id);
+        assert!(server.creatures.live[&captive].wanderer, "it came with a party, so the settlements' cap never counts it");
+    }
+
+    #[test]
+    fn a_freed_prisoner_follows_on_a_clock_of_its_own() {
+        let mut server = fixture();
+        let lifetime = server.content.wandering.get(event(&server, "prison_convoy")).def.lifetime;
+        for seed in 0..40u64 {
+            clear(&mut server);
+            let event = event(&server, "prison_convoy");
+            let spot = server.standing_spot(100, 128, 200).unwrap();
+            let id = server.begin_event_at(Some(1), event, spot, seed, true).unwrap();
+            let captive = members_of(&server, id, 2)[0];
+            // Its jailers are killed late in the convoy's life; the player freed it.
+            for jailer in members_of(&server, id, 0).into_iter().chain(members_of(&server, id, 1)) {
+                server.creatures.live.remove(&jailer);
+                server.wandering_died(jailer);
+            }
+            server.tick += ticks(lifetime - 5.0);
+            server.wandering.active.get_mut(&id).unwrap().last_blow = Some(1);
+            server.update_event(id);
+            if !server.wandering.by_creature.contains_key(&captive) {
+                continue;
+            }
+            run(&mut server, 20 * 30);
+            assert!(server.creatures.live.contains_key(&captive), "the convoy's end does not take it away mid-walk");
+            assert!(server.wandering.by_creature.contains_key(&captive), "and it still follows");
+            return;
+        }
+        panic!("some seed has the prisoner follow");
     }
 
     #[test]
