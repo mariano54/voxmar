@@ -1020,7 +1020,7 @@ impl Server {
         let level = |skill| self.content.skills.level(p.skills.xp(skill));
         let (has_home, hurt) = (p.home.is_some(), p.health.current < p.health.max);
         // A line that frees a captive is for a party that still holds one.
-        let holds_captive = inst.members.iter().any(|m| event.groups[m.group].1.role == Role::Captive);
+        let holds_captive = inst.members.iter().any(|m| event.groups[m.group].1.role == Role::Captive && self.creatures.live.contains_key(&m.creature));
         let line = meeting.lines.iter().enumerate().filter(|_| !inst.freed).find(|(i, line)| {
             let used = match line.once {
                 Once::Always => false,
@@ -1586,9 +1586,9 @@ mod tests {
         let id = start(&mut server, "prison_convoy", (68, 128));
         let jailer = members_of(&server, id, 0)[0];
         let captive = members_of(&server, id, 2)[0];
+        // Killed just now: the party has not yet counted its members again.
         server.creatures.live.remove(&captive);
         server.wandering_died(captive);
-        server.update_event(id);
         give_held(&mut server, "base:gold_coin", 3);
         assert!(server.meet(1, jailer), "the jailer still talks");
         assert_eq!(count_of(&server, "base:gold_coin"), 3, "but takes no coins for nobody");
