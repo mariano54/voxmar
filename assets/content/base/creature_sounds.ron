@@ -498,6 +498,7 @@
         "constable": (voice: "person", pitch: 0.88),
         "traveller": (voice: "person", pitch: 1.0),
         "hunter": (voice: "person", pitch: 0.92),
+        "poacher": (voice: "person", pitch: 0.84),
         "captive": (voice: "person", pitch: 1.05),
         "hound": (voice: "wolf", pitch: 1.35),
     },

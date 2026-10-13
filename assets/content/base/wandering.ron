@@ -710,5 +710,93 @@
                 (name: "pockets", gives: [Item("seed_mix", (3, 5)), Xp("farming", 10.0)], once: Player),
             ])],
         ),
+        // A hunting party: a hunter, a beater and their hounds after boar and deer. They go
+        // for the nearest within reach, stalk the last of the way and rush it; whoever drew
+        // first blood on what they bring down is given a fair share of the kill. A beginner
+        // is shown how to read the ground.
+        (
+            name: "hunting_party", weight: 0.5,
+            biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("tag:grassland", 0.5), ("tag:scrubland", 0.5)],
+            daylight: (0.3, 1.0), needs: (days: 1.0),
+            cast: [(species: "hunter"), (species: "villager", role: Follow), (species: "hound", count: (1, 2), role: Pet(0))],
+            script: Hunt(reach: 48.0, strike: 2.5, takes: 2, seconds: 420.0),
+            quarry: ["wild_boar", "red_deer"],
+            share: [Xp("hunter", 10.0)],
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "tracks", needs: [Below("hunter", 10)], gives: [Xp("hunter", 12.0)], once: Player),
+                (name: "took", needs: [When(Took)]),
+            ])],
+        ),
+        // A poacher after deer at dusk, alone and quick about it. Keep quiet about what you
+        // saw and there is a cut of venison in it; a fighter with a weapon in hand is not
+        // to be argued with, and the deer lives. Strike him and he runs.
+        (
+            name: "poacher", weight: 0.4,
+            biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("tag:grassland", 0.4)],
+            daylight: (0.05, 0.45), needs: (days: 1.5),
+            cast: [(species: "poacher")],
+            script: Hunt(reach: 40.0, strike: 2.0, takes: 1, seconds: 300.0),
+            quarry: ["red_deer"],
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "cut", needs: [When(Took)], gives: [Item("raw_venison", (1, 1))], once: Player),
+                (name: "spare", needs: [When(Passing), Holds("weapon"), Skill("attack", 10)], gives: [Leave], once: Party),
+            ])],
+        ),
+        // A trapper working the small game of the meadows and the wood's edge: rabbits,
+        // hares and pheasant. A beginner learns to set a snare; the first blood drawn on one
+        // they take is shared.
+        (
+            name: "trapper", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:forest", 0.7), ("tag:scrubland", 0.6)],
+            daylight: (0.2, 1.0), needs: (days: 0.8),
+            cast: [(species: "hunter")],
+            script: Hunt(reach: 36.0, strike: 2.0, takes: 3, seconds: 360.0),
+            quarry: ["rabbit", "hare", "pheasant"],
+            share: [Xp("hunter", 4.0)],
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "snare", needs: [Below("hunter", 8)], gives: [Xp("hunter", 10.0)], once: Player),
+            ])],
+        ),
+        // The night watch walks its round near a town with a lantern. The hurt are bound up,
+        // the lost told the way to town, and a beginner shown how to keep their guard up.
+        (
+            name: "night_watchman", weight: 0.7,
+            daylight: (0.0, 0.3), needs: (days: 1.0, town: Some(160.0)),
+            cast: [(species: "guard")],
+            script: Patrol(radius: 18.0, stops: 4, pause: (6.0, 12.0), laps: 2),
+            hurt: Avenge,
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "mend", needs: [Hurt], gives: [Heal(6)], once: Player),
+                (name: "guard_up", needs: [Below("defence", 10)], gives: [Xp("defence", 12.0)], once: Player),
+                (name: "way", gives: [Town(400.0)], once: Player),
+            ])],
+        ),
+        // A town's guard walk a round of its land by day. A wolf's fang (or a boar's) earns
+        // the town's bounty; a beginner with a weapon in hand is drilled. Strike one and
+        // they fight.
+        (
+            name: "guard_patrol", weight: 0.6,
+            daylight: (0.35, 1.0), needs: (days: 1.5, town: Some(220.0)),
+            cast: [(species: "guard"), (species: "guard", count: (1, 2), role: Flank)],
+            script: Patrol(radius: 26.0, stops: 5, pause: (4.0, 8.0), laps: 1),
+            hurt: Avenge,
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "bounty", wants: ("fang", 1), gives: [Item("gold_coin", (1, 1)), Xp("attack", 6.0)], once: Player),
+                (name: "drill", needs: [Holds("weapon"), Below("attack", 10)], gives: [Xp("attack", 12.0)], once: Player),
+            ])],
+        ),
+        // A fortune teller camps of an evening. A coin across the palm and the cards tell
+        // something true and near: a wonder, an ore that shows at the surface, a root, or
+        // the way to a town, whichever there is to tell.
+        (
+            name: "fortune_teller", weight: 0.4,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.05, 0.6), needs: (days: 1.0),
+            cast: [(species: "elder"), (species: "child", count: (0, 1), role: Follow)],
+            script: Camp(near: 22.0, stay: (300.0, 480.0), mill: 2.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "fortune", wants: ("gold_coin", 1), gives: [OneOf([Point("tag:wonder", 128.0), Point("tag:ore_sample", 128.0), Point("tag:root", 96.0), Town(600.0)])], once: Player),
+            ])],
+        ),
     ],
 )

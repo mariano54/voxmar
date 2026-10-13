@@ -80,6 +80,13 @@ const BOLT_PACE: f32 = 1.8;
 const POINT_PAST: f32 = 6.0;
 /// How far above and below the speaker a pointed-out block or a gatherer's work is looked for.
 const SEEK_DEPTH: i32 = 12;
+/// A hunt stalks (slowly) within this many blocks of its quarry, and rushes it from the
+/// last few; it gives up on one it has not reached in so many seconds, and stands over a
+/// kill this long.
+const STALK: f32 = 10.0;
+const RUSH: f32 = 3.0;
+const HUNT_GIVE_UP: f32 = 60.0;
+const OVER_THE_KILL: f32 = 6.0;
 
 fn ticks(seconds: f32) -> u64 {
     (seconds * TICKS_PER_SECOND as f32).round().max(1.0) as u64
@@ -245,6 +252,9 @@ enum Plan {
     Lead { heading: Vec2, goal: Vec3, waiting: Option<u64>, arrived: Option<u64> },
     /// Working the blocks about an anchor, each worker its own.
     Gather { anchor: Vec3 },
+    /// Hunting until a tick: after its quarry (since a tick), with kills `took`, standing
+    /// over the last until a tick, and the quarry it gave up on.
+    Hunt { target: Option<u32>, since: u64, took: u8, until: u64, rest_until: u64, passed: Vec<u32> },
 }
 
 /// What the players near a party hold, and how the party's kind answers (`Reaction`).
@@ -511,6 +521,33 @@ impl Server {
             .min_by(|a, b| a.0.length().total_cmp(&b.0.length()))
     }
 
+    /// Whether creature `id` is fair game to a hunt after `quarry`: a live, wild one of
+    /// those species, nobody's and of no party.
+    fn is_quarry(&self, id: u32, quarry: &[CreatureId]) -> bool {
+        self.creatures.live.get(&id).is_some_and(|c| c.health > 0 && c.owner.is_none() && !c.companion && quarry.contains(&c.species)) && !self.wandering.manages(id)
+    }
+
+    /// The nearest of `quarry` within `reach` blocks (across) of `from`, and not one of `passed`.
+    fn quarry_near(&self, from: Vec3, reach: f32, quarry: &[CreatureId], passed: &[u32]) -> Option<u32> {
+        self.creatures
+            .live
+            .iter()
+            .filter(|(id, c)| !passed.contains(id) && flat(c.body.position, from) <= reach && (c.body.position.y - from.y).abs() <= SEEK_DEPTH as f32 && self.is_quarry(**id, quarry))
+            .min_by(|a, b| flat(a.1.body.position, from).total_cmp(&flat(b.1.body.position, from)).then(a.0.cmp(b.0)))
+            .map(|(id, _)| *id)
+    }
+
+    /// Whether `reward`, given from `from`, has something to tell: a `Point` or a `Town`
+    /// only with one near.
+    fn has_to_tell(&self, from: Vec3, reward: &ResolvedReward) -> bool {
+        match reward {
+            ResolvedReward::Point(want, reach) => self.point_at(from, want, *reach).is_some(),
+            ResolvedReward::Town(reach) => self.town_near(from, *reach).is_some(),
+            ResolvedReward::OneOf(choices) => choices.iter().any(|c| self.has_to_tell(from, c)),
+            _ => true,
+        }
+    }
+
     fn make_young(&mut self, id: u32) {
         let tick = self.tick;
         let Some(creature) = self.creatures.live.get_mut(&id) else { return };
@@ -541,7 +578,8 @@ impl Server {
                 && event.suits_distance(flat(spot.as_vec3(), self.spawn))
                 && days >= needs.days
                 && needs.home.is_none_or(|h| h == p.home.is_some())
-                && needs.combat.is_none_or(|(low, high)| (low..=high).contains(&combat));
+                && needs.combat.is_none_or(|(low, high)| (low..=high).contains(&combat))
+                && needs.town.is_none_or(|reach| self.town_near(spot.as_vec3(), reach).is_some());
             let weight = event.biome_weight(&biome.name, &biome.tags);
             if !suits || weight <= 0.0 {
                 continue;
@@ -550,6 +588,12 @@ impl Server {
             if let Script::Gather { reach, .. } = event.def.script
                 && (self.nearest_block(spot.as_vec3(), reach, &event.seek, 0.0, &[]).is_none()
                     || !event.deliver.is_empty() && self.nearest_block(spot.as_vec3(), reach, &event.deliver, 0.0, &[]).is_none())
+            {
+                continue;
+            }
+            // A hunt comes only where there is something to hunt.
+            if let Script::Hunt { reach, .. } = event.def.script
+                && self.quarry_near(spot.as_vec3(), reach, &event.quarry, &[]).is_none()
             {
                 continue;
             }
@@ -701,6 +745,7 @@ impl Server {
                 Plan::Lead { heading, goal: at + Vec3::new(heading.x, 0.0, heading.y) * length, waiting: None, arrived: None }
             }
             Script::Gather { .. } => Plan::Gather { anchor: at },
+            Script::Hunt { seconds, .. } => Plan::Hunt { target: None, since: self.tick, took: 0, until: self.tick + ticks(seconds), rest_until: 0, passed: Vec::new() },
             Script::Roam { seconds, .. } => Plan::Amble { anchor: Some(at), heading: towards, until: self.tick + ticks(seconds), goal: None, pause_until: 0 },
             Script::Drift { seconds, .. } => Plan::Amble { anchor: None, heading: turned(towards, side * 1.2), until: self.tick + ticks(seconds), goal: None, pause_until: 0 },
         }
@@ -1041,6 +1086,16 @@ impl Server {
                     p.health.heal(health);
                     p.changed(traits::HEALTH);
                 }
+                ResolvedReward::OneOf(ref choices) => {
+                    let from = self.creatures.live.get(&source).map(|c| c.body.position).or_else(|| self.players.get(&player).map(|p| p.position));
+                    let Some(from) = from else { return };
+                    let open: Vec<ResolvedReward> = choices.iter().filter(|c| self.has_to_tell(from, c)).cloned().collect();
+                    if open.is_empty() {
+                        continue;
+                    }
+                    let pick = ((unit_from(mix(self.tick, source as u64 ^ 0x0f07)) * open.len() as f32) as usize).min(open.len() - 1);
+                    self.hand_out(player, source, &open[pick..=pick]);
+                }
                 ResolvedReward::Free | ResolvedReward::Anger | ResolvedReward::Befriend | ResolvedReward::Leave | ResolvedReward::Hand(_) | ResolvedReward::Cook(..) => {}
             }
         }
@@ -1258,6 +1313,8 @@ impl Server {
         let mut resume: Option<Plan> = None;
         let mut leaving = false;
         let mut revealed = false;
+        let mut take: Option<u32> = None;
+        let mut hunted_out = false;
         match (&mut inst.plan, script) {
             // Warning a player off: everyone stands and faces them.
             (_, _) if warning.is_some() => {
@@ -1539,7 +1596,62 @@ impl Server {
                     }
                 }
             }
+            // A hunt: after the nearest quarry, stalking the last of the way and rushing it at
+            // the end; one of them close enough brings it down.
+            (Plan::Hunt { target, since, took, until, rest_until, passed }, Script::Hunt { reach, strike, takes, .. }) => {
+                if self.tick < *rest_until {
+                    (last, pose) = (true, Pose::Crouched);
+                } else if *took >= takes || self.tick >= *until || inst.done {
+                    hunted_out = true;
+                } else {
+                    if let Some(t) = *target
+                        && (!self.is_quarry(t, &event.quarry) || self.tick > *since + ticks(HUNT_GIVE_UP))
+                    {
+                        passed.push(t);
+                        *target = None;
+                    }
+                    if target.is_none() {
+                        (*target, *since) = (self.quarry_near(lead, reach, &event.quarry, passed), self.tick);
+                    }
+                    match target.and_then(|t| self.creatures.live.get(&t).map(|c| (t, c.body.position))) {
+                        None => hunted_out = true,
+                        Some((t, at)) => {
+                            heading = (xz(at) - xz(lead)).try_normalize().unwrap_or(heading);
+                            face = Some(at);
+                            let reached = inst.members.iter().any(|m| self.creatures.live.get(&m.creature).is_some_and(|c| flat(c.body.position, at) <= strike && (c.body.position.y - at.y).abs() <= 2.5));
+                            if reached {
+                                take = Some(t);
+                                *took += 1;
+                                *rest_until = self.tick + ticks(OVER_THE_KILL);
+                                *target = None;
+                                last = true;
+                            } else {
+                                let d = flat(lead, at);
+                                pace = if d <= RUSH + strike { 1.6 } else if d <= STALK { 0.7 } else { 1.0 };
+                                goal = Some(at);
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
+        }
+        if let Some(quarry) = take {
+            // Whoever drew first blood is given a share, the kill's own loot with it.
+            let first = self.creatures.live.get(&quarry).and_then(|c| c.hurt_by).filter(|p| self.players.get(p).is_some_and(|p| p.health.alive()));
+            let shared = first.filter(|_| !event.share.is_empty());
+            self.creature_felled(quarry, shared.is_some());
+            inst.stage = Stage::Took;
+            if let Some(player) = shared {
+                if let (Some(who), Some(p)) = (self.speaker_name(leader), self.players.get(&player)) {
+                    p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("share"))) });
+                }
+                self.hand_out(player, leader, &event.share);
+            }
+        }
+        if hunted_out {
+            inst.plan = self.march_away(lead, nearest, heading, 0.9, leaves(script));
+            (inst.done, inst.aim, inst.detour) = (false, None, None);
         }
         if let Some(seconds) = caught {
             inst.stage = Stage::Caught;
@@ -1843,8 +1955,7 @@ impl Server {
                     ResolvedReward::Hand(group) => can_hand(*group),
                     ResolvedReward::Cook(station, ..) => held.is_some_and(|h| self.content.cooking.for_item(h.item, std::slice::from_ref(station)).is_some()),
                     // Where nothing of the kind is near, they have nothing to tell.
-                    ResolvedReward::Point(want, reach) => self.creatures.live.get(&id).is_some_and(|c| self.point_at(c.body.position, want, *reach).is_some()),
-                    ResolvedReward::Town(reach) => self.creatures.live.get(&id).is_some_and(|c| self.town_near(c.body.position, *reach).is_some()),
+                    ResolvedReward::Point(..) | ResolvedReward::Town(_) | ResolvedReward::OneOf(_) => self.creatures.live.get(&id).is_some_and(|c| self.has_to_tell(c.body.position, g)),
                     _ => true,
                 })
                 && (!held_too
@@ -4192,5 +4303,211 @@ mod tests {
         assert!(xp_in(&server, "core:farming") > 0);
         assert!(server.meet(1, scarecrow));
         assert_eq!(count_of(&server, "base:seed_mix"), seed, "once");
+    }
+
+    /// A wild creature of `name` at `at`.
+    fn wild(server: &mut Server, name: &str, at: Vec3, salt: u64) -> u32 {
+        let species = server.content.creatures.id(name).unwrap();
+        server.spawn_creature(species, at, salt).expect("room for it")
+    }
+
+    fn loot_falling(server: &Server) -> usize {
+        server.creatures.falling_loot.len()
+    }
+
+    #[test]
+    fn a_hunting_party_runs_down_the_nearest_boar_and_keeps_what_nobody_else_struck() {
+        let mut server = fixture();
+        let boar = wild(&mut server, "base:wild_boar", Vec3::new(100.5, 200.0, 150.5), 1);
+        let id = start(&mut server, "hunting_party", (110, 128));
+        let client = listen(&mut server);
+        assert!(run_until(&mut server, id, 120, |inst| inst.stage == Stage::Took), "the hunt brings the boar down");
+        assert!(!server.creatures.live.contains_key(&boar), "the boar is down");
+        assert_eq!(loot_falling(&server), 0, "the hunters keep the whole of what they took themselves");
+        assert!(!says(&told(&client), "wander.base.hunting_party.share"));
+        // With nothing more in reach, they go.
+        assert!(run_until(&mut server, id, 20, |inst| matches!(inst.plan, Plan::March { .. })), "nothing left to hunt");
+        assert_eq!(server.wandering.active[&id].stage, Stage::Took, "and still say what they took");
+    }
+
+    #[test]
+    fn whoever_drew_first_blood_on_a_hunts_kill_is_given_a_share() {
+        let mut server = fixture();
+        let boar = wild(&mut server, "base:wild_boar", Vec3::new(100.5, 200.0, 150.5), 1);
+        server.creatures.live.get_mut(&boar).unwrap().hurt_by = Some(1);
+        let id = start(&mut server, "hunting_party", (110, 128));
+        let client = listen(&mut server);
+        assert!(run_until(&mut server, id, 120, |inst| inst.stage == Stage::Took));
+        assert!(says(&told(&client), "wander.base.hunting_party.share"));
+        assert!(xp_in(&server, "core:hunter") > 0, "a share of the hunt's experience");
+        assert!(loot_falling(&server) > 0, "and of the kill");
+    }
+
+    #[test]
+    fn a_hunt_with_nothing_to_hunt_goes_on_its_way() {
+        let mut server = fixture();
+        let id = start(&mut server, "hunting_party", (110, 128));
+        assert!(run_until(&mut server, id, 3, |inst| matches!(inst.plan, Plan::March { .. })));
+        assert_eq!(server.wandering.active[&id].stage, Stage::Passing);
+    }
+
+    #[test]
+    fn a_hunter_shows_a_beginner_how_to_read_the_ground() {
+        let mut server = fixture();
+        let id = start(&mut server, "hunting_party", (110, 128));
+        let hunter = members_of(&server, id, 0)[0];
+        let client = listen(&mut server);
+        assert!(server.meet(1, hunter));
+        assert!(says(&told(&client), "wander.base.hunting_party.tracks"));
+        assert!(xp_in(&server, "core:hunter") > 0);
+    }
+
+    #[test]
+    fn a_poacher_takes_a_deer_and_pays_for_silence_once() {
+        let mut server = fixture();
+        let deer = wild(&mut server, "base:red_deer", Vec3::new(98.5, 200.0, 148.5), 2);
+        let id = start(&mut server, "poacher", (110, 128));
+        let poacher = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        assert!(run_until(&mut server, id, 120, |inst| inst.stage == Stage::Took), "the poacher takes the deer");
+        assert!(!server.creatures.live.contains_key(&deer));
+        assert!(server.meet(1, poacher));
+        assert_eq!(count_of(&server, "base:raw_venison"), 1, "a cut for your silence");
+        assert!(server.meet(1, poacher));
+        assert_eq!(count_of(&server, "base:raw_venison"), 1, "once");
+    }
+
+    #[test]
+    fn a_fighter_with_a_weapon_sends_the_poacher_off_and_the_deer_lives() {
+        let mut server = fixture();
+        let deer = wild(&mut server, "base:red_deer", Vec3::new(80.5, 200.0, 160.5), 2);
+        let id = start(&mut server, "poacher", (110, 128));
+        let poacher = members_of(&server, id, 0)[0];
+        let weapon = tagged(&server, "weapon");
+        let name = server.content.blocks.def(weapon).name.clone();
+        give_held(&mut server, &name, 1);
+        // A beginner with a weapon does not frighten him.
+        let client = listen(&mut server);
+        assert!(server.meet(1, poacher));
+        assert!(!says(&told(&client), "wander.base.poacher.spare"));
+        skill_to(&mut server, "core:attack", 10);
+        assert!(server.meet(1, poacher));
+        assert!(says(&told(&client), "wander.base.poacher.spare"));
+        run(&mut server, 60 * TICKS_PER_SECOND as u64);
+        assert!(server.creatures.live.contains_key(&deer), "the deer lives");
+        assert!(server.wandering.active.get(&id).is_none_or(|inst| inst.stage != Stage::Took), "and nothing was taken");
+    }
+
+    #[test]
+    fn a_trapper_takes_small_game_up_to_its_takes_then_goes() {
+        let mut server = fixture();
+        let rabbits: Vec<u32> = (0..4).map(|i| wild(&mut server, "base:rabbit", Vec3::new(96.5 + i as f32 * 3.0, 200.0, 146.5), 10 + i)).collect();
+        let id = start(&mut server, "trapper", (110, 128));
+        assert!(run_until(&mut server, id, 300, |inst| matches!(inst.plan, Plan::March { .. })), "the trapper is done");
+        let left = rabbits.iter().filter(|r| server.creatures.live.contains_key(r)).count();
+        assert_eq!(left, 1, "three taken, and one left to run");
+    }
+
+    #[test]
+    fn a_trapper_teaches_a_beginner_the_snare() {
+        let mut server = fixture();
+        let id = start(&mut server, "trapper", (110, 128));
+        let trapper = members_of(&server, id, 0)[0];
+        assert!(server.meet(1, trapper));
+        assert!(xp_in(&server, "core:hunter") > 0);
+        skill_to(&mut server, "core:hunter", 20);
+        let before = xp_in(&server, "core:hunter");
+        assert!(server.meet(1, trapper));
+        assert_eq!(xp_in(&server, "core:hunter"), before, "nothing for the skilled");
+    }
+
+    /// The centre of a settlement of the fixture world's plan, and a place far from every one.
+    fn town_and_wild(server: &Server) -> (Vec3, Vec3) {
+        let towns = server.overworld.settlements_near(IVec2::new(128, 128), 6000);
+        let centre = towns.first().expect("a settlement in the world's plan").centre.as_vec3();
+        let lonely = (1..400).map(|i| centre + Vec3::new(i as f32 * 400.0, 0.0, 0.0)).find(|&p| server.town_near(p, 1000.0).is_none()).expect("somewhere far from towns");
+        (centre, lonely)
+    }
+
+    #[test]
+    fn the_town_watch_comes_only_near_a_town() {
+        let mut server = fixture();
+        // Broad day, two days in.
+        server.day = (0..20).map(|i| TICKS_PER_DAY as f64 * (2.0 + i as f64 / 20.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) > 0.8).expect("a bright hour");
+        let guard = event(&server, "guard_patrol");
+        let (centre, lonely) = town_and_wild(&server);
+        let comes = |server: &Server, at: Vec3| (0..600u64).any(|seed| server.pick_event(1, at.floor().as_ivec3(), mix(seed, 3)) == Some(guard));
+        assert!(comes(&server, centre + Vec3::new(120.0, 0.0, 0.0)), "the guard walk the town's land");
+        assert!(!comes(&server, lonely), "and nowhere far from a town");
+    }
+
+    #[test]
+    fn the_night_watch_binds_the_hurt_drills_a_beginner_and_tells_the_lost_the_way() {
+        let mut server = fixture();
+        let id = start(&mut server, "night_watchman", (110, 128));
+        let watchman = members_of(&server, id, 0)[0];
+        let (centre, _) = town_and_wild(&server);
+        server.creatures.live.get_mut(&watchman).unwrap().body.position = centre + Vec3::new(150.0, 0.0, 0.0);
+        let client = listen(&mut server);
+        let max = server.players[&1].health.max;
+        server.players.get_mut(&1).unwrap().health.current = max - 8;
+        assert!(server.meet(1, watchman));
+        assert!(server.players[&1].health.current > max - 8, "bound up");
+        assert!(server.meet(1, watchman));
+        assert!(xp_in(&server, "core:defence") > 0, "a word on keeping one's guard");
+        assert!(server.meet(1, watchman));
+        let said = told(&client);
+        assert!(said.iter().any(|(key, _)| key == "wander.town"), "the way to town: {said:?}");
+    }
+
+    #[test]
+    fn a_fang_earns_the_town_guards_bounty_and_a_beginner_with_a_weapon_is_drilled() {
+        let mut server = fixture();
+        let id = start(&mut server, "guard_patrol", (110, 128));
+        let guard = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:fang", 2);
+        assert!(server.meet(1, guard));
+        assert_eq!(count_of(&server, "base:fang"), 1);
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "the town's bounty");
+        assert!(server.meet(1, guard));
+        assert_eq!(count_of(&server, "base:fang"), 1, "once");
+        let weapon = tagged(&server, "weapon");
+        let name = server.content.blocks.def(weapon).name.clone();
+        give_held(&mut server, &name, 1);
+        let before = xp_in(&server, "core:attack");
+        assert!(server.meet(1, guard));
+        assert!(xp_in(&server, "core:attack") > before, "drilled");
+    }
+
+    #[test]
+    fn a_coin_buys_a_true_fortune_and_with_nothing_to_tell_the_coin_is_kept() {
+        let mut server = fixture();
+        let (id, teller) = camped(&mut server, "fortune_teller", 3.0);
+        let at = server.creatures.live[&teller].body.position;
+        let wonder = tagged(&server, "wonder");
+        let name = server.content.blocks.def(wonder).name.clone();
+        let spot = (at + Vec3::new(30.0, 0.0, 0.0)).floor().as_ivec3();
+        place(&mut server, &name, IVec3::new(spot.x.min(250), 200, spot.z));
+        give_held(&mut server, "base:gold_coin", 2);
+        let client = listen(&mut server);
+        assert!(server.meet(1, teller));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "the coin across the palm");
+        let said = told(&client);
+        assert!(says(&said, "wander.base.fortune_teller.fortune"));
+        let town = server.town_near(at, 600.0).is_some();
+        let told_of = |key: &str| said.iter().any(|(k, _)| k == key);
+        assert!(told_of("wander.point") || town && told_of("wander.town"), "something true and near: {said:?}");
+        if !town {
+            let point = said.iter().find(|(k, _)| k == "wander.point").unwrap();
+            assert!(point.1.iter().any(|(n, w)| n == "thing" && *w == Words::Block(name.clone())), "the wonder: {point:?}");
+        }
+        assert!(server.meet(1, teller));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "once");
+        // Far from everything, another teller has nothing to tell, and takes nothing.
+        let (_, lonely) = town_and_wild(&server);
+        server.wandering.active.get_mut(&id).unwrap().told.clear();
+        server.creatures.live.get_mut(&teller).unwrap().body.position = lonely;
+        assert!(server.meet(1, teller));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "nothing to tell, nothing taken");
     }
 }

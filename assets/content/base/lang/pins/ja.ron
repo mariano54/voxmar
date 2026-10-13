@@ -81,6 +81,7 @@
     "creature.base.rabbit": ("Rabbit", "ウサギ"),
     "creature.base.raider": ("Raider", "野盗"),
     "creature.base.hunter": ("Hunter", "狩人"),
+    "creature.base.poacher": ("Poacher", "密猟者"),
     "creature.base.jailer": ("Jailer", "看守"),
     "creature.base.thief": ("Thief", "泥棒"),
     "creature.base.white_stag": ("White stag", "白い牡鹿"),

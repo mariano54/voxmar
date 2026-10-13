@@ -798,6 +798,32 @@ impl Server {
         }
     }
 
+    /// A creature brought down by no player's hand (a hunting party's quarry): it dies and
+    /// teaches nobody anything. Its loot drops only when `shared`, for the player who drew
+    /// first blood and is given their share of the kill.
+    pub(crate) fn creature_felled(&mut self, id: u32, shared: bool) {
+        let Some(creature) = self.creatures.live.remove(&id) else { return };
+        self.creatures.gone.push(CreatureGone { id, died: true });
+        self.villager_died(id);
+        self.wandering_died(id);
+        if !shared {
+            return;
+        }
+        let species = self.content.creatures.get(creature.species);
+        let moment = Moment { bonus: 0.0, tool: &[], night: self.daylight() < 0.3, by_player: true };
+        let mut draws = 0u32;
+        let found = loot::roll(&species.loot, &moment, || {
+            draws += 1;
+            unit_from(mix(creature.seed, draws as u64 ^ self.tick << 8))
+        });
+        let cell = creature.body.position.floor().as_ivec3();
+        let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
+        for (i, (item, count)) in found.into_iter().enumerate() {
+            let body = dropped::popped(cell, random3(self.tick, cell, i as u32 + id));
+            self.creatures.falling_loot.push((due, ItemStack { item, count }, body));
+        }
+    }
+
     /// Drops the loot of creatures whose bodies have finished falling.
     fn drop_fallen_loot(&mut self) {
         let tick = self.tick;
