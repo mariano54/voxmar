@@ -7427,13 +7427,13 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.next(Step::Ore, now);
     };
     match gate.phase {
-        // On the pad, looking level across it, whatever the steps before left: the party
-        // comes the same way every run.
+        // Where the creature steps stand, at the pad's near side looking level across it,
+        // whatever the steps before left: the party comes to the same place every run.
         0 => {
-            look(world, 180.0, 0.0);
+            look(world, 0.0, 0.0);
             if !gate.party_placed {
                 gate.party_placed = true;
-                world.resource::<Net>().command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 0.5));
+                world.resource::<Net>().command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
                 return;
             }
             if gate.server_in_phase() < 1.0 {
