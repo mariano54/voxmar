@@ -1212,5 +1212,96 @@
                 (name: "bet", wants: ("gold_coin", 1), gives: [OneOf([Item("gold_coin", (2, 2)), Effect("refreshed", 300.0)])], once: Player),
             ])],
         ),
+        // A henwife driving a few hens to market. A beginner learns where hens lay; four
+        // feathers buy two eggs; and a farmer with a home who has grown a little (Farming 3)
+        // can have a hen of their own for six wheat seeds, once for the party.
+        (
+            name: "henwife", weight: 0.5,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:forest", 0.4)],
+            daylight: (0.3, 0.9), needs: (days: 1.5),
+            cast: [(species: "villager"), (species: "junglefowl", count: (2, 3), role: Herd)],
+            script: Drift(leg: (6.0, 12.0), pause: (6.0, 12.0), seconds: 420.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "hen", needs: [Home(true), Skill("farming", 3)], wants: ("wheat_seeds", 6), gives: [Hand(1)], once: Party),
+                (name: "lay", needs: [Below("farming", 6)], gives: [Xp("farming", 6.0)], once: Player),
+                (name: "eggs", wants: ("feather", 4), gives: [Item("egg", (2, 2))], once: Player),
+            ])],
+        ),
+        // Mushroom pickers out after rain with baskets, working the wood's floor. A beginner
+        // cook is told which are good to eat; they say where more grow; four mushrooms buy
+        // a loaf.
+        (
+            name: "mushroom_pickers", weight: 0.6,
+            biomes: [("tag:forest", 1.2), ("tag:wetland", 0.6)],
+            daylight: (0.2, 0.9), needs: (days: 1.0, wet: Some(true)),
+            cast: [(species: "villager"), (species: "child", count: (0, 2), role: Follow)],
+            script: Gather(reach: 24.0, work: (6.0, 10.0), visits: 5),
+            seek: ["tag:fungus"],
+            halt: (near: 6.0, seconds: (10.0, 16.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "which", needs: [Below("cooking", 10)], gives: [Xp("cooking", 8.0)], once: Player),
+                (name: "where", gives: [Point("tag:fungus", 64.0)], once: Player),
+                (name: "basket", wants: ("tag:fungus", 4), gives: [Item("bread", (1, 1))], once: Player),
+            ])],
+        ),
+        // A woodcarver whittling by the path. A beginner holding a log is shown how the grain
+        // runs; eight logs buy a coin, once; a carver of some skill (Crafting 10) is given a
+        // tip for a finer cut.
+        (
+            name: "woodcarver", weight: 0.5,
+            biomes: [("tag:forest", 1.2), ("tag:open", 0.5)],
+            daylight: (0.25, 0.9), needs: (days: 0.8),
+            cast: [(species: "woodcutter"), (species: "hound", count: (0, 1), role: Pet(0))],
+            script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 1.5, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "grain", needs: [Holds("log"), Below("crafting", 10)], gives: [Xp("crafting", 8.0)], once: Player),
+                (name: "finer", needs: [Skill("crafting", 10), Below("crafting", 25)], gives: [Xp("crafting", 16.0)], once: Player),
+                (name: "buy", wants: ("tag:log", 8), gives: [Item("gold_coin", (1, 1))], once: Player),
+            ])],
+        ),
+        // Shearers between farms with their shears. Six wool buy a coin, once; a beginner
+        // holding wool is shown how a fleece is rolled.
+        (
+            name: "shearers", weight: 0.5,
+            biomes: [("tag:grassland", 1.2), ("tag:open", 0.8), ("tag:highland", 0.8)],
+            daylight: (0.3, 0.9), needs: (days: 2.0),
+            cast: [(species: "herder"), (species: "villager", role: Follow), (species: "hound", role: Pet(0))],
+            script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.8),
+            halt: (near: 6.0, seconds: (10.0, 16.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "roll", needs: [Holds("wool"), Below("farming", 8)], gives: [Xp("farming", 6.0)], once: Player),
+                (name: "buy", wants: ("wool", 6), gives: [Item("gold_coin", (1, 1))], once: Player),
+            ])],
+        ),
+        // A young would-be apprentice, looking for a master. They answer what the player has
+        // grown good at: a farmer, a miner or a crafter of skill (15) is asked to show them
+        // how, and teaching teaches; a coin from their purse for each lesson, once each.
+        (
+            name: "apprentice", weight: 0.4,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
+            daylight: (0.3, 0.9), needs: (days: 3.0),
+            cast: [(species: "child")],
+            script: Shadow(keep: (4.0, 9.0), seconds: 300.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "farming", needs: [Skill("farming", 15)], gives: [Xp("farming", 20.0), Item("gold_coin", (1, 1))], once: Player),
+                (name: "mining", needs: [Skill("mining", 15)], gives: [Xp("mining", 20.0), Item("gold_coin", (1, 1))], once: Player),
+                (name: "crafting", needs: [Skill("crafting", 15)], gives: [Xp("crafting", 20.0), Item("gold_coin", (1, 1))], once: Player),
+                (name: "someday", needs: [Below("farming", 15), Below("mining", 15), Below("crafting", 15)]),
+            ])],
+        ),
+        // A hedge witch at a ring of stones at night. Three herbs and an alchemist who knows a
+        // little (Alchemy 5) has a mote of aether for them, once; a beginner at Magic is told
+        // what the night air carries.
+        (
+            name: "hedge_witch", weight: 0.4,
+            biomes: [("tag:forest", 1.0), ("tag:wetland", 1.0), ("tag:grassland", 0.4)],
+            daylight: (0.0, 0.3), needs: (days: 2.0, away: Some((60.0, 100000.0))),
+            cast: [(species: "elder")],
+            script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 1.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "mote", needs: [Skill("alchemy", 5)], wants: ("tag:herb", 3), gives: [Item("aether_mote", (1, 1)), Xp("magic", 6.0)], once: Player),
+                (name: "air", needs: [Below("magic", 10)], gives: [Xp("magic", 8.0)], once: Player),
+            ])],
+        ),
     ],
 )
