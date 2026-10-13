@@ -100,6 +100,14 @@ fn run(ctx: &Ctx) -> f32 {
     ctx.creature.def.movement.run
 }
 
+/// Whether it is a bird, which flies where others walk far.
+fn flier(ctx: &Ctx) -> bool {
+    ctx.creature.def.movement.style == Style::Flier
+}
+
+/// A bird flies to a goal further than this many blocks off, and hops to a nearer one.
+const FLIES_PAST: f32 = 6.0;
+
 fn flat(a: Vec3, b: Vec3) -> f32 {
     a.with_y(0.0).distance(b.with_y(0.0))
 }
@@ -139,16 +147,24 @@ impl Module for Wander {
                 let angle = ctx.random(4) * std::f32::consts::TAU;
                 let radius = if at.kept { self.radius.min(super::super::husbandry::KEPT_ROAM) } else { self.radius };
                 // Each individual strays as far as its curiosity takes it.
-                let reach = radius * (0.6 + 0.9 * ctx.mind.personality.curiosity) * (0.3 + 0.7 * ctx.random(5));
+                let mut reach = radius * (0.6 + 0.9 * ctx.mind.personality.curiosity) * (0.3 + 0.7 * ctx.random(5));
+                // A bird mostly hops a little way, and now and then flies off across its range.
+                if flier(ctx) {
+                    reach = if ctx.random(6) < 0.3 * (0.5 + ctx.mind.personality.energy) { (ctx.creature.def.leash * (0.4 + 0.5 * ctx.random(7))).max(FLIES_PAST * 1.5) } else { reach.min(3.0) };
+                }
                 // About home, drifting back toward it (a kept one more so).
                 let base = at.position.lerp(at.home, if at.kept { 0.6 } else { 0.3 });
                 mind.goal = Some(base + Vec3::new(angle.cos(), 0.0, angle.sin()) * reach);
             }
         }
         if mind.pause > 0.0 {
-            return Decision { pose: resting_pose(ctx), ..Default::default() };
+            // A bird at rest pecks about the ground, looking up between pecks.
+            let pose = if flier(ctx) && ctx.lively >= 0.4 && (mind.pause * 1.3).fract() < 0.6 { Pose::Grazing } else { resting_pose(ctx) };
+            return Decision { pose, ..Default::default() };
         }
-        Decision { goal: mind.goal, speed: walk(ctx), ..Default::default() }
+        // It flies to where is far, and hops the last of the way.
+        let speed = if flier(ctx) && mind.goal.is_some_and(|g| flat(g, at.position) > FLIES_PAST) { run(ctx) * 0.8 } else { walk(ctx) };
+        Decision { goal: mind.goal, speed, ..Default::default() }
     }
 }
 
@@ -293,7 +309,9 @@ impl Module for Flee {
         if let Some(p) = target {
             mind.remember(Memory::ScaredBy(p.id), 10.0);
         }
-        Decision { goal: Some(at.position + (away + side).normalize() * 8.0), speed: run(ctx), pose: Pose::Alert, alarm: fresh, ..Default::default() }
+        // A bird takes wing and goes well clear before it settles again.
+        let far = if flier(ctx) { 22.0 } else { 8.0 };
+        Decision { goal: Some(at.position + (away + side).normalize() * far), speed: run(ctx), pose: Pose::Alert, alarm: fresh, ..Default::default() }
     }
 }
 

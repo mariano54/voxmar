@@ -33,6 +33,7 @@
 
 mod ambience;
 mod breaking;
+mod butterflies;
 mod capture;
 mod creature_sounds;
 mod creatures;
@@ -419,7 +420,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui::UiPlugin,
     ))
     .add_plugins(lang::LangPlugin);
-    app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin));
+    app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins(emitters::EmittersPlugin);
     app.add_plugins(held::HeldPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print

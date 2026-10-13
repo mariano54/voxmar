@@ -58,6 +58,24 @@ const HEARTS: usize = 3;
 const WATCHES_WITHIN: f32 = 9.0;
 const WATCH_TURN: f32 = 1.0;
 
+/// A small bird's flight: blocks it rises and dips each bound, beats a second, how far its
+/// wings swing out from folded (radians), how much longer they reach spread, and how fast
+/// one that dies in the air falls, in blocks a second.
+const UNDULATE: f32 = 0.18;
+const WINGBEATS: f32 = 24.0;
+const WING_SPREAD: f32 = 1.35;
+const WING_REACH: f32 = 1.6;
+const FALLS: f32 = 6.0;
+
+/// Where a flier is in its bounding flight: its rise (−1..1) and how hard it is beating its
+/// wings (0..1), climbing on a burst of wingbeats and dipping in a glide, each bird to its own
+/// time.
+fn flight_bound(now: f32, id: u32) -> (f32, f32) {
+    let phase = (now * 0.9 + creature::unit_from(id as u64) * 7.0).fract();
+    let beating = if phase < 0.55 { 1.0 } else { ((0.62 - phase) / 0.07).clamp(0.0, 1.0) };
+    ((phase * std::f32::consts::TAU).sin(), beating)
+}
+
 /// The heart's pixels, a row a string: `#` is heart, `+` its highlight.
 const HEART: [&str; 7] = ["         ", " ##   ## ", "#+##.####", "#+#######", " ####### ", "  #####  ", "    #    "];
 
@@ -209,6 +227,8 @@ struct Shown {
     nod: f32,
     look: f32,
     crouch: f32,
+    /// How far a flier's wings are spread, 0 (folded, on the ground) ..= 1 (in flight).
+    spread: f32,
     /// Hearts over it, made when first needed: trust filling while it is tamed, and all
     /// red while a kept one is ready to breed.
     hearts: Vec<Entity>,
@@ -711,6 +731,7 @@ fn show(
                 nod: 0.0,
                 look: 0.0,
                 crouch: 0.0,
+                spread: 0.0,
                 hearts: Vec::new(),
             },
         );
@@ -771,7 +792,16 @@ fn show(
         };
         shown.look += (look - shown.look) * (4.0 * dt).min(1.0);
 
-        let moving = (speed / (def.movement.walk.max(0.5) * 1.5)).min(1.0);
+        // A flier spreads its wings off the ground, and falls when it dies in the air.
+        let flier = def.movement.style == Style::Flier;
+        let aloft = flier && !world.is_solid((shown.position - Vec3::Y * 0.1).floor().as_ivec3());
+        shown.spread += (f32::from(u8::from(aloft && shown.dying.is_none())) - shown.spread) * (8.0 * dt).min(1.0);
+        if aloft && shown.dying.is_some() {
+            shown.position.y -= FALLS * dt;
+            shown.view.position = shown.position;
+            shown.view.velocity = Vec3::ZERO;
+        }
+        let moving = (speed / (def.movement.walk.max(0.5) * 1.5)).min(1.0) * (1.0 - shown.spread);
         let running = speed > def.movement.walk * 1.6;
         // Hoppers hop, and anything running bounds: pairs together. Otherwise diagonal pairs.
         let paired = def.movement.style == Style::Hopper || (running && def.movement.style != Style::Creeper);
@@ -779,6 +809,8 @@ fn show(
         let bob = if paired { (step.sin().abs() * 0.12 - 0.02).max(0.0) * moving } else { step.sin().abs() * 0.025 * moving };
         let bob = match def.movement.style {
             Style::Drifter => (now * 1.7 + id as f32).sin() * 0.06,
+            // Small birds rise and dip as they fly, a burst of wingbeats and a glide.
+            Style::Flier => bob * (1.0 - shown.spread) + shown.spread * flight_bound(now, id).0 * UNDULATE / height.max(0.05),
             _ => bob,
         };
 
@@ -895,6 +927,13 @@ fn show(
                 Swing::Tail => {
                     let (rate, sway) = if keeper_near { (11.0, 0.45) } else { (2.5, 0.3) };
                     (Quat::from_rotation_y((now * rate + id as f32).sin() * sway + speed.min(4.0) * 0.05), Vec3::ONE)
+                }
+                Swing::Wing { side } if flier => {
+                    // Spread out to the sides and lengthened in flight, beating in bursts.
+                    let (_, beating) = flight_bound(now, id);
+                    let beat = (now * WINGBEATS).sin() * 0.75 * beating;
+                    let angle = shown.spread * (WING_SPREAD + beat);
+                    (Quat::from_rotation_z(side * angle), Vec3::new(1.0, 1.0 + WING_REACH * shown.spread, 1.0))
                 }
                 Swing::Wing { side } => {
                     let beat = if running || speed > def.movement.walk * 1.2 { (now * 18.0).sin() * 0.6 } else { 0.0 };

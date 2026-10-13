@@ -65,7 +65,7 @@ pub enum Water {
     Amphibious,
     /// Only in water.
     Swim,
-    /// Floats in the air (wisps); fliers proper come later.
+    /// Floats in the air (wisps). Birds that fly are `Style::Flier`s on land.
     Air,
 }
 
@@ -303,11 +303,14 @@ pub struct Movement {
     pub turn: f32,
     /// Upward speed of its jump; 0 for creatures that cannot jump.
     pub jump: f32,
+    /// How high a flier keeps over the ground (or the treetops) in flight, in blocks; only
+    /// for `Flier`s.
+    pub fly: f32,
 }
 
 impl Default for Movement {
     fn default() -> Self {
-        Self { style: Style::Walker, walk: 1.6, run: 4.5, turn: 270.0, jump: 7.5 }
+        Self { style: Style::Walker, walk: 1.6, run: 4.5, turn: 270.0, jump: 7.5, fly: 0.0 }
     }
 }
 
@@ -330,6 +333,9 @@ pub enum Style {
     Creeper,
     /// Floats and bobs: wisps.
     Drifter,
+    /// Hops about on the ground and takes wing to go further or faster than a walk, keeping
+    /// `fly` blocks over the land in flight and fluttering down to land: small birds.
+    Flier,
 }
 
 /// What it eats and what tempts it, by block or item name or `tag:`.
@@ -569,6 +575,9 @@ pub struct Limits {
     /// At most this many animals, and this many monsters, near each player.
     pub animals_near: usize,
     pub monsters_near: usize,
+    /// And this many small birds (`Flier`s), on a budget of their own, so birds never crowd
+    /// out the animals on the ground.
+    pub birds_near: usize,
     /// The most monsters near a player during a new world's first night (until its first
     /// dawn), so a first night in the open is a scare, not a siege.
     pub first_night_monsters: usize,
@@ -593,14 +602,14 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, first_night_monsters: 3, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, spawn_unseen_angle: 75.0, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
+        Self { most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 12, monsters_near: 8, birds_near: 4, first_night_monsters: 3, spawn_every: 1.5, spawn_near: 20.0, spawn_far: 40.0, spawn_unseen_angle: 75.0, empty_for_monsters: 1.5, empty_for_animals: 2.5 }
     }
 }
 
 crate::content::settable! {
     /// The limits one package sets: any of them.
     SetLimits for Limits {
-        most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize, first_night_monsters: usize,
+        most: usize, wild_most: usize, kept_each: usize, keepers: usize, animals_near: usize, monsters_near: usize, birds_near: usize, first_night_monsters: usize,
         spawn_every: f32, spawn_near: f32, spawn_far: f32, spawn_unseen_angle: f32, empty_for_monsters: f32, empty_for_animals: f32,
     }
 }
@@ -625,10 +634,10 @@ impl Limits {
         if !(self.empty_for_monsters.is_finite() && self.empty_for_monsters >= 0.0 && self.empty_for_animals.is_finite() && self.empty_for_animals >= 0.0) {
             return error("`empty_for_monsters` and `empty_for_animals` must be 0 or more".into());
         }
-        if self.animals_near + self.monsters_near > self.wild_most {
+        if self.animals_near + self.monsters_near + self.birds_near > self.wild_most {
             return error(format!(
-                "{} animals and {} monsters near one player are more than `wild_most` ({})",
-                self.animals_near, self.monsters_near, self.wild_most
+                "{} animals, {} monsters and {} birds near one player are more than `wild_most` ({})",
+                self.animals_near, self.monsters_near, self.birds_near, self.wild_most
             ));
         }
         let needed = self.keepers.checked_mul(self.kept_each).and_then(|kept| kept.checked_add(self.wild_most));
@@ -788,6 +797,13 @@ impl CreatureRegistry {
             }
             if def.supernatural && def.habitat.comfort.aether.0 <= 0.0 {
                 return Err(error("a supernatural creature needs an aether minimum in its comfort".into()));
+            }
+            let flier = def.movement.style == Style::Flier;
+            if flier != (def.movement.fly > 0.0) || !(def.movement.fly.is_finite() && def.movement.fly <= 32.0) {
+                return Err(error(format!("a `Flier` needs `fly` from above 0 to 32 blocks, and only a flier has one (`fly: {}`)", def.movement.fly)));
+            }
+            if flier && def.movement.run <= def.movement.walk * 1.5 {
+                return Err(error("a flier takes wing above one and a half times its walk, so its `run` must be faster than that".into()));
             }
             let loot = loot::resolve(&def.loot, blocks).map_err(error)?;
             let foods = |names: &[String]| -> Result<Vec<_>, RegistryError> {

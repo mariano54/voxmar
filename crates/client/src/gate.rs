@@ -454,6 +454,8 @@ struct Gate {
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
+    /// Whether the creatures step could release its butterfly.
+    butterfly: bool,
     /// Whether the struck creature's fall was judged.
     fall_judged: bool,
     /// Whether the loading cover was checked.
@@ -584,6 +586,7 @@ impl Gate {
             weapon_fallen_since: None,
             blows_seen: 0,
             readout_seen: false,
+            butterfly: false,
             fall_judged: false,
             cover_checked: false,
             spills: Vec::new(),
@@ -4950,6 +4953,9 @@ const FALL_FRAME_MS: f32 = 150.0;
 const CREATURE: &str = "base:lumen_snail";
 /// What it always drops.
 const CREATURE_DROP: &str = "base:lumen_slime";
+/// A small bird summoned with them, and a butterfly released over the pad.
+const BIRD: &str = "base:goldfinch";
+const BUTTERFLY: &str = "base:cabbage_white";
 
 /// A lumen snail and a few grazers are summoned on open test ground: they must reach the
 /// client and draw, and the snail, struck with left clicks as a player would, must die
@@ -4989,6 +4995,10 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command(&format!("summon mouflon 2 {} {} {}", pad.x - 3, pad.y, pad.z - 4));
             net.command(&format!("summon rabbit 1 {} {} {}", pad.x + 3, pad.y, pad.z - 4));
             net.command(&format!("summon shambler 1 {} {} {}", pad.x + 3, pad.y, pad.z));
+            net.command(&format!("summon {BIRD} 1 {} {} {}", pad.x - 3, pad.y, pad.z));
+            // A butterfly over the pad, in view and out of the player's way.
+            let butterfly = Vec3::new(pad.x as f32 - 1.5, pad.y as f32 + 1.6, pad.z as f32 + 0.5);
+            gate.butterfly = crate::butterflies::release(world, BUTTERFLY, butterfly, 30.0);
             gate.advance(now);
         }
         2 => {
@@ -5018,6 +5028,22 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 world.resource::<Net>().command("creatures remove shambler");
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
+                // A small bird reaches the client like any creature; a butterfly is the client's
+                // own, drawn as two wings.
+                let bird = world.resource::<Launch>().content.creatures.find(BIRD);
+                let birds = world.resource::<crate::creatures::Creatures>().views().filter(|v| Some(v.species) == bird).count();
+                gate.check("birds", if birds > 0 { Ok(format!("a summoned {BIRD} reached the client")) } else { Err(format!("a summoned {BIRD} never reached the client")) });
+                let wings = crate::butterflies::drawn(world);
+                gate.check(
+                    "butterflies",
+                    if !gate.butterfly {
+                        Err(format!("no winged set `{BUTTERFLY}` to release"))
+                    } else if wings >= 2 {
+                        Ok(format!("a released {BUTTERFLY} drawn, {wings} wing quads"))
+                    } else {
+                        Err(format!("a released {BUTTERFLY} drew {wings} wing quads"))
+                    },
+                );
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
                 // The one pointed at shows its level and health over it.
                 let shown = world.query_filtered::<&Visibility, With<crate::hud::levels::LevelLabel>>().iter(world).any(|v| *v != Visibility::Hidden);
