@@ -61,6 +61,12 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
     fall behind, and giving up after `patience` seconds with no follower. At the end the
     event's `reveal` (items, XP, an effect) goes to the nearest player within 18 blocks, with
     the line `arrived`, and the lure goes `linger` seconds later.
+  - `Gather(reach, work, visits)`: everyone who walks works. Each goes to the nearest block
+    the event `seek`s (block names or `tag:`s) within `reach` of where the party began, one
+    block each, stands at it crouched for `work` seconds, then takes the next; after
+    `visits` works between them, or with nothing left, they go. A block that is gone (the
+    player picked it) sends its worker to another; one not reached in time is passed over.
+    A gathering kind comes only where something it seeks is within `reach` of the spot.
   The leader strides in 6-block steps and turns aside where the ground will not do; with no
   headway for six seconds it detours, and after four detours the party gives up and leaves.
 - **Stopping.** A party with a `halt` stops for a player who comes within `near` of its
@@ -72,7 +78,14 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   (`Skill` at least, `Below` a level, `Home`, `Hurt`, `Holds` an item with a tag, which is
   not taken) and whose `wants` the player holds is said, takes what it wants and gives its
   rewards (items, XP, an effect, healing, `Free`, `Anger`, `Leave`: the party gives up what it
-  was about and goes, no grudge). A line can also need `When(stage)` (the party is at that
+  was about and goes, no grudge; `Point(selector, reach)`: tells the player which way, and
+  about how far, the nearest block of that name or `tag:` lies within `reach` of the speaker,
+  true to the land, or that none is near; `Hand(group)`: hands one member of that group to
+  the player as if tamed (a calf sold), said only when there is one and the player has room
+  for another kept animal; `Cook(station, most, keep)`: cooks what the line takes by the
+  game's own recipes at that station (cooking.ron), never burnt, up to `most` of what is in
+  hand, keeping `keep` for the speaker's pot, said only with something it cooks in hand). A
+  line can also need `When(stage)` (the party is at that
   stage of its script: `Caught`, `Waiting`, `Sprung`, `Won`, `Leading`, `Arrived`; the stage
   must belong to the event's script) or `Struck(group)` (this player struck a member of that
   group of the cast, and the party did not turn on them for it). A line with only such needs
@@ -81,6 +94,20 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   `.greet_3`, drawn each time; the title is `.title`. Lessons are capped by the player's own
   levels (`Below`): a tutor teaches a beginner, asks more for the next step and has nothing
   for a master, so no lesson skips a step.
+- **Guarding.** A party with a `guard(near, warn, calm)` (a sow with her litter) warns a
+  player who comes within `near` of any member: they stand and face them, and the event's
+  `warn` line is told. One who stays `warn` seconds, or comes within half of `near`, is set
+  upon by those that fight while the rest run (as `Avenge`); one who backs off past `calm`
+  is let be. A player holding what the party's kind is shy of or drawn to (a `Shy` or `Draw`
+  reaction: a torch, food) is not warned at all.
+- **Startling.** A party with a `startle(near, least, still, still_for, stalk)` (a herd of
+  deer) bolts from a player who comes within `near` blocks of any member, less `stalk.1`
+  blocks a level of skill `stalk.0` (Hunter: a stalker comes nearer), no nearer than
+  `least`. A player who has not moved for `still_for` seconds is noticed only at `still`, and
+  a still one holding what draws the kind (food) not at all. Bolted, it runs off and is done.
+  A party that startles does not halt or guard.
+- **Young.** A group with `young: true` comes young (piglets, a calf, fawns) and grows up as
+  kept young do.
 - **Being struck.** `hurt` says what a party does when a player strikes one of its own:
   `Scatter` (the party runs and breaks up, and will not talk), `Avenge` (those who can
   fight turn on the player while they stay near, the rest run) or `Ignore` (already hostile).
@@ -201,9 +228,36 @@ New in the framework: the `Chase`, `Ambush` and `Lure` scripts, the `Chaser` and
 roles, line stages (`When`) and `Struck`, the `Leave` reward, an event's `reveal`, and
 Reactions. The settled-companions save, the next batch, comes with a save change of its own.
 
+## Batch 4 (implemented, seven kinds): the early land
+
+The Nomad and Farm ages: folk at work a new player can walk up to with bare hands, and wild
+families that answer how they are approached. Every kind is data; the new pieces (the
+`Gather` script, `seek`, `guard`, `startle`, `young`, and the `Point`, `Hand` and `Cook`
+rewards) are each used by several kinds and the ones to come.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| berry pickers | Gather | Villagers and a child pick a patch of berry bushes, one bush each. Pick the bush one is at and they move on. They point out where mushrooms grow (true to the land, once), and eight berries buy a loaf. Only where berry bushes are. |
+| herb gatherer | Gather | An elder works the herbs of a meadow. Show a herb and a beginner learns Alchemy (once); Alchemy 5 is pointed to roots, Alchemy 20 to the glowing wonders, if any grow near. |
+| fisher folk | Gather | Fishers stand crouched at the water's edge. Three sticks from a beginner (Fishing below 5) buy twine enough for a rod; a rod held out gets a lesson (below 12); four fish buy line; the hurt are given a fish. Only by water. |
+| boar sounder | Drift, Herd, guard | A wild sow with two to four young piglets. Come within nine blocks and she grunts a warning; stay three seconds, or come within half that, and she charges while the piglets run. Hold up a torch and they go; hold out food and she lets you near (a piglet can then be tamed the usual way). |
+| deer herd | Drift, Herd, startle | A stag, hinds and a fawn or two. They bolt from a walker at 22 blocks, a still player at 6, and a hunter's step nearer (0.35 a Hunter level, to 8). Stand still holding food and they come to it; move and they are gone. |
+| travelling cook | Camp | A cook camps at dusk with a pot on. Raw meat or fish handed over comes back cooked, one kept for the pot; cooked food shown teaches a beginner (Cooking below 10); the hurt are fed. |
+| cowherd | Drift, Herd, Hand | A herder drives aurochs and a calf with a dog at heel, to players with a home. A pail held out is filled (once); to a player with the Hunter level that taming an aurochs takes (12), four coins buy the calf, kept from then on. |
+
+| the player | gatherers | sow and litter | deer herd |
+| --- | --- | --- | --- |
+| walks past | they halt if close, then work on | warned at 9 blocks | the herd bolts |
+| stands still | they work on | warned, then charged if close | they graze on round you |
+| picks what they work | the worker moves to the next | n/a | n/a |
+| holds a torch | nothing | the family goes off | they keep away |
+| holds food | trades and lessons as above | the sow comes to it, no warning | come to a still hand |
+| strikes one | scatter and will not talk | the sow fights, the piglets run | scatter |
+| is a skilled hunter | nothing | nothing | comes nearer unseen |
+
 ## Catalogue of 100
 
-Status: `done` is in batch 1, `next` is the second batch (ages 1 and 2: Nomad and Farm
+Status: `done` is in a batch above, `next` is the second batch (ages 1 and 2: Nomad and Farm
 first), `later` the rest. "New" names what the kind needs that the framework lacks; those
 are the mechanics later batches add, each used by several kinds.
 
@@ -221,23 +275,23 @@ are the mechanics later batches add, each used by several kinds.
 | 10 | prison convoy | see batch 1 | Captive | 2 | done |
 | 11 | lost child | see batch 2 | Roam, Guide | 1 | done |
 | 12 | shepherd with flock | see batch 2 | Drift, Herd | 2 | done |
-| 13 | cowherd and cows | milk for a bucket held out | Herd | 2 | next |
+| 13 | cowherd | see batch 4 | Herd | 2 | done |
 | 14 | goose girl | geese on a march to water | Herd | 2 | next |
-| 15 | berry pickers | villagers gather and drop forage in a basket; trade a share | Forage | 1 | next |
-| 16 | fishers' file | villagers with rods walk to a shore and fish | Gather | 1 | next |
+| 15 | berry pickers | see batch 4 | Forage | 1 | done |
+| 16 | fisher folk | see batch 4 | Gather | 1 | done |
 | 17 | woodcutters | two villagers fell a lone tree and haul the logs | Haul | 2 | next |
 | 18 | charcoal burners | a small camp with a smoking mound | Camp, Haul | 2 | next |
 | 19 | water carriers | villagers with yokes go from well to field | Haul | 2 | next |
 | 20 | harvest cart | a cart-pushing family in the farm age; swaps seeds | Haul | 2 | next |
-| 21 | herb woman | a forager who names a herb patch nearby for a coin | Forage | 1 | next |
+| 21 | herb gatherer | see batch 4 | Forage | 1 | done |
 | 22 | wandering healer | mends and sells a salve | | 1 | next |
 | 23 | hermit | lives off the path; a riddle gives a recipe | Vigil | 1 | next |
 | 24 | travelling smith | repairs held tools for coin | Camp | 2 | next |
-| 25 | travelling cook | a pot on the fire; a portion for an ingredient | Camp | 1 | next |
+| 25 | travelling cook | see batch 4 | Camp | 1 | done |
 | 26 | story teller | camps at dusk; players near get a journal page | Camp | 1 | next |
 | 27 | stray hound | see batch 2 | Roam | 1 | done |
-| 28 | deer herd | drifts through; flees when seen | Herd | 1 | next |
-| 29 | boar sounder | sow with piglets; charges what comes close | Herd | 1 | next |
+| 28 | deer herd | see batch 4 | Herd | 1 | done |
+| 29 | boar sounder | see batch 4 | Herd | 1 | done |
 | 30 | fox and farmer | see batch 3 (a fox runs, a farmer chases) | Chase | 2 | done |
 | 31 | thief and constable | see batch 3 | Chase | 2 | done |
 | 32 | poacher | hunts deer; reporting them to a guard pays | Hunt | 2 | later |
@@ -315,8 +369,7 @@ are the mechanics later batches add, each used by several kinds.
 Each is a script or a role used by many kinds, so every kind stays a few lines of data.
 
 - **Herd**: members drift together in a loose circle with a shepherd; they flee as one.
-- **Forage / Gather**: members stop at items or blocks of a tag, work a few seconds, drop
-  what they collected for a trade.
+- **Forage / Gather**: done (batch 4): members work the blocks of a name or tag about them.
 - **Haul**: two members carry a load along a line; kill one and it drops the load.
 - **Escort**: the party follows the player toward a settlement; arriving pays out, losing
   them (distance, death) ends it.

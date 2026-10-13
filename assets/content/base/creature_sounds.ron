@@ -415,6 +415,7 @@
         "aurochs": (voice: "cattle"),
         "bison": (voice: "bison"),
         "wild_boar": (voice: "pig"),
+        "wild_sow": (voice: "pig", pitch: 0.9),
         "red_deer": (voice: "deer"),
         "white_stag": (voice: "deer", pitch: 0.95),
         "reindeer": (voice: "reindeer"),

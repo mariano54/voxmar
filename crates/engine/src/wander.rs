@@ -17,6 +17,7 @@ use rustc_hash::FxHashMap;
 use serde::Deserialize;
 
 use crate::block::{BlockId, BlockRegistry, RegistryError};
+use crate::cooking::CookingRegistry;
 use crate::creature::{CreatureId, CreatureRegistry, Kind};
 use crate::effect::{EffectId, EffectRegistry};
 use crate::skill::{SkillId, SkillRegistry};
@@ -202,6 +203,17 @@ pub struct EventDef {
     /// What a led one's guide gives the player who followed to the end (a `Lure` script).
     #[serde(default)]
     pub reveal: Vec<Reward>,
+    /// What a `Gather` party works at: block names and `tag:` selectors. It comes only
+    /// where one of them is within its `reach`.
+    #[serde(default)]
+    pub seek: Vec<String>,
+    /// Whether the party warns off a player who comes near, then turns on them.
+    #[serde(default)]
+    pub guard: Option<Guard>,
+    /// Whether the party bolts from a player who comes near, and how near a still or a
+    /// skilled one may come.
+    #[serde(default)]
+    pub startle: Option<Startle>,
     /// Seconds it lasts at most; it ends sooner when it has gone by.
     #[serde(default = "lifetime")]
     pub lifetime: f32,
@@ -280,6 +292,38 @@ pub enum Arrival {
     Town,
 }
 
+/// A party that keeps players off (a sow with her young): a player within `near` blocks of
+/// any member is warned (they stand and face them, and the event's `warn` line is told
+/// them); one who stays `warn` seconds, or comes within half of `near`, is set upon by those
+/// that fight, while those that cannot run. Back beyond `calm` blocks before that and the
+/// warning is over. A player they shy from (a torch) or are drawn to (food) is not warned.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Guard {
+    pub near: f32,
+    pub warn: f32,
+    pub calm: f32,
+}
+
+/// A party that bolts (a herd of deer): a player who comes within `near` blocks, less
+/// `stalk.1` a level of skill `stalk.0`, no nearer than `least`, sends it running; one who
+/// has stood still for `still_for` seconds is only noticed at `still` blocks.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Startle {
+    pub near: f32,
+    pub least: f32,
+    pub still: f32,
+    #[serde(default = "still_for")]
+    pub still_for: f32,
+    #[serde(default)]
+    pub stalk: Option<(String, f32)>,
+}
+
+fn still_for() -> f32 {
+    2.0
+}
+
 /// What a party does when a player strikes one of its members.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 pub enum Hurt {
@@ -315,6 +359,9 @@ pub struct Group {
     pub count: (u8, u8),
     #[serde(default)]
     pub role: Role,
+    /// Its members come young (a sow's piglets, a cow's calf), and grow up as kept young do.
+    #[serde(default)]
+    pub young: bool,
 }
 
 fn one_one() -> (u8, u8) {
@@ -387,6 +434,11 @@ pub enum Script {
     /// (and, after `patience` seconds without a follower, giving up), and when they have come
     /// all the way, the `reveal` is theirs and it goes `linger` seconds later.
     Lure { keep: (f32, f32), length: f32, pace: f32, patience: f32, linger: f32 },
+    /// Everyone who walks works: each goes to the nearest block the event `seek`s within
+    /// `reach` blocks of where the party began (one each), stands at it `work` seconds
+    /// (least and most), then the next, until the party has worked `visits` times, then
+    /// they go. A block that is gone (picked, cut) sends its worker to another.
+    Gather { reach: f32, work: (f32, f32), visits: u8 },
 }
 
 /// What speakers of an event say and give.
@@ -506,6 +558,17 @@ pub enum Reward {
     Anger,
     /// The party gives up what it was about and goes, bearing no grudge.
     Leave,
+    /// Tells the player which way, and about how far, the nearest block of a name or a
+    /// `tag:` lies within so many blocks of the speaker: true to the land, or that there is
+    /// none near.
+    Point(String, f32),
+    /// Hands one member of this group of the cast to the player, kept as if tamed (a calf
+    /// sold): it leaves the party. Said only when there is one, and room for it.
+    Hand(usize),
+    /// Cooks what the line takes, by the game's own recipes at a station with this tag
+    /// (cooking.ron), never burnt: up to the second number of what is in hand, keeping the
+    /// third of the cooked for the speaker's pot. Said only with something it cooks in hand.
+    Cook(String, u8, u8),
 }
 
 /// A kind of event with its names resolved.
@@ -520,6 +583,10 @@ pub struct Event {
     pub guide_thanks: Vec<ResolvedReward>,
     /// What a lure shows the player who followed it to the end.
     pub reveal: Vec<ResolvedReward>,
+    /// The blocks a `Gather` party works at.
+    pub seek: Vec<BlockId>,
+    /// The skill whose level lets a player come nearer a startled party, and by how much a level.
+    pub stalk: Option<(SkillId, f32)>,
 }
 
 /// A meeting with its lines resolved.
@@ -560,7 +627,7 @@ pub enum ResolvedNeed {
     Holds(String),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ResolvedReward {
     Item(BlockId, (u8, u8)),
     Xp(SkillId, f32),
@@ -570,6 +637,29 @@ pub enum ResolvedReward {
     Free,
     Anger,
     Leave,
+    Point(Want, f32),
+    Hand(usize),
+    /// A station's tag, the most cooked at once, and how many of them are kept.
+    Cook(String, u8, u8),
+}
+
+/// A block name or a `tag:` selector, resolved: what a `seek` or a `Point` looks for.
+fn selector(name: &str, blocks: &BlockRegistry) -> Result<Want, String> {
+    match name.strip_prefix("tag:") {
+        Some(tag) if blocks.tagged(tag).next().is_none() => Err(format!("no block has the tag `{tag}`")),
+        Some(tag) => Ok(Want::Tag(tag.to_owned())),
+        None => blocks.id(name).map(Want::Item).ok_or_else(|| format!("no block `{name}`")),
+    }
+}
+
+impl Want {
+    /// The blocks it names.
+    pub fn blocks(&self, blocks: &BlockRegistry) -> Vec<BlockId> {
+        match self {
+            Want::Item(id) => vec![*id],
+            Want::Tag(tag) => blocks.tagged(tag).collect(),
+        }
+    }
 }
 
 /// A reward with its names resolved, or what is wrong with it.
@@ -586,6 +676,12 @@ fn resolve_reward(reward: &Reward, blocks: &BlockRegistry, skills: &SkillRegistr
         Reward::Free => ResolvedReward::Free,
         Reward::Anger => ResolvedReward::Anger,
         Reward::Leave => ResolvedReward::Leave,
+        Reward::Point(_, reach) if !(8.0..=128.0).contains(reach) => return Err(format!("points within {reach} blocks: 8 to 128")),
+        Reward::Point(name, reach) => ResolvedReward::Point(selector(name, blocks)?, *reach),
+        // The group is checked against the cast, and the station against the recipes, by the caller.
+        Reward::Hand(group) => ResolvedReward::Hand(*group),
+        Reward::Cook(_, most, keep) if *most == 0 || keep >= most => return Err(format!("cooks up to {most} and keeps {keep}: it must give some back")),
+        Reward::Cook(station, most, keep) => ResolvedReward::Cook(station.clone(), *most, *keep),
     })
 }
 
@@ -669,9 +765,15 @@ impl WanderRegistry {
         for event in &mut events {
             qualify(&mut event.name);
             event.cast.iter_mut().for_each(|g| qualify(&mut g.species));
+            event.seek.iter_mut().for_each(qualify);
+            if let Some((skill, _)) = event.startle.as_mut().and_then(|s| s.stalk.as_mut())
+                && !skill.contains(':')
+            {
+                *skill = format!("core:{skill}");
+            }
             for reward in event.freed.iter_mut().flat_map(|f| f.thanks.iter_mut()).chain(event.guide.iter_mut().flat_map(|g| g.thanks.iter_mut())).chain(event.reveal.iter_mut()) {
                 match reward {
-                    Reward::Item(item, _) => qualify(item),
+                    Reward::Item(item, _) | Reward::Point(item, _) => qualify(item),
                     Reward::Xp(skill, _) if !skill.contains(':') => *skill = format!("core:{skill}"),
                     Reward::Effect(effect, _) => qualify(effect),
                     _ => {}
@@ -684,7 +786,7 @@ impl WanderRegistry {
                     }
                     for reward in &mut line.gives {
                         match reward {
-                            Reward::Item(item, _) => qualify(item),
+                            Reward::Item(item, _) | Reward::Point(item, _) => qualify(item),
                             Reward::Xp(skill, _) if !skill.contains(':') => *skill = format!("core:{skill}"),
                             Reward::Effect(effect, _) => qualify(effect),
                             _ => {}
@@ -711,6 +813,7 @@ impl WanderRegistry {
         blocks: &BlockRegistry,
         skills: &SkillRegistry,
         effects: &EffectRegistry,
+        cooking: &CookingRegistry,
     ) -> Result<Self, RegistryError> {
         rules.check()?;
         let mut reactions: Vec<Reaction> = Vec::new();
@@ -805,6 +908,9 @@ impl WanderRegistry {
                 Script::Lure { keep, length, pace, patience, linger } if keep.0 < 3.0 || keep.0 > keep.1 || length < 40.0 || !(0.3..=2.0).contains(&pace) || patience < 20.0 || linger < 2.0 => {
                     return Err(error(format!("Lure needs keep of at least 3 (least <= most), a length of at least 40, a pace of 0.3 to 2, patience of 20 seconds and a linger of 2, not {keep:?}, {length}, {pace}, {patience}, {linger}")));
                 }
+                Script::Gather { reach, work, visits } if !(4.0..=32.0).contains(&reach) || work.0 < 2.0 || work.0 > work.1 || visits == 0 => {
+                    return Err(error(format!("Gather needs a reach of 4 to 32, work of at least 2 seconds (least <= most) and a visit, not {reach}, {work:?}, {visits}")));
+                }
                 _ => {}
             }
             let has = |role: Role| def.cast.iter().any(|g| g.role == role);
@@ -817,6 +923,40 @@ impl WanderRegistry {
             }
             if lure != !def.reveal.is_empty() {
                 return Err(error("a `Lure` shows `reveal` at its end, and nothing else has one".into()));
+            }
+            let gather = matches!(def.script, Script::Gather { .. });
+            if gather == def.seek.is_empty() {
+                return Err(error("a `Gather` works at what it `seek`s, and nothing else seeks".into()));
+            }
+            let mut seek = Vec::new();
+            for name in &def.seek {
+                seek.extend(selector(name, blocks).map_err(|why| error(format!("seek: {why}")))?.blocks(blocks));
+            }
+            if (chase || ambush || lure) && (def.guard.is_some() || def.startle.is_some()) {
+                return Err(error("a chase, an ambush or a lure does not `guard` or `startle`".into()));
+            }
+            if def.guard.is_some() && def.startle.is_some() || def.startle.is_some() && def.halt.is_some() {
+                return Err(error("a party that bolts (`startle`) neither stands its ground (`guard`) nor stops for a player (`halt`)".into()));
+            }
+            if let Some(guard) = def.guard {
+                if guard.near < 3.0 || guard.warn < 0.5 || guard.calm <= guard.near {
+                    return Err(error(format!("`guard` needs near of at least 3, a warning of half a second and calm further than near, not {guard:?}")));
+                }
+                if !groups.iter().any(|(species, _)| creatures.get(*species).fights()) {
+                    return Err(error("guards, but nobody in the cast fights".into()));
+                }
+            }
+            let mut stalk = None;
+            if let Some(startle) = &def.startle {
+                if startle.least < 2.0 || startle.least > startle.near || startle.still < 1.0 || startle.still > startle.near || startle.still_for < 0.5 {
+                    return Err(error(format!("`startle` needs 2 <= least <= near, still of 1 up to near and still_for of half a second, not {startle:?}")));
+                }
+                if let Some((name, per)) = &startle.stalk {
+                    if !(per.is_finite() && *per > 0.0 && *per <= 2.0) {
+                        return Err(error(format!("`stalk` takes 0 to 2 blocks a level, not {per}")));
+                    }
+                    stalk = Some((skills.id(name).ok_or_else(|| error(format!("stalk: no skill `{name}`")))?, *per));
+                }
             }
             let captives = def.cast.iter().filter(|g| g.role == Role::Captive).count();
             if captives > 1 {
@@ -863,23 +1003,26 @@ impl WanderRegistry {
             if lure {
                 names.push("arrived".into());
             }
+            if def.guard.is_some() {
+                names.push("warn".into());
+            }
             let mut reveal = Vec::new();
             for reward in &def.reveal {
-                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave) {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..)) {
                     return Err(error("a lure's `reveal` gives items, experience, effects or healing only".into()));
                 }
                 reveal.push(resolve_reward(reward, blocks, skills, effects, false).map_err(|why| error(format!("reveal: {why}")))?);
             }
             let mut guide_thanks = Vec::new();
             for reward in def.guide.iter().flat_map(|g| &g.thanks) {
-                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave) {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..)) {
                     return Err(error("a guide's `thanks` gives items, experience, effects or healing only".into()));
                 }
                 guide_thanks.push(resolve_reward(reward, blocks, skills, effects, false).map_err(|why| error(format!("guide thanks: {why}")))?);
             }
             let mut thanks = Vec::new();
             for reward in def.freed.iter().flat_map(|f| &f.thanks) {
-                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave) {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..)) {
                     return Err(error("a captive's `thanks` gives items, experience, effects or healing only".into()));
                 }
                 thanks.push(resolve_reward(reward, blocks, skills, effects, true).map_err(|why| error(format!("thanks: {why}")))?);
@@ -940,6 +1083,19 @@ impl WanderRegistry {
                     };
                     let mut gives = Vec::new();
                     for reward in &line.gives {
+                        if let Reward::Hand(group) = reward
+                            && (*group >= groups.len() || *group == meeting.who || creatures.get(groups[*group].0).def.taming.is_none())
+                        {
+                            return Err(at(format!("`Hand({group})` hands over a group of the cast that can be kept, not the speaker's own")));
+                        }
+                        if let Reward::Cook(station, ..) = reward {
+                            if line.wants.is_none() {
+                                return Err(at("`Cook` cooks what the line `wants`, and it wants nothing".into()));
+                            }
+                            if !cooking.iter().any(|(_, r)| r.def.station == *station) {
+                                return Err(at(format!("`Cook` at `{station}`: no recipe is cooked at a station of that tag")));
+                            }
+                        }
                         gives.push(resolve_reward(reward, blocks, skills, effects, captives == 1).map_err(&at)?);
                     }
                     names.push(line.name.clone());
@@ -948,7 +1104,7 @@ impl WanderRegistry {
                 meetings.push(ResolvedMeeting { who: meeting.who, greet: meeting.greet.clone(), greets: meeting.greets, lines });
             }
             registry.by_name.insert(def.name.clone(), registry.events.len());
-            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal });
+            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, stalk });
         }
         Ok(registry)
     }

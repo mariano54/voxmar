@@ -775,6 +775,8 @@
     "command.wander.started": "{event} sets out ahead of you.",
     "wander.said": "{who}: “{text}”",
     "wander.settled": "{who} settles in near your home.",
+    "wander.point": "{thing}: {dir} of here, about {far} blocks off.",
+    "wander.point_none": "None of that grows near here.",
     "command.creatures.none": "No creatures within 64 blocks.",
     "command.creatures.title": "Within 64 blocks:",
     "command.creatures.line": "{count} × {creature}, nearest {distance} blocks away ({doing})",

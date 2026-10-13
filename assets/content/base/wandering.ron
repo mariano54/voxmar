@@ -313,5 +313,120 @@
                 (name: "caught", needs: [When(Caught)]),
             ])],
         ),
+        // Batch 4: the early land (Nomad and Farm ages). Folk at work a new player can walk
+        // up to, and wild families that answer how they are approached.
+        //
+        // Berry pickers spread over a patch of bushes, each to their own, crouched at it a
+        // while. Pick the bush one is working and they move to the next. They know the land:
+        // ask, and they say where mushrooms grow, true to what is there. Eight berries of
+        // your own buy a loaf from their basket.
+        (
+            name: "berry_pickers", weight: 0.9,
+            biomes: [("tag:forest", 1.0), ("tag:forest_edge", 1.0), ("tag:grassland", 0.6), ("tag:open", 0.6)],
+            daylight: (0.3, 0.9), needs: (days: 0.4),
+            cast: [(species: "villager"), (species: "villager", count: (1, 2), role: Follow), (species: "child", count: (0, 1), role: Follow)],
+            script: Gather(reach: 20.0, work: (8.0, 16.0), visits: 10),
+            seek: ["tag:berry"],
+            halt: (near: 6.0, seconds: (14.0, 24.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "swap", wants: ("sweet_berry", 8), gives: [Item("bread", (1, 1))]),
+                (name: "mushrooms", gives: [Point("tag:fungus", 96.0)], once: Player),
+            ])],
+        ),
+        // An old herb gatherer working the flowers and roots of a meadow. Show them a herb
+        // you picked and they tell you what it is good for (Alchemy, for a beginner). Those who
+        // know a little are told where roots grow; those who know more, where the wonders do,
+        // if any grow near.
+        (
+            name: "herb_gatherer", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:forest_edge", 0.8), ("tag:forest", 0.5), ("tag:wetland", 0.6)],
+            daylight: (0.3, 0.85), needs: (days: 0.6, away: Some((30.0, 100000.0))),
+            cast: [(species: "elder")],
+            script: Gather(reach: 24.0, work: (10.0, 20.0), visits: 6),
+            seek: ["tag:herb"],
+            halt: (near: 6.0, seconds: (16.0, 26.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "lore", needs: [Below("alchemy", 10)], wants: ("tag:herb", 1), gives: [Xp("alchemy", 10.0)], once: Player),
+                (name: "wonders", needs: [Skill("alchemy", 20)], gives: [Point("tag:wonder", 128.0)], once: Player),
+                (name: "roots", needs: [Skill("alchemy", 5)], gives: [Point("tag:root", 96.0)], once: Player),
+            ])],
+        ),
+        // Fisher folk walk down to the water and stand at the edge with their lines. A
+        // beginner who brings three sticks gets line enough for a rod; one with a rod in hand
+        // is shown how to hold it; one who is hurt is given a fish. Four fish of your own
+        // buy more line.
+        (
+            name: "fisher_folk", weight: 0.8,
+            biomes: [("tag:river", 1.5), ("tag:wetland", 1.0), ("tag:open", 0.6), ("tag:forest", 0.5), ("tag:grassland", 0.5)],
+            daylight: (0.2, 0.85), needs: (days: 0.4),
+            cast: [(species: "fisher"), (species: "fisher", count: (0, 1), role: Follow), (species: "child", count: (0, 1), role: Follow)],
+            script: Gather(reach: 24.0, work: (20.0, 40.0), visits: 6),
+            seek: ["water"],
+            halt: (near: 6.0, seconds: (14.0, 24.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "rod_tip", needs: [Holds("rod"), Below("fishing", 12)], gives: [Xp("fishing", 12.0)], once: Player),
+                (name: "line", needs: [Below("fishing", 5)], wants: ("stick", 3), gives: [Item("twine", (2, 2))], once: Player),
+                (name: "swap", wants: ("tag:fish", 4), gives: [Item("twine", (3, 3))]),
+                (name: "share", needs: [Hurt], gives: [Item("raw_cod", (1, 1))], once: Player),
+            ])],
+        ),
+        // A wild sow with her piglets, rooting through the wood. Come near and she stands
+        // and grunts a warning; stay, or come close, and she charges while the piglets run.
+        // A torch held up sends the family off, food held out lets you near (feed a piglet
+        // long enough and it is yours, the usual taming), and the sow is a fight a beginner
+        // may lose.
+        (
+            name: "boar_sounder", weight: 0.7,
+            biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("tag:forest_edge", 0.6), ("tag:grassland", 0.3)],
+            daylight: (0.15, 0.85), needs: (days: 0.6),
+            cast: [(species: "wild_sow"), (species: "wild_boar", count: (2, 4), role: Herd, young: true)],
+            script: Drift(leg: (5.0, 10.0), pause: (8.0, 20.0), seconds: 480.0),
+            guard: (near: 9.0, warn: 3.0, calm: 16.0),
+            hurt: Avenge,
+        ),
+        // A herd of red deer grazing along, a stag at its head. Walk up and they bolt; stand
+        // still and they graze on round you; a hunter's quiet step gets closer than most, and a
+        // still hand holding food is let near. Strike one and they scatter.
+        (
+            name: "deer_herd", weight: 0.7,
+            biomes: [("tag:forest", 1.0), ("tag:grassland", 0.8), ("tag:forest_edge", 1.0)],
+            daylight: (0.1, 0.6), needs: (days: 0.5),
+            cast: [(species: "red_deer"), (species: "red_deer", count: (2, 4), role: Herd), (species: "red_deer", count: (0, 2), role: Herd, young: true)],
+            script: Drift(leg: (6.0, 12.0), pause: (6.0, 18.0), seconds: 480.0),
+            startle: (near: 22.0, least: 8.0, still: 6.0, stalk: Some(("hunter", 0.35))),
+        ),
+        // A travelling cook camps at dusk with a pot on. Hand over raw meat or fish and it
+        // comes back cooked (the cook keeps one for the pot); show them what you cooked
+        // yourself and a beginner learns a thing or two; the hurt are sat down and fed.
+        (
+            name: "travelling_cook", weight: 0.6,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 0.8), ("tag:forest", 0.6)],
+            daylight: (0.1, 0.55), needs: (days: 0.8),
+            cast: [(species: "baker"), (species: "villager", count: (0, 1), role: Follow), (species: "hound", role: Pet(0))],
+            script: Camp(near: 24.0, stay: (240.0, 360.0), mill: 4.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "lesson", needs: [Below("cooking", 10), Holds("cooked")], gives: [Xp("cooking", 15.0)], once: Player),
+                (name: "cook", wants: ("tag:raw", 2), gives: [Cook("campfire", 8, 1)]),
+                (name: "supper", needs: [Hurt], gives: [Heal(6)], once: Player),
+            ])],
+        ),
+        // A cowherd driving a few aurochs and a calf to new grass, a dog at heel. Hold out a
+        // pail and you may milk one. To a player with a home and the hand for beasts (the
+        // Hunter level it takes to tame an aurochs) they sell the calf for four coins: it is
+        // yours from then on, and grows up as kept young do.
+        (
+            name: "cowherd", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8)],
+            daylight: (0.3, 0.9), needs: (days: 1.5, home: true),
+            cast: [(species: "herder"), (species: "aurochs", count: (2, 3), role: Herd), (species: "aurochs", role: Herd, young: true), (species: "hound", role: Pet(0))],
+            script: Drift(leg: (6.0, 12.0), pause: (10.0, 24.0), seconds: 480.0),
+            halt: (near: 6.0, seconds: (16.0, 28.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "milk", needs: [Holds("pail")], gives: [Item("milk", (1, 1)), Xp("farming", 6.0)], once: Player),
+                (name: "calf", needs: [Skill("hunter", 12)], wants: ("gold_coin", 4), gives: [Hand(2)], once: Party),
+                (name: "calf_offer", needs: [Skill("hunter", 12)]),
+                (name: "green", needs: [Below("hunter", 12)]),
+            ])],
+        ),
     ],
 )
