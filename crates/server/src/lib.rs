@@ -98,6 +98,11 @@ pub struct ServerConfig {
     /// the clock. What the server judges by arrival stamps (a break, a blow) keeps the
     /// clock's pace, since players' messages carry theirs.
     pub tick_speedup: u32,
+    /// Whether wandering events start by chance near players (`try_wandering`). Off only
+    /// in tests, whose quick ticks would otherwise bring a party beside the player some
+    /// game days in, when a test slowed by load is still running; `/wander start` and
+    /// the wandering tests start theirs by hand either way.
+    pub wandering_starts: bool,
 }
 
 /// How much any one connection may ask of the server: a server operator's numbers, read
@@ -211,6 +216,7 @@ impl Default for ServerConfig {
             lag: Lag::default(),
             cut_saves: false,
             tick_speedup: 1,
+            wandering_starts: true,
         }
     }
 }

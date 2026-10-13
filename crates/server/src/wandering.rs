@@ -350,7 +350,7 @@ impl Server {
         }
         let _span = tracing::info_span!("wandering").entered();
         let rules = *self.content.wandering.rules();
-        if self.tick.is_multiple_of(ticks(rules.scan_every)) {
+        if self.config.wandering_starts && self.tick.is_multiple_of(ticks(rules.scan_every)) {
             let ids: Vec<PlayerId> = self.players.values().filter(|p| p.joined).map(|p| p.id).collect();
             for (i, player) in ids.into_iter().enumerate() {
                 self.try_wandering(player, i as u64);
@@ -1990,6 +1990,21 @@ mod tests {
     fn leader_at(server: &Server, id: u64) -> Option<Vec3> {
         let instance = server.wandering.active.get(&id)?;
         server.creatures.live.get(&instance.members.first()?.creature).map(|c| c.body.position)
+    }
+
+    #[test]
+    fn every_event_comes_to_biomes_the_world_has() {
+        let server = fixture();
+        let biomes = server.overworld.biomes();
+        for (_, event) in server.content.wandering.iter() {
+            for (selector, _) in &event.def.biomes {
+                let known = match selector.strip_prefix("tag:") {
+                    Some(tag) => biomes.iter().any(|(_, b)| b.tags.iter().any(|t| t == tag)),
+                    None => biomes.iter().any(|(_, b)| b.name == *selector || b.name.rsplit(':').next() == selector.rsplit(':').next()),
+                };
+                assert!(known, "{} comes to `{selector}`, which no biome is or carries", event.def.name);
+            }
+        }
     }
 
     #[test]
