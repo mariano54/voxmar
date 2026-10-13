@@ -2035,7 +2035,8 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     client.chat.clear();
     client.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
     client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Crucible Kiln is lit")));
-    assert_eq!(count(&client, coal), 0, "lighting did not consume the charge");
+    // The inventory update follows the chat line, so wait for it rather than race it.
+    client.pump_until(|c| count(c, coal) == 0);
     client.ok("/give copper_ore 2");
     client.pump_until(|c| count(c, ore) == 2);
     smelt(&mut client);

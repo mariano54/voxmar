@@ -34,6 +34,7 @@ reward, shown first), tasks, after, rewards. Goals:
 | `Have(item, n)` | what the player carries, pouches too |
 | `Home` | a lit Homestead Hearth |
 | `LookUp(item)` | the recipe viewer was opened on the item (the client says so once, `ClientMessage::LookedUp`; tally `lookedup:<item>`) |
+| `Thriving(n, percent)` | the player keeps n animals right now at a condition of at least that percent (read live from the kept animals, not tallied; a newly tamed one starts at 60) |
 
 Items and creatures may be `any` or `tag:TAG`. Rewards are `Xp(skill, xp)` and
 `Item(item, count)`. Titles and reasons are translated as `quest.<package>.<name>` and
@@ -62,3 +63,6 @@ live fire. Removing a required piece quenches it; rebuilding requires a new char
 Completed quests in older saves stay completed. Older `cooked` and `built` tallies do
 not establish which station cooked food or whether fuel was paid, so they cannot
 complete these stricter goals for an unfinished quest.
+
+A package's `tracker` may name `start_pins`: quests pinned for a player whose book is new
+(nothing done, nothing pinned), once per world joined. A later package replaces the list.

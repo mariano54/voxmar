@@ -226,6 +226,12 @@ impl QuestRegistry {
         }
         for quest in &mut file.quests {
             qualify(&mut quest.name);
+            // A reward item is looked up by its full name when it is given.
+            for reward in &mut quest.rewards {
+                if let Reward::Item(item, _) = reward {
+                    qualify(item);
+                }
+            }
             for after in &mut quest.after {
                 *after = after.split('|').map(|n| if n.contains(':') { n.to_owned() } else { format!("{namespace}:{n}") }).collect::<Vec<_>>().join("|");
             }
@@ -360,6 +366,13 @@ mod tests {
         assert_eq!(progress.goal(&Goal::Thriving(4, 75)), (2, 4));
         assert_eq!(progress.goal(&Goal::Thriving(2, 75)), (2, 2));
         assert_eq!(progress.goal(&Goal::Thriving(3, 50)), (3, 3));
+    }
+
+    #[test]
+    fn reward_items_are_named_in_full_so_the_server_can_find_them() {
+        let source = r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "A", why: "", tasks: [[Home]], rewards: [Xp("cooking", 1.0), Item("torch", 4), Item("core:coin", 1)])])"#;
+        let file = QuestRegistry::read("t", source).unwrap();
+        assert_eq!(file.quests[0].rewards, vec![Reward::Xp("cooking".into(), 1.0), Reward::Item("t:torch".into(), 4), Reward::Item("core:coin".into(), 1)]);
     }
 
     #[test]

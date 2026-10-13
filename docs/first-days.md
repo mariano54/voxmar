@@ -53,28 +53,35 @@ Mostly yes, with these checks:
   91 fired clay between the Potter and the Kiln. That is a long clay session; Clay Banks and
   Fire the Clay split it into steps with rewards so it reads as progress.
 
-## Gaps found (not all fixed here)
+## Gaps found, and where each stands
 
-1. **Nothing says "open the quest book".** The book (L) holds the guide, but a new player is
-   told nothing. Fixed here with a first-time tip (`tip.quests`, names the bound key).
-2. **No auto-pin.** The tracker starts empty; a player must pin quests by hand. Left as is;
-   the tip says to pin up to three.
-3. **First Night counts any cooking** (`Cook("any")`): charcoal, fired clay or an ingot
-   satisfies it. Codex's branch `codex/nomad-farm-first-contracts` (aadac231) tightens this and
-   makes the Kiln need a real lit, fuelled run; its last live test failed on the First Night
-   reward. Not merged here: it changes goal semantics and needs its own landing.
-4. **The Kiln does not need fuel or a light action**: it checks the structure and tallies
-   `Built` (same branch above).
-5. **Worldgen never places the locked age chests**, so lockpick quests and the chest loop
-   are out of the first days; no quest here depends on them.
-6. **The Ranged guide advertises a sling that does not exist** (skills.ron). Left; needs the
-   sling item or a text change by Combat/Gameplay.
+1. **Nothing said "open the quest book".** Fixed: a first-time tip names the bound key
+   (`tip.quests`), and a new player's book starts with Look It Up and First Night pinned
+   (`tracker: (start_pins: [...])` in `quests.ron`; pinned once, only when nothing is done or
+   pinned, so unpinning is respected).
+2. **First Night counted any cooking**, so charcoal, fired clay or an ingot satisfied it.
+   Fixed (Codex's contract, ported): it needs a campfire crafted and food cooked at a
+   campfire (`CookAt`, tallied by station and item).
+3. **The Kiln needed no fuel or light action.** Fixed (Codex's contract, ported): lighting
+   needs a standing kiln and a full charge of 32 charcoal or 24 coal in hand (`Lit`, fuels
+   in `multiblocks.ron`), and smelting needs a live fire.
+4. **Food Enough (design F01) was absent.** Added as a Farm quest with four routes: wheat
+   plus carrots or rye harvested, four animals kept at condition 75 or better
+   (`Thriving`; a newly tamed animal starts at 60, so it takes a day of food, water, room
+   and shelter), or forty fish. The condition goal counts what is kept now, not a streak.
+5. **The Ranged guide advertised a sling that does not exist.** Removed; no bow or other
+   ranged weapon exists either, so the rest of that guide is still all future.
+6. **Worldgen never places the locked age chests**, so no quest depends on them.
 7. **Prayers and altars, the quern and stove are not built.** No quest asks for them.
-8. **Food Enough** (design F01, two crops and four animals content for a day) is absent; the
-   journal cannot express sustained farming. Farming, Hens in a Row and Camp Cook stand in.
-9. **Bedding is crafted but never used**: Sleep sets the respawn point only; no Rested effect.
-10. **Clay was only mentioned by Farm quests** though the Hearth needs it: the Hearth quest now
-    says where to dig it.
+8. **Bedding is crafted but never used**: Sleep sets the respawn point only; no Rested
+   effect.
+9. **Clay was only mentioned by Farm quests** though the Hearth needs it: the Hearth quest
+   now says where to dig it.
+10. **The First Night reward never arrived in Codex's last live gate run.** The server side
+    passes in `first_night_needs_a_crafted_campfire_and_food_cooked_on_it` (same craft, cook
+    and reward path), so the cause is in the gate step. The step now waits for the crafted
+    campfire before cooking and its failure line says whether food or the quest is missing
+    (with the quest's goal counts). The Mac run will show which.
 
 Next (Mac): run `tools/gate` (the cloud cannot build the client's graphics stack and has
 no GPU), then play the first three days once in a fresh survival world and note where you
