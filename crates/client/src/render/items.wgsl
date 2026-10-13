@@ -7,15 +7,17 @@
 #import voxmar::lighting::{shade_normal, apply_fog}
 
 struct Item {
-    // centre before bobbing, and seconds into its turning and bobbing at time 0
+    // centre before bobbing, and seconds into its turning and bobbing at time 0; for the
+    // item in hand, where it is in the view (right, up, forward of the eye)
     center: vec3<f32>,
     phase: f32,
-    // where this copy of a stack sits, in the item's turning frame
+    // where this copy of a stack sits, in the item's turning frame; for the item in hand,
+    // its rotation vector (axis times angle)
     offset_x: f32,
     offset_y: f32,
     offset_z: f32,
     size: f32,
-    // shape:4 | tinted faces:6 | free:14 | block light:4 | sky light:4
+    // shape:4 | tinted faces:6 | held:1 | free:13 | block light:4 | sky light:4
     flags: u32,
     // two faces' texture layers each, the lower face in the low half
     layers: array<u32, 3>,
@@ -33,6 +35,11 @@ struct Item {
 @group(2) @binding(7) var block_layers: texture_2d<f32>;
 
 const SHAPE_SPRITE: u32 = 1u;
+// The item in the player's hand (see `Held` in items.rs).
+const FLAG_HELD: u32 = 1u << 10u;
+// Where its depth is held: just inside the near plane (reverse depth, 1 at the near plane),
+// so no wall or block the eye stands against can hide or cut it.
+const HELD_DEPTH: f32 = 0.9;
 // Turn per second, in radians (Minecraft's one radian a second), and the bob: a tenth of
 // a block up and down at two radians a second.
 const SPIN: f32 = 1.0;
@@ -61,19 +68,52 @@ struct VertexOutput {
     @location(3) @interpolate(flat) face: u32,
 };
 
-// Where an item is and how far it has turned, now.
+// Where an item is and how it is turned, now: model space to the world.
 struct Pose {
     center: vec3<f32>,
-    angle: f32,
+    rotation: mat3x3<f32>,
 };
 
 fn pose_of(item: Item) -> Pose {
     var pose: Pose;
+    if (item.flags & FLAG_HELD) != 0u {
+        // The camera's own axes: the hand is where the eye is and moves as it turns. The
+        // view looks down -z, so forward is minus.
+        let view_axes = mat3x3<f32>(view.world_from_view[0].xyz, view.world_from_view[1].xyz, view.world_from_view[2].xyz);
+        pose.center = view.world_position + view_axes * vec3(item.center.x, item.center.y, -item.center.z);
+        pose.rotation = view_axes * rotation_of(vec3(item.offset_x, item.offset_y, item.offset_z));
+        return pose;
+    }
     let age = globals.time + item.phase;
-    pose.angle = age * SPIN;
+    let angle = age * SPIN;
+    pose.rotation = turned(angle);
     pose.center = item.center + vec3(0.0, sin(age * BOB_RATE) * BOB, 0.0)
-        + turn(vec3(item.offset_x, item.offset_y, item.offset_z), pose.angle);
+        + turn(vec3(item.offset_x, item.offset_y, item.offset_z), angle);
     return pose;
+}
+
+// The turn about the vertical axis by `angle`, as a matrix (what `turn` does to a vector).
+fn turned(angle: f32) -> mat3x3<f32> {
+    let c = cos(angle);
+    let s = sin(angle);
+    return mat3x3<f32>(vec3(c, 0.0, -s), vec3(0.0, 1.0, 0.0), vec3(s, 0.0, c));
+}
+
+// The rotation a rotation vector (axis times angle) stands for, as a matrix (Rodrigues').
+fn rotation_of(v: vec3<f32>) -> mat3x3<f32> {
+    let angle = length(v);
+    if angle < 1e-5 {
+        return mat3x3<f32>(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, 1.0));
+    }
+    let k = v / angle;
+    let s = sin(angle);
+    let c = cos(angle);
+    let t = 1.0 - c;
+    return mat3x3<f32>(
+        vec3(c + t * k.x * k.x, s * k.z + t * k.x * k.y, -s * k.y + t * k.x * k.z),
+        vec3(-s * k.z + t * k.x * k.y, c + t * k.y * k.y, s * k.x + t * k.y * k.z),
+        vec3(s * k.y + t * k.x * k.z, -s * k.x + t * k.y * k.z, c + t * k.z * k.z),
+    );
 }
 
 fn turn(v: vec3<f32>, angle: f32) -> vec3<f32> {
@@ -103,9 +143,10 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     let pose = pose_of(item);
     let face = vertex_index / 6u;
     let normal = NORMALS[face];
-    let world_normal = turn(normal, pose.angle);
+    let world_normal = pose.rotation * normal;
     // A face turned away from the eye collapses to nothing.
-    let toward = view.world_position - (pose.center + world_normal * item.size * 0.5);
+    let reach = half_extent(item);
+    let toward = view.world_position - (pose.center + world_normal * reach[face / 2u] * item.size);
     if dot(world_normal, toward) <= 0.0 {
         out.clip_position = vec4(0.0, 0.0, 0.0, 1.0);
         return out;
@@ -118,8 +159,11 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     local[(axis + 1u) % 3u] = corner.x;
     local[(axis + 2u) % 3u] = corner.y;
     let model = (local * 2.0 - 1.0) * half_extent(item);
-    out.world_position = pose.center + turn(model, pose.angle) * item.size;
+    out.world_position = pose.center + (pose.rotation * model) * item.size;
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
+    if (item.flags & FLAG_HELD) != 0u {
+        out.clip_position.z = out.clip_position.w * HELD_DEPTH;
+    }
     out.local = local;
     out.instance = instance_index;
     out.face = face;
@@ -234,7 +278,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var overlay_uv = uv;
     if sprite {
         // The view ray in the unit box.
-        let eye = turn(view.world_position - pose.center, -pose.angle) / item.size;
+        let eye = (transpose(pose.rotation) * (view.world_position - pose.center)) / item.size;
         let here = (in.local * 2.0 - 1.0) * half_extent(item);
         let direction = normalize(here - eye) / (2.0 * half_extent(item));
         let n = i32(textureDimensions(block_textures).x);
@@ -260,7 +304,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let over = textureSampleGrad(block_textures, block_sampler, overlay_uv, i32(overlay - 1u), uv_dx, uv_dy);
         albedo = mix(texel.rgb, over.rgb * color, over.a);
     }
-    let world_normal = turn(normal, pose.angle);
+    let world_normal = pose.rotation * normal;
     let sky = f32(item.flags >> 28u) / 15.0;
     let block = f32((item.flags >> 24u) & 15u) / 15.0;
     // Sprites (plants) are lit as thin and translucent, as the plants they came from are.

@@ -1,0 +1,66 @@
+// How things are held in the hand in first person (crates/client/src/held.rs, docs/held.md).
+// Another pack's held.ron replaces any of this, entry by entry: a kind by its tag, and a move
+// or the hand's motion whole. Distances are blocks from the eye: right, up and forward.
+// Turns are degrees: pitch (a tip leaning away is negative), yaw (a face turning to the
+// left is negative) and roll (counter-clockwise as the player sees it is positive, which
+// stands a sword's icon, tip upper right, upright). Every sprite is drawn as its icon: the
+// grip at the lower left and the head or tip at the upper right.
+(
+    hand: Some((
+        breath: 0.006, breath_rate: 0.3,
+        sway: (0.012, 0.01), steps_per_block: 0.8, sway_speed: 4.3,
+        lowered: 0.55, raise_seconds: 0.25,
+        stance_seconds: 0.14,
+        skew: 0.7,
+        light_rate: 8.0, measure_seconds: 0.2,
+    )),
+    // What every kind does unless it says otherwise: a slash across the view, a chop down,
+    // a poke forward, the item lifted across the chest to guard or to the mouth to eat.
+    moves: (
+        attack: Some((at: (-0.20, -0.02, 0.10), turn: (-55.0, 20.0, 55.0), seconds: 0.30)),
+        dig: Some((at: (-0.06, -0.10, 0.14), turn: (-45.0, 0.0, 15.0), seconds: 0.32)),
+        place: Some((at: (-0.05, -0.06, 0.10), turn: (-22.0, 0.0, 0.0), seconds: 0.22)),
+        guard: Some((at: (-0.22, 0.08, -0.02), turn: (-20.0, 30.0, 35.0))),
+        eat: Some((at: (-0.20, 0.30, -0.12), turn: (-30.0, 20.0, 20.0))),
+    ),
+    kinds: [
+        // Blades: a sword stands upright at the lower right, a dagger and a spear lean away.
+        (tag: "sword", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),
+        (
+            tag: "dagger", pose: (at: (0.34, -0.26, 0.58), turn: (-10.0, -18.0, 38.0), size: 0.5),
+            moves: (attack: Some((at: (-0.16, 0.0, 0.22), turn: (-35.0, 8.0, 15.0), seconds: 0.22))),
+        ),
+        (
+            tag: "spear", pose: (at: (0.38, -0.26, 0.66), turn: (-12.0, -18.0, 28.0), size: 0.8),
+            moves: (attack: Some((at: (-0.10, 0.02, 0.30), turn: (-25.0, 6.0, 12.0), seconds: 0.34))),
+        ),
+        (tag: "weapon", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),
+        // Tools: held up, head forward, and a dig is a chop.
+        (tag: "pickaxe", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),
+        (tag: "axe", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),
+        (tag: "shovel", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.58)),
+        (
+            tag: "hoe", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56),
+            moves: (dig: Some((at: (-0.04, -0.12, 0.10), turn: (-50.0, 0.0, 20.0), seconds: 0.36))),
+        ),
+        (tag: "knife", pose: (at: (0.34, -0.26, 0.58), turn: (-6.0, -18.0, 38.0), size: 0.5)),
+        (tag: "shears", pose: (at: (0.34, -0.26, 0.58), turn: (0.0, -18.0, 30.0), size: 0.5)),
+        (
+            tag: "rod", pose: (at: (0.38, -0.22, 0.66), turn: (-14.0, -18.0, 28.0), size: 0.7),
+            moves: (place: Some((at: (-0.08, 0.10, 0.12), turn: (-40.0, 0.0, 10.0), seconds: 0.4))),
+        ),
+        // A pail hangs upright, a little lower, and a dig with it is a scoop.
+        (
+            tag: "pail", pose: (at: (0.32, -0.27, 0.56), turn: (0.0, -14.0, 0.0), size: 0.46),
+            moves: (dig: Some((at: (-0.06, 0.06, 0.10), turn: (-35.0, 0.0, -10.0), seconds: 0.36))),
+        ),
+        // A torch is carried upright.
+        (tag: "light", pose: (at: (0.34, -0.30, 0.58), turn: (0.0, -12.0, 4.0), size: 0.5)),
+        // Food is held ready to eat, and lifted to the face.
+        (tag: "edible", pose: (at: (0.32, -0.28, 0.54), turn: (0.0, -16.0, 6.0), size: 0.34)),
+    ],
+    // A block is a small cube, a corner towards the player.
+    cube: Some((tag: "cube", pose: (at: (0.34, -0.26, 0.56), turn: (12.0, 36.0, 0.0), size: 0.3))),
+    // Any other item is its icon, thin, facing the player.
+    sprite: Some((tag: "sprite", pose: (at: (0.34, -0.27, 0.56), turn: (0.0, -16.0, 10.0), size: 0.42))),
+)

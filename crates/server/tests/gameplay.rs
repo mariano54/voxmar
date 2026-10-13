@@ -3274,10 +3274,11 @@ fn silent_sockets_neither_count_as_players_nor_pile_up() {
 
 #[test]
 fn an_address_gets_one_starting_kit_in_a_while() {
-    // A day is too long to wait: a mod sets the window to two seconds.
+    // A day is too long to wait: a mod sets the window to two seconds, and gives a kit (base
+    // starts a player with nothing).
     let mut content = content();
     let mut files = (*content.files).clone();
-    files.push(voxmar_engine::content::ContentFile { package: "test".into(), name: "survival.ron".into(), source: "(kit_window: 2.0)".into() });
+    files.push(voxmar_engine::content::ContentFile { package: "test".into(), name: "survival.ron".into(), source: r#"(kit_window: 2.0, starter_kit: [("base:bread", 4)])"#.into() });
     content.files = std::sync::Arc::new(files);
     let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
     let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
@@ -3297,13 +3298,12 @@ fn an_address_gets_one_starting_kit_in_a_while() {
 }
 
 #[test]
-fn a_new_player_starts_with_tools_food_light_wood_and_the_purse() {
+fn a_new_player_starts_with_nothing_but_the_purse() {
     let client = Client::join();
     let id = |name: &str| client.content.blocks.expect(name);
-    let carried = |item| client.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
-    assert_eq!([carried(id("base:bread")), carried(id("base:torch")), carried(id("base:oak_planks"))], [4, 8, 16], "{:?}", client.inventory);
-    assert_eq!([carried(id("base:wooden_pickaxe")), carried(id("base:wooden_axe"))], [1, 1], "{:?}", client.inventory);
+    assert_eq!(client.inventory.slots.iter().flatten().count(), 1, "{:?}", client.inventory);
     assert_eq!(client.inventory.slots[voxmar_engine::inventory::SLOTS - 1].map(|s| s.item), Some(id("base:coin_purse")));
+    let carried = |item| client.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     assert_eq!(carried(id("base:cobblestone")) + carried(id("base:glass")) + carried(id("base:glowstone")), 0);
 }
 
@@ -5688,13 +5688,13 @@ const FRESH_BUDGETS: &[(&str, f32)] = &[
     ("timber", 60.0),
     ("crafting_table", 60.0),
     ("stone_in_hand", 120.0),
-    ("first_night", 240.0),
-    ("a_bed_of_your_own", 420.0),
-    ("torchlight", 480.0),
-    ("hearth_materials", 600.0),
-    ("hearth_lit", 700.0),
-    ("pit_kiln", 800.0),
-    ("fire_the_clay", 1000.0),
+    ("first_night", 180.0),
+    ("a_bed_of_your_own", 200.0),
+    ("torchlight", 220.0),
+    ("hearth_materials", 300.0),
+    ("hearth_lit", 320.0),
+    ("pit_kiln", 360.0),
+    ("fire_the_clay", 500.0),
 ];
 
 /// What the player's time goes on, besides crafting, placing and waiting.
@@ -5853,6 +5853,14 @@ impl Fresh {
 
     /// Puts `item` in the hand: on the hotbar already, or swapped onto its last slot.
     fn hold(&mut self, item: &str) {
+        // Nothing: bare hands, on a hotbar slot with nothing in it.
+        if item.is_empty() {
+            let hotbar = voxmar_engine::inventory::HOTBAR_SLOTS;
+            let empty = (0..hotbar).find(|&s| self.c.inventory.get(s).is_none()).expect("a free hotbar slot for bare hands");
+            self.held = empty as u8;
+            self.send();
+            return;
+        }
         let id = self.c.content.blocks.expect(item);
         let on = |c: &Client, s: usize| c.inventory.get(s).is_some_and(|x| x.item == id);
         let hotbar = voxmar_engine::inventory::HOTBAR_SLOTS;
@@ -5982,7 +5990,11 @@ impl Fresh {
         self.hold(food);
         let (raw, done) = (self.have(food), self.have(cooked));
         self.c.propose("base:cook", ActionTarget::Block { block: station, face: Face::PosY });
-        self.spend(Act::Cook, |me| me.wait(10.0, "cooking", |c| holding(c, food) < raw));
+        // A spoiled attempt can give the food back (a cracked clay is clay again), so the
+        // count alone does not say it ended: it ended once the two seconds plus a second's
+        // slack of server ticks have passed, or the cooked food arrived.
+        let over = self.c.ticks() + 3 * TICKS_PER_SECOND as u64;
+        self.spend(Act::Cook, |me| me.wait(10.0, "cooking", |c| holding(c, cooked) > done || holding(c, food) < raw || c.ticks() >= over));
         self.have(cooked) > done
     }
 
@@ -5999,7 +6011,7 @@ impl Fresh {
     fn hunt(&mut self, prefer: impl Fn(&Client) -> &'static str, done: impl Fn(&Client) -> bool) {
         let (mouth, lane_x) = (Self::middle(self.rel(-9, 0, 2)), self.rel(-9, 0, 0).x as f32 + 0.5);
         let started = self.c.ticks();
-        let hand = if self.have("base:stone_axe") > 0 { "base:stone_axe" } else { "base:wooden_axe" };
+        let hand = if self.have("base:stone_axe") > 0 { "base:stone_axe" } else { "" };
         self.hold(hand);
         // In by the open end.
         if (self.at.x - lane_x).abs() > 0.5 {
@@ -6039,8 +6051,8 @@ impl Fresh {
         // Level ground, clear of whatever grew there.
         c.fill(origin, v(-13, 0, -11), v(20, 10, 13), "air");
         c.fill(origin, v(-13, -4, -11), v(20, -1, 13), "dirt");
-        // Three oak trunks, four logs each.
-        for x in [3, 5, 7] {
+        // Four oak trunks, four logs each.
+        for x in [1, 3, 5, 7] {
             c.fill(origin, v(x, 0, -5), v(x, 3, -5), "oak_log");
         }
         // A patch of natural stone one block high, with two coal ores on its near edge.
@@ -6081,10 +6093,12 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     let rel = |f: &Fresh, cells: Vec<IVec3>| -> Vec<IVec3> { cells.into_iter().map(|p| f.origin + p).collect() };
     let (cobble, clay, stick, log) = ("base:cobblestone", "base:clay", "base:stick", "base:oak_log");
 
-    // Timber: eight logs, and four more for the two campfires.
-    let trunks = rel(&f, [3, 5, 7].into_iter().flat_map(|x| (0..4).map(move |y| v(x, y, -5))).collect());
-    f.gather("base:wooden_axe", trunks, log, 12);
+    // Timber, with bare hands (a new player starts with nothing): eight logs, four more for
+    // the two campfires, and four more for planks.
+    let trunks = rel(&f, [1, 3, 5, 7].into_iter().flat_map(|x| (0..4).map(move |y| v(x, y, -5))).collect());
+    f.gather("", trunks, log, 16);
     f.mark("timber");
+    f.craft(&[(0, log, 4)], "base:oak_planks", 16);
 
     // A crafting table from four planks, set down where it serves the stone and the fire, and
     // sticks from planks.
@@ -6094,6 +6108,8 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     f.walk_toward(Fresh::middle(table), 3.0);
     f.place("base:crafting_table", table - up);
     f.craft(&[(0, "base:oak_planks", 3), (3, "base:oak_planks", 3)], stick, 12);
+    f.at_table(table);
+    f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (2, "base:oak_planks", 1), (4, stick, 1), (7, stick, 1)], "base:wooden_pickaxe", 1);
 
     // Stone in Hand: cobblestone with the wooden pickaxe, then a stone pickaxe and axe.
     let stone = rel(&f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
@@ -6131,15 +6147,14 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     }
     f.mark("first_night");
 
-    // A Bed of Your Own: seven feathers (junglefowl) and two hides (rabbits) for a sleeping
-    // bag, crafted at the table.
+    // A Bed of Your Own: two feathers (junglefowl) and two hides (rabbits) for a sleeping
+    // bag, crafted in the two by two grid.
     let (feather, hide) = ("base:feather", "base:hide");
     let (feathers, hides) = (|c: &Client| holding(c, feather) + loose(c, feather), |c: &Client| holding(c, hide) + loose(c, hide));
-    f.hunt(|c| if hides(c) < 2 { "rabbit" } else { "junglefowl" }, |c| feathers(c) >= 7 && hides(c) >= 2);
-    f.collect(feather, 7);
+    f.hunt(|c| if hides(c) < 2 { "rabbit" } else { "junglefowl" }, |c| feathers(c) >= 2 && hides(c) >= 2);
+    f.collect(feather, 2);
     f.collect(hide, 2);
-    f.at_table(table);
-    f.craft(&[(0, feather, 1), (1, feather, 1), (2, feather, 1), (3, feather, 1), (4, hide, 1), (5, feather, 1), (6, feather, 1), (7, hide, 1), (8, feather, 1)], "base:sleeping_bag", 1);
+    f.craft(&[(0, feather, 1), (1, feather, 1), (3, hide, 1), (4, hide, 1)], "base:sleeping_bag", 1);
     f.mark("a_bed_of_your_own");
 
     // Torchlight: two coal ores, each with a stick making four torches.

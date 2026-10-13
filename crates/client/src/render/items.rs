@@ -47,6 +47,8 @@ pub const CAPACITY: usize = 2048;
 const SHADER: &str = "embedded://voxmar/render/items.wgsl";
 /// Vertices of one item's box.
 const BOX_VERTICES: u32 = 36;
+/// The flag of the item in hand (`FLAG_HELD` in items.wgsl).
+const HELD: u32 = 1 << 10;
 
 pub struct ItemPlugin;
 
@@ -102,6 +104,21 @@ pub struct ItemModel {
     pub tint: [u8; 3],
     /// Sky and block light where it is, 0..=15.
     pub light: [u8; 2],
+    /// Set for the item in the player's hand: it is placed in the view, not the world.
+    pub held: Option<Held>,
+}
+
+/// Where the item in the player's hand sits, in the camera's frame. It stands in for the
+/// model's `center` (and `offset` and `phase`, which it does not use): the shader finds the
+/// camera's axes for itself, so the hand moves with the very view the frame is drawn with
+/// and trails nothing behind, and draws it in front of everything, as no wall comes
+/// between a hand and the eye.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Held {
+    /// Where its middle is, in blocks: right, up and forward of the eye.
+    pub at: Vec3,
+    /// How it is turned from facing the eye, as a rotation vector (axis times angle).
+    pub turn: Vec3,
 }
 
 /// The items to draw this frame, which `drops` fills.
@@ -112,11 +129,13 @@ pub struct ItemModels(pub Vec<ItemModel>);
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 struct GpuItem {
+    /// Where it is, or for the item in hand, right, up and forward of the eye.
     center: [f32; 3],
     phase: f32,
+    /// Where this copy of a stack sits, or for the item in hand, its rotation vector.
     offset: [f32; 3],
     size: f32,
-    /// shape:4 | tinted faces:6 | free:14 | block light:4 | sky light:4.
+    /// shape:4 | tinted faces:6 | held:1 | free:13 | block light:4 | sky light:4.
     flags: u32,
     /// Two faces' layers each, the lower face in the low half.
     layers: [u32; 3],
@@ -135,12 +154,16 @@ impl GpuItem {
         };
         let pair = |i: usize| model.layers[i] as u32 | (model.layers[i + 1] as u32) << 16;
         let [r, g, b] = model.tint;
+        let (center, offset, held) = match model.held {
+            Some(held) => (held.at, held.turn, HELD),
+            None => (model.center, model.offset, 0),
+        };
         Self {
-            center: model.center.to_array(),
+            center: center.to_array(),
             phase: model.phase,
-            offset: model.offset.to_array(),
+            offset: offset.to_array(),
             size: model.size,
-            flags: shape | ((model.tinted as u32) & 63) << 4 | block << 24 | sky << 28,
+            flags: shape | ((model.tinted as u32) & 63) << 4 | held | block << 24 | sky << 28,
             layers: [pair(0), pair(2), pair(4)],
             tint: u32::from_le_bytes([r, g, b, 255]),
             _pad: [0; 3],
@@ -367,6 +390,7 @@ mod tests {
             tinted: 0b000100,
             tint: [10, 20, 30],
             light: [14, 3],
+            held: None,
         };
         let gpu = GpuItem::new(&model);
         assert_eq!(gpu.flags & 15, 1);
@@ -374,5 +398,14 @@ mod tests {
         assert_eq!((gpu.flags >> 24 & 15, gpu.flags >> 28), (3, 14));
         assert_eq!(gpu.layers, [1 | 2 << 16, 3 | 4 << 16, 5 | 600 << 16]);
         assert_eq!(gpu.tint.to_le_bytes(), [10, 20, 30, 255]);
+        assert_eq!(gpu.flags & HELD, 0);
+        // The item in hand: its place in the view and its turn take the world place's fields.
+        let held = Held { at: Vec3::new(0.3, -0.2, 0.6), turn: Vec3::new(0.0, 0.5, 0.25) };
+        let gpu = GpuItem::new(&ItemModel { held: Some(held), ..model });
+        assert_eq!((gpu.center, gpu.offset), ([0.3, -0.2, 0.6], [0.0, 0.5, 0.25]));
+        assert_eq!(gpu.flags & HELD, HELD);
+        // And its flag leaves the rest of the word as it was.
+        assert_eq!((gpu.flags >> 4) & 63, 0b000100);
+        assert_eq!((gpu.flags >> 24 & 15, gpu.flags >> 28), (3, 14));
     }
 }
