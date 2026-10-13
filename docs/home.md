@@ -64,8 +64,8 @@ the modifiers of the last second. Raw meat's queasiness is not lengthened.
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the
 `sleeps` rules): Rested (10 minutes) anywhere, Well rested (15) if the bed is in a Snug home,
 Deep rest (20) in a Cosy one (a game day is 20 minutes). Rest gives a little heal, xp,
-mining and speed wherever you go, and you cannot sleep again until it wears off ("You are not
-tired yet"), so it is a once-a-day habit, not a button to hold. Timed effects count down
+mining and speed wherever you go, and a bed always works as a bed (it sets where you wake and your home) but gives no new rest
+while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
 ## Numbers and tuning

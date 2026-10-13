@@ -1984,7 +1984,7 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     // Rested, they are not tired again until it wears off.
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
-    client.pump_until(|c| told(c, "not tired"));
+    client.pump_until(|c| told(c, "rested already"));
     assert!(!has(&client, "base:well_rested"));
     // Light a hearth with a chimney (a lit one is home), a second light and a roof: snug.
     let core = feet + IVec3::new(4, 0, 0);

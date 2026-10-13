@@ -343,7 +343,7 @@
     "bed.set": "You will wake here after dying, until you have a home.",
     "bed.set_home": "You will wake here after dying, though your hearth comes first.",
     "bed.rested": "You sleep soundly: {name}. {what}",
-    "bed.not_tired": "You are not tired yet.",
+    "bed.not_tired": "You are rested already, so there is no new rest, but this is your bed.",
     "effect.gained": "{name}: {what}",
     "effect.gained_next": "{name}: {what} {next}",
     "quest.done": "Quest done: {quest}.",

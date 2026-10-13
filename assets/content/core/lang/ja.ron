@@ -330,7 +330,7 @@
     "bed.set": "家ができるまで、倒れたらここで目覚める。",
     "bed.set_home": "倒れたらここで目覚める。ただし炉が優先される。",
     "bed.rested": "ぐっすり眠った：{name}。{what}",
-    "bed.not_tired": "まだ眠くない。",
+    "bed.not_tired": "もう休めているので新たな休息はないが、ここが寝床になった。",
     "effect.gained": "{name}：{what}",
     "effect.gained_next": "{name}：{what}{next}",
     "quest.done": "クエスト達成：{quest}。",

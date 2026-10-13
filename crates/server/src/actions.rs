@@ -421,7 +421,8 @@ impl Server {
 
     /// `agent` sleeps at the bed at `bed`: it is where they wake after dying (their hearth
     /// first, once they have one), and they wake rested, as well as the home around the
-    /// bed allows (effects.ron's `sleeps`). Not again until that rest has worn off.
+    /// bed allows (effects.ron's `sleeps`). A bed always works, as a bed; the rest is held back
+    /// while one is still on them, so the buff cannot be had again until it wears off.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
         let player = self.players.get_mut(&agent).unwrap();
         player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
