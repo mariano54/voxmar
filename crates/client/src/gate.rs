@@ -289,6 +289,11 @@ enum Step {
     Cook,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
+    /// `/wander start tinker_camp` brings a travelling party: its trader and hound reach the
+    /// client and draw; a right click on the trader gets a greeting in chat; four hides held
+    /// out are swapped for loaves (the party's trade, taken from the hand); `/wander end`
+    /// sends them away.
+    Party,
     /// `/locate ore` finds a sample of ore on the ground, and the server's world there has
     /// it, with its vein's ore below it.
     Ore,
@@ -463,6 +468,8 @@ struct Gate {
     /// or none was, and the nearest the player came to it.
     tame_aim: [u32; 3],
     tame_nearest: f32,
+    /// The newest creature id when the party step began: what is newer is the party's.
+    party_after: u32,
     breaks: Breaks,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
@@ -585,6 +592,7 @@ impl Gate {
             food_moved: false,
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
+            party_after: 0,
             breaks: Breaks::default(),
             mining_before: None,
             struck_heights: (f32::MAX, f32::MIN),
@@ -957,6 +965,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Torches crafted for a pinned quest, waited on in the server's seconds, and a quest
         // done left to drop off.
         Step::Quests => 60.0,
+        // A party walks in, is talked to, traded with and sent away, each in server seconds.
+        Step::Party => 60.0,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -1198,6 +1208,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
+        Step::Party => party(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Tarns => tarns(world, gate, now, in_phase),
         Step::Settlements => settlements(world, gate, now, in_phase),
@@ -6207,7 +6218,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 _ if gate.server_in_phase() > 10.0 => {
                     gate.check("tame", Err("the junglefowl or the wheat never came".into()));
-                    gate.next(Step::Ore, now);
+                    gate.next(Step::Party, now);
                 }
                 _ => {}
             }
@@ -6215,7 +6226,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         2 => {
             let Some(view) = hen(world) else {
                 gate.check("tame", Err("the junglefowl went".into()));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
                 return;
             };
             let me = world.resource::<crate::creatures::Creatures>().me;
@@ -6233,7 +6244,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     "25 server seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left; the crosshair was on it {on} frames, on another creature {other}, on none {none}; nearest {:.1} blocks",
                     gate.tame_nearest
                 )));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             } else {
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
                 key(world, KeyCode::KeyW, far);
@@ -6262,7 +6273,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if in_phase > 3.0 {
                 let detail = format!("aimed at the tamed junglefowl, it read {:?} {:?} with tags {tags:?}", readout.name, readout.level);
                 gate.check("readout: kept", Err(detail));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             }
         }
         4 => {
@@ -6281,7 +6292,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if gate.server_in_phase() > 3.0 {
                 mouse(world, MouseButton::Right, false);
                 gate.check("condition", Err(format!("3 server seconds of looking closely at our junglefowl read none of {lines:?}")));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             } else if let Some(view) = hen(world) {
                 // A hotbar slot holding nothing it eats: an empty one first.
                 let free = {
@@ -6306,7 +6317,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Err("the junglefowl went before it was let go".into()));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
                 return;
             };
             if !view.kept {
@@ -6314,13 +6325,13 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Ok(format!("the junglefowl went wild again after {in_phase:.1}s")));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             } else if gate.server_in_phase() > 8.0 {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Err("8 server seconds of Shift and right clicks on our junglefowl did not let it go".into()));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Party, now);
             } else {
                 // It wanders (up to 7 blocks from home) and reach is 5: walk toward it while far.
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
@@ -6329,6 +6340,148 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::ShiftLeft, true);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
                 mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A tinker's camp started on the pad's far side: its trader and hound must reach the client
+/// and draw, a right click on the trader gets a greeting, four hides held out are swapped
+/// for loaves, and `/wander end` sends the party away.
+fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let content = world.resource::<Launch>().content.clone();
+    let (Some(trader), Some(hound)) = (content.creatures.find("base:trader"), content.creatures.find("base:hound")) else {
+        gate.check("party", Err("no `base:trader` or `base:hound` in the content".into()));
+        gate.next(Step::Ore, now);
+        return;
+    };
+    let after = gate.party_after;
+    let speaker = |world: &World| {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        creatures.views().filter(|v| v.species == trader && v.id > after).max_by_key(|v| v.id).copied()
+    };
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    // Back on the pad, whatever went wrong.
+    let leave = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Right, false);
+        let net = world.resource::<Net>();
+        net.command("wander end");
+        net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+        gate.next(Step::Ore, now);
+    };
+    match gate.phase {
+        0 => {
+            gate.party_after = world.resource::<crate::creatures::Creatures>().views().map(|v| v.id).max().unwrap_or(0);
+            gate.count_before = item_count(world, "base:bread");
+            let net = world.resource::<Net>();
+            net.command("time set noon");
+            net.command("wander end");
+            net.command("wander start tinker_camp");
+            net.command("give hide 4");
+            gate.advance(now);
+        }
+        // The party reaches the client, and is drawn.
+        1 => {
+            let hounds = world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == hound && v.id > after).count();
+            if let Some(view) = speaker(world)
+                && hounds > 0
+            {
+                let drawn = world.resource::<crate::creatures::Creatures>().alive();
+                gate.check("party: arrives", Ok(format!("a trader and {hounds} hound reached the client after {:.1}s ({drawn} creatures drawn)", gate.server_in_phase())));
+                // Beside the trader, facing it: tp puts the player on the spot, a few blocks off.
+                let at = view.position + Vec3::new(0.0, 0.0, 3.0);
+                world.resource::<Net>().command(&format!("tp {} {} {}", at.x, at.y, at.z));
+                gate.advance(now);
+            } else if gate.server_in_phase() > 20.0 {
+                let trader_seen = speaker(world).is_some();
+                gate.check("party: arrives", Err(format!("/wander start tinker_camp gave the client no trader and hound in 20 server seconds (trader seen {trader_seen}, hounds {hounds})")));
+                leave(world, gate);
+            }
+        }
+        // A right click on the trader with nothing to trade: a greeting in chat.
+        2 => {
+            let Some(view) = speaker(world) else {
+                gate.check("party: greeting", Err("the trader went before it was spoken to".into()));
+                leave(world, gate);
+                return;
+            };
+            let greetings: Vec<String> = {
+                let locale = world.resource::<crate::lang::Locale>();
+                ["wander.base.tinker_camp.greet", "wander.base.tinker_camp.greet_2"].map(|key| locale.get(key).to_owned()).into()
+            };
+            let said = world.resource::<crate::hud::console::Console>().since(gate.phase_since).find(|line| greetings.iter().any(|g| line.contains(g.as_str()))).map(str::to_owned);
+            if let Some(line) = said {
+                mouse(world, MouseButton::Right, false);
+                key(world, KeyCode::KeyW, false);
+                gate.check("party: greeting", Ok(format!("a right click on the trader read \"{line}\" after {:.1}s", gate.server_in_phase())));
+                gate.advance(now);
+            } else if gate.server_in_phase() > 15.0 {
+                gate.check("party: greeting", Err(format!("15 server seconds of right clicks on the trader read none of {greetings:?}")));
+                leave(world, gate);
+            } else {
+                // A slot holding no hides (they would be offered as a swap): an empty one first.
+                let hide = content.blocks.id("base:hide");
+                let free = {
+                    let player = world.resource::<LocalPlayer>();
+                    let slots = 0..voxmar_engine::inventory::HOTBAR_SLOTS;
+                    slots.clone().find(|&s| player.inventory.get(s).is_none()).or_else(|| slots.into_iter().find(|&s| player.inventory.get(s).is_some_and(|stack| Some(stack.item) != hide)))
+                };
+                if let Some(slot) = free {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                }
+                let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.5;
+                key(world, KeyCode::KeyW, far);
+                aim_at(world, view.position + Vec3::Y * 0.9);
+                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
+        // The same click with four hides in hand: the party's trade, loaves for them.
+        3 => {
+            let Some(view) = speaker(world) else {
+                gate.check("party: trade", Err("the trader went before it was traded with".into()));
+                leave(world, gate);
+                return;
+            };
+            let bread = item_count(world, "base:bread");
+            let swap = world.resource::<crate::lang::Locale>().get("wander.base.tinker_camp.swap_hide").to_owned();
+            let said = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|line| line.contains(swap.as_str()));
+            if said && bread > gate.count_before {
+                mouse(world, MouseButton::Right, false);
+                key(world, KeyCode::KeyW, false);
+                gate.check("party: trade", Ok(format!("four hides held out for the trader came back as {} loaves after {:.1}s", bread - gate.count_before, gate.server_in_phase())));
+                gate.advance(now);
+            } else if gate.server_in_phase() > 15.0 {
+                gate.check("party: trade", Err(format!("15 server seconds with four hides in hand got no swap from the trader: the line spoken {said}, loaves {} (had {}), hides held {}", bread, gate.count_before, item_count(world, "base:hide"))));
+                leave(world, gate);
+            } else if let Some(hide) = content.blocks.id("base:hide")
+                && let Some(slot) = in_hotbar(world, &mut gate.food_moved, hide)
+            {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.5;
+                key(world, KeyCode::KeyW, far);
+                aim_at(world, view.position + Vec3::Y * 0.9);
+                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+            }
+        }
+        // Sent away: the party goes from the client.
+        4 => {
+            if in_phase < 0.1 {
+                world.resource::<Net>().command("wander end");
+                return;
+            }
+            let (party, hounds) = {
+                let creatures = world.resource::<crate::creatures::Creatures>();
+                (creatures.views().filter(|v| v.species == trader && v.id > after).count(), creatures.views().filter(|v| v.species == hound && v.id > after).count())
+            };
+            if party + hounds == 0 {
+                gate.check("party: ends", Ok(format!("/wander end took the party from the client after {:.1}s", gate.server_in_phase())));
+                leave(world, gate);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("party: ends", Err(format!("10 server seconds after /wander end, {party} traders and {hounds} hounds of the party were still drawn")));
+                leave(world, gate);
             }
         }
         _ => {}
