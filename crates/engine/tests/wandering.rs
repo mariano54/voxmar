@@ -15,7 +15,7 @@ fn dir() -> std::path::PathBuf {
 #[test]
 fn every_event_word_is_a_key_in_both_languages() {
     let content = Content::load(&dir()).unwrap();
-    assert!(content.wandering.len() >= 38, "the first six batches load");
+    assert!(content.wandering.len() >= 46, "the first seven batches load");
     for code in ["en", "ja"] {
         let lang = Lang::load(&dir(), code);
         for (_, event) in content.wandering.iter() {
@@ -33,6 +33,9 @@ fn every_event_word_is_a_key_in_both_languages() {
             }
             if event.def.guard.is_some() {
                 keys.push(event.key("warn"));
+            }
+            if event.def.show.is_some() {
+                keys.push(event.key("show"));
             }
             match event.def.script {
                 Script::Ambush { .. } => keys.push(event.key("sprung")),

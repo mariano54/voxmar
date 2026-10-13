@@ -814,6 +814,8 @@
     "wander.settled": "{who} settles in near your home.",
     "wander.point": "{thing}: {dir} of here, about {far} blocks off.",
     "wander.point_none": "None of that grows near here.",
+    "wander.town": "{name}, a {size}: {dir} of here, about {far} blocks off.",
+    "wander.town_none": "No town lies near here.",
     "command.creatures.none": "No creatures within 64 blocks.",
     "command.creatures.title": "Within 64 blocks:",
     "command.creatures.line": "{count} × {creature}, nearest {distance} blocks away ({doing})",
