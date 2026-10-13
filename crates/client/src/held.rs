@@ -558,7 +558,9 @@ fn show(
         }
     };
     let light = motion.light(measured, dt, handling.hand.light_rate);
-    models.0.push(ItemModel {
+    // First, not last: the renderer keeps the first `CAPACITY` models, and when drops fill
+    // the list it is the furthest of them that go, not the hand.
+    models.0.insert(0, ItemModel {
         center: Vec3::ZERO,
         phase: 0.0,
         offset: Vec3::ZERO,
