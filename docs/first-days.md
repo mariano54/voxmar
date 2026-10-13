@@ -57,7 +57,7 @@ Mostly yes, with these checks:
 
 1. **Nothing said "open the quest book".** Fixed: a first-time tip names the bound key
    (`tip.quests`), and a new player's book starts with Look It Up and First Night pinned
-   (`tracker: (start_pins: [...])` in `quests.ron`; pinned once, only when nothing is done or
+   (`tracker: (start_pins: [...])` in `quests.ron`; pinned once per install, only when nothing is done or
    pinned, so unpinning is respected).
 2. **First Night counted any cooking**, so charcoal, fired clay or an ingot satisfied it.
    Fixed (Codex's contract, ported): it needs a campfire crafted and food cooked at a

@@ -65,4 +65,4 @@ not establish which station cooked food or whether fuel was paid, so they cannot
 complete these stricter goals for an unfinished quest.
 
 A package's `tracker` may name `start_pins`: quests pinned for a player whose book is new
-(nothing done, nothing pinned), once per world joined. A later package replaces the list.
+(nothing done, nothing pinned), once per install (remembered in the settings). A later package replaces the list.

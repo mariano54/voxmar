@@ -34,10 +34,8 @@ pub struct QuestsPlugin;
 impl Plugin for QuestsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestView>()
-            .init_resource::<PinsSeeded>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(OnExit(Screen::InGame), |mut seeded: ResMut<PinsSeeded>| seeded.0 = false)
             .add_systems(Update, ((open_start, choose_on_open, show, pick, turn_ways, draw).chain().after(ScreenSystems), (seed_pins, retire, track).chain()).run_if(in_state(Screen::InGame)));
     }
 }
@@ -95,24 +93,25 @@ fn open_start(
     commands.remove_resource::<StartQuest>();
 }
 
-/// Whether this world's quests have been looked at for a new player's pins.
-#[derive(Resource, Default)]
-struct PinsSeeded(bool);
+/// What `Settings::tips_seen` remembers once a new player's pins have been looked at.
+const START_PINS_SEEN: &str = "start_pins";
 
 /// A new player (nothing done, nothing pinned) starts with the content's `start_pins`
-/// pinned, so the first thing on screen is what to do. Once, when the world's quests first
-/// arrive; a player who unpins them keeps their choice.
-fn seed_pins(player: Res<LocalPlayer>, launch: Res<Launch>, mut seeded: ResMut<PinsSeeded>, mut settings: ResMut<Settings>) {
-    if seeded.0 || player.quests.is_empty() {
+/// pinned, so the first thing on screen is what to do. Once for this install, the first
+/// time a world's quests arrive, however that went: a player who unpins them keeps their
+/// choice in every world after.
+fn seed_pins(player: Res<LocalPlayer>, launch: Res<Launch>, mut settings: ResMut<Settings>) {
+    if player.quests.is_empty() || settings.tips_seen.iter().any(|seen| seen == START_PINS_SEEN) {
         return;
     }
-    seeded.0 = true;
+    settings.tips_seen.push(START_PINS_SEEN.to_owned());
     if settings.pinned_quests.is_empty() && player.quests.iter().all(|quest| !quest.done) {
         let content = &launch.content;
         for name in content.quests.start_pins() {
             toggle_pin(&mut settings, content, name);
         }
     }
+    settings.save();
 }
 
 /// Only quests the content has stay pinned, and no more than the tracker shows.
