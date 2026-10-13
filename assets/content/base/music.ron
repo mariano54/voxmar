@@ -6,8 +6,8 @@
 // package's numbers replace these, a category it names again replaces that one, and its
 // rules come before these.
 (
-    // Linear gain of a track at 100% music volume.
-    volume: 0.35,
+    // Linear gain of a track at 100% music volume (a quarter under the 0.35 it was, 13 Oct).
+    volume: 0.26,
     // Borrowed tracks' gain relative to Voxmar's own.
     borrowed_volume: 1.0,
     // Seconds before the title screen's first track.
