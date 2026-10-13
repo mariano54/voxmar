@@ -1,23 +1,22 @@
-//! Water and lava flowing: runs the engine's fluid kernel once a tick, within a budget
-//! that adapts to how long updates take and how busy the server is, and sends each player
-//! what changed in the columns they have, in one message.
-
-use std::time::Instant;
+//! Water and lava flowing: runs the engine's fluid kernel once a tick, for a set number of
+//! updates, and sends each player what changed in the columns they have, in one message.
 
 use voxmar_engine::coords::ColumnPos;
-use voxmar_protocol::TICKS_PER_SECOND;
 
 use crate::Server;
+
+/// Fluid updates a tick runs, at most. A set number, not a share of the tick's time, so
+/// water spreads the same number of ticks on any machine however busy it is (a budget by
+/// the clock let a loaded server's floods run slower than an idle one's). Only a flood fills it:
+/// at a couple of microseconds an update, that is a third of a fifty-millisecond tick on a
+/// slow machine and a twentieth on a fast one.
+const UPDATES_PER_TICK: usize = 8192;
 
 impl Server {
     pub(crate) fn flow(&mut self) {
         let _span = tracing::info_span!("fluids").entered();
-        let started = Instant::now();
         let mut changes = Vec::new();
-        let budget = self.fluid_budget.updates();
-        let stats = self.fluids.step(&self.content.blocks, &mut self.world, self.tick, budget, &mut changes);
-        let busy = self.tick_seconds * TICKS_PER_SECOND as f64;
-        self.fluid_budget.record(stats.updates, started.elapsed().as_secs_f64(), busy);
+        self.fluids.step(&self.content.blocks, &mut self.world, self.tick, UPDATES_PER_TICK, &mut changes);
         if changes.is_empty() {
             return;
         }

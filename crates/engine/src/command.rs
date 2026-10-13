@@ -56,6 +56,10 @@ pub enum Run {
     Effect,
     /// Kills the player.
     Kill,
+    /// Makes an online player an admin, until `Deop`.
+    Op,
+    /// Takes an online player's admin rights away.
+    Deop,
     /// Drops a stack of items into the world.
     Drop,
     /// Grows the crops around the player.
@@ -70,6 +74,8 @@ pub enum Run {
     Creatures,
     /// Sets a player's level in a skill.
     Skill,
+    /// Tells how the machine at a block is doing.
+    Machine,
     /// Runs these command lines in order. `$1`, `$2`, … stand for this command's
     /// arguments and `$*` for all of them.
     Alias(Vec<String>),

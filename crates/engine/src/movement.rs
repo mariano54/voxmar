@@ -3,10 +3,10 @@
 //! the positions that come of it for plausibility. It knows the world only through
 //! [`Surroundings`], so tests run it on any arrangement of blocks.
 //!
-//! Getting out of water follows Minecraft: water shallower than [`WADE_DEPTH`] over the feet
-//! is walked and jumped in, deeper water is swum in, and a swimmer pushing against a bank
-//! whose top is within [`STEP_OUT`] of their feet is lifted out at [`CLIMB_OUT_SPEED`], so a
-//! bank level with the water is climbed by swimming up against it, without timing a jump.
+//! Getting out of water follows Minecraft: water shallower than [`Tuning::wade_depth`] over
+//! the feet is walked and jumped in, deeper water is swum in, and a swimmer pushing against a
+//! bank whose top is within [`Tuning::step_out`] of their feet is lifted out at
+//! [`Tuning::climb_out_speed`], so a bank level with the water is climbed by swimming up against it, without timing a jump.
 //! A swimmer bobbing at the surface is in water too shallow to swim in, so holding jump
 //! there jumps, as Minecraft's does, which takes them onto a bank a block above the water.
 //!
@@ -14,7 +14,8 @@
 //! client turns into [`Controls::sprint`]) starts it, and it lasts while forward is held,
 //! until the player runs head-on into a wall.
 //!
-//! The speeds, gravity and jump come from the content's `movement.ron` ([`Tuning`]).
+//! The speeds, gravity, jump and these depths and heights come from the content's
+//! `movement.ron` ([`Tuning`]).
 
 use glam::{IVec3, Vec2, Vec3};
 use serde::Deserialize;
@@ -23,23 +24,9 @@ use crate::block::{BlockId, BlockRegistry, RegistryError};
 use crate::fluid;
 use crate::physics::{Aabb, move_and_slide, player as dims};
 
-/// Water shallower than this over the feet is waded through: walked and jumped in, though
-/// slowly and carried by its flow, rather than swum in.
-pub const WADE_DEPTH: f32 = 0.4;
-/// How far above the feet a bank may rise for a swimmer pushing against it to be lifted
-/// out (Minecraft's 0.6).
-pub const STEP_OUT: f32 = 0.6;
-/// Blocks per second a swimmer is lifted out at (Minecraft's 0.3 a tick).
-pub const CLIMB_OUT_SPEED: f32 = 6.0;
 /// Longest step of the simulation, in seconds; longer frames are split, which keeps
 /// collision stable at low frame rates.
 pub const SUBSTEP: f32 = 1.0 / 120.0;
-/// Seconds after a jump before holding jump jumps again (Minecraft's ten ticks), so a
-/// jump from water doesn't repeat while the feet are still in it.
-pub const JUMP_DELAY: f32 = 0.5;
-/// How much of a wall-blocked step must have been heading into the wall for it to stop a
-/// sprint; glancing off a wall keeps it.
-const HEAD_ON: f32 = 0.35;
 
 /// How players move, in blocks and seconds: the content's `movement.ron`.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -56,11 +43,100 @@ pub struct Tuning {
     pub water_speed: f32,
     pub fly_speed: f32,
     pub fly_sprint_speed: f32,
+    /// Water shallower than this over the feet is waded through: walked and jumped in,
+    /// though slowly and carried by its flow, rather than swum in.
+    pub wade_depth: f32,
+    /// How far above the feet a bank may rise for a swimmer pushing against it to be
+    /// lifted out, and how fast (blocks a second) they are lifted.
+    pub step_out: f32,
+    pub climb_out_speed: f32,
+    /// Seconds after a jump before holding jump jumps again, so a jump from water doesn't
+    /// repeat while the feet are still in it (at most 1).
+    pub jump_delay: f32,
+    /// How much of a wall-blocked step must have been heading into the wall for it to stop
+    /// a sprint (a share, at most 1); glancing off a wall keeps it.
+    pub head_on: f32,
+    /// How high a walker steps up onto a block without jumping (at most 1), for blocks
+    /// shorter than a whole one. Kept here for the client and the server's move checks
+    /// to read alike; nothing steps up yet.
+    pub step_up: f32,
+    /// How much the server lets a player's moves get away with.
+    pub checks: Checks,
+}
+
+/// How far the server lets the moves a client reports stray from these numbers, for
+/// rounding, network jitter and hitches, before it puts the player back.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Checks {
+    /// How much faster than the top speeds a move may be.
+    pub speed_margin: f32,
+    /// Seconds of top speed a player's movement may run ahead in one go, and blocks of
+    /// movement allowed besides.
+    pub burst: f32,
+    pub slack: f32,
+    /// How far a player on foot may rise above where they last stood, besides their jump
+    /// (and out of water, `Tuning::step_out`).
+    pub rise_slack: f32,
+    /// Seconds a player on foot may be off the ground before the height they may keep
+    /// starts to sink, and how fast it sinks (blocks a second).
+    pub hover_grace: f32,
+    pub hover_sink: f32,
+    /// Seconds a player let down to that height keeps it before it sinks again.
+    pub let_down_pause: f32,
+    /// How far above ground a player still counts as having just touched it.
+    pub near_ground: f32,
+    /// Longest step, in blocks, a move is checked for walls in.
+    pub sweep_step: f32,
+    /// The player's box, as shares of their width and height, that must stay out of
+    /// walls: a little smaller than theirs, for rounding.
+    pub wall_box: (f32, f32),
+}
+
+impl Checks {
+    fn check(&self) -> Result<(), String> {
+        let Checks { speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, wall_box: (width, height) } = *self;
+        let numbers = [speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, width, height];
+        if numbers.iter().any(|n| !n.is_finite() || *n < 0.0) {
+            Err("every number must be zero or more".into())
+        } else if speed_margin < 1.0 {
+            Err("speed_margin below 1 would stop players at their own top speed".into())
+        } else if burst <= 0.0 {
+            Err("burst must be more than 0, or no move could be made".into())
+        } else if !(0.05..=1.0).contains(&sweep_step) {
+            Err("sweep_step must be from 0.05 to 1 (a smaller step makes every move slow to check, a larger one lets moves pass through walls)".into())
+        } else if let_down_pause > hover_grace {
+            Err("let_down_pause must be no more than hover_grace".into())
+        } else if !(0.5..=1.0).contains(&width) || !(0.5..=1.0).contains(&height) {
+            Err("wall_box shares must be from 0.5 to 1".into())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl Tuning {
     pub fn from_ron(source: &str) -> Result<Self, RegistryError> {
-        ron::from_str(source).map_err(|e| RegistryError(format!("movement.ron: {e}")))
+        let tuning: Tuning = ron::from_str(source).map_err(|e| RegistryError(format!("movement.ron: {e}")))?;
+        tuning.check().map_err(|e| RegistryError(format!("movement.ron: {e}")))?;
+        tuning.checks.check().map_err(|e| RegistryError(format!("movement.ron: checks: {e}")))?;
+        Ok(tuning)
+    }
+
+    fn check(&self) -> Result<(), String> {
+        let Tuning { wade_depth, step_out, climb_out_speed, jump_delay, head_on, step_up, .. } = *self;
+        let named = [("wade_depth", wade_depth), ("step_out", step_out), ("climb_out_speed", climb_out_speed), ("jump_delay", jump_delay), ("head_on", head_on), ("step_up", step_up)];
+        if let Some((name, _)) = named.iter().find(|(_, n)| !n.is_finite() || *n <= 0.0) {
+            Err(format!("{name} must be more than 0"))
+        } else if jump_delay > 1.0 {
+            Err("jump_delay must be at most 1 second".into())
+        } else if head_on > 1.0 {
+            Err("head_on must be at most 1 (a share of the way the player runs), or a sprint would never stop at a wall".into())
+        } else if step_up > 1.0 {
+            Err("step_up must be at most 1 block".into())
+        } else {
+            Ok(())
+        }
     }
 
     /// The tuning for a player whose effects make them `factor` times as quick on foot
@@ -94,7 +170,7 @@ pub struct Body {
     /// Whether the last step was stopped by a wall across, x or z.
     pub against_wall: bool,
     pub sprinting: bool,
-    /// Seconds until holding jump may jump again (see [`JUMP_DELAY`]).
+    /// Seconds until holding jump may jump again (see [`Tuning::jump_delay`]).
     pub jump_delay: f32,
 }
 
@@ -160,7 +236,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
     body.in_water = depth > 0.0;
     // By depth alone, as in Minecraft: a jump from shallow water is a jump, which judging
     // by the ground as well cut short to a swim stroke as soon as the feet left it.
-    let swimming = depth >= WADE_DEPTH;
+    let swimming = depth >= tuning.wade_depth;
     let Controls { wish, forward, sprint, jump, descend } = controls;
     if !forward || wish == Vec3::ZERO {
         body.sprinting = false;
@@ -196,7 +272,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
             // Minecraft, high enough to reach a bank a block above the water.
             if jump && (body.on_ground || body.in_water) && body.jump_delay == 0.0 {
                 body.velocity.y = body.velocity.y.max(tuning.jump_velocity);
-                body.jump_delay = JUMP_DELAY;
+                body.jump_delay = tuning.jump_delay;
                 if body.sprinting && body.on_ground && !body.in_water {
                     body.velocity += wish * tuning.sprint_jump_boost;
                 }
@@ -204,8 +280,8 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
             body.velocity.y = (body.velocity.y - tuning.gravity * dt).max(-tuning.terminal_velocity);
         }
         // Pushing against a bank low enough to step onto lifts a swimmer out.
-        if body.in_water && body.against_wall && wish != Vec3::ZERO && can_step_out(body, world, wish) {
-            body.velocity.y = body.velocity.y.max(CLIMB_OUT_SPEED);
+        if body.in_water && body.against_wall && wish != Vec3::ZERO && can_step_out(body, world, wish, tuning.step_out) {
+            body.velocity.y = body.velocity.y.max(tuning.climb_out_speed);
         }
     }
 
@@ -215,7 +291,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
     body.against_wall = blocked[0] || blocked[2];
     // Running head-on into a wall stops a sprint on the ground; glancing along one, or
     // bumping a step mid-jump, doesn't.
-    let head_on = (blocked[0] && wish.x.abs() > HEAD_ON) || (blocked[2] && wish.z.abs() > HEAD_ON);
+    let head_on = (blocked[0] && wish.x.abs() > tuning.head_on) || (blocked[2] && wish.z.abs() > tuning.head_on);
     if head_on && body.on_ground && !body.flying {
         body.sprinting = false;
     }
@@ -230,26 +306,26 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
     body.position = Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
 }
 
-/// Whether the body, raised by [`STEP_OUT`], would have room a little further along
-/// `wish`: the wall it is pushing against ends within a step of its feet.
-fn can_step_out(body: &Body, world: &impl Surroundings, wish: Vec3) -> bool {
+/// Whether the body, raised by `step_out` (`Tuning::step_out`), would have room a little
+/// further along `wish`: the wall it is pushing against ends within a step of its feet.
+fn can_step_out(body: &Body, world: &impl Surroundings, wish: Vec3, step_out: f32) -> bool {
     let mut raised = body.aabb();
-    raised.translate(Vec3::Y * STEP_OUT + wish * 0.1);
+    raised.translate(Vec3::Y * step_out + wish * 0.1);
     !raised.intersects(|p| world.solid(p))
 }
 
 /// How deep the water `aabb` stands in is over its feet (0 out of water), and the mean
 /// flow of that water (blocks per second along x, z): flowing water and river currents
-/// carry swimmers along. Only `water` counts, not other fluids.
-pub fn water_around(registry: &BlockRegistry, water: BlockId, block: impl Fn(IVec3) -> Option<BlockId>, aabb: &Aabb) -> (f32, Vec2) {
-    let Some(water) = registry.fluid(water).map(|f| f.fluid) else { return (0.0, Vec2::ZERO) };
+/// carry swimmers along. Only fluids that are swum in count (`FluidDef::swim`), so not
+/// lava. The client moves by it and the server judges moves by it.
+pub fn water_around(registry: &BlockRegistry, block: impl Fn(IVec3) -> Option<BlockId>, aabb: &Aabb) -> (f32, Vec2) {
     let (lo, hi) = (aabb.min.floor().as_ivec3(), (aabb.max - 1e-4).floor().as_ivec3());
     let (mut cells, mut depth, mut flow) = (0, 0.0f32, Vec2::ZERO);
     for y in lo.y..=hi.y {
         for z in lo.z..=hi.z {
             for x in lo.x..=hi.x {
                 let cell = IVec3::new(x, y, z);
-                let Some(state) = block(cell).and_then(|b| registry.fluid(b)).filter(|s| s.fluid == water) else { continue };
+                let Some(state) = block(cell).and_then(|b| registry.fluid(b)).filter(|s| registry.fluid_def(s.fluid).def.swim) else { continue };
                 // Shallow flowing water only counts up to its surface.
                 let covered = block(cell + IVec3::Y).and_then(|b| registry.fluid(b)).is_some_and(|s| s.fluid == state.fluid);
                 let surface = y as f32 + if covered { 1.0 } else { state.height() };
@@ -287,6 +363,27 @@ mod tests {
 
     fn tuning() -> Tuning {
         Tuning::from_ron(include_str!("../../../assets/content/core/movement.ron")).unwrap()
+    }
+
+    #[test]
+    fn the_shipped_movement_file_moves_players_as_before_and_refuses_what_could_not_move_them() {
+        // The numbers that were constants here, unchanged by moving them to data.
+        let t = tuning();
+        assert_eq!([t.wade_depth, t.step_out, t.climb_out_speed, t.jump_delay, t.head_on, t.step_up], [0.4, 0.6, 6.0, 0.5, 0.35, 0.5 + 1.0 / 16.0]);
+        let source = include_str!("../../../assets/content/core/movement.ron");
+        for (from, to) in [("wade_depth: 0.4", "wade_depth: 0.0"), ("climb_out_speed: 6.0", "climb_out_speed: -6.0"), ("jump_delay: 0.5", "jump_delay: 1.5"), ("head_on: 0.35", "head_on: 0.0"), ("head_on: 0.35", "head_on: 1.5"), ("step_up: 0.5625", "step_up: 2.0")] {
+            assert!(source.contains(from), "{from}");
+            assert!(Tuning::from_ron(&source.replace(from, to)).is_err(), "{to} loads");
+        }
+    }
+
+    #[test]
+    fn checks_a_mod_could_set_to_hang_or_stop_the_server_are_refused_on_load() {
+        let source = include_str!("../../../assets/content/core/movement.ron");
+        for (from, to) in [("sweep_step: 0.25", "sweep_step: 0.0"), ("speed_margin: 1.25", "speed_margin: 0.5"), ("burst: 2.0", "burst: 0.0"), ("let_down_pause: 0.25", "let_down_pause: 3.0"), ("hover_sink: 1.0", "hover_sink: -1.0"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 2.0)")] {
+            assert!(source.contains(from), "{from}");
+            assert!(Tuning::from_ron(&source.replace(from, to)).is_err(), "{to} loads");
+        }
     }
 
     /// Holds `controls` for `seconds` at `fps` frames a second; returns the body and

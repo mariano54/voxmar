@@ -83,6 +83,17 @@ pub struct Items {
 }
 
 impl Items {
+    /// Older saves may record several spellings of one keeper. Only hashes of known names
+    /// are migrated; a hash with no surviving spelling must remain protected.
+    pub(crate) fn canonical_owner(&mut self, aliases: &[u64], canonical: u64) {
+        for (&id, item) in &mut self.all {
+            if item.owner.is_some_and(|owner| owner != canonical && aliases.binary_search(&owner).is_ok()) {
+                item.owner = Some(canonical);
+                self.changed.insert(id);
+            }
+        }
+    }
+
     pub fn spawn(&mut self, stack: ItemStack, body: Loose, pickup_delay: f32) -> u32 {
         self.spawn_for(stack, body, pickup_delay, None, lifetime())
     }
@@ -123,8 +134,7 @@ impl Surroundings for Around<'_> {
 
     fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
         let blocks = &self.0.content.blocks;
-        let water = blocks.id("base:water").unwrap_or(BlockId::AIR);
-        movement::water_around(blocks, water, |p| self.0.block(p), aabb)
+        movement::water_around(blocks, |p| self.0.block(p), aabb)
     }
 }
 
@@ -186,6 +196,10 @@ impl Server {
             }
             let info = self.content.blocks.info(block);
             if info.drops.is_air() || info.drop_count == 0 {
+                continue;
+            }
+            // A furnishing the world placed (a village's altar) gives nothing.
+            if wild && self.content.blocks.def(block).has_tag("furnishing") {
                 continue;
             }
             // A crop nobody sowed (a village's field), broken before it is harvested,

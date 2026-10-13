@@ -24,7 +24,7 @@ use bevy::window::PrimaryWindow;
 use voxmar_engine::action::ActionTarget;
 use voxmar_engine::block::{BlockDef, Rarity};
 use voxmar_engine::craft::GRID;
-use voxmar_engine::inventory::{CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, SLOTS};
+use voxmar_engine::inventory::{LAST, WORN, CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, SLOTS};
 
 use super::{SLOT, slot_contents};
 use crate::lang::{Locale, Localized, TightLine};
@@ -49,7 +49,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, fit_grid, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item).after(InventorySystems))
+                ((toggle, fit_grid, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -90,6 +90,60 @@ struct LastClick {
 struct InventoryScreen;
 #[derive(Component)]
 struct InventorySlot(usize);
+/// The faint mark in an empty worn well of what it takes.
+#[derive(Component)]
+struct WornGlyph(usize);
+
+/// The mark for worn slot `slot`, if it is one, by `combat::Slot`'s order.
+fn worn_glyph(slot: usize) -> Option<Piece> {
+    let at = slot.checked_sub(WORN).filter(|_| slot <= LAST)?;
+    [Piece::WornHead, Piece::WornBody, Piece::WornLegs, Piece::WornHands, Piece::WornFeet, Piece::WornShield].get(at).copied()
+}
+
+/// What packages restyle of the interface (`interface.ron`, in `core`); a later package
+/// changes what it gives. Read with the rest of the content at launch, which a bad value
+/// fails.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct InterfaceStyle {
+    /// How strongly an empty worn well shows what it takes, 0 to 1.
+    pub worn_glyph_alpha: f32,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct InterfaceFile {
+    worn_glyph_alpha: Option<f32>,
+}
+
+impl InterfaceStyle {
+    pub const FILE: &str = "interface.ron";
+
+    pub fn load(files: &[voxmar_engine::content::ContentFile]) -> Result<Self, String> {
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let mut alpha = None;
+        for file in files.iter().filter(|f| f.name == Self::FILE) {
+            let given: InterfaceFile = options.from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
+            alpha = given.worn_glyph_alpha.or(alpha);
+        }
+        let worn_glyph_alpha = alpha.ok_or(format!("no package's {} gives worn_glyph_alpha", Self::FILE))?;
+        if !(0.0..=1.0).contains(&worn_glyph_alpha) {
+            return Err(format!("{}: worn_glyph_alpha {worn_glyph_alpha} is not from 0 to 1", Self::FILE));
+        }
+        Ok(InterfaceStyle { worn_glyph_alpha })
+    }
+}
+
+/// Each worn well's mark shows, faintly, while nothing is worn there.
+fn show_worn_glyphs(shown: Res<ShownInventory>, style: Res<InterfaceStyle>, mut glyphs: Query<(&WornGlyph, &mut Visibility, &mut ImageNode)>) {
+    let faint = Color::WHITE.with_alpha(style.worn_glyph_alpha);
+    for (glyph, mut visibility, mut image) in &mut glyphs {
+        visibility.set_if_neq(if shown.0.get(glyph.0).is_some() { Visibility::Hidden } else { Visibility::Inherited });
+        if image.color != faint {
+            image.color = faint;
+        }
+    }
+}
+
 /// A slot a screenshot shows the tooltip of, as if the pointer were over it (`--hover-slot`).
 #[derive(Resource)]
 pub struct HoverSlot(pub usize);
@@ -126,7 +180,9 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let columns = HOTBAR_SLOTS as f32;
     let grid_width = columns * SLOT + (columns - 1.0) * PX;
     commands.spawn((InventoryScreen, screen(SCRIM), Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
-        let mut card = panel(grid_width + 76.0 * PX);
+        // Room for the worn wells, two across, beside the crafting square.
+        let worn_width = 2.0 * SLOT + PX + space::SECTION;
+        let mut card = panel(grid_width + 76.0 * PX + worn_width);
         card.0.align_items = AlignItems::Center;
         root.spawn((card, InventoryCard, RelativeCursorPosition::default())).with_children(|card| {
             card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() })
@@ -141,12 +197,29 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             };
             let spawn_slot = |grid: &mut ChildSpawnerCommands, slot: usize| {
                 let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
-                grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image()))
-                    .with_children(|cell| slot_contents(cell, font, slot));
+                grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image())).with_children(|cell| {
+                    // A worn well shows faintly what it takes, under the piece worn in it.
+                    if let Some(glyph) = worn_glyph(slot) {
+                        let inset = (SLOT - 16.0 * PX) / 2.0;
+                        let at = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
+                        cell.spawn((at, glyph.image(), WornGlyph(slot)));
+                    }
+                    slot_contents(cell, font, slot)
+                });
             };
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
             card.spawn(crafting).with_children(|row| {
+                // What is worn: head and body, legs and hands, feet and shield.
+                let worn = Node {
+                    display: Display::Grid,
+                    grid_template_columns: RepeatedGridTrack::px(2, SLOT),
+                    row_gap: Val::Px(PX),
+                    column_gap: Val::Px(PX),
+                    margin: UiRect::right(Val::Px(space::SECTION)),
+                    ..default()
+                };
+                row.spawn(worn).with_children(|grid| (WORN..=LAST).for_each(|slot| spawn_slot(grid, slot)));
                 let square = Node {
                     display: Display::Grid,
                     grid_template_columns: RepeatedGridTrack::px(2, SLOT),
@@ -168,7 +241,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     let inset = (SLOT + 4.0 * PX - 16.0 * PX) / 2.0;
                     let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
                     cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
-                    cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() }, shadowed(font, "", BODY, TEXT), OutputCount));
+                    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() };
+                    super::spawn_count(cell, font, corner, OutputCount);
                 });
                 // What the grid makes and how to take it, or how to find a recipe.
                 let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
@@ -208,18 +282,22 @@ enum Move {
 
 /// Predicts a move and proposes it to the server, which checks it by the same rules.
 fn send(net: &Net, actions: &Actions, inventory: &mut Inventory, action: Move) {
-    let (moved, name, target) = match action {
-        Move::Items { from, to, count } => {
-            (inventory.move_items(from, to, count), "core:transfer", ActionTarget::Slots { from: from as u8, to: to as u8, count })
-        }
-        Move::Quick(slot) => (inventory.quick_move(slot), "core:quick_move", ActionTarget::Slot(slot as u8)),
-        Move::Stow => (inventory.stow_cursor(), "core:stow", ActionTarget::None),
-        Move::Throw { slot, count } => {
-            (inventory.take(slot, count).is_some(), "core:drop", ActionTarget::Stack { slot: slot as u8, count })
-        }
+    let name = match action {
+        Move::Items { .. } => "core:transfer",
+        Move::Quick(_) => "core:quick_move",
+        Move::Stow => "core:stow",
+        Move::Throw { .. } => "core:drop",
+    };
+    // Nothing is predicted for an action the content does not have.
+    let Some(id) = actions.named(name) else { return };
+    let (moved, target) = match action {
+        Move::Items { from, to, count } => (inventory.move_items(from, to, count), ActionTarget::Slots { from: from as u8, to: to as u8, count }),
+        Move::Quick(slot) => (inventory.quick_move(slot), ActionTarget::Slot(slot as u8)),
+        Move::Stow => (inventory.stow_cursor(), ActionTarget::None),
+        Move::Throw { slot, count } => (inventory.take(slot, count).is_some(), ActionTarget::Stack { slot: slot as u8, count }),
     };
     if moved {
-        net.propose(actions.0.expect(name), target);
+        net.propose(id, target);
     }
 }
 
@@ -302,13 +380,21 @@ fn craft(
         return;
     }
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let recipe = |grid: &[Option<voxmar_engine::block::BlockId>; GRID]| recipes.find(grid).filter(|r| allowed(r)).map(|r| (r.output, r.count));
+    let Some(craft) = actions.named("core:craft") else { return };
     let mut inventory = player.inventory.clone();
-    if inventory.craft(recipe, all) > 0 {
+    if craft_grid(&mut inventory, &recipes, allowed, all) > 0 {
         player.inventory = inventory;
-        net.propose(actions.0.expect("core:craft"), ActionTarget::Slot(if all { 0 } else { 1 }));
+        net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
         sounds.write(UiSound::Click);
     }
+}
+
+/// Crafts what `inventory`'s grid makes (all it can if `all`), as the server will: only a
+/// recipe `allowed`, and crafting all only while the grid still makes the recipe it made
+/// first. Returns how many were made.
+fn craft_grid(inventory: &mut Inventory, recipes: &voxmar_engine::craft::RecipeRegistry, allowed: impl Fn(&voxmar_engine::craft::Recipe) -> bool, all: bool) -> u32 {
+    let first = recipes.find(&inventory.grid()).filter(|r| allowed(r));
+    inventory.craft(recipes.while_making(first), all)
 }
 
 /// The crafting grid's square, and each of its cells by number (`craft::GRID`).
@@ -643,8 +729,14 @@ fn details(locale: &Locale, def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
         lines.push((uses.join(locale.get("language.dot")), SOFT));
     }
     let package = def.name.split(':').next().unwrap_or("");
-    lines.push((if ids { def.name.clone() } else { package.to_owned() }, MUTED));
+    lines.push((if ids { def.name.clone() } else { package_name(locale, package) }, MUTED));
     lines
+}
+
+/// What a package is called, in the player's language (`package.<id>`); a mod that names
+/// itself nowhere goes by its id.
+pub fn package_name(locale: &Locale, package: &str) -> String {
+    locale.get_or(&format!("package.{package}"), package).to_owned()
 }
 
 /// Names joined as the language lists them, at most `most` of them and how many more.
@@ -709,7 +801,8 @@ fn seed_line(
 }
 
 /// How a weapon fights: its class, style and the level that wields it (red while the
-/// player's is short of it), then its max hit at their level and how often it strikes.
+/// player's is short of it), then its max hit at their level and how often it strikes, and
+/// its reach if it is not the usual.
 fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
     let Some(weapon) = content.combat.weapon(item) else { return Vec::new() };
     let (Some(class), Some(skill)) = (weapon.class, weapon.skill) else { return Vec::new() };
@@ -727,8 +820,51 @@ fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, play
     );
     let hit = locale.format("item.weapon_hit", &[("hit", &weapon.max_hit(level)), ("seconds", &format!("{:.1}", weapon.cooldown))]);
     let mut lines = vec![(what, if ready { SOFT } else { ERROR }), (hit, SOFT)];
-    if weapon.reach > 0.0 {
-        lines.push((locale.get("item.weapon_reach").to_owned(), SOFT));
+    // Its reach, when it is not the usual (a spear's further, a dagger's shorter).
+    if (weapon.reach - content.combat.feel.reach).abs() > 0.05 {
+        lines.push((locale.format("item.weapon_reach", &[("reach", &format!("{:.1}", weapon.reach))]), SOFT));
+    }
+    lines
+}
+
+/// What a piece of armour or a shield is: its slot and the Defence level that wears it (red
+/// while the player is below it, with why it then gives nothing), its armour and weight,
+/// and the styles it is strong against.
+pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
+    let combat = &content.combat;
+    let defence = content.skills.ids().find(|&id| content.skills.get(id).name == "core:defence");
+    let level = defence.map_or(1, |id| content.skills.level(player.skills.xp(id)));
+    // What it is, the Defence it needs (red above the player's), then what it stops.
+    let (head, needs, armour, guard, resists) = if let Some(piece) = combat.piece(item) {
+        let set = combat.set(piece.set);
+        let name = locale.get_or(&format!("armour_set.{}", set.name), &voxmar_engine::lang::title_from_id(&set.name)).to_owned();
+        let weight = locale.get_or(&format!("item.weight.{}", piece.weight.key()), piece.weight.key()).to_owned();
+        (locale.format("item.armour", &[("set", &name), ("weight", &weight)]), piece.level, piece.armour, None, set.resists.clone())
+    } else if let Some(shield) = combat.shield(item) {
+        (locale.get("item.armour_shield").to_owned(), shield.level, shield.armour, Some(shield.guard), Vec::new())
+    } else {
+        return Vec::new();
+    };
+    let ready = level >= needs;
+    let mut lines = vec![(head, SOFT)];
+    // What anyone can wear needs no saying.
+    if needs > 1 {
+        lines.push((locale.format("item.armour_needs", &[("level", &needs)]), if ready { SOFT } else { ERROR }));
+    }
+    if armour > 0 {
+        lines.push((locale.format("item.armour_value", &[("armour", &armour)]), SOFT));
+    }
+    if let Some(guard) = guard {
+        let stop = (guard.stop * 100.0).round() as u32;
+        lines.push((locale.format("item.armour_guard", &[("stop", &stop), ("arc", &(guard.arc.round() as u32))]), SOFT));
+    }
+    if !resists.is_empty() {
+        let styles: Vec<String> = resists.iter().map(|style| locale.get(&format!("item.style.{}", style.key())).to_owned()).collect();
+        lines.push((locale.format("item.armour_resists", &[("styles", &styles.join(locale.get("language.comma")))]), SOFT));
+    }
+    // Below its level a shield neither guards nor gives armour (the weapon guards instead).
+    if !ready {
+        lines.push((locale.get(if guard.is_some() { "item.armour_low_shield" } else { "item.armour_low" }).to_owned(), ERROR));
     }
     lines
 }
@@ -746,7 +882,9 @@ fn pouch_lines(locale: &Locale, registry: &voxmar_engine::block::BlockRegistry, 
         .map(|&(held, count)| (locale.format("pouch.holds", &[("count", &count), ("item", &locale.block(registry.def(held)))]), SOFT))
         .collect();
     let empty = carried.is_empty().then(|| (locale.get("pouch.nothing").to_owned(), MUTED));
-    carried.into_iter().chain(empty).chain([(locale.get("pouch.hint").to_owned(), MUTED)]).collect()
+    // Empty, it says what fills it: what it holds (`holds:<kind>`), picked up.
+    let fills = carried.is_empty().then(|| registry.def(item).tags.iter().find_map(|tag| tag.strip_prefix("holds:")).and_then(|kind| locale.find(&format!("pouch.fills.{kind}"))).map(|words| (words.to_owned(), MUTED))).flatten();
+    carried.into_iter().chain(empty).chain(fills).chain([(locale.get("pouch.hint").to_owned(), MUTED)]).collect()
 }
 
 /// The mouse and key moves the inventory takes, as key caps with what each does, two to a
@@ -824,15 +962,27 @@ fn tooltip(
     (viewer, forced, places): (Res<super::recipes::RecipeViewer>, Option<Res<HoverSlot>>, Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>),
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
-    let item = hovered(&slots)
-        .or(forced.as_ref().map(|f| f.0))
-        .filter(|_| ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none())
+    let pointed = hovered(&slots).or(forced.as_ref().map(|f| f.0)).filter(|_| ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none());
+    // An empty worn slot says what goes in it.
+    let empty_worn = pointed.filter(|slot| (WORN..=LAST).contains(slot) && player.inventory.get(*slot).is_none());
+    let item = pointed
         .and_then(|slot| player.inventory.get(slot))
         .map(|stack| stack.item)
         .or(catalogue.hovered.filter(|_| ui.inventory_open && player.inventory.cursor.is_none()));
     let Some(item) = item else {
-        visibility.set_if_neq(Visibility::Hidden);
         *shown = None;
+        let Some(slot) = empty_worn else {
+            visibility.set_if_neq(Visibility::Hidden);
+            return;
+        };
+        let key = voxmar_engine::combat::Slot::ALL[slot - WORN].key();
+        let name = locale.get_or(&format!("item.slot.{key}"), key).to_owned();
+        commands.entity(entity).despawn_children().with_children(|lines| {
+            lines.spawn(shadowed(&font.0, name, BODY, TEXT));
+            lines.spawn(text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED));
+        });
+        visibility.set_if_neq(Visibility::Inherited);
+        place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
         return;
     };
     // Shift shows how the name reads: in Japanese, the kana over the name; in another
@@ -870,6 +1020,7 @@ fn tooltip(
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
+                .chain(armour_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
                 .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
@@ -879,27 +1030,27 @@ fn tooltip(
         });
     }
     visibility.set_if_neq(Visibility::Inherited);
-    if let Ok(window) = window.single()
+    place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
+}
+
+/// Puts the tooltip up and to the right of the pointer, kept on screen; without a pointer,
+/// beside the slot a screenshot names. The pointer is in the window's points, the
+/// interface laid out at its own scale.
+fn place_tip(node: &mut Node, computed: &ComputedNode, window: Option<&Window>, scale: f32, forced: Option<usize>, places: &Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>) {
+    let size = computed.size() * computed.inverse_scale_factor();
+    if let Some(window) = window
         && let Some(at) = window.cursor_position()
     {
-        // Up and to the right of the pointer, kept on screen; the pointer is in the
-        // window's points, the interface laid out at its own scale.
-        let (at, width) = (at / scale.0, window.width() / scale.0);
-        let size = computed.size() * computed.inverse_scale_factor();
-        let left = (at.x + 6.0 * PX).min(width - size.x - 2.0 * PX);
-        let top = (at.y - size.y - 2.0 * PX).max(2.0 * PX);
-        node.left = Val::Px(left);
-        node.top = Val::Px(top);
-    }    // Without a pointer, beside the slot a screenshot names.
-    else if let Some(slot) = forced.as_ref().map(|f| f.0)
+        let (at, width) = (at / scale, window.width() / scale);
+        node.left = Val::Px((at.x + 6.0 * PX).min(width - size.x - 2.0 * PX));
+        node.top = Val::Px((at.y - size.y - 2.0 * PX).max(2.0 * PX));
+    } else if let Some(slot) = forced
         && let Some((_, cell, place)) = places.iter().find(|(s, ..)| s.0 == slot)
     {
-        let size = computed.size() * computed.inverse_scale_factor();
         let at = (place.translation + cell.size() / 2.0) * cell.inverse_scale_factor();
         node.left = Val::Px(at.x + 2.0 * PX);
         node.top = Val::Px((at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
     }
-
 }
 
 #[cfg(test)]
@@ -908,10 +1059,105 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn the_interface_style_comes_from_data_and_a_later_package_changes_it() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let mut files: Vec<_> = content.files.iter().cloned().collect();
+        assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.25);
+        let file = |source: &str| voxmar_engine::content::ContentFile { package: "mod".into(), name: InterfaceStyle::FILE.into(), source: source.into() };
+        files.push(file("(worn_glyph_alpha: 0.5)"));
+        assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.5);
+        files.push(file("(worn_glyph_alpha: 2.0)"));
+        assert!(InterfaceStyle::load(&files).is_err());
+    }
+
+    /// Below its level a shield says it neither guards nor gives armour (a body piece only
+    /// the armour), and what anyone can wear says nothing of the level it needs.
+    #[test]
+    fn armour_below_its_level_says_what_it_does_not_do() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let player = LocalPlayer::default();
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&assets.join("content"), code);
+            let lines = |name: &str| armour_lines(&locale, &content, &player, content.blocks.id(name).unwrap()).into_iter().map(|(line, _)| line).collect::<Vec<_>>();
+            let (copper, shirt, wooden) = (lines("base:copper_shield"), lines("base:chainmail_shirt"), lines("base:wooden_shield"));
+            assert_eq!(copper.last().map(String::as_str), Some(locale.get("item.armour_low_shield")), "{code}: {copper:?}");
+            assert_eq!(shirt.last().map(String::as_str), Some(locale.get("item.armour_low")), "{code}: {shirt:?}");
+            let needs_one = locale.format("item.armour_needs", &[("level", &1)]);
+            assert!(!wooden.contains(&needs_one) && !wooden.iter().any(|line| line == locale.get("item.armour_low_shield")), "{code}: {wooden:?}");
+        }
+    }
+
+    /// No item's tooltip, in any language, has a line that is only a package's id: every
+    /// word on it is the language's (the package by its name, Voxmar).
+    #[test]
+    fn tooltips_name_packages_not_their_ids() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let blocks = &content.blocks;
+        let packages: std::collections::BTreeSet<&str> = (0..blocks.len()).filter_map(|i| blocks.def(BlockId(i as u16)).name.split(':').next()).collect();
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&assets.join("content"), code);
+            for id in (0..blocks.len()).map(|i| BlockId(i as u16)) {
+                let def = blocks.def(id);
+                for (line, _) in details(&locale, def, false) {
+                    assert!(!packages.contains(line.as_str()), "{code}: {}'s tooltip has a line reading only {line:?}", def.name);
+                }
+            }
+            assert_ne!(package_name(&locale, "base"), "base");
+            assert_eq!(package_name(&locale, "some_mod"), "some_mod", "{code}: a mod that names itself nowhere goes by its id");
+        }
+    }
+
     fn held(count: u8) -> Inventory {
         let mut inventory = Inventory::default();
         inventory.cursor = Some(ItemStack { item: BlockId(1), count });
         inventory
+    }
+
+    /// Crafting all on a grid that, once the first recipe is made, would make another: the
+    /// client makes as many as the server does, and nothing else.
+    #[test]
+    fn crafting_all_here_makes_what_the_server_makes_when_the_grid_turns_into_another_recipe() {
+        use std::time::{Duration, Instant};
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let server = voxmar_server::spawn(voxmar_server::ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
+        let (connection, server_side) = voxmar_protocol::local_pair();
+        server.connections().send(server_side).unwrap();
+        let net = Net::new(connection, Some(server), "crafter".into(), content.fingerprint(), None);
+        let mut seen = Inventory::default();
+        let mut wait_for = |done: &dyn Fn(&Inventory) -> bool| -> Inventory {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !done(&seen) {
+                assert!(Instant::now() < deadline, "the server never sent that inventory: {seen:?}");
+                match net.try_recv() {
+                    Ok(Some(voxmar_protocol::ServerMessage::PlayerState { inventory, .. })) => seen = inventory,
+                    Ok(_) => std::thread::sleep(Duration::from_millis(1)),
+                    Err(_) => panic!("the server went away"),
+                }
+            }
+            seen.clone()
+        };
+        let planks = content.blocks.expect("base:oak_planks");
+        net.command("/clear");
+        net.command("/give oak_planks 6");
+        wait_for(&|i| i.get(0) == Some(ItemStack { item: planks, count: 6 }) && i.slots.iter().flatten().count() == 1);
+        // Down the left two planks a cell, one a cell beside them: a crafting table; what is
+        // left, a plank over a plank, would make sticks.
+        let transfer = content.actions.expect("core:transfer");
+        for (cell, count) in [(0, 2), (3, 2), (1, 1), (4, 1)] {
+            net.propose(transfer, ActionTarget::Slots { from: 0, to: (CRAFT + cell) as u8, count });
+        }
+        let before = wait_for(&|i| i.grid().iter().flatten().count() == 4 && i.get(0).is_none());
+        let mut predicted = before.clone();
+        let made = craft_grid(&mut predicted, &content.recipes, |r: &voxmar_engine::craft::Recipe| !r.needs_table(), true);
+        net.propose(content.actions.expect("core:craft"), ActionTarget::Slot(0));
+        let crafted = wait_for(&|i| *i != before);
+        assert_eq!(made, 1, "one table");
+        assert_eq!(predicted, crafted, "the client's craft differs from the server's");
+        let stick = content.blocks.expect("base:stick");
+        assert!(!crafted.slots.iter().flatten().any(|s| s.item == stick));
     }
 
     #[test]
@@ -944,5 +1190,18 @@ mod tests {
         }
         assert_eq!(inventory.cursor.map(|s| s.count), Some(64));
         assert_eq!(inventory.get(3).map(|s| s.count), Some(25));
+    }
+
+    /// English spells the button one way, as the key chip does ("Right-click"), in every
+    /// package's words.
+    #[test]
+    fn english_spells_right_click_one_way() {
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        for package in std::fs::read_dir(&content).unwrap().flatten() {
+            let Ok(words) = std::fs::read_to_string(package.path().join("lang/en.ron")) else { continue };
+            for line in words.lines().filter(|line| !line.trim_start().starts_with("//")) {
+                assert!(!line.to_lowercase().contains("right click"), "{}: {line}", package.path().display());
+            }
+        }
     }
 }

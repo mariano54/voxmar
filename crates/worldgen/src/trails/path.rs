@@ -227,7 +227,15 @@ impl Stamp {
 }
 
 /// Stamps over a `size`×`size` square of columns from `min`, from the trails `paths`.
+/// Where two give a column the same weight the first stamped sets its height, so they are
+/// stamped in an order of their own (by their ends), whatever order they come in: the
+/// stamps depend only on which paths there are.
 pub fn stamps(min: IVec2, size: i32, paths: &[&Path], clearings: &[IVec2]) -> Option<Box<[Stamp]>> {
+    fn ends(p: &Path) -> Option<[f32; 5]> {
+        p.centres.first().zip(p.centres.last()).map(|(a, b)| [a.at.x, a.at.y, b.at.x, b.at.y, p.centres.len() as f32])
+    }
+    let mut paths = paths.to_vec();
+    paths.sort_by(|p, q| ends(p).partial_cmp(&ends(q)).unwrap_or(std::cmp::Ordering::Equal));
     let mut stamps = vec![Stamp::default(); (size * size) as usize];
     let mut any = false;
     for &centre in clearings {
@@ -241,7 +249,7 @@ pub fn stamps(min: IVec2, size: i32, paths: &[&Path], clearings: &[IVec2]) -> Op
         }
     }
     let (low, high) = (min.as_vec2(), (min + size).as_vec2());
-    for path in paths {
+    for path in &paths {
         if path.max.cmplt(low).any() || path.min.cmpge(high).any() {
             continue;
         }
@@ -358,5 +366,18 @@ mod tests {
         assert_eq!(at(20, 7).weight, 0.0);
         assert!(at(83, 0).deck.is_some());
         assert!((40..=42).any(|x| at(x, 0).stone || at(x, -1).stone || at(x, 1).stone));
+    }
+
+    /// Two trails leaving one gate meet with equal weights round it; the stamps are the
+    /// same whichever is stamped first.
+    #[test]
+    fn stamps_do_not_depend_on_path_order() {
+        let east: Vec<Vec2> = (0..=6).map(|i| Vec2::new(60.0 + i as f32 * 8.0, 0.0)).collect();
+        let north: Vec<Vec2> = (0..=6).map(|i| Vec2::new(60.0, -(i as f32) * 8.0)).collect();
+        let (a, b) = (path(&east, &Slope), path(&north, &Slope));
+        let one = stamps(IVec2::new(32, -64), 96, &[&a, &b], &[]).unwrap();
+        let other = stamps(IVec2::new(32, -64), 96, &[&b, &a], &[]).unwrap();
+        assert!(one.iter().zip(other.iter()).any(|(s, _)| s.weight > 0.0));
+        assert_eq!(one, other);
     }
 }
