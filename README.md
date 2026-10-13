@@ -40,7 +40,11 @@ the view that far (0..1, cracks and chips showing; 1 breaks it just before the s
 `--clip SECONDS` saves every frame of that much game time at 30 fps instead; `--clip-join` starts
 it the moment the player joins (to see what joining shows) rather than once the world settled, and
 `--clip-command LINE` runs a console line as it starts (`--clip-command "/weather clear"` to watch
-the weather change). Still shots also wait for the weather and the place's air to show.
+the weather change). A clip paces the integrated server, so creatures move at their own speed
+however slowly the frames draw; `--pose-to dx,dy,dz,yaw,pitch` glides the camera there from
+`--pose` through the clip, and `--no-hud` hides the interface. `tools/trailer/trailer.py`
+records the trailer's shots this way and cuts them with its title cards and music (see
+`tools/trailer/trailer.json`). Still shots also wait for the weather and the place's air to show.
 `--flicker` measures shimmer: with the clock stopped it also takes `OUT-moved.png` after
 stepping the camera 4 cm sideways, logs the share of pixels that changed by more than 60
 levels, and marks them in red in `OUT-flicker.png`.

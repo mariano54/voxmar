@@ -17,7 +17,12 @@
 //! as `OUT-000.png` on, for checking how things move (wind, water, weather). It starts once
 //! the world has settled, or with `--clip-join` the moment the player joins (to see what
 //! joining shows); `--clip-command LINE` runs a console command as it starts (`/weather
-//! clear`, to watch the weather change).
+//! clear`, to watch the weather change). With the server in this process, the clip paces
+//! it: before each shot the game's clock stands still until the server has simulated as far
+//! as the shot's time, so creatures move at their own speed however slowly the frames draw.
+//! `--pose-to` glides the camera from `--pose` to there through the clip, at an even speed,
+//! with each of the five numbers moving from one to the other (a yaw from 0 to 400 turns
+//! more than a full circle), for scripted fly-bys; `--no-hud` hides the interface.
 //!
 //! Still shots wait for the weather to be ready (`weather::WeatherReady`) as well as the
 //! world, so they show the place's own weather and air.
@@ -64,6 +69,10 @@ pub struct CapturePlugin {
     pub path: PathBuf,
     /// Optional camera override: offset from the player's eye, then yaw and pitch (degrees).
     pub pose: Option<[f32; 5]>,
+    /// Where a clip's camera glides to from `pose` (see the module docs).
+    pub pose_to: Option<[f32; 5]>,
+    /// Hide the interface: only the world is shot.
+    pub no_hud: bool,
     /// Seconds to fly forward after loading, measuring frame pacing while streaming.
     pub flight: Option<f32>,
     /// Seconds to dig straight down after loading, holding the button as a player would,
@@ -146,6 +155,8 @@ impl Plugin for CapturePlugin {
         app.insert_resource(UiState { menu_open: self.menu, inventory_open: self.inventory, character_open: self.character, ..default() }).insert_resource(Capture {
             path: self.path.clone(),
             pose: self.pose,
+            pose_to: self.pose_to,
+            no_hud: self.no_hud,
             flight: self.flight,
             lift_asked: None,
             dig: self.dig,
@@ -201,6 +212,10 @@ impl Plugin for CapturePlugin {
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time)
                 .before(crate::render::update_environment)
                 .before(TransformSystems::Propagate),
+        )
+        .add_systems(
+            PostUpdate,
+            hide_ui.run_if(|state: Res<Capture>| state.no_hud).before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
         );
     }
 }
@@ -209,6 +224,8 @@ impl Plugin for CapturePlugin {
 struct Capture {
     path: PathBuf,
     pose: Option<[f32; 5]>,
+    pose_to: Option<[f32; 5]>,
+    no_hud: bool,
     flight: Option<f32>,
     /// When (by the server's clock) the flight asked to be teleported to its height.
     lift_asked: Option<f32>,
@@ -275,14 +292,31 @@ struct Clip {
     /// Shots asked for, and shots written.
     taken: u32,
     saved: Arc<AtomicU32>,
+    /// The server's tick count at the first shot, when the clip paces the server.
+    first_tick: Option<u64>,
+    /// Whether the game's clock runs into the next frame, which takes the next shot; it
+    /// stands still after each shot until the server has caught up.
+    running: bool,
 }
 
 impl Clip {
-    /// `record_clip` takes over, and every frame from now on advances the game alike.
+    /// `record_clip` takes over, and every shot from now on is a frame's game time after the last.
     fn start(&mut self, commands: &mut Commands, console: &mut crate::hud::console::Console) {
         self.started = true;
         console.run_when_joined(std::mem::take(&mut self.commands));
         commands.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1) / CLIP_RATE));
+    }
+
+    /// How far through the clip the shot last asked for is, from 0 at the first to 1 at
+    /// the last; 0 before the first.
+    fn progress(&self) -> f32 {
+        self.taken.saturating_sub(1) as f32 / self.frames.saturating_sub(1).max(1) as f32
+    }
+
+    /// The server's tick count the shot `n` waits for: as many ticks after the first shot's
+    /// as the game time between them holds.
+    fn tick_of(first: u64, n: u32) -> u64 {
+        first + u64::from(n) * u64::from(voxmar_protocol::TICKS_PER_SECOND) / u64::from(CLIP_RATE)
     }
 }
 
@@ -350,12 +384,28 @@ pub(crate) fn target_ui(
 }
 
 fn apply_pose(state: Res<Capture>, player: Res<LocalPlayer>, mut camera: Query<&mut Transform, With<Camera3d>>) {
-    let (Some([x, y, z, yaw, pitch]), Ok(mut transform)) = (state.pose, camera.single_mut()) else { return };
+    let (Some(from), Ok(mut transform)) = (state.pose, camera.single_mut()) else { return };
+    let [x, y, z, yaw, pitch] = match (state.pose_to, &state.clip) {
+        (Some(to), Some(clip)) => glide(from, to, clip.progress()),
+        _ => from,
+    };
     let step = state.flicker.as_ref().map_or(Vec3::ZERO, |f| f.step);
     transform.translation = player.eye() + Vec3::new(x, y, z) + step;
     // `--face-creature` turns the player toward the creature; the camera looks as they do.
     let (yaw, pitch) = if state.face_creature { (player.yaw, player.pitch) } else { (yaw.to_radians(), pitch.to_radians()) };
     transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+}
+
+/// The pose `progress` (0 to 1) of the way from `from` to `to`, each number moving evenly.
+fn glide(from: [f32; 5], to: [f32; 5], progress: f32) -> [f32; 5] {
+    std::array::from_fn(|i| from[i] + (to[i] - from[i]) * progress)
+}
+
+/// `--no-hud`: hides every interface root each frame, after whatever showed it.
+fn hide_ui(mut roots: Query<&mut Visibility, (With<Node>, Without<ChildOf>)>) {
+    for mut visibility in &mut roots {
+        visibility.set_if_neq(Visibility::Hidden);
+    }
 }
 
 /// Selects the hotbar slot holding `--hold`'s item, as a player picks it with a number key.
@@ -912,12 +962,28 @@ fn measure_flicker(
 }
 
 /// Records a `--clip` once `capture` has started it: a shot every frame, each one
-/// `CLIP_RATE`th of a second of game time after the last.
-fn record_clip(mut commands: Commands, mut state: ResMut<Capture>, real: Res<Time<Real>>) {
+/// `CLIP_RATE`th of a second of game time after the last. A server in this process is
+/// paced by the clip: after each shot the game's clock stands still until the server has
+/// simulated up to the next shot's time, and the frame after that takes it.
+fn record_clip(mut commands: Commands, mut state: ResMut<Capture>, real: Res<Time<Real>>, net: Res<crate::net::Net>, mut virtual_time: ResMut<Time<Virtual>>) {
     let state = &mut *state;
     let screenshot = state.screenshot();
     let Some(clip) = state.clip.as_mut().filter(|c| c.started) else { return };
     if clip.taken < clip.frames {
+        if let Some(server) = net.server() {
+            let first = *clip.first_tick.get_or_insert_with(|| server.ticks());
+            let due = Clip::tick_of(first, clip.taken);
+            server.pace(Some(due));
+            if !clip.running {
+                // What the server sent up to `due` is applied by the next frame, which the
+                // clock runs into and the shot is taken in.
+                if server.ticks() >= due {
+                    virtual_time.unpause();
+                    clip.running = true;
+                }
+                return;
+            }
+        }
         let saved = clip.saved.clone();
         commands
             .spawn(screenshot)
@@ -926,6 +992,12 @@ fn record_clip(mut commands: Commands, mut state: ResMut<Capture>, real: Res<Tim
                 saved.fetch_add(1, Ordering::Relaxed);
             });
         clip.taken += 1;
+        if let Some(server) = net.server() {
+            // The server works toward the next shot while this one draws.
+            server.pace(Some(Clip::tick_of(clip.first_tick.unwrap_or_default(), clip.taken)));
+            virtual_time.pause();
+            clip.running = false;
+        }
     } else if clip.saved.load(Ordering::Relaxed) >= clip.frames && state.taken_at.is_none() {
         info!("clip: {} frames saved", clip.frames);
         state.taken_at = Some(real.elapsed_secs());
@@ -1000,5 +1072,27 @@ mod tests {
     #[test]
     fn sibling_adds_a_suffix_before_the_extension() {
         assert_eq!(sibling(Path::new("shots/far.png"), "moved"), PathBuf::from("shots/far-moved.png"));
+    }
+
+    #[test]
+    fn a_clip_glides_from_its_pose_at_the_first_shot_to_its_end_pose_at_the_last() {
+        let mut clip = Clip { frames: 5, ..default() };
+        let (from, to) = ([0.0, 10.0, 0.0, 0.0, -10.0], [8.0, 10.0, -4.0, 400.0, 0.0]);
+        // Before the first shot and at it, the camera is at the start.
+        assert_eq!(glide(from, to, clip.progress()), from);
+        clip.taken = 1;
+        assert_eq!(glide(from, to, clip.progress()), from);
+        clip.taken = 3;
+        assert_eq!(glide(from, to, clip.progress()), [4.0, 10.0, -2.0, 200.0, -5.0]);
+        clip.taken = 5;
+        assert_eq!(glide(from, to, clip.progress()), to);
+    }
+
+    #[test]
+    fn each_clip_shot_waits_for_the_server_ticks_its_game_time_holds() {
+        // 30 shots a second, 20 ticks: two ticks for every three shots.
+        let ticks: Vec<u64> = (0..7).map(|n| Clip::tick_of(100, n)).collect();
+        assert_eq!(ticks, [100, 100, 101, 102, 102, 103, 104]);
+        assert_eq!(Clip::tick_of(100, CLIP_RATE), 100 + u64::from(voxmar_protocol::TICKS_PER_SECOND));
     }
 }

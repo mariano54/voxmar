@@ -1,0 +1,143 @@
+{
+  "about": "voxmar's 30 second trailer, made by trailer.py beside this file. The timeline plays in order, each piece lasting `beats` beats of the music. A shot is a --clip capture of a fresh world of `seed`: `commands` run once in game (a /tp to the place), the camera glides from `pose` to `pose_to` (offset from the player's eye in blocks, then yaw and pitch in degrees) at the `time` of day (0 is sunrise), with `weather` shown if given. Cards are drawn in the game's font, `{name}` replaced by a count from the content (biomes, cave_biomes, skills, creatures).",
+  "size": [
+    3840,
+    2160
+  ],
+  "scale_factor": 2,
+  "fov": 70,
+  "settings": {
+    "about": "The game's settings for every shot, written to a settings.ron of the trailer's own: the best of each. minecraft_assets is always false and textures always Voxmar, whatever is set here.",
+    "view_distance": 32,
+    "anti_aliasing": "Msaa4",
+    "shadows": "Ultra",
+    "water_quality": "High",
+    "far_detail": "Full",
+    "volumetric_light": true,
+    "particles": "All",
+    "vsync": false
+  },
+  "beat": 0.857,
+  "fade_in": 0.6,
+  "fade_out": 1.2,
+  "music": {
+    "about": "skyward_serenity, one of the four Suno tracks: a phrase starts 10.75 s in and the next ends 30.8 s later. Swap `track` and `start` to change it.",
+    "track": "assets/music/skyward_serenity.mp3",
+    "start": 10.75,
+    "fade_in": 0.2,
+    "fade_out": 1.5
+  },
+  "card_style": {
+    "background": "#0c0e12",
+    "text": "#f3ead2",
+    "shadow": "#3a3226",
+    "pixels": 28,
+    "sub_pixels": 11,
+    "line_gap": 4,
+    "fade": 0.18,
+    "ja_font": "assets/ui/fonts/japanese/fusion-pixel-12px-monospaced-ja.ttf",
+    "ja_pixels": 18,
+    "ja_sub_pixels": 8
+  },
+  "timeline": [
+    {
+      "shot": "peaks",
+      "beats": 3
+    },
+    {
+      "shot": "river",
+      "beats": 3
+    },
+    {
+      "card": "biomes",
+      "beats": 2
+    },
+    {
+      "shot": "coast",
+      "beats": 3
+    },
+    {
+      "shot": "waterfall",
+      "beats": 3
+    },
+    {
+      "card": "weather",
+      "beats": 2
+    },
+    {
+      "shot": "blizzard",
+      "beats": 3
+    },
+    {
+      "card": "skills",
+      "beats": 2
+    },
+    {
+      "shot": "village",
+      "beats": 3
+    },
+    {
+      "shot": "combat",
+      "beats": 3
+    },
+    {
+      "card": "performance",
+      "beats": 2
+    },
+    {
+      "shot": "flight",
+      "beats": 3
+    },
+    {
+      "card": "title",
+      "beats": 3
+    }
+  ],
+  "cards": {
+    "biomes": {
+      "en": [
+        "{biomes} BIOMES",
+        "AND {cave_biomes} MORE UNDERGROUND"
+      ],
+      "ja": [
+        "{biomes}のバイオーム",
+        "地下にも{cave_biomes}のバイオーム"
+      ]
+    },
+    "weather": {
+      "en": [
+        "LIVING WEATHER"
+      ],
+      "ja": [
+        "移りゆく天気"
+      ]
+    },
+    "skills": {
+      "en": [
+        "{skills} SKILLS"
+      ],
+      "ja": [
+        "{skills}のスキル"
+      ]
+    },
+    "performance": {
+      "en": [
+        "HIGH PERFORMANCE"
+      ],
+      "ja": [
+        "高パフォーマンス"
+      ]
+    },
+    "title": {
+      "en": [
+        "VOXMAR",
+        "OPEN SOURCE · MODDABLE"
+      ],
+      "ja": [
+        "ボクスマー",
+        "オープンソース・MOD対応"
+      ]
+    }
+  },
+  "shots": {}
+}

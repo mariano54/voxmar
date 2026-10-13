@@ -1038,6 +1038,28 @@ fn the_server_console_runs_commands_as_an_admin() {
     guest.pump_until(|c| c.allow_flight);
 }
 
+/// A paced server ticks exactly as far as it is let, however long it is left, and goes on
+/// by the clock once let go (a clip recorded frame by frame paces it).
+#[test]
+fn a_paced_server_ticks_as_far_as_it_is_let_and_no_further() {
+    fn ticks(c: &Client) -> u64 {
+        c._server.as_ref().expect("joined in-process").ticks()
+    }
+    let mut client = Client::join();
+    client._server.as_ref().unwrap().pace(Some(0));
+    // The command's answer comes after the server has read the pace, so it ticks no more.
+    client.settle();
+    let held = ticks(&client) + 30;
+    client._server.as_ref().unwrap().pace(Some(held));
+    client.pump_until(|c| ticks(c) >= held);
+    for _ in 0..10 {
+        client.settle();
+    }
+    assert_eq!(ticks(&client), held, "a paced server ticked past its pace");
+    client._server.as_ref().unwrap().pace(None);
+    client.pump_until(|c| ticks(c) > held);
+}
+
 #[test]
 fn walking_wears_a_path() {
     let mut client = Client::join();

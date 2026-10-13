@@ -14,7 +14,8 @@
 //! pixels per interface pixel, 2 to shoot as a Retina display draws: use twice the size), `--clip SECONDS` (save
 //! every frame of that much game time at 30 fps instead, to check motion; `--clip-join` starts
 //! it the moment the player joins rather than once the world has settled, `--clip-command LINE`
-//! runs a console command as it starts), `--windowed`
+//! runs a console command as it starts, `--pose-to dx,dy,dz,yaw,pitch` glides the camera there
+//! from `--pose` through the clip, `--no-hud` hides the interface), `--windowed`
 //! (draw to a real window and shoot that, for what only a window has, such as the render
 //! scale; with the saved settings when `VOXMAR_CONFIG` is set), `--flicker` or
 //! `--flicker-still` (measure shimmer; see capture.rs) or
@@ -97,6 +98,10 @@ struct Options {
     gate: Option<std::path::PathBuf>,
     server_lag: Option<u64>,
     pose: Option<[f32; 5]>,
+    /// `--pose-to`: where a clip's camera glides to from `pose`.
+    pose_to: Option<[f32; 5]>,
+    /// `--no-hud`: keep the HUD hidden in a capture.
+    no_hud: bool,
     flight: Option<f32>,
     dig: Option<f32>,
     wait: f32,
@@ -176,6 +181,8 @@ fn parse_options() -> Result<Options, String> {
         gate: None,
         server_lag: None,
         pose: None,
+        pose_to: None,
+        no_hud: false,
         flight: None,
         dig: None,
         wait: 0.0,
@@ -297,8 +304,16 @@ fn parse_options() -> Result<Options, String> {
                 let parts: Vec<f32> = value()?.split(',').map(str::parse).collect::<Result<_, _>>().map_err(|e| format!("--pose: {e}"))?;
                 options.pose = Some(parts.try_into().map_err(|_| "--pose needs x,y,z,yaw,pitch")?);
             }
+            "--pose-to" => {
+                let parts: Vec<f32> = value()?.split(',').map(str::parse).collect::<Result<_, _>>().map_err(|e| format!("--pose-to: {e}"))?;
+                options.pose_to = Some(parts.try_into().map_err(|_| "--pose-to needs x,y,z,yaw,pitch")?);
+            }
+            "--no-hud" => options.no_hud = true,
             _ => return Err(format!("unknown argument {arg}")),
         }
+    }
+    if options.pose_to.is_some() && (options.pose.is_none() || options.clip.is_none()) {
+        return Err("--pose-to needs --pose and --clip: the camera glides from one to the other through the clip".into());
     }
     Ok(options)
 }
@@ -520,6 +535,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.add_plugins(capture::CapturePlugin {
             path,
             pose: options.pose,
+            pose_to: options.pose_to,
+            no_hud: options.no_hud,
             flight: options.flight,
             dig: options.dig,
             wait: options.wait,

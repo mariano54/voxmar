@@ -280,7 +280,13 @@ pub struct ServerHandle {
     thread: Option<JoinHandle<()>>,
     tick_times: Arc<Mutex<VecDeque<Duration>>>,
     ticks: Arc<AtomicU64>,
+    /// The tick count the server may run up to while paced (see `ServerHandle::pace`), or
+    /// `UNPACED` while it keeps the wall clock.
+    pace: Arc<AtomicU64>,
 }
+
+/// `ServerHandle::pace` unset: the server ticks by the wall clock.
+const UNPACED: u64 = u64::MAX;
 
 /// Ticks whose times a server keeps, for `ServerHandle::tick_times`: the last minute.
 const TICK_TIMES: usize = 60 * TICKS_PER_SECOND as usize;
@@ -296,6 +302,14 @@ impl ServerHandle {
     /// on a busy machine keeps, where wall-clock seconds do not.
     pub fn ticks(&self) -> u64 {
         self.ticks.load(Ordering::Relaxed)
+    }
+
+    /// Paces the server by its caller rather than the wall clock: it ticks as fast as it can
+    /// until `ticks` reaches `until`, then waits for the next call. A clip recorded frame by
+    /// frame uses it so creatures move in the clip's time, however slowly the frames draw.
+    /// `None` returns the server to the wall clock.
+    pub fn pace(&self, until: Option<u64>) {
+        self.pace.store(until.unwrap_or(UNPACED), Ordering::Relaxed);
     }
 
     /// Sender for new connections (local or accepted by a TCP listener).
@@ -343,17 +357,18 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
     let stop = Arc::new(AtomicBool::new(false));
     let tick_times = Arc::new(Mutex::new(VecDeque::with_capacity(TICK_TIMES)));
     let ticks = Arc::new(AtomicU64::new(0));
+    let pace = Arc::new(AtomicU64::new(UNPACED));
     let thread = {
-        let (stop, tick_times, ticks) = (stop.clone(), tick_times.clone(), ticks.clone());
+        let (stop, tick_times, ticks, pace) = (stop.clone(), tick_times.clone(), ticks.clone(), pace.clone());
         std::thread::Builder::new()
             .name("server".into())
             .spawn(move || {
                 let mut server = Server::new(config, meta, save, state, content, incoming, lines);
                 server.generation_changed = generation_changed;
-                server.run(&stop, &tick_times, &ticks)
+                server.run(&stop, &tick_times, &ticks, &pace)
             })?
     };
-    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks })
+    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks, pace })
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -611,8 +626,9 @@ impl Server {
     }
 
     /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are
-    /// handled as soon as they arrive so actions feel immediate.
-    fn run(mut self, stop: &AtomicBool, tick_times: &Mutex<VecDeque<Duration>>, ticks: &AtomicU64) {
+    /// handled as soon as they arrive so actions feel immediate. While paced (see
+    /// `ServerHandle::pace`), ticks run as soon as the pace allows instead.
+    fn run(mut self, stop: &AtomicBool, tick_times: &Mutex<VecDeque<Duration>>, ticks: &AtomicU64, pace: &AtomicU64) {
         let tick_length = Duration::from_secs(1) / TICKS_PER_SECOND;
         let mut next_tick = Instant::now();
         while !stop.load(Ordering::Relaxed) {
@@ -627,7 +643,13 @@ impl Server {
                 self.console(&line);
             }
             let now = Instant::now();
-            if now >= next_tick {
+            let until = pace.load(Ordering::Relaxed);
+            let due = if until == UNPACED { now >= next_tick } else { ticks.load(Ordering::Relaxed) < until };
+            if until != UNPACED {
+                // Back on the wall clock, the next tick is a tick from the last.
+                next_tick = now + tick_length;
+            }
+            if due {
                 self.tick();
                 ticks.fetch_add(1, Ordering::Relaxed);
                 if let Ok(mut times) = tick_times.lock() {
@@ -637,6 +659,9 @@ impl Server {
                     times.push_back(now.elapsed());
                 }
                 std::thread::sleep(self.config.lag.of_tick(self.tick));
+                if until != UNPACED {
+                    continue;
+                }
                 next_tick += tick_length;
                 if now > next_tick + tick_length * 10 {
                     tracing::warn!("server is running behind, skipping ticks");
