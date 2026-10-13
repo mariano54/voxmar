@@ -81,26 +81,55 @@ pub struct Ground<'a> {
 
 /// A box of the band table, as a span of each table axis.
 pub(crate) struct Gate {
-    spans: [(f32, f32); 4],
+    ramps: [(Option<Ramp>, Option<Ramp>); 4],
+}
+
+/// The exact endpoint and subtraction used by a band edge's smoothstep. These are
+/// constant for the gate; the width must be the rounded endpoint difference, not the
+/// nominal ramp (a small ramp can round away at a large endpoint).
+#[derive(Clone, Copy)]
+struct Ramp {
+    start: f32,
+    width: f32,
+}
+
+impl Ramp {
+    fn weight(self, value: f32) -> f32 {
+        let t = ((value - self.start) / self.width).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
 }
 
 impl Gate {
     /// The gate of a climate box written on the bands of `climate.ron`.
     pub(crate) fn new(content: &WorldContent, climate: &ClimateBox) -> Self {
-        Gate { spans: [Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion].map(|axis| content.span(axis, climate.bands(axis))) }
+        Self::from_spans([Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion].map(|axis| content.span(axis, climate.bands(axis))))
+    }
+
+    fn from_spans(spans: [(f32, f32); 4]) -> Self {
+        let ramps = std::array::from_fn(|axis| {
+            let (lo, hi) = spans[axis];
+            let ramp = |edge: f32| if axis == 1 { RAMPS[1] * edge.abs().max(0.3) } else { RAMPS[axis] };
+            let lower = lo.is_finite().then(|| Ramp { start: lo, width: (lo + ramp(lo)) - lo });
+            let upper = hi.is_finite().then(|| {
+                let start = hi - ramp(hi);
+                Ramp { start, width: hi - start }
+            });
+            (lower, upper)
+        });
+        Gate { ramps }
     }
 
     /// How far inside the box a climate lies, 0 ..= 1, from its regional temperature,
     /// moisture, continentalness and landform class, fading in just inside each edge.
     pub(crate) fn weight(&self, fields: &[f32; 4]) -> f32 {
         let mut weight = 1.0;
-        for (axis, (&(lo, hi), &v)) in self.spans.iter().zip(fields).enumerate() {
-            let ramp = |edge: f32| if axis == 1 { RAMPS[1] * edge.abs().max(0.3) } else { RAMPS[axis] };
-            if lo.is_finite() {
-                weight *= smoothstep(lo, lo + ramp(lo), v);
+        for (&(lower, upper), &v) in self.ramps.iter().zip(fields) {
+            if let Some(ramp) = lower {
+                weight *= ramp.weight(v);
             }
-            if hi.is_finite() {
-                weight *= 1.0 - smoothstep(hi - ramp(hi), hi, v);
+            if let Some(ramp) = upper {
+                weight *= 1.0 - ramp.weight(v);
             }
             if weight == 0.0 {
                 break;
@@ -652,10 +681,106 @@ fn standalone_chance(kind: ShapeKind, share: f32, dials: &WorldDials) -> (f32, f
 mod tests {
     use super::*;
 
+    /// Literal precomputed-ramp predecessor; it derives every endpoint at the call,
+    /// without reading the production gate's ramps or using its weight helper.
+    fn original_gate_weight(spans: &[(f32, f32); 4], fields: &[f32; 4]) -> f32 {
+        let mut weight = 1.0;
+        for (axis, (&(lo, hi), &v)) in spans.iter().zip(fields).enumerate() {
+            let ramp = |edge: f32| if axis == 1 { RAMPS[1] * edge.abs().max(0.3) } else { RAMPS[axis] };
+            if lo.is_finite() {
+                weight *= smoothstep(lo, lo + ramp(lo), v);
+            }
+            if hi.is_finite() {
+                weight *= 1.0 - smoothstep(hi - ramp(hi), hi, v);
+            }
+            if weight == 0.0 {
+                break;
+            }
+        }
+        weight
+    }
+
+    #[test]
+    fn gates_precompute_ramps_keep_original_weight_bits() {
+        let any = (f32::NEG_INFINITY, f32::INFINITY);
+        let nan = f32::from_bits(0x7fc00123);
+        let mut checked = 0;
+        let mut check = |gate: &Gate, spans: &[(f32, f32); 4], fields: [f32; 4]| {
+            let actual = gate.weight(&fields);
+            let expected = original_gate_weight(spans, &fields);
+            assert_eq!(actual.to_bits(), expected.to_bits(), "spans {spans:?}, fields {fields:?}: {actual} / {expected}");
+            checked += 1;
+        };
+        let values = [f32::NEG_INFINITY, -f32::MAX, -1.0e8, -25.0, -1.0, -0.0, 0.0, 0.1, 0.3, 0.34, 0.5, 1.0, 17.0, 17.5, 25.0, 1.0e8, f32::MAX, f32::INFINITY, nan];
+        let bounds = [any, (17.0, f32::INFINITY), (f32::NEG_INFINITY, 0.34), (0.0, 0.5), (0.3, 0.31), (-10.0, 10.0), (-0.0, 0.0), (1.0e8, 1.0e8), (-f32::MAX, f32::MAX), (f32::MAX, f32::INFINITY), (f32::NEG_INFINITY, -f32::MAX), (1.0, -1.0), (nan, 0.34), (17.0, nan), (f32::INFINITY, f32::NEG_INFINITY)];
+        // Other axes are unbounded so no earlier zero can hide the edge under test.
+        for axis in 0..4 {
+            for (lo, hi) in bounds {
+                let mut spans = [any; 4];
+                spans[axis] = (lo, hi);
+                let gate = Gate::from_spans(spans);
+                let ramp = |edge: f32| if axis == 1 { RAMPS[1] * edge.abs().max(0.3) } else { RAMPS[axis] };
+                let mut probes = values.to_vec();
+                for edge in [lo, lo + ramp(lo), hi - ramp(hi), hi].into_iter().filter(|e| e.is_finite()) {
+                    probes.extend([edge, f32::from_bits(edge.to_bits().wrapping_sub(1)), f32::from_bits(edge.to_bits().wrapping_add(1))]);
+                }
+                for value in probes {
+                    let mut fields = [25.0, 0.1, 0.3, 0.2];
+                    fields[axis] = value;
+                    check(&gate, &spans, fields);
+                }
+            }
+        }
+        // Exercise the real constructor and every current terrain/tarn climate box,
+        // including products of axes and early zeros before a later NaN.
+        let registry = crate::test_registry();
+        let content = WorldContent::base(&registry).unwrap();
+        let boxes = content.shapes.iter().flat_map(|s| &s.climate).chain(content.tarns.iter().flat_map(|t| &t.climate));
+        let mut real_boxes = 0;
+        for climate in boxes {
+            real_boxes += 1;
+            let spans = [Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion].map(|axis| content.span(axis, climate.bands(axis)));
+            let gate = Gate::new(&content, climate);
+            let ramp = |axis: usize, edge: f32| if axis == 1 { RAMPS[1] * edge.abs().max(0.3) } else { RAMPS[axis] };
+            let middle = std::array::from_fn(|axis| {
+                let (lo, hi) = spans[axis];
+                match (lo.is_finite(), hi.is_finite()) {
+                    (true, true) => lo + (hi - lo) * 0.5,
+                    (true, false) => lo + 2.0 * ramp(axis, lo),
+                    (false, true) => hi - 2.0 * ramp(axis, hi),
+                    (false, false) => 0.0,
+                }
+            });
+            for axis in 0..4 {
+                let (lo, hi) = spans[axis];
+                let mut probes = values.to_vec();
+                for edge in [lo, lo + ramp(axis, lo), hi - ramp(axis, hi), hi].into_iter().filter(|e| e.is_finite()) {
+                    probes.extend([edge, f32::from_bits(edge.to_bits().wrapping_sub(1)), f32::from_bits(edge.to_bits().wrapping_add(1))]);
+                }
+                probes.extend([0.25, 0.5, 0.75].into_iter().flat_map(|f| [lo + f * ramp(axis, lo), hi - f * ramp(axis, hi)]).filter(|v| v.is_finite()));
+                // Keep other axes inside this actual box so an early zero cannot mask
+                // its fade values, including ramps between adjacent float probes.
+                for value in probes {
+                    let mut fields = middle;
+                    fields[axis] = value;
+                    check(&gate, &spans, fields);
+                }
+            }
+            check(&gate, &spans, [f32::NEG_INFINITY, nan, nan, nan]);
+            check(&gate, &spans, [nan, nan, nan, nan]);
+        }
+        assert!(real_boxes > 0);
+        // Storing the nominal 1.5 ramp would differ: this endpoint loses it to rounding.
+        let rounded = Gate::from_spans([(1.0e8, f32::INFINITY), any, any, any]);
+        assert_eq!(rounded.ramps[0].0.unwrap().width.to_bits(), 0.0f32.to_bits());
+        assert!(rounded.weight(&[1.0e8, 0.0, 0.0, 0.0]).is_nan());
+        println!("{checked} original full-weight bit comparisons, {real_boxes} real terrain/tarn boxes");
+    }
+
     #[test]
     fn gates_ramp_in_inside_their_edges() {
         // Temperature 17 °C and up, moisture below 0.34.
-        let gate = Gate { spans: [(17.0, f32::INFINITY), (f32::NEG_INFINITY, 0.34), (f32::NEG_INFINITY, f32::INFINITY), (0.0, 0.5)] };
+        let gate = Gate::from_spans([(17.0, f32::INFINITY), (f32::NEG_INFINITY, 0.34), (f32::NEG_INFINITY, f32::INFINITY), (0.0, 0.5)]);
         let at = |t: f32, m: f32| gate.weight(&[t, m, 0.3, 0.2]);
         assert_eq!(at(16.9, 0.1), 0.0);
         assert_eq!(at(25.0, 0.4), 0.0);
