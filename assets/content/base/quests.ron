@@ -137,7 +137,7 @@
         ),
         (
             name: "hide_and_seek", age: "nomad", branch: "hunter", title: "Hide and Seek",
-            why: "Hide makes armour, pouches and bedding. Rabbits and deer drop it, and a knife in your hand makes it drop more often. Gather four hides. Keep two bones as well: a bone makes a club, a needle, a handle.",
+            why: "Hide makes armour, pouches and bedding. Rabbits on grassland drop it, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
             tasks: [[Have("hide", 4), Have("bone", 2)]],
             after: ["small_game", "a_sharp_edge"],
             rewards: [Xp("hunter", 60.0), Xp("crafting", 30.0)],
@@ -382,8 +382,8 @@
         ),
         (
             name: "fresh_eggs", age: "farm", branch: "husbandry", title: "Fresh Eggs",
-            why: "A kept hen lays on the ground near her. Collect six eggs: they fry on a campfire, and a hen that is fed, watered and sheltered lays more. Fry one to taste the reward.",
-            tasks: [[Have("egg", 6), Cook("fried_egg", 1)]],
+            why: "A kept hen lays on the ground near her. Collect six eggs: they fry on a campfire, and a hen that is fed, watered and sheltered lays more. Fry one to taste the reward, and keep the other five.",
+            tasks: [[Have("egg", 5), Cook("fried_egg", 1)]],
             after: ["hens_in_a_row"],
             rewards: [Xp("farming", 100.0)],
         ),
