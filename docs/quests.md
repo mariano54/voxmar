@@ -292,4 +292,3 @@ Quests that teach it:
 - **A Stone's Throw** (Nomad, combat, after Twine and Thong): craft a sling, reach Ranged 2.
 - **Bow and Arrow** (Farm, combat, after Homestead Hearth): craft a short bow and eight
   arrows, reach Ranged 5.
-
