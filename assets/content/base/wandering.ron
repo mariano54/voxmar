@@ -881,5 +881,94 @@
                 (name: "took", needs: [When(Took)]),
             ])],
         ),
+        // A potter and an apprentice dig clay at a bank and carry it to their pile, by the
+        // little kiln they fire it in. Clay handed over comes back fired, none cracked, one
+        // kept for their trouble; a beginner who shows a fired piece learns to throw a pot.
+        // Only where clay shows at the water's edge.
+        (
+            name: "clay_diggers", weight: 0.7,
+            biomes: [("tag:river", 1.2), ("tag:wetland", 1.0), ("tag:grassland", 0.6), ("tag:open", 0.5)],
+            daylight: (0.25, 0.85), needs: (days: 1.5, home: Some(true)),
+            cast: [(species: "villager"), (species: "child", count: (0, 1), role: Follow)],
+            script: Gather(reach: 24.0, work: (8.0, 14.0), visits: 6, carry: Some((set: (2.0, 4.0)))),
+            seek: ["clay"],
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "fire", wants: ("clay", 2), gives: [Cook("pit_kiln", 8, 1)], once: Player),
+                (name: "pot", needs: [Below("crafting", 8)], wants: ("fired_clay", 1), gives: [Xp("crafting", 12.0)], once: Player),
+            ])],
+        ),
+        // Harvest home: villagers carry the last sheaf of the year past folk's fields near
+        // their homes, singing. A sheaf of your own wheat on their dolly and the crops about
+        // them grow on a stage; a beginner learns the sowing song.
+        (
+            name: "harvest_home", weight: 0.6,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("base:steppe", 0.6), ("tag:forest", 0.3)],
+            daylight: (0.3, 0.9), needs: (days: 2.0, home: Some(true), near_home: Some(40.0)),
+            cast: [(species: "farmer"), (species: "villager", count: (1, 2), role: Follow), (species: "child", count: (1, 2), role: Follow)],
+            script: March(pass: (5.0, 12.0), length: 140.0, pace: 0.6),
+            halt: (near: 7.0, seconds: (20.0, 30.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "sheaf", wants: ("wheat", 3), gives: [Grow(32.0, 1), Xp("farming", 10.0)], once: Party),
+                (name: "song", needs: [Below("farming", 5)], gives: [Item("wheat_seeds", (3, 4)), Xp("farming", 6.0)], once: Player),
+            ])],
+        ),
+        // Coal carters walk sacks of coal to the nearest town. Keep with them on the road
+        // and at the town they give a little of it; on the way they show a beginner how
+        // coal over a stick makes a torch, and say where coal shows at the surface.
+        (
+            name: "coal_carters", weight: 0.6, lifetime: 1500.0,
+            biomes: [("tag:mountain", 1.0), ("tag:open", 0.8), ("tag:forest", 0.6), ("tag:grassland", 0.6)],
+            daylight: (0.3, 0.9), needs: (days: 0.8),
+            cast: [(species: "villager"), (species: "villager", count: (1, 2), role: Follow)],
+            script: Journey(reach: 600.0, pace: 0.8, near: 16.0),
+            halt: (near: 6.0, seconds: (6.0, 10.0), cooldown: 45.0),
+            reveal: [Item("coal_ore", (2, 3)), Xp("mining", 8.0)],
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "there", needs: [When(Arrived)]),
+                (name: "torch", needs: [Below("engineering", 5)], wants: ("stick", 2), gives: [Item("coal_ore", (1, 1)), Xp("engineering", 6.0)], once: Player),
+                (name: "seam", gives: [Point("coal_ore_sample", 128.0)], once: Player),
+            ])],
+        ),
+        // A tanner on the road, hides drying on a frame by their camp: after the hunters
+        // come the hides. Four hides buy two coins, once; a beginner holding one is shown
+        // how to scrape and cure it.
+        (
+            name: "tanner", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:grassland", 0.8)],
+            daylight: (0.3, 0.9), needs: (days: 1.2),
+            cast: [(species: "tanner"), (species: "hound", count: (0, 1), role: Pet(0))],
+            script: Camp(near: 22.0, stay: (240.0, 360.0), mill: 3.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "scrape", needs: [Holds("hide"), Below("crafting", 6)], gives: [Xp("crafting", 10.0)], once: Player),
+                (name: "buy", wants: ("hide", 4), gives: [Item("gold_coin", (2, 2))], once: Player),
+            ])],
+        ),
+        // A piper at dusk near folk's homes with the field mice of their stores at his heels.
+        // He waits to be seen, then leads them off; follow him to the end of his tune and he
+        // leaves the seed they would have eaten. Strike him and he and the mice scatter.
+        (
+            name: "rat_catcher", weight: 0.4,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.15, 0.45), needs: (days: 1.5, home: Some(true), near_home: Some(80.0)),
+            cast: [(species: "bard"), (species: "field_mouse", count: (3, 5), role: Follow)],
+            script: Lure(keep: (5.0, 16.0), length: 110.0, pace: 0.8, patience: 150.0, linger: 6.0),
+            hurt: Scatter,
+            reveal: [Item("seed_mix", (3, 4)), Xp("farming", 12.0)],
+        ),
+        // Miners benighted far from home, their lamp gone out, sitting it out where the
+        // dark found them. Coal or charcoal and they light it again and pay for it; they
+        // know where coal shows, and tell it.
+        (
+            name: "benighted_miners", weight: 0.5,
+            biomes: [("tag:mountain", 1.2), ("tag:open", 0.8), ("tag:forest", 0.6)],
+            daylight: (0.0, 0.2), needs: (days: 1.2, away: Some((80.0, 100000.0))),
+            cast: [(species: "villager"), (species: "villager", count: (1, 2), role: Follow)],
+            script: Roam(radius: 0.0, pause: (40.0, 60.0), rest: true, seconds: 300.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "relight", wants: ("tag:coal", 1), gives: [Item("gold_coin", (1, 1)), Xp("mining", 8.0)], once: Player),
+                (name: "seam", gives: [Point("coal_ore_sample", 128.0)], once: Player),
+            ])],
+        ),
     ],
 )
