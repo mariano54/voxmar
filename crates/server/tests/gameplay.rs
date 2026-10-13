@@ -4148,16 +4148,16 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     client.pump_until(|c| c.kinds.len() > blows);
     assert_eq!(client.kinds[blows], Blow::Counter);
     assert!(client.damage[blows] > 0, "a counter cannot miss");
-    // Staggered after its recovery: its next blow comes no sooner than both, and a wind-up.
+    // A dodge just before the blow: it passes through. Tried first on the staggered bear's
+    // next blow, which a dodge does not hasten or delay.
     face(&mut client, id, slot, false);
-    let next = wait_for_blow(&mut client, id, perfect + 1);
+    let dodged = answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
+    assert_eq!(client.hurt[dodged].0, 0, "a dodged blow takes nothing");
+    // Staggered after its recovery: its next blow came no sooner than both, and a wind-up.
+    let next = blow_from(&client.hurt_by, id, perfect + 1).expect("the bear struck again");
     let gap = client.hurt_at[next] - client.hurt_at[perfect];
     let least = recovery + feel.stagger + windup;
     assert!(gap.as_secs_f32() > least - 0.1, "its next blow came {:.2}s after the perfect block: under {least:.2}s", gap.as_secs_f32());
-    // A dodge just before the blow: it passes through.
-    client.wait_server(1);
-    let dodged = answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
-    assert_eq!(client.hurt[dodged].0, 0, "a dodged blow takes nothing");
 }
 
 #[test]
