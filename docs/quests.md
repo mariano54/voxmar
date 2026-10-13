@@ -203,3 +203,61 @@ The Crucible Kiln is now three parts, as Homestead Hearth is: the crucible made,
 standing (`Built`, counted when its crucible is right-clicked whole, which also names the
 fuel it wants), and the kiln lit (`Lit`). Lighting always counts both, so a kiln lit
 before this still reads done, and `quests_done` keeps finished quests finished.
+
+## Every skill in the first two ages (Oct 13)
+
+Each of the fourteen skills, the first Nomad or Farm quest that teaches it, what its early
+levels open (core's `skills.ron` guide), and its first tool or station upgrade.
+
+| Skill | First quest that teaches it | What it opens early | First upgrade |
+| --- | --- | --- | --- |
+| Farming | A Handful of Grain (Nomad) | Sow wheat at 1, mallards 3, carrots and mouflon 5 | Wooden to stone hoe (Break Ground) |
+| Hunter | A Friend in the Wild (Nomad) | Tame fowl and rabbits at 1, mallards 3, mouflon 5, goats 8 | A knife, for more hide (A Sharp Edge) |
+| Mining | A Pile of Stone (Nomad) | Stone and coal at 1, copper 5, tin 10 | Wooden to stone pickaxe (Stone in Hand), then copper (Red Metal) |
+| Cooking | First Night (Nomad) | Campfire meat and fish at 1, carrots 2, mutton 5, seed mix 8 | Campfire to cottage stove (Workshop and Stove) |
+| Engineering | Crafting Table (Nomad) | Tools at 1, copper ingots and tools 5, crucible 10, bronze 12 | The crafting table, then the Crucible Kiln |
+| Crafting | Look It Up and Twine and Thong (Nomad) | Pouches 3, kiln bricks and workshop pieces 5, loom 8; fired clay cracks until 12 | The pit kiln (A Pit Kiln) |
+| Construction | Homestead Hearth (Nomad) | Stool 1, table 3, bed and altar 5, bookshelf 8 | A workbench at home (A Bench to Work At) |
+| Fishing | Rod and Line (Nomad) | Shrimp and minnows at 1, sardines 5, perch 10 | The fishing rod |
+| Attack | Something to Swing (Nomad) | Stone weapons at 1, copper 5 | Fist to stone sword or bone club, then copper (Copper Arms) |
+| Defence | Hide Wraps, then **Hard to Put Down** (Nomad, new) | Hide armour at 1, copper armour 10 | Hide wraps, then a shield (Raise Your Guard) |
+| Hitpoints | **Hard to Put Down** (Nomad, new) | Twice your level in health; 12 is 24 | None: it grows with blows landed |
+| Magic | A Place to Pray (Farm) | Bark Skin at 1, Ember Arm 4, Mending 10 | The stone altar |
+| Alchemy | **Herb Lore** (Nomad, new) | A taste only: herb lore from three kinds of wanderer | None yet |
+| Ranged | None | None yet | None yet |
+
+Two new side quests fill the skills that had nothing before:
+- **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 3 and Hitpoints 12. Both
+  skills train only in a fight, and nothing had pointed at either of them.
+- **Herb Lore** (Nomad, farming, after Herb Gatherer) asks the player to deal with a herb
+  gatherer, a travelling alchemist or a wandering healer. These are the three wanderers that
+  teach Alchemy for herbs, and they are the only Alchemy anything gives today.
+
+Left for later, on purpose:
+- **Alchemy past a taste.** Alchemy 5 and up is brewing: tonics, then cauldrons and draughts.
+  None of it exists yet, so a quest for an Alchemy level would be grinding the same three
+  wanderers. Alchemy quests wait for brewing.
+- **Ranged.** No bow, sling or thrown weapon exists. The guide's shortbow at 5 has no
+  recipe, so Ranged waits for its weapons.
+
+## A wait always has something beside it (Oct 13)
+
+The main line has no idle waits: in the bot's timeline (docs/first-days.md), every stretch
+is digging, firing or crafting. The idle waits are off it: crops growing, animals laying or
+regrowing, a herb growing back, and the night. Each quest that sets one off now names, in
+en and ja, an optional quest that is already open at that moment:
+
+| Wait | Length | Quest that sets it off | What its text offers meanwhile (all open by then) |
+| --- | --- | --- | --- |
+| Wheat ripening | 12 min | First Harvest | Patient Angler, Hens in a Row, A Seat by the Fire |
+| A field resown | 12 min a crop | A Field of Gold | Camp Cook, Herb Garden |
+| Carrots ripening | 14 min | Carrot Patch | A Kitchen Garden, which grows on the same crops |
+| A hen laying | 5 min an egg | Fresh Eggs | A Woolly Flock, A Full House |
+| Wool growing back | 6 min | Wool Gathering | Wool and Dye, The Milk Pail |
+| Milk | 5 min | The Milk Pail | A Full Pen |
+| A herb growing back | Its regrowth | Herb Garden | Herb Lore (new) |
+| Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Coal and Cinders underground, cooking and crafting at home |
+| Long clay firing | 59 + 97 s of firing for the bot | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+
+A script checked that every quest title written in parentheses in a why is a real quest's
+title, and every 「」 name in ja is a real ja title, apart from the Prayers menu.

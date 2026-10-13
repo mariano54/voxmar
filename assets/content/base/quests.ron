@@ -85,7 +85,7 @@
         ),
         (
             name: "torchlight", age: "nomad", branch: "main", title: "Torchlight",
-            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a wooden one. Make eight.",
+            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a wooden one. Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal (Coal and Cinders), or cooking and crafting at home.",
             tasks: [[Craft("torch", 8)]],
             after: ["first_night"],
             rewards: [Xp("engineering", 21.0)],
@@ -158,6 +158,13 @@
             rewards: [Xp("crafting", 50.0), Xp("defence", 40.0)],
         ),
         (
+            name: "hard_to_put_down", age: "nomad", branch: "combat", title: "Hard to Put Down",
+            why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 3 and Hitpoints 12.",
+            tasks: [[Level("defence", 3), Level("hitpoints", 12)]],
+            after: ["hide_wraps"],
+            rewards: [Xp("defence", 60.0), Xp("hitpoints", 40.0)],
+        ),
+        (
             name: "meat_and_fire", age: "nomad", branch: "cooking", title: "Meat on the Fire",
             why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: rabbit, chicken, duck or frog. Ducks and frogs live by rivers and in swamps. A higher Cooking level burns less. Six good meals will also take you to Cooking 2.",
             tasks: [[Cook("tag:meat", 6), Level("cooking", 2)]],
@@ -210,6 +217,13 @@
             tasks: [[Pick("tag:herb", 5)]],
             after: ["wild_harvest"],
             rewards: [Xp("farming", 60.0)],
+        ),
+        (
+            name: "herb_lore", age: "nomad", branch: "farming", title: "Herb Lore",
+            why: "Alchemy is knowing what each herb carries. Brewing comes in a later age, but folk on the road teach the first of it now: an old herb gatherer shares lore for a herb, a wandering healer makes a salve of three, and a travelling alchemist wants two each of six kinds. Carry herbs on your rounds and deal with one of them.",
+            tasks: [[Met("herb_gatherer", 1)], [Met("travelling_alchemist", 1)], [Met("wandering_healer", 1)]],
+            after: ["herb_gatherer"],
+            rewards: [Xp("alchemy", 30.0), Xp("farming", 40.0)],
         ),
         (
             name: "neighbours", age: "nomad", branch: "explore", title: "Wild Neighbours",
@@ -327,7 +341,7 @@
         ),
         (
             name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",
-            why: "Brick by Brick takes a lot of fired clay, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with.",
+            why: "Brick by Brick takes a lot of fired clay, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road (Fired Whole).",
             tasks: [[Cook("fired_clay", 40)]],
             after: ["the_potter"],
             rewards: [Xp("crafting", 120.0), Item("kiln_bricks", 4)],
@@ -362,28 +376,28 @@
         ),
         (
             name: "first_harvest", age: "farm", branch: "farming", title: "First Harvest",
-            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds on the farmland (right-click), keep water within four blocks, and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest. Harvest four. Keep the four wheat you harvest in your pack.",
+            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds on the farmland (right-click), keep water within four blocks, and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: fish (Patient Angler), tame hens (Hens in a Row) or make seats for the hearth (A Seat by the Fire).",
             tasks: [[Pick("wheat_crop", 4), Have("wheat", 4)]],
             after: ["homestead_hearth"],
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
         ),
         (
             name: "a_field_of_gold", age: "farm", branch: "farming", title: "A Field of Gold",
-            why: "One plot is a hobby; a field is a food supply. Keep sowing from your own seed and harvest twenty-four wheat plants. Seeds come back with each harvest, so the field pays for itself. A field that size also teaches Farming 4.",
+            why: "One plot is a hobby; a field is a food supply. Keep sowing from your own seed and harvest twenty-four wheat plants. Seeds come back with each harvest, so the field pays for itself. A field that size also teaches Farming 4. Between sowings, cook what your hunting and fishing bring (Camp Cook) or set a herb planter by the door (Herb Garden).",
             tasks: [[Pick("wheat_crop", 24), Level("farming", 4)]],
             after: ["first_harvest"],
             rewards: [Xp("farming", 250.0)],
         ),
         (
             name: "carrot_patch", age: "farm", branch: "farming", title: "Carrot Patch",
-            why: "Carrots need Farming 5 and cool, moist soil. A carrot is its own seed: forage wild carrots (white-flowered, thickest in flower meadows, a few on plains), plant what you get, and harvest four. Rabbits love them too. Keep the four carrots you harvest.",
+            why: "Carrots need Farming 5 and cool, moist soil. A carrot is its own seed: forage wild carrots (white-flowered, thickest in flower meadows, a few on plains), plant what you get, and harvest four. Rabbits love them too. Keep the four carrots you harvest. Carrots take a little longer than wheat; four crops sown by your home also make a kitchen garden (A Kitchen Garden) while they grow.",
             tasks: [[Pick("carrot_crop", 4), Have("carrot", 4)]],
             after: ["first_harvest"],
             rewards: [Xp("farming", 150.0), Item("carrot", 4)],
         ),
         (
             name: "herb_garden", age: "farm", branch: "farming", title: "Herb Garden",
-            why: "Herbs cannot be sown, but a herb planter (planks round dirt, Construction 3) lets a picked herb grow back at home. Make a planter, set a herb in it, and pick it again when it returns. Pick six wild plants on your rounds as well.",
+            why: "Herbs cannot be sown, but a herb planter (planks round dirt, Construction 3) lets a picked herb grow back at home. Make a planter, set a herb in it, and pick it again when it returns. Pick six wild plants on your rounds as well. While a herb grows back, take spare herbs to the folk on the road who know them (Herb Lore).",
             tasks: [[Craft("herb_planter", 1), Pick("any", 6)]],
             after: ["first_harvest"],
             rewards: [Xp("construction", 80.0), Xp("farming", 60.0)],
@@ -418,7 +432,7 @@
         ),
         (
             name: "fresh_eggs", age: "farm", branch: "husbandry", title: "Fresh Eggs",
-            why: "A kept hen lays on the ground near her, and a hen that is fed, watered and sheltered lays more. Fry your first egg on a campfire to taste the reward, then collect five more and keep them.",
+            why: "A kept hen lays on the ground near her, and a hen that is fed, watered and sheltered lays more. Fry your first egg on a campfire to taste the reward, then collect five more and keep them. A hen lays about every five minutes: meanwhile go after a mouflon (A Woolly Flock) or tame more animals about the house (A Full House).",
             tasks: [[Have("egg", 5), Cook("fried_egg", 1)]],
             after: ["hens_in_a_row"],
             rewards: [Xp("farming", 100.0)],
@@ -439,7 +453,7 @@
         ),
         (
             name: "wool_gathering", age: "farm", branch: "husbandry", title: "Wool Gathering",
-            why: "Wool makes beds, cloth and sleeping bags. Right-click a kept sheep with shears in hand whenever its wool has grown back, and gather six.",
+            why: "Wool makes beds, cloth and sleeping bags. Right-click a kept sheep with shears in hand whenever its wool has grown back, and gather six. Wool grows back in about six minutes: dye the first of it into cloth meanwhile (Wool and Dye), or go after milk (The Milk Pail).",
             tasks: [[Have("wool", 6)]],
             after: ["a_woolly_flock"],
             rewards: [Xp("farming", 120.0), Xp("crafting", 60.0)],
@@ -453,7 +467,7 @@
         ),
         (
             name: "the_milk_pail", age: "farm", branch: "husbandry", title: "The Milk Pail",
-            why: "A tamed mountain goat (Hunter 8), reindeer (10) or aurochs (12) gives milk to a pail, right-clicked. Goats live on mountains and take wheat or an apple; reindeer live on tundra and in taiga and take a mushroom; aurochs graze the plains and take wheat. Hold the food, approach calmly and right-click to tame one. Milk heals half as fast again for a while. Collect two. Make the pail first: two planks crossed.",
+            why: "A tamed mountain goat (Hunter 8), reindeer (10) or aurochs (12) gives milk to a pail, right-clicked. Goats live on mountains and take wheat or an apple; reindeer live on tundra and in taiga and take a mushroom; aurochs graze the plains and take wheat. Hold the food, approach calmly and right-click to tame one. Milk heals half as fast again for a while. Collect two. Make the pail first: two planks crossed. An animal gives milk about every five minutes; between pails, tame more toward a real farm (A Full Pen).",
             tasks: [[Craft("pail", 1), Have("milk", 2)]],
             after: ["a_woolly_flock"],
             rewards: [Xp("farming", 250.0)],
