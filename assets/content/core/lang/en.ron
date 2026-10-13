@@ -300,6 +300,7 @@
     "target.kept_by": "Kept by {owner}",
     "target.young": "Young",
     "target.ready": "Ready to breed",
+    "target.count": "×{count}",
     "skills.needs": "Needs {skill} {level}",
     "tools.needs": "Needs a {tool} or better",
     "fishing.nothing": "Nothing bites.",

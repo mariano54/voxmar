@@ -259,6 +259,10 @@ enum Step {
     /// Blocks drawn as shapes (a slab, stairs both ways up, a barrel, a crate and a sack)
     /// reach the client and draw.
     Shapes,
+    /// The item in the hand is drawn in first person: an iron sword, a stone block and an
+    /// empty hand each give a different view, only in the lower right; and sealed in a
+    /// stone box with no light the sword is far darker than under the open sky.
+    Held,
     /// Natural births arrive out of view; a torch-lit pad rejects monsters.
     NaturalSpawns,
     /// Creatures summoned on a pad beside the test ground reach the client and draw.
@@ -323,6 +327,9 @@ enum Step {
     /// An effect that comes on pops up with its name, and the first look at the inventory
     /// brings its tip.
     Tips,
+    /// The name of what the crosshair rests on shows at the top left: a block close by, a
+    /// creature further than a blow reaches, and not through a wall.
+    Look,
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
@@ -1188,6 +1195,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Shapes => shapes(world, gate, now, in_phase),
+        Step::Held => held(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
         Step::NaturalSpawns => natural_spawns(world, gate, now),
         Step::Creatures => creatures(world, gate, now, in_phase),
@@ -1209,6 +1217,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Identity => identity(world, gate, now),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
+        Step::Look => look_name(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
@@ -3718,7 +3727,123 @@ fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let again = showing(world).filter(|name| *name == "inventory");
             gate.check("tips: once", if again.is_none() { Ok("seen once, it does not come back".into()) } else { Err("the inventory tip came back".into()) });
             world.resource_mut::<UiState>().inventory_open = false;
-            gate.next(Step::Guides, now);
+            gate.next(Step::Look, now);
+        }
+        _ => {}
+    }
+}
+
+/// Looking at a plank block beside the player names it ("Oak Planks"); looking at a lumen
+/// snail seven blocks off, past any blow's reach, names it with its level; a stone wall put
+/// between hides it again, and the block named is the wall's. Shots `look-block` and
+/// `look-creature` show the label at the top left.
+fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    let planks = pad + IVec3::new(1, 0, 2);
+    let species = world.resource::<Launch>().content.creatures.find(CREATURE);
+    let Some(species) = species else {
+        gate.check("look", Err(format!("no `{CREATURE}` in the content")));
+        gate.next(Step::Guides, now);
+        return;
+    };
+    let snail = |world: &World| world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
+    let named = |world: &World| world.resource::<crate::hud::target::Readout>().clone();
+    match gate.phase {
+        // On the creatures' pad (clear stone, air above): a plank block close by, once what the
+        // creatures step left there (a grazer or two in the walls) is gone, since a wanderer on
+        // the look ray would take the name.
+        0 => {
+            let net = world.resource::<Net>();
+            for species in ["mouflon", "rabbit", "lumen_snail", "shambler"] {
+                net.command(&format!("creatures remove {species}"));
+            }
+            net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+            net.command(&format!("setblock {} {} {} oak_planks", planks.x, planks.y, planks.z));
+            net.command("time set noon");
+            gate.advance(now);
+        }
+        1 if in_phase > 0.5 => {
+            // Nothing alive on the pad before the first look (given a few server seconds to go).
+            let middle = pad.as_vec3();
+            let crowded = world.resource::<crate::creatures::Creatures>().views().any(|v| v.position.distance(middle) < 12.0);
+            if crowded && gate.server_in_phase() < 6.0 {
+                return;
+            }
+            let client = world.resource::<ClientWorld>();
+            let Some(block) = client.block(planks).filter(|b| !b.is_air()) else {
+                if gate.server_in_phase() > 10.0 {
+                    gate.check("look: block", Err("the plank block never reached the client".into()));
+                    gate.next(Step::Guides, now);
+                }
+                return;
+            };
+            let wanted = world.resource::<crate::lang::Locale>().block(client.registry.def(block));
+            aim(world, planks);
+            let readout = named(world);
+            if readout.name != wanted && in_phase < 5.0 {
+                return;
+            }
+            if gate.shot(world, "look-block").is_some() {
+                let result = if readout.name == wanted && readout.creature.is_none() {
+                    Ok(format!("the block looked at is named {:?} at the top left", readout.name))
+                } else {
+                    Err(format!("looking at the planks the label read {:?}, not {wanted:?}", readout.name))
+                };
+                gate.check("look: block", result);
+                world.resource::<Net>().command(&format!("summon {CREATURE} 1 {} {} {}", pad.x, pad.y, pad.z - 3));
+                gate.advance(now);
+            }
+        }
+        2 => {
+            let Some(view) = snail(world) else {
+                if gate.server_in_phase() > 10.0 {
+                    gate.check("look: creature", Err("the snail never reached the client".into()));
+                    gate.next(Step::Guides, now);
+                }
+                return;
+            };
+            aim_at(world, view.position + Vec3::Y * 0.2);
+            let readout = named(world);
+            let distance = world.resource::<LocalPlayer>().eye().distance(view.position);
+            let reach = world.resource::<Launch>().content.combat.feel.touch;
+            if readout.creature != Some(view.id) && in_phase < 5.0 {
+                return;
+            }
+            if gate.shot(world, "look-creature").is_some() {
+                let wanted = {
+                    let (launch, locale) = (world.resource::<Launch>(), world.resource::<crate::lang::Locale>());
+                    locale.creature(&launch.content.creatures.get(species).def)
+                };
+                let result = if readout.creature == Some(view.id) && readout.name == wanted && !readout.level.is_empty() && distance > reach {
+                    Ok(format!("a snail {distance:.1} blocks off is named {:?}, {}", readout.name, readout.level))
+                } else {
+                    Err(format!("looking at a snail {distance:.1} blocks off (reach {reach}) the label read {:?} {:?} for creature {:?}", readout.name, readout.level, readout.creature))
+                };
+                gate.check("look: creature", result);
+                // A wall put between: two blocks wide, three high.
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {} {} {} {} {} stone", pad.x - 1, pad.y, pad.z, pad.x + 1, pad.y + 2, pad.z));
+                gate.advance(now);
+            }
+        }
+        3 if in_phase > 1.0 => {
+            let wall = pad + IVec3::new(0, 1, 0);
+            if world.resource::<ClientWorld>().block(wall).is_none_or(|b| b.is_air()) && gate.server_in_phase() < 10.0 {
+                return;
+            }
+            let Some(view) = snail(world) else { return };
+            aim_at(world, view.position + Vec3::Y * 0.2);
+            let readout = named(world);
+            let result = if readout.creature.is_none() {
+                Ok(format!("the snail behind a wall is not named; the wall is: {:?}", readout.name))
+            } else {
+                Err(format!("the snail behind a wall was named {:?}", readout.name))
+            };
+            if in_phase > 1.5 {
+                gate.check("look: wall hides", result);
+                world.resource::<Net>().command("creatures remove lumen_snail");
+                gate.next(Step::Guides, now);
+            }
         }
         _ => {}
     }
@@ -4656,11 +4781,125 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the shaped blocks barely show: the view changed by {change:.1} levels")),
             };
             gate.check("shapes", result);
+            gate.next(Step::Held, now);
+        }
+        _ => {}
+    }
+}
+
+/// The lower right of the view, where the hand is (fractions of the frame: x from, x to, y
+/// from, y to; y down).
+const HAND_AREA: [f32; 4] = [0.5, 1.0, 0.45, 1.0];
+/// The rest of the view, which holding something must leave as it was: sky above the hand,
+/// clear of the quest cards, the chat and any leaves, which sway in the wind between shots.
+const OUT_OF_HAND: [f32; 4] = [0.5, 0.8, 0.0, 0.35];
+
+/// The item in the hand, seen in first person: looking up at the open sky, an empty hand,
+/// an iron sword and a stone block each give a shot; the sword and the block each change
+/// the lower right and leave the upper left alone, and differ from each other. Then in a
+/// stone box with no light, the sword in hand is much darker (the hand takes the light where
+/// the player stands).
+fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    const SWORD: &str = "base:iron_sword";
+    const BLOCK: &str = "base:stone";
+    let feet = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let hold = |world: &mut World, name: &str| select(world, name);
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command("time set noon");
+            net.command(&format!("give {} 1", SWORD.trim_start_matches("base:")));
+            net.command(&format!("give {} 1", BLOCK.trim_start_matches("base:")));
+            gate.advance(now);
+        }
+        1 => {
+            look(world, 0.0, 40.0);
+            if holding(world, SWORD).1.is_some() && holding(world, BLOCK).1.is_some() && empty_hand(world) {
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("held", Err("the sword, the stone or a free hotbar slot never came".into()));
+                gate.next(Step::NaturalSpawns, now);
+            }
+        }
+        2 if in_phase > 0.5 => {
+            if gate.shot(world, "held-empty").is_some() {
+                hold(world, SWORD);
+                gate.advance(now);
+            }
+        }
+        // The hand comes up from below in a quarter of a second, and its light settles.
+        3 if in_phase > 0.8 => {
+            if gate.shot(world, "held-sword").is_some() {
+                hold(world, BLOCK);
+                gate.advance(now);
+            }
+        }
+        4 if in_phase > 0.8 => {
+            if gate.shot(world, "held-block").is_some() {
+                let (x, y, z) = (feet.x, feet.y, feet.z);
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {y} {} {} {} {} stone", x - 3, z - 3, x + 3, y + 5, z + 3));
+                net.command(&format!("fill {} {} {} {} {} {} air", x - 2, y, z - 2, x + 2, y + 4, z + 2));
+                hold(world, SWORD);
+                gate.advance(now);
+            }
+        }
+        // Sealed in: a roof over the eye and nothing alight.
+        5 => {
+            let roof = feet + IVec3::new(0, 5, 0);
+            let sealed = world.resource::<ClientWorld>().block(roof).is_some_and(|b| !b.is_air());
+            if (sealed && in_phase > SETTLE) || gate.server_in_phase() > 10.0 {
+                gate.advance(now);
+            }
+        }
+        6 if in_phase > 1.0 => {
+            if gate.shot(world, "held-sword-dark").is_some() {
+                empty_hand(world);
+                gate.advance(now);
+            }
+        }
+        7 if in_phase > 0.8 => {
+            let Some(empty_dark) = gate.shot(world, "held-empty-dark") else { return };
+            let (x, y, z) = (feet.x, feet.y, feet.z);
+            world.resource::<Net>().command(&format!("fill {} {y} {} {} {} {} air", x - 3, z - 3, x + 3, y + 5, z + 3));
+            let shots: Vec<Option<Image>> = ["held-empty", "held-sword", "held-block", "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
+            let [Some(empty), Some(sword), Some(block), Some(sword_dark)] = shots.as_slice() else {
+                gate.check("held", Err("a shot of the hand was never taken".into()));
+                gate.next(Step::NaturalSpawns, now);
+                return;
+            };
+            let in_hand = |a: &Image, b: &Image| change_in(a, b, HAND_AREA);
+            let (sword_seen, block_seen) = (in_hand(empty, sword), in_hand(empty, block));
+            let apart = in_hand(sword, block);
+            let (left_sword, left_block) = (change_in(empty, sword, OUT_OF_HAND), change_in(empty, block, OUT_OF_HAND));
+            let dark_seen = in_hand(&empty_dark, sword_dark);
+            let result = if sword_seen < HELD_SEEN {
+                Err(format!("the sword barely shows in the lower right: it changed the view there by {sword_seen:.2} levels"))
+            } else if block_seen < HELD_SEEN {
+                Err(format!("the block barely shows in the lower right: it changed the view there by {block_seen:.2} levels"))
+            } else if apart < HELD_SEEN {
+                Err(format!("the sword and the block look alike in hand: they differ by {apart:.2} levels"))
+            } else if left_sword > HELD_ELSEWHERE || left_block > HELD_ELSEWHERE {
+                Err(format!("holding something changed the rest of the view: by {left_sword:.2} (sword) and {left_block:.2} (block) levels"))
+            } else if dark_seen > sword_seen * 0.5 {
+                Err(format!("the sword is as bright in a sealed dark box ({dark_seen:.2} levels from the empty hand) as under the sky ({sword_seen:.2})"))
+            } else {
+                Ok(format!(
+                    "sword {sword_seen:.1} and block {block_seen:.1} levels in the lower right (differing by {apart:.1}), the rest unchanged ({left_sword:.2}, {left_block:.2}); in the dark box the sword shows {dark_seen:.1}"
+                ))
+            };
+            gate.check("held", result);
             gate.next(Step::NaturalSpawns, now);
         }
         _ => {}
     }
 }
+
+/// Levels the lower right must change by for the item in hand to count as drawn, and the
+/// most the rest of the view may.
+const HELD_SEEN: f32 = 1.0;
+const HELD_ELSEWHERE: f32 = 0.5;
 
 /// Births through ordinary spawning, driven through admin console inputs. The clear
 /// pad makes view-cone rejection observable from replicated birth poses; positive dark
@@ -5834,7 +6073,7 @@ const MARKS_WAIT: f32 = 0.6;
 const MARKS_TELLS: u32 = 3;
 
 const FALLEN_SECONDS: f32 = 0.2;
-const FALLEN_WAIT: f32 = 2.0;
+const FALLEN_WAIT: f32 = 6.0;
 
 /// Hold the actual killed target in view, with native movement/attack inputs released.
 /// Only its currently visible mark ends the watch; an absent/hidden mark times out.
@@ -7543,6 +7782,26 @@ fn change(a: &Image, b: &Image, inset: f32) -> f32 {
     sum as f32 / n.max(1) as f32
 }
 
+/// Mean change between two shots of the same size, in levels of 255, within `area` (x from,
+/// x to, y from, y to, as fractions of the frame, y down).
+fn change_in(a: &Image, b: &Image, area: [f32; 4]) -> f32 {
+    let (Ok((w, h, da)), Ok((wb, hb, db))) = (pixels(a), pixels(b)) else { return 0.0 };
+    if (w, h) != (wb, hb) {
+        return 0.0;
+    }
+    let [x0, x1, y0, y1] = area;
+    let (x0, x1, y0, y1) = ((w as f32 * x0) as usize, (w as f32 * x1) as usize, (h as f32 * y0) as usize, (h as f32 * y1) as usize);
+    let (mut sum, mut n) = (0u64, 0u64);
+    for y in y0..y1.min(h) {
+        for x in x0..x1.min(w) {
+            let i = (y * w + x) * 4;
+            sum += (0..3).map(|c| da[i + c].abs_diff(db[i + c]) as u64).sum::<u64>();
+            n += 3;
+        }
+    }
+    sum as f32 / n.max(1) as f32
+}
+
 /// Turns the player to look at the middle of the top of `block`, as moving the mouse
 /// would.
 fn aim(world: &mut World, block: IVec3) {
@@ -7631,6 +7890,36 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A shot of grey pixels, `grey(x, y)` each.
+    fn grey_shot(w: u32, h: u32, grey: impl Fn(u32, u32) -> u8) -> Image {
+        let mut data = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                data.extend([grey(x, y), grey(x, y), grey(x, y), 255]);
+            }
+        }
+        Image::new(
+            bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            bevy::render::render_resource::TextureDimension::D2,
+            data,
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            default(),
+        )
+    }
+
+    #[test]
+    fn the_hand_check_sees_only_the_lower_right() {
+        let empty = grey_shot(100, 100, |_, _| 100);
+        // An item in the hand's corner: 40 levels brighter over 30 by 30 pixels there.
+        let held = grey_shot(100, 100, |x, y| if x >= 70 && y >= 70 { 140 } else { 100 });
+        let seen = change_in(&empty, &held, HAND_AREA);
+        assert!((seen - 40.0 * 900.0 / 2750.0).abs() < 1e-3, "{seen}");
+        assert!(seen >= HELD_SEEN, "{seen}");
+        assert_eq!(change_in(&empty, &held, OUT_OF_HAND), 0.0);
+        // A shot of another size is no comparison.
+        assert_eq!(change_in(&empty, &grey_shot(50, 50, |_, _| 0), HAND_AREA), 0.0);
+    }
 
     #[test]
     fn an_already_received_blow_never_queues_a_late_native_defence_edge() {

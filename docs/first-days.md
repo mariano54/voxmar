@@ -12,8 +12,10 @@ locked age chests, a sling) have no quest.
 
 ## The loop, day by day
 
-The starting kit is a wooden pickaxe and axe, four bread, eight torches, sixteen planks and
-a purse (`core/survival.ron`). Recipes are never locked by quests; a quest only opens its
+A new player starts with nothing but the coin purse (`starter_kit` is empty in
+`core/survival.ron`; a mod can list a kit there). The first quests teach the way in: punch
+trees (Timber is pinned first), make planks in the grid, a crafting table, sticks, then a
+wooden pickaxe and axe at the table, then stone. Recipes are never locked by quests; a quest only opens its
 own page, and finishing is retroactive (it counts what you already did).
 
 **Day 1, daylight: tools and a fire.** Logs (Timber), cobblestone (A Pile of Stone), a
@@ -26,10 +28,13 @@ Up teaches the recipe search in its first line.
 Own). Monsters are capped low on night one (`first_night_monsters`). Something to Swing and
 Small Game give a weapon for the morning.
 
-**Day 2: choose where to live.** Walk three biomes (Where to Settle, then Lay of the Land
-for six), gather hide (Hide and Seek), fish (Twine and Thong, Rod and Line, First Catch),
-and tame a hen or rabbit. Clay (four) comes from a pond bed with a shovel; then craft the
-Hearth (about 28 cobblestone) and light it. **Homestead Hearth ends Nomad**: Farm quests open.
+**Day 2: choose where to live.** Gather hide (Hide and Seek), fish (Twine and Thong, Rod and
+Line, First Catch), and tame a hen or rabbit. Clay (four) comes from a pond bed with a shovel;
+then craft the Hearth (about 28 cobblestone) and light it. **Homestead Hearth ends Nomad**:
+Farm quests open. It asks only for a bed (A Bed of Your Own) and a lit Hearth, so a player who
+finds stone and clay beside the camp is never held back by where they have walked. Walking
+three biomes (Where to Settle, then Lay of the Land for six) is its own exploration quest,
+paying Farming, Mining and Fishing experience and six bread.
 
 **Days 3 to 5, Farm: sustain yourself, then fire.** Plant wheat (First Harvest), keep hens
 (Hens in a Row, Fresh Eggs), cook (Camp Cook, level 5), a flock (A Woolly Flock). The main line
@@ -82,6 +87,12 @@ Mostly yes, with these checks:
     campfire before cooking and its failure line says whether food or the quest is missing
     (with the quest's goal counts). The Mac run will show which.
 
+11. **Balance defaults** (measured below): burning and cracking start at a quarter at level
+    1 and reach nothing by the mid-teens of the skill (a cracked clay is clay again); the
+    level-1 sleeping bag is two feathers and two hides, so a new player has a bed on day
+    one; Homestead Hearth no longer waits for three biomes (Where to Settle is its own
+    exploration quest).
+
 Next (Mac): run `tools/gate` (the cloud cannot build the client's graphics stack and has
 no GPU), then play the first three days once in a fresh survival world and note where you
 stalled.
@@ -103,19 +114,27 @@ time. It asserts only the budget table at the top of the test (generous ceilings
 regression such as a recipe that suddenly needs ten times the work fails it) and prints one
 summary block to stderr (`--nocapture`).
 
-Four full runs. "Typical" is the median, "range" is the fastest and slowest.
+Medians of three runs each. "Before" is the first measurement (four runs, with the old
+starting kit and before the balance defaults below); "Kit" is after the balance defaults,
+still with the wooden tools, bread, torches and planks of the old kit; "Now" starts with
+nothing, bare hands on the first trees. "Range" is the fastest and slowest run of "Now".
 
-| Milestone (quest) | Typical | Range | What the time went on |
-|---|---|---|---|
-| 8 logs (Timber) | 14.8 s | 14.8 to 15.1 | Chopping 12 logs with the wooden axe (13 s of the 15), 2 s of walking between trunks. |
-| Crafting table | 14.8 s | 14.8 to 15.1 | Free: the logs for it were already in hand. Crafting takes no server time. |
-| Stone pickaxe and axe (Stone in Hand) | 23.9 s | 23.9 to 24.4 | 9 cobble with the wooden pickaxe (about 7 s of mining), then crafting. |
-| Campfire and a cooked meal (First Night) | 66 s | 47 to 101 | Walking to and chasing animals, killing rabbits and junglefowl, 2 s per cook. The spread is cook burns (see below) and hunting luck. |
-| Torches and sleeping bag (A Bed of Your Own) | 89 s | 66 to 115 | Hunting again for 7 feathers and 2 hides (rabbit hide drops 80%, feathers 90%), 12 s of walking. Torches add 4 s (2 coal). |
-| Hearth materials (28 cobble, 4 clay) | 113 s | 90 to 139 | About 15 s of mining cobble, clay from the pond bank with a stone shovel, 6 to 8 s of walking. |
-| Homestead Hearth built and lit | 117 s | 93 to 142 | 3 s: ring of 8 cobble, hearthstone, 2 chimneys, light. Home is set ("your home"). |
-| Pit kiln built | 124 s | 100 to 148 | 7 s: 7 more cobble, a campfire, the kiln recipe. |
-| 12 fired clay (Fire the Clay) | 176 s | 155 to 221 | 28 clay to dig (7 s), then 33 to 55 s of cooking, because half the attempts are lost (see below). |
+| Milestone (quest) | Before | Kit | Now | Range now | What the time went on |
+|---|---|---|---|---|---|
+| 8 logs (Timber) | 14.8 s | 14.8 s | 35.2 s | 35.2 | Punching 16 logs by hand (33 s; the axe made it 13), 2 s of walking between trunks. |
+| Crafting table | 14.8 s | 14.8 s | 35.2 s | 35.2 | Four logs to sixteen planks, the table, sticks and a wooden pickaxe: crafting takes no server time. |
+| Stone pickaxe and axe (Stone in Hand) | 23.9 s | 23.9 s | 44.3 s | 44.3 to 44.8 | 9 cobble with the wooden pickaxe (about 7 s of mining), then crafting. |
+| Campfire and a cooked meal (First Night) | 66 s | 53.5 s | 76.2 s | 74 to 81 | Walking to and chasing animals, killing rabbits and junglefowl, 2 s per cook. |
+| Torches and sleeping bag (A Bed of Your Own) | 89 s | 56.8 s | 84.7 s | 82 to 106 | Two feathers and two hides, crafted in the hand grid. Torches add 4 to 10 s (2 coal). |
+| Hearth materials (28 cobble, 4 clay) | 113 s | 83.2 s | 110.1 s | 110 to 134 | About 15 s of mining cobble, clay from the pond bank with a stone shovel, 6 to 8 s of walking. |
+| Homestead Hearth built and lit | 117 s | 86.2 s | 113.6 s | 113 to 138 | 3 s: ring of 8 cobble, hearthstone, 2 chimneys, light. Home is set ("your home"). |
+| Pit kiln built | 124 s | 92.4 s | 119.7 s | 120 to 144 | 6 s: 7 more cobble, a campfire, the kiln recipe. |
+| 12 fired clay (Fire the Clay) | 176 s | 145.8 s | 168.5 s | 164 to 197 | 28 clay to dig (7 s), then 31 to 40 s of cooking: about a fifth of the attempts crack, and a cracked clay comes back as clay. |
+
+The "before" Hearth rows are when the Hearth was built and lit; the quest itself stayed held
+until three biomes were walked, which the plot cannot do (see "What the run showed"). Now the
+run ends with Homestead Hearth, A Pit Kiln and Fire the Clay all done, with the biomes seen at
+2 of 3.
 
 Blocks mined over the whole run: about 90. Animals killed: 7 to 8 (no restock of the lane
 was ever needed). By the Hearth the player has spent roughly 35% of the time mining, 45%
@@ -140,22 +159,23 @@ Nomad opening, including 12 fired clay, fits in about three minutes.
 
 ### What the run showed
 
-- **Cooking burns 50% of the time at Cooking level 1 and the raw item is lost.** A cooked
-  meal takes two attempts on average. This is the largest source of variance in
-  First Night (47 to 101 s).
-- **Fired clay is the slowest step of all.** 12 fired clay took about 26 cook attempts (33 to
-  55 s) because clay cracks at the same 50% rate. The pit kiln tail is a third of the run.
-  If the "fire the clay" step should be quicker, the crack chance is the lever, not the
-  2 s cook time.
-- **The sleeping bag needs 7 feathers and 2 hides at Crafting level 1.** Wool and hide or fur
+- **Cooking burned half of the attempts at Cooking level 1 and the raw item was lost; now it
+  burns a quarter** (`BURN_AT_START` in `engine/src/cooking.rs`, or a recipe's `burn_start`),
+  falling in a straight line to nothing at `stop_burning`, the mid-teens for the first foods
+  (15 for meat, fish and potatoes, 12 for eggs and clay). That was the largest source of
+  variance in First Night (47 to 101 s, now 45 to 56 s).
+- **Fired clay is still the slowest step**, but a cracked clay now comes back as clay
+  (`burnt: "clay"`), so a crack costs two seconds, not the dig. 12 fired clay took about 20
+  attempts (35 to 40 s) against about 26 (33 to 55 s) before.
+- **The sleeping bag is two feathers and two hides at Crafting level 1** (the hand grid, no
+  table). It was seven feathers and two hides in a three by three. Wool and hide or fur still
   need Crafting 5, so the first bed is a junglefowl and rabbit hunt, not a sheep.
-- **The Homestead Hearth quest cannot finish on the plot.** It has `after:
+- **The Homestead Hearth quest could not finish on the plot, and now can.** It had `after:
   ["a_bed_of_your_own", "where_to_settle"]` and Where to Settle needs three biomes visited;
-  the plot is one, sometimes two. The hearth is built and lit and `player.home` is set, but
-  the quest stays "held, not done". The farm quests that chain on it (`a_pit_kiln`,
-  `fire_the_clay`) are then held too, even though their goals (kiln built, 12 fired clay)
-  are fully met. This is the exact blocker for completing the Nomad chain without leaving the
-  plot; it is a design fact (the quest is meant to be done after exploring), not a bug, but a
-  player who builds the Hearth early sees no reward for it until they have wandered.
-- **The starter kit leaves one hotbar slot free (slot 8)**; bread takes four slots. The test
-  swaps tools through that slot.
+  the plot is one, sometimes two, so the quest stayed "held, not done" and the farm quests
+  chained on it (`a_pit_kiln`, `fire_the_clay`) were held too. Biome visits no longer gate
+  the core chain: Homestead Hearth waits only for A Bed of Your Own. Where to Settle is an
+  exploration quest of its own with a reward worth the walk.
+- **Starting with nothing costs about 20 s, all of it on the first trees**: bare hands punch
+  a log in about 2 s against the wooden axe's 1. After the wooden pickaxe the run keeps pace
+  with the kit runs. The first night has no torches until Torchlight's coal.

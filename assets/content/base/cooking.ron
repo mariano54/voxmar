@@ -1,12 +1,13 @@
 // Cooking (engine/src/cooking.rs, docs/food-and-cooking.md): what each station cooks.
 // `input` is an item (or `tag:` and a tag), `station` the tag of the station block, `level`
 // the level it takes in its `skill` (Cooking unless given), `xp` the experience for one that doesn't burn. Burning starts
-// at `level` (half the time) and stops at `stop_burning` (0: never burns); burnt food is `burnt_food`.
+// at `level` (`burn_start` of the time, a quarter unless given) and stops at `stop_burning` (0: never burns);
+// burnt food is `burnt_food`, or what `burnt` names (a cracked clay is clay again).
 (
     recipes: [
         (input: "raw_rabbit", output: "cooked_rabbit", level: 1, xp: 30.0, stop_burning: 15, burnt: "burnt_food"),
         (input: "raw_chicken", output: "cooked_chicken", level: 1, xp: 30.0, stop_burning: 15, burnt: "burnt_food"),
-        (input: "potato", output: "baked_potato", level: 2, xp: 32.0, stop_burning: 16, burnt: "burnt_food"),
+        (input: "potato", output: "baked_potato", level: 2, xp: 32.0, stop_burning: 15, burnt: "burnt_food"),
         (input: "carrot", output: "roast_carrot", level: 2, xp: 28.0, stop_burning: 14, burnt: "burnt_food"),
         // An egg teaches 6 (design draft 63: quail lay one every ten minutes).
         (input: "egg", output: "fried_egg", level: 1, xp: 6.0, stop_burning: 12, burnt: "burnt_food"),
@@ -19,8 +20,8 @@
         (input: "raw_venison", output: "cooked_venison", level: 15, xp: 90.0, stop_burning: 34, burnt: "burnt_food"),
         (input: "raw_bear", output: "cooked_bear", level: 25, xp: 140.0, stop_burning: 45, burnt: "burnt_food"),
         // Fish (fishing.ron): cooking one teaches what catching it does (design draft 63).
-        (input: "raw_shrimp", output: "cooked_shrimp", level: 1, xp: 10.0, stop_burning: 21, burnt: "burnt_food"),
-        (input: "raw_minnow", output: "cooked_minnow", level: 1, xp: 10.0, stop_burning: 21, burnt: "burnt_food"),
+        (input: "raw_shrimp", output: "cooked_shrimp", level: 1, xp: 10.0, stop_burning: 15, burnt: "burnt_food"),
+        (input: "raw_minnow", output: "cooked_minnow", level: 1, xp: 10.0, stop_burning: 15, burnt: "burnt_food"),
         (input: "raw_sardine", output: "cooked_sardine", level: 5, xp: 13.0, stop_burning: 25, burnt: "burnt_food"),
         (input: "raw_perch", output: "cooked_perch", level: 10, xp: 18.0, stop_burning: 30, burnt: "burnt_food"),
         (input: "raw_trout", output: "cooked_trout", level: 15, xp: 25.0, stop_burning: 35, burnt: "burnt_food"),
@@ -38,7 +39,7 @@
         (input: "raw_glimmer_koi", output: "cooked_glimmer_koi", level: 75, xp: 1323.0, stop_burning: 80, burnt: "burnt_food"),
         // Fired in a pit kiln (Crafting): clay into fired clay, which pots, vials and kiln
         // bricks are made of; it cracks now and then until Crafting 12.
-        (input: "clay", output: "fired_clay", station: "pit_kiln", skill: "core:crafting", level: 1, xp: 6.0, stop_burning: 12),
+        (input: "clay", output: "fired_clay", station: "pit_kiln", skill: "core:crafting", level: 1, xp: 6.0, stop_burning: 12, burnt: "clay"),
         // Smelted in the Crucible Kiln (Engineering), which must stand round its crucible:
         // copper and tin, and bronze from their blend. Metal never burns.
         (input: "copper_ore", output: "copper_ingot", station: "crucible", skill: "core:engineering", level: 5, xp: 8.0, stop_burning: 0),
