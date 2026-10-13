@@ -459,13 +459,17 @@ impl Server {
             return;
         }
         let followed = |name: &str| self.content.wandering.iter().any(|(_, e)| e.def.needs.after.as_ref().is_some_and(|(n, _)| n == name));
-        let waiting = self.wandering.active.values().any(|inst| {
-            !self.wandering.followed.contains(&inst.id)
-                && self.tick >= inst.born + ticks(rules.follow_after)
-                && followed(&self.content.wandering.get(inst.event).def.name)
-                && inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).is_some_and(|c| c.body.position.distance(at) < rules.near)
-        });
-        if !waiting {
+        // Those near the player, about long enough and not yet joined, where their leaders stand.
+        let ready: Vec<(u64, usize, Vec3)> = self
+            .wandering
+            .active
+            .values()
+            .filter(|inst| !self.wandering.followed.contains(&inst.id) && self.tick >= inst.born + ticks(rules.follow_after))
+            .filter(|inst| followed(&self.content.wandering.get(inst.event).def.name))
+            .filter_map(|inst| inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map(|c| (inst.id, inst.event, c.body.position)))
+            .filter(|(_, _, leader)| leader.distance(at) < rules.near)
+            .collect();
+        if ready.is_empty() {
             return;
         }
         let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x5f0d);
@@ -476,8 +480,15 @@ impl Server {
         let (tick, day) = (self.tick, self.day);
         let wet = self.weather.local(&mut self.temperature, xz(spot.as_vec3()), tick, day).weather.precipitation > FALLING;
         let Some(event) = self.pick_among(player, spot, mix(seed, 5), wet, true) else { return };
+        // The one it joins is one of those ready: never a party another already joined.
         let Some((forerunner, reach)) = self.content.wandering.get(event).def.needs.after.clone() else { return };
-        let Some((led, _)) = self.nearest_party(spot.as_vec3(), &forerunner, reach) else { return };
+        let kind = self.content.wandering.find(&forerunner);
+        let led = ready
+            .iter()
+            .filter(|(_, e, leader)| Some(*e) == kind && flat(*leader, spot.as_vec3()) <= reach)
+            .min_by(|a, b| flat(a.2, spot.as_vec3()).total_cmp(&flat(b.2, spot.as_vec3())))
+            .map(|(id, _, _)| *id);
+        let Some(led) = led else { return };
         if self.begin_event(Some(player), event, spot, mix(seed, 6)).is_some() {
             self.wandering.followed.insert(led);
         }
@@ -580,20 +591,14 @@ impl Server {
     /// Where the leader of the nearest running party of kind `name` stands, within `reach`
     /// blocks of `from`.
     fn party_near(&self, from: Vec3, name: &str, reach: f32) -> Option<Vec3> {
-        self.nearest_party(from, name, reach).map(|(_, at)| at)
-    }
-
-    /// `party_near`, with the event's id. One already joined by a follower is still found:
-    /// a `Toward` or a later `after` may name it.
-    fn nearest_party(&self, from: Vec3, name: &str, reach: f32) -> Option<(u64, Vec3)> {
         let kind = self.content.wandering.find(name)?;
         self.wandering
             .active
             .values()
             .filter(|inst| inst.event == kind)
-            .filter_map(|inst| inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map(|c| (inst.id, c.body.position)))
-            .filter(|(_, at)| flat(*at, from) <= reach)
-            .min_by(|a, b| flat(a.1, from).total_cmp(&flat(b.1, from)))
+            .filter_map(|inst| inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map(|c| c.body.position))
+            .filter(|at| flat(*at, from) <= reach)
+            .min_by(|a, b| flat(*a, from).total_cmp(&flat(*b, from)))
     }
 
     fn town_near(&self, from: Vec3, reach: f32) -> Option<(Vec2, voxmar_worldgen::SettlementInfo)> {
@@ -6066,6 +6071,12 @@ mod tests {
         assert_eq!(follow(&mut server), Some(event(&server, "rival_pedlar")), "the rival comes after the pedlar");
         assert!(server.wandering.followed.contains(&pedlar));
         assert_eq!(follow(&mut server), None, "once for each party it follows");
+        // A second pedlar about: a rival may follow it, but never the first again.
+        let second = start(&mut server, "pedlar_and_hound", (land.x + 40, land.z - 50));
+        server.tick += ticks(server.content.wandering.rules().follow_after);
+        assert_eq!(follow(&mut server), Some(event(&server, "rival_pedlar")), "the second pedlar has its rival");
+        assert!(server.wandering.followed.contains(&second));
+        assert_eq!(follow(&mut server), None, "both joined, none more");
     }
 
     /// No party hands over a step of the ages' main line (docs/wandering.md, "How often"):
