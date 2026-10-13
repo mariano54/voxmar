@@ -46,6 +46,11 @@ pub struct ShaderPack {
     /// whiteout, rain, dust) are, relative to the weather's own.
     pub mist: f32,
     pub fog: f32,
+    /// How open to the sky the camera must be for ground fog and the weather's fog to show:
+    /// the share of the sky above it in view (render/exposure.rs) under which they are gone,
+    /// and over which they show in full, between the two they fade. Caves, shafts dug down
+    /// and rooms hold no mist; open land, forests under their leaves and a valley's floor do.
+    pub mist_sky: Vec2,
     /// How much the air of the place shows (`weather::atmosphere::ClientAtmosphere`: a
     /// biome's or climate's dusty, damp or cold haze, its sky tint and grading nudges), as
     /// a nudge on top of the pack's own look; 0 ignores it.
@@ -85,6 +90,10 @@ pub struct ShaderPack {
     pub particles: f32,
     /// How strongly cracks show over a block being mined, 0..1.
     pub cracks: f32,
+    /// The light, as a share of what lights a white surface (luminance, linear), under which
+    /// a crack's light edges are gone and over which they show in full: in the dark of a
+    /// cave the cracks darken the block and catch no light, by a torch they glint.
+    pub crack_light: Vec2,
     pub water: WaterLook,
 }
 
@@ -131,6 +140,7 @@ impl Default for ShaderPack {
             haze_tint: Vec3::ONE,
             mist: 1.0,
             fog: 1.0,
+            mist_sky: Vec2::new(0.12, 0.4),
             local_air: 0.5,
             rays: 0.0,
             shadow_softness: 0.015,
@@ -149,12 +159,24 @@ impl Default for ShaderPack {
             bloom: 0.1,
             particles: 1.0,
             cracks: 1.0,
+            crack_light: Vec2::new(0.02, 0.25),
             water: WaterLook::default(),
         }
     }
 }
 
 impl ShaderPack {
+    /// How much of the mist shows with the sky `open` (0..1) above the camera: none when
+    /// enclosed, all when open, and a smooth fade between (`mist_sky`).
+    pub fn mist_share(&self, open: f32) -> f32 {
+        fade(self.mist_sky, open)
+    }
+
+    /// How much of a crack's light edges show in light of luminance `light` (`crack_light`).
+    pub fn crack_highlight(&self, light: f32) -> f32 {
+        fade(self.crack_light, light)
+    }
+
     /// The key lang names it by: its name in lower case, with anything but a letter or a
     /// digit made `_` (`shader_pack.verdant`, `shader_pack.新緑`, `shader_pack.r_d_v1_2` for
     /// "R&D v1.2").
@@ -171,6 +193,14 @@ impl ShaderPack {
     fn from(&self) -> &str {
         self.source.as_deref().unwrap_or("the game itself")
     }
+}
+
+/// 0 under `range.x`, 1 over `range.y` and a smooth step between; a range read from a pack
+/// that is not ordered counts as a step at its larger end, so no pack divides by zero.
+fn fade(range: Vec2, value: f32) -> f32 {
+    let (low, high) = (range.x.min(range.y), range.x.max(range.y));
+    let t = ((value - low) / (high - low).max(1e-4)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Every pack found, the built-in Classic look first, then the shipped ones in the order
@@ -284,6 +314,22 @@ mod tests {
         let packs = ShaderPacks::load(&dir);
         std::fs::remove_dir_all(&dir).unwrap();
         packs.0.into_iter().skip(1).map(|p| (p.name, p.source.unwrap(), p.keyed)).collect()
+    }
+
+    /// The sky and light fades read from every pack the game ships are real ranges, so a mist
+    /// is gone in a shaft and shows in the open, and a crack catches no light in the dark.
+    #[test]
+    fn shipped_packs_fade_mist_and_cracks_with_the_light() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        for pack in ShaderPacks::load(&assets).0.iter().filter(|p| p.shipped) {
+            assert!(pack.mist_sky.x < pack.mist_sky.y && pack.mist_sky.x >= 0.0 && pack.mist_sky.y <= 1.0, "{}: {}", pack.name, pack.mist_sky);
+            assert_eq!((pack.mist_share(0.0), pack.mist_share(1.0)), (0.0, 1.0), "{}", pack.name);
+            assert!(pack.crack_light.x < pack.crack_light.y && pack.crack_light.x >= 0.0, "{}: {}", pack.name, pack.crack_light);
+            assert_eq!((pack.crack_highlight(0.0), pack.crack_highlight(2.0)), (0.0, 1.0), "{}", pack.name);
+        }
+        // An unordered range does not divide by zero.
+        let odd = ShaderPack { mist_sky: Vec2::new(0.5, 0.5), ..default() };
+        assert!(odd.mist_share(0.3).is_finite() && odd.mist_share(0.9) == 1.0);
     }
 
     /// A pack's key keeps its name's letters and digits, in any script, in lower case, and

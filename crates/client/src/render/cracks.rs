@@ -4,6 +4,11 @@
 //! lines darken it and their light edges lighten it, so the block keeps its own texture and
 //! lighting under the cracks.
 //!
+//! The cracks are lit by what lights the face under them. Multiplying keeps the block's own
+//! light on its dark cracks; their light edges (a texel over mid grey) are light a crack
+//! catches, so they show only as much as the face is lit: in the dark of a cave they are
+//! gone and the crack only darkens, by a torch or in the sun they glint (`ShaderPack::crack_light`).
+//!
 //! The stages are `block/destroy_stage_0..9` from the texture packs (the player's
 //! Minecraft install has them), or cracks drawn here when no pack does.
 
@@ -19,6 +24,8 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 
+use super::SceneLight;
+use super::pack::ActivePack;
 use crate::textures::Rgba;
 
 /// Stages from the first crack to a block about to break.
@@ -42,11 +49,17 @@ pub struct Crack {
     pub at: Option<(IVec3, u32)>,
     /// How strongly cracks show, 0..1 (the shader pack's).
     pub strength: f32,
+    /// Sky and block light on the face being mined (`breaking::light_at`).
+    pub light: [u8; 2],
 }
+
+/// Steps the light edges' strength is held to, so the material is not rebuilt as dusk
+/// moves the light a hair every frame.
+const HIGHLIGHT_STEPS: f32 = 16.0;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct CrackMaterial {
-    /// x: stage, y: strength.
+    /// x: stage, y: strength, z: how much of the cracks' light edges show (0..1).
     #[uniform(0)]
     params: Vec4,
     #[texture(1, dimension = "2d_array")]
@@ -125,6 +138,7 @@ const IDLE_SIZE: f32 = 256.0;
 fn show(
     crack: Res<Crack>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
+    (scene, pack): (Res<SceneLight>, Res<ActivePack>),
     mut cube: Query<(&mut Transform, &mut Visibility, &MeshMaterial3d<CrackMaterial>), With<CrackCube>>,
     mut materials: ResMut<Assets<CrackMaterial>>,
 ) {
@@ -143,7 +157,11 @@ fn show(
     };
     visibility.set_if_neq(Visibility::Visible);
     *transform = Transform::from_translation(block.as_vec3() + 0.5).with_scale(Vec3::splat(1.002));
-    let params = Vec4::new(stage.min(STAGES - 1) as f32, crack.strength.min(1.0), 0.0, 0.0);
+    let [sky, block_light] = crack.light;
+    let lit = scene.at(sky, block_light);
+    let highlight = pack.crack_highlight(lit.red * 0.2126 + lit.green * 0.7152 + lit.blue * 0.0722);
+    let highlight = (highlight * HIGHLIGHT_STEPS).round() / HIGHLIGHT_STEPS;
+    let params = Vec4::new(stage.min(STAGES - 1) as f32, crack.strength.min(1.0), highlight, 0.0);
     // Only when the stage changes, ten times a block, so the material is rarely rebuilt.
     if materials.get(&material.0).is_some_and(|m| m.params != params)
         && let Some(mut material) = materials.get_mut(&material.0)
@@ -231,6 +249,23 @@ fn drawn_stage(stage: u32) -> Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The luminance a pack's crack highlight sees for a face in the sun, by a torch, in
+    /// moonlight and in a cave with no light but the floor's: cracks glint in the first two
+    /// and not in the dark.
+    #[test]
+    fn cracks_catch_light_only_where_there_is_some() {
+        let pack = ActivePack::default();
+        let scene = SceneLight { sky: Vec3::new(0.9, 0.9, 0.95), falloff: 2.2 };
+        let seen = |sky: u8, block: u8| {
+            let lit = scene.at(sky, block);
+            pack.crack_highlight(lit.red * 0.2126 + lit.green * 0.7152 + lit.blue * 0.0722)
+        };
+        assert_eq!(seen(15, 0), 1.0, "in the sun");
+        assert_eq!(seen(0, 14), 1.0, "by a torch");
+        assert_eq!(seen(0, 0), 0.0, "in a dark cave");
+        assert!(seen(0, 4) > seen(0, 0) && seen(0, 4) < seen(0, 14), "a far torch lights them partly");
+    }
 
     fn dark(stage: &Rgba) -> Vec<usize> {
         stage.pixels.chunks(4).enumerate().filter(|(_, p)| p[3] > 0 && p[0] < 100).map(|(i, _)| i).collect()

@@ -36,8 +36,9 @@ impl Server {
         let Some(item) = player.held() else { return };
         let Some(recipe) = cooking.for_item(item, &tags) else { return };
         let level = recipe.skill.map_or(1, |skill| skills.level(player.skills.xp(skill)));
-        // Room for what comes out, or nothing is cooked.
-        let room = [Some(recipe.output), recipe.burnt].into_iter().flatten().all(|food| player.inventory.room_for(food, 1) > 0);
+        // Room for what comes out, or nothing is cooked. What comes out as the held item
+        // itself (a cracked clay is clay) fits where the one cooked is taken from.
+        let room = [Some(recipe.output), recipe.burnt].into_iter().flatten().all(|food| food == item || player.inventory.room_for(food, 1) > 0);
         if !room || player.inventory.take_one(selected).is_none() {
             return;
         }

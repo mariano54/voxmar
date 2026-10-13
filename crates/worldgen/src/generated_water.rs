@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+use rayon::prelude::*;
+
 use voxmar_engine::block::BlockRegistry;
 use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
@@ -47,8 +49,9 @@ fn generated_water_does_not_move() {
             kinds.extend(sights.iter().map(|&(kind, _)| kind));
             places.extend(sights.into_iter().map(|(_, at)| IVec2::new(at.x, at.z)));
         }
-        for place in places {
-            let (fluids, falls, rivers) = check_area(&registry, &generator, seed, place);
+        // Each place on its own core.
+        let counts: Vec<(usize, usize, usize)> = places.par_iter().map(|&place| check_area(&registry, &generator, seed, place)).collect();
+        for (fluids, falls, rivers) in counts {
             (fluid_cells, curtain, pinned) = (fluid_cells + fluids, curtain + falls, pinned + rivers);
         }
     }
@@ -67,11 +70,11 @@ fn tarns_do_not_move() {
     let content = load_content();
     let world_content = WorldContent::load(&content).unwrap();
     let registry = content.blocks.clone();
-    let mut tarns = 0;
-    for seed in [1, 2, 3, 4] {
+    // Each seed on its own core.
+    let tarns: usize = [1u64, 2, 3, 4].par_iter().map(|&seed| {
         let generator = Overworld::with_content(seed, registry.clone(), &world_content);
         let floor = generator.rivers.tarn_floor().expect("the base content has tarns");
-        let Some(meadow) = generator.locate_biome("alpine_meadow", IVec2::ZERO, 60000) else { continue };
+        let Some(meadow) = generator.locate_biome("alpine_meadow", IVec2::ZERO, 60000) else { return 0 };
         let region = meadow.div_euclid(IVec2::splat(crate::water::REGION));
         let found: Vec<IVec2> = (0..9)
             .flat_map(|r| generator.rivers.stream_lakes(generator.stages(), region + IVec2::new(r % 3 - 1, r / 3 - 1)))
@@ -79,12 +82,12 @@ fn tarns_do_not_move() {
             .map(|(pit, _, _, _)| pit)
             .take(2)
             .collect();
-        for pit in found {
+        for &pit in &found {
             let fluids = check_area(&registry, &generator, seed, pit).0;
             assert!(fluids > 0, "seed {seed}: no water around the tarn at {pit}");
-            tarns += 1;
         }
-    }
+        found.len()
+    }).sum();
     assert!(tarns >= 4, "only {tarns} tarns found around alpine meadows");
 }
 
@@ -168,20 +171,20 @@ fn water_still_settles_at_the_next_version() {
     let content = load_content();
     let world_content = WorldContent::load(&content).unwrap();
     let registry = content.blocks.clone();
-    let mut fluid_cells = 0;
-    for seed in [5, 7, 19] {
+    // Each seed on its own core, and each place of it.
+    let fluid_cells: usize = [5u64, 7, 19].par_iter().map(|&seed| {
         let generator = Overworld::with_content_at(seed, registry.clone(), &world_content, Overworld::VERSION + 1);
         let spawn = generator.spawn_point();
         let mut places: Vec<IVec2> = generator.water_sights(IVec2::new(spawn.x, spawn.z), 600).into_iter().map(|(_, at)| IVec2::new(at.x, at.z)).collect();
         if seed == 5 {
             places.push(IVec2::new(851, 1030));
         }
-        for place in places {
+        places.par_iter().map(|&place| {
             let fluids = check_area(&registry, &generator, seed, place).0;
             assert!(!(seed == 5 && place == IVec2::new(851, 1030)) || fluids > 0, "no water at seed 5's old waterfall spot");
-            fluid_cells += fluids;
-        }
-    }
+            fluids
+        }).sum::<usize>()
+    }).sum();
     assert!(fluid_cells > 1000, "too little water seen at the next version: {fluid_cells}");
 }
 

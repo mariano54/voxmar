@@ -126,11 +126,14 @@ pub struct View {
     pub eye_height: f32,
     /// The water the eye is in, if it is under water.
     pub underwater: Option<Submerged>,
+    /// How much of the mist shows, 0..1: the ground fog and the weather's fog belong to the
+    /// open air, so a camera dug down, in a cave or in a room has none (`ShaderPack::mist_share`).
+    pub mist_share: f32,
 }
 
 impl View {
     pub fn new(distance: f32) -> Self {
-        Self { distance, eye_height: 130.0, underwater: None }
+        Self { distance, eye_height: 130.0, underwater: None, mist_share: 1.0 }
     }
 }
 
@@ -195,7 +198,7 @@ impl Default for Air {
 impl Atmosphere {
     /// The air and light for this moment, seen from `view`.
     pub fn new(light: &Light, weather: &Weather, air: &Air, pack: &ShaderPack, quality: Quality, view: View) -> Self {
-        let View { distance: view_distance, eye_height, underwater } = view;
+        let View { distance: view_distance, eye_height, underwater, mist_share } = view;
         let shadow = Vec4::new(quality.shadows.taps() as f32, pack.shadow_softness, NORMAL_OFFSET, MAX_PENUMBRA);
         let surface = Vec4::new(pack.sky_falloff, pack.ambient_occlusion, pack.subsurface, pack.glow * GLOW);
         if let Some(water) = underwater {
@@ -244,8 +247,8 @@ impl Atmosphere {
             let sand = Color::srgb_u8(r, g, b).to_linear().to_vec3();
             fog_color = fog_color.lerp(sand * luminance(fog_color) / luminance(sand).max(1e-4), dust.sqrt());
         }
-        let weather_fog = weather_extinction(weather) * pack.fog;
-        let ground_fog = weather.ground_fog.clamp(0.0, 1.0) * GROUND_FOG * pack.mist;
+        let weather_fog = weather_extinction(weather) * pack.fog * mist_share;
+        let ground_fog = weather.ground_fog.clamp(0.0, 1.0) * GROUND_FOG * pack.mist * mist_share;
 
         let rays = quality.volumetric_light && pack.rays > 0.0;
         // Shafts show most when the sun is low, as in the mornings and evenings of shader
@@ -424,6 +427,29 @@ mod tests {
         assert!(foggy.mist.w > 0.0);
         let none = ShaderPack { mist: 0.0, ..ShaderPack::default() };
         assert_eq!(Atmosphere::new(&light, &valley, &Air::default(), &none, quality, View::new(2000.0)).mist.x, 0.0);
+    }
+
+    #[test]
+    fn mist_is_gone_where_the_sky_is_not_in_view() {
+        let pack = ShaderPack::default();
+        let quality = Quality::default();
+        let light = Light::default();
+        let weather = Weather { ground_fog: 0.9, fog_top: 82.0, fog: 0.6, ..Weather::NONE };
+        let at = |open: f32| {
+            let view = View { mist_share: pack.mist_share(open), ..View::new(2000.0) };
+            Atmosphere::new(&light, &weather, &Air::default(), &pack, quality, view)
+        };
+        let outside = at(1.0);
+        assert!(outside.mist.x > 0.04 && outside.mist.w > 0.0 && outside.fog.w > 0.0);
+        // In a shaft dug down, ground fog and the weather's fog are both gone, and the
+        // volumetric pass does not shape any.
+        let shaft = at(0.0);
+        assert_eq!((shaft.mist.x, shaft.mist.w, shaft.fog.w), (0.0, 0.0, 0.0));
+        // At a cave mouth they thin with the sky in view.
+        let mouth = at(0.25);
+        assert!(mouth.mist.x > 0.0 && mouth.mist.x < outside.mist.x && mouth.fog.w < outside.fog.w);
+        // The haze of clear air is not mist and stays.
+        assert_eq!(shaft.haze, outside.haze);
     }
 
     #[test]

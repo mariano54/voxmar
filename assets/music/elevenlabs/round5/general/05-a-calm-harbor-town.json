@@ -1,0 +1,29 @@
+{
+  "leads": [
+    "warm solo violin"
+  ],
+  "support": [
+    "gentle bells and chimes",
+    "harp",
+    "cello"
+  ],
+  "texture": "soft organ-like sustained pad",
+  "opener": "Relaxed, intimate instrumental tune",
+  "space": "dry, close-miked and intimate, very little reverb",
+  "form": "a slow folk-song melody with a clear verse and refrain",
+  "percussion": null,
+  "hint": null,
+  "vibes": [
+    "gentle folk storytelling",
+    "tender, like a lullaby"
+  ],
+  "touch": null,
+  "biome": "general",
+  "scene": "a calm harbor town",
+  "bpm": 61,
+  "key": "D minor",
+  "length_s": 179,
+  "prompt": "Relaxed, intimate instrumental tune for a cozy adventure game scene: a calm harbor town. Mood: gentle folk storytelling, tender, like a lullaby. Timeless and peaceful: it should fit any place and any time of day, day or night. Lead melody on warm solo violin, accompanied by gentle bells and chimes, harp, cello, over soft organ-like sustained pad. Structure: a slow folk-song melody with a clear verse and refrain; a clear, singable melody, and rests and silences are welcome. Sound: dry, close-miked and intimate, very little reverb. Slow, unhurried tempo around 61 BPM in D minor, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 82
+}

@@ -40,6 +40,8 @@ pub const SHOWN_WITHIN: f32 = 32.0;
 /// How far up an open sky is looked for, and how far down a floor.
 const SKY_SCAN: i32 = 48;
 const FLOOR_SCAN: i32 = 8;
+/// How many blocks sideways sky light is looked for.
+const SKY_SPREAD: u8 = 3;
 
 pub struct BreakingPlugin;
 
@@ -93,13 +95,35 @@ impl Dice {
     }
 }
 
-fn cracks(target: Res<Target>, world: Res<ClientWorld>, mut crack: ResMut<Crack>) {
+fn cracks(target: Res<Target>, world: Res<ClientWorld>, mut crack: ResMut<Crack>, mut lit: Local<Option<(IVec3, [u8; 2])>>) {
     let at = target.breaking.filter(|&(pos, progress)| {
         progress > 0.0 && world.block(pos).is_some_and(|b| !matches!(world.registry.info(b).render, RenderKind::Plant | RenderKind::Invisible))
     });
     let at = at.map(|(pos, progress)| (pos, ((progress * STAGES as f32) as u32).min(STAGES - 1)));
     if crack.at != at {
         crack.at = at;
+    }
+    // The cracks are lit by what lights the face being mined: the air in front of it, worked
+    // out once per face rather than every frame, and again at the next stint (a torch may
+    // have been set meanwhile).
+    let Some((block, _)) = at else {
+        *lit = None;
+        return;
+    };
+    let outside = match target.hit {
+        Some(hit) if hit.block == block => block + hit.face.normal(),
+        _ => block,
+    };
+    let light = match *lit {
+        Some((cell, light)) if cell == outside => light,
+        _ => {
+            let light = light_at(&world, outside);
+            *lit = Some((outside, light));
+            light
+        }
+    };
+    if crack.light != light {
+        crack.light = light;
     }
 }
 
@@ -109,7 +133,7 @@ fn cracks(target: Res<Target>, world: Res<ClientWorld>, mut crack: ResMut<Crack>
 struct Chipping {
     owed: f32,
     dice: Dice,
-    light: Option<(IVec3, u8)>,
+    light: Option<(IVec3, [u8; 2])>,
 }
 
 /// Chips falling from the face being mined, a dozen a second.
@@ -124,6 +148,7 @@ fn chips(
     let Chipping { owed, dice, light: lit } = &mut *state;
     let (Some(pieces), Some(hit), Some((pos, _))) = (pieces, target.hit, target.breaking) else {
         *owed = 0.0;
+        *lit = None;
         return;
     };
     let Some(block) = world.block(pos).filter(|_| hit.block == pos) else { return };
@@ -133,7 +158,7 @@ fn chips(
     let light = match *lit {
         Some((at, light)) if at == outside => light,
         _ => {
-            let light = sky_light(&world, outside);
+            let light = light_at(&world, outside);
             *lit = Some((outside, light));
             light
         }
@@ -176,7 +201,7 @@ fn bursts(
         if !shows_breaking(info) || particles.amount <= 0.0 {
             continue;
         }
-        let light = sky_light(&world, pos);
+        let light = light_at(&world, pos);
         // A plant is a narrower, lower shape, and breaks into fewer pieces.
         let (low, high, counts) = if info.render == RenderKind::Plant {
             (Vec3::new(0.2, 0.0, 0.2), Vec3::new(0.8, 0.8, 0.8), UVec3::new(3, 3, 3))
@@ -212,7 +237,7 @@ fn piece(
     pos: IVec3,
     info: &BlockInfo,
     face: Face,
-    sky: u8,
+    light: [u8; 2],
     position: Vec3,
     velocity: Vec3,
     size: f32,
@@ -246,7 +271,9 @@ fn piece(
         size,
         look: Look::Texture { layer, corner: pieces.corner(layer, dice.roll()), span: 0.25 },
         color: [r, g, b, 255],
-        light: [sky, info.emission],
+        // Lit as the terrain there is: by the sky, and by torches and glowing blocks near, or
+        // by its own glow if that is more.
+        light: [light[0], light[1].max(info.emission)],
         ..default()
     }
 }
@@ -276,10 +303,18 @@ fn ground_below(world: &ClientWorld, position: Vec3) -> f32 {
         .map_or(position.y - FLOOR_SCAN as f32 * 2.0, |below| below.y as f32 + 1.0)
 }
 
+/// Sky and block light at a cell, as the terrain around it is lit: pieces breaking from a
+/// block in a cave by a torch are lit by that torch, in a dark cave dark, and at night by
+/// the moon.
+pub(crate) fn light_at(world: &ClientWorld, cell: IVec3) -> [u8; 2] {
+    [sky_light(world, cell), crate::drops::block_light(world, cell)]
+}
+
 /// Sky light at a cell, 0..=15, judged from the columns around it as the engine lights
 /// them: sky light falls straight down, losing what water and leaves take and stopping at
-/// solid blocks, then spreads sideways one level a block. Close enough to light a few
-/// particles like the terrain around them.
+/// solid blocks, then spreads sideways one level a block, through what lets light by. A
+/// column behind a wall gives none, so a cave a block or two inside a cliff stays dark.
+/// Close enough to light a few particles and cracks like the terrain around them.
 pub(crate) fn sky_light(world: &ClientWorld, cell: IVec3) -> u8 {
     let column = |x: i32, z: i32| {
         let mut level = 15u8;
@@ -294,20 +329,62 @@ pub(crate) fn sky_light(world: &ClientWorld, cell: IVec3) -> u8 {
         }
         level
     };
-    let mut best = 0u8;
-    for reach in 0..=3u8 {
-        let r = reach as i32;
-        for dx in -r..=r {
-            let dz = r - dx.abs();
-            best = best.max(column(cell.x + dx, cell.z + dz).saturating_sub(reach));
-            if dz != 0 {
-                best = best.max(column(cell.x + dx, cell.z - dz).saturating_sub(reach));
-            }
-        }
+    // Outwards from the cell over the cells at its height that light passes, nearest first.
+    let passes = |at: IVec3| world.block(at).is_none_or(|block| world.registry.info(block).attenuation < 15);
+    let mut reached = vec![IVec3::ZERO];
+    let mut ring = vec![IVec3::ZERO];
+    let mut best = column(cell.x, cell.z);
+    for reach in 1..=SKY_SPREAD {
         // Columns further away give at most one level less.
-        if best >= 15 - (reach + 1) {
+        if best >= 15 - reach {
             break;
         }
+        let mut next = Vec::new();
+        for from in ring {
+            for step in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z] {
+                let at = from + step;
+                if reached.contains(&at) || !passes(cell + at) {
+                    continue;
+                }
+                reached.push(at);
+                next.push(at);
+                best = best.max(column(cell.x + at.x, cell.z + at.z).saturating_sub(reach));
+            }
+        }
+        ring = next;
     }
     best
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use voxmar_engine::world::Column;
+
+    use super::*;
+    use crate::render::terrain::Terrain;
+
+    #[test]
+    fn sky_light_spreads_sideways_but_not_through_a_wall() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let stone = content.blocks.expect("base:stone");
+        let mut world = ClientWorld::new(content.blocks.clone(), 2, Terrain::detached());
+        world.insert_column(ColumnPos::of_block(IVec3::ZERO), Arc::new(Column::default()));
+        // A roof over the cell and all around, but for one column two blocks away.
+        for x in -2..12 {
+            for z in -2..12 {
+                if (x, z) != (3, 5) {
+                    world.set_block(IVec3::new(x, 101, z), stone);
+                }
+            }
+        }
+        let cell = IVec3::new(5, 100, 5);
+        assert_eq!(sky_light(&world, IVec3::new(3, 100, 5)), 15);
+        assert_eq!(sky_light(&world, cell), 13);
+        // A wall between them: the open column is only reached the long way round, four
+        // blocks, out of reach.
+        world.set_block(IVec3::new(4, 100, 5), stone);
+        assert_eq!(sky_light(&world, cell), 0);
+    }
 }

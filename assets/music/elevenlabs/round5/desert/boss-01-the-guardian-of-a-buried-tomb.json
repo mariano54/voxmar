@@ -1,0 +1,22 @@
+{
+  "mode": "boss",
+  "biome": "desert",
+  "lead": "string section in harmonic minor",
+  "colors": [
+    "duduk",
+    "low brass"
+  ],
+  "drums": "darbuka and frame drums",
+  "vibes": [
+    "ancient and dangerous",
+    "sun-scorched fury"
+  ],
+  "scene": "the guardian of a buried tomb",
+  "form": "a pulsing ostinato that builds layer by layer into a soaring main theme",
+  "bpm": 141,
+  "key": "A harmonic minor",
+  "length_s": 146,
+  "prompt": "Intense boss battle theme for a desert video game: the guardian of a buried tomb. Mood: ancient and dangerous, sun-scorched fury. Lead on string section in harmonic minor, with duduk and low brass; driving rhythm from darbuka and frame drums. Structure: a pulsing ostinato that builds layer by layer into a soaring main theme. Epic orchestral game-soundtrack sound with a memorable main motif, punchy and clear but musical, not harsh. Fast tempo around 141 BPM in A harmonic minor. Strictly no vocals, no choir, no nature sounds or sound effects, no EDM drops, no dubstep, no heavy-metal distortion guitars.",
+  "model": "music_v2_5",
+  "seed": 94
+}

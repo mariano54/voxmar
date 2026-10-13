@@ -1,0 +1,29 @@
+{
+  "leads": [
+    "wooden flute"
+  ],
+  "support": [
+    "harp",
+    "cello",
+    "marimba"
+  ],
+  "texture": "warm ambient synth pads",
+  "opener": "Relaxed, intimate instrumental tune",
+  "space": "warm small-room sound, light reverb",
+  "form": "a gentle waltz in 3/4 time",
+  "percussion": "soft wooden shaker",
+  "hint": null,
+  "vibes": [
+    "melancholic but comforting",
+    "intimate chamber-music warmth"
+  ],
+  "touch": null,
+  "biome": "forest",
+  "scene": "a warm cabin deep in the woods",
+  "bpm": 50,
+  "key": "C major",
+  "length_s": 177,
+  "prompt": "Relaxed, intimate instrumental tune for a forest scene: a warm cabin deep in the woods. Mood: melancholic but comforting, intimate chamber-music warmth. Lead melody on wooden flute, accompanied by harp, cello, marimba, over warm ambient synth pads. Structure: a gentle waltz in 3/4 time; a clear, singable melody, and rests and silences are welcome. Sound: warm small-room sound, light reverb. Slow, unhurried tempo around 50 BPM in C major, soft dynamics throughout. Occasional soft wooden shaker, very sparse, no drum kit and no electronic beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 71
+}

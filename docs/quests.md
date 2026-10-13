@@ -29,7 +29,8 @@ reward, shown first), tasks, after, rewards. Goals:
 | `Catch(fish, n)`, `Catch("Kinds", n)` | the journal's Fish page |
 | `Kill(creature, n)` | the journal's Animals and Monsters pages |
 | `Pick(plant, n)`, `Mine(ore, n)` | the journal's Plants and Ores pages |
-| `Visit(n)`, `Discover(page, n)` | how many entries the journal has |
+| `Visit(n)`, `Discover(page, n)` | how many entries the journal has (Animals and Monsters entries are only found from close up, see [journal.md](journal.md)) |
+| `Kinds(page, which, n)` | how many different entries of a page were done at least once (killed, caught, picked, mined; only seen does not count), among `any`, a `tag:TAG` or one name: Wild Harvest is `Kinds(Plants, "any", 5)` |
 | `Level(skill, n)` | the skill's level |
 | `Have(item, n)` | what the player carries, pouches too |
 | `Home` | a lit Homestead Hearth |
@@ -43,10 +44,30 @@ Items and creatures may be `any` or `tag:TAG`. Rewards are `Xp(skill, xp)` and
 ## On the server
 
 Each second the server checks every player's open quests, finishes those whose task
-holds, gives their rewards with a chat line, and sends `ServerMessage::Quests { states }`
-when any state changed: each quest's name, whether it is done, and each goal's progress
-as (have, need). The client keeps them in `LocalPlayer::quests`. Quests done and the
-tallies are saved with the player.
+holds, tells the player with a chat line, and sends `ServerMessage::Quests { states }`
+when any state changed: each quest's name, whether it is done, whether it is claimed, and
+each goal's progress as (have, need). The client keeps them in `LocalPlayer::quests`.
+Quests done, quests claimed and the tallies are saved with the player.
+
+## Claiming
+
+Finishing a quest pays nothing by itself. A done quest with rewards waits in the quest
+book: it glows gold on the web, its chapter shows a gold "!", the chat says so, and its
+page has a Claim button (`ClientMessage::ClaimQuest`) beside the rewards, which list the
+experience and the items. The server then gives the items and the experience once. A quest
+that pays nothing is claimed as it finishes. If the pack cannot hold every item, nothing
+is given, the player is told, and the quest stays claimable; the reward never drops on the
+ground. A quest that is not done, was claimed, or does not exist is ignored.
+
+Unclaimed rewards persist: the save lists the claimed quests (`quests_claimed`). A save
+from before claiming has no list, and counts everything it finished as claimed, since all of
+it was paid then.
+
+The sounds: a chime as a quest is finished and a softer ring as it is claimed, played by the
+client as the server's states change (not for the states a session starts with). They are
+synthesized (`ui/sound.rs`) unless a package's `sounds.ron` lists `quest_done` or
+`quest_claim` recordings, which replace them; they follow the sound volume, not the choice
+of click sounds.
 
 The Nomad and Farm chapters (ages 1 and 2) have the quests the game can already do:
 Nomad runs from the first campfire to the lit Homestead Hearth, Farm from the first harvest
@@ -66,3 +87,17 @@ complete these stricter goals for an unfinished quest.
 
 A package's `tracker` may name `start_pins`: quests pinned for a player whose book is new
 (nothing done, nothing pinned), once per install (remembered in the settings). A later package replaces the list.
+
+## Multi-part quests
+
+A task is a list of goals that must all hold, so one quest can ask for a gather, a craft
+and a cook together. Quests that were a single count are two-part where the second part is
+what the player does next anyway (Oct 13, Mariano: "a bit too simple"): Small Game (kill,
+then cook one), Hide and Seek (hides and bones), Rod and Line (craft, then land a fish),
+A Fish Supper (catch three, cook three), Meat on the Fire (six cooked, Cooking 2), Sharpening
+Up (Attack 4 and five kills), First Harvest and Carrot Patch (harvest, keep the crop), A
+Field of Gold (24 harvests, Farming 4), Herb Garden (planter and six plants), Seed Mix (the
+mix and the wheat to make it from), Fresh Eggs (fry the first egg, then keep five), A Woolly Flock (tame,
+and shears made), The Milk Pail (the pail, then the milk), A Silvery Ore (tin and copper from
+one seam), Many Kinds (three kinds, six cooked). The main line of each age (the pacing
+test's milestones) stays as it was. Rewards are unchanged.
