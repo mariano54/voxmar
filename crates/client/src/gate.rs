@@ -515,6 +515,9 @@ struct Gate {
     /// Whether this stage of the party step has sent its first command (the tp to the pad, or
     /// /wander end): sent on the stage's first frame however long that frame took.
     party_sent: bool,
+    /// The game clock when the party step gave its hides: the trader's swap line is looked
+    /// for from then on.
+    party_given: f32,
     breaks: Breaks,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
@@ -641,6 +644,7 @@ impl Gate {
             tame_nearest: f32::MAX,
             party_after: 0,
             party_sent: false,
+            party_given: 0.0,
             breaks: Breaks::default(),
             mining_before: None,
             struck_heights: (f32::MAX, f32::MIN),
@@ -7486,6 +7490,7 @@ fn party(world: &mut World, gate: &mut Gate, now: f32) {
             net.command("wander end");
             net.command("wander start tinker_camp");
             net.command("give hide 4");
+            gate.party_given = now;
             gate.advance(now);
         }
         // The party reaches the client, and is drawn.
@@ -7539,11 +7544,14 @@ fn party(world: &mut World, gate: &mut Gate, now: f32) {
                 if let Some(slot) = free {
                     world.resource_mut::<LocalPlayer>().selected = slot;
                 }
+                // Until the given hides show in the pack, the slot that looks empty may be where
+                // they land: a click then would be a swap, not a greeting.
+                let hides_here = item_count(world, "base:hide") >= 4;
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.5;
                 key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.9);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
-                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+                mouse(world, MouseButton::Right, hides_here && aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
             }
         }
         // The same click with four hides in hand: the party's trade, loaves for them.
@@ -7555,8 +7563,9 @@ fn party(world: &mut World, gate: &mut Gate, now: f32) {
             };
             let bread = item_count(world, "base:bread");
             let swap = world.resource::<crate::lang::Locale>().get("wander.base.tinker_camp.swap_hide").to_owned();
-            let said = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|line| line.contains(swap.as_str()));
-            if said && bread > gate.count_before {
+            // Spoken since the hides were given, whichever stage's click it answered.
+            let said = world.resource::<crate::hud::console::Console>().since(gate.party_given).any(|line| line.contains(swap.as_str()));
+            if said && bread > gate.count_before && item_count(world, "base:hide") < 4 {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("party: trade", Ok(format!("four hides held out for the trader came back as {} loaves after {:.1}s", bread - gate.count_before, gate.server_in_phase())));
