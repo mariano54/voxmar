@@ -392,6 +392,8 @@ impl Content {
                 return Err(RegistryError(format!("treasure.ron: `{}` opens to a bin of {room} stacks, but its table gives up to {most}", blocks.def(block).name)));
             }
         }
+        let mut quests = crate::quest::QuestRegistry::new(quests)?;
+        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks })?;
         crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
         crate::inventory::set_worn_slots(combat.worn_slots());
@@ -423,7 +425,7 @@ impl Content {
             value: Arc::new(value),
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
-            quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
+            quests: Arc::new(quests),
             journal: Arc::new(crate::journal::JournalRules::merge(journal, &mut notes)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),

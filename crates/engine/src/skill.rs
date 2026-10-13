@@ -132,6 +132,16 @@ impl SkillRegistry {
         self.by_name.get(name).copied()
     }
 
+    /// The skill someone in package `namespace` means by `name`: a full name as written,
+    /// else that package's own skill of that name, else core's (`mining` is `core:mining`).
+    /// Quests, `/skill` and the client's flags all name skills this way.
+    pub fn named(&self, namespace: &str, name: &str) -> Option<SkillId> {
+        if name.contains(':') {
+            return self.id(name);
+        }
+        self.id(&format!("{namespace}:{name}")).or_else(|| self.id(&format!("core:{name}")))
+    }
+
     pub fn get(&self, id: SkillId) -> &SkillDef {
         &self.defs[id.0 as usize]
     }

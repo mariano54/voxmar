@@ -201,6 +201,9 @@ impl ShaderPacks {
             .filter(|path| path.extension().is_some_and(|e| e == "ron") && file_name(path) != SHIPPED)
             .collect();
         files.sort_by_cached_key(|path| (shipped.iter().position(|name| *name == file_name(path)).unwrap_or(usize::MAX), file_name(path)));
+        for name in shipped.iter().filter(|name| !files.iter().any(|path| file_name(path) == **name)) {
+            warn!("shaderpacks/{SHIPPED} lists {name}, which is not in shaderpacks");
+        }
         for path in files {
             let source = format!("shaderpacks/{}", file_name(&path));
             let mut pack = match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| ron::from_str::<ShaderPack>(&s).map_err(|e| e.to_string())) {
@@ -316,5 +319,12 @@ mod tests {
         let real = ShaderPacks::load(&assets);
         let shipped: Vec<&str> = real.0.iter().filter(|p| p.shipped && p.keyed).map(|p| p.name.as_str()).collect();
         assert_eq!(shipped, ["Classic", "Verdant"]);
+        // Every file shipped.ron lists loads, as shipped: a missing one would lose its flag.
+        let listed: Vec<String> = ron::from_str(&std::fs::read_to_string(assets.join("shaderpacks").join(SHIPPED)).unwrap()).unwrap();
+        let loaded: Vec<String> = real.0.iter().filter(|p| p.shipped).filter_map(|p| p.source.clone()).collect();
+        assert_eq!(loaded, listed.iter().map(|file| format!("shaderpacks/{file}")).collect::<Vec<_>>());
+        // A listed file that is missing is only warned of: the rest load as before.
+        let packs = load(&[("verdant.ron", "Verdant")], &["gone.ron", "verdant.ron"]);
+        assert_eq!(packs, [("Verdant".into(), "shaderpacks/verdant.ron".into(), true)]);
     }
 }

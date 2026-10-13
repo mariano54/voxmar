@@ -632,7 +632,8 @@ fn site_with_water(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>, water: &mut cra
     }
     // The spawn's square looks further down its list, and keeps every spot that will do
     // so the planner may try the next where one cannot be laid out.
-    let tries = if spawn.is_some() { site.tries * SPAWN_TRIES } else { site.tries };
+    let spawn_tries = ctx.def.rules.spawn_tries as usize;
+    let tries = if spawn.is_some() { site.tries * spawn_tries } else { site.tries };
     candidates.sort_by(|a, b| b.0.total_cmp(&a.0).then((a.1.x, a.1.y).cmp(&(b.1.x, b.1.y))));
     // Where water is required, a closer look round the best spots finds the creeks the
     // samples missed; the first `tries` with water near go on.
@@ -653,7 +654,7 @@ fn site_with_water(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>, water: &mut cra
             }
         })
         // Keep the qualifying-prefix limit, but examine it lazily: a normal cell
-        // returns its first usable site, and a spawn cell needs only SPAWN_TRIES.
+        // returns its first usable site, and a spawn cell needs only `spawn_tries`.
         .take(tries);
     let mut found = Vec::new();
     let mut examined = 0;
@@ -683,7 +684,7 @@ fn site_with_water(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>, water: &mut cra
             return vec![(at, fresh)];
         }
         found.push((at, fresh));
-        if found.len() >= SPAWN_TRIES {
+        if found.len() >= spawn_tries {
             break;
         }
     }
@@ -694,10 +695,6 @@ fn site_with_water(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>, water: &mut cra
     report_close_scratch(water);
     found
 }
-
-/// How many times more spots the square a new player spawns in looks at, and how many
-/// it tries laying out, before it is left empty.
-const SPAWN_TRIES: usize = 8;
 
 /// Whether a settlement may stand on this original site: in no biome it avoids, and
 /// within its temperatures. The same full site also supplies fertility and home level.
@@ -900,14 +897,12 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     // the well elsewhere), then as the smallest place, before it is left empty: only the
     // land may keep a new player from a settlement.
     let salted = |salt: u64| Rng::new(ctx.seed ^ mix(salt), 0x5e771e, cell.x, cell.y);
+    let salts = u64::from(ctx.def.rules.spawn_salts);
     sites
         .iter()
-        .find_map(|&(centre, fresh)| (1..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), false, &mut ground)))
-        .or_else(|| sites.iter().find_map(|&(centre, fresh)| (0..SPAWN_SALTS).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), true, &mut ground))))
+        .find_map(|&(centre, fresh)| (1..salts).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), false, &mut ground)))
+        .or_else(|| sites.iter().find_map(|&(centre, fresh)| (0..salts).find_map(|salt| lay_out(ctx, cell, centre, fresh, salted(salt), true, &mut ground))))
 }
-
-/// How many draws the spawn's square tries laying out each spot with.
-const SPAWN_SALTS: u64 = 8;
 
 /// The stream names are drawn from, apart from the rest of the plan so a square's
 /// neighbours can draw the names it may take without planning it.

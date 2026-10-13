@@ -127,6 +127,11 @@
     //     where they spawn: of the squares in reach, the nearest that can hold one always
     //     does, unless one already stands in reach (design, 7 Oct: P21's early quests send
     //     them there). 0 promises none.
+    //   spawn_tries: that square looks at this many times `site.tries` spots, and keeps
+    //     this many at most to lay out, best first (1 to 32). spawn_salts: it lays each out
+    //     with this many draws (other lanes, the well elsewhere), then as many again as the
+    //     smallest place, before it is left empty (1 to 32). Each draw levels lots and
+    //     looks for water round their banks, so these bound the spawn's planning.
     //   names_apart: no two settlements within this many blocks of each other share a name
     //     (design, draft 81).
     //   levers: how each lever is drawn: `luck` times the mean of `rolls` rolls, plus shares
@@ -166,6 +171,8 @@
     //     props keep from lanes (by a lane, in a yard).
     rules: (
         spawn_settlement_within: 1024,
+        spawn_tries: 8,
+        spawn_salts: 8,
         names_apart: 4096,
         levers: (
             wealth: (luck: 0.45, fertility: 0.25, water: 0.2, flat: 0.1),

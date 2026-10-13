@@ -318,3 +318,37 @@ pub mod tcp {
         Ok(Connection::new(out_tx, in_rx, false, Some(peer), Some(heard)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stamp is when a message counts as arriving. In process that is the stamp it was
+    /// sent with (tests space a player's messages that way); over TCP the stamp stays on
+    /// the sending side and the server's reader stamps what it reads, so a client cannot
+    /// claim its blows or breaks came at another time.
+    #[test]
+    fn a_stamp_is_kept_in_process_and_replaced_by_the_read_over_tcp() {
+        let long_ago = Instant::now().checked_sub(Duration::from_secs(60)).expect("a clock older than a minute");
+        let (client, server) = local_pair();
+        assert!(client.send_at(ClientMessage::Cancel, long_ago));
+        let (at, message) = server.try_recv_at().unwrap().expect("sent in process");
+        assert!(matches!(message, ClientMessage::Cancel) && at == long_ago);
+
+        let (accepted_tx, accepted) = unbounded();
+        let addr = tcp::listen("127.0.0.1:0", accepted_tx).unwrap();
+        let client = tcp::connect(addr).unwrap();
+        let server = accepted.recv_timeout(Duration::from_secs(10)).expect("the connection is accepted");
+        let sent = Instant::now();
+        assert!(client.send_at(ClientMessage::Cancel, long_ago));
+        let deadline = sent + Duration::from_secs(10);
+        let (at, message) = loop {
+            if let Some(read) = server.try_recv_at().unwrap() {
+                break read;
+            }
+            assert!(Instant::now() < deadline, "the message never came over the socket");
+            std::thread::yield_now();
+        };
+        assert!(matches!(message, ClientMessage::Cancel) && at >= sent, "stamped {:?} before it was sent", sent - at);
+    }
+}
