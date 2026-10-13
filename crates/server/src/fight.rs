@@ -676,4 +676,104 @@ mod tests {
         });
         assert_eq!(defended, Some(Defended::Perfect));
     }
+
+    /// A server with one player holding a sword (Attack 20) and a bear a step ahead of
+    /// them, and the player's round trip as the server measured it.
+    fn bear_beside_a_swordsman(round_trip: f32, allowance: Option<f32>) -> (Server, voxmar_protocol::ClientConnection, u32) {
+        let mut server = crate::test_server();
+        if let Some(allowance) = allowance {
+            std::sync::Arc::get_mut(&mut server.content.combat).expect("the test server owns its combat data").feel.lag_allowance = allowance;
+        }
+        let (client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        joined.joined = true;
+        joined.grounded = server.tick;
+        joined.round_trip = Some(round_trip);
+        joined.inventory.add(server.content.blocks.id("base:iron_sword").expect("a sword"), 1);
+        let attack = server.content.skills.id("core:attack").expect("Attack");
+        joined.skills.grant(attack, server.content.skills.xp_for(20));
+        let ahead = joined.position + joined.look().with_y(0.0).normalize() * 1.2;
+        server.players.insert(player, joined);
+        let species = server.content.creatures.id("base:brown_bear").expect("a bear");
+        let bear = server.spawn_creature(species, ahead, 1).expect("room");
+        (server, client, bear)
+    }
+
+    /// What the bear's blow, landing at 10 s of the fight clock, comes to when the player
+    /// answers it `after` seconds after they saw its wind-up begin, over a connection whose
+    /// round trip is `round_trip`: they see the wind-up begin half of it late, and their
+    /// answer arrives half of it late again. Everything is stamped, nothing waits.
+    fn answered(round_trip: f32, allowance: Option<f32>, after: f32, dodge: bool) -> Defended {
+        let (mut server, client, bear) = bear_beside_a_swordsman(round_trip, allowance);
+        let player = 1;
+        let feel = server.content.combat.feel;
+        let species = server.creatures.live[&bear].species;
+        let windup = server.content.creatures.get(species).def.attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup) as f64;
+        let lands = 10.0;
+        server.arrival = server.fights.epoch + Duration::from_secs_f64(lands - windup + after as f64 + round_trip as f64);
+        if dodge {
+            server.dodge(player);
+        } else {
+            server.raise_guard(player, true);
+        }
+        server.creature_blow(bear, player, lands);
+        std::iter::from_fn(|| client.try_recv().ok().flatten()).find_map(|message| match message {
+            ServerMessage::Hurt { defended, .. } => Some(defended),
+            _ => None,
+        }).expect("the blow told the player what came of it")
+    }
+
+    /// Review: a player sees a wind-up begin half their round trip late, and their answer
+    /// comes half of it late again. A guard or dodge is judged that much earlier, by the
+    /// round trip the server measures, never past `feel.lag_allowance`: answered on time on
+    /// their own screen at 0 or 150 ms, it lands; late, it does not; at 400 ms, past the
+    /// allowance, even on time it does not. Without the allowance the 150 ms answers fail.
+    #[test]
+    fn a_guard_and_a_dodge_count_from_when_the_player_saw_the_wind_up() {
+        let (server, ..) = bear_beside_a_swordsman(0.0, None);
+        let feel = server.content.combat.feel;
+        let perfect = server.guard_of(1).expect("a sword guards").perfect;
+        let dodge = server.content.combat.dodge_of(&server.players[&1].inventory.worn).clone();
+        let species = server.creatures.live.values().next().expect("the bear").species;
+        let windup = server.content.creatures.get(species).def.attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup);
+        // On time on their screen: the middle of the perfect window, and of the dodge's.
+        let on_time = [(windup - perfect / 2.0, false, Defended::Perfect), (windup - (dodge.safe.0 + dodge.safe.1) / 2.0, true, Defended::Dodged)];
+        for round_trip in [0.0, 0.15, 0.4] {
+            let allowed = round_trip <= feel.lag_allowance;
+            for (after, dash, defended) in on_time {
+                let came = answered(round_trip, None, after, dash);
+                if allowed {
+                    assert_eq!(came, defended, "an answer on time at {} ms came to {came:?}", round_trip * 1000.0);
+                } else {
+                    assert!(matches!(came, Defended::Hit | Defended::Blocked), "an answer on time at {} ms, past the allowance, came to {came:?}", round_trip * 1000.0);
+                }
+                // Late on their screen too: the blow lands.
+                let late = answered(round_trip, None, windup + 0.25, dash);
+                assert!(matches!(late, Defended::Hit | Defended::Missed), "an answer late at {} ms came to {late:?}", round_trip * 1000.0);
+            }
+        }
+        // Without the allowance the same answers at 150 ms are late.
+        for (after, dash, defended) in on_time {
+            assert_ne!(answered(0.15, Some(0.0), after, dash), defended, "the 150 ms answer needed no allowance");
+        }
+    }
+
+    /// The round trip the allowance is made of: a ping answered later by the connection's
+    /// round trip, smoothed, then capped by the feel.
+    #[test]
+    fn the_round_trip_a_ping_measures_is_the_allowance_up_to_its_cap() {
+        let (mut server, _client, _bear) = bear_beside_a_swordsman(0.0, None);
+        let player = 1;
+        let cap = server.content.combat.feel.lag_allowance;
+        assert!(cap > 0.15 && cap < 0.4, "the cases below assume a cap between 150 and 400 ms");
+        for (round_trip, allowance) in [(0.15, 0.15), (0.4, cap as f64)] {
+            let sent = Instant::now();
+            let p = server.players.get_mut(&player).unwrap();
+            p.round_trip = None;
+            p.ping = Some((7, sent));
+            server.pong(player, 7, sent + Duration::from_secs_f64(round_trip));
+            assert!((server.lag_allowance(player) - allowance).abs() < 1e-6, "{round_trip}: {}", server.lag_allowance(player));
+        }
+    }
 }

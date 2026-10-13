@@ -36,7 +36,6 @@ TIMING_TESTS = [
     "break_and_place_blocks",
     "a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started",
     "falling_hurts",
-    "a_guard_and_a_dodge_count_from_when_the_player_saw_the_wind_up",  # a delayed connection: the round trip is real time
     "only_admins_fly_fast",
     "walking_wears_a_path",
     "a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it",
