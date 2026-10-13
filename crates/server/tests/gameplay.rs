@@ -2824,17 +2824,20 @@ fn a_settlement_come_back_to_holds_its_people_once() {
     let mut client = settlement_client();
     let tp = to_settlement(&mut client, "", "midnight");
     client.ok("/time freeze");
-    // Settled: the same count three looks running.
+    // Settled: the same people two looks running. On a loaded machine the server can still
+    // be bringing them in after three looks, so it looks until they hold still.
     let mut before = census(&client);
-    for _ in 0..3 {
+    let mut settled = false;
+    for _ in 0..20 {
         client.pump_ticks(3 * TICKS_PER_SECOND as u64, |_| false);
         let now = census(&client);
-        if now == before && !now.is_empty() {
+        settled = now == before && !now.is_empty();
+        if settled {
             break;
         }
         before = now;
     }
-    assert!(!before.is_empty(), "no one about");
+    assert!(settled, "the people never held still: {before:?}");
     // Away past `release` (well inside `forget`): the server lets them go.
     let far = client.position + Vec3::new(400.0, 0.0, 0.0);
     client.ok(&format!("/tp {} {}", far.x as i32, far.z as i32));
