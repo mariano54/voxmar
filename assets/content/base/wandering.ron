@@ -303,7 +303,7 @@
         // own soon enough.
         (
             name: "fox_and_farmer", weight: 0.6,
-            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:forest_edge", 0.6)],
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:forest", 0.4)],
             daylight: (0.3, 0.9), needs: (days: 0.8, away: Some((40.0, 100000.0))),
             cast: [(species: "fox"), (species: "farmer", role: Chaser)],
             script: Chase(pass: (4.0, 14.0), length: 130.0, pace: 1.8, gain: 1.2, hold: (8.0, 14.0)),
