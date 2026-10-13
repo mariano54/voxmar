@@ -471,10 +471,10 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **The rain dance** (rainmakers): pay the rainmakers and see the rain come.
 - **Filled again** (shrine bearer): have spent prayer restored at a wandering shrine.
 - **A fortune told** (fortune teller): follow a fortune to what it named.
-- **Fired whole** (clay diggers): have clay fired at a wandering potter's kiln.
-- **Harvest home** (harvest home): give a sheaf to the dolly and see the field grow.
-- **Coal by road** (coal carters): walk the coal to town; the first coal for torchlight.
-- **The piper's tune** (rat catcher): follow the piper to the end of his tune.
+- **Fired whole** (clay diggers): have clay fired at a wandering potter's kiln. Quest Fired Whole.
+- **Harvest home** (harvest home): give a sheaf to the dolly and see the field grow. Quest The Last Sheaf.
+- **Coal by road** (coal carters): walk the coal to town; the first coal for torchlight. Quest Coal by Road (or the benighted miners).
+- **The piper's tune** (rat catcher): follow the piper to the end of his tune. Quest Mice in the Stores.
 
 ## Catalogue of 100
 
