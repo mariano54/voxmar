@@ -283,6 +283,10 @@ enum Step {
     /// An iron sword in hand at Attack 20, a brown bear struck until it dies takes harder
     /// blows than a fist could deal.
     Weapon,
+    /// A sling at Ranged 10 against a held brown bear seven blocks off, out of a sword's
+    /// reach: shot with left clicks until a stone hits, each shot spends one cobblestone,
+    /// and the hit trains Ranged.
+    Sling,
     /// The bear again, in survival, provoked into fighting back: the guard raised just as
     /// its wind-up ends is a perfect block that takes nothing, a click then is a counter,
     /// and a dodge as the next blow comes down lets it pass.
@@ -496,6 +500,8 @@ struct Gate {
     weapon_fallen_since: Option<f32>,
     /// Blows the server has answered, as last counted.
     blows_seen: u32,
+    /// Blows landed, Ranged experience and cobblestone carried as the sling step began.
+    sling_from: (u32, u32, u32),
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
     /// Whether the creatures step could release its butterfly.
@@ -643,6 +649,7 @@ impl Gate {
             fallen_since: None,
             weapon_fallen_since: None,
             blows_seen: 0,
+            sling_from: (0, 0, 0),
             readout_seen: false,
             butterfly: false,
             fall_judged: false,
@@ -1031,7 +1038,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area of the world to generate and mesh.
         Step::Gorge | Step::Ore | Step::Tarns => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
-        Step::Strike | Step::Weapon => STRIKE_LIMIT,
+        Step::Strike | Step::Weapon | Step::Sling => STRIKE_LIMIT,
         // The feel step ends itself by the server's clock (`FEEL_LIMIT`, then the kill);
         // this is the backstop for a server that stopped.
         Step::Feel => FEEL_LIMIT + 2.0 * UNANSWERED + STEP_LIMIT,
@@ -1292,6 +1299,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
         Step::Weapon => weapon(world, gate, now, in_phase),
+        Step::Sling => sling(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
@@ -6174,6 +6182,95 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     gate.check("weapon strikes", result);
                     end_weapon(world, gate, now);
                 }
+            }
+        }
+        _ => {
+            if sweep_bears(world, gate, species, pad) {
+                gate.next(Step::Sling, now);
+            }
+        }
+    }
+}
+
+/// The sling, the Ranged level it is shot at, and what it shoots.
+const SLING: &str = "base:sling";
+const SLING_LEVEL: u8 = 10;
+const SLING_STONES: u32 = 12;
+
+/// A sling at Ranged 10 against a held brown bear seven blocks off: shot a second apart
+/// until a stone hits, every shot answered spends one cobblestone, and the hit trains Ranged.
+fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(BEAR) else {
+        gate.check("sling", Err(format!("no `{BEAR}` in the content")));
+        gate.next(Step::Feel, now);
+        return;
+    };
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    let view = the_bear(world, gate, species);
+    let stones = item_count(world, "base:cobblestone");
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("skill ranged {SLING_LEVEL}"));
+            net.command(&format!("give {} 1", SLING.trim_start_matches("base:")));
+            net.command(&format!("give cobblestone {SLING_STONES}"));
+            net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+            // Seven blocks back from it, past any blow's reach and inside the sling's.
+            net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 - 6.5));
+            gate.feel = FeelRun::default();
+            gate.advance(now);
+        }
+        1 => {
+            let ready = skill_level(world, "core:ranged").0 >= SLING_LEVEL && view.is_some() && stones >= SLING_STONES;
+            if ready && select(world, SLING) {
+                world.resource::<Net>().command(&format!("creatures hold {}", BEAR.trim_start_matches("base:")));
+                let landed = world.resource::<crate::creatures::Creatures>().landed;
+                gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
+                gate.sling_from = (landed, skill_level(world, "core:ranged").1, stones);
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("sling", Err(format!("the sling, Ranged {SLING_LEVEL}, the stones or the bear never came (bear seen: {}, stones {stones})", view.is_some())));
+                end_weapon(world, gate, now);
+            }
+        }
+        2 => {
+            let (blows, landed) = {
+                let creatures = world.resource::<crate::creatures::Creatures>();
+                (creatures.blows, creatures.landed)
+            };
+            if blows > gate.blows_seen {
+                gate.blows_seen = blows;
+                gate.phase_since = now;
+                gate.phase_server = gate.server_now;
+            }
+            let (landed_from, xp_from, stones_from) = gate.sling_from;
+            let xp = skill_level(world, "core:ranged").1;
+            let Some(view) = view else {
+                gate.check("sling shot", Err("the bear went out of sight".into()));
+                end_weapon(world, gate, now);
+                return;
+            };
+            if landed > landed_from && xp > xp_from {
+                // Every shot the server answered spent a stone: the hit, and any misses before it.
+                let spent = stones_from.saturating_sub(stones);
+                let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
+                let result = if spent >= 1 {
+                    Ok(format!("a stone hit from {distance:.1} blocks; Ranged xp {xp_from} -> {xp}, {spent} stones spent"))
+                } else {
+                    Err(format!("a stone hit from {distance:.1} blocks, but no cobblestone was spent ({stones} left)"))
+                };
+                gate.check("sling shot", result);
+                end_weapon(world, gate, now);
+            } else if stones == 0 || gate.server_in_phase() > UNANSWERED {
+                gate.check("sling shot", Err(format!("no stone hit: {} landed, Ranged xp {xp_from} -> {xp}, {stones} stones left", landed - landed_from)));
+                end_weapon(world, gate, now);
+            } else {
+                // Held still, aimed at its middle, and shot a second apart, past the sling's cooldown.
+                key(world, KeyCode::KeyW, false);
+                aim_at(world, view.position + Vec3::Y * 0.6);
+                let shoot = ((now - gate.since) / 1.0).fract() < 0.1;
+                mouse(world, MouseButton::Left, shoot);
             }
         }
         _ => {

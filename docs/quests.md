@@ -224,7 +224,7 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 | Hitpoints | **Hard to Put Down** (Nomad, new) | Twice your level in health; 12 is 24 | None: it grows with blows landed |
 | Magic | A Place to Pray (Farm) | Bark Skin at 1, Ember Arm 4, Mending 10 | The stone altar |
 | Alchemy | **Herb Lore** (Nomad, new) | A taste only: herb lore from three kinds of wanderer | None yet |
-| Ranged | None | None yet | None yet |
+| Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 5 | Sling to short bow |
 
 Two new side quests fill the skills that had nothing before:
 - **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 3 and Hitpoints 12. Both
@@ -233,12 +233,13 @@ Two new side quests fill the skills that had nothing before:
   gatherer, a travelling alchemist or a wandering healer. These are the three wanderers that
   teach Alchemy for herbs, and they are the only Alchemy anything gives today.
 
+Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
+weapons" below).
+
 Left for later, on purpose:
 - **Alchemy past a taste.** Alchemy 5 and up is brewing: tonics, then cauldrons and draughts.
   None of it exists yet, so a quest for an Alchemy level would be grinding the same three
   wanderers. Alchemy quests wait for brewing.
-- **Ranged.** No bow, sling or thrown weapon exists. The guide's shortbow at 5 has no
-  recipe, so Ranged waits for its weapons.
 
 ## A wait always has something beside it (Oct 13)
 
@@ -261,3 +262,34 @@ en and ja, an optional quest that is already open at that moment:
 
 A script checked that every quest title written in parentheses in a why is a real quest's
 title, and every 「」 name in ja is a real ja title, apart from the Prayers menu.
+
+## First ranged weapons (Oct 13)
+
+Ranged was the one combat skill with no early taste. Ages 1-2 now have two weapons, both
+in content data (core/combat.ron classes and weapons, base/blocks_weapons.ron,
+base/recipes_weapons.ron), checked at load:
+
+| Weapon | Age | Level | Max hit | Cooldown | Reach | Ammo | Recipe |
+|---|---|---|---|---|---|---|---|
+| Sling | Nomad | Ranged 1 | 2 | 0.53 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
+| Short Bow | Farm | Ranged 5 | 4 | 0.6 s | 20 | Arrows | Three sticks, three twine (Crafting 5) |
+| Arrow (x4) | Farm | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 5) |
+
+Next to early melee: fists hit 1, a stone sword 3, copper swords 5 and a copper axe 6. The
+sling (2) is a step above fists that keeps you out of reach; the bow (4) sits just under
+copper melee, paid for in arrows and the two hands it needs.
+
+How a shot works, the same way every blow does:
+- The server decides every hit. A shot is a swing with a class whose `ammo` is set: the
+  rhythm, accuracy roll, damage and flinch are the melee ones. No knockback.
+- Reach is the class's reach, and the server also needs a clear line from the eye to the
+  target's centre. A wall in between drops the shot.
+- Each shot uses one ammo when it lands, hit or miss. With none, the server sends "Nothing
+  to shoot" and starts no swing.
+- Ranged XP comes from hits, like every style skill (40 per damage, plus Hitpoints).
+
+Quests that teach it:
+- **A Stone's Throw** (Nomad, combat, after Twine and Thong): craft a sling, reach Ranged 2.
+- **Bow and Arrow** (Farm, combat, after Homestead Hearth): craft a short bow and eight
+  arrows, reach Ranged 5.
+

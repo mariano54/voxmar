@@ -834,6 +834,10 @@ fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, play
     if (weapon.reach - content.combat.feel.reach).abs() > 0.05 {
         lines.push((locale.format("item.weapon_reach", &[("reach", &format!("{:.1}", weapon.reach))]), SOFT));
     }
+    // What it shoots, for a sling or a bow: the first item it takes.
+    if let Some(&ammo) = content.combat.ammo(weapon).first() {
+        lines.push((locale.format("item.weapon_ammo", &[("ammo", &locale.block(content.blocks.def(ammo)))]), SOFT));
+    }
     lines
 }
 

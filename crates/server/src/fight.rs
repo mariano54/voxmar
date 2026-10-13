@@ -205,6 +205,11 @@ impl Server {
         if self.eating(player) {
             return;
         }
+        // A sling or bow with nothing to shoot is no swing at all; the player is told why.
+        if self.ammo_slot(player, &weapon) == Some(None) {
+            self.no_ammo(player, &weapon);
+            return;
+        }
         let held = self.players.get(&player).and_then(|p| p.held());
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
@@ -226,6 +231,37 @@ impl Server {
             fighter.riposte_until = 0.0;
             fighter.aim = Some(Aim { creature, counter, riposte, weapon, held });
         }
+    }
+
+    /// For a weapon that shoots: `Some` with the pack slot of the first thing it shoots,
+    /// or `Some(None)` with nothing to shoot; `None` for a weapon that strikes.
+    fn ammo_slot(&self, player: PlayerId, weapon: &Weapon) -> Option<Option<usize>> {
+        let ammo = self.content.combat.ammo(weapon);
+        if ammo.is_empty() {
+            return None;
+        }
+        let p = self.players.get(&player)?;
+        Some((0..voxmar_engine::inventory::SLOTS).find(|&slot| p.inventory.get(slot).is_some_and(|stack| ammo.contains(&stack.item))))
+    }
+
+    /// Tells a player their weapon has nothing to shoot, naming what it shoots.
+    fn no_ammo(&self, player: PlayerId, weapon: &Weapon) {
+        let (Some(p), Some(&first)) = (self.players.get(&player), self.content.combat.ammo(weapon).first()) else { return };
+        let held = p.held().map(|item| voxmar_engine::lang::Words::Block(self.content.blocks.def(item).name.clone()));
+        let words = voxmar_engine::lang::Words::key("combat.no_ammo")
+            .with("weapon", held.unwrap_or_else(|| voxmar_engine::lang::Words::key("combat.no_ammo.weapon")))
+            .with("ammo", voxmar_engine::lang::Words::Block(self.content.blocks.def(first).name.clone()));
+        p.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text: words });
+    }
+
+    /// Whether nothing solid stands between a player's eye and the middle of `aabb`: a shot
+    /// needs a clear line where a blow needs only reach.
+    fn clear_shot(&self, eye: Vec3, aabb: &Aabb) -> bool {
+        let centre = (aabb.min + aabb.max) * 0.5;
+        let distance = eye.distance(centre);
+        let blocks = &self.content.blocks;
+        let solid = |cell: voxmar_engine::glam::IVec3| self.block(cell).is_some_and(|b| blocks.info(b).solid);
+        voxmar_engine::physics::raycast(eye, centre - eye, distance, solid).is_none_or(|hit| hit.distance >= distance)
     }
 
     /// A player starts a bite of food (`core:eat`): a swing under way is dropped, and the
@@ -379,7 +415,13 @@ impl Server {
                 landing.push((player, aim, swing.strength, on_beat, kind, in_reach));
             }
         }
-        for (player, aim, strength, on_beat, kind, in_reach) in landing {
+        for (player, aim, strength, mut on_beat, kind, mut in_reach) in landing {
+            // A shot needs a clear line too: one into a wall is a miss.
+            if in_reach && !self.content.combat.ammo(&aim.weapon).is_empty() {
+                let eye = self.players.get(&player).map(|p| p.eye());
+                in_reach = eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| self.clear_shot(eye, &aabb));
+                on_beat &= in_reach;
+            }
             self.land_swing(player, aim, strength, on_beat, kind, in_reach);
         }
         // Creatures' blows, each judged at the moment it lands, once every guard and dodge
@@ -419,6 +461,20 @@ impl Server {
     fn land_swing(&mut self, player: PlayerId, aim: Aim, strength: f32, on_beat: bool, kind: Blow, in_reach: bool) {
         let feel = self.content.combat.feel;
         let weapon = aim.weapon;
+        // A shot takes one of what the weapon shoots, hit or miss; with none left it is no shot.
+        match self.ammo_slot(player, &weapon) {
+            Some(None) => {
+                self.no_ammo(player, &weapon);
+                return;
+            }
+            Some(Some(slot)) => {
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.inventory.take(slot, 1);
+                    p.changed(voxmar_engine::traits::INVENTORY);
+                }
+            }
+            None => {}
+        }
         let Some(p) = self.players.get(&player) else { return };
         let falling = p.fall_start.is_some_and(|top| p.position.y < top - feel.falling_drop);
         if !in_reach {

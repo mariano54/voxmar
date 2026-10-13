@@ -137,6 +137,13 @@
             rewards: [Xp("crafting", 40.0)],
         ),
         (
+            name: "a_stones_throw", age: "nomad", branch: "combat", title: "A Stone's Throw",
+            why: "A sling hits from twelve blocks away, where a blade must be close: birds, runners, or something you would rather not stand next to. Lay a hide between two twine in a row at the crafting table. Hold it and click a creature in clear sight: each shot throws one cobblestone from your pack, hit or miss, so carry a stack. It hits softer than a stone sword (2 at most), and every hit trains Ranged. Reach Ranged 2.",
+            tasks: [[Craft("sling", 1), Level("ranged", 2)]],
+            after: ["twine_and_thong"],
+            rewards: [Xp("ranged", 40.0), Xp("crafting", 30.0)],
+        ),
+        (
             name: "small_game", age: "nomad", branch: "hunter", title: "Small Game",
             why: "Rabbits, junglefowl and other small animals are the easiest food: raw rabbit and chicken cook well at a campfire. Look for them on open grassland. Hunt three; a few blows are enough, and each kill trains Hunter. Then cook one of what you killed.",
             tasks: [[Kill("any", 3), Cook("tag:meat", 1)]],
@@ -499,6 +506,13 @@
             tasks: [[Craft("copper_sword", 1), Craft("copper_shield", 1)]],
             after: ["red_metal"],
             rewards: [Xp("engineering", 200.0), Xp("attack", 100.0)],
+        ),
+        (
+            name: "bow_and_arrow", age: "farm", branch: "combat", title: "Bow and Arrow",
+            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 5). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 5): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 5 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
+            tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],
         ),
         (
             name: "copper_mail", age: "farm", branch: "combat", title: "Copper Mail",

@@ -4070,6 +4070,73 @@ fn a_swing_is_dropped_when_its_weapon_leaves_the_hand() {
     client.pump_until(|c| c.blows == 1);
 }
 
+/// How many of `item` the player carries.
+fn carried_of(client: &Client, item: voxmar_engine::block::BlockId) -> u32 {
+    (0..voxmar_engine::inventory::SLOTS).filter_map(|s| client.inventory.get(s)).filter(|s| s.item == item).map(|s| s.count as u32).sum()
+}
+
+#[test]
+fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
+    let mut client = Client::join();
+    let (sling, stone) = (client.content.blocks.expect("base:sling"), client.content.blocks.expect("base:cobblestone"));
+    let ranged = client.content.skills.id("core:ranged").expect("a ranged skill");
+    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
+    // Creative, so the bear's blows pass us by, on a wide flat floor.
+    client.ok("/gamemode creative");
+    client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
+    client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
+    client.ok("/clear");
+    client.ok("/skill ranged 10");
+    client.ok("/give sling 1");
+    client.pump_until(|c| carried_of(c, sling) == 1);
+    let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == sling)).expect("the sling on the hotbar");
+    client.drain();
+    let before: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
+    client.ok("/summon brown_bear 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear && !before.contains(&v.id)));
+    let id = client.creatures.values().find(|v| v.species == bear && !before.contains(&v.id)).unwrap().id;
+    client.ok("/creatures hold");
+    // Eight blocks off, out of any sword's reach, inside the sling's twelve.
+    let at = client.creatures[&id].position;
+    let aim = |client: &mut Client| {
+        let yaw = yaw_toward(client.position, at);
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
+    };
+    client.ok(&format!("/tp {} {} {}", at.x + 8.0, at.y, at.z));
+    aim(&mut client);
+    client.wait_server(1);
+    // Nothing to shoot: no swing, and the player is told what the sling needs.
+    client.chat.clear();
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.chat.iter().any(|(_, line)| line.contains("Nothing to shoot")));
+    client.wait_server(1);
+    assert_eq!(client.blows, 0, "a sling with no stone still swung");
+    // With stones: each shot takes one, hit or miss, and a hit trains Ranged.
+    client.ok("/give cobblestone 16");
+    client.pump_until(|c| carried_of(c, stone) == 16);
+    let xp = client.skills.xp(ranged);
+    let mut shots = 0;
+    while client.damage.iter().all(|&d| d == 0) {
+        assert!(shots < 16, "sixteen sling shots from eight blocks never hit: {:?}", client.damage);
+        client.propose("core:attack", ActionTarget::Creature(id));
+        shots += 1;
+        client.pump_until(|c| c.blows == shots);
+        client.pump_until(|c| carried_of(c, stone) == 16 - shots);
+        client.wait_server(1);
+    }
+    client.pump_until(|c| c.skills.xp(ranged) > xp);
+    // A wall between is a miss, and the stone is still spent.
+    let x = at.x + 4.0;
+    client.ok(&format!("/fill {} {} {} {} {} {} stone", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
+    client.wait_server(1);
+    let (blows, left) = (client.blows, carried_of(&client, stone));
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.blows == blows + 1);
+    assert_eq!(client.damage.last(), Some(&0), "a shot through a wall hit");
+    client.pump_until(|c| carried_of(c, stone) == left - 1);
+}
+
 /// Whether a dodge proposed now is taken: a second one at once must then be refused by its
 /// cooldown, so exactly one Teleport comes back (two: the first was refused too; none: the
 /// cooldown did not hold).
