@@ -132,7 +132,7 @@ fn everywhere() -> Vec<Context> {
 }
 
 /// Where tracks at matching locations play. The first rule a location matches decides.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
     /// Patterns of paths, the location less its namespace, `*` standing for anything:
@@ -430,13 +430,14 @@ mod tests {
                 assert!(english.find(&key).is_some(), "no {key}");
             }
         }
+        let audio = |path: &std::path::PathBuf| path.extension().is_some_and(|e| e == "mp3" || e == "ogg");
         let mut placed = 0;
         for folder in rules.categories.iter().filter_map(|c| c.folder.as_ref()) {
-            let tracks = std::fs::read_dir(assets.join("music").join(folder)).unwrap().count();
-            assert!(tracks > 0, "assets/music/{folder} is empty");
+            let tracks = walk(&assets.join("music").join(folder)).iter().filter(|p| audio(p)).count();
+            assert!(tracks > 0, "assets/music/{folder} has no tracks");
             placed += tracks;
         }
-        let all = walk(&assets.join("music"));
+        let all: Vec<_> = walk(&assets.join("music")).into_iter().filter(audio).collect();
         assert_eq!(placed, all.len(), "tracks outside every category's folder: {all:?}");
         assert!(!rules.prism.instances.is_empty() && !rules.prism.sources.is_empty());
     }

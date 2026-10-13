@@ -465,10 +465,11 @@ fn schedule_music(
         music.current = None;
         music.next_at = Some(time.elapsed() + music.gap(&time, in_menu));
     }
+    let boss = !in_menu && in_boss_fight(&mut music, &time, player.position, creatures.as_deref(), world.as_deref());
     let underground = &music.rules.underground;
     let context = match &surroundings {
         _ if in_menu => Context::Menu,
-        _ if in_boss_fight(&mut music, &time, player.position, creatures.as_deref(), world.as_deref()) => Context::Boss,
+        _ if boss => Context::Boss,
         Some(around) if around.depth >= underground.depth && around.sky <= underground.max_sky => Context::Underground,
         _ => Context::Game,
     };
@@ -777,10 +778,9 @@ mod tests {
         assert_eq!(named("minecraft:music/game/calm1", false), "Calm1");
         assert_eq!(named("horizonmelodies:music_and_melody/music/overworld/wild_hills", false), "Wild Hills");
         for folder in rules.categories.iter().filter_map(|c| c.folder.as_ref()) {
-            for entry in std::fs::read_dir(assets.join("music").join(folder)).unwrap().flatten() {
-                let file = entry.file_name().into_string().unwrap();
-                let stem = file.rsplit_once('.').unwrap().0;
-                assert!(english.find(&format!("music.track.{stem}")).is_some(), "{folder}/{file} has no music.track.{stem}");
+            for name in own_tracks(&assets.join("music"), folder) {
+                let stem = name.rsplit('/').next().unwrap().rsplit_once('.').unwrap().0;
+                assert!(english.find(&format!("music.track.{stem}")).is_some(), "{name} has no music.track.{stem}");
             }
         }
     }
