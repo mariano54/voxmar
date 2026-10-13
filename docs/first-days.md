@@ -77,7 +77,8 @@ Mostly yes, with these checks:
 5. **The Ranged guide advertised a sling that does not exist.** Removed; no bow or other
    ranged weapon exists either, so the rest of that guide is still all future.
 6. **Worldgen never places the locked age chests**, so no quest depends on them.
-7. **Prayers and altars, the quern and stove are not built.** No quest asks for them.
+7. **The quern and stove are not built.** No quest asks for them. Prayers and the altar
+   came later and have their quests (Altar Rites, A Prayer in the Fight).
 8. **Bedding is crafted but never used**: fixed by [home.md](home.md): sleeping gives a rest, and a bed, light and hearth start a ladder of home comfort.
 9. **Clay was only mentioned by Farm quests** though the Hearth needs it: the Hearth quest
    now says where to dig it.
@@ -110,6 +111,23 @@ Mostly yes, with these checks:
     the biomes, creature habitats, ore veins and that census (wild wheat on grassland and
     in village fields; copper and coal under their ore samples; tin below copper; herbs,
     berries and flowers by biome; each animal by its habitat).
+
+15. **Steps asked for things the text never showed how to make** (Oct 13 walk of every
+    Nomad quest in order, then Farm up to the lit Crucible Kiln, checking each ask against
+    `recipes.ron`, skill unlocks and where things are found). Fixed in the quest text:
+    Crafting Table names its four planks; Stone in Hand says a wooden pickaxe breaks stone
+    into cobblestone; Torchlight gives coal and a stick and where coal shows; Pockets names
+    hide and twine and Crafting 3; First Ore says Mining 5 comes from coal and now follows
+    Coal and Cinders; A Friend in the Wild says where wild carrots grow; Break Ground and
+    First Night say where cobblestone comes from; Tools for Animals names the wild herds
+    (mouflon, mountain goats, reindeer, aurochs) instead of farm animals the world lacks;
+    Red Metal, Copper Kit and The Crucible give the ingot recipe (copper ore over coal or
+    charcoal, Engineering 5) and where Engineering comes from; Crucible Kiln gives the
+    layout (a ring of eight kiln bricks and four corner pillars) and the charge; The Potter
+    names Crafting 2; A Woolly Flock says wheat is the favourite food. Checked and right as
+    written: the hearth and chimney, sleeping bag, bread, shears, pail, hide armour,
+    buckler, knives, shovel, rod, pit kiln, kiln bricks, crucible, clay pot, charcoal at a
+    campfire and tin at Mining 10.
 
 Next (Mac): run `tools/gate` (the cloud cannot build the client's graphics stack and has
 no GPU), then play the first three days once in a fresh survival world and note where you

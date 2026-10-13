@@ -197,7 +197,9 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   core's. Everyone who came with a party, freed or let go, stays outside the settlements'
   people budget.
 - **Admin.** `/wander` lists the parties about, `/wander list` the kinds, `/wander start
-  NAME` begins one ahead of you, `/wander end` sends them all away.
+  NAME` begins one ahead of you (nearer, down to your feet, where there is no standing room
+  ahead), `/wander end` sends them all away, and `/wander hold` keeps any from setting out
+  by chance until `/wander allow` (the gate holds them through its session).
 
 ## Reactions
 

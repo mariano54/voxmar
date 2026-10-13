@@ -221,7 +221,8 @@ fn render_offscreen(
 enum Step {
     /// The world around the player loads.
     Load,
-    /// The test ground is built, the clock and weather held, and the observer joins.
+    /// The test ground is built, the clock, weather and chance wandering parties held, and
+    /// the observer joins.
     Build,
     /// The player stands on the test ground, the observer floats out of the way.
     Arrive,
@@ -382,14 +383,15 @@ enum Step {
 }
 
 impl Step {
-    /// Whether the server runs behind (`SERVER_LAG`) in this step: in those that play
-    /// against a lagging server (placing, digging, breaking, the workshop's breaks, and
-    /// combat timed against where blows fall) and the steps before them. The rest check
-    /// what lag does not change, and run against a server at full speed, which gets there
-    /// three times sooner.
+    /// Whether the server runs behind (`SERVER_LAG`) in this step: in those whose checks are
+    /// about playing against a lagging server (placing, digging and breaking, where blocks
+    /// were lost to it, and the fight's guard and dodge, timed against where its blows fall)
+    /// and the steps before them. The rest check what lag does not change (what crafting,
+    /// a kill or a campfire gives), and run against a server at full speed, which gets
+    /// there three times sooner.
     fn lagged(self) -> bool {
         use Step::*;
-        matches!(self, Load | Build | Arrive | Place | PlaceSettle | Dig | DigSettle | Collect | Breaks | Workshop | HvAge | Strike | Weapon | Feel | Cook)
+        matches!(self, Load | Build | Arrive | Place | PlaceSettle | Dig | DigSettle | Collect | Breaks | Feel)
     }
 }
 
@@ -497,6 +499,9 @@ struct Gate {
     spills: Vec<(String, String)>,
     /// Views in a language with line rules where no text had its line breaks checked.
     unbroken: Vec<String>,
+    /// The text-fit tour's view (its step and stage), its layout as last drawn, whether that
+    /// changed since the view was shown, and the frames it has held still since (`FIT_STILL`).
+    fit_layout: ((Step, u32), u64, bool, u32),
     /// The interface font before the gate tried another, to go back to.
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
@@ -507,6 +512,12 @@ struct Gate {
     tame_nearest: f32,
     /// The newest creature id when the party step began: what is newer is the party's.
     party_after: u32,
+    /// Whether this stage of the party step has sent its first command (the tp to the pad, or
+    /// /wander end): sent on the stage's first frame however long that frame took.
+    party_sent: bool,
+    /// The game clock when the party step gave its hides: the trader's swap line is looked
+    /// for from then on.
+    party_given: f32,
     breaks: Breaks,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
@@ -626,11 +637,14 @@ impl Gate {
             cover_checked: false,
             spills: Vec::new(),
             unbroken: Vec::new(),
+            fit_layout: ((Step::Load, 0), 0, false, 0),
             font: None,
             food_moved: false,
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
             party_after: 0,
+            party_sent: false,
+            party_given: 0.0,
             breaks: Breaks::default(),
             mining_before: None,
             struck_heights: (f32::MAX, f32::MIN),
@@ -697,6 +711,7 @@ impl Gate {
         self.step_server = self.server_now;
         self.phase_server = self.server_now;
         self.food_moved = false;
+        self.party_sent = false;
     }
 
     /// On to the next stage of a step. Logged with the game's and the server's clocks, so a
@@ -1074,6 +1089,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             for line in [
                 "time set noon".to_owned(),
                 "time freeze".into(),
+                // No party sets out by chance into a step about something else (the party
+                // step starts its own).
+                "wander hold".into(),
+                "wander end".into(),
                 "clear".into(),
                 "give oak_planks 64".into(),
                 "give cobblestone 64".into(),
@@ -1258,7 +1277,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
-        Step::Party => party(world, gate, now, in_phase),
+        Step::Party => party(world, gate, now),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Tarns => tarns(world, gate, now, in_phase),
         Step::Settlements => settlements(world, gate, now, in_phase),
@@ -1669,18 +1688,50 @@ fn lay_and_craft(world: &mut World, cells: &[(usize, &str)]) -> bool {
     true
 }
 
-/// Selects the hotbar slot holding `name`, swapping it in from the pack first if need be.
+/// An item `select` moved into the hand, the player states the client had been sent then,
+/// and the server's tick: until a later state has it in the hotbar, it is not yet in hand
+/// as the server sees it. A state already on its way when the move went out (another
+/// item given) puts it back where it was, and a click then would be made empty handed.
+#[derive(Resource)]
+struct Moving {
+    item: String,
+    states: u32,
+    tick: u64,
+}
+
+/// Server seconds after which a move into the hand no state confirmed is proposed again.
+const MOVE_UNANSWERED: f32 = 2.0;
+
+/// Takes item `name` in hand: selects its hotbar slot, or moves it into `TOOL_SLOT` and
+/// selects that. True once it is in the hotbar as the server last said; false while there
+/// is none, and while a move into the hand waits for the server's word (see `Moving`).
 fn select(world: &mut World, name: &str) -> bool {
     let Some(slot) = holding(world, name).1 else { return false };
+    let states = world.resource::<LocalPlayer>().states;
+    let tick = world.resource::<Net>().server().map_or(0, |server| server.ticks());
+    if let Some(moving) = world.get_resource::<Moving>()
+        && moving.item == name
+    {
+        let waited = tick.saturating_sub(moving.tick) as f32 / voxmar_protocol::TICKS_PER_SECOND as f32;
+        if states == moving.states && waited < MOVE_UNANSWERED {
+            return false;
+        }
+        if slot >= voxmar_engine::inventory::HOTBAR_SLOTS && waited < MOVE_UNANSWERED {
+            // A state sent before the move came first: the next one has it moved.
+            return false;
+        }
+        world.remove_resource::<Moving>();
+    }
     if slot >= voxmar_engine::inventory::HOTBAR_SLOTS {
         let actions = world.resource::<crate::Actions>().0.clone();
         let target = voxmar_engine::action::ActionTarget::Slots { from: slot as u8, to: TOOL_SLOT as u8, count: u8::MAX };
         world.resource::<Net>().propose(actions.expect("core:transfer"), target);
         world.resource_mut::<LocalPlayer>().inventory.move_items(slot, TOOL_SLOT, u8::MAX);
         world.resource_mut::<LocalPlayer>().selected = TOOL_SLOT;
-    } else {
-        world.resource_mut::<LocalPlayer>().selected = slot;
+        world.insert_resource(Moving { item: name.to_owned(), states, tick });
+        return false;
     }
+    world.resource_mut::<LocalPlayer>().selected = slot;
     true
 }
 
@@ -1753,8 +1804,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         3 => {
+            // Clicked only once the table is in hand as the server has it (`select`).
+            let placed = block_is(world, gate, table, "base:crafting_table");
+            let in_hand = placed || select(world, "base:crafting_table");
             let pressed = gate.frames % 2 == 0;
-            mouse(world, MouseButton::Right, pressed && !block_is(world, gate, table, "base:crafting_table"));
+            mouse(world, MouseButton::Right, pressed && in_hand && !placed);
             if block_is(world, gate, table, "base:crafting_table") {
                 mouse(world, MouseButton::Right, false);
                 aim(world, table);
@@ -1821,7 +1875,13 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            select(world, "base:stone_pickaxe");
+            if !select(world, "base:stone_pickaxe") {
+                mouse(world, MouseButton::Left, false);
+                if gate.server_in_phase() > WORKSHOP_WAIT {
+                    fail(world, gate, "ore", "the stone pickaxe never came to hand".into());
+                }
+                return;
+            }
             aim(world, ore);
             mouse(world, MouseButton::Left, gate.frames % 2 == 0);
             let locale = world.resource::<Locale>();
@@ -2799,8 +2859,9 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0
                 && world.resource::<ClientWorld>().block(rel(-1, 2, 3)) == content.blocks.id(if i / 2 == 1 { "core:air" } else { "base:hv_cable" }) {
                 aim(world, target);
-                select(world, pick);
-                gate.settled += 1;
+                if select(world, pick) {
+                    gate.settled += 1;
+                }
                 if gate.settled >= 3 && gate.shot(world, name).is_some() {
                     if i >= 9 {
                         set_language(world, "en");
@@ -4789,6 +4850,28 @@ const FIT_LOOKUPS: [(&str, bool); 4] = [("base:campfire", false), ("base:oak_log
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
 const FIT_SETTLE: f32 = 0.4;
+/// Frames a view's layout must hold still, once it changed for the view, to be read before
+/// `FIT_SETTLE`, and the least it is left: a view laid out sooner is read sooner.
+const FIT_STILL: u32 = 4;
+const FIT_SETTLE_LEAST: f32 = 0.1;
+
+/// Where every node of the interface is and how big, and every text's lines: what laying
+/// out a view changes.
+fn layout_print(world: &mut World) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    let mut nodes = world.query::<(&ComputedNode, &bevy::ui::UiGlobalTransform, Option<&bevy::text::TextLayoutInfo>)>();
+    for (node, at, text) in nodes.iter(world) {
+        let size = node.size();
+        let at = at.translation;
+        [size.x, size.y, at.x, at.y].map(f32::to_bits).hash(&mut hasher);
+        if let Some(text) = text {
+            [text.size.x, text.size.y].map(f32::to_bits).hash(&mut hasher);
+            text.glyphs.len().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
 
 /// Opens every view in turn, in each language, and lists the texts that do not fit (see
 /// `ui::fit`): one check for the lot, naming each.
@@ -4832,7 +4915,20 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         set_language(world, language);
     }
     show_view(world, Some(view), now);
-    if in_phase < FIT_SETTLE {
+    // Read once the view is laid out: its layout changed and then held still a few frames,
+    // or `FIT_SETTLE` passed (a view that lays out like the one before it).
+    let print = layout_print(world);
+    let shown = (gate.step, gate.phase);
+    let (on, last, changed, still) = &mut gate.fit_layout;
+    if *on != shown {
+        (*on, *last, *changed, *still) = (shown, print, false, 0);
+    } else if print == *last {
+        *still += 1;
+    } else {
+        (*last, *changed, *still) = (print, true, 0);
+    }
+    let laid_out = *changed && *still >= FIT_STILL && in_phase >= FIT_SETTLE_LEAST;
+    if in_phase < FIT_SETTLE && !laid_out {
         return;
     }
     // A journal page is read once it is drawn, in this language, however long that takes.
@@ -7352,7 +7448,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// A tinker's camp started on the pad's far side: its trader and hound must reach the client
 /// and draw, a right click on the trader gets a greeting, four hides held out are swapped
 /// for loaves, and `/wander end` sends the party away.
-fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+fn party(world: &mut World, gate: &mut Gate, now: f32) {
     let content = world.resource::<Launch>().content.clone();
     let (Some(trader), Some(hound)) = (content.creatures.find("base:trader"), content.creatures.find("base:hound")) else {
         gate.check("party", Err("no `base:trader` or `base:hound` in the content".into()));
@@ -7374,7 +7470,19 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.next(Step::Ore, now);
     };
     match gate.phase {
+        // Where the creature steps stand, at the pad's near side looking level across it,
+        // whatever the steps before left: the party comes to the same place every run.
         0 => {
+            look(world, 0.0, 0.0);
+            if !gate.party_sent {
+                gate.party_sent = true;
+                world.resource::<Net>().command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+                return;
+            }
+            if gate.server_in_phase() < 1.0 {
+                return;
+            }
+            gate.party_sent = false;
             gate.party_after = world.resource::<crate::creatures::Creatures>().views().map(|v| v.id).max().unwrap_or(0);
             gate.count_before = item_count(world, "base:bread");
             let net = world.resource::<Net>();
@@ -7382,6 +7490,7 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command("wander end");
             net.command("wander start tinker_camp");
             net.command("give hide 4");
+            gate.party_given = now;
             gate.advance(now);
         }
         // The party reaches the client, and is drawn.
@@ -7398,7 +7507,9 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if gate.server_in_phase() > 20.0 {
                 let trader_seen = speaker(world).is_some();
-                gate.check("party: arrives", Err(format!("/wander start tinker_camp gave the client no trader and hound in 20 server seconds (trader seen {trader_seen}, hounds {hounds})")));
+                // What the server answered the commands, a refusal's reason among it.
+                let said: Vec<String> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).map(str::to_owned).collect();
+                gate.check("party: arrives", Err(format!("/wander start tinker_camp gave the client no trader and hound in 20 server seconds (trader seen {trader_seen}, hounds {hounds}); the server said {said:?}")));
                 leave(world, gate);
             }
         }
@@ -7433,11 +7544,14 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if let Some(slot) = free {
                     world.resource_mut::<LocalPlayer>().selected = slot;
                 }
+                // Until the given hides show in the pack, the slot that looks empty may be where
+                // they land: a click then would be a swap, not a greeting.
+                let hides_here = item_count(world, "base:hide") >= 4;
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.5;
                 key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.9);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
-                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+                mouse(world, MouseButton::Right, hides_here && aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
             }
         }
         // The same click with four hides in hand: the party's trade, loaves for them.
@@ -7449,8 +7563,9 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             let bread = item_count(world, "base:bread");
             let swap = world.resource::<crate::lang::Locale>().get("wander.base.tinker_camp.swap_hide").to_owned();
-            let said = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|line| line.contains(swap.as_str()));
-            if said && bread > gate.count_before {
+            // Spoken since the hides were given, whichever stage's click it answered.
+            let said = world.resource::<crate::hud::console::Console>().since(gate.party_given).any(|line| line.contains(swap.as_str()));
+            if said && bread > gate.count_before && item_count(world, "base:hide") < 4 {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("party: trade", Ok(format!("four hides held out for the trader came back as {} loaves after {:.1}s", bread - gate.count_before, gate.server_in_phase())));
@@ -7471,7 +7586,8 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         // Sent away: the party goes from the client.
         4 => {
-            if in_phase < 0.1 {
+            if !gate.party_sent {
+                gate.party_sent = true;
                 world.resource::<Net>().command("wander end");
                 return;
             }
