@@ -36,6 +36,7 @@ pub mod atmosphere;
 pub mod bolts;
 pub mod cloud_map;
 pub mod cracks;
+pub mod exposure;
 pub mod frame_timing;
 pub mod gpu_clock;
 pub mod in_flight;
@@ -91,7 +92,7 @@ impl Plugin for RenderPlugin {
             cloud_map::CloudMapPlugin,
             bolts::BoltPlugin,
         ))
-            .add_plugins((warm::WarmPlugin, resolve::ResolvePlugin, frame_timing::FrameTimingPlugin, gpu_clock::GpuClockPlugin))
+            .add_plugins((warm::WarmPlugin, resolve::ResolvePlugin, frame_timing::FrameTimingPlugin, gpu_clock::GpuClockPlugin, exposure::ExposurePlugin))
             .insert_resource(DirectionalLightShadowMap { size: ShadowQuality::default().map_size() })
             .init_resource::<DayCycle>()
             .init_resource::<SceneLight>()
@@ -837,6 +838,7 @@ pub(crate) fn update_environment(
     (pack, quality, air, mut atmosphere): (Res<pack::ActivePack>, Res<Quality>, Res<ClientAtmosphere>, ResMut<atmosphere::Atmosphere>),
     (generator, mut water_column, mut hail_lying): (Option<Res<lod::WorldGenerator>>, Local<Option<(IVec2, Vec3)>>, Local<f32>),
     (player, mut sky_of, mut scene_light): (Option<Res<crate::player::LocalPlayer>>, Local<Option<u64>>, ResMut<SceneLight>),
+    sky_open: Res<exposure::SkyOpen>,
 ) {
     let Some(sky_handle) = sky_handle else { return };
     // The camera's own transform (it has no parent), as this frame moved it: the global one
@@ -900,7 +902,9 @@ pub(crate) fn update_environment(
         surface: cycle.water_surface,
         light: env.light_color * env.light_direction.y.max(0.0) + env.ambient,
     });
-    let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation.y, underwater };
+    // Mist belongs to the open air: dug down, in a cave or a room, it is gone.
+    let mist_share = pack.mist_share(sky_open.shown);
+    let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation.y, underwater, mist_share };
     let mut air = atmosphere::Atmosphere::new(&light, shown, &air, &pack, *quality, view);
     if !cycle.underwater {
         // The brightest flash inside the cloud lights the cloud around it.
