@@ -512,8 +512,9 @@ struct Gate {
     tame_nearest: f32,
     /// The newest creature id when the party step began: what is newer is the party's.
     party_after: u32,
-    /// Whether the party step has put the player on the pad for the start.
-    party_placed: bool,
+    /// Whether this stage of the party step has sent its first command (the tp to the pad, or
+    /// /wander end): sent on the stage's first frame however long that frame took.
+    party_sent: bool,
     breaks: Breaks,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
@@ -639,7 +640,7 @@ impl Gate {
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
             party_after: 0,
-            party_placed: false,
+            party_sent: false,
             breaks: Breaks::default(),
             mining_before: None,
             struck_heights: (f32::MAX, f32::MIN),
@@ -706,6 +707,7 @@ impl Gate {
         self.step_server = self.server_now;
         self.phase_server = self.server_now;
         self.food_moved = false;
+        self.party_sent = false;
     }
 
     /// On to the next stage of a step. Logged with the game's and the server's clocks, so a
@@ -1271,7 +1273,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
-        Step::Party => party(world, gate, now, in_phase),
+        Step::Party => party(world, gate, now),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Tarns => tarns(world, gate, now, in_phase),
         Step::Settlements => settlements(world, gate, now, in_phase),
@@ -7442,7 +7444,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// A tinker's camp started on the pad's far side: its trader and hound must reach the client
 /// and draw, a right click on the trader gets a greeting, four hides held out are swapped
 /// for loaves, and `/wander end` sends the party away.
-fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+fn party(world: &mut World, gate: &mut Gate, now: f32) {
     let content = world.resource::<Launch>().content.clone();
     let (Some(trader), Some(hound)) = (content.creatures.find("base:trader"), content.creatures.find("base:hound")) else {
         gate.check("party", Err("no `base:trader` or `base:hound` in the content".into()));
@@ -7468,15 +7470,15 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // whatever the steps before left: the party comes to the same place every run.
         0 => {
             look(world, 0.0, 0.0);
-            if !gate.party_placed {
-                gate.party_placed = true;
+            if !gate.party_sent {
+                gate.party_sent = true;
                 world.resource::<Net>().command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
                 return;
             }
             if gate.server_in_phase() < 1.0 {
                 return;
             }
-            gate.party_placed = false;
+            gate.party_sent = false;
             gate.party_after = world.resource::<crate::creatures::Creatures>().views().map(|v| v.id).max().unwrap_or(0);
             gate.count_before = item_count(world, "base:bread");
             let net = world.resource::<Net>();
@@ -7575,7 +7577,8 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         // Sent away: the party goes from the client.
         4 => {
-            if in_phase < 0.1 {
+            if !gate.party_sent {
+                gate.party_sent = true;
                 world.resource::<Net>().command("wander end");
                 return;
             }
