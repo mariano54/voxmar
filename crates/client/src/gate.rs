@@ -1798,8 +1798,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         3 => {
+            // Clicked only once the table is in hand as the server has it (`select`).
+            let placed = block_is(world, gate, table, "base:crafting_table");
+            let in_hand = placed || select(world, "base:crafting_table");
             let pressed = gate.frames % 2 == 0;
-            mouse(world, MouseButton::Right, pressed && !block_is(world, gate, table, "base:crafting_table"));
+            mouse(world, MouseButton::Right, pressed && in_hand && !placed);
             if block_is(world, gate, table, "base:crafting_table") {
                 mouse(world, MouseButton::Right, false);
                 aim(world, table);
@@ -1866,7 +1869,13 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            select(world, "base:stone_pickaxe");
+            if !select(world, "base:stone_pickaxe") {
+                mouse(world, MouseButton::Left, false);
+                if gate.server_in_phase() > WORKSHOP_WAIT {
+                    fail(world, gate, "ore", "the stone pickaxe never came to hand".into());
+                }
+                return;
+            }
             aim(world, ore);
             mouse(world, MouseButton::Left, gate.frames % 2 == 0);
             let locale = world.resource::<Locale>();
@@ -2844,8 +2853,9 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0
                 && world.resource::<ClientWorld>().block(rel(-1, 2, 3)) == content.blocks.id(if i / 2 == 1 { "core:air" } else { "base:hv_cable" }) {
                 aim(world, target);
-                select(world, pick);
-                gate.settled += 1;
+                if select(world, pick) {
+                    gate.settled += 1;
+                }
                 if gate.settled >= 3 && gate.shot(world, name).is_some() {
                     if i >= 9 {
                         set_language(world, "en");
