@@ -71,3 +71,17 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     assert_eq!(names(rest(&survey_of("cosy"), false)), ["base:rested", "base:well_rested", "base:deep_rest"]);
     assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:rested"], "a bed under the sky is only a plain rest");
 }
+
+#[test]
+fn the_next_step_is_above_the_highest_reached_not_one_skipped_below() {
+    // A hearth lit with no torch by the bed: Hearthside holds though Camp does not, and
+    // `/home` names Snug next, not Camp.
+    let content = content();
+    let effects = &content.effects;
+    let calm = Weather::NONE;
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "hearth"))).collect() };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey) };
+    let id = |name: &str| effects.id(&format!("base:{name}")).unwrap();
+    let ladder = effects.home_progress(&situation).into_iter().find(|chain| chain.reached == Some(id("hearthside"))).expect("the ladder stands at Hearthside");
+    assert_eq!(ladder.next.map(|(next, _)| next), Some(id("snug")));
+}
