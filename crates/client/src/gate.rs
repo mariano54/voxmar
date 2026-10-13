@@ -554,6 +554,9 @@ struct Gate {
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
+    /// The machine's one-minute load average read about once a second, with the session's
+    /// real seconds at each read, over the last `LOAD_SPAN` (`Gate::load_now`).
+    loads: std::collections::VecDeque<(f32, f64)>,
     /// The server's clock (its ticks, in seconds) this frame, and when the step and the
     /// phase began by it.
     server_now: f32,
@@ -673,6 +676,7 @@ impl Gate {
             counted: 0,
             frame_ms: Vec::new(),
             longest: default(),
+            loads: default(),
             overlay_ms: default(),
             server_now: 0.0,
             step_server: 0.0,
@@ -909,6 +913,13 @@ fn run(world: &mut World) {
     gate.frame_ms.push(frame_ms);
     let longest = gate.longest.entry(gate.step).or_default();
     *longest = longest.max(frame_ms);
+    let real = world.resource::<Time<Real>>().elapsed_secs();
+    if gate.loads.back().is_none_or(|&(at, _)| real - at >= 1.0) {
+        gate.loads.push_back((real, load_average()));
+        while gate.loads.front().is_some_and(|&(at, _)| real - at > LOAD_SPAN) {
+            gate.loads.pop_front();
+        }
+    }
     if screen == Screen::InGame && world.resource::<crate::weather::WeatherReady>().0 {
         watch_weather(world, &mut gate, now);
     } else {
@@ -8669,7 +8680,8 @@ const HITCH_MS: f32 = 150.0;
 const HITCH_FACTOR: f32 = 6.0;
 
 /// Checks that `step` (placing or digging) ran without a hitch: no frame over
-/// max(`HITCH_MS`, `HITCH_FACTOR` × the session's median frame).
+/// max(`HITCH_MS`, `HITCH_FACTOR` × the session's median frame), times how far the load
+/// now (`Gate::load_now`) asks for more than the cores.
 fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     let mut sorted = gate.frame_ms.clone();
     sorted.sort_by(f32::total_cmp);
@@ -8680,7 +8692,7 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     // check being skipped, for the machine is rarely calm enough to wait for. Pipelines
     // compiled on the spot, what this check first caught, the pipelines check catches at
     // any load.
-    let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
+    let (load, cores) = (gate.load_now(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
     let crowded = (load / cores).max(1.0) as f32;
     let limit = HITCH_MS.max(HITCH_FACTOR * median) * crowded;
     let on = if crowded > 1.0 { format!(", the bar {crowded:.1}× higher at load {load:.0} on {cores} cores") } else { String::new() };
@@ -8694,6 +8706,32 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
         Some(why) => gate.known(&format!("{name}: smooth"), result, why),
         None => gate.check(&format!("{name}: smooth"), result),
     }
+}
+
+/// How far back `Gate::load_now` reads the load average, and the least span it judges a
+/// rise over.
+const LOAD_SPAN: f32 = 30.0;
+const LOAD_RISE_SPAN: f32 = 10.0;
+
+impl Gate {
+    /// The machine's load now (runnable threads): the one-minute average, or more while it
+    /// is rising. The average moves a part `1 - e^(-t/60)` of the way to the load over `t`
+    /// seconds, so from two reads `t` apart the load between them was `(L1 - L0 e) / (1 - e)`
+    /// with `e = e^(-t/60)`. At the gate's start, as its test binaries come on together, the
+    /// average lags far behind: 28 read with the cores asked for about 45, and the smooth
+    /// bars stood 1.6x where the frames were stretched by more.
+    fn load_now(&self) -> f64 {
+        let Some(&(now, latest)) = self.loads.back() else { return load_average() };
+        let rising = self.loads.front().filter(|&&(at, _)| now - at >= LOAD_RISE_SPAN).map_or(0.0, |&(at, before)| load_between(before, latest, now - at));
+        latest.max(rising)
+    }
+}
+
+/// The load over the `seconds` between two reads of the one-minute average (see
+/// `Gate::load_now`).
+fn load_between(before: f64, latest: f64, seconds: f32) -> f64 {
+    let e = (-f64::from(seconds) / 60.0).exp();
+    (latest - before * e) / (1.0 - e)
 }
 
 /// The machine's load average over the last minute (runnable threads), or 0 if unknown.
@@ -8930,6 +8968,22 @@ mod tests {
             bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
             default(),
         )
+    }
+
+    /// The load a rising one-minute average comes from: the gate's start, its test binaries
+    /// coming on together over a quiet machine, the average a second at a time as the
+    /// kernel moves it.
+    #[test]
+    fn the_load_now_is_read_through_a_rising_average() {
+        let (quiet, busy) = (7.5, 60.0);
+        let average = |t: f32| busy - (busy - quiet) * (-f64::from(t) / 60.0).exp();
+        // 32 s in, the average has come only to 29.
+        assert!((average(32.0) - 29.0).abs() < 0.5);
+        let estimate = load_between(average(12.0), average(32.0), 20.0);
+        assert!((estimate - busy).abs() < 1e-6, "read {estimate}");
+        // Steady, and falling: no more than the average says.
+        assert!((load_between(20.0, 20.0, 20.0) - 20.0).abs() < 1e-9);
+        assert!(load_between(30.0, 25.0, 20.0) < 25.0);
     }
 
     #[test]
