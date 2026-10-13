@@ -37,12 +37,18 @@ impl Server {
         }
         let ids: Vec<PlayerId> = self.players.values().filter(|p| p.joined).map(|p| p.id).collect();
         for id in ids {
-            let (finished, states) = self.quest_check(id);
-            for name in &finished {
-                self.finish_quest(id, name);
-            }
-            self.send_quests(id, states);
+            self.update_quests(id);
         }
+    }
+
+    /// Finishes `id`'s quests whose tasks hold and tells them their quests' states if they
+    /// changed.
+    fn update_quests(&mut self, id: PlayerId) {
+        let (finished, states) = self.quest_check(id);
+        for name in &finished {
+            self.finish_quest(id, name);
+        }
+        self.send_quests(id, states);
     }
 
     /// The quests `id` has newly finished, and every quest's state as it will stand once
@@ -127,8 +133,8 @@ impl Server {
                 self.grant_xp(agent, id, *xp);
             }
         }
-        // The quest screen hears at once, not at the next second's check.
-        let (_, states) = self.quest_check(agent);
-        self.send_quests(agent, states);
+        // The quest screen hears at once, not at the next second's check; what the reward
+        // itself finishes (items carried, a level reached) is finished now too.
+        self.update_quests(agent);
     }
 }

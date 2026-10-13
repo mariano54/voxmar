@@ -390,6 +390,7 @@
     "quest.claim": "受け取る",
     "quest.status.open": "挑戦可能",
     "quest.status.waiting": "未解放",
+    "quest.goals": "やること",
     "quest.routes": "いずれか一つで達成：",
     "quest.after": "先に：{list}",
     "quest.chapter.count": "{done}/{all}",

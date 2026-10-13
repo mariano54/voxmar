@@ -403,6 +403,7 @@
     "quest.claim": "Claim",
     "quest.status.open": "Open",
     "quest.status.waiting": "Not yet",
+    "quest.goals": "What to do",
     "quest.routes": "Any one of these:",
     "quest.after": "Comes after: {list}",
     "quest.chapter.count": "{done}/{all}",

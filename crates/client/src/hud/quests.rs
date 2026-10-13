@@ -27,7 +27,7 @@ use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::sound::UiSound;
 use crate::ui::widgets::{
-    ACCENT, BODY, ButtonStyle, GOLD, MUTED, SCRIM, SHADOW, SOFT, ScrollList, TEXT, UiFont, panel, screen, shadowed, space, spawn_button, spawn_heading, spawn_rule, spawn_scroll_more,
+    ACCENT, BODY, ButtonStyle, GOLD, MUTED, SCRIM, SHADOW, SOFT, ScrollList, TEXT, UiFont, button_row, panel, screen, shadowed, space, spawn_button, spawn_heading, spawn_rule, spawn_scroll_more,
     text,
 };
 
@@ -424,45 +424,49 @@ struct WayStep {
     of: usize,
 }
 
-/// The panel's width, the chapters' column, the web's height and the page's.
-const WIDTH: f32 = 540.0 * PX;
+/// How much of the window the book takes across and down, in percent: most of it, growing
+/// with the window.
+const SHARE: Vec2 = Vec2::new(92.0, 76.0);
+/// The chapters' column, and the sidebar at the right with the picked quest's page.
 const CHAPTERS: f32 = 80.0 * PX;
-const WEB_HEIGHT: f32 = 170.0 * PX;
-const DETAIL_HEIGHT: f32 = 160.0 * PX;
-/// The web's room across and down (inside its well), and its quests' least and most step.
-const WEB_ROOM: Vec2 = Vec2::new(WIDTH - CHAPTERS - 4.0 * space::OUTER, WEB_HEIGHT - 2.0 * space::GAP);
-const STEP_LEAST: Vec2 = Vec2::new(SLOT + 10.0 * PX, SLOT + 5.0 * PX);
-const STEP_MOST: Vec2 = Vec2::new(SLOT + 90.0 * PX, SLOT + 20.0 * PX);
+const SIDEBAR: f32 = 180.0 * PX;
+/// A quest on the web: its cell, and the item or skill drawn in it at twice the size of a
+/// slot's (each of its 16 texels two interface pixels).
+const CELL: f32 = 36.0 * PX;
+const ICON: f32 = 32.0 * PX;
+/// The quests' least and most step across and down the web; it spreads to fill its well
+/// between them, and a web too big for the well scrolls.
+const STEP_LEAST: Vec2 = Vec2::new(CELL + 12.0 * PX, CELL + 6.0 * PX);
+const STEP_MOST: Vec2 = Vec2::new(CELL + 90.0 * PX, CELL + 40.0 * PX);
 /// How far the picked quest's glow reaches past it.
 const GLOW: f32 = 4.0 * PX;
-/// The width of the Pin button, and of the Claim button beside it.
-const PIN: f32 = 52.0 * PX;
-const CLAIM: f32 = 64.0 * PX;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
     commands.spawn((QuestScreen, screen(SCRIM), Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
-        root.spawn(panel(WIDTH)).with_children(|card| {
+        let (mut card, image) = panel(0.0);
+        card.width = Val::Percent(SHARE.x);
+        card.height = Val::Percent(SHARE.y);
+        root.spawn((card, image)).with_children(|card| {
             card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() }).with_children(|heading| spawn_heading(heading, font, "screen.quests"));
-            card.spawn(Node { column_gap: Val::Px(space::GAP), ..default() }).with_children(|columns| {
-                columns.spawn((Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), width: Val::Px(CHAPTERS), flex_shrink: 0.0, ..default() }, Chapters));
-                columns.spawn(Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::GAP), min_width: Val::ZERO, ..default() }).with_children(|right| {
-                    let web = Node {
-                        height: Val::Px(WEB_HEIGHT),
-                        overflow: Overflow::scroll(),
-                        padding: UiRect::all(Val::Px(space::GAP)),
-                        ..default()
-                    };
-                    right.spawn((Web, ScrollList, web, Piece::Well.image()));
-                    let detail = Node {
-                        height: Val::Px(DETAIL_HEIGHT),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(space::HAIR),
-                        overflow: Overflow::scroll_y(),
-                        ..default()
-                    };
-                    let detail = right.spawn((Detail, ScrollList, detail)).id();
-                    spawn_scroll_more(right, font, detail);
+            // The chapters, the web filling what is left, and the picked quest's page at the
+            // right.
+            card.spawn(Node { flex_grow: 1.0, min_height: Val::ZERO, column_gap: Val::Px(space::GAP), ..default() }).with_children(|columns| {
+                let chapters = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), width: Val::Px(CHAPTERS), flex_shrink: 0.0, overflow: Overflow::scroll_y(), ..default() };
+                columns.spawn((chapters, Chapters));
+                let web = Node {
+                    flex_grow: 1.0,
+                    flex_basis: Val::ZERO,
+                    min_width: Val::ZERO,
+                    overflow: Overflow::scroll(),
+                    padding: UiRect::all(Val::Px(space::GAP)),
+                    ..default()
+                };
+                columns.spawn((Web, ScrollList, web, Piece::Well.image()));
+                columns.spawn(Node { width: Val::Px(SIDEBAR), flex_shrink: 0.0, flex_direction: FlexDirection::Column, ..default() }).with_children(|side| {
+                    let detail = Node { flex_grow: 1.0, min_height: Val::ZERO, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), overflow: Overflow::scroll_y(), ..default() };
+                    let detail = side.spawn((Detail, ScrollList, detail)).id();
+                    spawn_scroll_more(side, font, detail);
                 });
             });
             spawn_rule(card, space::GAP);
@@ -600,15 +604,18 @@ fn draw(
     settings: Res<Settings>,
     viewer: Res<super::recipes::RecipeViewer>,
     chapters_column: Query<Entity, With<Chapters>>,
-    web: Query<Entity, With<Web>>,
+    web: Query<(Entity, &ComputedNode), With<Web>>,
     detail: Query<Entity, With<Detail>>,
-    mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool)>>,
+    mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool, IVec2)>>,
 ) {
     if !ui.quests_open {
         *drawn = None;
         return;
     }
-    let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some());
+    // The web's room inside its well, as laid out for this window: drawn again when the
+    // window changes it.
+    let room = web.single().map_or(Vec2::ZERO, |(_, computed)| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
+    let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some(), room.as_ivec2());
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
         return;
     }
@@ -648,19 +655,21 @@ fn draw(
     let Some(age) = ages.get(view.chapter) else { return };
     let Layout { quests, ours, cells, columns, tallest } = layout(content, age);
     // Spread to fill the well, within reason; a web too big for it scrolls.
-    let step = Vec2::new(WEB_ROOM.x / columns as f32, WEB_ROOM.y / tallest as f32).clamp(STEP_LEAST, STEP_MOST);
-    let place = |i: usize| cells[i] * step + (step - Vec2::splat(SLOT)) / 2.0;
-    let centre = |i: usize| place(i) + Vec2::splat(SLOT / 2.0);
-    if let Ok(web) = web.single() {
+    let step = Vec2::new(room.x / columns as f32, room.y / tallest as f32).clamp(STEP_LEAST, STEP_MOST);
+    let place = |i: usize| cells[i] * step + (step - Vec2::splat(CELL)) / 2.0;
+    let centre = |i: usize| place(i) + Vec2::splat(CELL / 2.0);
+    if let Ok((web, _)) = web.single() {
         commands.entity(web).despawn_children().with_children(|web| {
             if ours == 0 {
                 web.spawn((Localized("quest.empty"), text(font, "", BODY, MUTED)));
                 return;
             }
             let size = Vec2::new(columns as f32, tallest as f32) * step;
-            // Centred by its margins, which a web too big for the well gives up, so it scrolls
-            // from its top-left rather than being cut off.
-            web.spawn(Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin: UiRect::all(Val::Auto), ..default() }).with_children(|area| {
+            // Centred in the well by its margins; a web too big for the well has none that way,
+            // so it scrolls from its top-left rather than being cut off.
+            let margin = ((room - size) / 2.0).max(Vec2::ZERO);
+            let margin = UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() };
+            web.spawn(Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin, ..default() }).with_children(|area| {
                 // The lines first, under the quests.
                 for i in 0..ours {
                     for first in before(content, quests[i]) {
@@ -688,8 +697,8 @@ fn draw(
                         position_type: PositionType::Absolute,
                         left: Val::Px(at.x),
                         top: Val::Px(at.y),
-                        width: Val::Px(SLOT),
-                        height: Val::Px(SLOT),
+                        width: Val::Px(CELL),
+                        height: Val::Px(CELL),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
@@ -709,8 +718,8 @@ fn draw(
                             position_type: PositionType::Absolute,
                             left: Val::Px(at.x - GLOW),
                             top: Val::Px(at.y - GLOW),
-                            width: Val::Px(SLOT + 2.0 * GLOW),
-                            height: Val::Px(SLOT + 2.0 * GLOW),
+                            width: Val::Px(CELL + 2.0 * GLOW),
+                            height: Val::Px(CELL + 2.0 * GLOW),
                             ..default()
                         };
                         area.spawn((glow, BackgroundColor(GOLD.with_alpha(0.55))));
@@ -720,17 +729,17 @@ fn draw(
                             position_type: PositionType::Absolute,
                             left: Val::Px(at.x - GLOW),
                             top: Val::Px(at.y - GLOW),
-                            width: Val::Px(SLOT + 2.0 * GLOW),
-                            height: Val::Px(SLOT + 2.0 * GLOW),
+                            width: Val::Px(CELL + 2.0 * GLOW),
+                            height: Val::Px(CELL + 2.0 * GLOW),
                             ..default()
                         };
                         area.spawn((glow, BackgroundColor(ACCENT.with_alpha(0.45))));
                     }
                     area.spawn((Button, crate::ui::widgets::HoverLight, QuestNode(quest.name.clone()), node, piece.image())).with_children(|cell| {
-                        cell.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
+                        cell.spawn((Node { width: Val::Px(ICON), height: Val::Px(ICON), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
                         // The quest picked, ringed.
                         if picked {
-                            let ring = Node { position_type: PositionType::Absolute, left: Val::Px(-2.0 * PX), top: Val::Px(-2.0 * PX), width: Val::Px(SLOT + 4.0 * PX), height: Val::Px(SLOT + 4.0 * PX), ..default() };
+                            let ring = Node { position_type: PositionType::Absolute, left: Val::Px(-2.0 * PX), top: Val::Px(-2.0 * PX), width: Val::Px(CELL + 4.0 * PX), height: Val::Px(CELL + 4.0 * PX), ..default() };
                             cell.spawn((ring, Piece::Selection.image()));
                         }
                     });
@@ -747,30 +756,58 @@ fn draw(
             };
             let standing = standing(content, &player, quest);
             let state = state(&player, &quest.name);
-            detail.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), flex_shrink: 0.0, ..default() }).with_children(|top| {
+            // Its name and where it stands, then what can be done with it: claim its rewards,
+            // pin it.
+            detail.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::FlexStart, column_gap: Val::Px(space::GAP), flex_shrink: 0.0, ..default() }).with_children(|top| {
                 top.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, shadowed(font, title(&locale, quest), BODY, GOLD)));
-                let ready = claimable(&player, &quest.name);
                 let status = match standing {
-                    Standing::Done if ready => (locale.get("quest.status.ready").to_owned(), GOLD),
+                    Standing::Done if claimable(&player, &quest.name) => (locale.get("quest.status.ready").to_owned(), GOLD),
                     Standing::Done => (locale.get("quest.status.done").to_owned(), GOLD),
                     Standing::Open => (locale.get("quest.status.open").to_owned(), ACCENT),
                     Standing::Waiting => (locale.get("quest.status.waiting").to_owned(), MUTED),
                 };
                 top.spawn((text(font, status.0, BODY, status.1), TightLine));
-                if ready {
-                    top.spawn(Node { width: Val::Px(CLAIM), flex_shrink: 0.0, ..default() }).with_children(|cell| {
-                        spawn_button(cell, font, "quest.claim", ButtonStyle::Primary, ClaimButton);
-                    });
-                }
-                // Only an open quest is followed on screen.
-                let pinned = settings.pinned_quests.contains(&quest.name);
-                if pinned || (standing == Standing::Open && settings.pinned_quests.len() < content.quests.tracker().pins) {
-                    top.spawn(Node { width: Val::Px(PIN), flex_shrink: 0.0, ..default() }).with_children(|cell| {
-                        spawn_button(cell, font, if pinned { "quest.unpin" } else { "quest.pin" }, ButtonStyle::Secondary, PinButton);
-                    });
-                }
             });
+            let ready = claimable(&player, &quest.name);
+            // Only an open quest is followed on screen.
+            let pinned = settings.pinned_quests.contains(&quest.name);
+            let pinnable = pinned || (standing == Standing::Open && settings.pinned_quests.len() < content.quests.tracker().pins);
+            if ready || pinnable {
+                detail.spawn(Node { flex_shrink: 0.0, ..button_row(space::HAIR) }).with_children(|row| {
+                    if ready {
+                        spawn_button(row, font, "quest.claim", ButtonStyle::Primary, ClaimButton);
+                    }
+                    if pinnable {
+                        spawn_button(row, font, if pinned { "quest.unpin" } else { "quest.pin" }, ButtonStyle::Secondary, PinButton);
+                    }
+                });
+            }
             detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, why(&locale, quest), BODY, SOFT)));
+            // What it gives, one line each: an item with its count, or experience in a skill
+            // with the skill's mark.
+            if !quest.rewards.is_empty() {
+                let claimed = state.is_some_and(|s| s.claimed);
+                detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized(if claimed { "quest.rewards.claimed" } else { "quest.rewards" }), shadowed(font, "", BODY, if claimed { MUTED } else { ACCENT })));
+                for reward in &quest.rewards {
+                    detail.spawn(Node { flex_shrink: 0.0, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
+                        let words = match reward {
+                            Reward::Item(item, count) => {
+                                super::recipes::item_cell(row, font, &images, item_id(content, package(quest), item), (*count > 1).then(|| count.to_string()));
+                                locale.format("quest.reward.item", &[("count", count), ("item", &item_words(&locale, content, package(quest), item))])
+                            }
+                            Reward::Xp(skill, xp) => {
+                                let mark = skill_id(content, skill).and_then(|id| images.skills.get(id.0 as usize).cloned()).unwrap_or_default();
+                                let inset = (SLOT - 16.0 * PX) / 2.0;
+                                row.spawn((Node { width: Val::Px(SLOT), height: Val::Px(SLOT), padding: UiRect::all(Val::Px(inset)), flex_shrink: 0.0, ..default() }, Piece::Well.image())).with_children(|cell| {
+                                    cell.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::new(mark)));
+                                });
+                                locale.format("quest.reward.xp", &[("xp", &(*xp as u32)), ("skill", &skill_words(&locale, content, skill))])
+                            }
+                        };
+                        row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, text(font, words, BODY, if claimed { MUTED } else { TEXT })));
+                    });
+                }
+            }
             let firsts = before(content, quest);
             if !firsts.is_empty() {
                 let names: Vec<String> = firsts.iter().map(|q| title(&locale, q)).collect();
@@ -778,9 +815,9 @@ fn draw(
                 let color = if standing == Standing::Waiting { TEXT } else { MUTED };
                 detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, line, BODY, color)));
             }
-            if quest.tasks.len() > 1 {
-                detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized("quest.routes"), shadowed(font, "", BODY, ACCENT)));
-            }
+            // What it asks: its goals, or its routes when there are several.
+            let asks = if quest.tasks.len() > 1 { "quest.routes" } else { "quest.goals" };
+            detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized(asks), shadowed(font, "", BODY, ACCENT)));
             for (t, task) in quest.tasks.iter().enumerate() {
                 if quest.tasks.len() > 1 {
                     detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, locale.format("quest.route", &[("n", &(t + 1))]), BODY, MUTED)));
@@ -821,28 +858,6 @@ fn draw(
                             way_card(detail, font, &images, content, &locale, entry, (key, shown, ways.len()));
                         }
                     }
-                }
-            }
-            if !quest.rewards.is_empty() {
-                let gives: Vec<String> = quest
-                    .rewards
-                    .iter()
-                    .map(|reward| match reward {
-                        Reward::Xp(skill, xp) => locale.format("quest.reward.xp", &[("xp", &(*xp as u32)), ("skill", &skill_words(&locale, content, skill))]),
-                        Reward::Item(item, count) => locale.format("quest.reward.item", &[("count", count), ("item", &item_words(&locale, content, package(quest), item))]),
-                    })
-                    .collect();
-                let claimed = state.is_some_and(|s| s.claimed);
-                detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized(if claimed { "quest.rewards.claimed" } else { "quest.rewards" }), shadowed(font, "", BODY, if claimed { MUTED } else { ACCENT })));
-                detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, gives.join(locale.get("language.comma")), BODY, SOFT)));
-                // The items it gives, to click for their recipes.
-                let items: Vec<(BlockId, u8)> = quest.rewards.iter().filter_map(|r| if let Reward::Item(item, count) = r { item_id(content, package(quest), item).map(|id| (id, *count)) } else { None }).collect();
-                if !items.is_empty() {
-                    detail.spawn(Node { flex_shrink: 0.0, column_gap: Val::Px(PX), ..default() }).with_children(|row| {
-                        for (item, count) in items {
-                            super::recipes::item_cell(row, font, &images, Some(item), (count > 1).then(|| count.to_string()));
-                        }
-                    });
                 }
             }
         });
