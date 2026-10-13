@@ -482,7 +482,7 @@ mod tests {
             ("base:copper_ore", &["ore"]),
             ("base:poppy", &["flower"]),
             ("base:raw_trout", &["fish"]),
-            ("base:brick", &[]),
+            ("base:brick", &["multiblock_core"]),
             ("sky:torch", &[]),
             ("sky:cloud", &[]),
         ];
@@ -494,8 +494,8 @@ mod tests {
         skills.extend("sky", r#"(skills: [(name: "gliding", title: "", description: ""), (name: "fishing", title: "", description: "")])"#).unwrap();
         let body = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
         let creatures = format!(r#"(creatures: [(name: "rabbit", health: 3, {body}, taming: (xp: 10.0)), (name: "wolf", health: 8, {body})])"#);
-        let creatures = CreatureRegistry::new(CreatureRegistry::read("base", &creatures).unwrap(), &blocks, &skills).unwrap();
-        let fishing = FishingRegistry::new(vec![FishingRegistry::read("base", r#"(catches: [(item: "raw_trout", level: 1, xp: 10.0)])"#).unwrap()], &blocks, &skills).unwrap();
+        let creatures = CreatureRegistry::new(CreatureRegistry::read("base", &creatures).unwrap().defs, Default::default(), &blocks, &skills).unwrap();
+        let fishing = FishingRegistry::new(vec![FishingRegistry::read("base", r#"(catches: [(item: "raw_trout", level: 1, xp: 10.0)])"#).unwrap()], Default::default(), &blocks, &skills).unwrap();
         let kiln = r#"(multiblocks: [(name: "kiln", layers: [["bbb", "bBb", "bbb"]], key: {'b': "brick", 'B': "brick"}, core: 'B')])"#;
         let multiblocks = MultiblockRegistry::new(vec![MultiblockRegistry::read("base", kiln).unwrap()], &blocks).unwrap();
         let source = format!("(quests: [{quest}])");
