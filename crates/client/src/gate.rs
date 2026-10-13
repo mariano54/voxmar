@@ -406,6 +406,14 @@ impl Gate {
     fn lagging(&self) -> bool {
         self.step.lagged() && (self.step != Step::Feel || (FEEL_BLOCK..=FEEL_DODGE).contains(&self.phase))
     }
+
+    /// How many times the game's pace the server ticks now: the workshop's machine stages
+    /// (the boiler and crusher on to the iron age) wait on their recipes' server time, a
+    /// bloom and its dust taking half a minute of it, so they run at `MACHINES_HURRIED`.
+    /// Every wait in them is by the server's clock, so they prove the same sooner.
+    fn hurried(&self) -> u32 {
+        if self.step == Step::Workshop && (16..=19).contains(&self.phase) { MACHINES_HURRIED } else { 1 }
+    }
 }
 
 #[derive(Resource)]
@@ -881,6 +889,7 @@ fn run(world: &mut World) {
         gate.server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
         if let Some(server) = net.server() {
             server.set_lagging(gate.lagging());
+            server.set_hurried(gate.hurried());
         }
     }
     // The wall clock, for what ends a session whose other clocks stopped (`guard`).
@@ -937,6 +946,9 @@ fn run(world: &mut World) {
     }
     world.insert_resource(gate);
 }
+
+/// How many times the game's pace the workshop's machine stages tick (`Gate::hurried`).
+const MACHINES_HURRIED: u32 = 4;
 
 /// The workshop's machine phases that play only in the full gate, and the seconds each
 /// adds to the session there (measured on a loaded Mac, with room): the session's limits,
@@ -2761,6 +2773,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
+/// Server seconds each HV-age shot waits after its teleport, on top of the player standing
+/// there with the pick in hand for three frames and the cable as the shot wants it.
+const HV_SHOT_SETTLE: f32 = 0.5;
+
 /// The HV source, processors and treasure played with the real server. Inputs must first
 /// arrive in hand and then leave it; machine replies must show power/progress, not merely
 /// a queued recipe. Every wait on the server uses its clock.
@@ -2884,7 +2900,7 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
                 world.resource::<Net>().command(&format!("tp {}", at(position)));
                 empty_hand(world);
                 gate.advance(now);
-            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > 1.0
+            } else if (world.resource::<LocalPlayer>().position - position.as_vec3()).length() < 1.0 && gate.server_in_phase() > HV_SHOT_SETTLE
                 && world.resource::<ClientWorld>().block(rel(-1, 2, 3)) == content.blocks.id(if i / 2 == 1 { "core:air" } else { "base:hv_cable" }) {
                 aim(world, target);
                 if select(world, pick) {
@@ -3758,18 +3774,23 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             let tilled = farmland.is_some() && world.resource::<ClientWorld>().block(plot) == farmland;
             // Rice takes Farming 10: below it the client refuses it itself, for the level.
             let level = skill_level(world, "core:farming").0 >= 10;
-            match (tilled && level, in_hotbar(world, &mut gate.food_moved, rice)) {
+            // The aim is from the feet: the player stands there first, whatever the steps
+            // before left (a teleport of theirs still on its way on a server behind once
+            // put the eye where the ray met the ground short of the plot).
+            let posed = open_scene_pose(world, gate);
+            match (tilled && level && posed, in_hotbar(world, &mut gate.food_moved, rice)) {
                 (true, Some(slot)) => {
                     world.resource_mut::<LocalPlayer>().selected = slot;
                     gate.advance(now);
                 }
                 _ if gate.server_in_phase() > UNANSWERED => {
-                    gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came")));
+                    let at = if posed { "stood at the feet".to_owned() } else { unsettled(world, gate) };
+                    gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came, or {at}")));
                     gate.next(Step::Merged, now);
                 }
                 (ready, slot) => {
                     if gate.frames % 120 == 0 {
-                        info!("gate: refusal: farmland {tilled}, Farming 10 {level} (ready {ready}), rice in the hotbar at {slot:?}");
+                        info!("gate: refusal: farmland {tilled}, Farming 10 {level}, at the feet {posed} (ready {ready}), rice in the hotbar at {slot:?}");
                     }
                 }
             }
@@ -3792,7 +3813,8 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     let (target, player) = (world.resource::<crate::interact::Target>(), world.resource::<LocalPlayer>());
                     (target.hit.as_ref().map(|hit| (hit.block - gate.feet, hit.face)), player.inventory.get(player.selected).map(|s| s.item))
                 };
-                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name} (aimed at {target:?} from the feet, holding {held:?})")));
+                let from = world.resource::<LocalPlayer>().position - gate.feet.as_vec3();
+                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name} (aimed at {target:?} from the feet, standing at {from:.2} from them, holding {held:?})")));
                 gate.advance(now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
@@ -5168,6 +5190,20 @@ fn open_scene_pose(world: &mut World, gate: &mut Gate) -> bool {
     ready && gate.settled >= 3
 }
 
+/// Why `open_scene_pose` has not settled, for its checks' failures.
+fn unsettled(world: &World, gate: &Gate) -> String {
+    let player = world.resource::<LocalPlayer>();
+    let position = gate.feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    format!(
+        "the open test-ground teleport did not settle: teleported {}, on the ground {}, in water {}, {:.2} from the spot at {:.2}",
+        player.teleports != gate.scene_teleport,
+        player.on_ground,
+        player.in_water,
+        player.position.distance(position),
+        player.position
+    )
+}
+
 /// A storm, then snow, each drawn (rain, snow and their particles change the view), then
 /// clear skies again.
 fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -5182,7 +5218,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
-                    gate.check("weather: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.check("weather: pose", Err(unsettled(world, gate)));
                     gate.next(Step::Depths, now);
                 }
                 return;
@@ -5300,7 +5336,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
-                    gate.check("depths: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.check("depths: pose", Err(unsettled(world, gate)));
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -5369,6 +5405,9 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("depths: no mist in a shaft", Ok(format!("{} ({open:.2} of the sky in view)", mist(&air))));
             let room = format!("tp {} {} {}", room_floor.x as f32 + 0.5, room_floor.y, room_floor.z as f32 + 0.5);
             world.resource::<Net>().command(&room);
+            // The fog has been seen in the open and not in the shaft: it lifts while the
+            // cracks are tried in the sealed room, where none reaches.
+            world.resource::<Net>().command("weather clear 600");
             gate.advance(now);
         }
         // In the sealed room, before the wall is touched: the face is dark.
@@ -5451,7 +5490,6 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("a glowstone beside the wall does not light the cracks: sky {}, block {}, light edges {highlight:.2}", light[0], light[1]))
             };
             gate.check("depths: crack by a glowstone", result);
-            world.resource::<Net>().command("weather clear 600");
             gate.advance(now);
         }
         // The shot of the lit cracks is in.
@@ -5464,7 +5502,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         8 | 9 => {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
-                    gate.check("depths: back", Err("the open test-ground teleport did not settle".into()));
+                    gate.check("depths: back", Err(unsettled(world, gate)));
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -6396,7 +6434,7 @@ struct FeelRun {
     centre: f32,
     probe: u32,
     /// The moment after the wind-up showed that the perfect block was found at: the dodge's
-    /// search starts just before it, as the same delays (the server's, the frames') hold.
+    /// search starts there, as the same delays (the server's, the frames') hold.
     found: Option<f32>,
     /// The bear the step is about (`the_bear`), whether it was seen dying, and whether it
     /// has been seen out of its attack pose since the last blow (a wind-up counts from the
@@ -6739,8 +6777,12 @@ fn to_dodge(gate: &mut Gate, windup: f32, now: f32) {
     gate.feel.seen = None;
     gate.feel.answered = false;
     // A dodge is safe from 0.04 to about 0.2 s in, a perfect guard up to 0.15 s before the
-    // blow: the dodge goes about 0.05 s before the perfect block's moment, if it was found.
-    gate.feel.after = gate.feel.found.map_or(windup - 0.15, |at| at - 0.05).clamp(0.0, windup);
+    // blow. The block's search starts at its window's earliest moment and moves later only
+    // on a guard raised too soon, so the moment it was found at lands early in the guard's
+    // window, which is the middle of the dodge's: the dodge starts there. (0.05 s before it
+    // was the dodge window's very edge, and once the smoothed round trip had grown with the
+    // lag since the block's try, the server judged the same request earlier and it was hit.)
+    gate.feel.after = gate.feel.found.unwrap_or(windup - 0.15).clamp(0.0, windup);
     gate.feel.centre = gate.feel.after;
     gate.feel.probe = 0;
     to_phase(gate, FEEL_DODGE, now);
@@ -7759,7 +7801,7 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         0 => {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
-                    gate.check("sky: pose", Err("the open test-ground teleport did not settle".into()));
+                    gate.check("sky: pose", Err(unsettled(world, gate)));
                     gate.next(Step::Tree, now);
                 }
                 return;

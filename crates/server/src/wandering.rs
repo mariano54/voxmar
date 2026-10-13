@@ -119,6 +119,8 @@ pub struct Wandering {
     /// An admin's `/wander hold`: no event begins by chance until `/wander allow`. Kept only
     /// while the server runs.
     held: bool,
+    /// Running events that one which comes after them has already joined.
+    followed: FxHashSet<u64>,
 }
 
 struct Instance {
@@ -432,6 +434,7 @@ impl Server {
     /// One try at an event near `player`.
     pub(crate) fn try_wandering(&mut self, player: PlayerId, salt: u64) {
         if !self.wandering_welcome(player) {
+            self.try_follower(player, salt);
             return;
         }
         let rules = *self.content.wandering.rules();
@@ -444,6 +447,51 @@ impl Server {
         let wet = self.weather.local(&mut self.temperature, xz(spot.as_vec3()), tick, day).weather.precipitation > FALLING;
         let Some(event) = self.pick_event_in(player, spot, mix(seed, 5), wet) else { return };
         self.begin_event(Some(player), event, spot, mix(seed, 6));
+    }
+
+    /// One try at a party that comes after one already near `player` (`needs.after`): it
+    /// joins its forerunner through the gap, `follow_after` seconds on at the earliest, and
+    /// only once for each.
+    fn try_follower(&mut self, player: PlayerId, salt: u64) {
+        let rules = *self.content.wandering.rules();
+        let Some(at) = self.players.get(&player).filter(|p| p.joined && p.health.alive()).map(|p| p.position) else { return };
+        if self.wandering.held || self.wandering.active.len() >= rules.most_total {
+            return;
+        }
+        let followed = |name: &str| self.content.wandering.iter().any(|(_, e)| e.def.needs.after.as_ref().is_some_and(|(n, _)| n == name));
+        // Those near the player, about long enough and not yet joined, where their leaders stand.
+        let ready: Vec<(u64, usize, Vec3)> = self
+            .wandering
+            .active
+            .values()
+            .filter(|inst| !self.wandering.followed.contains(&inst.id) && self.tick >= inst.born + ticks(rules.follow_after))
+            .filter(|inst| followed(&self.content.wandering.get(inst.event).def.name))
+            .filter_map(|inst| inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map(|c| (inst.id, inst.event, c.body.position)))
+            .filter(|(_, _, leader)| leader.distance(at) < rules.near)
+            .collect();
+        if ready.is_empty() {
+            return;
+        }
+        let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x5f0d);
+        if unit_from(mix(seed, 1)) >= rules.chance {
+            return;
+        }
+        let Some(spot) = self.wandering_spot(player, seed) else { return };
+        let (tick, day) = (self.tick, self.day);
+        let wet = self.weather.local(&mut self.temperature, xz(spot.as_vec3()), tick, day).weather.precipitation > FALLING;
+        let Some(event) = self.pick_among(player, spot, mix(seed, 5), wet, true) else { return };
+        // The one it joins is one of those ready: never a party another already joined.
+        let Some((forerunner, reach)) = self.content.wandering.get(event).def.needs.after.clone() else { return };
+        let kind = self.content.wandering.find(&forerunner);
+        let led = ready
+            .iter()
+            .filter(|(_, e, leader)| Some(*e) == kind && flat(*leader, spot.as_vec3()) <= reach)
+            .min_by(|a, b| flat(a.2, spot.as_vec3()).total_cmp(&flat(b.2, spot.as_vec3())))
+            .map(|(id, _, _)| *id);
+        let Some(led) = led else { return };
+        if self.begin_event(Some(player), event, spot, mix(seed, 6)).is_some() {
+            self.wandering.followed.insert(led);
+        }
     }
 
     /// A place at the edge of the player's view, out of sight, a body can stand on.
@@ -612,6 +660,11 @@ impl Server {
 
     /// `pick_event`, where rain or snow falls (`wet`) or none does.
     fn pick_event_in(&self, player: PlayerId, spot: IVec3, seed: u64, wet: bool) -> Option<usize> {
+        self.pick_among(player, spot, seed, wet, false)
+    }
+
+    /// `pick_event_in`, of only the kinds that come after another (`followers`), or of all.
+    fn pick_among(&self, player: PlayerId, spot: IVec3, seed: u64, wet: bool, followers: bool) -> Option<usize> {
         let rules = self.content.wandering.rules();
         let p = self.players.get(&player)?;
         let site = self.overworld.site(spot.x, spot.z);
@@ -623,6 +676,9 @@ impl Server {
         let mut choices: Vec<(usize, f32)> = Vec::new();
         for (index, event) in self.content.wandering.iter() {
             let needs = &event.def.needs;
+            if followers && needs.after.is_none() {
+                continue;
+            }
             let suits = event.suits_light(daylight)
                 && event.suits_distance(flat(spot.as_vec3(), self.spawn))
                 && days >= needs.days
@@ -1265,6 +1321,7 @@ impl Server {
     /// Takes the cast away, those not dead, without a death.
     fn end_event(&mut self, inst: Instance) {
         tracing::info!("wandering: {} ends", self.content.wandering.get(inst.event).def.name);
+        self.wandering.followed.remove(&inst.id);
         for member in &inst.members {
             self.wandering.by_creature.remove(&member.creature);
             self.creatures.take_away(member.creature);
@@ -2392,6 +2449,10 @@ impl Server {
         self.wandering.by_creature.remove(&id);
     }
 }
+
+#[cfg(test)]
+#[path = "wandering_audit.rs"]
+mod audit;
 
 #[cfg(test)]
 mod tests {
@@ -5965,5 +6026,101 @@ mod tests {
         assert!(server.meet(1, rival));
         assert!(told(&client).iter().any(|(k, _)| k == "wander.toward"), "where the other went");
         assert!(server.wandering.active.contains_key(&ahead));
+    }
+
+    /// A party that comes after another (`needs.after`) joins it through the gap that keeps
+    /// other parties off, `follow_after` seconds on at the earliest, and only once for each.
+    #[test]
+    fn a_party_that_comes_after_another_joins_it_through_the_gap_once() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        // Floor about land the rival comes to, and the player on it.
+        let land = land_for(&server, event(&server, "rival_pedlar"), Vec3::new(128.0, 200.0, 128.0), |at| {
+            let rival = server.content.wandering.get(event(&server, "rival_pedlar"));
+            (0..16).all(|i| {
+                let (a, r) = (i as f32 * 0.4, 50.0 + i as f32 * 3.0);
+                let biome = server.overworld.biomes().get(server.overworld.site((at.x + a.cos() * r) as i32, (at.z + a.sin() * r) as i32).biome);
+                rival.biome_weight(&biome.name, &biome.tags) > 0.0
+            })
+        });
+        let stone = server.content.blocks.expect("base:stone");
+        let centre = ColumnPos::of_block(land);
+        for dx in -4..=4 {
+            for dz in -4..=4 {
+                let mut column = Column::default();
+                for x in 0..32 {
+                    for z in 0..32 {
+                        column.set_block(IVec3::new(x, 199, z), stone);
+                    }
+                }
+                server.world.insert(centre.offset(dx, dz), std::sync::Arc::new(column));
+            }
+        }
+        server.players.get_mut(&1).unwrap().position = Vec3::new(land.x as f32 + 0.5, 200.0, land.z as f32 + 0.5);
+        let pedlar = start(&mut server, "pedlar_and_hound", (land.x, land.z - 60));
+        assert!(!server.wandering_welcome(1), "the gap after the pedlar keeps others off");
+        let follow = |server: &mut Server| {
+            let before: Vec<u64> = server.wandering.active.keys().copied().collect();
+            (0..400).find_map(|salt| {
+                server.try_follower(1, salt);
+                server.wandering.active.values().find(|i| !before.contains(&i.id)).map(|i| i.event)
+            })
+        };
+        assert_eq!(follow(&mut server), None, "too soon after the pedlar set out");
+        server.tick += ticks(server.content.wandering.rules().follow_after);
+        assert_eq!(follow(&mut server), Some(event(&server, "rival_pedlar")), "the rival comes after the pedlar");
+        assert!(server.wandering.followed.contains(&pedlar));
+        assert_eq!(follow(&mut server), None, "once for each party it follows");
+        // A second pedlar about: a rival may follow it, but never the first again.
+        let second = start(&mut server, "pedlar_and_hound", (land.x + 40, land.z - 50));
+        server.tick += ticks(server.content.wandering.rules().follow_after);
+        assert_eq!(follow(&mut server), Some(event(&server, "rival_pedlar")), "the second pedlar has its rival");
+        assert!(server.wandering.followed.contains(&second));
+        assert_eq!(follow(&mut server), None, "both joined, none more");
+    }
+
+    /// No party hands over a step of the ages' main line (docs/wandering.md, "How often"):
+    /// what a main quest asks a player to make is never a gift, and what it asks them to
+    /// cook, mine or carry comes, if at all, short of the count and never again and again.
+    #[test]
+    fn no_party_does_a_main_quest_step_for_the_player() {
+        use voxmar_engine::quest::Goal;
+        let server = crate::test_server();
+        let content = &server.content;
+        let item = |name: &str| content.blocks.id(name).or_else(|| content.blocks.id(&format!("base:{name}")));
+        let (mut made, mut counted): (Vec<BlockId>, Vec<(BlockId, u32)>) = (Vec::new(), Vec::new());
+        for quest in content.quests.iter().filter(|q| q.branch == "main") {
+            for goal in quest.tasks.iter().flatten() {
+                match goal {
+                    Goal::Craft(name, _) => made.extend(item(name)),
+                    Goal::Cook(name, n) | Goal::Mine(name, n) | Goal::Have(name, n) => counted.extend(item(name).map(|i| (i, *n))),
+                    _ => {}
+                }
+            }
+        }
+        assert!(made.contains(&content.blocks.expect("base:torch")), "the torch is a main-line make");
+        fn gifts(r: &ResolvedReward, out: &mut Vec<(BlockId, u8)>) {
+            match r {
+                ResolvedReward::Item(item, (_, most)) => out.push((*item, *most)),
+                ResolvedReward::OneOf(c) => c.iter().for_each(|r| gifts(r, out)),
+                _ => {}
+            }
+        }
+        for (_, e) in content.wandering.iter() {
+            let lines = e.meetings.iter().flat_map(|m| m.lines.iter()).map(|l| (l.name.as_str(), &l.gives[..], Some(l.once)));
+            let others = [("thanks", &e.thanks[..]), ("guide_thanks", &e.guide_thanks[..]), ("reveal", &e.reveal[..]), ("show", &e.show[..]), ("share", &e.share[..])];
+            for (line, gives, once) in lines.chain(others.into_iter().map(|(n, g)| (n, g, None))) {
+                let mut got = Vec::new();
+                gives.iter().for_each(|r| gifts(r, &mut got));
+                for (gift, most) in got {
+                    let name = &content.blocks.def(gift).name;
+                    assert!(!made.contains(&gift), "{} {line} gives {name}, which a main quest asks the player to make", e.def.name);
+                    if let Some(&(_, asked)) = counted.iter().find(|(i, _)| *i == gift) {
+                        assert!((most as u32) < asked, "{} {line} gives up to {most} {name}, all a main quest asks", e.def.name);
+                        assert!(once != Some(Once::Always), "{} {line} gives {name} over and over", e.def.name);
+                    }
+                }
+            }
+        }
     }
 }
