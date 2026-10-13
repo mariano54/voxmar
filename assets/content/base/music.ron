@@ -1,7 +1,9 @@
-// Background music: when tracks play, how loud, and where. Voxmar's own tracks are the
-// files in `assets/music`. With Minecraft assets on in the settings, tracks from the
-// player's own Prism Launcher instance join them, read where they are and never copied
-// (crates/client/src/music/prism.rs). A later package's numbers replace these, and its
+// Background music: its categories, when tracks play, how loud, and where. Voxmar's own
+// tracks are the files in a category's folder of `assets/music`. With Minecraft assets on
+// in the settings, tracks from the player's own Prism Launcher instance join them, read
+// where they are and never copied (crates/client/src/music/prism.rs), each in the category
+// its rule below names. The audio settings turn each category on and off. A later
+// package's numbers replace these, a category it names again replaces that one, and its
 // rules come before these.
 (
     // Linear gain of a track at 100% music volume.
@@ -19,7 +21,18 @@
     resume_after: 2.0,
     // The chance a pick is one of Voxmar's own tracks while borrowed ones suit too.
     own_share: 0.25,
-    own_contexts: [Menu, Game, Underground],
+    // In the settings' order. Each is called `music.<name>` in the languages.
+    categories: [
+        // Voxmar's own: a folder of `assets/music` each, playing everywhere unless
+        // `contexts` says otherwise.
+        (name: "suno", folder: "suno"),
+        (name: "lyria", folder: "lyria"),
+        // Borrowed from the Prism instance, so only with Minecraft assets on.
+        (name: "minecraft_menu"),
+        (name: "minecraft_world"),
+        (name: "minecraft_deep"),
+        (name: "minecraft_records"),
+    ],
     // Tracks played lately that are passed over while others suit.
     recent: 12,
     // Underground: this many blocks below the surface, with this little of the air
@@ -54,19 +67,19 @@
     // `minecraft:music/game/calm1`, `music/game/calm1`; for HorizonMelodies' StaTech
     // tracks, `music_and_melody/music/overworld/<name>`. The first match decides.
     rules: [
-        (category: "menu", paths: ["*music/menu/*", "*end/credits*"], contexts: [Menu]),
+        (category: "minecraft_menu", paths: ["*music/menu/*", "*end/credits*"], contexts: [Menu]),
         // The unsettling discs only below.
-        (category: "eerie records", paths: ["*records/11", "*records/13", "*music_disc/11", "*music_disc/13"], contexts: [Underground], weight: 0.5),
-        (category: "records", paths: ["*records/*", "*record/*", "*music_disc*"], contexts: [Game, Underground], weight: 0.5),
+        (category: "minecraft_records", paths: ["*records/11", "*records/13", "*music_disc/11", "*music_disc/13"], contexts: [Underground], weight: 0.5),
+        (category: "minecraft_records", paths: ["*records/*", "*record/*", "*music_disc*"], contexts: [Game, Underground], weight: 0.5),
         // Nether, End, caves and strongholds: the music of being deep down.
-        (category: "deep", paths: [
+        (category: "minecraft_deep", paths: [
             "*nether*", "*crimson_forest*", "*warped_forest*", "*soulsand_valley*", "*soul_sand_valley*", "*basalt_deltas*",
             "*/end/*", "*dragon*", "*boss*",
             "*caves/*", "*deep_dark*", "*dripstone*", "*structure/*", "*ancient_city*", "*trial_chambers*", "*stronghold*",
         ], contexts: [Underground]),
-        (category: "creative", paths: ["*creative*"], contexts: [Game]),
-        (category: "water", paths: ["*under_water*", "*underwater*", "*/water/*"], contexts: [Game]),
+        (category: "minecraft_world", paths: ["*creative*"], contexts: [Game]),
+        (category: "minecraft_world", paths: ["*under_water*", "*underwater*", "*/water/*"], contexts: [Game]),
         // Everything else is the world's: the game, overworld biome and misc tracks.
-        (category: "world", paths: ["*"], contexts: [Game, Underground]),
+        (category: "minecraft_world", paths: ["*"], contexts: [Game, Underground]),
     ],
 )

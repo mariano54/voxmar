@@ -4,12 +4,14 @@
 //! returning to the menus fades the game's music out and the menu's starts again soon. `M`
 //! mutes or unmutes.
 //!
-//! Voxmar's own tracks are the files in `assets/music` (generated offline by
-//! `tools/generate_music.py`). With the `minecraft_assets` setting on, the tracks of the
-//! player's own Prism Launcher instance join them (`prism`), each read from where it is
-//! as it is about to play. Each track suits some moments (the menus, the world above,
-//! deep underground), as `music.ron` says (`rules`); a pick is among those suiting the
-//! moment, passing over the ones played lately. A borrowed track is checked to decode
+//! Music comes in categories (`music.ron`), which the audio settings turn on and off.
+//! Voxmar's own tracks are the files in their category's folder of `assets/music`
+//! (`suno`, made with Suno; `lyria`, generated offline by `tools/generate_music.py`). With
+//! the `minecraft_assets` setting on, the tracks of the player's own Prism Launcher
+//! instance join them (`prism`), each read from where it is as it is about to play. Each
+//! track suits some moments (the menus, the world above, deep underground), as
+//! `music.ron` says (`rules`); a pick is among those suiting the moment and in a category
+//! that is on, passing over the ones played lately. A borrowed track is checked to decode
 //! before it plays; one that does not (empty, cut short, another codec) leaves the
 //! rotation.
 
@@ -30,7 +32,7 @@ use crate::settings::Settings;
 use crate::sfx::Audible;
 
 use self::prism::{Found, Place, TrackFile};
-use self::rules::{Context, MusicRules};
+use self::rules::{Category, Context, MusicRules};
 
 pub mod prism;
 pub mod rules;
@@ -48,7 +50,7 @@ impl Plugin for MusicPlugin {
                     toggle_music,
                     (receive_found, schedule_music, start_loaded).chain().in_set(Audible),
                     fade_out,
-                    set_volume.run_if(resource_changed::<Settings>),
+                    (set_volume, stop_switched_off).run_if(resource_changed::<Settings>),
                 ),
             );
     }
@@ -61,6 +63,8 @@ struct Track {
     weight: f32,
     /// What the log calls it.
     name: String,
+    /// Its category's name (`music.ron`).
+    category: String,
 }
 
 enum Source {
@@ -72,7 +76,16 @@ impl Track {
     fn own(&self) -> bool {
         matches!(self.source, Source::Own(_))
     }
+
+    /// Whether its category is on in the settings.
+    fn on(&self, settings: &Settings) -> bool {
+        !settings.music_off.contains(&self.category)
+    }
 }
+
+/// The categories of music, in the settings' order, for the audio settings' switches.
+#[derive(Resource, Clone, Default)]
+pub struct MusicCategories(pub Vec<Category>);
 
 #[derive(Resource)]
 struct Music {
@@ -105,10 +118,11 @@ impl Music {
     }
 }
 
-/// A track playing, and whether it is one of Voxmar's own.
+/// A track playing, whether it is one of Voxmar's own, and its category.
 #[derive(Component)]
 struct MusicTrack {
     own: bool,
+    category: String,
 }
 
 /// A track on its way out, with the seconds it has left.
@@ -125,24 +139,29 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         None => MusicRules::default(),
     };
     let directory = voxmar_server::assets_dir().join("music");
-    let mut names: Vec<String> = std::fs::read_dir(&directory)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.ends_with(".mp3") || name.ends_with(".ogg"))
-        .collect();
-    names.sort();
-    info!("{} music tracks", names.len());
-    let tracks = names
-        .into_iter()
-        .map(|name| Track {
-            source: Source::Own(assets.load(format!("music/{name}"))),
-            contexts: rules.own_contexts.clone(),
+    let mut tracks = Vec::new();
+    let mut counts = Vec::new();
+    for category in &rules.categories {
+        let Some(folder) = &category.folder else { continue };
+        let mut names: Vec<String> = std::fs::read_dir(directory.join(folder))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.ends_with(".mp3") || name.ends_with(".ogg"))
+            .collect();
+        names.sort();
+        counts.push(format!("{} {}", category.name, names.len()));
+        tracks.extend(names.into_iter().map(|name| Track {
+            source: Source::Own(assets.load(format!("music/{folder}/{name}"))),
+            contexts: category.contexts.clone(),
             weight: 1.0,
-            name,
-        })
-        .collect();
+            name: format!("{folder}/{name}"),
+            category: category.name.clone(),
+        }));
+    }
+    info!("{} music tracks ({})", tracks.len(), counts.join(", "));
+    commands.insert_resource(MusicCategories(rules.categories.clone()));
     // Looking through a modpack's jars takes a moment; Voxmar's own tracks play meanwhile.
     let found = settings.minecraft_assets.then(|| {
         let (tx, rx) = bounded(1);
@@ -183,7 +202,13 @@ fn receive_found(mut music: ResMut<Music>) {
             Some((_, count)) => *count += 1,
             None => categories.push((rule.category.clone(), 1)),
         }
-        added.push(Track { source: Source::Borrowed(track.file), contexts: rule.contexts.clone(), weight: rule.weight, name: track.location });
+        added.push(Track {
+            source: Source::Borrowed(track.file),
+            contexts: rule.contexts.clone(),
+            weight: rule.weight,
+            name: track.location,
+            category: rule.category.clone(),
+        });
     }
     let places: Vec<String> = found.counts.iter().map(|(place, count)| format!("{place} {count}")).collect();
     let categories: Vec<String> = categories.iter().map(|(category, count)| format!("{category} {count}")).collect();
@@ -226,11 +251,13 @@ fn random_in(time: &Time, salt: u64, (low, high): (f32, f32)) -> f32 {
     low + (high - low) * (mixed as f32 / (1u64 << 24) as f32)
 }
 
-/// The track to play next where the player is: Voxmar's own `own_share` of the time when
-/// borrowed tracks suit too, then by weight, passing over the ones played lately while
-/// others suit. `rolls` are two numbers in 0..1.
-fn pick(tracks: &[Track], context: Context, recent: &VecDeque<usize>, own_share: f32, rolls: [f32; 2]) -> Option<usize> {
-    let suits = |context: Context| -> Vec<usize> { (0..tracks.len()).filter(|&i| tracks[i].contexts.contains(&context)).collect() };
+/// The track to play next where the player is, among those whose category is on: Voxmar's
+/// own `own_share` of the time when borrowed tracks suit too, then by weight, passing over
+/// the ones played lately while others suit. `rolls` are two numbers in 0..1.
+fn pick(tracks: &[Track], context: Context, settings: &Settings, recent: &VecDeque<usize>, own_share: f32, rolls: [f32; 2]) -> Option<usize> {
+    let suits = |context: Context| -> Vec<usize> {
+        (0..tracks.len()).filter(|&i| tracks[i].contexts.contains(&context) && tracks[i].on(settings)).collect()
+    };
     let mut suiting = suits(context);
     if suiting.is_empty() && context == Context::Underground {
         suiting = suits(Context::Game);
@@ -304,7 +331,7 @@ fn schedule_music(
         _ => Context::Game,
     };
     let rolls = [random_in(&time, 1, (0.0, 1.0)), random_in(&time, 2, (0.0, 1.0))];
-    let Some(index) = pick(&music.tracks, context, &music.recent, music.rules.own_share, rolls) else {
+    let Some(index) = pick(&music.tracks, context, &settings, &music.recent, music.rules.own_share, rolls) else {
         // Nothing suits here; look again after a gap.
         music.next_at = Some(time.elapsed() + Duration::from_secs_f32(random_in(&time, 0, music.rules.gap)));
         return;
@@ -313,10 +340,11 @@ fn schedule_music(
     while music.recent.len() > music.rules.recent.max(1) {
         music.recent.pop_front();
     }
+    let category = music.tracks[index].category.clone();
     match music.tracks[index].source {
         Source::Own(ref handle) => {
             let handle = handle.clone();
-            let entity = spawn_track(&mut commands, handle, true, music.level(&settings, true));
+            let entity = spawn_track(&mut commands, handle, true, category, music.level(&settings, true));
             music.playing = Some(entity);
         }
         Source::Borrowed(ref file) => {
@@ -331,8 +359,8 @@ fn schedule_music(
     }
 }
 
-fn spawn_track(commands: &mut Commands, source: Handle<AudioSource>, own: bool, level: f32) -> Entity {
-    commands.spawn((MusicTrack { own }, AudioPlayer(source), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(level)))).id()
+fn spawn_track(commands: &mut Commands, source: Handle<AudioSource>, own: bool, category: String, level: f32) -> Entity {
+    commands.spawn((MusicTrack { own, category }, AudioPlayer(source), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(level)))).id()
 }
 
 /// Plays a borrowed track once it has been read.
@@ -354,7 +382,8 @@ fn start_loaded(
     match read {
         Ok(source) => {
             let source = sources.add(source);
-            let entity = spawn_track(&mut commands, source, false, music.level(&settings, false));
+            let category = music.tracks[index].category.clone();
+            let entity = spawn_track(&mut commands, source, false, category, music.level(&settings, false));
             music.playing = Some(entity);
         }
         Err(e) => {
@@ -416,6 +445,24 @@ fn set_volume(
     }
 }
 
+/// A category switched off in the settings fades out its track playing (or forgets one
+/// being read), and another, from a category still on, comes soon.
+fn stop_switched_off(
+    mut commands: Commands,
+    time: Res<Time>,
+    settings: Res<Settings>,
+    music: Option<ResMut<Music>>,
+    playing: Query<&MusicTrack, Without<FadingOut>>,
+) {
+    let Some(mut music) = music else { return };
+    let loading_off = music.loading.as_ref().is_some_and(|(index, _)| !music.tracks[*index].on(&settings));
+    let playing_off = music.playing.and_then(|entity| playing.get(entity).ok()).is_some_and(|track| settings.music_off.contains(&track.category));
+    if loading_off || playing_off {
+        music.fade_out(&mut commands);
+        music.next_at = Some(time.elapsed() + Duration::from_secs_f32(music.rules.resume_after));
+    }
+}
+
 fn toggle_music(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -441,7 +488,8 @@ mod tests {
 
     fn track(own: bool, contexts: &[Context], weight: f32) -> Track {
         let source = if own { Source::Own(Handle::default()) } else { Source::Borrowed(TrackFile::Loose("x.ogg".into())) };
-        Track { source, contexts: contexts.to_vec(), weight, name: String::new() }
+        let category = if own { "ours" } else { "borrowed" }.to_owned();
+        Track { source, contexts: contexts.to_vec(), weight, name: String::new(), category }
     }
 
     #[test]
@@ -454,27 +502,36 @@ mod tests {
             track(false, &[Underground], 3.0),
         ];
         let none = VecDeque::new();
+        let all = Settings::default();
         // In the menus: own below the share, else the one borrowed menu track.
-        assert_eq!(pick(&tracks, Menu, &none, 0.25, [0.1, 0.5]), Some(0));
-        assert_eq!(pick(&tracks, Menu, &none, 0.25, [0.9, 0.5]), Some(1));
+        assert_eq!(pick(&tracks, Menu, &all, &none, 0.25, [0.1, 0.5]), Some(0));
+        assert_eq!(pick(&tracks, Menu, &all, &none, 0.25, [0.9, 0.5]), Some(1));
         // Underground, by weight: one in four the world's track, else the deep one.
-        assert_eq!(pick(&tracks, Underground, &none, 0.25, [0.9, 0.2]), Some(2));
-        assert_eq!(pick(&tracks, Underground, &none, 0.25, [0.9, 0.3]), Some(3));
+        assert_eq!(pick(&tracks, Underground, &all, &none, 0.25, [0.9, 0.2]), Some(2));
+        assert_eq!(pick(&tracks, Underground, &all, &none, 0.25, [0.9, 0.3]), Some(3));
         // Never the deep track above ground.
         for roll in [0.0, 0.5, 0.99] {
-            assert_eq!(pick(&tracks, Game, &none, 0.25, [0.9, roll]), Some(2));
+            assert_eq!(pick(&tracks, Game, &all, &none, 0.25, [0.9, roll]), Some(2));
         }
         // Played lately is passed over while others suit, but a lone track still plays,
         // and only the very last is avoided when every one was played lately.
         let lately = VecDeque::from([3]);
-        assert_eq!(pick(&tracks, Underground, &lately, 0.25, [0.9, 0.9]), Some(2));
-        assert_eq!(pick(&tracks, Game, &VecDeque::from([2]), 0.25, [0.9, 0.5]), Some(2));
-        assert_eq!(pick(&tracks, Underground, &VecDeque::from([3, 2]), 0.25, [0.9, 0.0]), Some(3));
+        assert_eq!(pick(&tracks, Underground, &all, &lately, 0.25, [0.9, 0.9]), Some(2));
+        assert_eq!(pick(&tracks, Game, &all, &VecDeque::from([2]), 0.25, [0.9, 0.5]), Some(2));
+        assert_eq!(pick(&tracks, Underground, &all, &VecDeque::from([3, 2]), 0.25, [0.9, 0.0]), Some(3));
         // Nothing borrowed: always Voxmar's own; nothing at all: none.
-        assert_eq!(pick(&tracks[..1], Menu, &none, 0.0, [0.9, 0.9]), Some(0));
-        assert_eq!(pick(&[], Game, &none, 0.25, [0.5, 0.5]), None);
+        assert_eq!(pick(&tracks[..1], Menu, &all, &none, 0.0, [0.9, 0.9]), Some(0));
+        assert_eq!(pick(&[], Game, &all, &none, 0.25, [0.5, 0.5]), None);
         // Underground with nothing for it falls back to the world's tracks.
-        assert_eq!(pick(&[track(false, &[Game], 1.0)], Underground, &none, 0.25, [0.5, 0.5]), Some(0));
+        assert_eq!(pick(&[track(false, &[Game], 1.0)], Underground, &all, &none, 0.25, [0.5, 0.5]), Some(0));
+        // A category switched off is never picked; with Voxmar's own off, the borrowed play
+        // whatever the share, and with everything off, nothing does.
+        let ours_off = Settings { music_off: vec!["ours".into()], ..Settings::default() };
+        for roll in [0.0, 0.5, 0.99] {
+            assert_eq!(pick(&tracks, Menu, &ours_off, &none, 0.25, [roll, roll]), Some(1));
+        }
+        let all_off = Settings { music_off: vec!["ours".into(), "borrowed".into()], ..Settings::default() };
+        assert_eq!(pick(&tracks, Game, &all_off, &none, 0.25, [0.5, 0.5]), None);
     }
 
     /// A borrowed file that is empty or not audio is refused before it reaches Bevy's

@@ -1,7 +1,9 @@
-//! What `music.ron` says: when tracks play and how loud, where to find borrowed ones
+//! What `music.ron` says: the categories of music (each a folder of Voxmar's own tracks,
+//! or borrowed ones, or both), when tracks play and how loud, where to find borrowed ones
 //! (`prism`), and where each borrowed track plays, by rules matching its location. Every
-//! content package may have one; a later package's numbers replace an earlier one's and
-//! its rules come first, so a mod can move any track.
+//! content package may have one; a later package's numbers replace an earlier one's, a
+//! category it names again replaces that one, and its rules come first, so a mod can move
+//! any track or add a category of its own.
 
 use serde::Deserialize;
 use voxmar_engine::content::ContentFile;
@@ -41,8 +43,8 @@ pub struct MusicRules {
     pub resume_after: f32,
     /// The chance a pick is one of Voxmar's own tracks while borrowed ones suit too.
     pub own_share: f32,
-    /// Where Voxmar's own tracks play.
-    pub own_contexts: Vec<Context>,
+    /// The categories, which the audio settings turn on and off, in the settings' order.
+    pub categories: Vec<Category>,
     /// How many tracks played lately are passed over while others suit.
     pub recent: usize,
     pub underground: Underground,
@@ -60,6 +62,34 @@ pub struct Underground {
     pub max_sky: f32,
 }
 
+/// A category of music, switched on and off in the audio settings. Voxmar's own tracks are
+/// the files in its folder; borrowed tracks join it by the rules naming it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Category {
+    /// What the rules and the settings file call it: lowercase letters, digits and `_`. The
+    /// languages call it `music.<name>`, and say what it holds in `music.<name>.hint`.
+    pub name: String,
+    /// The folder of `assets/music` its own tracks are in, if it has any.
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// Where its own tracks play.
+    #[serde(default = "everywhere")]
+    pub contexts: Vec<Context>,
+}
+
+impl Category {
+    /// Whether its tracks all come from a Prism Launcher instance, so it matters only with
+    /// Minecraft assets on.
+    pub fn borrowed_only(&self) -> bool {
+        self.folder.is_none()
+    }
+}
+
+fn everywhere() -> Vec<Context> {
+    vec![Context::Menu, Context::Game, Context::Underground]
+}
+
 /// Where tracks at matching locations play. The first rule a location matches decides.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -67,7 +97,7 @@ pub struct Rule {
     /// Patterns of paths, the location less its namespace, `*` standing for anything:
     /// `*music/menu/*`.
     pub paths: Vec<String>,
-    /// A name for the log.
+    /// The category they are in (`categories`).
     pub category: String,
     /// Where they play; none leaves them out.
     pub contexts: Vec<Context>,
@@ -92,7 +122,7 @@ struct File {
     retry_after: Option<f32>,
     resume_after: Option<f32>,
     own_share: Option<f32>,
-    own_contexts: Option<Vec<Context>>,
+    categories: Vec<Category>,
     recent: Option<usize>,
     underground: Option<Underground>,
     prism: Option<Discovery>,
@@ -100,7 +130,7 @@ struct File {
 }
 
 impl Default for MusicRules {
-    /// Music as it was before `music.ron`: Voxmar's own tracks, everywhere.
+    /// Before any `music.ron`: no categories, so no tracks.
     fn default() -> Self {
         Self {
             volume: 0.35,
@@ -111,7 +141,7 @@ impl Default for MusicRules {
             retry_after: 2.0,
             resume_after: 2.0,
             own_share: 1.0,
-            own_contexts: vec![Context::Menu, Context::Game, Context::Underground],
+            categories: Vec::new(),
             recent: 0,
             underground: Underground { depth: f32::INFINITY, max_sky: 0.0 },
             prism: Discovery::default(),
@@ -129,10 +159,25 @@ impl MusicRules {
             macro_rules! replace {
                 ($($field:ident),*) => {$(if let Some(value) = read.$field { rules.$field = value; })*};
             }
-            replace!(volume, borrowed_volume, first_menu_delay, gap, fade_out, retry_after, resume_after, own_share, own_contexts, recent, underground, prism);
+            replace!(volume, borrowed_volume, first_menu_delay, gap, fade_out, retry_after, resume_after, own_share, recent, underground, prism);
+            for category in read.categories {
+                check_category(&category).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
+                match rules.categories.iter_mut().find(|known| known.name == category.name) {
+                    Some(known) => *known = category,
+                    None => rules.categories.push(category),
+                }
+            }
             rules.rules.splice(0..0, read.rules);
         }
+        if let Some(rule) = rules.rules.iter().find(|rule| rules.category(&rule.category).is_none()) {
+            return Err(format!("{FILE}: the rule for {:?} puts tracks in category {:?}, which no categories list has", rule.paths, rule.category));
+        }
         Ok(rules)
+    }
+
+    /// The category called `name`.
+    pub fn category(&self, name: &str) -> Option<&Category> {
+        self.categories.iter().find(|category| category.name == name)
     }
 
     /// The rule a borrowed track's location matches by its path, if any. The namespace is
@@ -141,6 +186,21 @@ impl MusicRules {
         let path = location.split_once(':').map_or(location, |(_, path)| path);
         self.rules.iter().find(|rule| rule.paths.iter().any(|pattern| glob(pattern, path)))
     }
+}
+
+/// A category's name is part of language keys and the settings file, and its folder lies
+/// inside `assets/music`.
+fn check_category(category: &Category) -> Result<(), String> {
+    let name = &category.name;
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        return Err(format!("category {name:?}: a name is lowercase letters, digits and _"));
+    }
+    if let Some(folder) = &category.folder
+        && (folder.is_empty() || folder.starts_with('/') || folder.split(['/', '\\']).any(|part| part == ".."))
+    {
+        return Err(format!("category {name}: folder {folder:?} is not inside assets/music"));
+    }
+    Ok(())
 }
 
 /// Whether `text` matches `pattern`, where `*` matches any run of characters (`/` too).
@@ -176,16 +236,38 @@ mod tests {
         assert!(glob("exact", "exact") && !glob("exact", "exactly"));
     }
 
+    fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() { files.extend(walk(&path)) } else { files.push(path) }
+        }
+        files
+    }
+
     fn package(package: &str, source: &str) -> ContentFile {
         ContentFile { package: package.into(), name: FILE.into(), source: source.into() }
     }
 
     #[test]
     fn later_packages_replace_numbers_and_their_rules_come_first() {
-        let base = package("base", r#"(volume: 0.3, recent: 4, rules: [(paths: ["*music/*"], category: "game", contexts: [Game])])"#);
-        let mod_ = package("zmod", r#"(recent: 9, rules: [(paths: ["*music/menu/*"], category: "menu", contexts: [Menu], weight: 2.0)])"#);
+        let base = package(
+            "base",
+            r#"(volume: 0.3, recent: 4, categories: [(name: "ours", folder: "ours"), (name: "game")], rules: [(paths: ["*music/*"], category: "game", contexts: [Game])])"#,
+        );
+        let mod_ = package(
+            "zmod",
+            r#"(recent: 9, categories: [(name: "menu"), (name: "ours", folder: "theirs", contexts: [Menu])], rules: [(paths: ["*music/menu/*"], category: "menu", contexts: [Menu], weight: 2.0)])"#,
+        );
         let rules = MusicRules::load(&[base, mod_]).unwrap();
         assert_eq!((rules.volume, rules.recent, rules.gap), (0.3, 9, (180.0, 420.0)));
+        // A category named again is replaced where it was; a new one comes after.
+        let names: Vec<&str> = rules.categories.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["ours", "game", "menu"]);
+        let ours = rules.category("ours").unwrap();
+        assert_eq!((ours.folder.as_deref(), ours.contexts.as_slice()), (Some("theirs"), [Context::Menu].as_slice()));
+        assert_eq!(rules.category("game").unwrap().contexts, [Context::Menu, Context::Game, Context::Underground]);
+        assert!(rules.category("game").unwrap().borrowed_only() && !ours.borrowed_only());
         let menu = rules.rule("minecraft:music/menu/menu1").unwrap();
         assert_eq!((menu.category.as_str(), menu.contexts.as_slice(), menu.weight), ("menu", [Context::Menu].as_slice(), 2.0));
         assert_eq!(rules.rule("minecraft:music/game/calm1").unwrap().weight, 1.0);
@@ -193,6 +275,27 @@ mod tests {
         // Patterns see the path, not the namespace.
         assert!(rules.rule("musicmod:dig/grass1").is_none());
         assert!(MusicRules::load(&[package("bad", "(loudness: 2.0)")]).unwrap_err().contains("bad/music.ron"));
+    }
+
+    /// A rule's category must be listed, and a category's name and folder must be safe to
+    /// use as a language key, a settings entry and a folder of `assets/music`.
+    #[test]
+    fn categories_are_checked_as_they_load() {
+        let unlisted = package("base", r#"(rules: [(paths: ["*"], category: "world", contexts: [Game])])"#);
+        assert!(MusicRules::load(&[unlisted]).unwrap_err().contains("\"world\", which no categories list has"));
+        for (bad, says) in [
+            (r#"(categories: [(name: "Suno Tracks")])"#, "lowercase"),
+            (r#"(categories: [(name: "")])"#, "lowercase"),
+            (r#"(categories: [(name: "up", folder: "../sounds")])"#, "not inside"),
+            (r#"(categories: [(name: "root", folder: "/music")])"#, "not inside"),
+        ] {
+            let error = MusicRules::load(&[package("zmod", bad)]).unwrap_err();
+            assert!(error.contains("zmod/music.ron") && error.contains(says), "{bad}: {error}");
+        }
+        // A mod may put its rules' tracks in a category an earlier package lists.
+        let base = package("base", r#"(categories: [(name: "world")])"#);
+        let mod_ = package("zmod", r#"(rules: [(paths: ["*"], category: "world", contexts: [Game])])"#);
+        assert_eq!(MusicRules::load(&[base, mod_]).unwrap().rule("x:y").unwrap().category, "world");
     }
 
     /// The shipped rules place each kind of track the GT New Horizons soundtrack and the
@@ -233,7 +336,30 @@ mod tests {
             assert!(rule.weight > 0.0);
         }
         assert!(rules.own_share > 0.0 && rules.own_share < 1.0);
-        assert!(rules.own_contexts.contains(&Menu) && rules.own_contexts.contains(&Game));
+        // Voxmar's own tracks, a folder for each source, play in the menus and the world.
+        for name in ["suno", "lyria"] {
+            let category = rules.category(name).unwrap_or_else(|| panic!("no category {name}"));
+            assert_eq!(category.folder.as_deref(), Some(name));
+            assert!(category.contexts.contains(&Menu) && category.contexts.contains(&Game), "{name}");
+        }
+        // Every category is named and explained (every language has the same keys, as
+        // `lang::every_language_has_the_same_keys` checks), every folder holds tracks, and
+        // every track of `assets/music` is in a category's folder.
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let english = voxmar_engine::lang::Lang::load(&assets.join("content"), "en");
+        for category in &rules.categories {
+            for key in [format!("music.{}", category.name), format!("music.{}.hint", category.name)] {
+                assert!(english.find(&key).is_some(), "no {key}");
+            }
+        }
+        let mut placed = 0;
+        for folder in rules.categories.iter().filter_map(|c| c.folder.as_ref()) {
+            let tracks = std::fs::read_dir(assets.join("music").join(folder)).unwrap().count();
+            assert!(tracks > 0, "assets/music/{folder} is empty");
+            placed += tracks;
+        }
+        let all = walk(&assets.join("music"));
+        assert_eq!(placed, all.len(), "tracks outside every category's folder: {all:?}");
         assert!(!rules.prism.instances.is_empty() && !rules.prism.sources.is_empty());
     }
 }

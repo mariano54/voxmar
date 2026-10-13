@@ -247,6 +247,9 @@ enum Step {
     Swim,
     /// Esc opens and closes the menu, E the inventory.
     Screens,
+    /// On the menu's audio page, a switch for each category of music the player can hear;
+    /// clicking one turns that category off, and again on.
+    Music,
     /// F3 opens the debug overlay, and PostUpdate (UI layout among it) takes no longer with
     /// it open than closed.
     Overlay,
@@ -1191,6 +1194,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::HvAge => hv_age(world, gate, now),
         Step::Swim => swim(world, gate, now, in_phase),
         Step::Screens => screens(world, gate, now, in_phase),
+        Step::Music => music(world, gate, now, in_phase),
         Step::Overlay => overlay(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
@@ -3163,13 +3167,117 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let count: u32 = inventory.slots.iter().flatten().filter(|s| Some(s.item) == planks).map(|s| s.count as u32).sum();
             if count >= 4 {
                 gate.check("craft", Ok(format!("the crafting grid turned a log into {count} planks")));
-                gate.next(Step::Overlay, now);
+                gate.next(Step::Music, now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft", Err(format!("after crafting a log there are {count} planks and the grid holds {:?}", inventory.grid())));
-                gate.next(Step::Overlay, now);
+                gate.next(Step::Music, now);
             }
         }
         _ => {}
+    }
+}
+
+/// The menu's audio page shows a switch for each category of music there is to hear (its
+/// own tracks, or Minecraft's with Minecraft assets on), and clicking the first turns its
+/// category off in the settings, saying so beside it, and clicking again turns it back on.
+fn music(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let ui = world.resource::<UiState>();
+    let (menu, locked) = (ui.menu_open, ui.cursor_locked);
+    let words = |world: &World, on: bool| world.resource::<Locale>().get(if on { "settings.value.on" } else { "settings.value.off" }).to_owned();
+    let off = |world: &World| world.resource::<crate::settings::Settings>().music_off.clone();
+    match gate.phase {
+        0 => {
+            key(world, KeyCode::Escape, true);
+            gate.advance(now);
+        }
+        1 => {
+            key(world, KeyCode::Escape, false);
+            if menu && in_phase > 0.2 {
+                match crate::settings::tab_button(world, "settings.tab.audio") {
+                    Some(tab) => {
+                        world.resource_mut::<UiClicks>().next = Some((tab, MouseButton::Left));
+                        gate.advance(now);
+                    }
+                    None => {
+                        gate.check("music: switches", Err("the menu has no audio tab".into()));
+                        gate.next(Step::Overlay, now);
+                    }
+                }
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: switches", Err("Esc did not open the menu".into()));
+                gate.next(Step::Overlay, now);
+            }
+        }
+        2 => {
+            if in_phase < 0.3 {
+                return;
+            }
+            let minecraft = world.resource::<crate::settings::Settings>().minecraft_assets;
+            let wanted: Vec<String> = world
+                .get_resource::<crate::music::MusicCategories>()
+                .map(|c| c.0.iter().filter(|c| minecraft || !c.borrowed_only()).map(|c| c.name.clone()).collect())
+                .unwrap_or_default();
+            let shown = crate::settings::music_switches_shown(world);
+            let names: Vec<String> = shown.iter().map(|(name, _, _)| name.clone()).collect();
+            let all_on = shown.iter().all(|(_, _, said)| *said == words(world, true)) && off(world).is_empty();
+            let result = if wanted.is_empty() {
+                Err("the content lists no categories of music".into())
+            } else if names != wanted {
+                Err(format!("the audio page shows switches for {names:?}, not {wanted:?}"))
+            } else if !all_on {
+                Err(format!("not every category reads on: {:?}, off in the settings {:?}", shown.iter().map(|s| &s.2).collect::<Vec<_>>(), off(world)))
+            } else {
+                Ok(format!("a switch for each of {}, all on", names.join(", ")))
+            };
+            let ok = result.is_ok();
+            gate.check("music: switches", result);
+            match shown.first().filter(|_| ok) {
+                Some((_, switch, _)) => {
+                    world.resource_mut::<UiClicks>().next = Some((*switch, MouseButton::Left));
+                    gate.advance(now);
+                }
+                None => close(world, gate, now),
+            }
+        }
+        3 => {
+            let Some((name, switch, said)) = crate::settings::music_switches_shown(world).first().cloned() else { return };
+            if off(world) == [name.clone()] && said == words(world, false) {
+                gate.check("music: switch off", Ok(format!("clicked, {name} is off and reads {said}")));
+                world.resource_mut::<UiClicks>().next = Some((switch, MouseButton::Left));
+                gate.advance(now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: switch off", Err(format!("after a click on {name}'s switch it reads {said:?} and the settings have {:?} off", off(world))));
+                world.resource_mut::<crate::settings::Settings>().music_off.clear();
+                close(world, gate, now);
+            }
+        }
+        4 => {
+            let Some((name, _, said)) = crate::settings::music_switches_shown(world).first().cloned() else { return };
+            if off(world).is_empty() && said == words(world, true) {
+                gate.check("music: switch on", Ok(format!("clicked again, {name} is back on")));
+                close(world, gate, now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: switch on", Err(format!("after a second click {name} reads {said:?} and the settings have {:?} off", off(world))));
+                world.resource_mut::<crate::settings::Settings>().music_off.clear();
+                close(world, gate, now);
+            }
+        }
+        _ => {
+            key(world, KeyCode::Escape, false);
+            if !menu && locked {
+                gate.next(Step::Overlay, now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: close", Err("Esc did not close the menu".into()));
+                gate.next(Step::Overlay, now);
+            }
+        }
+    }
+
+    /// Esc, then on to the phase waiting for the menu to close.
+    fn close(world: &mut World, gate: &mut Gate, now: f32) {
+        key(world, KeyCode::Escape, true);
+        gate.phase = 4;
+        gate.advance(now);
     }
 }
 
