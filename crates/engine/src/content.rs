@@ -326,6 +326,10 @@ impl Content {
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
         let effects = EffectRegistry::new(effects)?;
+        // A home asks for tags blocks carry: a misspelt one would be a step nobody can climb.
+        if let Some(tag) = effects.home_tags().iter().find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: a home is asked for blocks tagged `{tag}`, which no block carries")));
+        }
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;

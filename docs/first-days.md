@@ -72,7 +72,7 @@ Mostly yes, with these checks:
 7. **Prayers and altars, the quern and stove are not built.** No quest asks for them.
 8. **Food Enough** (design F01, two crops and four animals content for a day) is absent; the
    journal cannot express sustained farming. Farming, Hens in a Row and Camp Cook stand in.
-9. **Bedding is crafted but never used**: Sleep sets the respawn point only; no Rested effect.
+9. **Bedding is crafted but never used**: fixed by [home.md](home.md): sleeping gives a rest, and a bed, light and hearth start a ladder of home comfort.
 10. **Clay was only mentioned by Farm quests** though the Hearth needs it: the Hearth quest now
     says where to dig it.
 

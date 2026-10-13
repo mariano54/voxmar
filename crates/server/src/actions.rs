@@ -387,12 +387,7 @@ impl Server {
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
                 (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
                 (Effect::PickLock, ActionTarget::Block { block, .. }) => self.pick_lock(agent, block),
-                (Effect::Sleep, ActionTarget::Block { block, .. }) => {
-                    let player = self.players.get_mut(&agent).unwrap();
-                    player.bed = Some(block.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
-                    let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
-                    player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key(key) });
-                }
+                (Effect::Sleep, ActionTarget::Block { block, .. }) => self.sleep(agent, block),
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);
                 }
@@ -416,6 +411,39 @@ impl Server {
                 }
                 (effect, target) => tracing::warn!("{} cannot apply {effect:?} to {target:?}", def.name),
             }
+        }
+    }
+
+    /// `agent` sleeps at the bed at `bed`: it is where they wake after dying (their hearth
+    /// first, once they have one), and they wake rested, as well as the home around the
+    /// bed allows (effects.ron's `sleeps`). Not again until that rest has worn off.
+    fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
+        let player = self.players.get_mut(&agent).unwrap();
+        player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+        let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
+        player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key(key) });
+        let effects = self.content.effects.clone();
+        if effects.rested(&self.players[&agent].timed_effects) {
+            let player = &self.players[&agent];
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.not_tired") });
+            return;
+        }
+        let home = self.home_survey(agent);
+        let feet = self.players[&agent].position.floor().as_ivec3();
+        let outdoors = self.open_sky(feet + IVec3::Y * 2);
+        let calm = voxmar_engine::weather::Weather::NONE;
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref() };
+        let given = effects.given_by_sleep(&situation);
+        // The best rest it gives (the one the others are hidden by) is the one it says.
+        let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
+        let player = self.players.get_mut(&agent).unwrap();
+        player.give_effects(&given);
+        player.changed(traits::VITALS);
+        if let Some(best) = best {
+            let def = effects.get(best);
+            let key = voxmar_engine::lang::def_key("effect", &def.name);
+            let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
     }
 

@@ -1920,6 +1920,50 @@ fn a_sleeping_bag_is_where_the_homeless_wake() {
 }
 
 #[test]
+fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    // A sleeping bag and a torch are a camp, once slept in; the sleep is a rest.
+    let bag = feet + IVec3::new(2, 0, 0);
+    for line in [format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z), format!("/setblock {} {} {} torch", feet.x + 3, feet.y, feet.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(feet + IVec3::new(3, 0, 0)) == c.content.blocks.id("base:torch"));
+    assert!(!has(&client, "base:camp"), "no bed slept in yet, so no camp");
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:camp") && has(c, "base:rested") && told(c, "Camp:") && told(c, "You sleep soundly"));
+    // Rested, they are not tired again until it wears off.
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| told(c, "not tired"));
+    assert!(!has(&client, "base:well_rested"));
+    // Light a hearth with a chimney (a lit one is home), a second light and a roof: snug.
+    let core = feet + IVec3::new(4, 0, 0);
+    for line in [
+        format!("/setblock {} {} {} hearthstone", core.x, core.y, core.z),
+        format!("/setblock {} {} {} torch", feet.x + 3, feet.y + 1, feet.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 6, feet.y + 4, feet.z + 3),
+    ] {
+        client.ok(&line);
+    }
+    client.chat.clear();
+    client.pump_until(|c| has(c, "base:snug") && told(c, "Snug:"));
+    // Another night, now in a snug home, rests them better.
+    client.ok("/effect clear");
+    client.pump_until(|c| !has(c, "base:rested"));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:well_rested") && told(c, "Well rested"));
+    assert!(!has(&client, "base:rested"), "the better rest hides the plain one");
+    // Out of reach of home, none of it holds.
+    client.tp(feet.as_vec3() + Vec3::new(30.5, 0.0, 0.5));
+    client.pump_until(|c| !has(c, "base:snug") && has(c, "base:well_rested"));
+}
+
+#[test]
 fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
     let mut client = Client::join();
     let boiler = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);

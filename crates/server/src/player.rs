@@ -56,6 +56,9 @@ pub struct Player {
     /// the last second (`process::Survival`).
     pub timed_effects: Vec<(EffectId, f32)>,
     pub modifiers: Modifiers,
+    /// The announced effects (`EffectDef::announce`) the player has been told of this
+    /// session, so stepping out of a room and back in does not say it twice.
+    pub announced: Vec<EffectId>,
     /// Healing and hurting under way, in seconds (`process::Survival`).
     pub heal_clock: f32,
     pub hurt_clock: f32,
@@ -140,6 +143,7 @@ impl Player {
             skills: Skills::default(),
             vitals: Vitals::default(),
             timed_effects: Vec::new(),
+            announced: Vec::new(),
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
             health_base: 0,

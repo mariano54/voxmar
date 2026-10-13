@@ -32,6 +32,11 @@ pub(crate) struct SurvivalRules {
     pub heat_reach: i32,
     pub water_chill: f32,
     pub roof_scan: i32,
+    /// A home reaches this many blocks out on each side, this many up and this many down:
+    /// the box its furnishings are counted in and a player must stand in to feel it.
+    pub home_reach: i32,
+    pub home_up: i32,
+    pub home_down: i32,
 }
 
 /// One package's `survival.ron`: whichever numbers it sets.
@@ -52,6 +57,9 @@ struct SurvivalFile {
     heat_reach: Option<i32>,
     water_chill: Option<f32>,
     roof_scan: Option<i32>,
+    home_reach: Option<i32>,
+    home_up: Option<i32>,
+    home_down: Option<i32>,
 }
 
 impl SurvivalRules {
@@ -63,7 +71,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down);
         }
         macro_rules! set {
             ($field:ident) => {
@@ -99,6 +107,9 @@ impl SurvivalRules {
             heat_reach: set!(heat_reach),
             water_chill: set!(water_chill),
             roof_scan: set!(roof_scan),
+            home_reach: set!(home_reach),
+            home_up: set!(home_up),
+            home_down: set!(home_down),
         };
         let checks = [
             (rules.max_health > 0, "max_health must be above 0"),
@@ -111,6 +122,8 @@ impl SurvivalRules {
             ((0..=16).contains(&rules.heat_reach), "heat_reach must be 0 to 16 blocks"),
             (rules.water_chill.is_finite(), "water_chill must be a number"),
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
+            ((1..=16).contains(&rules.home_reach), "home_reach must be 1 to 16 blocks"),
+            ((0..=16).contains(&rules.home_up) && (0..=16).contains(&rules.home_down), "home_up and home_down must be 0 to 16 blocks"),
             (rules.pack_end.len() <= SLOTS - HOTBAR_SLOTS, "pack_end holds at most as many items as the pack has slots besides the hotbar"),
             (rules.new_inventory(true).is_some(), "pack_end and starter_kit together do not fit in an inventory"),
         ];
