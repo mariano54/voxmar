@@ -40,6 +40,7 @@ mod drops;
 mod emitters;
 mod fight;
 mod gate;
+mod held;
 mod hud;
 mod interact;
 mod keys;
@@ -419,6 +420,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .add_plugins(lang::LangPlugin);
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin));
     app.add_plugins(emitters::EmittersPlugin);
+    app.add_plugins(held::HeldPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.
     if std::env::var_os("VOXMAR_GPU_TIMES").is_some() {
@@ -854,6 +856,7 @@ fn setup(
         })
         .collect();
     commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons, effects });
+    commands.insert_resource(held::load(source.held_books(), registry));
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

@@ -9,7 +9,7 @@
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::ActionTarget;
-use voxmar_engine::block::{RenderKind, Sound, Tint};
+use voxmar_engine::block::{BlockId, RenderKind, Sound, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos};
 use voxmar_engine::dropped::SIZE;
 use voxmar_engine::inventory::ItemStack;
@@ -144,7 +144,7 @@ fn throw(keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, net: Res<Net>, actio
 /// Moves every item on towards where it should be, and hands the renderer this frame's
 /// models.
 #[allow(clippy::too_many_arguments)]
-fn show(
+pub(crate) fn show(
     time: Res<Time>,
     world: Res<ClientWorld>,
     player: Res<LocalPlayer>,
@@ -210,9 +210,20 @@ fn copies(count: u8) -> usize {
     }
 }
 
-/// The models showing `item`: its copies, turning and bobbing together.
-fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<&TexturePieces>, item: &Shown) {
-    let info = world.registry.info(item.stack.item);
+/// How an item is drawn: its shape, texture layers, which faces take a biome colour and
+/// that colour where it is (`at`, a block), and the width of its model.
+pub(crate) struct Look {
+    pub shape: Shape,
+    pub size: f32,
+    pub layers: [u16; 6],
+    pub tinted: u8,
+    pub tint: [u8; 3],
+}
+
+/// The look of `item` where it is at `at`: a tiny block for a block, and a plant's sprite
+/// (or any item's, drawn as a plant) flat.
+pub(crate) fn look_of(world: &ClientWorld, pieces: Option<&TexturePieces>, item: BlockId, at: IVec3) -> Look {
+    let info = world.registry.info(item);
     let sprite = info.render == RenderKind::Plant;
     let (shape, size) = if sprite { (Shape::Sprite, SPRITE_SIZE) } else { (Shape::Cube, SIZE) };
     let layers = if sprite { [info.layers[0]; 6] } else { info.layers };
@@ -230,17 +241,23 @@ fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<
             kind = tint;
         }
     }
-    let pos = item.position.floor().as_ivec3();
     let colors = world
         .voxels
-        .column(ColumnPos::of_block(pos))
-        .map_or(DEFAULT_COLORS, |column| column.colors_at(pos.x & (CHUNK_SIZE - 1), pos.z & (CHUNK_SIZE - 1)));
+        .column(ColumnPos::of_block(at))
+        .map_or(DEFAULT_COLORS, |column| column.colors_at(at.x & (CHUNK_SIZE - 1), at.z & (CHUNK_SIZE - 1)));
     let tint = match kind {
         Tint::None => [255; 3],
         Tint::Grass => colors[0],
         Tint::Foliage => colors[1],
         Tint::Water => colors[2],
     };
+    Look { shape, size, layers, tinted, tint }
+}
+
+/// The models showing `item`: its copies, turning and bobbing together.
+fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<&TexturePieces>, item: &Shown) {
+    let Look { shape, size, layers, tinted, tint } = look_of(world, pieces, item.stack.item, item.position.floor().as_ivec3());
+    let sprite = shape == Shape::Sprite;
     // Lifted off the ground by the bob, as Minecraft's are.
     let center = item.position + Vec3::Y * (BOB + size / 2.0);
     for copy in 0..copies(item.stack.count) {
@@ -248,7 +265,7 @@ fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<
         // own turning frame.
         let spread = if copy == 0 { Vec3::ZERO } else { scatter(copy) * size * 0.35 };
         let offset = if sprite { Vec3::new(spread.x * 0.3, spread.y * 0.3, -(copy as f32) * size / 16.0) } else { spread };
-        models.push(ItemModel { center, phase: item.phase, offset, size, shape, layers, tinted, tint, light: item.light });
+        models.push(ItemModel { center, phase: item.phase, offset, size, shape, layers, tinted, tint, light: item.light, held: None });
     }
 }
 
