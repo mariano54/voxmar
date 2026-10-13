@@ -186,6 +186,8 @@ pub struct SavedPlayer {
     pub quests: Vec<String>,
     pub quests_claimed: Vec<String>,
     pub tallies: Vec<(String, u32)>,
+    /// Prayer points left; none in older saves, which come back full.
+    pub prayer_points: Option<f32>,
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -226,6 +228,8 @@ struct PlayerFile {
     quests_claimed: Option<Vec<String>>,
     #[serde(default)]
     tallies: Vec<(String, u32)>,
+    #[serde(default)]
+    prayer_points: Option<f32>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -505,7 +509,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: file.tallies }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: file.tallies, prayer_points: file.prayer_points }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -546,6 +550,7 @@ impl WorldSave {
             quests: player.quests.clone(),
             quests_claimed: Some(player.quests_claimed.clone()),
             tallies: player.tallies.clone(),
+            prayer_points: player.prayer_points,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -1058,6 +1063,7 @@ mod tests {
             quests: vec!["base:a".into(), "base:b".into()],
             quests_claimed: vec!["base:a".into()],
             tallies: Vec::new(),
+            prayer_points: None,
         };
         save.write_player("ada", &player, &registry).unwrap();
         assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().quests_claimed, ["base:a"], "a waiting reward is kept");
@@ -1099,6 +1105,7 @@ mod tests {
             quests: vec!["base:first_night".into(), "base:stone_in_hand".into()],
             quests_claimed: vec!["base:first_night".into()],
             tallies: vec![("crafted:base:torch".into(), 8)],
+            prayer_points: Some(7.5),
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1170,6 +1177,7 @@ mod tests {
             quests: Vec::new(),
             quests_claimed: Vec::new(),
             tallies: Vec::new(),
+            prayer_points: None,
         };
         save.write_player("herbalist", &player, &registry).unwrap();
         let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();

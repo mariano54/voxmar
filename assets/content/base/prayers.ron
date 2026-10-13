@@ -1,0 +1,50 @@
+// Prayers (engine/src/prayer.rs; the design wiki's Combat feel tab, draft 87): Magic spells
+// drawn from prayer points, not runes. A player has `points` + `per_level` x Magic; each
+// prayer on drains `drain` points a minute, and at none left every prayer goes out. An
+// altar (a block tagged `altar`, base:stone_altar) fills them; with no prayer on and no blow
+// either way for `calm` seconds, a point comes back every `regain` seconds. One ward is on
+// at a time, and one boost of each stat: the last turned on puts out the one it shares a
+// kind with. A ward stops `ward` of a creature's blows in its styles, so food still
+// matters with one up (bosses and players' blows get their own shares when there are any).
+//
+// The book holds what fights do today; ranged and magic boosts (Steady Eye, Spark Will, Far
+// Eye, Flame Will, Falcon Eye, Star Will) come with ranged and magic attacks, Lingering with
+// potions, and the vows with the temple rites.
+(
+    rules: (
+        points: 10.0,
+        per_level: 1.0,
+        calm: 10.0,
+        regain: 20.0,
+        ward: 0.8,
+        // Magic experience a bone offered at an altar gives (the wiki: 16 at a wayside
+        // shrine), times what the offering is worth in bones.
+        offer_xp: 16.0,
+    ),
+    prayers: [
+        (name: "bark_skin", level: 1, drain: 5.0, effects: [Boost(stat: Defence, share: 0.05)]),
+        (name: "ember_arm", level: 4, drain: 5.0, effects: [Boost(stat: Strength, share: 0.05)]),
+        (name: "keen_mind", level: 7, drain: 5.0, effects: [Boost(stat: Accuracy, share: 0.05)]),
+        (name: "mending", level: 10, drain: 2.0, effects: [Mending(2.0)]),
+        (name: "ward_stab", level: 12, drain: 20.0, effects: [Ward(styles: [Stab])]),
+        (name: "ward_slash", level: 15, drain: 20.0, effects: [Ward(styles: [Slash])]),
+        (name: "ward_crush", level: 18, drain: 20.0, effects: [Ward(styles: [Crush])]),
+        (name: "stone_skin", level: 20, drain: 10.0, effects: [Boost(stat: Defence, share: 0.10)]),
+        (name: "forge_arm", level: 22, drain: 10.0, effects: [Boost(stat: Strength, share: 0.10)]),
+        (name: "clear_mind", level: 24, drain: 10.0, effects: [Boost(stat: Accuracy, share: 0.10)]),
+        // Death keeps a fourth: never a fifth with a grave-ward amulet (value.ron's `most`).
+        (name: "keepsake", level: 25, drain: 2.0, effects: [Keep(1)]),
+        (name: "ward_missiles", level: 28, drain: 20.0, effects: [Ward(styles: [Ranged])]),
+        (name: "ward_magic", level: 34, drain: 20.0, effects: [Ward(styles: [Magic])]),
+        (name: "iron_skin", level: 40, drain: 20.0, effects: [Boost(stat: Defence, share: 0.15)]),
+        (name: "titan_arm", level: 42, drain: 20.0, effects: [Boost(stat: Strength, share: 0.15)]),
+        (name: "hawk_mind", level: 44, drain: 20.0, effects: [Boost(stat: Accuracy, share: 0.15)]),
+        (name: "ward_melee", level: 46, drain: 24.0, effects: [Ward(styles: [Stab, Slash, Crush])]),
+        // Under a tenth of most health after a blow: a quarter of it back, and every point gone.
+        (name: "last_breath", level: 52, drain: 6.0, effects: [LastBreath(below: 0.1, heal: 0.25)]),
+    ],
+    // What an altar takes for Magic experience, in bones each is worth.
+    offerings: [
+        (item: "bone", worth: 1.0),
+    ],
+)

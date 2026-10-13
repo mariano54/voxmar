@@ -116,6 +116,11 @@ impl Locale {
         self.get_or(&def_key("skill", &def.name), &def.title).to_owned()
     }
 
+    /// What a prayer is called (`base:bark_skin`).
+    pub fn prayer(&self, name: &str) -> String {
+        self.get_or(&def_key("prayer", name), &title_from_id(name)).to_owned()
+    }
+
     /// One line on what a skill covers.
     pub fn skill_description(&self, def: &SkillDef) -> String {
         self.get_or(&format!("{}.description", def_key("skill", &def.name)), &def.description).to_owned()
@@ -489,6 +494,11 @@ mod tests {
             }
             keys.extend(blocks.def(id).tags.iter().filter_map(|tag| tag.strip_prefix("holds:")).map(|kind| format!("pouch.fills.{kind}")));
         }
+        // The prayer book's names (the UI draws them).
+        keys.extend(content.prayers.all().filter(|(_, prayer)| first_party(&prayer.name)).map(|(_, prayer)| def_key("prayer", &prayer.name)));
+        // What each prayer's effects say, built from the effect's kind and stat.
+        keys.extend(["keep", "mending", "last_breath", "ward"].map(|effect| format!("prayer.effect.{effect}")));
+        keys.extend(["defence", "strength", "accuracy"].map(|stat| format!("prayer.effect.boost.{stat}")));
         // What each first-party package is called, at the foot of every item's tooltip.
         keys.extend(FIRST_PARTY.iter().map(|package| format!("package.{package}")));
         // The quest book's chapters, one per age the first-party quests name.

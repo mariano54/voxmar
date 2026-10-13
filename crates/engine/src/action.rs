@@ -113,6 +113,8 @@ pub enum Requirement {
     /// takes, or something that is not a block to place (a placeable block it does not
     /// take is placed against it instead).
     Machine,
+    /// The target is an altar (tagged `altar`): a stone altar, a shrine's.
+    Altar,
     /// The actor holds a fishing rod and the target is water with open air above, near
     /// enough to cast to.
     Fishable,
@@ -186,6 +188,9 @@ pub enum Effect {
     /// Pick the lock of the target chest with what the actor holds (`treasure.ron`): open,
     /// it becomes a plain chest holding what it rolled.
     PickLock,
+    /// Pray at the target altar: offer one held offering for Magic experience, or with none
+    /// in hand have prayer points back in full (`prayer`).
+    Pray,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -541,6 +546,10 @@ impl ActionDef {
                         fuel || input || bin || !ctx.info(item).placeable
                     }
                 }
+            }
+            Requirement::Altar => {
+                let (block, _) = block_target()?;
+                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("altar"))
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };

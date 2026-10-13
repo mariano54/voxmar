@@ -653,6 +653,19 @@
             after: ["tin_find", "copper_kit"],
             rewards: [Xp("mining", 400.0), Item("coal_ore", 16)],
         ),
+        (
+            name: "a_place_to_pray", age: "farm", branch: "prayer", title: "A Place to Pray",
+            why: "Stone bricks ringed round one more brick make a stone altar (Construction 5). Place it and right-click it: your prayer points fill, and a bone in hand is offered for Magic experience. Then press C and open Prayers to turn Bark Skin on.",
+            tasks: [[Craft("stone_altar", 1)]],
+            rewards: [Xp("magic", 120.0)],
+        ),
+        (
+            name: "bones_for_the_altar", age: "farm", branch: "prayer", title: "Bones for the Altar",
+            why: "Each bone offered at the altar is 16 Magic experience. At Magic 4 Ember Arm opens, a little more melee damage; at Magic 10, Mending, which brings your health back twice as fast.",
+            tasks: [[Level("magic", 4)]],
+            after: ["a_place_to_pray"],
+            rewards: [Xp("magic", 100.0)],
+        ),
     ],
     // A new player's book opens with these pinned (a book with nothing done or pinned), so
     // the first thing on screen is what to do.

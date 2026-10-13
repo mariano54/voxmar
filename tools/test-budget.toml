@@ -50,6 +50,7 @@ tests = [
   "going_silent_does_not_buy_more_time_hovering",
   "guards_come_for_a_player_who_strikes_a_villager",
   "ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining",
+  "prayers_drain_ward_off_blows_and_fill_at_an_altar",
 ]
 
 [[allow]]

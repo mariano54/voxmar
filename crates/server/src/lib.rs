@@ -22,6 +22,7 @@ mod inspect;
 mod fluids;
 mod items;
 mod player;
+mod prayers;
 mod process;
 mod rules;
 mod treasure;
@@ -803,6 +804,7 @@ impl Server {
         self.tick_creatures();
         self.tick_fights();
         self.ping_players();
+        self.tick_prayers();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();

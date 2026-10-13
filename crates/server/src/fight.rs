@@ -422,6 +422,10 @@ impl Server {
             self.struck(player, aim.creature, 0, false, Blow::Plain);
             return;
         }
+        let tick = self.tick;
+        if let Some(p) = self.players.get_mut(&player) {
+            p.last_blow = tick;
+        }
         let stroke = Stroke::of(kind, strength, on_beat, aim.counter, aim.riposte, falling, &feel);
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
         if kind == Blow::Flourish && damage > 0 {
@@ -496,6 +500,9 @@ impl Server {
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
         let lunge = attack.lunge.unwrap_or(feel.creature_lunge).max(0.0);
         let tick = self.tick;
+        if let Some(p) = self.players.get_mut(&player) {
+            p.last_blow = tick;
+        }
         let live = self.creatures.live.get_mut(&creature).expect("checked above");
         // The telegraph ends as the blow comes down, so the wind-up reads as long as it is.
         live.winding = false;
