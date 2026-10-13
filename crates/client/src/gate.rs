@@ -5892,7 +5892,7 @@ const MARKS_WAIT: f32 = 0.6;
 const MARKS_TELLS: u32 = 3;
 
 const FALLEN_SECONDS: f32 = 0.2;
-const FALLEN_WAIT: f32 = 2.0;
+const FALLEN_WAIT: f32 = 6.0;
 
 /// Hold the actual killed target in view, with native movement/attack inputs released.
 /// Only its currently visible mark ends the watch; an absent/hidden mark times out.

@@ -130,6 +130,12 @@ pub struct SplatStyle {
     /// Least continuous visible time over a fallen body; zero keeps the normal lifetime.
     #[serde(default)]
     pub fallen_seconds: f32,
+    /// How long after the killing blow its mark waits for the target's fall to be drawn
+    /// before giving up, past its normal lifetime. The death can reach the client, or the
+    /// mark's layout, later than a splat's whole life on a busy machine; zero keeps the
+    /// normal lifetime.
+    #[serde(default)]
+    pub fallen_wait: f32,
     pub rise: f32,
     pub fade: f32,
     pub gap: f32,
@@ -204,7 +210,7 @@ impl CombatStyle {
                 return Err(format!("{FILE}: {name} must be more than 0 and finite, not {value}"));
             }
         }
-        let some = [("meter.below", meter.below), ("meter.linger", meter.linger), ("pips.gap", pips.gap), ("splats.fallen_seconds", splats.fallen_seconds), ("splats.rise", splats.rise), ("splats.gap", splats.gap), ("splats.hurt_above", splats.hurt_above)];
+        let some = [("meter.below", meter.below), ("meter.linger", meter.linger), ("pips.gap", pips.gap), ("splats.fallen_seconds", splats.fallen_seconds), ("splats.fallen_wait", splats.fallen_wait), ("splats.rise", splats.rise), ("splats.gap", splats.gap), ("splats.hurt_above", splats.hurt_above)];
         for (name, value) in some {
             if !(value >= 0.0 && value.is_finite()) {
                 return Err(format!("{FILE}: {name} may not be less than 0 or infinite ({value})"));
@@ -315,6 +321,10 @@ pub struct HitSplat {
     anchor: Option<Vec3>,
     /// First and most recent continuous draws over a fallen body (game seconds).
     fallen_draws: Option<(f64, f64)>,
+    /// Whether it was ever drawn over a fallen body: a killing blow's mark that has not
+    /// been waits for the fall past its normal lifetime (`SplatStyle::fallen_wait`), one
+    /// that has gets no second start.
+    fell: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -335,9 +345,14 @@ impl HitSplat {
         self.anchor
     }
 
+    /// Whether this killing blow's mark still waits for its target's fall to be drawn.
+    fn awaiting(&self, now: f64, style: &SplatStyle) -> bool {
+        self.killed && style.fallen_seconds > 0.0 && !self.fell && now - self.at < style.fallen_wait as f64
+    }
+
     fn age(&self, now: f64, style: &SplatStyle, fallen: bool) -> f32 {
         let age = ((now - self.at) as f32 / style.seconds).max(0.0);
-        if fallen && style.fallen_seconds > 0.0
+        if (fallen || self.awaiting(now, style)) && style.fallen_seconds > 0.0
             && self.fallen_draws.is_none_or(|(first, last)| last - first < style.fallen_seconds as f64)
         {
             // Keep a readable, bounded rise and positive opacity while the hold is open.
@@ -348,11 +363,14 @@ impl HitSplat {
     }
 
     /// Decide lifetime after drawable eligibility. Hidden time resets continuity; a
-    /// slow frame that completes the hold is drawn before expiry on the next update.
+    /// slow frame that completes the hold is drawn before expiry on the next update. A
+    /// killing blow's mark that has not yet been drawn over its fallen target outlives its
+    /// normal time (up to `fallen_wait` from the blow), so a death or a layout that came
+    /// late still gets its hold; once drawn over the body it gets no second start.
     fn frame(&mut self, now: f64, style: &SplatStyle, drawable: bool, fallen: bool) -> SplatFrame {
         let expired = now - self.at >= style.seconds as f64;
         let holding = drawable && fallen && self.fallen_draws.is_some_and(|(first, last)| last - first < style.fallen_seconds as f64);
-        if expired && !holding {
+        if expired && !holding && !self.awaiting(now, style) {
             return SplatFrame::Gone;
         }
         if !drawable {
@@ -361,6 +379,7 @@ impl HitSplat {
         }
         let age = self.age(now, style, fallen);
         let over_fallen = if fallen {
+            self.fell = true;
             let (first, last) = self.fallen_draws.get_or_insert((now, now));
             *last = now;
             (now - *first) as f32
@@ -582,7 +601,7 @@ fn splats(
         let centred = UiTransform::from_translation(Val2::percent(-50.0, -100.0));
         let size = font_size(look.scale);
         let pixel = size / font_size(1);
-        let mark = HitSplat { creature, at, killed, size, anchor: None, fallen_draws: None };
+        let mark = HitSplat { creature, at, killed, size, anchor: None, fallen_draws: None, fell: false };
         commands.entity(layer).with_children(|layer| {
             layer.spawn((node, centred, mark, Visibility::Hidden)).with_children(|splat| {
                 for (x, y) in ring() {
@@ -755,7 +774,7 @@ mod tests {
     #[test]
     fn killing_splats_draw_the_completion_frame_before_expiring() {
         let style = CombatStyle::load(&assets()).unwrap().splats;
-        let mut mark = HitSplat { creature: Some(1), at: 10.0, killed: true, size: 24.0, anchor: None, fallen_draws: None };
+        let mut mark = HitSplat { creature: Some(1), at: 10.0, killed: true, size: 24.0, anchor: None, fallen_draws: None, fell: false };
         let draw = |frame| match frame {
             SplatFrame::Draw { age, over_fallen } => {
                 assert!(age < 1.0, "the hold must have positive alpha");
@@ -775,22 +794,50 @@ mod tests {
     #[test]
     fn hidden_fallen_splats_reset_continuity_and_cannot_rearm_after_expiry() {
         let style = CombatStyle::load(&assets()).unwrap().splats;
-        let mut mark = HitSplat { creature: Some(1), at: 10.0, killed: true, size: 24.0, anchor: None, fallen_draws: None };
+        let mut mark = HitSplat { creature: Some(1), at: 10.0, killed: true, size: 24.0, anchor: None, fallen_draws: None, fell: false };
         assert!(matches!(mark.frame(10.60, &style, true, true), SplatFrame::Draw { over_fallen: 0.0, .. }));
         assert_eq!(mark.frame(10.80, &style, false, true), SplatFrame::Hidden);
         assert!(matches!(mark.frame(10.85, &style, true, true), SplatFrame::Draw { over_fallen: 0.0, .. }));
         assert!(matches!(mark.frame(10.95, &style, true, true), SplatFrame::Draw { over_fallen, .. } if (over_fallen - 0.10).abs() < 1e-5));
         assert_eq!(mark.frame(11.0, &style, false, true), SplatFrame::Gone, "an expired hidden mark cannot wait indefinitely");
         let mut unseen = HitSplat { fallen_draws: None, ..mark };
+        assert!(unseen.fell, "it was drawn over the body once, which is its one start");
         assert_eq!(unseen.frame(10.8, &style, false, true), SplatFrame::Hidden);
-        assert_eq!(unseen.frame(11.0, &style, true, true), SplatFrame::Gone, "no credit or revival before the first draw");
+        assert_eq!(unseen.frame(11.0, &style, true, true), SplatFrame::Gone, "no revival after the one start");
+    }
+
+    #[test]
+    fn a_killing_mark_waits_for_a_late_fall_but_only_for_so_long() {
+        let style = CombatStyle::load(&assets()).unwrap().splats;
+        assert!(style.fallen_wait > style.seconds, "the wait must reach past the normal lifetime");
+        let killing = || HitSplat { creature: Some(1), at: 10.0, killed: true, size: 24.0, anchor: None, fallen_draws: None, fell: false };
+        // The death reached the client after the mark's whole life: it still gets its hold
+        // over the body, and the hold completes (0.25 s of continuous draws) before it goes.
+        let mut mark = killing();
+        assert!(matches!(mark.frame(10.5, &style, true, false), SplatFrame::Draw { over_fallen: 0.0, .. }));
+        assert!(matches!(mark.frame(10.95, &style, true, false), SplatFrame::Draw { over_fallen: 0.0, age, .. } if age > 0.0 && age < 1.0), "waiting, whole and readable");
+        assert!(matches!(mark.frame(11.2, &style, true, true), SplatFrame::Draw { over_fallen: 0.0, .. }));
+        assert!(matches!(mark.frame(11.45, &style, true, true), SplatFrame::Draw { over_fallen, .. } if (over_fallen - 0.25).abs() < 1e-5));
+        assert_eq!(mark.frame(11.5, &style, true, true), SplatFrame::Gone, "the hold is over");
+        // Its layout was late, so it was not drawable until after the normal lifetime.
+        let mut mark = killing();
+        assert_eq!(mark.frame(10.3, &style, false, true), SplatFrame::Hidden);
+        assert_eq!(mark.frame(10.6, &style, false, true), SplatFrame::Hidden);
+        assert!(matches!(mark.frame(10.95, &style, true, true), SplatFrame::Draw { over_fallen: 0.0, .. }), "the first draw after the normal lifetime still starts the hold");
+        // A body that never falls does not keep it for ever, and a blow that did not kill
+        // or a mark on the player gets no wait.
+        let mut mark = killing();
+        assert!(matches!(mark.frame(11.4, &style, true, false), SplatFrame::Draw { .. }));
+        assert_eq!(mark.frame(10.0 + style.fallen_wait as f64, &style, true, false), SplatFrame::Gone);
+        let mut hit = HitSplat { killed: false, ..killing() };
+        assert_eq!(hit.frame(10.95, &style, true, true), SplatFrame::Gone);
     }
 
     #[test]
     fn ordinary_splats_expire_normally_and_offscreen_marks_do_not_count() {
         let style = CombatStyle::load(&assets()).unwrap().splats;
         for creature in [Some(1), None] {
-            let mut mark = HitSplat { creature, at: 10.0, killed: true, size: 24.0, anchor: None, fallen_draws: None };
+            let mut mark = HitSplat { creature, at: 10.0, killed: false, size: 24.0, anchor: None, fallen_draws: None, fell: false };
             assert!(matches!(mark.frame(10.8, &style, true, false), SplatFrame::Draw { over_fallen: 0.0, .. }));
             assert_eq!(mark.frame(10.95, &style, true, false), SplatFrame::Gone);
         }
@@ -816,12 +863,16 @@ mod tests {
             fov: 75f32.to_radians(), near: 0.05, aspect_ratio: viewport.x / viewport.y, ..default()
         }.get_clip_from_view();
         camera.computed.target_info = Some(RenderTargetInfo { physical_size: viewport.as_uvec2(), scale_factor: 1.0 });
+        // The old loot walk judged by the old lifetime: a killing blow's mark that waited for
+        // its fall was the late-death fix, a different thing from the watch held here.
+        let old_style = SplatStyle { fallen_wait: 0.0, ..style.clone() };
         let simulate = |watch: bool| {
+            let style = if watch { &style } else { &old_style };
             let mut app = App::new();
             app.add_plugins(bevy::input::InputPlugin).init_resource::<LocalPlayer>();
             app.world_mut().resource_mut::<LocalPlayer>().position = Vec3::ZERO;
             let entity = app.world_mut().spawn((HitSplat {
-                creature: Some(7), at: 10.0, killed: true, size: 24.0, anchor: Some(anchor), fallen_draws: None,
+                creature: Some(7), at: 10.0, killed: true, size: 24.0, anchor: Some(anchor), fallen_draws: None, fell: false,
             }, Visibility::Inherited)).id();
             // Last used to hand W on and aim at loot's standing height before watching
             // the fallen mark. At close melee range, the corrected watch must bring that target back into view.
@@ -882,20 +933,20 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(bevy::input::InputPlugin).init_resource::<LocalPlayer>();
         let entity = app.world_mut().spawn((HitSplat {
-            creature: Some(8), at: 10.0, killed: true, size: 24.0, anchor: None, fallen_draws: Some((10.0, 10.3)),
+            creature: Some(8), at: 10.0, killed: true, size: 24.0, anchor: None, fallen_draws: Some((10.0, 10.3)), fell: true,
         }, Visibility::Inherited)).id();
         let anchor = Vec3::new(0.0, 0.2, -1.6);
         let mut since = None;
         assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 100.0), None, "another killed target cannot satisfy the watch");
         assert_eq!(since, Some(100.0), "the watch starts at death after a long fight, not at the fight's start");
-        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 102.0), Some(Err(0.0)), "missing marks fail in bounded time");
+        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 106.0), Some(Err(0.0)), "missing marks fail in bounded time");
         app.world_mut().get_mut::<HitSplat>(entity).unwrap().creature = Some(7);
         app.world_mut().entity_mut(entity).insert(Visibility::Hidden);
-        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 102.0), Some(Err(0.0)), "hidden time is not visibility");
-        assert_eq!(crate::gate::watch_fallen(app.world_mut(), None, Some(anchor), &mut since, 102.0), Some(Err(0.0)), "player splats cannot substitute for a killed target");
+        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 106.0), Some(Err(0.0)), "hidden time is not visibility");
+        assert_eq!(crate::gate::watch_fallen(app.world_mut(), None, Some(anchor), &mut since, 106.0), Some(Err(0.0)), "player splats cannot substitute for a killed target");
         app.world_mut().entity_mut(entity).insert(Visibility::Inherited);
         app.world_mut().get_mut::<HitSplat>(entity).unwrap().killed = false;
-        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 102.0), Some(Err(0.0)), "a missing/admin-removed body is not a server-confirmed killing blow");
+        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 106.0), Some(Err(0.0)), "a missing/admin-removed body is not a server-confirmed killing blow");
     }
 
     #[test]
@@ -904,19 +955,19 @@ mod tests {
         app.add_plugins(bevy::input::InputPlugin).init_resource::<LocalPlayer>();
         let anchor = Vec3::new(0.0, 0.2, -1.6);
         app.world_mut().spawn((HitSplat {
-            creature: Some(7), at: 10.0, killed: false, size: 24.0, anchor: Some(anchor), fallen_draws: Some((10.0, 10.3)),
+            creature: Some(7), at: 10.0, killed: false, size: 24.0, anchor: Some(anchor), fallen_draws: Some((10.0, 10.3)), fell: true,
         }, Visibility::Inherited));
         let killing = app.world_mut().spawn((HitSplat {
-            creature: Some(7), at: 10.0, killed: true, size: 24.0, anchor: Some(anchor), fallen_draws: None,
+            creature: Some(7), at: 10.0, killed: true, size: 24.0, anchor: Some(anchor), fallen_draws: None, fell: false,
         }, Visibility::Inherited)).id();
         let mut since = None;
         assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 100.0), None,
             "a visible earlier hit with the same event stamp cannot substitute for the killing blow");
         app.world_mut().get_mut::<HitSplat>(killing).unwrap().fallen_draws = Some((10.0, 10.3));
         assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 100.3), Some(Ok(seen)) if seen >= 0.2));
-        assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 102.0), Some(Err(seen)) if seen >= 0.2),
+        assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 106.0), Some(Err(seen)) if seen >= 0.2),
             "success first observed at/after the deadline cannot pass");
-        assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 102.1), Some(Err(_))),
+        assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 106.1), Some(Err(_))),
             "a timed out watch cannot rearm on a later direct call");
     }
 
