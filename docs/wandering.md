@@ -559,6 +559,41 @@ the player has become good at.
 | gives what's asked | eggs, a hen | a coin | n/a |
 | strikes one | they scatter | they scatter | they scatter |
 
+## Batch 15 (implemented, six kinds): parties that answer other parties
+
+Three general rules, all in data:
+- **`needs.after: (kind, reach)`**: the kind comes only while a party of that kind is about,
+  within reach of where it would appear (16 to 256 blocks).
+- **`needs.met: kind`**: the kind comes only to a player who has met that kind before. The
+  player's "met" tally is kept with their save, so one visit sets up a later one.
+- **`Toward(kind, reach)`**: a reward that tells which way and how far the nearest running
+  party of that kind is. It can also be one of the choices in a `OneOf`. It is said only
+  when there is one.
+
+Each named kind is checked when the content loads.
+
+| kind | rule | what it adds |
+| --- | --- | --- |
+| gamekeepers | after the poacher | Come after a poacher at work, with a hound. They say which way he is, once; a beginner learns the snare law. |
+| stragglers | after the shrine bearer | Pilgrims fallen behind a shrine. They say which way it went; a loaf and they pray with you (prayer restored). |
+| gossip | Toward, near a town | A coin and they tell where the nearest pedlar, tinker, smith, cook, fortune teller or puppet show is. With nobody on the roads, they take nothing. |
+| refugee kin | met the refugees, near home | Kin of refugees a player took in come to thank them: seed mix and Farming, once. |
+| christening | met the wedding | The couple from a wedding a player met, with their child, days later. A loaf for the feast: prayer and Refreshed, once. |
+| poacher's gang | met the poacher | Friends of a poacher a player met lie in wait (Ambush) for them. Beat them and they pay to be let go. |
+
+## Batch 16 (implemented, six kinds): more answers, and the hundredth kind
+
+Built from batch 15's rules, so there are no new mechanics. Two kinds come back to a player who helped, three come after another party at work, and one is close behind a rival. This brings the game to 100 kinds.
+
+| kind | rule | what it adds |
+| --- | --- | --- |
+| grateful parents | met the lost child, near home | The family of a lost child a player met come by with coins and bread, once. |
+| journeyman | met the apprentice | The apprentice, days later and a journeyman now: a lesson in one trade (25 XP) and two coins back, once. |
+| highwaymen | after market folk | Lie in wait (Ambush) while market folk are on the road; beaten, they give up a purse. |
+| late pupil | after the mage tutors | Hurrying after the tutors: says which way they went; a loaf for yesterday's Magic lesson. |
+| beaters | after a hunting party | Say where the hunt went; a beginner learns how game is driven. |
+| rival pedlar | after the pedlar and hound | A coin for one of three bargains, once, and a sneer toward where the other pedlar went. |
+
 ## Quest hooks
 
 Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
@@ -572,10 +607,10 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **The rain dance** (rainmakers): pay the rainmakers and see the rain come.
 - **Filled again** (shrine bearer): have spent prayer restored at a wandering shrine.
 - **A fortune told** (fortune teller): follow a fortune to what it named.
-- **Fired whole** (clay diggers): have clay fired at a wandering potter's kiln.
-- **Harvest home** (harvest home): give a sheaf to the dolly and see the field grow.
-- **Coal by road** (coal carters): walk the coal to town; the first coal for torchlight.
-- **The piper's tune** (rat catcher): follow the piper to the end of his tune.
+- **Fired whole** (clay diggers): have clay fired at a wandering potter's kiln. Quest Fired Whole.
+- **Harvest home** (harvest home): give a sheaf to the dolly and see the field grow. Quest The Last Sheaf.
+- **Coal by road** (coal carters): walk the coal to town; the first coal for torchlight. Quest Coal by Road (or the benighted miners).
+- **The piper's tune** (rat catcher): follow the piper to the end of his tune. Quest Mice in the Stores.
 - **A first bout** (sparring master): spar with a wandering soldier, win or lose.
 - **Ring champion** (village champion): win a wager in the champion's ring.
 - **Under the stars** (stargazers): watch the sky with the stargazers.
@@ -590,11 +625,17 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **A hen of your own** (henwife): take a hen home from a henwife.
 - **Teach a trade** (apprentice): be good enough at something that a would-be apprentice asks to learn it.
 - **Herbs into aether** (hedge witch): have three herbs made into a mote of aether.
+- **The keepers' word** (gamekeepers, poacher): meet the gamekeepers, then find the poacher they point to.
+- **Catch up the shrine** (stragglers, shrine bearer): learn from the stragglers which way the shrine went, then reach it.
+- **From wedding to christening** (wedding, christening): meet a wedding, and later bless its child.
+- **Those taken in** (refugees, refugee kin): take refugees in at home, then welcome their kin.
+- **Found and thanked** (lost child, grateful parents): walk a lost child to town, then be thanked at home.
+- **Master and journeyman** (apprentice, journeyman): teach an apprentice, then meet them again as a journeyman.
+- **Market road** (market folk, highwaymen): walk with market folk, and beat the highwaymen who come after them.
 
 ## Catalogue of 100
 
-Status: `done` is in a batch above, `next` is the second batch (ages 1 and 2: Nomad and Farm
-first), `later` the rest. "New" names what the kind needs that the framework lacks; those
+Status: `done` is in a batch above (100 kinds in the game after batch 16), `later` the rest. "New" names what the kind needs that the framework lacks; those
 are the mechanics later batches add, each used by several kinds.
 
 | # | kind | what happens | new | age | status |
@@ -731,6 +772,18 @@ are the mechanics later batches add, each used by several kinds.
 | 130 | woodcarver | see batch 14 | Camp | 1 | done |
 | 131 | shearers | see batch 14 | March | 2 | done |
 | 132 | apprentice | see batch 14 | Skill | 2 | done |
+| 133 | gamekeepers | see batch 15 | after | 1 | done |
+| 134 | stragglers | see batch 15 | after | 1 | done |
+| 135 | gossip | see batch 15 | Toward | 1 | done |
+| 136 | refugee kin | see batch 15 | met | 2 | done |
+| 137 | christening | see batch 15 | met | 2 | done |
+| 138 | poacher's gang | see batch 15 | met, Ambush | 2 | done |
+| 139 | grateful parents | see batch 16 | met | 1 | done |
+| 140 | journeyman | see batch 16 | met | 2 | done |
+| 141 | highwaymen | see batch 16 | after, Ambush | 2 | done |
+| 142 | late pupil | see batch 16 | after | 1 | done |
+| 143 | beaters | see batch 16 | after | 1 | done |
+| 144 | rival pedlar | see batch 16 | after | 1 | done |
 
 ## Mechanics the next batches add
 
@@ -749,6 +802,7 @@ Each is a script or a role used by many kinds, so every kind stays a few lines o
 - **Show**: done (batch 7): a camped party puts on something to watch; staying pays.
 - **Hunt**: done (batch 8): a party goes after wild quarry and brings it down; first blood shares.
 - **Journey**: done (batch 9): a party walks to a town; those who walk with it are thanked there.
+- **After / met / Toward**: done (batch 15): a party that comes after another, follows up an earlier visit, or tells where one is.
 - **Duel / Dance / Crossing / Vigil**: fixed arrangements of the formation code.
 
 ## Notes

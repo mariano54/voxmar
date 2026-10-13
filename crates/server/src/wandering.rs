@@ -540,6 +540,19 @@ impl Server {
     /// Makes creature `id` young, to grow up as kept young do.
     /// The nearest settlement of the world's plan within `reach` blocks (across) of `from`,
     /// and the way to its centre.
+    /// Where the leader of the nearest running party of kind `name` stands, within `reach`
+    /// blocks of `from`.
+    fn party_near(&self, from: Vec3, name: &str, reach: f32) -> Option<Vec3> {
+        let kind = self.content.wandering.find(name)?;
+        self.wandering
+            .active
+            .values()
+            .filter(|inst| inst.event == kind)
+            .filter_map(|inst| inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map(|c| c.body.position))
+            .filter(|at| flat(*at, from) <= reach)
+            .min_by(|a, b| flat(*a, from).total_cmp(&flat(*b, from)))
+    }
+
     fn town_near(&self, from: Vec3, reach: f32) -> Option<(Vec2, voxmar_worldgen::SettlementInfo)> {
         let at = IVec2::new(from.x.floor() as i32, from.z.floor() as i32);
         self.overworld
@@ -572,6 +585,7 @@ impl Server {
         match reward {
             ResolvedReward::Point(want, reach) => self.point_at(from, want, *reach).is_some(),
             ResolvedReward::Town(reach) => self.town_near(from, *reach).is_some(),
+            ResolvedReward::Toward(name, reach) => self.party_near(from, name, *reach).is_some(),
             ResolvedReward::OneOf(choices) => choices.iter().any(|c| self.has_to_tell(from, c)),
             _ => true,
         }
@@ -616,7 +630,9 @@ impl Server {
                 && needs.combat.is_none_or(|(low, high)| (low..=high).contains(&combat))
                 && needs.town.is_none_or(|reach| self.town_near(spot.as_vec3(), reach).is_some())
                 && needs.wet.is_none_or(|w| w == wet)
-                && needs.near_home.is_none_or(|near| p.home.is_some_and(|home| flat(home, p.position) <= near));
+                && needs.near_home.is_none_or(|near| p.home.is_some_and(|home| flat(home, p.position) <= near))
+                && needs.after.as_ref().is_none_or(|(name, reach)| self.party_near(spot.as_vec3(), name, *reach).is_some())
+                && needs.met.as_ref().is_none_or(|name| p.tallies.get(&format!("met:{name}")).is_some_and(|&n| n > 0));
             let weight = event.biome_weight(&biome.name, &biome.tags);
             if !suits || weight <= 0.0 {
                 continue;
@@ -1116,6 +1132,17 @@ impl Server {
                             .with("far", Words::text(((to.length() / 50.0).round().max(1.0) * 50.0) as u32)),
                         None => Words::key("wander.town_none"),
                     };
+                    p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text });
+                }
+                ResolvedReward::Toward(ref name, reach) => {
+                    let from = self.creatures.live.get(&source).map(|c| c.body.position).or_else(|| self.players.get(&player).map(|p| p.position));
+                    let (Some(from), Some(p)) = (from, self.players.get(&player)) else { return };
+                    let (Some(at), Some(kind)) = (self.party_near(from, name, reach), self.content.wandering.find(name)) else { continue };
+                    let to = xz(at) - xz(from);
+                    let text = Words::key("wander.toward")
+                        .with("who", Words::key(&self.content.wandering.get(kind).title_key()))
+                        .with("dir", crate::commands::compass(to))
+                        .with("far", Words::text(((to.length() / 10.0).round().max(1.0) * 10.0) as u32));
                     p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text });
                 }
                 ResolvedReward::Item(item, (low, high)) => {
@@ -2132,7 +2159,7 @@ impl Server {
                     ResolvedReward::Hand(group) => can_hand(*group),
                     ResolvedReward::Cook(station, ..) => held.is_some_and(|h| self.content.cooking.for_item(h.item, std::slice::from_ref(station)).is_some()),
                     // Where nothing of the kind is near, they have nothing to tell.
-                    ResolvedReward::Point(..) | ResolvedReward::Town(_) | ResolvedReward::OneOf(_) => self.creatures.live.get(&id).is_some_and(|c| self.has_to_tell(c.body.position, g)),
+                    ResolvedReward::Point(..) | ResolvedReward::Town(_) | ResolvedReward::Toward(..) | ResolvedReward::OneOf(_) => self.creatures.live.get(&id).is_some_and(|c| self.has_to_tell(c.body.position, g)),
                     // Prayer is restored only to one short of it.
                     ResolvedReward::Prayer(_) => p.praying.points < self.prayer_most(player),
                     // A blessing on the fields wants a field with something growing in it.
@@ -5726,5 +5753,217 @@ mod tests {
         give_held(&mut server, &name, 3);
         server.meet(1, witch);
         assert_eq!(count_of(&server, &name), 3, "once");
+    }
+
+    /// Whether kind `name` can be picked for player 1 at land it suits.
+    fn comes_at(server: &Server, name: &str, spot: IVec3) -> bool {
+        let kind = event(server, name);
+        (0..800u64).any(|seed| server.pick_event_in(1, spot, mix(seed, 3), false) == Some(kind))
+    }
+
+    /// Party `id`'s leader moved to `at`.
+    fn lead_to(server: &mut Server, id: u64, at: Vec3) {
+        let lead = server.wandering.active[&id].members[0].creature;
+        server.creatures.live.get_mut(&lead).unwrap().body.position = at;
+    }
+
+    #[test]
+    fn gamekeepers_come_only_after_a_poacher_at_work_and_tell_where_he_is() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (3.0 + i as f64 / 40.0)).find(|&day| (0.15..0.4).contains(&voxmar_engine::creature::daylight(day as u64))).expect("a dim hour");
+        let spot = land_for(&server, event(&server, "gamekeepers"), Vec3::new(128.0, 200.0, 128.0), |_| true);
+        assert!(!comes_at(&server, "gamekeepers", spot), "no poacher, no keepers");
+        let poaching = start(&mut server, "poacher", (110, 128));
+        lead_to(&mut server, poaching, spot.as_vec3() + Vec3::new(400.0, 0.0, 0.0));
+        assert!(!comes_at(&server, "gamekeepers", spot), "not after one far off");
+        lead_to(&mut server, poaching, spot.as_vec3() + Vec3::new(60.0, 0.0, 0.0));
+        assert!(comes_at(&server, "gamekeepers", spot), "after the poacher");
+        lead_to(&mut server, poaching, Vec3::new(110.5, 200.0, 128.5));
+        let id = start(&mut server, "gamekeepers", (130, 128));
+        let keeper = members_of(&server, id, 0)[0];
+        let client = listen(&mut server);
+        assert!(server.meet(1, keeper));
+        assert!(told(&client).iter().any(|(k, _)| k == "wander.toward"), "which way he went");
+    }
+
+    #[test]
+    fn straggling_pilgrims_tell_where_the_shrine_went_and_pray_for_a_loaf() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        let spot = land_for(&server, event(&server, "stragglers"), Vec3::new(128.0, 200.0, 128.0), |_| true);
+        assert!(!comes_at(&server, "stragglers", spot), "no shrine, nobody behind it");
+        let shrine = start(&mut server, "shrine_bearer", (110, 128));
+        lead_to(&mut server, shrine, spot.as_vec3() + Vec3::new(80.0, 0.0, 0.0));
+        assert!(comes_at(&server, "stragglers", spot));
+        lead_to(&mut server, shrine, Vec3::new(110.5, 200.0, 128.5));
+        let id = start(&mut server, "stragglers", (130, 128));
+        let pilgrim = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().praying.points = 0.0;
+        give_held(&mut server, "base:bread", 1);
+        let client = listen(&mut server);
+        assert!(server.meet(1, pilgrim));
+        assert!(told(&client).iter().any(|(k, _)| k == "wander.toward"));
+        assert!(server.meet(1, pilgrim));
+        assert_eq!(count_of(&server, "base:bread"), 0);
+        assert!(server.players[&1].praying.points > 0.0, "prayer restored");
+    }
+
+    #[test]
+    fn the_gossip_tells_where_a_party_is_for_a_coin_and_takes_none_with_nothing_to_tell() {
+        let mut server = fixture();
+        let id = start(&mut server, "gossip", (110, 128));
+        let gossip = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:gold_coin", 2);
+        server.meet(1, gossip);
+        assert_eq!(count_of(&server, "base:gold_coin"), 2, "nothing on the roads, nothing to sell");
+        start(&mut server, "pedlar_and_hound", (150, 150));
+        let client = listen(&mut server);
+        assert!(server.meet(1, gossip));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1);
+        let said = told(&client);
+        assert!(said.iter().any(|(k, _)| k == "wander.toward"), "where the pedlar is: {said:?}");
+    }
+
+    #[test]
+    fn kin_and_christenings_come_back_to_those_who_met_the_first_party() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        server.day += 6.0 * TICKS_PER_DAY as f64;
+        let home = Vec3::new(128.5, 200.0, 128.5);
+        server.players.get_mut(&1).unwrap().home = Some(home);
+        let comes = |server: &Server, name: &str| {
+            let kind = event(server, name);
+            let spot = land_for(server, kind, home, |_| true);
+            (0..800u64).any(|seed| server.pick_event_in(1, spot, mix(seed, 3), false) == Some(kind))
+        };
+        let spot = land_for(&server, event(&server, "refugee_kin"), home, |_| true);
+        server.players.get_mut(&1).unwrap().home = Some(spot.as_vec3());
+        server.players.get_mut(&1).unwrap().position = spot.as_vec3();
+        assert!(!comes(&server, "refugee_kin") && !comes(&server, "christening"), "nobody met, nobody comes back");
+        server.tally(1, "met", "base:refugees", 1);
+        server.tally(1, "met", "base:wedding", 1);
+        assert!(comes(&server, "refugee_kin"), "kin of the refugees taken in");
+        assert!(comes(&server, "christening"), "the couple from the wedding");
+        let mut server = fixture();
+        let id = start(&mut server, "refugee_kin", (110, 128));
+        let kin = members_of(&server, id, 0)[0];
+        assert!(server.meet(1, kin));
+        assert!(count_of(&server, "base:seed_mix") >= 4);
+        let mut server = fixture();
+        let id = start(&mut server, "christening", (110, 128));
+        let priest = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:bread", 1);
+        assert!(server.meet(1, priest));
+        assert!(has_effect(&server, "refreshed"));
+    }
+
+    #[test]
+    fn the_poachers_gang_waits_only_for_one_who_met_him_and_pays_when_beaten() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (5.0 + i as f64 / 40.0)).find(|&day| (0.15..0.4).contains(&voxmar_engine::creature::daylight(day as u64))).expect("a dim hour");
+        skill_to(&mut server, "core:attack", 10);
+        skill_to(&mut server, "core:defence", 10);
+        skill_to(&mut server, "core:hitpoints", 10);
+        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.0, 200.0, 128.0));
+        let spot = land_for(&server, event(&server, "poachers_gang"), Vec3::new(128.0, 200.0, 128.0), |_| true);
+        assert!(!comes_at(&server, "poachers_gang", spot), "a stranger to him");
+        server.tally(1, "met", "base:poacher", 1);
+        assert!(comes_at(&server, "poachers_gang", spot), "word got round");
+        let id = start(&mut server, "poachers_gang", (110, 128));
+        let poacher = members_of(&server, id, 0)[0];
+        server.wandering.active.get_mut(&id).unwrap().stage = Stage::Won;
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        assert!(server.meet(1, poacher));
+        assert!((2..=3).contains(&count_of(&server, "base:gold_coin")), "paid to be let go");
+    }
+
+    #[test]
+    fn grateful_parents_and_a_journeyman_come_back_to_those_who_helped() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        server.day += 5.0 * TICKS_PER_DAY as f64;
+        let spot = land_for(&server, event(&server, "grateful_parents"), Vec3::new(128.0, 200.0, 128.0), |_| true);
+        server.players.get_mut(&1).unwrap().home = Some(spot.as_vec3());
+        server.players.get_mut(&1).unwrap().position = spot.as_vec3();
+        assert!(!comes_at(&server, "grateful_parents", spot) && !comes_at(&server, "journeyman", spot), "nobody helped, nobody comes back");
+        server.tally(1, "met", "base:lost_child", 1);
+        server.tally(1, "met", "base:apprentice", 1);
+        assert!(comes_at(&server, "grateful_parents", spot), "the lost child's parents");
+        assert!(comes_at(&server, "journeyman", spot), "the apprentice, a journeyman now");
+        let mut server = fixture();
+        let id = start(&mut server, "grateful_parents", (110, 128));
+        let parent = members_of(&server, id, 0)[0];
+        assert!(server.meet(1, parent));
+        assert!(count_of(&server, "base:gold_coin") >= 2 && count_of(&server, "base:bread") == 2);
+        let mut server = fixture();
+        let id = start(&mut server, "journeyman", (110, 128));
+        let journeyman = members_of(&server, id, 0)[0];
+        assert!(server.meet(1, journeyman));
+        assert_eq!(count_of(&server, "base:gold_coin"), 2);
+        let learned = ["core:farming", "core:mining", "core:crafting"].iter().filter(|s| xp_in(&server, s) > 0).count();
+        assert_eq!(learned, 1, "one trade's lesson");
+    }
+
+    #[test]
+    fn highwaymen_lie_in_wait_only_while_market_folk_are_on_the_road() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        skill_to(&mut server, "core:attack", 10);
+        skill_to(&mut server, "core:defence", 10);
+        skill_to(&mut server, "core:hitpoints", 10);
+        let spot = land_for(&server, event(&server, "highwaymen"), Vec3::new(128.0, 200.0, 128.0), |_| true);
+        assert!(!comes_at(&server, "highwaymen", spot), "an empty road");
+        let market = start(&mut server, "market_folk", (110, 128));
+        lead_to(&mut server, market, spot.as_vec3() + Vec3::new(60.0, 0.0, 0.0));
+        assert!(comes_at(&server, "highwaymen", spot), "market day");
+        let mut server = fixture();
+        let id = start(&mut server, "highwaymen", (110, 128));
+        let thief = members_of(&server, id, 0)[0];
+        server.wandering.active.get_mut(&id).unwrap().stage = Stage::Won;
+        assert!(server.meet(1, thief));
+        assert!((2..=3).contains(&count_of(&server, "base:gold_coin")), "the purse given back");
+    }
+
+    #[test]
+    fn a_late_pupil_and_beaters_say_where_their_party_went() {
+        for (name, after) in [("late_pupil", "mage_tutors"), ("beaters", "hunting_party")] {
+            let mut server = fixture();
+            broad_day(&mut server);
+            let spot = land_for(&server, event(&server, name), Vec3::new(128.0, 200.0, 128.0), |_| true);
+            assert!(!comes_at(&server, name, spot), "{name}: nobody to come after");
+            let ahead = start(&mut server, after, (110, 128));
+            lead_to(&mut server, ahead, spot.as_vec3() + Vec3::new(60.0, 0.0, 0.0));
+            assert!(comes_at(&server, name, spot), "{name}: after {after}");
+            lead_to(&mut server, ahead, Vec3::new(110.5, 200.0, 128.5));
+            let id = start(&mut server, name, (130, 128));
+            let speaker = members_of(&server, id, 0)[0];
+            let client = listen(&mut server);
+            assert!(server.meet(1, speaker));
+            assert!(told(&client).iter().any(|(k, _)| k == "wander.toward"), "{name}: which way");
+        }
+        let mut server = fixture();
+        let id = start(&mut server, "late_pupil", (110, 128));
+        let pupil = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:bread", 1);
+        assert!(server.meet(1, pupil));
+        assert_eq!(count_of(&server, "base:bread"), 0);
+        assert!(xp_in(&server, "core:magic") > 0, "yesterday's lesson for a loaf");
+    }
+
+    #[test]
+    fn the_rival_pedlar_undercuts_once_and_sneers_toward_the_other() {
+        let mut server = fixture();
+        let ahead = start(&mut server, "pedlar_and_hound", (150, 150));
+        let id = start(&mut server, "rival_pedlar", (110, 128));
+        let rival = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:gold_coin", 2);
+        assert!(server.meet(1, rival));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1);
+        let bargains = ["base:bread", "base:seed_mix", "base:flint"].iter().map(|i| count_of(&server, i)).sum::<u32>();
+        assert!(bargains >= 2, "one of the bargains");
+        let client = listen(&mut server);
+        assert!(server.meet(1, rival));
+        assert!(told(&client).iter().any(|(k, _)| k == "wander.toward"), "where the other went");
+        assert!(server.wandering.active.contains_key(&ahead));
     }
 }

@@ -128,3 +128,18 @@ so that what the game already does is something the book points to:
   torch, or share food). Farm: Neighbourly (the neighbours call once the hearth is lit),
   The Rain Dance (watch the rainmakers or pay them), Filled Again (the shrine bearer) and A
   Share of the Hunt (strike first at a hunting party's, trapper's or wolf hunters' quarry).
+- **Wanderer quests in two parts** (the hooks in docs/wandering.md, Oct 13). Each pairs a
+  wandering kind with what the player does next anyway, so meeting them is a side step,
+  never a wait. Nomad: Coal by Road (the coal carters or the benighted miners, and sixteen
+  torches; pays four coal). Farm: Fired Whole (the clay diggers fire your clay, and
+  twenty-four fired in all; pays twelve clay), The Last Sheaf (the harvest home procession,
+  and twelve wheat brought in; pays eight wheat seed) and Mice in the Stores (follow the
+  piper to the end of his tune, and a pantry or larder at home; pays four seed mix).
+
+## Quick upgrades
+
+Oct 13 (docs/first-days.md, "Quick upgrades on common resources"): Timber asks for four logs
+by hand, the planks for the table, sticks and both wooden tools, and An Axe to It (after
+Crafting Table) asks for the wooden axe and eight logs chopped with it, so the first tool
+upgrade comes in the first minute. First Night tells the player the stone axe hits three
+times as hard as a fist.

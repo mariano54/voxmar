@@ -25,7 +25,7 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; a junglefowl gives chicken and sometimes an egg. Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; a junglefowl gives chicken and sometimes an egg. Fists are slow at the hunt too: swing the stone axe, which hits three times as hard (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
@@ -47,14 +47,14 @@
             why: "Biomes help different work: the woods heal, the water fishes, the mountains mine. Walk until you have stood in three different ones; where you build decides what your home gives.",
             tasks: [[Visit(3)]],
             after: ["stone_in_hand"],
-            rewards: [Xp("farming", 100.0), Xp("mining", 100.0), Xp("fishing", 100.0), Item("bread", 6)],
+            rewards: [Xp("farming", 100.0), Xp("mining", 100.0), Xp("fishing", 100.0), Item("bread", 2)],
         ),
         (
             name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",
             why: "Your home: you wake here after dying, and the Farm age opens. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel.",
             tasks: [[Home]],
             after: ["a_bed_of_your_own"],
-            rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 4)],
+            rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 1)],
         ),
         (
             name: "a_friend_in_the_wild", age: "nomad", branch: "hunter", title: "A Friend in the Wild",
@@ -96,6 +96,13 @@
             rewards: [Xp("engineering", 18.0)],
         ),
         (
+            name: "an_axe_to_it", age: "nomad", branch: "start", title: "An Axe to It",
+            why: "Punching trees is slow. At the crafting table, three planks and two sticks make a wooden axe (the recipe viewer shows the shape): a log takes half the time it takes a fist, and a stone axe halves that again. Make one and chop eight logs; the campfire, planks and sticks ahead all want them.",
+            tasks: [[Craft("wooden_axe", 1), Have("tag:log", 8)]],
+            after: ["crafting_table"],
+            rewards: [Xp("engineering", 20.0), Item("stick", 4)],
+        ),
+        (
             name: "first_ore", age: "nomad", branch: "mining", title: "Red Metal Underfoot",
             why: "Copper needs Mining 5 and the pickaxe you have. Mining grows mostly from coal: a score or so of it, with what the early quests give, takes you there. Copper lies in veins underground, mostly below sea level and richest under granite; a small copper-coloured stone lying on the ground marks a vein below it, so dig down there. Mine five; it is the start of every metal.",
             tasks: [[Mine("copper_ore", 5)]],
@@ -104,8 +111,8 @@
         ),
         (
             name: "timber", age: "nomad", branch: "start", title: "Timber",
-            why: "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the attack button: bare hands are slow, but they work) and gather eight logs; woods have the most trees, and plains have a few in groves. A log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and axe.",
-            tasks: [[Have("tag:log", 8)]],
+            why: "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the attack button: bare hands are slow, but they work) and gather four logs; woods have the most trees, and plains have a few in groves. Four are enough to start: a log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and a wooden axe. Chop the rest with the axe, in half the time a fist takes.",
+            tasks: [[Have("tag:log", 4)]],
             rewards: [Xp("engineering", 30.0)],
         ),
         (
@@ -318,6 +325,13 @@
             rewards: [Xp("crafting", 60.0)],
         ),
         (
+            name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",
+            why: "Brick by Brick takes a lot of fired clay, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with.",
+            tasks: [[Cook("fired_clay", 40)]],
+            after: ["the_potter"],
+            rewards: [Xp("crafting", 120.0), Item("kiln_bricks", 4)],
+        ),
+        (
             name: "a_pit_kiln", age: "farm", branch: "main", title: "A Pit Kiln",
             why: "Clay needs more heat than an open fire gives. A pit kiln is a campfire ringed with cobblestone: lay five cobblestones round a campfire at the crafting table, as the recipe shows, then set it down.",
             tasks: [[Craft("pit_kiln", 1)]],
@@ -333,17 +347,17 @@
         ),
         (
             name: "brick_by_brick", age: "farm", branch: "main", title: "Brick by Brick",
-            why: "The Crucible Kiln is built of kiln bricks: nineteen for the kiln and its crucible. Four fired clay make a brick at the crafting grid (Crafting 5). Make nineteen; it is a lot of clay, so keep firing.",
-            tasks: [[Craft("kiln_bricks", 19)]],
+            why: "The Crucible Kiln is built of kiln bricks: nineteen for the kiln and its crucible. Four fired clay make a brick at the crafting grid (Crafting 5). Have nineteen in hand: A Kiln Load pays the first four, and the rest is still a lot of clay, so keep firing.",
+            tasks: [[Have("kiln_bricks", 19)]],
             after: ["the_potter"],
             rewards: [Xp("crafting", 300.0)],
         ),
         (
             name: "the_crucible", age: "farm", branch: "main", title: "The Crucible",
-            why: "The heart of the kiln: seven kiln bricks round a clay pot, shaped at the crafting table (Engineering 10). Engineering grows with every tool, ingot and torch you make, and the copper quests pay it well. Make it, then build the kiln round it.",
+            why: "The heart of the kiln: seven kiln bricks round a clay pot, shaped at the crafting table (Engineering 10). Engineering grows with every tool, ingot and torch you make, and the copper quests pay it well. Make it, then build the kiln round it; its reward is sixteen charcoal, half the kiln's charge.",
             tasks: [[Craft("crucible", 1)]],
             after: ["brick_by_brick", "red_metal"],
-            rewards: [Xp("engineering", 300.0)],
+            rewards: [Xp("engineering", 300.0), Item("charcoal", 16)],
         ),
         (
             name: "first_harvest", age: "farm", branch: "farming", title: "First Harvest",
@@ -821,6 +835,34 @@
             tasks: [[Met("hunting_party", 1)], [Met("trapper", 1)], [Met("wolf_hunters", 1)]],
             after: ["homestead_hearth"],
             rewards: [Xp("hunter", 120.0)],
+        ),
+        (
+            name: "fired_whole", age: "farm", branch: "pottery", title: "Fired Whole",
+            why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is a dozen clay for the next kiln load.",
+            tasks: [[Met("clay_diggers", 1), Cook("fired_clay", 24)]],
+            after: ["a_pit_kiln"],
+            rewards: [Xp("crafting", 150.0), Item("clay", 12)],
+        ),
+        (
+            name: "coal_by_road", age: "nomad", branch: "explore", title: "Coal by Road",
+            why: "Coal carters walk sacks of coal to the nearest town, and miners caught by the dark far from home sit waiting for a light. Keep with the carters to the town, or give the miners a lump of coal or charcoal to light their lamp again; both say where coal shows at the surface. Then make sixteen torches: coal or charcoal over a stick makes four.",
+            tasks: [[Met("coal_carters", 1), Craft("torch", 16)], [Met("benighted_miners", 1), Craft("torch", 16)]],
+            after: ["torchlight", "folk_of_the_road"],
+            rewards: [Xp("mining", 80.0), Item("coal_ore", 4)],
+        ),
+        (
+            name: "the_last_sheaf", age: "farm", branch: "farming", title: "The Last Sheaf",
+            why: "At harvest, villagers carry the last sheaf round the fields near folk's homes, singing. Put three of your wheat on their dolly while crops grow within 32 blocks, and the crops about them grow on a stage; a beginner learns the sowing song. Meet them, and bring in twelve wheat. The reward is seed for a bigger field.",
+            tasks: [[Met("harvest_home", 1), Pick("wheat_crop", 12)]],
+            after: ["first_harvest"],
+            rewards: [Xp("farming", 150.0), Item("wheat_seeds", 8)],
+        ),
+        (
+            name: "mice_in_the_stores", age: "farm", branch: "home", title: "Mice in the Stores",
+            why: "At dusk a piper may come by homes, the field mice of folk's stores at his heels. Follow him to the end of his tune and he leaves the seed they would have eaten. Keep a pantry by your fire as well, two crates or baskets beside it, so your stores are worth the guarding.",
+            tasks: [[Met("rat_catcher", 1), Built("home_pantry", 1)], [Met("rat_catcher", 1), Built("home_larder", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("farming", 100.0), Item("seed_mix", 4)],
         ),
     ],
     // A new player's book opens with these pinned (a book with nothing done or pinned), so
