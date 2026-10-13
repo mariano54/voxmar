@@ -422,6 +422,16 @@ impl Client {
         panic!("a count never held still for 20 ticks");
     }
 
+    /// Claims a finished quest's rewards in the quest screen (`ClientMessage::ClaimQuest`).
+    fn claim(&mut self, quest: &str) {
+        self.connection.send(ClientMessage::ClaimQuest { name: quest.into() });
+    }
+
+    /// Whether the server says a quest is finished and its rewards claimed.
+    fn claimed(&self, quest: &str) -> bool {
+        self.quests.iter().any(|q| q.name == quest && q.done && q.claimed)
+    }
+
     /// Runs a command that should succeed, returning its answer.
     fn ok(&mut self, line: &str) -> String {
         let lines = self.command(line);
@@ -1771,7 +1781,20 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     }
     client.propose("core:craft", ActionTarget::Slot(0));
     client.chat.clear();
-    client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table")));
+    // Finished, it waits to be claimed: the chat line points to the quest screen, and the
+    // Engineering (18) is not given with it.
+    client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table. Claim its reward in the quest book")));
+    client.settle();
+    assert!(!client.earned.contains(&180), "finishing paid before it was claimed: {:?}", client.earned);
+    assert!(!client.claimed("base:crafting_table"));
+    client.claim("base:crafting_table");
+    client.pump_until(|c| c.claimed("base:crafting_table") && c.earned.contains(&180));
+    // Claiming again, or a quest not finished, pays nothing.
+    client.claim("base:crafting_table");
+    client.claim("base:first_ore");
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == 180).count(), 1, "{:?}", client.earned);
+    assert!(!client.claimed("base:first_ore"));
 }
 
 /// The First Night contract uses real grid and cooking events, and both kinds of
@@ -1827,12 +1850,26 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
         }
     }
     client.propose("core:craft", ActionTarget::Slot(0));
-    client.pump_until(|c| done(c) && count(c, "base:campfire") == 1 && count(c, "base:torch") == 4);
+    client.pump_until(|c| done(c) && count(c, "base:campfire") == 1);
+    client.wait_server(2);
+    assert_eq!(count(&client, "base:torch"), 0, "finishing paid the torches before they were claimed");
+    drop(client);
+    // The reward waits through a restart, in the save.
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| done(c));
+    client.wait_server(2);
+    assert!(!client.claimed("base:first_night"), "rejoining claimed it");
+    assert_eq!(count(&client, "base:torch"), 0);
+    client.claim("base:first_night");
+    client.pump_until(|c| c.claimed("base:first_night") && count(c, "base:torch") == 4);
     drop(client);
     let mut client = Client::join_with(config());
     client.pump_until(|c| done(c));
     client.wait_server(2);
-    assert_eq!(count(&client, "base:torch"), 4, "rejoining paid the quest twice");
+    assert!(client.claimed("base:first_night"), "the claim was not saved");
+    client.claim("base:first_night");
+    client.wait_server(2);
+    assert_eq!(count(&client, "base:torch"), 4, "rejoining or claiming again paid the quest twice");
     drop(client);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -1926,6 +1963,7 @@ fn looking_an_item_up_finishes_the_look_it_up_quest() {
     client.earned.clear();
     client.connection.send(ClientMessage::LookedUp { item: pickaxe });
     client.pump_until(|c| done(c) && c.chat.iter().any(|(_, t)| t.contains("Quest done: Look It Up")));
+    client.claim("base:look_it_up");
     client.pump_until(|c| c.earned.contains(&400));
     for _ in 0..20 {
         client.connection.send(ClientMessage::LookedUp { item: pickaxe });
@@ -1961,6 +1999,7 @@ const TEST_QUESTS: &str = r#"(quests: [
     (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("stick", 3)]], rewards: [Item("torch", 2)]),
     (name: "miner", age: "nomad", branch: "main", title: "Miner", why: "", tasks: [[Level("mining", 10)]], rewards: [Xp("crafting", 50.0)]),
     (name: "laden", age: "nomad", branch: "main", title: "Laden", why: "", tasks: [[Have("base:cobblestone", 2304)]], rewards: [Item("base:apple", 3)]),
+    (name: "walk", age: "nomad", branch: "main", title: "Free Walk", why: "", tasks: [[Level("mining", 3)]]),
 ])"#;
 
 /// Quests are checked once a second by the server's clock: one a goal short is still open
@@ -1982,10 +2021,16 @@ fn a_quest_is_done_at_the_next_check_once_its_goal_holds_and_rewards_once() {
     assert_eq!(carried(&client, torch), 0);
     client.chat.clear();
     client.ok("/give stick 1");
-    client.pump_until(|c| done(c, "zz_test:sticks") && carried(c, torch) == 2);
+    client.pump_until(|c| done(c, "zz_test:sticks"));
     assert!(client.chat.iter().any(|(_, line)| line.contains("Three Sticks")), "{:?}", client.chat);
+    // Done, the torches wait to be claimed, and come once.
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    assert_eq!(carried(&client, torch), 0);
+    client.claim("zz_test:sticks");
+    client.pump_until(|c| carried(c, torch) == 2);
     // Without the sticks, two checks later: still done, and the torches came once.
     client.ok("/clear stick");
+    client.claim("zz_test:sticks");
     client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
     assert!(done(&client, "zz_test:sticks"));
     assert_eq!(carried(&client, torch), 2);
@@ -2003,29 +2048,61 @@ fn a_level_quest_waits_for_the_level_and_grants_its_experience() {
     client.ok("/skill mining 9");
     client.after_server_ticks(TICKS_PER_SECOND as u64);
     assert!(!done(&client, "zz_test:miner"), "level 9 finished a level 10 quest");
+    // A quest not finished cannot be claimed.
+    client.claim("zz_test:miner");
     client.earned.clear();
     client.ok("/skill mining 10");
-    client.pump_until(|c| done(c, "zz_test:miner") && c.earned.contains(&500));
+    client.pump_until(|c| done(c, "zz_test:miner"));
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    assert!(!client.earned.contains(&500), "finishing paid before it was claimed: {:?}", client.earned);
+    client.claim("zz_test:miner");
+    client.pump_until(|c| c.earned.contains(&500));
+    client.claim("zz_test:miner");
     client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
     assert_eq!(client.earned.iter().filter(|&&tenths| tenths == 500).count(), 1, "{:?}", client.earned);
     drop(client);
     std::fs::remove_dir_all(&assets).unwrap();
 }
 
-/// A reward that does not fit lies at the player's feet rather than being lost.
+/// A reward the pack cannot hold is not given and not lost: the claim is refused with a
+/// message, nothing is paid, and the quest stays claimable once there is room.
 #[test]
-fn a_quest_reward_that_does_not_fit_drops_at_the_players_feet() {
+fn a_quest_reward_that_does_not_fit_stays_claimable() {
     let (assets, content) = with_mod("quests-full", &[("quests.ron", TEST_QUESTS)]);
     let mut client = join_content(content);
-    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
     let apple = client.content.blocks.expect("base:apple");
+    let apples = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == apple).map(|s| s.count as u32).sum::<u32>();
     client.pump_until(|c| !c.quests.is_empty());
     client.ok("/clear");
     // Every slot full of cobblestone.
     client.ok("/give cobblestone 2304");
-    client.pump_until(|c| done(c, "zz_test:laden"));
-    client.pump_until(|c| c.items.values().any(|i| i.stack.item == apple && i.stack.count == 3));
-    assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == apple));
+    client.pump_until(|c| c.quests.iter().any(|q| q.name == "zz_test:laden" && q.done));
+    client.chat.clear();
+    client.claim("zz_test:laden");
+    client.pump_until(|c| c.chat.iter().any(|(kind, text)| *kind == ChatKind::Error && text.contains("no room in your pack")));
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    assert!(!client.claimed("zz_test:laden"));
+    assert_eq!(apples(&client), 0);
+    assert!(!client.items.values().any(|i| i.stack.item == apple), "the reward dropped on the ground");
+    // With room, the same quest pays out.
+    client.ok("/clear cobblestone");
+    client.claim("zz_test:laden");
+    client.pump_until(|c| c.claimed("zz_test:laden") && apples(c) == 3);
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// A quest that pays nothing has nothing to claim: it is claimed as it finishes, and the
+/// chat does not send the player to the quest screen.
+#[test]
+fn a_quest_that_pays_nothing_is_claimed_as_it_finishes() {
+    let (assets, content) = with_mod("quests-free", &[("quests.ron", TEST_QUESTS)]);
+    let mut client = join_content(content);
+    client.pump_until(|c| !c.quests.is_empty());
+    client.chat.clear();
+    client.ok("/skill mining 3");
+    client.pump_until(|c| c.claimed("zz_test:walk"));
+    assert!(client.chat.iter().any(|(_, t)| t.contains("Quest done: Free Walk") && !t.contains("Claim")), "{:?}", client.chat);
     drop(client);
     std::fs::remove_dir_all(&assets).unwrap();
 }
@@ -5398,8 +5475,10 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     let (table, stick) = (client.content.blocks.expect("base:crafting_table"), client.content.blocks.expect("base:stick"));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == table));
     // The first table also finishes the Crafting Table quest, whose reward (18 Engineering)
-    // comes at the next quest check: wait for it, so both grants are counted exactly.
+    // waits to be claimed: claim it, so both grants are counted exactly.
     client.pump_until(|c| c.quests.iter().any(|q| q.name == "base:crafting_table" && q.done));
+    client.claim("base:crafting_table");
+    client.pump_until(|c| c.claimed("base:crafting_table"));
     client.settle();
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
     let reward = client.content.quests.get("base:crafting_table").unwrap().rewards.iter().find_map(|r| match r {

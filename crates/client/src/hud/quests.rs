@@ -20,10 +20,12 @@ use super::SLOT;
 use super::screens::{GameScreen, ScreenSystems, spawn_hotkeys};
 use crate::lang::{Locale, Localized, TightLine};
 use crate::menu::Screen;
+use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
+use crate::ui::sound::UiSound;
 use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, GOLD, MUTED, SCRIM, SHADOW, SOFT, ScrollList, TEXT, UiFont, panel, screen, shadowed, space, spawn_button, spawn_heading, spawn_rule, spawn_scroll_more,
     text,
@@ -36,7 +38,7 @@ impl Plugin for QuestsPlugin {
         app.init_resource::<QuestView>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, turn_ways, draw).chain().after(ScreenSystems), (seed_pins, retire, track).chain()).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, claim, turn_ways, draw).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -165,6 +167,11 @@ pub fn chapters(content: &Content) -> Vec<String> {
 
 fn state<'a>(player: &'a LocalPlayer, name: &str) -> Option<&'a QuestState> {
     player.quests.iter().find(|s| s.name == name)
+}
+
+/// Whether a quest is finished and its rewards wait to be claimed.
+pub fn claimable(player: &LocalPlayer, name: &str) -> bool {
+    state(player, name).is_some_and(|s| s.done && !s.claimed)
 }
 
 pub fn standing(content: &Content, player: &LocalPlayer, quest: &QuestDef) -> Standing {
@@ -406,6 +413,9 @@ struct QuestNode(String);
 struct Detail;
 #[derive(Component)]
 struct PinButton;
+/// Claims the picked quest's rewards.
+#[derive(Component)]
+pub(crate) struct ClaimButton;
 /// An arrow turning to another way of making what a goal asks for.
 #[derive(Component)]
 struct WayStep {
@@ -425,8 +435,9 @@ const STEP_LEAST: Vec2 = Vec2::new(SLOT + 10.0 * PX, SLOT + 5.0 * PX);
 const STEP_MOST: Vec2 = Vec2::new(SLOT + 90.0 * PX, SLOT + 20.0 * PX);
 /// How far the picked quest's glow reaches past it.
 const GLOW: f32 = 4.0 * PX;
-/// The width of the Pin button.
+/// The width of the Pin button, and of the Claim button beside it.
 const PIN: f32 = 52.0 * PX;
+const CLAIM: f32 = 64.0 * PX;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -499,6 +510,52 @@ fn pick(
     }
 }
 
+/// The Claim button asks the server to pay the picked quest's rewards; the quest screen
+/// hears the answer with the quests' next states.
+fn claim(buttons: Query<&Interaction, (Changed<Interaction>, With<ClaimButton>)>, view: Res<QuestView>, player: Res<LocalPlayer>, net: Option<Res<Net>>) {
+    if buttons.iter().any(|i| *i == Interaction::Pressed)
+        && let (Some(name), Some(net)) = (view.picked.as_deref(), net)
+        && claimable(&player, name)
+    {
+        net.claim_quest(name);
+    }
+}
+
+/// The sounds of quests: a chime as one is finished, and a softer one as its rewards are
+/// claimed, told by the server's next states against the last (not on joining, when the
+/// first states arrive).
+fn hear_quests(player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut last: Local<(u32, Vec<QuestState>)>) {
+    // Cleared on joining: the next states are the first of a session.
+    if player.quests.is_empty() {
+        *last = (player.quests_rev, Vec::new());
+        return;
+    }
+    if last.0 == player.quests_rev {
+        return;
+    }
+    let (done, claimed) = quest_changes(&last.1, &player.quests);
+    if done {
+        sounds.write(UiSound::QuestDone);
+    }
+    if claimed {
+        sounds.write(UiSound::QuestClaim);
+    }
+    *last = (player.quests_rev, player.quests.clone());
+}
+
+/// Whether, from `before` to `now`, a quest was finished, and whether one's rewards were
+/// claimed. The first states of a session (nothing `before`) are what the
+/// player already had.
+fn quest_changes(before: &[QuestState], now: &[QuestState]) -> (bool, bool) {
+    if before.is_empty() {
+        return (false, false);
+    }
+    let was = |name: &str| before.iter().find(|s| s.name == name);
+    let done = now.iter().any(|s| s.done && was(&s.name).is_some_and(|w| !w.done));
+    let claimed = now.iter().any(|s| s.claimed && was(&s.name).is_some_and(|w| w.done && !w.claimed));
+    (done, claimed)
+}
+
 /// The arrows by an inline recipe turn to its other ways.
 fn turn_ways(steps: Query<(&WayStep, &Interaction), Changed<Interaction>>, mut view: ResMut<QuestView>) {
     for (way, interaction) in &steps {
@@ -564,6 +621,7 @@ fn draw(
             for (i, age) in ages.iter().enumerate() {
                 let quests: Vec<&QuestDef> = content.quests.iter().filter(|q| &q.age == age).collect();
                 let done = quests.iter().filter(|q| standing(content, &player, q) == Standing::Done).count();
+                let waiting = quests.iter().any(|q| claimable(&player, &q.name));
                 let node = Node {
                     min_height: Val::Px(14.0 * PX),
                     flex_shrink: 0.0,
@@ -581,7 +639,8 @@ fn draw(
                     let name = locale.get_or(&format!("quest.age.{age}"), &title_from_id(age)).to_owned();
                     button.spawn((shadowed(font, name, BODY, TEXT), TightLine));
                     let count = locale.format("quest.chapter.count", &[("done", &done), ("all", &quests.len())]);
-                    button.spawn((text(font, count, BODY, MUTED), TightLine));
+                    // A gold "!" marks a chapter with rewards waiting to be claimed.
+                    button.spawn((text(font, if waiting { format!("! {count}") } else { count }, BODY, if waiting { GOLD } else { MUTED }), TightLine));
                 });
             }
         });
@@ -643,7 +702,19 @@ fn draw(
                     };
                     let tint = if standing == Standing::Waiting || i >= ours { Color::srgba(1.0, 1.0, 1.0, 0.35) } else { Color::WHITE };
                     let picked = view.picked.as_deref() == Some(quest.name.as_str());
-                    // The quest picked glows, whatever it stands at, under its ring.
+                    // A finished quest with rewards to claim glows gold; the quest picked glows
+                    // in the accent, whatever it stands at, under its ring.
+                    if claimable(&player, &quest.name) {
+                        let glow = Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(at.x - GLOW),
+                            top: Val::Px(at.y - GLOW),
+                            width: Val::Px(SLOT + 2.0 * GLOW),
+                            height: Val::Px(SLOT + 2.0 * GLOW),
+                            ..default()
+                        };
+                        area.spawn((glow, BackgroundColor(GOLD.with_alpha(0.55))));
+                    }
                     if picked {
                         let glow = Node {
                             position_type: PositionType::Absolute,
@@ -678,12 +749,19 @@ fn draw(
             let state = state(&player, &quest.name);
             detail.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), flex_shrink: 0.0, ..default() }).with_children(|top| {
                 top.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, shadowed(font, title(&locale, quest), BODY, GOLD)));
+                let ready = claimable(&player, &quest.name);
                 let status = match standing {
+                    Standing::Done if ready => (locale.get("quest.status.ready").to_owned(), GOLD),
                     Standing::Done => (locale.get("quest.status.done").to_owned(), GOLD),
                     Standing::Open => (locale.get("quest.status.open").to_owned(), ACCENT),
                     Standing::Waiting => (locale.get("quest.status.waiting").to_owned(), MUTED),
                 };
                 top.spawn((text(font, status.0, BODY, status.1), TightLine));
+                if ready {
+                    top.spawn(Node { width: Val::Px(CLAIM), flex_shrink: 0.0, ..default() }).with_children(|cell| {
+                        spawn_button(cell, font, "quest.claim", ButtonStyle::Primary, ClaimButton);
+                    });
+                }
                 // Only an open quest is followed on screen.
                 let pinned = settings.pinned_quests.contains(&quest.name);
                 if pinned || (standing == Standing::Open && settings.pinned_quests.len() < content.quests.tracker().pins) {
@@ -754,7 +832,8 @@ fn draw(
                         Reward::Item(item, count) => locale.format("quest.reward.item", &[("count", count), ("item", &item_words(&locale, content, package(quest), item))]),
                     })
                     .collect();
-                detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized("quest.rewards"), shadowed(font, "", BODY, ACCENT)));
+                let claimed = state.is_some_and(|s| s.claimed);
+                detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized(if claimed { "quest.rewards.claimed" } else { "quest.rewards" }), shadowed(font, "", BODY, if claimed { MUTED } else { ACCENT })));
                 detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, gives.join(locale.get("language.comma")), BODY, SOFT)));
                 // The items it gives, to click for their recipes.
                 let items: Vec<(BlockId, u8)> = quest.rewards.iter().filter_map(|r| if let Reward::Item(item, count) = r { item_id(content, package(quest), item).map(|id| (id, *count)) } else { None }).collect();
@@ -898,7 +977,8 @@ fn track(
                     top.spawn((Button, Unpin(name.clone()), Node { padding: UiRect::horizontal(Val::Px(PX)), ..default() })).with_child((shadowed(font, "×", BODY, MUTED), TightLine));
                 });
                 if done {
-                    card.spawn((shadowed(font, locale.get("quest.tracker.done").to_owned(), BODY, GOLD), TrackerLine));
+                    let key = if claimable(&player, name) { "quest.tracker.ready" } else { "quest.tracker.done" };
+                    card.spawn((shadowed(font, locale.get(key).to_owned(), BODY, GOLD), TrackerLine));
                     return;
                 }
                 for (goal, progress) in best_task(quest, state) {
@@ -960,6 +1040,23 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// The chimes follow the server's states: one as a quest turns done, another as a done
+    /// one turns claimed, and none for the states a session starts with.
+    #[test]
+    fn quest_sounds_follow_the_states_the_server_sends() {
+        let state = |name: &str, done: bool, claimed: bool| QuestState { name: name.into(), done, claimed, tasks: Vec::new() };
+        let start = vec![state("a", true, true), state("b", false, false), state("c", true, false)];
+        assert_eq!(quest_changes(&[], &start), (false, false), "joining is not a quest finished");
+        assert_eq!(quest_changes(&start, &start), (false, false));
+        let finished = vec![state("a", true, true), state("b", true, false), state("c", true, false)];
+        assert_eq!(quest_changes(&start, &finished), (true, false));
+        let claimed = vec![state("a", true, true), state("b", true, false), state("c", true, true)];
+        assert_eq!(quest_changes(&finished, &claimed), (false, true));
+        // Finished and claimed at once (it pays nothing) is a chime only.
+        let free = vec![state("a", true, true), state("b", true, true), state("c", true, false)];
+        assert_eq!(quest_changes(&start, &free), (true, false));
     }
 
     #[test]

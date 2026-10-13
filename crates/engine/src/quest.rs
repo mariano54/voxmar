@@ -9,6 +9,9 @@
 //! hold. Goals read the player's state: their journal (kills, catches, plants picked, ores
 //! mined, biomes stood in), their tallies of things made and cooked, their skills, what they
 //! carry, and whether they have a home.
+//!
+//! Finishing a quest does not pay it: the rewards wait for the player to claim them in the
+//! quest screen (`QuestState::claimed`), unless the quest pays nothing.
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -212,8 +215,18 @@ impl Progress<'_> {
 pub struct QuestState {
     pub name: String,
     pub done: bool,
+    /// Done and paid out. A done quest with rewards waits to be claimed in the quest screen
+    /// (`ClientMessage::ClaimQuest`); one with none is claimed the moment it is done.
+    pub claimed: bool,
     /// For each task, each goal's progress: (have, need).
     pub tasks: Vec<Vec<(u32, u32)>>,
+}
+
+impl QuestDef {
+    /// Whether finishing it pays anything out, to be claimed.
+    pub fn pays(&self) -> bool {
+        !self.rewards.is_empty()
+    }
 }
 
 impl QuestRegistry {
@@ -397,12 +410,13 @@ impl QuestRegistry {
     }
 
     /// Every quest's state for the client.
-    pub fn states(&self, done: &[String], progress: &Progress) -> Vec<QuestState> {
+    pub fn states(&self, done: &[String], claimed: &[String], progress: &Progress) -> Vec<QuestState> {
         self.quests
             .iter()
             .map(|q| QuestState {
                 name: q.name.clone(),
                 done: done.contains(&q.name),
+                claimed: claimed.contains(&q.name),
                 tasks: q.tasks.iter().map(|t| t.iter().map(|g| progress.goal(g)).collect()).collect(),
             })
             .collect()
@@ -526,7 +540,11 @@ mod tests {
         // a home already, the hearth follows the same moment.
         let done = quests.newly_done(&[], &progress);
         assert_eq!(done, ["base:tools", "base:settle", "base:hearth"]);
-        let states = quests.states(&done, &progress);
+        let states = quests.states(&done, &done, &progress);
+        // Done is not claimed: the states say which of the finished still wait.
+        let waiting = quests.states(&done, &["base:tools".to_owned()], &progress);
+        assert_eq!(waiting.iter().filter(|s| s.done && !s.claimed).map(|s| s.name.as_str()).collect::<Vec<_>>(), ["base:settle", "base:hearth"]);
+        assert!(states.iter().filter(|s| s.done).all(|s| s.claimed));
         let fish = states.iter().find(|s| s.name == "base:fish").unwrap();
         assert_eq!((fish.done, fish.tasks.clone()), (false, vec![vec![(3, 5)], vec![(1, 10)]]));
         // Two more trout finish it.
