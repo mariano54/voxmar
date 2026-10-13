@@ -61,6 +61,8 @@
         // Singles. Tallow lights a candle until bees give wax; a lantern holds a torch in
         // metal, a stone one in four blocks of stone.
         (pattern: [["twine", ""], ["hide", "hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
+        // Two herbs tied up with twine, to hang and dry: a home's herb nook.
+        (pattern: [["twine", "twine"], ["tag:herb", "tag:herb"]], output: "hanging_herbs", count: 2, skill: "core:crafting", level: 4, xp: 3.0),
         (pattern: [["copper_ingot"], ["torch"], ["copper_ingot"]], output: "copper_hanging_lantern", skill: "core:engineering", level: 5, xp: 12.0),
         (pattern: [["iron_ingot"], ["torch"], ["iron_ingot"]], output: "iron_hanging_lantern", skill: "core:engineering", level: 15, xp: 24.0),
         (pattern: [["", "{name}", ""], ["{name}", "torch", "{name}"], ["", "{name}", ""]], output: "{name}_lantern", skill: "core:construction", level: 9, xp: 6.0),

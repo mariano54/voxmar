@@ -1462,5 +1462,29 @@
                 (name: "sneer", gives: [Toward("pedlar_and_hound", 200.0)], once: Player),
             ])],
         ),
+        // Callers for a home that has come far (`home_is`: the home step its hearth has
+        // reached, judged as `/home` judges it; docs/home.md, "Callers"). A homely home, with
+        // seats, a table and stores, draws folk in of an evening to sit by its fire: a long
+        // talk leaves you thinking clearer, and a cooked supper shared, candles toward a
+        // brighter home.
+        (
+            name: "fireside_guests", weight: 1.0,
+            daylight: (0.0, 0.6), needs: (days: 3.0, home: Some(true), near_home: Some(40.0), home_is: Some("homely")),
+            cast: [(species: "villager"), (species: "villager", role: Follow)],
+            script: Camp(near: 10.0, stay: (300.0, 420.0), mill: 2.0, away: 100.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "talk", gives: [Effect("focused", 900.0)], once: Player),
+                (name: "supper", wants: ("tag:cooked", 1), gives: [Item("candle", (2, 2)), Xp("cooking", 10.0)], once: Player),
+            ])],
+        ),
+        // A hedgehog in from the dark to a cosy home's door, after the crumbs. It is as wild
+        // as any: a mushroom or a strawberry at a time (Hunter 3) and it stays, one of the
+        // animals about the house.
+        (
+            name: "hedgehog_lodger", weight: 1.0,
+            daylight: (0.0, 0.35), needs: (days: 3.0, home: Some(true), near_home: Some(40.0), home_is: Some("cosy")),
+            cast: [(species: "hedgehog")],
+            script: Camp(near: 8.0, stay: (400.0, 600.0), mill: 3.0, away: 60.0),
+        ),
     ],
 )

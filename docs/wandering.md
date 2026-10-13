@@ -694,9 +694,9 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **Master and journeyman** (apprentice, journeyman): teach an apprentice, then meet them again as a journeyman.
 - **Market road** (market folk, highwaymen): walk with market folk, and beat the highwaymen who come after them.
 
-## Catalogue of 100
+## Catalogue
 
-Status: `done` is in a batch above (100 kinds in the game after batch 16), `later` the rest. "New" names what the kind needs that the framework lacks; those
+Status: `done` is in a batch above (102 kinds in the game: 100 after batch 16, and the two home callers), `later` the rest. "New" names what the kind needs that the framework lacks; those
 are the mechanics later batches add, each used by several kinds.
 
 | # | kind | what happens | new | age | status |
@@ -845,6 +845,8 @@ are the mechanics later batches add, each used by several kinds.
 | 142 | late pupil | see batch 16 | after | 1 | done |
 | 143 | beaters | see batch 16 | after | 1 | done |
 | 144 | rival pedlar | see batch 16 | after | 1 | done |
+| 145 | fireside guests | Two callers sit by a Homely home's fire of an evening: a long talk (Focused); a cooked supper shared, two candles. | home_is | 2 | done |
+| 146 | hedgehog at the door | A wild hedgehog comes by night to a Cosy home's door; tame it and it stays. | home_is | 2 | done |
 
 ## Mechanics the next batches add
 
@@ -864,6 +866,7 @@ Each is a script or a role used by many kinds, so every kind stays a few lines o
 - **Hunt**: done (batch 8): a party goes after wild quarry and brings it down; first blood shares.
 - **Journey**: done (batch 9): a party walks to a town; those who walk with it are thanked there.
 - **After / met / Toward**: done (batch 15): a party that comes after another, follows up an earlier visit, or tells where one is.
+- **Home callers (`home_is`)**: done (the cozy home work, docs/home.md "Callers"): a kind that comes only to a home that has reached a step, judged at the home.
 - **Duel / Dance / Crossing / Vigil**: fixed arrangements of the formation code.
 
 ## Notes

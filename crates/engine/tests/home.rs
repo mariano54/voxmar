@@ -70,7 +70,47 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     assert_eq!(names(rest(&survey_of("camp"), false)), ["base:rested"]);
     assert_eq!(names(rest(&survey_of("snug"), false)), ["base:rested", "base:well_rested"]);
     assert_eq!(names(rest(&survey_of("cosy"), false)), ["base:rested", "base:well_rested", "base:deep_rest"]);
-    assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:rested"], "a bed under the sky is only a plain rest");
+    assert_eq!(names(rest(&survey_of("camp"), true)), ["base:rested"], "a bed under the sky is a plain rest");
+    assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:rested", "base:well_rested"], "under the sky, its seats and lights are only a lit corner");
+}
+
+#[test]
+fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
+    let content = content();
+    let effects = &content.effects;
+    let calm = Weather::NONE;
+    let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
+    let rest = |survey: &HomeSurvey| {
+        let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[] };
+        effects.given_by_sleep(&situation).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
+    };
+    // A camp out under the sky: a plain rest. A seat and a second light by the bag: a well rested one.
+    assert_eq!(rest(&survey(&[("bed", 1), ("light", 1)])), [("base:rested".to_owned(), 600.0)]);
+    let corner = survey(&[("bed", 1), ("seat", 1), ("light", 2)]);
+    assert_eq!(rest(&corner), [("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)]);
+    assert_eq!(rooms_in(&[("bed", 1), ("seat", 1), ("light", 2)], &calm, true), ["base:bedside"]);
+    assert_eq!(effects.get(effects.id("base:bedside").unwrap()).modifiers.warmth, 2.0);
+    // Snug and a lit corner too: the one rest, once.
+    let snug_corner = survey(&[("bed", 1), ("seat", 1), ("light", 2), ("hearth", 1)]);
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&snug_corner), done: &[] };
+    let given = effects.given_by_sleep(&situation);
+    assert_eq!(given.iter().filter(|(id, _)| effects.get(*id).name == "base:well_rested").count(), 1, "two ways to one rest give it once");
+}
+
+#[test]
+fn herbs_drying_at_home_make_a_nook_for_the_garden_and_the_brew() {
+    let content = content();
+    let effects = &content.effects;
+    assert!(rooms(&[("drying", 2)]).is_empty(), "nowhere to keep them");
+    assert!(rooms(&[("drying", 1), ("storage", 1)]).is_empty(), "one bunch is not a nook");
+    assert_eq!(rooms(&[("drying", 2), ("storage", 1)]), ["base:herb_nook"]);
+    let nook = effects.get(effects.id("base:herb_nook").unwrap());
+    assert_eq!(nook.boosts.iter().map(|(s, n)| (s.as_str(), *n)).collect::<Vec<_>>(), [("core:farming", 1), ("core:alchemy", 1)]);
+    assert_eq!(nook.modifiers.meal_time, 1.1);
+    // The bunches are craftable, and break to nothing (furnishings drop nothing, d80).
+    let herbs = content.blocks.expect("base:hanging_herbs");
+    assert!(content.recipes.iter().any(|r| r.output == herbs), "hanging herbs are made");
+    assert_eq!(content.blocks.def(herbs).drops.as_deref(), Some("core:air"));
 }
 
 /// What a survey with these counts shows of the rooms (the side branches) in this weather.

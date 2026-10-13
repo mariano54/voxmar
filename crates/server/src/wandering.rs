@@ -673,6 +673,16 @@ impl Server {
         let days = (self.day / voxmar_protocol::TICKS_PER_DAY as f64) as f32;
         let combat = self.combat_level(player);
         let recent = self.wandering.recent.get(&player);
+        // The player's home, surveyed once and only if a kind asks how far it has come.
+        let anchor = p.home.or(p.bed).map(|h| h.floor().as_ivec3());
+        let survey = std::cell::OnceCell::new();
+        let home_is = |step: voxmar_engine::effect::EffectId| {
+            let Some(anchor) = anchor else { return false };
+            let survey = survey.get_or_init(|| self.survey_around(anchor, Some(player)));
+            let calm = voxmar_engine::weather::Weather::NONE;
+            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done };
+            self.content.effects.get(step).when.as_ref().is_some_and(|when| when.holds(&situation))
+        };
         let mut choices: Vec<(usize, f32)> = Vec::new();
         for (index, event) in self.content.wandering.iter() {
             let needs = &event.def.needs;
@@ -688,7 +698,8 @@ impl Server {
                 && needs.wet.is_none_or(|w| w == wet)
                 && needs.near_home.is_none_or(|near| p.home.is_some_and(|home| flat(home, p.position) <= near))
                 && needs.after.as_ref().is_none_or(|(name, reach)| self.party_near(spot.as_vec3(), name, *reach).is_some())
-                && needs.met.as_ref().is_none_or(|name| p.tallies.get(&format!("met:{name}")).is_some_and(|&n| n > 0));
+                && needs.met.as_ref().is_none_or(|name| p.tallies.get(&format!("met:{name}")).is_some_and(|&n| n > 0))
+                && event.home_is.is_none_or(home_is);
             let weight = event.biome_weight(&biome.name, &biome.tags);
             if !suits || weight <= 0.0 {
                 continue;
@@ -6077,6 +6088,36 @@ mod tests {
         assert_eq!(follow(&mut server), Some(event(&server, "rival_pedlar")), "the second pedlar has its rival");
         assert!(server.wandering.followed.contains(&second));
         assert_eq!(follow(&mut server), None, "both joined, none more");
+    }
+
+    /// Callers come only to a home that has come far enough (`home_is`), judged at the home
+    /// as `/home` judges it: fireside guests to a homely one, the hedgehog to a cosy one.
+    #[test]
+    fn callers_come_only_to_a_home_that_has_come_far_enough() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| (0.1..0.5).contains(&voxmar_engine::creature::daylight(day as u64))).expect("an evening");
+        let home = IVec3::new(128, 200, 128);
+        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        let spot = IVec3::new(128, 200, 150);
+        let bare = ["base:hearthstone", "base:sleeping_bag", "base:candle"];
+        for (i, name) in bare.iter().enumerate() {
+            place(&mut server, name, home + IVec3::new(i as i32 + 1, 0, 0));
+        }
+        assert!(!comes_at(&server, "fireside_guests", spot), "a bare camp draws no callers");
+        // Seats, a table, stores, more light and a roof over it all: homely.
+        for (i, name) in ["base:oak_stool", "base:oak_stool", "base:oak_table", "base:crate", "base:crate", "base:candle", "base:candle"].iter().enumerate() {
+            place(&mut server, name, home + IVec3::new(i as i32 - 3, 0, 2));
+        }
+        for x in -6..=6 {
+            for z in -6..=6 {
+                place(&mut server, "base:stone", home + IVec3::new(x, 4, z));
+            }
+        }
+        assert!(comes_at(&server, "fireside_guests", spot), "a homely home has callers");
+        assert!(!comes_at(&server, "hedgehog_lodger", spot), "homely is not yet cosy");
+        // Far from home, nobody calls there.
+        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(600.0, 200.0, 600.0));
+        assert!(!comes_at(&server, "fireside_guests", spot));
     }
 
     /// No party hands over a step of the ages' main line (docs/wandering.md, "How often"):

@@ -816,6 +816,27 @@
             rewards: [Xp("construction", 100.0), Xp("cooking", 60.0)],
         ),
         (
+            name: "a_lit_corner", age: "nomad", branch: "home", title: "A Lit Corner",
+            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and sleeping in it you wake well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
+            tasks: [[Built("home_bedside", 1)]],
+            after: ["make_camp"],
+            rewards: [Xp("construction", 40.0), Xp("crafting", 20.0)],
+        ),
+        (
+            name: "a_herb_nook", age: "farm", branch: "home", title: "A Herb Nook",
+            why: "Tie two herbs with twine and they hang to dry (Crafting 4). Two bunches and a jar, basket or crate at home make a herb nook: there you farm and brew as if a level higher, so a kitchen garden at the door takes seed a level early, and a meal's good lasts a tenth longer.",
+            tasks: [[Built("home_herb_nook", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("farming", 80.0), Xp("crafting", 40.0)],
+        ),
+        (
+            name: "callers_at_the_door", age: "farm", branch: "home", title: "Callers at the Door",
+            why: "A homely home draws callers. With seats, a table and stores under your roof, guests may come of an evening to sit by your fire while you are home: talk with them, share a cooked supper. Make it cosy and, by night, something smaller may come to the door for the crumbs.",
+            tasks: [[Met("fireside_guests", 1)]],
+            after: ["a_homely_home"],
+            rewards: [Xp("construction", 120.0), Xp("cooking", 60.0)],
+        ),
+        (
             name: "the_rain_dance", age: "farm", branch: "explore", title: "The Rain Dance",
             why: "In a dry spell, rainmakers dance on grassland, savanna and scrub. Stand and watch the dance through and go off refreshed, or pay them two coins and the rain comes for ten minutes: the glimmer koi rises only in rain.",
             tasks: [[Met("rainmakers", 1)]],
