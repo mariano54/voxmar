@@ -251,6 +251,27 @@
             after: ["stone_in_hand"],
             rewards: [Xp("engineering", 30.0)],
         ),
+        (
+            name: "full_stone_kit", age: "nomad", branch: "crafting", title: "A Full Stone Kit",
+            why: "A stone tool works twice as fast as a wooden one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one cobblestone over two sticks), hoe and knife.",
+            tasks: [[Have("stone_pickaxe", 1), Have("stone_axe", 1), Have("stone_shovel", 1), Have("stone_hoe", 1), Have("stone_knife", 1)]],
+            after: ["stone_in_hand", "break_ground", "a_sharp_edge"],
+            rewards: [Xp("engineering", 30.0), Item("torch", 8)],
+        ),
+        (
+            name: "dig_in", age: "nomad", branch: "mining", title: "Dig In",
+            why: "The hearth needs four clay, and clay lies on the bottom of ponds and lakes. A stone shovel digs four times faster than bare hands: make one, wade in and dig four.",
+            tasks: [[Craft("stone_shovel", 1), Have("clay", 4)]],
+            after: ["stone_in_hand"],
+            rewards: [Xp("engineering", 12.0), Item("bread", 4)],
+        ),
+        (
+            name: "stockpile", age: "nomad", branch: "start", title: "Stockpile",
+            why: "A home runs on common stock. Carry thirty-two logs and sixty-four cobblestone and nothing you want to build is a trip away.",
+            tasks: [[Have("tag:log", 32), Have("cobblestone", 64)]],
+            after: ["timber", "a_pile_of_stone"],
+            rewards: [Xp("construction", 40.0), Item("torch", 16)],
+        ),
         // The Farm age: fired clay, copper and tin, and the Crucible Kiln that opens bronze.
         (
             name: "the_potter", age: "farm", branch: "main", title: "The Potter",
@@ -568,6 +589,13 @@
             tasks: [[Pick("wheat_crop", 12), Pick("carrot_crop", 6)], [Pick("wheat_crop", 12), Pick("rye_crop", 6)], [Thriving(4, 75)], [Catch("any", 40)]],
             after: ["homestead_hearth"],
             rewards: [Xp("farming", 530.0), Item("bread", 10)],
+        ),
+        (
+            name: "copper_kit", age: "farm", branch: "mining", title: "Copper Kit",
+            why: "Copper works six times as fast as a bare hand, a step above stone, and finds more. An axe takes three ingots, a shovel one, a hoe two and a knife one: seven in all.",
+            tasks: [[Craft("copper_axe", 1), Craft("copper_shovel", 1), Craft("copper_hoe", 1), Craft("copper_knife", 1)]],
+            after: ["red_metal"],
+            rewards: [Xp("engineering", 60.0), Item("coal_ore", 8)],
         ),
     ],
     // A new player's book opens with these pinned (a book with nothing done or pinned), so
