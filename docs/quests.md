@@ -135,6 +135,13 @@ so that what the game already does is something the book points to:
   twenty-four fired in all; pays twelve clay), The Last Sheaf (the harvest home procession,
   and twelve wheat brought in; pays eight wheat seed) and Mice in the Stores (follow the
   piper to the end of his tune, and a pantry or larder at home; pays four seed mix).
+- **Wanderers that come back** (the Nomad thread's hooks, Oct 13): quests that ask for a
+  kind and the kind that follows it, all Farm side branches. The Keepers' Word (the
+  poacher, the gamekeepers on his trail and, days later, his gang), Catch Up the Shrine (the
+  shrine bearer and the stragglers asking after it), From Wedding to Christening, Those
+  Taken In (refugees, then their kin), First Metal (the bloomery smelters before the
+  Crucible Kiln, and four copper ore) and A Hen of Your Own (the henwife's hen, kept near
+  home).
 
 ## Quick upgrades
 

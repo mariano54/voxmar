@@ -605,11 +605,11 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **New seed** (seed swappers): swap wheat seed for another crop and sow it.
 - **Keep up** (messenger): run with a messenger all the way to town.
 - **Sleepwalking** (sleepwalker): wake a neighbour wandering in their sleep and see them home.
-- **First metal** (bloomery smelters): have copper smelted at a travelling bloomery.
+- **First metal** (bloomery smelters): have copper smelted at a travelling bloomery. Quest First Metal.
 - **To the light** (moth netters): hold a flame up for the moth netters.
 - **Sound pots** (potter): sell four fired pots to a travelling potter.
 - **The green one** (snail racers): watch a snail race in the rain.
-- **A hen of your own** (henwife): take a hen home from a henwife.
+- **A hen of your own** (henwife): take a hen home from a henwife. Quest A Hen of Your Own.
 - **Teach a trade** (apprentice): be good enough at something that a would-be apprentice asks to learn it.
 - **Herbs into aether** (hedge witch): have three herbs made into a mote of aether.
 - **The keepers' word** (gamekeepers, poacher): meet the gamekeepers, then find the poacher they point to.
