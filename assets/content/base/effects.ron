@@ -69,6 +69,24 @@
         (name: "heart_of_the_home", kind: Buff, title: "Heart of the Home", description: "Everything a home needs: heal twice as fast, learn an eighth more.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 4), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2), HomeHas("rug", 2), HomeHas("curtain", 2), HomeHas("cushion", 1), HomeHas("crockery", 3), HomeHas("books", 1), HomeHas("cooking", 1), HomeHas("workshop", 1), HomeHas("banner", 1)])),
             replaces: ["camp", "hearthside", "snug", "homely", "cosy"], modifiers: (heal: 2.0, warmth: 6.0, xp: 1.125)),
+        // Rooms: side branches of the ladder, each a different use of a home. A workbench and a
+        // workshop lift crafting and building levels (`boosts`, which recipes' level checks
+        // count; a recipe marked firm ignores them); a pantry and a larder make more of meals.
+        // The first step of each is a Nomad-age thing to do with the camp, the next a Farm-age one.
+        (name: "workbench", kind: Buff, title: "Workbench", description: "A bench to work at: you craft and build as if a level higher here.", announce: true,
+            next: "Next: a loom, spindle stand or quern, a light, and two places to store things under a roof make it a workshop.",
+            when: Some(All([AtHome, HomeHas("crafting_table", 1), HomeHas("seat", 1), HomeHas("light", 1)])),
+            replaces: [], boosts: [("crafting", 1), ("construction", 1)]),
+        (name: "workshop", kind: Buff, title: "Workshop", description: "Everything to hand: you craft and build as if two levels higher here.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("crafting_table", 1), HomeHas("seat", 1), HomeHas("light", 2), HomeHas("workshop", 1), HomeHas("storage", 2)])),
+            replaces: ["workbench"], boosts: [("crafting", 2), ("construction", 2), ("engineering", 1)]),
+        (name: "pantry", kind: Buff, title: "Pantry", description: "A full pantry by the fire: the good a meal does lasts a quarter longer.", announce: true,
+            next: "Next: four places to store things, a stove or cauldron and a table under a roof make it a larder.",
+            when: Some(All([AtHome, HomeHas("storage", 2), Any([HomeHas("hearth", 1), HomeHas("heat", 1)])])),
+            replaces: [], modifiers: (meal_time: 1.25)),
+        (name: "larder", kind: Buff, title: "Larder", description: "Meals heal a fifth more here and their good lasts half again as long.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("storage", 4), HomeHas("cooking", 1), HomeHas("table", 1), Any([HomeHas("hearth", 1), HomeHas("heat", 1)])])),
+            replaces: ["pantry"], modifiers: (meal_heal: 1.2, meal_time: 1.5)),
         // Sleeping at a bed (the sleeps rules below): the better the home around the bed, the
         // better the rest, which lasts a while wherever you go, and keeps you from sleeping again.
         (name: "rested", kind: Buff, title: "Rested", description: "You slept: you heal and learn a little more for a while.",

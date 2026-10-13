@@ -1965,6 +1965,51 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
 }
 
 #[test]
+fn a_larder_makes_more_of_a_meal() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    // Hurt by a fall first (food is eaten to heal), from air cleared high enough.
+    client.ok(&format!("/fill {} {} {} {} {} {} air", feet.x - 2, feet.y + 1, feet.z - 3, feet.x + 9, feet.y + 14, feet.z + 3));
+    client.pump_until(|c| c.world.block(feet + IVec3::Y * 12) == Some(BlockId::AIR));
+    fall_from_open_sky(&mut client);
+    let at = |dx: i32| feet + IVec3::new(dx, 0, 0);
+    let chip = |c: &Client, name: &str| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == name).copied();
+    // A bed to be home, a hearth to cook by (its tag is all a home asks), four crates, a
+    // cauldron and a table, under a roof: a larder.
+    let mut lines = vec![format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 9, feet.y + 4, feet.z + 3)];
+    for (dx, block) in [(2, "sleeping_bag"), (3, "hearthstone"), (4, "crate"), (5, "crate"), (6, "crate"), (7, "crate"), (8, "cauldron"), (9, "oak_table")] {
+        lines.push(format!("/setblock {} {} {} {block}", at(dx).x, at(dx).y, at(dx).z));
+    }
+    for line in lines {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(at(9)) == c.content.blocks.id("base:oak_table"));
+    client.propose("base:sleep", ActionTarget::Block { block: at(2), face: Face::PosY });
+    client.pump_until(|c| chip(c, "base:larder").is_some());
+    // Bread gives Sustained for ten minutes; at a larder, for fifteen.
+    for line in ["/clear", "/give bread 1", "/effect clear"] {
+        client.ok(line);
+    }
+    let bread = client.content.blocks.expect("base:bread");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == bread));
+    client.propose_at("core:eat", ActionTarget::None, Instant::now());
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    client.pump_until(|c| chip(c, "base:sustained").is_some());
+    let left = chip(&client, "base:sustained").and_then(|a| a.seconds_left).unwrap();
+    assert!(left > 800, "bread at a larder lasts 900 s, not {left}");
+    // Away from home it is the plain ten minutes.
+    client.ok("/effect clear");
+    client.ok("/give bread 1");
+    client.tp(feet.as_vec3() + Vec3::new(30.5, 0.0, 0.5));
+    client.pump_until(|c| chip(c, "base:larder").is_none());
+    client.propose_at("core:eat", ActionTarget::None, Instant::now());
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    client.pump_until(|c| chip(c, "base:sustained").is_some());
+    let left = chip(&client, "base:sustained").and_then(|a| a.seconds_left).unwrap();
+    assert!(left <= 600, "bread away from home lasts 600 s, not {left}");
+}
+
+#[test]
 fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
     let mut client = Client::join();
     let boiler = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);

@@ -399,9 +399,14 @@ impl Server {
                     // Food heals, the same food a little less each time in a row.
                     let share = player.recent_food.share(item);
                     player.recent_food.eat(item);
-                    let heal = (blocks.info(item).food as f32 * share).round() as u8;
+                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time).
+                    let (meal_heal, meal_time) = (player.modifiers.meal_heal, player.modifiers.meal_time);
+                    let heal = (blocks.info(item).food as f32 * share * meal_heal).round().min(u8::MAX as f32) as u8;
                     // What it does besides (content's effects.ron): hearty, queasy and so on.
-                    player.give_effects(&effects.given_by(&blocks.def(item).tags));
+                    let mut given = effects.given_by(&blocks.def(item).tags);
+                    // Only good effects last longer: raw meat's queasiness does not.
+                    given.iter_mut().filter(|(effect, _)| effects.get(*effect).kind == voxmar_engine::effect::Kind::Buff).for_each(|(_, seconds)| *seconds *= meal_time);
+                    player.give_effects(&given);
                     if heal > 0 && player.health.alive() {
                         player.health.heal(heal);
                         player.changed(traits::HEALTH);

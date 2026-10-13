@@ -54,7 +54,8 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     };
     let top = |survey: &HomeSurvey, outdoors: bool| {
         let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey) };
-        effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).collect::<Vec<_>>()
+        // The ladder's own step alone: rooms (below) come on beside it.
+        effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| LADDER.iter().any(|step| *name == format!("base:{step}"))).collect::<Vec<_>>()
     };
     let rest = |survey: &HomeSurvey, outdoors: bool| {
         let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey) };
@@ -70,4 +71,54 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     assert_eq!(names(rest(&survey_of("snug"), false)), ["base:rested", "base:well_rested"]);
     assert_eq!(names(rest(&survey_of("cosy"), false)), ["base:rested", "base:well_rested", "base:deep_rest"]);
     assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:rested"], "a bed under the sky is only a plain rest");
+}
+
+/// What a survey with these counts, indoors, shows of the rooms (the side branches).
+fn rooms(counts: &[(&str, u32)]) -> Vec<String> {
+    let content = content();
+    let effects = &content.effects;
+    let calm = Weather::NONE;
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey) };
+    effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| !LADDER.iter().any(|step| *name == format!("base:{step}"))).collect()
+}
+
+#[test]
+fn rooms_come_on_beside_the_ladder_and_the_better_one_hides_the_other() {
+    assert!(rooms(&[("bed", 1)]).is_empty());
+    assert_eq!(rooms(&[("crafting_table", 1), ("seat", 1), ("light", 1)]), ["base:workbench"]);
+    let workshop = [("crafting_table", 1), ("seat", 1), ("light", 2), ("workshop", 1), ("storage", 2)];
+    assert_eq!(rooms(&workshop), ["base:workshop"], "the workshop hides the workbench; no fire, no pantry");
+    assert_eq!(rooms(&[("storage", 2), ("heat", 1)]), ["base:pantry"]);
+    assert_eq!(rooms(&[("storage", 2), ("hearth", 1)]), ["base:pantry"], "a hearth is a fire too");
+    let larder = [("storage", 4), ("cooking", 1), ("table", 1), ("hearth", 1)];
+    assert_eq!(rooms(&larder), ["base:larder"], "the larder hides the pantry");
+    // Rooms stack: a workshop with a larder shows both.
+    let both = [("crafting_table", 1), ("seat", 1), ("light", 2), ("workshop", 1), ("storage", 4), ("cooking", 1), ("table", 1), ("hearth", 1)];
+    assert_eq!(rooms(&both), ["base:workshop", "base:larder"]);
+}
+
+#[test]
+fn rooms_lift_levels_and_meals_by_what_content_says() {
+    let content = content();
+    let effects = &content.effects;
+    let get = |name: &str| effects.get(effects.id(&format!("base:{name}")).unwrap());
+    let skills = |name: &str| get(name).boosts.iter().map(|(s, n)| (s.as_str(), *n)).collect::<Vec<_>>();
+    assert_eq!(skills("workbench"), [("core:crafting", 1), ("core:construction", 1)]);
+    assert_eq!(skills("workshop"), [("core:crafting", 2), ("core:construction", 2), ("core:engineering", 1)]);
+    assert_eq!((get("pantry").modifiers.meal_time, get("pantry").modifiers.meal_heal), (1.25, 1.0));
+    assert_eq!((get("larder").modifiers.meal_time, get("larder").modifiers.meal_heal), (1.5, 1.2));
+}
+
+#[test]
+fn a_workshop_boosts_the_levels_recipes_are_checked_against() {
+    let content = content();
+    let effects = &content.effects;
+    let calm = Weather::NONE;
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 4)).collect() };
+    let at_home = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey) };
+    let active = effects.active(&at_home, &[]);
+    assert_eq!((effects.boost(&active, "core:crafting"), effects.boost(&active, "core:engineering")), (2, 1));
+    let away = Situation { home: None, ..at_home };
+    assert_eq!(effects.boost(&effects.active(&away, &[]), "core:crafting"), 0, "away from home there is no boost");
 }

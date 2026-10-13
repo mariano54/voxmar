@@ -95,11 +95,14 @@ pub struct Modifiers {
     pub xp: f32,
     /// How often a cast line lands something.
     pub fishing: f32,
+    /// How much a meal heals, and how long the effects it gives last.
+    pub meal_heal: f32,
+    pub meal_time: f32,
 }
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0 }
     }
 }
 
@@ -119,6 +122,8 @@ impl Modifiers {
             mining: sum.mining * m.mining,
             xp: sum.xp * m.xp,
             fishing: sum.fishing * m.fishing,
+            meal_heal: sum.meal_heal * m.meal_heal,
+            meal_time: sum.meal_time * m.meal_time,
         })
     }
 }

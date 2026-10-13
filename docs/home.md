@@ -43,6 +43,22 @@ workshop is the loom frame, spindle stand and quern. All are craftable in the fi
 (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
 crafting, not a grind.
 
+## Rooms (side branches)
+
+Beside the ladder, a home can grow a use. They come on at home beside the ladder's step, each
+announced in chat with a **Next:** line, and the better one hides the other:
+
+| Room | Needs (tags) | Gives while at home |
+| --- | --- | --- |
+| Workbench | crafting table, a seat, a light | crafting and construction checks count 1 level higher (`boosts`) |
+| Workshop | + roof, 2 lights, a loom, spindle stand or quern, 2 storage | crafting and construction +2, engineering +1 |
+| Pantry | 2 storage, a hearth or any heat block | the good effects of a meal last x1.25 (`meal_time`) |
+| Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
+
+`boosts` are the effect vocabulary's own (they stop at +6 and recipes marked firm ignore
+them); `meal_heal` and `meal_time` are two new modifiers, applied as the meal is eaten from
+the modifiers of the last second. Raw meat's queasiness is not lengthened.
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the
@@ -67,6 +83,8 @@ reach the step).
 
 ## Not built (ideas)
 
+- A herb nook (hanging herbs, jars) boosting Alchemy and Farming: `hanging_herbs` is only a
+  village prop today, with no recipe.
 - A `/home` command listing what is still missing for the next step.
 - Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
   protocol to take a slot count.
