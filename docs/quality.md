@@ -170,9 +170,10 @@ run's output (`DIR/test-*.txt`, the test binaries run with `-Z unstable-options
 much busier than idle the machine is), the slowest test binary `suite_seconds` (`--full`:
 `full_suite_seconds`, with the slow tests the default gate skips), and a test
 over its budget is listed in `[[allow]]` with its own `seconds` and the reason. It prints the
-slowest tests every time. It fails on a test over its budget, on a binary over the suite
-budget, and on an allowance the test no longer needs (it ran back under the default), so the
-list only shrinks as tests get cheaper. A new test over the default is made cheaper first;
+slowest tests every time. It fails on a test over its budget and on a binary over the suite
+budget; with `--strict`, run on the Linux box the budgets were set on, also on an allowance a
+test no longer needs (it ran back under the default), so the list only shrinks as tests get
+cheaper (a faster machine would find many unneeded, so the gate only notes them). A new test over the default is made cheaper first;
 an entry is the last resort, with a reason a reader can check.
 
 How the tests are kept cheap:

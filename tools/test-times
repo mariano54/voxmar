@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Test times and budgets. See docs/quality.md ("Fast tests").
 
-    tools/test-times DIR [--full] [--scale X] [--top N] [--quiet]
+    tools/test-times DIR [--full] [--strict] [--scale X] [--top N] [--quiet]
         Reads the test output files the gate keeps (DIR/test-*.txt, run with
         `-Z unstable-options --report-time`, so every line ends in its time), prints the
         slowest tests and each test binary's time, and checks them against
         tools/test-budget.toml: a test may take `per_test_seconds`, and one listed in
         `[[allow]]` (`binary`, `tests`, `seconds`, `why`) its own `seconds`, for the reason given. Exits 1 when a test is over, when
-        the slowest binary is over `suite_seconds`, or when an allowance is not needed any
-        more (the test is back under the default, or gone): the list stays honest.
+        or the slowest binary is over `suite_seconds`. An allowance a test no longer needs (it ran
+        back under the default) is listed as a note, and fails with --strict: budgets are set on
+        a slow machine, so a fast one finds many unneeded; run --strict on the Linux box that set them.
         --full: the run included the slow tests the default gate skips (`full_suite_seconds`).
         --scale X: how much slower than an idle machine this one is running (the gate passes
         the load over the cores, at least 1), since a busy machine slows every test alike.
@@ -81,7 +82,7 @@ def parse_budget(text):
 
 
 def main(argv):
-    directory, scale, top, quiet, full = None, 1.0, 20, False, False
+    directory, scale, top, quiet, full, strict = None, 1.0, 20, False, False, False
     args = iter(argv)
     for arg in args:
         if arg == "--scale":
@@ -92,6 +93,8 @@ def main(argv):
             quiet = True
         elif arg == "--full":
             full = True
+        elif arg == "--strict":
+            strict = True
         elif directory is None:
             directory = arg
         else:
@@ -122,11 +125,12 @@ def main(argv):
         if seconds > limit * scale:
             what = f"allowed {limit:g} s" if entry else f"budget {limit:g} s"
             problems.append(f"{seconds:6.1f} s  {binary} {name}: over its {what}" + (f" (x{scale:.1f} for this machine's load)" if scale > 1 else ""))
-    # An allowance the test no longer needs: it ran, and well under the default.
+    # An allowance the test no longer needs: it ran, and under the default.
+    notes = []
     for (binary, name), entry in allowed.items():
         ran = [s for s, b, n in tests if (b, n) == (binary, name)]
         if ran and ran[0] <= per_test:
-            problems.append(f"{ran[0]:6.1f} s  {binary} {name}: back under {per_test:g} s, so its allowance of {entry['seconds']} s can go")
+            (problems if strict else notes).append(f"{ran[0]:6.1f} s  {binary} {name}: back under {per_test:g} s, so its allowance of {entry['seconds']} s can go")
     slowest = max(binaries.values(), default=0.0)
     if slowest > suite * scale:
         problems.append(f"slowest test binary took {slowest:.0f} s, over the {suite:g} s for the tests")
@@ -140,6 +144,10 @@ def main(argv):
         for seconds, binary, name in tests[:top]:
             note = f"  [allowed {allowed[(binary, name)]['seconds']:g} s]" if (binary, name) in allowed else ""
             print(f"  {seconds:6.1f} s  {binary} {name}{note}")
+    if notes and not quiet:
+        print(f"test-times: {len(notes)} allowances not needed on this machine (run with --strict where the budgets were set):")
+        for note in notes[:5]:
+            print("  " + note)
     if problems:
         print("test-times: over budget (tools/test-budget.toml):", file=sys.stderr)
         for problem in problems:
