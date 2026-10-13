@@ -78,6 +78,9 @@ pub enum Run {
     Machine,
     /// Lists, starts and ends wandering parties (`wandering.ron`).
     Wander,
+    /// Tells where the player's home is, how far its furnishing has come and what the next
+    /// step lacks.
+    Home,
     /// Runs these command lines in order. `$1`, `$2`, … stand for this command's
     /// arguments and `$*` for all of them.
     Alias(Vec<String>),

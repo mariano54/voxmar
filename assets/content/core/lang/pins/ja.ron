@@ -368,4 +368,6 @@
     "skill.core.ranged.guide.8.how": ("Batteries power the crossbow; silver bolts for supernatural foes.", "電池でクロスボウを動かす。超自然の敵には銀のボルト。"),
     "command.core.machine.help": ("Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.", "ブロックにある機械の様子を伝えます (~ は今いる場所): 何を作っているか、動力、足りないもの。"),
     "command.core.machine.help.summary": ("Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.", "ブロックにある機械の様子を伝えます。"),
+    "command.core.home.help": ("Tells where your home is, how far its furnishing has come, and what the next step needs.", "家の場所と、家具が整ってきた度合い、次の段階に必要なものを伝えます。"),
+    "command.core.home.help.summary": ("Tells where your home is, how far its furnishing has come, and what the next step needs.", "家の場所と次の段階に必要なものを伝えます。"),
 }

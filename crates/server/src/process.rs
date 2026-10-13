@@ -124,7 +124,7 @@ impl Process for Survival {
         let seconds = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
         let effects = server.content.effects.clone();
         let hitpoints = server.content.skills.id("core:hitpoints");
-        // Steps of a home reached this second, counted for quests (`Built("home_snug", 1)`).
+        // Steps of a home reached this second, counted for quests (`Built("home_snug", 1)`, qualified by the effect's package).
         let mut reached: Vec<(PlayerId, String)> = Vec::new();
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
@@ -162,7 +162,7 @@ impl Process for Survival {
             // Warmth from what was eaten and the weather counts before the bands of warmth
             // are judged: soaked through, a mild day feels chilly.
             let biome = server.overworld.biome_at(feet.x, feet.z);
-            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref() };
+            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done };
             let first = effects.active(&situation, &player.timed_effects);
             situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
             let active = effects.active(&situation, &player.timed_effects);
@@ -212,7 +212,8 @@ impl Process for Survival {
             player.announced.extend(&gained);
             for effect in gained {
                 let def = effects.get(effect);
-                reached.push((id, format!("home_{}", def.name.rsplit(':').next().unwrap_or_default())));
+                let (package, own) = def.name.split_once(':').unwrap_or(("", &def.name));
+                reached.push((id, format!("{package}:{}_{own}", def.ladder)));
                 let key = voxmar_engine::lang::def_key("effect", &def.name);
                 let mut words = Words::key("effect.gained").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
                 if !def.next.is_empty() {
@@ -246,10 +247,18 @@ impl Server {
         if near.x > rules.home_reach || near.z > rules.home_reach || feet.y > anchor.y + up || feet.y < anchor.y - down {
             return None;
         }
+        Some(self.survey_around(anchor, Some(id)))
+    }
+
+    /// What lies around a home at `anchor`, whoever stands near it: its blocks by tag and the
+    /// animals `keeper` keeps within its reach (`kept`).
+    pub(crate) fn survey_around(&self, anchor: IVec3, keeper: Option<PlayerId>) -> HomeSurvey {
+        let rules = &self.survival;
+        let (up, down) = (rules.home_up, rules.home_down);
         let wanted = self.content.effects.home_tags();
         let mut counts: Vec<(String, u32)> = wanted.iter().map(|tag| (tag.clone(), 0)).collect();
         if wanted.is_empty() {
-            return Some(HomeSurvey { counts });
+            return HomeSurvey { counts };
         }
         let blocks = &self.content.blocks;
         let reach = rules.home_reach;
@@ -269,7 +278,16 @@ impl Server {
                 }
             }
         }
-        Some(HomeSurvey { counts })
+        if let Some((_, kept)) = counts.iter_mut().find(|(tag, _)| tag == "kept") {
+            let (reach, centre) = (reach as f32 + 0.5, anchor.as_vec3() + Vec3::splat(0.5));
+            for creature in self.creatures.live.values().filter(|c| keeper.is_some() && c.owner_id == keeper) {
+                let off = creature.body.position - centre;
+                if off.x.abs() <= reach && off.z.abs() <= reach && off.y <= up as f32 + 1.0 && off.y >= -(down as f32) - 1.0 {
+                    *kept += 1;
+                }
+            }
+        }
+        HomeSurvey { counts }
     }
 
     /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in

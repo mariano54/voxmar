@@ -36,6 +36,8 @@ use voxmar_engine::traits;
 use voxmar_engine::wander::{Arrival, Hurt, Once, ResolvedNeed, ResolvedReward, Response, Role, Script, Stage, Want};
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
+use crate::creatures::Budget;
+
 use crate::Server;
 use crate::commands::{Reply, Source};
 
@@ -552,10 +554,14 @@ impl Server {
         let limits = self.content.creatures.limits();
         match def.kind {
             Kind::Villager => self.wandering.people(self) + placing < self.content.wandering.rules().people_most,
-            kind => {
-                let monster = kind == Kind::Monster;
-                let cap = if monster { self.monsters_cap() } else { limits.animals_near };
-                self.wild_room() > 0 && self.nearby_room(at, monster, cap)
+            _ => {
+                let of = crate::creatures::budget(def).unwrap_or(Budget::Animal);
+                let cap = match of {
+                    Budget::Monster => self.monsters_cap(),
+                    Budget::Bird => limits.birds_near,
+                    Budget::Animal => limits.animals_near,
+                };
+                self.wild_room() > 0 && self.nearby_room(at, of, cap)
             }
         }
     }
@@ -2181,7 +2187,7 @@ mod tests {
         for i in 0..cap {
             server.spawn_creature(hound, Vec3::new(128.5, 200.0, 128.5 + i as f32), i as u64);
         }
-        assert!(!server.nearby_room(Vec3::new(128.5, 200.0, 128.5), false, cap));
+        assert!(!server.nearby_room(Vec3::new(128.5, 200.0, 128.5), Budget::Animal, cap));
         assert!(!server.wandering_room(hound, Vec3::new(128.5, 200.0, 128.5), 0), "no room for another dog");
     }
 

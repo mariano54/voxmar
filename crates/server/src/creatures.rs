@@ -916,19 +916,23 @@ impl Server {
         if wild_room == 0 {
             return;
         }
-        let nearby = |kind: Kind| {
+        let nearby = |of: Budget| {
             self.creatures
                 .live
                 .values()
-                .filter(|c| c.body.position.distance(at) < NEAR && self.content.creatures.get(c.species).def.kind != Kind::Villager)
-                .filter(|c| (self.content.creatures.get(c.species).def.kind == Kind::Monster) == (kind == Kind::Monster))
+                .filter(|c| c.body.position.distance(at) < NEAR && budget(&self.content.creatures.get(c.species).def) == Some(of))
                 .count()
         };
-        let (animals, monsters) = (nearby(Kind::Animal), nearby(Kind::Monster));
+        let (animals, monsters, birds) = (nearby(Budget::Animal), nearby(Budget::Monster), nearby(Budget::Bird));
         // A new world's first night brings only a few, until its first dawn: the world begins
         // at sunrise, so that is the first day, and any darkness that runs on past its end.
         let monsters_cap = self.monsters_cap();
-        if animals >= limits.animals_near && monsters >= monsters_cap {
+        let room_of = |of: Budget| match of {
+            Budget::Animal => (animals, limits.animals_near),
+            Budget::Bird => (birds, limits.birds_near),
+            Budget::Monster => (monsters, monsters_cap),
+        };
+        if [Budget::Animal, Budget::Bird, Budget::Monster].into_iter().all(|of| room_of(of).0 >= room_of(of).1) {
             return;
         }
         let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x5ba7);
@@ -957,7 +961,8 @@ impl Server {
                 continue;
             }
             let monster = def.kind == Kind::Monster;
-            if (monster && (monsters >= monsters_cap || !dark)) || (!monster && animals >= limits.animals_near) {
+            let (here, cap) = room_of(budget(def).expect("not a villager"));
+            if here >= cap || (monster && !dark) {
                 continue;
             }
             if def.habitat.caves != underground && !monster {
@@ -975,42 +980,51 @@ impl Server {
                 choices.push((id, weight));
             }
         }
-        // Sometimes nothing: some spots stay empty, so there are gaps between herds.
-        let total: f32 = choices.iter().map(|c| c.1).sum();
-        let nothing = if choices.iter().all(|&(id, _)| self.content.creatures.get(id).def.kind == Kind::Monster) { limits.empty_for_monsters } else { limits.empty_for_animals };
-        let mut pick = unit_from(mix(seed, 2)) * (total + nothing);
-        let Some(&(species, _)) = choices.iter().find(|c| {
-            pick -= c.1;
-            pick <= 0.0
-        }) else {
-            return;
-        };
-        // Groups vary: even herd animals turn up alone or in pairs now and then.
-        let group = self.content.creatures.get(species).def.group.size;
-        let roll = unit_from(mix(seed, 4));
-        let count = if roll < 0.18 {
-            1
-        } else if roll < 0.32 {
-            group.1.min(2)
-        } else {
-            group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
-        };
-        // Never past the cap: a herd arriving near it comes smaller.
-        let monster = self.content.creatures.get(species).def.kind == Kind::Monster;
-        let room = if monster { monsters_cap.saturating_sub(monsters) } else { limits.animals_near.saturating_sub(animals) };
-        let count = count.min(room.max(1).min(wild_room).min(u8::MAX as usize) as u8);
-        for i in 0..count.max(1) {
-            let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
-            let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
-            if (monster && self.lit_near(cell)) || self.seen_by_a_player(cell, limits.spawn_unseen_angle) {
-                continue;
+        // Birds are drawn apart from what walks, with a draw of their own at the same spot, so
+        // they add to the animals about instead of taking their places.
+        let (birds, ground): (Vec<_>, Vec<_>) = choices.into_iter().partition(|&(id, _)| budget(&self.content.creatures.get(id).def) == Some(Budget::Bird));
+        for (choices, seed) in [(ground, seed), (birds, mix(seed, 0xb1d5))] {
+            if self.wild_room() == 0 {
+                break;
             }
-            let position = cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
-            let cap = if monster { monsters_cap } else { limits.animals_near };
-            if !self.nearby_room(position, monster, cap) {
+            // Sometimes nothing: some spots stay empty, so there are gaps between herds.
+            let total: f32 = choices.iter().map(|c| c.1).sum();
+            let nothing = if choices.iter().all(|&(id, _)| self.content.creatures.get(id).def.kind == Kind::Monster) { limits.empty_for_monsters } else { limits.empty_for_animals };
+            let mut pick = unit_from(mix(seed, 2)) * (total + nothing);
+            let Some(&(species, _)) = choices.iter().find(|c| {
+                pick -= c.1;
+                pick <= 0.0
+            }) else {
                 continue;
+            };
+            // Groups vary: even herd animals turn up alone or in pairs now and then.
+            let group = self.content.creatures.get(species).def.group.size;
+            let roll = unit_from(mix(seed, 4));
+            let count = if roll < 0.18 {
+                1
+            } else if roll < 0.32 {
+                group.1.min(2)
+            } else {
+                group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
+            };
+            // Never past the cap: a herd arriving near it comes smaller.
+            let def = &self.content.creatures.get(species).def;
+            let (monster, of) = (def.kind == Kind::Monster, budget(def).expect("not a villager"));
+            let (here, cap) = room_of(of);
+            let room = cap.saturating_sub(here);
+            let count = count.min(room.max(1).min(self.wild_room()).min(u8::MAX as usize) as u8);
+            for i in 0..count.max(1) {
+                let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
+                let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
+                if (monster && self.lit_near(cell)) || self.seen_by_a_player(cell, limits.spawn_unseen_angle) {
+                    continue;
+                }
+                let position = cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+                if !self.nearby_room(position, of, cap) {
+                    continue;
+                }
+                self.spawn_unseen(species, position, seed ^ i as u64, limits.spawn_unseen_angle);
             }
-            self.spawn_unseen(species, position, seed ^ i as u64, limits.spawn_unseen_angle);
         }
     }
 
@@ -1033,12 +1047,14 @@ impl Server {
 
     /// Every joined player's nearby budget applies, including where two players' areas
     /// overlap. Count accepted members again so a group cannot cross either cap.
-    pub(crate) fn nearby_room(&self, at: Vec3, monster: bool, cap: usize) -> bool {
+    pub(crate) fn nearby_room(&self, at: Vec3, of: Budget, cap: usize) -> bool {
         self.players.values().filter(|p| p.joined && p.position.distance(at) < NEAR).all(|player| {
-            self.creatures.live.values().filter(|c| {
-                let kind = self.content.creatures.get(c.species).def.kind;
-                kind != Kind::Villager && c.body.position.distance(player.position) < NEAR && (kind == Kind::Monster) == monster
-            }).count() < cap
+            self.creatures
+                .live
+                .values()
+                .filter(|c| c.body.position.distance(player.position) < NEAR && budget(&self.content.creatures.get(c.species).def) == Some(of))
+                .count()
+                < cap
         })
     }
 
@@ -1210,6 +1226,24 @@ pub(crate) fn product_ticks(minutes: f32, seed: u64, index: usize) -> u64 {
 
 /// How often a rarity spawns against a common species: the multipliers worldgen uses for
 /// plants (`worldgen::rarity`).
+/// The budget near a player a species is counted against (`Limits`): villagers come with
+/// their settlements and count against none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Budget {
+    Animal,
+    Bird,
+    Monster,
+}
+
+pub(crate) fn budget(def: &creature::CreatureDef) -> Option<Budget> {
+    match def.kind {
+        Kind::Villager => None,
+        Kind::Monster => Some(Budget::Monster),
+        _ if def.movement.style == creature::Style::Flier => Some(Budget::Bird),
+        _ => Some(Budget::Animal),
+    }
+}
+
 fn spawn_factor(rarity: Rarity) -> f32 {
     match rarity {
         Rarity::Common => 1.0,
@@ -1513,13 +1547,23 @@ mod density_tests {
         for seed in 0..cap + 1 {
             server.spawn_seeded(farmer, at, seed as u64).expect("room for residents");
         }
-        assert!(server.nearby_room(at, false, cap), "residents must not consume animal room");
+        assert!(server.nearby_room(at, Budget::Animal, cap), "residents must not consume animal room");
         for salt in 0..cap {
-            assert!(server.nearby_room(at, false, cap), "animal room vanished before the cap");
+            assert!(server.nearby_room(at, Budget::Animal, cap), "animal room vanished before the cap");
             server.spawn_creature(sheep, at, salt as u64).expect("room for animals");
         }
-        assert!(!server.nearby_room(at, false, cap), "true animals must still exhaust the nearby budget");
-        assert!(server.nearby_room(at, true, 1), "neither animals nor residents exhaust monster room");
+        assert!(!server.nearby_room(at, Budget::Animal, cap), "true animals must still exhaust the nearby budget");
+        assert!(server.nearby_room(at, Budget::Monster, 1), "neither animals nor residents exhaust monster room");
+        // Birds keep a budget of their own: a full field still has room for a few birds,
+        // and birds never take the animals' places.
+        let birds = server.content.creatures.limits().birds_near;
+        let finch = server.content.creatures.id("base:goldfinch").unwrap();
+        for salt in 0..birds {
+            assert!(server.nearby_room(at, Budget::Bird, birds), "the animals took the birds' room");
+            server.spawn_creature(finch, at, 100 + salt as u64).expect("room for birds");
+        }
+        assert!(!server.nearby_room(at, Budget::Bird, birds), "birds must exhaust their own budget");
+        assert_eq!(budget(&server.content.creatures.get(finch).def), Some(Budget::Bird));
     }
 
     #[test]

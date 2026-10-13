@@ -399,9 +399,14 @@ impl Server {
                     // Food heals, the same food a little less each time in a row.
                     let share = player.recent_food.share(item);
                     player.recent_food.eat(item);
-                    let heal = (blocks.info(item).food as f32 * share).round() as u8;
+                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time).
+                    let (meal_heal, meal_time) = (player.modifiers.meal_heal, player.modifiers.meal_time);
+                    let heal = (blocks.info(item).food as f32 * share * meal_heal).round().min(u8::MAX as f32) as u8;
                     // What it does besides (content's effects.ron): hearty, queasy and so on.
-                    player.give_effects(&effects.given_by(&blocks.def(item).tags));
+                    let mut given = effects.given_by(&blocks.def(item).tags);
+                    // Only good effects last longer: raw meat's queasiness does not.
+                    given.iter_mut().filter(|(effect, _)| effects.get(*effect).kind == voxmar_engine::effect::Kind::Buff).for_each(|(_, seconds)| *seconds *= meal_time);
+                    player.give_effects(&given);
                     if heal > 0 && player.health.alive() {
                         player.health.heal(heal);
                         player.changed(traits::HEALTH);
@@ -416,7 +421,8 @@ impl Server {
 
     /// `agent` sleeps at the bed at `bed`: it is where they wake after dying (their hearth
     /// first, once they have one), and they wake rested, as well as the home around the
-    /// bed allows (effects.ron's `sleeps`). Not again until that rest has worn off.
+    /// bed allows (effects.ron's `sleeps`). A bed always works, as a bed; the rest is held back
+    /// while one is still on them, so the buff cannot be had again until it wears off.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
         let player = self.players.get_mut(&agent).unwrap();
         player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
@@ -432,7 +438,7 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref() };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done };
         let given = effects.given_by_sleep(&situation);
         // The best rest it gives (the one the others are hidden by) is the one it says.
         let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
@@ -496,7 +502,7 @@ impl Server {
         let Some(player) = self.players.get(&agent) else { return false };
         let held = player.held();
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
-        let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block);
+        let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block) + player.modifiers.finds;
         let info = self.content.blocks.info(block);
         let [roll, kick, ..] = crate::items::random3(self.tick, pos, agent ^ 0xd1ce);
         // Never a furnishing's: it gives itself back only where a player placed it.

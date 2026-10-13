@@ -348,6 +348,9 @@ enum Step {
     Guides,
     /// The journal key opens the journal, whose Plants page lists what there is to find.
     Journal,
+    /// A sleeping bag with a torch beside it, slept in, is a camp: the Camp chip comes on, the
+    /// chat says so with what to add next, and the sleep is a rest.
+    Home,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
@@ -467,6 +470,8 @@ struct Gate {
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
+    /// Whether the creatures step could release its butterfly.
+    butterfly: bool,
     /// Whether the struck creature's fall was judged.
     fall_judged: bool,
     /// Whether the loading cover was checked.
@@ -599,6 +604,7 @@ impl Gate {
             weapon_fallen_since: None,
             blows_seen: 0,
             readout_seen: false,
+            butterfly: false,
             fall_judged: false,
             cover_checked: false,
             spills: Vec::new(),
@@ -982,6 +988,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Quests => 60.0,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
+        // The effects are judged once a second by the server, and a rest is a sleep away.
+        Step::Home => 45.0,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -1241,6 +1249,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Look => look_name(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Journal => journal(world, gate, now, in_phase),
+        Step::Home => home(world, gate, now),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -3914,14 +3923,16 @@ fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let named = |world: &World| world.resource::<crate::hud::target::Readout>().clone();
     match gate.phase {
         // On the creatures' pad (clear stone, air above): a plank block close by, once what the
-        // creatures step left there (a grazer or two in the walls) is gone, since a wanderer on
-        // the look ray would take the name.
+        // creatures step left there (a grazer or two in the walls, the bird) is gone, since a
+        // wanderer on the look ray would take the name.
         0 => {
             let net = world.resource::<Net>();
-            for species in ["mouflon", "rabbit", "lumen_snail", "shambler"] {
+            for species in ["mouflon", "rabbit", "lumen_snail", "shambler", "goldfinch"] {
                 net.command(&format!("creatures remove {species}"));
             }
             net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+            // The bird flies about its home on the pad, out of reach of the first remove.
+            net.command("creatures remove goldfinch");
             net.command(&format!("setblock {} {} {} oak_planks", planks.x, planks.y, planks.z));
             net.command("time set noon");
             gate.advance(now);
@@ -4078,7 +4089,76 @@ fn journal(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let found = world.resource::<LocalPlayer>().journal.entries().count();
             gate.check("journal", if open { Ok(format!("J opened the journal ({found} things found so far, {cells} buttons drawn)")) } else { Err("J did not open the journal".into()) });
             world.resource_mut::<UiState>().journal_open = false;
-            gate.next(Step::Quests, now);
+            gate.next(Step::Home, now);
+        }
+    }
+}
+
+/// A sleeping bag and a torch beside the player, slept in: the bed is their home and it has
+/// a light, so the Camp step (docs/home.md) comes on as a chip, the chat names it and what to
+/// add next, and the sleep gives a rest. The blocks go again after, and the rest with them.
+fn home(world: &mut World, gate: &mut Gate, now: f32) {
+    let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let (bag, torch) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0));
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        for at in [bag, torch] {
+            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        }
+        net.command("effect clear");
+        gate.next(Step::Quests, now);
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("effect clear");
+            net.command(&format!("setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z));
+            net.command(&format!("setblock {} {} {} torch", torch.x, torch.y, torch.z));
+            gate.advance(now);
+        }
+        1 => {
+            let placed = {
+                let client = world.resource::<ClientWorld>();
+                match (client.registry.id("base:sleeping_bag"), client.registry.id("base:torch")) {
+                    (Some(b), Some(t)) => Some(client.block(bag) == Some(b) && client.block(torch) == Some(t)),
+                    _ => None,
+                }
+            };
+            match placed {
+                None => {
+                    gate.check("home", Err("no sleeping bag or torch in the content".into()));
+                    leave(world, gate);
+                }
+                Some(true) => {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:sleep"), voxmar_engine::action::ActionTarget::Block { block: bag, face: voxmar_engine::coords::Face::PosY });
+                    gate.advance(now);
+                }
+                Some(false) if waited > 10.0 => {
+                    gate.check("home", Err(format!("the sleeping bag and torch were not on the client {waited:.1} server s after they were placed")));
+                    leave(world, gate);
+                }
+                Some(false) => {}
+            }
+        }
+        _ => {
+            let has = |world: &World, name: &str| {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                launch.content.effects.id(name).is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
+            };
+            let (camp, rested) = (has(world, "base:camp"), has(world, "base:rested"));
+            let (announced, slept) = {
+                let lines: Vec<&str> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).collect();
+                (lines.iter().any(|l| l.contains("Camp:") && l.contains("Next:")), lines.iter().any(|l| l.contains("You sleep soundly")))
+            };
+            if camp && rested && announced && slept {
+                gate.check("home: camp", Ok("a bed and a light slept in showed the Camp chip, the chat named it with its next step, and the sleep was a rest".into()));
+                leave(world, gate);
+            } else if waited > 30.0 {
+                gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, Camp line with Next {announced}, sleep line {slept}")));
+                leave(world, gate);
+            }
         }
     }
 }
@@ -5425,6 +5505,9 @@ const FALL_FRAME_MS: f32 = 150.0;
 const CREATURE: &str = "base:lumen_snail";
 /// What it always drops.
 const CREATURE_DROP: &str = "base:lumen_slime";
+/// A small bird summoned with them, and a butterfly released over the pad.
+const BIRD: &str = "base:goldfinch";
+const BUTTERFLY: &str = "base:cabbage_white";
 
 /// A lumen snail and a few grazers are summoned on open test ground: they must reach the
 /// client and draw, and the snail, struck with left clicks as a player would, must die
@@ -5464,6 +5547,10 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command(&format!("summon mouflon 2 {} {} {}", pad.x - 3, pad.y, pad.z - 4));
             net.command(&format!("summon rabbit 1 {} {} {}", pad.x + 3, pad.y, pad.z - 4));
             net.command(&format!("summon shambler 1 {} {} {}", pad.x + 3, pad.y, pad.z));
+            net.command(&format!("summon {BIRD} 1 {} {} {}", pad.x - 3, pad.y, pad.z));
+            // A butterfly over the pad, in view and out of the player's way.
+            let butterfly = Vec3::new(pad.x as f32 - 1.5, pad.y as f32 + 1.6, pad.z as f32 + 0.5);
+            gate.butterfly = crate::butterflies::release(world, BUTTERFLY, butterfly, 30.0);
             gate.advance(now);
         }
         2 => {
@@ -5493,6 +5580,22 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 world.resource::<Net>().command("creatures remove shambler");
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
+                // A small bird reaches the client like any creature; a butterfly is the client's
+                // own, drawn as two wings.
+                let bird = world.resource::<Launch>().content.creatures.find(BIRD);
+                let birds = world.resource::<crate::creatures::Creatures>().views().filter(|v| Some(v.species) == bird).count();
+                gate.check("birds", if birds > 0 { Ok(format!("a summoned {BIRD} reached the client")) } else { Err(format!("a summoned {BIRD} never reached the client")) });
+                let wings = crate::butterflies::drawn(world);
+                gate.check(
+                    "butterflies",
+                    if !gate.butterfly {
+                        Err(format!("no winged set `{BUTTERFLY}` to release"))
+                    } else if wings >= 2 {
+                        Ok(format!("a released {BUTTERFLY} drawn, {wings} wing quads"))
+                    } else {
+                        Err(format!("a released {BUTTERFLY} drew {wings} wing quads"))
+                    },
+                );
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
                 // The one pointed at shows its level and health over it.
                 let shown = world.query_filtered::<&Visibility, With<crate::hud::levels::LevelLabel>>().iter(world).any(|v| *v != Visibility::Hidden);

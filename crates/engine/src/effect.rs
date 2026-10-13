@@ -60,6 +60,11 @@ pub struct EffectDef {
     /// steps of a ladder they work toward.
     #[serde(default)]
     pub announce: bool,
+    /// The ladder an announced step belongs to; reaching it counts for quests as
+    /// `Built("LADDER_NAME", 1)`, with the effect's name alone after the ladder's. `home`
+    /// unless given.
+    #[serde(default = "home_ladder")]
+    pub ladder: String,
     /// For an announced step, what to do to reach the next, which the chat line says after
     /// what this one does (language key `….next`).
     #[serde(default)]
@@ -70,6 +75,10 @@ pub struct EffectDef {
     /// boosts together stop at +6 (`level::MAX_BOOST`).
     #[serde(default)]
     pub boosts: Vec<(String, i8)>,
+}
+
+fn home_ladder() -> String {
+    "home".to_owned()
 }
 
 /// What an effect changes. Rates are multipliers (1 changes nothing).
@@ -95,11 +104,18 @@ pub struct Modifiers {
     pub xp: f32,
     /// How often a cast line lands something.
     pub fishing: f32,
+    /// How much a meal heals, and how long the effects it gives last.
+    pub meal_heal: f32,
+    pub meal_time: f32,
+    /// What is added to the chance of an extra find when the player breaks a natural block
+    /// (`tools.ron`'s rules): 0.05 is one more time in twenty. It adds to what the tool's
+    /// `yield` and the skill level give.
+    pub finds: f32,
 }
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0 }
     }
 }
 
@@ -119,6 +135,9 @@ impl Modifiers {
             mining: sum.mining * m.mining,
             xp: sum.xp * m.xp,
             fishing: sum.fishing * m.fishing,
+            meal_heal: sum.meal_heal * m.meal_heal,
+            meal_time: sum.meal_time * m.meal_time,
+            finds: sum.finds + m.finds,
         })
     }
 }
@@ -150,23 +169,101 @@ pub enum Condition {
     AtHome,
     /// Under a roof (something solid overhead).
     Indoors,
-    /// At home, with at least this many blocks carrying the tag around it.
+    /// At home, with at least this many blocks carrying the tag around it. Besides block
+    /// tags, `kept` counts the animals the player keeps around the home.
     HomeHas(String, u32),
+    /// Under a roof while the inner condition (the weather) holds out in the open: the
+    /// storm outside, from indoors.
+    Sheltered(Box<Condition>),
+    /// The player has finished this quest (its full name, or its name alone in the package
+    /// that lists the effect): what a quest taught stays with them, as an effect that holds
+    /// from then on.
+    Done(String),
     All(Vec<Condition>),
     Any(Vec<Condition>),
     Not(Box<Condition>),
 }
 
 impl Condition {
+    /// The quests `Done` asks after anywhere in this condition.
+    fn quests<'a>(&'a self, into: &mut Vec<&'a str>) {
+        match self {
+            Condition::Done(quest) => into.push(quest),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.quests(into)),
+            Condition::Not(c) => c.quests(into),
+            _ => {}
+        }
+    }
+
+    /// Names every quest `Done` asks after in full.
+    fn qualify_quests(&mut self, qualify: &impl Fn(&mut String)) {
+        match self {
+            Condition::Done(quest) => qualify(quest),
+            Condition::All(list) | Condition::Any(list) => list.iter_mut().for_each(|c| c.qualify_quests(qualify)),
+            Condition::Not(c) => c.qualify_quests(qualify),
+            _ => {}
+        }
+    }
+
     /// The tags `HomeHas` asks of a home anywhere in this condition.
     fn home_tags<'a>(&'a self, into: &mut Vec<&'a str>) {
         match self {
             Condition::HomeHas(tag, _) => into.push(tag),
             Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.home_tags(into)),
-            Condition::Not(c) => c.home_tags(into),
+            Condition::Not(c) | Condition::Sheltered(c) => c.home_tags(into),
             _ => {}
         }
     }
+}
+
+/// What a home condition still lacks, as `/home` tells it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Lack {
+    /// A roof overhead.
+    Roof,
+    /// Standing at home (the home survey is none).
+    Away,
+    /// Blocks with a tag: how many there are and how many are wanted.
+    Tag { tag: String, have: u32, need: u32 },
+    /// Any one of these will do.
+    OneOf(Vec<Vec<Lack>>),
+}
+
+impl Condition {
+    /// Whether the condition is about a home (`AtHome` or `HomeHas` anywhere in it).
+    fn about_home(&self) -> bool {
+        match self {
+            Condition::AtHome | Condition::HomeHas(..) => true,
+            Condition::All(list) | Condition::Any(list) => list.iter().any(Condition::about_home),
+            Condition::Not(c) => c.about_home(),
+            _ => false,
+        }
+    }
+
+    /// What this lacks at `s`, if it does not hold: only what a home can lack (a roof, the
+    /// tags it wants, being there); the weather and the rest are never asked for.
+    pub fn lacks(&self, s: &Situation) -> Vec<Lack> {
+        if self.holds(s) {
+            return Vec::new();
+        }
+        match self {
+            Condition::AtHome => vec![Lack::Away],
+            Condition::Indoors => vec![Lack::Roof],
+            Condition::HomeHas(tag, need) => vec![Lack::Tag { tag: tag.clone(), have: s.home.map_or(0, |h| h.count(tag)), need: *need }],
+            Condition::All(list) => list.iter().flat_map(|c| c.lacks(s)).collect(),
+            Condition::Any(list) => vec![Lack::OneOf(list.iter().map(|c| c.lacks(s)).collect())],
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// One chain of home steps (a ladder, or a pair of rooms) as `/home` tells it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomeProgress {
+    /// The highest step of the chain the home has.
+    pub reached: Option<EffectId>,
+    /// The next one up and what it lacks, if there is one.
+    pub next: Option<(EffectId, Vec<Lack>)>,
 }
 
 /// What the conditions are checked against: the player's state and the weather where they
@@ -184,6 +281,8 @@ pub struct Situation<'a> {
     pub biome_tags: &'a [String],
     /// What lies around the player's home, if they stand within reach of it.
     pub home: Option<&'a HomeSurvey>,
+    /// The quests the player has finished (full names).
+    pub done: &'a [String],
 }
 
 /// How many blocks with each tag lie around a home: the tags are those effects ask of it
@@ -217,6 +316,8 @@ impl Condition {
             Condition::AtHome => s.home.is_some(),
             Condition::Indoors => !s.outdoors,
             Condition::HomeHas(tag, n) => s.home.is_some_and(|h| h.count(tag) >= *n),
+            Condition::Sheltered(c) => !s.outdoors && c.holds(&Situation { outdoors: true, ..*s }),
+            Condition::Done(quest) => s.done.iter().any(|d| d == quest),
             Condition::All(all) => all.iter().all(|c| c.holds(s)),
             Condition::Any(any) => any.iter().any(|c| c.holds(s)),
             Condition::Not(c) => !c.holds(s),
@@ -276,6 +377,8 @@ pub struct EffectRegistry {
     sleeps: Vec<(EffectId, f32, Option<EffectId>)>,
     /// The tags effects ask of a home, each once.
     home_tags: Vec<String>,
+    /// The quests effects wait on, each once.
+    quests: Vec<String>,
 }
 
 impl EffectRegistry {
@@ -291,6 +394,9 @@ impl EffectRegistry {
         for def in &mut file.effects {
             qualify(&mut def.name);
             def.replaces.iter_mut().for_each(qualify);
+            if let Some(when) = &mut def.when {
+                when.qualify_quests(&qualify);
+            }
             // Skills are all core's.
             for (skill, _) in &mut def.boosts {
                 if !skill.contains(':') {
@@ -367,7 +473,19 @@ impl EffectRegistry {
                 home_tags.push(tag.to_owned());
             }
         }
-        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags })
+        let mut asked: Vec<&str> = Vec::new();
+        for def in &defs {
+            if let Some(when) = &def.when {
+                when.quests(&mut asked);
+            }
+        }
+        let mut quests: Vec<String> = Vec::new();
+        for quest in asked {
+            if !quests.iter().any(|q| q == quest) {
+                quests.push(quest.to_owned());
+            }
+        }
+        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, quests })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -451,9 +569,70 @@ impl EffectRegistry {
         self.replaces[winner.0 as usize].contains(&loser)
     }
 
+    /// Where each chain of home steps stands at `situation`: the announced effects about a
+    /// home, grouped by what replaces what, ordered by how much each replaces (the lowest
+    /// first), a chain's highest step met and the lowest one it has yet to reach with what
+    /// that lacks.
+    pub fn home_progress(&self, situation: &Situation) -> Vec<HomeProgress> {
+        let steps: Vec<EffectId> = self.ids().filter(|&id| self.get(id).announce && self.get(id).ladder == "home" && self.get(id).when.as_ref().is_some_and(Condition::about_home)).collect();
+        // Chains: steps joined by one replacing the other.
+        let mut chain: Vec<usize> = (0..steps.len()).collect();
+        for (i, &a) in steps.iter().enumerate() {
+            for (j, &b) in steps.iter().enumerate() {
+                if self.replaces[a.0 as usize].contains(&b) {
+                    let (from, to) = (chain[j], chain[i]);
+                    chain.iter_mut().filter(|c| **c == from).for_each(|c| *c = to);
+                }
+            }
+        }
+        let mut firsts: Vec<usize> = chain.clone();
+        firsts.sort_unstable();
+        firsts.dedup();
+        firsts
+            .into_iter()
+            .map(|c| {
+                let mut members: Vec<EffectId> = steps.iter().zip(&chain).filter(|(_, k)| **k == c).map(|(&id, _)| id).collect();
+                members.sort_by_key(|id| (self.replaces[id.0 as usize].len(), *id));
+                let holds = |id: EffectId| self.get(id).when.as_ref().is_some_and(|w| w.holds(situation));
+                // The highest step met, and the next one above it: a lower step left unmet
+                // (a hearth lit with no torch by the bed) is behind, not next.
+                let top = members.iter().rposition(|&id| holds(id));
+                let reached = top.map(|i| members[i]);
+                let next = members[top.map_or(0, |i| i + 1)..].iter().copied().find(|&id| !holds(id)).map(|id| (id, self.get(id).when.as_ref().map(|w| w.lacks(situation)).unwrap_or_default()));
+                HomeProgress { reached, next }
+            })
+            .collect()
+    }
+
     /// The tags effects ask of a home (`HomeHas`): what surveying a home counts.
     pub fn home_tags(&self) -> &[String] {
         &self.home_tags
+    }
+
+    /// The announced steps of every ladder, by the names `Built` goals and tallies use:
+    /// the effect's package, then the ladder and the effect's own name (`base:home_snug`).
+    pub fn steps(&self) -> Vec<String> {
+        self.defs
+            .iter()
+            .filter(|def| def.announce)
+            .map(|def| {
+                let (package, own) = def.name.split_once(':').unwrap_or(("", &def.name));
+                format!("{package}:{}_{own}", def.ladder)
+            })
+            .collect()
+    }
+
+    /// The announced step named `name` (as `steps` gives it), if there is one.
+    pub fn step(&self, name: &str) -> Option<&EffectDef> {
+        self.defs.iter().filter(|def| def.announce).find(|def| {
+            let (package, own) = def.name.split_once(':').unwrap_or(("", &def.name));
+            name.strip_prefix(package).and_then(|rest| rest.strip_prefix(':')).and_then(|rest| rest.strip_prefix(def.ladder.as_str())).and_then(|rest| rest.strip_prefix('_')) == Some(own)
+        })
+    }
+
+    /// The quests (full names) some effect waits on, each once: content checks they exist.
+    pub fn quests(&self) -> &[String] {
+        &self.quests
     }
 
     /// Whether the effects a sleep gives are among `active` (the player is rested already).
@@ -495,7 +674,7 @@ mod tests {
     }
 
     fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None }
+        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[] }
     }
 
     #[test]
@@ -553,7 +732,7 @@ mod tests {
     }
 
     const HOME: &str = r#"(effects: [
-        (name: "camp", kind: Buff, title: "Camp", description: "", when: Some(All([AtHome, HomeHas("bed", 1)])), modifiers: (heal: 1.2)),
+        (name: "camp", kind: Buff, title: "Camp", description: "", announce: true, when: Some(All([AtHome, HomeHas("bed", 1)])), modifiers: (heal: 1.2)),
         (name: "snug", kind: Buff, title: "Snug", description: "", announce: true, when: Some(All([AtHome, Indoors, HomeHas("bed", 1), HomeHas("seat", 2)])), replaces: ["camp"], modifiers: (heal: 1.5)),
         (name: "rested", kind: Buff, title: "Rested", description: "", modifiers: (xp: 1.05)),
         (name: "well_rested", kind: Buff, title: "Well rested", description: "", replaces: ["rested"], modifiers: (xp: 1.1)),
@@ -564,6 +743,35 @@ mod tests {
 
     fn home_registry() -> EffectRegistry {
         EffectRegistry::new(vec![EffectRegistry::read("core", HOME).unwrap()]).unwrap()
+    }
+
+    const KNOW_HOW: &str = r#"(effects: [
+        (name: "steady", kind: Buff, title: "Steady", description: "", announce: true, ladder: "knack", when: Some(Done("full_kit")), modifiers: (mining: 1.1)),
+        (name: "practised", kind: Buff, title: "Practised", description: "", when: Some(All([Done("full_kit"), Done("base:copper_kit")])), replaces: ["steady"], modifiers: (mining: 1.2, finds: 0.04)),
+        (name: "mountain_craft", kind: Buff, title: "Mountain craft", description: "", when: Some(All([Done("full_kit"), InBiome("mountain")])), modifiers: (finds: 0.03)),
+    ])"#;
+
+    #[test]
+    fn what_a_quest_taught_stays_as_an_effect_and_combines_with_where_you_are() {
+        let effects = EffectRegistry::new(vec![EffectRegistry::read("core", KNOW_HOW).unwrap()]).unwrap();
+        assert_eq!(effects.quests(), ["core:full_kit", "base:copper_kit"], "each quest once, qualified by the package unless it names one");
+        assert_eq!(effects.steps(), ["core:knack_steady"], "an announced step is named by its ladder, and only an announced one");
+        assert_eq!(effects.step("core:knack_steady").map(|d| d.title.as_str()), Some("Steady"));
+        assert!(effects.step("core:knack_practised").is_none() && effects.step("core:home_steady").is_none() && effects.step("steady").is_none());
+        let calm = Weather::NONE;
+        let away = situation(&calm, false, 15.0, true);
+        let names = |situation: &Situation| effects.active(situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).collect::<Vec<_>>();
+        assert!(names(&away).is_empty(), "nothing is known before the quest");
+        let kit = ["core:full_kit".to_owned()];
+        assert_eq!(names(&Situation { done: &kit, ..away }), ["core:steady"]);
+        let both = ["core:full_kit".to_owned(), "base:copper_kit".to_owned()];
+        assert_eq!(names(&Situation { done: &both, ..away }), ["core:practised"], "the better step hides the milder");
+        let tags = ["mountain".to_owned()];
+        let high = Situation { biome: "base:crags", biome_tags: &tags, done: &kit, ..away };
+        assert_eq!(names(&high), ["core:steady", "core:mountain_craft"], "what was learnt pairs with where it is used");
+        let active = effects.active(&Situation { done: &both, ..high }, &[]);
+        let modifiers = effects.modifiers(&active);
+        assert_eq!((modifiers.mining, modifiers.finds), (1.2, 0.07), "speeds multiply and extra finds add");
     }
 
     fn survey(counts: &[(&str, u32)]) -> HomeSurvey {
@@ -613,5 +821,54 @@ mod tests {
         assert!(read(no_when).contains("no `when`"));
         let zero = r#"(effects: [(name: "x", kind: Buff, title: "X", description: "")], sleeps: [(effect: "x", seconds: 0.0)])"#;
         assert!(read(zero).contains("0 seconds"));
+    }
+
+    #[test]
+    fn a_home_says_what_the_next_step_lacks() {
+        let effects = home_registry();
+        let calm = Weather::NONE;
+        let have = survey(&[("bed", 1), ("seat", 1)]);
+        let outdoors = Situation { home: Some(&have), ..situation(&calm, false, 15.0, true) };
+        let progress = effects.home_progress(&outdoors);
+        // `camp` and `snug` are one chain; nothing else is announced and about a home.
+        assert_eq!(progress.len(), 1);
+        let camp = effects.id("core:camp").unwrap();
+        let snug = effects.id("core:snug").unwrap();
+        assert_eq!(progress[0].reached, Some(camp));
+        assert_eq!(
+            progress[0].next,
+            Some((snug, vec![Lack::Roof, Lack::Tag { tag: "seat".into(), have: 1, need: 2 }])),
+            "a roof and a second seat"
+        );
+        let done = survey(&[("bed", 1), ("seat", 2)]);
+        let indoors = Situation { home: Some(&done), ..situation(&calm, false, 15.0, false) };
+        assert_eq!(effects.home_progress(&indoors)[0], HomeProgress { reached: Some(snug), next: None });
+        let away = effects.home_progress(&situation(&calm, false, 15.0, false));
+        assert_eq!(away[0].reached, None);
+        assert_eq!(away[0].next.as_ref().map(|(id, lacks)| (*id, lacks.first().cloned())), Some((camp, Some(Lack::Away))));
+    }
+
+    #[test]
+    fn a_choice_of_blocks_is_one_lack() {
+        let any = Condition::Any(vec![Condition::HomeHas("hearth".into(), 1), Condition::HomeHas("heat".into(), 1)]);
+        let calm = Weather::NONE;
+        let none = survey(&[]);
+        let s = Situation { home: Some(&none), ..situation(&calm, false, 15.0, true) };
+        assert_eq!(
+            any.lacks(&s),
+            [Lack::OneOf(vec![vec![Lack::Tag { tag: "hearth".into(), have: 0, need: 1 }], vec![Lack::Tag { tag: "heat".into(), have: 0, need: 1 }]])]
+        );
+        let warm = survey(&[("heat", 1)]);
+        assert!(any.lacks(&Situation { home: Some(&warm), ..s }).is_empty());
+    }
+
+    #[test]
+    fn the_weather_outside_counts_from_indoors_only() {
+        let storm = Weather { precipitation: 0.9, ..Weather::NONE };
+        let fair = Weather::NONE;
+        let cond = Condition::Sheltered(Box::new(Condition::Rain(0.3)));
+        assert!(cond.holds(&situation(&storm, false, 15.0, false)), "it rains and they are under a roof");
+        assert!(!cond.holds(&situation(&storm, false, 15.0, true)), "out in it they are not sheltered, they are soaked");
+        assert!(!cond.holds(&situation(&fair, false, 15.0, false)), "a roof in fair weather shelters from nothing");
     }
 }

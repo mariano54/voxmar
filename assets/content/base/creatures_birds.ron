@@ -1,0 +1,175 @@
+// Small wild birds (Mariano, 2026-10-13: "Add butterflies and birds (small) in the
+// environment, depending on climate", and "birds should be killable though, but drop
+// nothing"). Each climate has its own: finches in meadows, thrushes in broadleaf woods,
+// crossbills in the conifers, buntings on the tundra, larks in the desert, parakeets in the
+// jungle, wagtails by fresh water and swallows over open country.
+//
+// They are `Flier`s (docs/creature-ai.md, "Movement styles"): they hop about the ground
+// pecking, take wing to cross their range or when a player comes near, keep `fly` blocks
+// over the land and the treetops in flight, and flutter down to land again. They count
+// against a budget of their own near each player (`birds_near` in creatures.ron), so they
+// never crowd out the animals on the ground. They drop nothing and give no Hunter
+// experience: there is nothing to butcher.
+(
+    creatures: [
+        (
+            // Buff and pale, a red face and a dab of gold on the wings; in small bands over
+            // flowery grassland.
+            name: "goldfinch", level: 1, health: 1,
+            body: (
+                size: (0.22, 0.24),
+                model: Biped(body: (0.15, 0.13, 0.2), head: (0.1, 0.1, 0.1), legs: 0.05, wings: (0.03, 0.18), beak: (0.035, 0.03, 0.045), tail: (0.05, 0.02, 0.1), tilt: 10.0, tail_lift: 8.0),
+                colours: [(186, 150, 96), (236, 226, 202), (226, 206, 170)],
+                skin: (fur: 0.03, belly: 0.5, markings: [Mask(colour: (204, 44, 38)), Spots(colour: (246, 206, 40), size: 0.03, density: 0.35)]),
+            ),
+            movement: (style: Flier, walk: 0.9, run: 7.0, turn: 540.0, jump: 3.5, fly: 5.0),
+            habitat: (
+                biomes: [("tag:flowers", 1.2), ("tag:grassland", 1.0), ("tag:temperate", 0.5), ("tag:open", 0.3)],
+                comfort: (temperature: (4.0, 28.0), moisture: (0.4, 2.0)),
+            ),
+            group: (size: (2, 4)),
+            temperament: (fear: 0.85, nervousness: 0.8, curiosity: 0.3, sociability: 0.85, energy: 0.75),
+            senses: (sight: 12.0, hearing: 16.0),
+            leash: 32.0,
+        ),
+        (
+            // Brown above, cream and spotted below; alone or in pairs in broadleaf woods.
+            name: "song_thrush", level: 1, health: 2,
+            body: (
+                size: (0.24, 0.26),
+                model: Biped(body: (0.17, 0.15, 0.23), head: (0.11, 0.11, 0.11), legs: 0.06, wings: (0.03, 0.2), beak: (0.035, 0.03, 0.05), tail: (0.06, 0.02, 0.12), tilt: 12.0, tail_lift: 6.0),
+                colours: [(124, 94, 62), (234, 216, 178), (84, 70, 56)],
+                skin: (fur: 0.04, belly: 0.55, markings: [Spots(colour: (76, 54, 38), size: 0.022, density: 0.55)]),
+            ),
+            movement: (style: Flier, walk: 1.0, run: 7.5, turn: 480.0, jump: 3.5, fly: 6.0),
+            habitat: (
+                biomes: [("tag:broadleaf", 1.0), ("tag:forest", 0.6), ("tag:temperate", 0.4)],
+                comfort: (temperature: (0.0, 26.0), moisture: (0.6, 2.6)),
+            ),
+            group: (size: (1, 2)),
+            temperament: (fear: 0.8, nervousness: 0.7, curiosity: 0.45, sociability: 0.5, energy: 0.6),
+            senses: (sight: 12.0, hearing: 16.0),
+            leash: 32.0,
+        ),
+        (
+            // Brick red, with the crossed bill it prises seeds from cones with; in bands
+            // through the conifers.
+            name: "crossbill", level: 1, health: 1,
+            body: (
+                size: (0.22, 0.24),
+                model: Biped(body: (0.16, 0.14, 0.2), head: (0.11, 0.1, 0.1), legs: 0.05, wings: (0.03, 0.18), beak: (0.04, 0.04, 0.05), tail: (0.05, 0.02, 0.09), tilt: 10.0, tail_lift: 4.0),
+                colours: [(178, 70, 52), (196, 108, 82), (70, 58, 50)],
+                skin: (fur: 0.04, belly: 0.35, markings: [Saddle(colour: (92, 62, 54))]),
+            ),
+            genes: [(name: "plumage", kind: Alleles([(name: "red", frequency: 3.0), (name: "olive", frequency: 2.0, effects: [Colour(0, (126, 132, 66)), Colour(1, (158, 160, 96))])]))],
+            movement: (style: Flier, walk: 0.9, run: 7.0, turn: 540.0, jump: 3.5, fly: 6.0),
+            habitat: (
+                biomes: [("tag:conifer", 1.0), ("tag:cool", 0.5), ("tag:forest", 0.2)],
+                comfort: (temperature: (-15.0, 20.0), moisture: (0.4, 2.4)),
+            ),
+            group: (size: (2, 4)),
+            temperament: (fear: 0.75, nervousness: 0.7, curiosity: 0.4, sociability: 0.9, energy: 0.7),
+            senses: (sight: 12.0, hearing: 16.0),
+            leash: 32.0,
+        ),
+        (
+            // White as the snow, black across the back; in flocks on the tundra and the
+            // frozen heights.
+            name: "snow_bunting", level: 1, health: 1,
+            body: (
+                size: (0.22, 0.24),
+                model: Biped(body: (0.16, 0.14, 0.21), head: (0.1, 0.1, 0.1), legs: 0.05, wings: (0.03, 0.19), beak: (0.03, 0.03, 0.04), tail: (0.05, 0.02, 0.09), tilt: 8.0, tail_lift: 6.0),
+                colours: [(238, 236, 230), (246, 244, 240), (196, 160, 70)],
+                skin: (fur: 0.03, belly: 0.4, markings: [Saddle(colour: (44, 40, 38))]),
+            ),
+            movement: (style: Flier, walk: 1.0, run: 7.0, turn: 540.0, jump: 3.5, fly: 4.0),
+            habitat: (
+                biomes: [("tag:tundra", 1.0), ("tag:frozen", 0.8), ("tag:cold", 0.7), ("tag:alpine", 0.6)],
+                comfort: (temperature: (-30.0, 8.0), moisture: (0.1, 2.4)),
+            ),
+            group: (size: (2, 4)),
+            temperament: (fear: 0.7, nervousness: 0.6, curiosity: 0.35, sociability: 0.95, energy: 0.7),
+            senses: (sight: 14.0, hearing: 16.0),
+            leash: 32.0,
+        ),
+        (
+            // Sandy and crested, hard to see on the sand until it flies.
+            name: "desert_lark", level: 1, health: 1,
+            body: (
+                size: (0.22, 0.26),
+                model: Biped(body: (0.16, 0.14, 0.21), head: (0.1, 0.1, 0.1), legs: 0.06, wings: (0.03, 0.19), beak: (0.03, 0.03, 0.05), tail: (0.05, 0.02, 0.09), tilt: 8.0, tail_lift: 4.0, crest: (0.02, 0.04, 0.05)),
+                colours: [(206, 176, 128), (232, 214, 176), (120, 98, 76)],
+                skin: (fur: 0.05, belly: 0.4, markings: [Mask(colour: (156, 126, 92))]),
+            ),
+            movement: (style: Flier, walk: 1.2, run: 7.5, turn: 480.0, jump: 3.5, fly: 5.0),
+            habitat: (
+                biomes: [("tag:desert", 1.0), ("tag:mesa", 0.6), ("tag:dry", 0.6), ("tag:savanna", 0.4)],
+                comfort: (temperature: (14.0, 46.0), moisture: (0.0, 0.8)),
+                active: Crepuscular,
+            ),
+            group: (size: (1, 3)),
+            temperament: (fear: 0.75, nervousness: 0.6, curiosity: 0.4, sociability: 0.6, energy: 0.6),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 32.0,
+        ),
+        (
+            // Green, long tailed and loud, with a red bill; in noisy bands through the jungle.
+            name: "parakeet", level: 1, health: 2,
+            body: (
+                size: (0.24, 0.28),
+                model: Biped(body: (0.16, 0.15, 0.21), head: (0.11, 0.11, 0.11), legs: 0.05, wings: (0.03, 0.2), beak: (0.05, 0.05, 0.04), tail: (0.05, 0.02, 0.22), tilt: 20.0, tail_lift: -10.0),
+                colours: [(88, 186, 70), (168, 218, 92), (214, 58, 40)],
+                skin: (iris: (240, 220, 140), fur: 0.03, belly: 0.4, markings: [Collar(colour: (34, 34, 36), width: 0.015)]),
+            ),
+            movement: (style: Flier, walk: 0.8, run: 8.0, turn: 540.0, jump: 3.5, fly: 7.0),
+            habitat: (
+                biomes: [("tag:jungle", 1.0), ("tag:tropical", 1.0), ("tag:lush", 0.5), ("tag:savanna", 0.3)],
+                comfort: (temperature: (19.0, 40.0), moisture: (0.9, 3.0)),
+            ),
+            group: (size: (3, 4)),
+            temperament: (fear: 0.7, nervousness: 0.6, curiosity: 0.6, sociability: 0.95, energy: 0.85),
+            senses: (sight: 14.0, hearing: 16.0),
+            leash: 36.0,
+        ),
+        (
+            // Grey and white with a black bib, the long tail always wagging; along rivers,
+            // lakes and marsh.
+            name: "wagtail", level: 1, health: 1,
+            body: (
+                size: (0.22, 0.24),
+                model: Biped(body: (0.14, 0.13, 0.2), head: (0.1, 0.1, 0.1), legs: 0.06, wings: (0.03, 0.17), beak: (0.03, 0.025, 0.05), tail: (0.04, 0.02, 0.18), tilt: 4.0, tail_lift: 10.0),
+                colours: [(134, 138, 144), (242, 242, 238), (40, 40, 42)],
+                skin: (fur: 0.03, belly: 0.5, markings: [Collar(colour: (36, 36, 38), width: 0.04), Mask(colour: (238, 238, 234))]),
+            ),
+            movement: (style: Flier, walk: 1.3, run: 7.0, turn: 540.0, jump: 3.5, fly: 4.0),
+            habitat: (
+                biomes: [("tag:wetland", 1.0), ("tag:river", 1.0), ("tag:fresh_water", 1.0), ("tag:water", 0.5)],
+                comfort: (temperature: (-2.0, 30.0), moisture: (0.8, 3.0)),
+            ),
+            group: (size: (1, 2)),
+            temperament: (fear: 0.7, nervousness: 0.7, curiosity: 0.5, sociability: 0.5, energy: 0.9),
+            senses: (sight: 12.0, hearing: 16.0),
+            leash: 32.0,
+        ),
+        (
+            // Glossy blue-black with a red face; more in the air than on the ground, high
+            // over open country.
+            name: "swallow", level: 1, health: 1,
+            body: (
+                size: (0.22, 0.22),
+                model: Biped(body: (0.14, 0.12, 0.21), head: (0.1, 0.09, 0.1), legs: 0.03, wings: (0.03, 0.24), beak: (0.03, 0.02, 0.03), tail: (0.06, 0.015, 0.16), tilt: 4.0, tail_lift: 4.0),
+                colours: [(38, 50, 98), (238, 226, 210), (36, 34, 34)],
+                skin: (fur: 0.02, belly: 0.45, markings: [Mask(colour: (186, 66, 46))]),
+            ),
+            movement: (style: Flier, walk: 0.6, run: 9.0, turn: 600.0, jump: 3.0, fly: 9.0),
+            habitat: (
+                biomes: [("tag:grassland", 0.8), ("tag:open", 0.6), ("tag:wetland", 0.6), ("tag:temperate", 0.4)],
+                comfort: (temperature: (8.0, 32.0), moisture: (0.4, 2.5)),
+            ),
+            group: (size: (2, 4)),
+            temperament: (fear: 0.6, nervousness: 0.5, curiosity: 0.3, sociability: 0.8, energy: 1.0),
+            senses: (sight: 16.0, hearing: 16.0),
+            leash: 40.0,
+        ),
+    ],
+)

@@ -1563,18 +1563,28 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(0).is_some_and(|s| s.item == c.content.blocks.expect("base:fishing_rod")));
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
+    let miss = client.content.english.render(&voxmar_engine::lang::Words::key("fishing.nothing"), &client.content.blocks);
+    let nothing = |c: &Client| c.chat.iter().any(|(_, text)| *text == miss);
     // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
-    // A cast takes five seconds of the clock (`actions.ron`), and a busy machine takes longer
-    // to bring the catch: waiting just past five seconds cancelled every cast with the next
-    // one (a miss streak of six, on 5.6 s a cast, in one run in a dozen), so each is waited out
-    // with room to spare, the wait ending at the catch.
+    // A cast takes five seconds of the clock (`actions.ron`), judged by when the player's
+    // messages arrive: each is proposed as if clicked at `at`, and a command stamped just
+    // past its time is handled after the cast is done, so the casts follow one another
+    // exactly, however busy the machine, without waiting the seconds out. Each ends in a
+    // fish or nothing before the next.
+    let mut at = Instant::now();
     for _ in 0..6 {
-        client.propose("base:fish", ActionTarget::Block { block: water, face: Face::PosY });
-        let up = Instant::now() + Duration::from_secs(15);
-        client.pump_until(|c| fish(c) || Instant::now() > up);
+        client.chat.clear();
+        client.propose_at("base:fish", ActionTarget::Block { block: water, face: Face::PosY }, at);
+        at += Duration::from_millis(5100);
+        client.connection.send_at(ClientMessage::Command { line: "/time".into() }, at);
+        client.pump_until(|c| fish(c) || nothing(c) || !c.refused.is_empty());
+        assert!(client.refused.is_empty(), "a cast was refused: {:?}", client.refused);
         if fish(&client) {
             break;
         }
+        // The catch is rolled by the tick it lands on: the next cast lands on another.
+        client.after_server_ticks(1);
+        at += Duration::from_millis(100);
     }
     assert!(fish(&client), "six casts at Fishing 80 caught nothing");
     client.pump_until(|c| !c.earned.is_empty());
@@ -2092,6 +2102,58 @@ fn a_quest_is_done_at_the_next_check_once_its_goal_holds_and_rewards_once() {
     std::fs::remove_dir_all(&assets).unwrap();
 }
 
+/// What a quest taught stays as an effect (`Done` in an effect's `when`): it is not there
+/// before the quest, it comes on at the check that finishes it with its say in chat, it
+/// changes the player's modifiers, and as an announced step of a ladder it counts for a
+/// quest that asks for the step (`Built("knack_trick", 1)`).
+#[test]
+fn a_finished_quest_teaches_an_effect_that_changes_modifiers_and_counts_as_a_step() {
+    let quests = r#"(quests: [
+    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("stick", 3)]], rewards: []),
+    (name: "tricky", age: "nomad", branch: "main", title: "Tricky", why: "", tasks: [[Built("knack_trick", 1)]], after: ["sticks"], rewards: [Xp("crafting", 50.0)]),
+])"#;
+    let effects = r#"(effects: [
+    (name: "trick", kind: Buff, title: "Trick", description: "A trick of the hand.", announce: true, ladder: "knack", when: Some(Done("sticks")), modifiers: (mining: 1.5, finds: 0.25)),
+])"#;
+    let (assets, content) = with_mod("quests-know-how", &[("quests.ron", quests), ("effects.ron", effects)]);
+    let mut client = join_content(content);
+    let known = |c: &Client| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == "zz_test:trick");
+    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
+    client.pump_until(|c| !c.quests.is_empty());
+    client.ok("/clear");
+    client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
+    assert!(!known(&client) && !done(&client, "zz_test:tricky"), "nothing is known before the quest");
+    assert_eq!(client.content.effects.modifiers(&client.vitals.effects).finds, 0.0);
+    client.chat.clear();
+    client.ok("/give stick 3");
+    client.pump_until(|c| done(c, "zz_test:sticks") && known(c) && c.chat.iter().any(|(_, t)| t.contains("Trick")));
+    let modifiers = client.content.effects.modifiers(&client.vitals.effects);
+    assert_eq!((modifiers.mining, modifiers.finds), (1.5, 0.25));
+    // Reaching the step counts for the quest that asks for it.
+    client.pump_until(|c| done(c, "zz_test:tricky"));
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// An effect's `finds` adds to the chance of an extra piece from a natural block: at 1 the
+/// extra always comes, so breaking one clay bank gives two clay.
+#[test]
+fn an_effect_that_adds_finds_turns_up_an_extra_piece_from_natural_ground() {
+    let effects = r#"(effects: [(name: "lucky", kind: Buff, title: "Lucky", description: "", when: Some(Not(InBiome("zz_nowhere"))), modifiers: (finds: 1.0))])"#;
+    let (assets, content) = with_mod("effects-finds", &[("effects.ron", effects)]);
+    let mut client = join_content(content);
+    let feet = client.position.floor().as_ivec3();
+    let bank = feet + IVec3::new(2, 0, 0);
+    client.ok("/clear");
+    client.ok(&format!("/setblock {} {} {} clay", bank.x, bank.y, bank.z));
+    client.pump_until(|c| c.world.block(bank) == c.content.blocks.id("base:clay") && c.content.effects.modifiers(&c.vitals.effects).finds == 1.0);
+    client.propose("core:mine", ActionTarget::Block { block: bank, face: Face::NegX });
+    client.pump_until(|c| holding(c, "base:clay") + loose(c, "base:clay") >= 2);
+    assert_eq!(holding(&client, "base:clay") + loose(&client, "base:clay"), 2, "the clay and one more");
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
 /// A level goal holds from that level, not a level before, and its experience comes once.
 #[test]
 fn a_level_quest_waits_for_the_level_and_grants_its_experience() {
@@ -2278,10 +2340,13 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
     client.pump_until(|c| has(c, "base:camp") && has(c, "base:rested") && told(c, "Camp:") && told(c, "You sleep soundly"));
+    // The quests that ask for the steps see them (the whole of Make Camp's task holds; whether it is done waits on its earlier quests).
+    client.pump_until(|c| quest_status(c, "make_camp").1);
+    assert!(!quest_status(&client, "snug_for_winter").1, "a camp is not yet snug");
     // Rested, they are not tired again until it wears off.
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
-    client.pump_until(|c| told(c, "not tired"));
+    client.pump_until(|c| told(c, "rested already"));
     assert!(!has(&client, "base:well_rested"));
     // Light a hearth with a chimney (a lit one is home), a second light and a roof: snug.
     let core = feet + IVec3::new(4, 0, 0);
@@ -2294,6 +2359,7 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     }
     client.chat.clear();
     client.pump_until(|c| has(c, "base:snug") && told(c, "Snug:"));
+    client.pump_until(|c| quest_status(c, "snug_for_winter").1);
     // Another night, now in a snug home, rests them better.
     client.ok("/effect clear");
     client.pump_until(|c| !has(c, "base:rested"));
@@ -2304,6 +2370,135 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     // Out of reach of home, none of it holds.
     client.tp(feet.as_vec3() + Vec3::new(30.5, 0.0, 0.5));
     client.pump_until(|c| !has(c, "base:snug") && has(c, "base:well_rested"));
+}
+
+#[test]
+fn a_larder_makes_more_of_a_meal() {
+    real_time("eating takes its time on the clock (stamps of arrival)");
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    // Hurt by a fall first (food is eaten to heal), from air cleared high enough.
+    client.ok(&format!("/fill {} {} {} {} {} {} air", feet.x - 2, feet.y + 1, feet.z - 3, feet.x + 9, feet.y + 14, feet.z + 3));
+    client.pump_until(|c| c.world.block(feet + IVec3::Y * 12) == Some(BlockId::AIR));
+    fall_from_open_sky(&mut client);
+    let at = |dx: i32| feet + IVec3::new(dx, 0, 0);
+    let chip = |c: &Client, name: &str| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == name).copied();
+    // A bed to be home, a hearth to cook by (its tag is all a home asks), four crates, a
+    // cauldron and a table, under a roof: a larder.
+    let mut lines = vec![format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 9, feet.y + 4, feet.z + 3)];
+    for (dx, block) in [(2, "sleeping_bag"), (3, "hearthstone"), (4, "crate"), (5, "crate"), (6, "crate"), (7, "crate"), (8, "cauldron"), (9, "oak_table")] {
+        lines.push(format!("/setblock {} {} {} {block}", at(dx).x, at(dx).y, at(dx).z));
+    }
+    for line in lines {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(at(9)) == c.content.blocks.id("base:oak_table"));
+    client.propose("base:sleep", ActionTarget::Block { block: at(2), face: Face::PosY });
+    client.pump_until(|c| chip(c, "base:larder").is_some());
+    // Bread gives Sustained for ten minutes; at a larder, for fifteen.
+    for line in ["/clear", "/give bread 1", "/effect clear"] {
+        client.ok(line);
+    }
+    let bread = client.content.blocks.expect("base:bread");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == bread));
+    client.propose_at("core:eat", ActionTarget::None, Instant::now());
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    client.pump_until(|c| chip(c, "base:sustained").is_some());
+    let left = chip(&client, "base:sustained").and_then(|a| a.seconds_left).unwrap();
+    assert!(left > 800, "bread at a larder lasts 900 s, not {left}");
+    // Away from home it is the plain ten minutes.
+    client.ok("/effect clear");
+    client.ok("/give bread 1");
+    client.tp(feet.as_vec3() + Vec3::new(30.5, 0.0, 0.5));
+    client.pump_until(|c| chip(c, "base:larder").is_none());
+    client.propose_at("core:eat", ActionTarget::None, Instant::now());
+    client.after_server_ticks(TICKS_PER_SECOND as u64);
+    client.pump_until(|c| chip(c, "base:sustained").is_some());
+    let left = chip(&client, "base:sustained").and_then(|a| a.seconds_left).unwrap();
+    assert!(left <= 600, "bread away from home lasts 600 s, not {left}");
+}
+
+#[test]
+fn a_home_answers_the_weather_the_animals_and_the_garden_around_it() {
+    real_time("kept animals wander at the game's own pace, or they leave the house before they are counted");
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let at = |dx: i32, dz: i32| feet + IVec3::new(dx, 0, dz);
+    // A bag, a hearth and a roof: a snug home to react from.
+    let mut lines = vec![format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 6, feet.y + 4, feet.z + 3)];
+    for (dx, block) in [(2, "sleeping_bag"), (3, "hearthstone")] {
+        lines.push(format!("/setblock {} {} {} {block}", at(dx, 0).x, at(dx, 0).y, at(dx, 0).z));
+    }
+    for line in lines {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(at(3, 0)) == c.content.blocks.id("base:hearthstone"));
+    client.propose("base:sleep", ActionTarget::Block { block: at(2, 0), face: Face::PosY });
+    client.pump_until(|c| has(c, "base:camp") || has(c, "base:hearthside"));
+    // Fair weather, no animals, no crops: none of the reactions.
+    for name in ["base:sheltered", "base:company", "base:full_house", "base:kitchen_garden"] {
+        assert!(!has(&client, name), "{name} before anything is around");
+    }
+    // A storm outside and a fire inside: sheltered; out from under the roof it is just a storm.
+    client.ok("/weather storm max 600");
+    client.pump_until(|c| has(c, "base:sheltered"));
+    client.tp(feet.as_vec3() + Vec3::new(0.5, 0.0, 6.5));
+    client.pump_until(|c| !has(c, "base:sheltered"));
+    client.tp(feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+    client.pump_until(|c| has(c, "base:sheltered"));
+    client.ok("/weather clear");
+    client.pump_until(|c| !has(c, "base:sheltered"));
+    // One kept animal about the house is company; four, a full house that hides it.
+    client.ok("/summon rabbit 1 ~4 ~ ~1");
+    client.ok("/creatures tame rabbit");
+    client.pump_until(|c| has(c, "base:company"));
+    client.ok("/summon rabbit 3 ~4 ~ ~-1");
+    client.ok("/creatures tame rabbit");
+    client.pump_until(|c| has(c, "base:full_house"));
+    assert!(!has(&client, "base:company"), "a full house hides company");
+    // Out of reach of home, the animals are not at home with them.
+    client.tp(feet.as_vec3() + Vec3::new(40.5, 0.0, 0.5));
+    client.pump_until(|c| !has(c, "base:full_house"));
+    client.tp(feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+    // Four crops by the door are a kitchen garden.
+    let mut lines = vec![format!("/fill {} {} {} {} {} {} farmland", feet.x - 1, feet.y - 1, feet.z + 2, feet.x + 2, feet.y - 1, feet.z + 2)];
+    for dx in -1..=2 {
+        lines.push(format!("/setblock {} {} {} wheat_crop", feet.x + dx, feet.y, feet.z + 2));
+    }
+    for line in lines {
+        client.ok(&line);
+    }
+    client.pump_until(|c| has(c, "base:kitchen_garden"));
+}
+
+#[test]
+fn home_says_where_home_is_and_what_the_next_step_needs() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    // No bed, no hearth: no home.
+    let lines = client.command("/home");
+    assert!(lines.iter().any(|(kind, text)| *kind != ChatKind::Info && text.contains("no home yet")), "{lines:?}");
+    // A bag and a torch, slept in, are a camp; the hint names the hearth as the next step.
+    let bag = feet + IVec3::new(2, 0, 0);
+    for line in [format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z), format!("/setblock {} {} {} torch", feet.x + 3, feet.y, feet.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(feet + IVec3::new(3, 0, 0)) == c.content.blocks.id("base:torch"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    // Wait out the sleep's own lines and the step's announcement before asking.
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Camp:")));
+    let said = client.ok("/home");
+    assert!(said.contains(&format!("Your home is at {}, {}, {}", bag.x, bag.y + 1, bag.z)), "{said}");
+    assert!(said.contains("Camp reached. Next, Hearthside: it needs hearth 0/1"), "{said}");
+    // A hearthstone lights it: the ladder moves on and the next step names a roof and the rest.
+    let hearth = feet + IVec3::new(4, 0, 0);
+    client.ok(&format!("/setblock {} {} {} hearthstone", hearth.x, hearth.y, hearth.z));
+    client.pump_until(|c| c.world.block(hearth) == c.content.blocks.id("base:hearthstone"));
+    client.chat.clear();
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Hearthside:")));
+    let said = client.ok("/home");
+    assert!(said.contains("Hearthside reached. Next, Snug: it needs a roof overhead, light 1/2"), "{said}");
 }
 
 #[test]
