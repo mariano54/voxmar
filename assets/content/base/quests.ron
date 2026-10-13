@@ -857,6 +857,48 @@
             after: ["homestead_hearth"],
             rewards: [Xp("farming", 100.0), Item("seed_mix", 4)],
         ),
+        (
+            name: "the_keepers_word", age: "farm", branch: "hunter", title: "The Keepers' Word",
+            why: "A poacher stalks deer in the woods at dusk: be there when he takes one and he cuts you a share, or face him with a weapon in hand (Attack 10) and he leaves. Gamekeepers follow on his trail and say which way he went, and on a later day, once you can fight, his gang may lie in wait for you. Deal with all three.",
+            tasks: [[Met("poacher", 1), Met("gamekeepers", 1), Met("poachers_gang", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("hunter", 200.0), Xp("attack", 100.0)],
+        ),
+        (
+            name: "catch_up_the_shrine", age: "farm", branch: "prayer", title: "Catch Up the Shrine",
+            why: "Pilgrims who fell behind the shrine bearer walk the roads after it, asking which way it went. They point you after it too, and a loaf from you buys their prayers. Meet the shrine bearer and the stragglers both.",
+            tasks: [[Met("shrine_bearer", 1), Met("stragglers", 1)]],
+            after: ["filled_again"],
+            rewards: [Xp("magic", 120.0)],
+        ),
+        (
+            name: "wedding_to_christening", age: "farm", branch: "explore", title: "From Wedding to Christening",
+            why: "A wedding party walks the open country behind a priest: a flower for the bride, and they share bread and good cheer. Some days later the same folk may pass again with a child to be christened. Bring a loaf for the feast, and the priest's blessing restores your prayer. Meet both.",
+            tasks: [[Met("wedding", 1), Met("christening", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("magic", 60.0), Xp("cooking", 60.0)],
+        ),
+        (
+            name: "those_taken_in", age: "farm", branch: "home", title: "Those Taken In",
+            why: "Refugees roam near homes, hungry. Food in your hand and they follow you home, where they thank you with seed. Days later their kin come looking for them and camp near your home to thank you too. Take them in, then meet their kin.",
+            tasks: [[Met("refugees", 1), Met("refugee_kin", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("farming", 100.0), Xp("construction", 100.0)],
+        ),
+        (
+            name: "first_metal", age: "farm", branch: "mining", title: "First Metal",
+            why: "Before you have a Crucible Kiln, a smith and a helper may camp in the woods with a bloomery. Hand them two copper ore and they smelt it to ingots for you; a beginner at Engineering learns to work the bellows. Deal with them, and mine four copper ore of your own.",
+            tasks: [[Met("bloomery_smelters", 1), Mine("copper_ore", 4)]],
+            after: ["charcoal"],
+            rewards: [Xp("engineering", 120.0), Item("charcoal", 4)],
+        ),
+        (
+            name: "a_hen_of_your_own", age: "farm", branch: "husbandry", title: "A Hen of Your Own",
+            why: "A henwife drifts over the grassland with her hens. Once you have a home and Farming 3, six wheat seeds buy a hen she hands to you; four feathers buy two eggs. Keep the hen near your home, as company there.",
+            tasks: [[Met("henwife", 1), Built("home_company", 1)], [Met("henwife", 1), Built("home_full_house", 1)]],
+            after: ["first_harvest"],
+            rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
+        ),
     ],
     // A new player's book opens with these pinned (a book with nothing done or pinned), so
     // the first thing on screen is what to do.
