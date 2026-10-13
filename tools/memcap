@@ -15,8 +15,9 @@
 #   pauses, until it goes. Once his game (voxmar not as a capture or gate, or Minecraft)
 #   has been seen, memcap removes the flag a minute after that game exits, so the work
 #   waiting starts at once; until it is seen, the flag holds two hours after it was written.
-# - Runs everything at background priority (on a Mac, background QoS: the efficiency
-#   cores only), so it never takes a core from his game; timing runs excepted.
+# - Runs everything a step below his game (on a Mac, utility QoS: the performance cores he
+#   leaves free too; VOXMAR_QOS=background for the efficiency cores only), so it never
+#   takes a core from his game; timing runs excepted.
 # - Runs everything muted (VOXMAR_MUTE=1): no run of ours ever plays a sound; and with a
 #   configuration directory of its own (VOXMAR_CONFIG) unless one is given, so no run of
 #   ours ever writes Mariano's settings or worlds.
@@ -136,17 +137,17 @@ while [[ -z $lock ]]; do
   fi
 done
 
-# Everything runs at background priority, so it can never take a core from Mariano's game
-# or a timing run: on a Mac, clamped to background QoS, which keeps it to the efficiency
-# cores (6 of the 18 are performance cores, and our builds on them gave his game 25-35 ms
-# frames); elsewhere at the lowest CPU priority. Timing runs (VOXMAR_TIMING=1, or
-# VOXMAR_FOREGROUND=1 for a benchmark's timed runs outside a quiet window) run as his game does.
-# VOXMAR_QOS=utility runs a job a step higher (the gate's own build and tests): it may use a
-# performance core his game leaves free, still below his game, and PLAYING pauses it anyway.
-# On the efficiency cores alone a landing's build took 25 minutes.
+# Everything runs a step below Mariano's game, so it can never take a core from it or from a
+# timing run: on a Mac, clamped to utility QoS, which may use the performance cores his game
+# leaves free (and PLAYING pauses it anyway); elsewhere nice 10. Timing runs
+# (VOXMAR_TIMING=1, or VOXMAR_FOREGROUND=1 for a benchmark's timed runs outside a quiet
+# window) run as his game does. VOXMAR_QOS=background keeps a job to the efficiency cores
+# (6 of the 18 are performance cores; nice 19 elsewhere): on those alone a landing's build took
+# 25 minutes, and the clamp bought nothing while he is not playing, since PLAYING stops
+# every job and he sets it only when he plays. It is the default no longer.
 background=()
-qos=${VOXMAR_QOS:-background}
-[[ $qos == utility ]] || qos=background
+qos=${VOXMAR_QOS:-utility}
+[[ $qos == background ]] || qos=utility
 if [[ -z $VOXMAR_TIMING && -z $VOXMAR_FOREGROUND ]]; then
   if [[ $(uname -s) == Darwin ]] && command -v taskpolicy >/dev/null; then
     background=(taskpolicy -c "$qos")

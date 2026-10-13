@@ -20,11 +20,14 @@
     // the beat. Each shows `seconds`, rising `rise` meanwhile, whole for the first `fade`
     // of its time and then fading; those on one creature stack upward, newest lowest, `gap`
     // apart, at most `most` (the oldest goes early); the player's own stand `hurt_above`
-    // over the bottom of the hotbar (which Raise HUD lifts).
+    // over the bottom of the hotbar (which Raise HUD lifts). The mark of a killing blow also
+    // stays for `fallen_seconds` of continuous view over its target's fallen body, and waits
+    // up to `fallen_wait` from the blow for that fall to be drawn (a death or a layout that
+    // reaches the client late, on a busy machine, must not cost it its hold).
     // `scale` is screen pixels a font pixel, 2 to 6: 4 unless given. Every splat's words are
     // ringed by two dark font pixels (set in the code, not here) so they read over fur and grass.
     splats: (
-        seconds: 0.9, fallen_seconds: 0.25, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 63,
+        seconds: 0.9, fallen_seconds: 0.25, fallen_wait: 1.5, rise: 14, fade: 0.5, gap: 1, most: 6, hurt_above: 63,
         // The player's blows, by kind.
         blows: {
             "plain": (color: (255, 90, 74)),

@@ -17,6 +17,28 @@ Each slipped between checks that tested one side at a time, in quiet conditions.
 answer is one gate that every landing passes, which plays the real game, client and
 server together, as he does, under load, and judges it by what reaches the screen.
 
+## The landing bar (Mariano, 2026-10-13)
+
+Speed is a feature: a landing that takes hours costs more than the bugs its ceremony
+catches. The bar is:
+
+- **A green `tools/gate` is the landing bar.** `tools/land` runs it on the merged tip, and a
+  change that passes it lands. No evidence bundles, no mutation proofs, no hash-pinned
+  status files, no separate review chat per phase, no lock queue in front of `tools/land`
+  (the gate's own one-at-a-time rules in this file are enough).
+- **One review pass, by one Sonnet session, only for a change that touches the server
+  tick, saves, the network protocol or balance numbers** (anything that can corrupt a
+  world, desync two players or move the economy). It reads the diff and the tests and
+  answers GO or a list of blockers; findings are fixed on the branch, and the gate runs
+  again. Every other change lands on the gate alone.
+- A visible change adds a gate step (see below), not a screenshot bundle: the step is the
+  evidence, and it runs at every landing from then on.
+- **A failing check is never a flake.** A check that failed once and passed on a retry has
+  a race; the fix is a wait on server ticks or a state, never a retry loop or a wider bar.
+- A cloud thread pushes its branch and opens a draft PR; the Mac landing thread lands it
+  after the gate. A cloud thread can run `tools/gate` itself, on software Vulkan (below),
+  to hand over a branch that is already green.
+
 ## The gates: `tools/gate`
 
 Two gates share one script. Forced checks must be quick, or they slow every thread down,
