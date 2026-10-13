@@ -907,6 +907,7 @@
     "net.rejected.name_taken": "{name} はすでにこのサーバーで遊んでいます",
     "net.rejected.full": "サーバーが満員です",
     "net.rejected.save": "セーブされたプレイヤーを読み込めず、退避もできませんでした",
+    "net.rejected.joined_again": "同じアドレスから再び参加されたため、この接続を閉じました",
     "save.player_set_aside": "セーブされたプレイヤーを読み込めなかったため、最初から始めます。古いファイルは {file} としてサーバー管理者のために残してあります。",
     "world.generation_changed": "このワールドの地形データは、前回土地が作られたときから変わっています。これから探索する土地は、以前に探索した土地とうまくつながらないことがあります。",
     "language.list_separator": "、",

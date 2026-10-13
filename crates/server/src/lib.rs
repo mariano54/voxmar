@@ -47,7 +47,7 @@ use voxmar_engine::field::Field;
 use voxmar_engine::fluid::Fluids;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::{Column, VoxelWorld};
-use voxmar_protocol::{PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
+use voxmar_protocol::{KEEPALIVE, PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
 use voxmar_worldgen::{Generator, Overworld, WorldContent};
 
 use crate::actions::Executor;
@@ -115,11 +115,15 @@ pub struct Limits {
     /// How many leading bits of an IPv6 address the limits per address count by: one
     /// host usually holds a whole /64, so each of its addresses is not another player.
     pub ipv6_prefix: u8,
+    /// Seconds a joined player's connection must have been silent (not even a keepalive)
+    /// before the same name from the same address replaces it: a game that froze or lost
+    /// its network. Over the client's keepalive, so a playing session is never ended so.
+    pub rejoin_silence: f32,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32, ipv6_prefix: 64 }
+        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32, ipv6_prefix: 64, rejoin_silence: KEEPALIVE.as_secs_f32() + 1.0 }
     }
 }
 
@@ -128,7 +132,7 @@ impl Limits {
     /// one connection hold the server up.
     pub fn from_ron(source: &str) -> Result<Self, String> {
         let limits: Limits = ron::from_str(source).map_err(|e| e.to_string())?;
-        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length, ipv6_prefix } = limits;
+        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length, ipv6_prefix, rejoin_silence } = limits;
         let rates = [chat_burst, chat_per_second, hello_seconds];
         if rates.iter().any(|n| !n.is_finite() || *n < 0.0) {
             Err("chat_burst, chat_per_second and hello_seconds must be zero or more".into())
@@ -142,6 +146,8 @@ impl Limits {
             Err("name_length must be from 1 to 64".into())
         } else if !(16..=128).contains(&ipv6_prefix) {
             Err("ipv6_prefix must be from 16 to 128".into())
+        } else if !(rejoin_silence > KEEPALIVE.as_secs_f32() && rejoin_silence <= 3600.0) {
+            Err(format!("rejoin_silence must be over the client's keepalive ({} s), or a playing session could be ended, and at most 3600", KEEPALIVE.as_secs()))
         } else {
             Ok(limits)
         }
@@ -1213,7 +1219,8 @@ mod tests {
         let limits = Limits::from_ron("(chat_burst: 4.0, max_pending_per_address: 2)").unwrap();
         assert_eq!(limits, Limits { chat_burst: 4.0, max_pending_per_address: 2, ..Limits::default() });
         assert_eq!(Limits::from_ron("()").unwrap(), Limits::default());
-        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(ipv6_prefix: 8)", "(ipv6_prefix: 129)", "(chat_brust: 4.0)"] {
+        assert_eq!(Limits::default().rejoin_silence, 6.0, "a keepalive and a second");
+        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(ipv6_prefix: 8)", "(ipv6_prefix: 129)", "(rejoin_silence: 5.0)", "(rejoin_silence: 4000.0)", "(chat_brust: 4.0)"] {
             assert!(Limits::from_ron(bad).is_err(), "{bad} is accepted");
         }
     }
