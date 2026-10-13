@@ -1154,6 +1154,8 @@
     "command.wander.started": "{event}が目の前から出発します。",
     "wander.said": "{who}「{text}」",
     "wander.settled": "{who}はあなたの家の近くに住みついた。",
+    "wander.point": "{thing}：ここから{dir}へ、およそ{far}ブロック。",
+    "wander.point_none": "この近くには見当たらない。",
     "command.creatures.none": "64ブロック以内に生き物はいません。",
     "command.creatures.title": "64ブロック以内:",
     "command.creatures.line": "{creature} ×{count}、いちばん近いのは{distance}ブロック先({doing})",

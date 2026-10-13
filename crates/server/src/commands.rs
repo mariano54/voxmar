@@ -1112,7 +1112,7 @@ fn compass_point(direction: Vec2) -> &'static str {
 }
 
 /// The compass point nearest a direction, in words.
-fn compass(direction: Vec2) -> Words {
+pub(crate) fn compass(direction: Vec2) -> Words {
     Words::key(&format!("compass.{}", compass_point(direction)))
 }
 

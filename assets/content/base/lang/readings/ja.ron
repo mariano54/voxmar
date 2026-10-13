@@ -620,5 +620,11 @@
     "creature.base.raider": "やとう",
     "creature.base.hound": "りょうけん",
     "creature.base.jailer": "かんしゅ",
+    "creature.base.thief": "どろぼう",
+    "creature.base.white_stag": "しろいおじか",
+    "creature.base.wild_sow": "いのししのはは",
+    "creature.base.constable": "じゅんさ",
+    "creature.base.traveller": "きずついたたびびと",
     "creature.base.captive": "しゅうじん",
+    "creature.base.hunter": "かりゅうど",
 }

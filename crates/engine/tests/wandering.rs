@@ -6,6 +6,7 @@ use std::path::Path;
 
 use voxmar_engine::content::Content;
 use voxmar_engine::lang::Lang;
+use voxmar_engine::wander::Script;
 
 fn dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")
@@ -14,7 +15,7 @@ fn dir() -> std::path::PathBuf {
 #[test]
 fn every_event_word_is_a_key_in_both_languages() {
     let content = Content::load(&dir()).unwrap();
-    assert!(content.wandering.len() >= 9, "the first batch loads");
+    assert!(content.wandering.len() >= 38, "the first six batches load");
     for code in ["en", "ja"] {
         let lang = Lang::load(&dir(), code);
         for (_, event) in content.wandering.iter() {
@@ -22,9 +23,21 @@ fn every_event_word_is_a_key_in_both_languages() {
             for meeting in &event.meetings {
                 keys.extend((0..meeting.greets).map(|n| event.greeting(meeting, n)));
                 keys.extend(meeting.lines.iter().map(|line| event.key(&line.name)));
+                keys.extend(meeting.lines.iter().filter(|line| !line.asks.is_empty()).map(|line| event.key(&format!("{}_ask", line.name))));
             }
             if event.has_captive() {
                 keys.extend([event.key("thanks"), event.key("freed")]);
+            }
+            if event.def.guide.is_some() {
+                keys.extend([event.key("arrived"), event.key("company")]);
+            }
+            if event.def.guard.is_some() {
+                keys.push(event.key("warn"));
+            }
+            match event.def.script {
+                Script::Ambush { .. } => keys.push(event.key("sprung")),
+                Script::Lure { .. } => keys.push(event.key("arrived")),
+                _ => {}
             }
             for key in keys {
                 assert!(lang.find(&key).is_some(), "{code}: `{key}` is missing for {}", event.def.name);

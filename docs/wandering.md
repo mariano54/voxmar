@@ -27,17 +27,57 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   with `habitat: (party_only: true)` is never spawned naturally.
 - **Cast and roles.** A cast is groups, each a species, a count range and a role: `Lead`
   (the first group's first member leads everything), `Follow`, `Flank` (alternating sides),
-  `Rear`, `Ahead` (scouts), `Pet(group)` (keeps to that group's first member), `Free` (its
-  own brain, only kept in the party's books).
+  `Rear`, `Ahead` (scouts), `Herd` (loosely about the leader), `Captive`, `Pet(group)` (keeps to that group's first member), `Free` (its
+  own brain, only kept in the party's books), `Chaser` (runs the leader down, in a `Chase`) and
+  `Lurk` (lies in wait about the leader, in an `Ambush`).
 - **Scripts.** The script decides where the leader goes; every other member gets a formation
   slot from its role. The server hands each member an `Errand`, the same handoff villagers
-  use, so the creature brain still decides how to walk it (and still flees, fights or looks
-  around when its modules say so).
+  use, so the creature brain still decides how to walk it (and still fights or looks around
+  when its modules say so). Until a player turns the party, its errand is `steady`: the
+  brain's own `Flee` waits while it holds one, so a member runs only when its script says
+  (a chase, a lure hurrying on), and a wild stag or a hurt traveller does not bolt from the
+  player the script is meant to meet. Once a player turns it (a scatter, a sprung ambush)
+  the errand is no longer steady and each member's fear may run it; a freed or released
+  member has no errand at all, and its brain is wholly its own.
   - `March(pass, length, pace)`: a line that passes the player at `pass` blocks and walks on.
   - `Patrol(radius, stops, pause, laps)`: a ring of stops, each paused at, then marches off.
   - `Camp(near, stay, mill, away)`: settles near the player, mills about (rests at night),
     leaves.
   - `Shadow(keep, seconds)`: keeps `keep` blocks from the player, stands still when looked at.
+  - `Roam(radius, pause, rest, seconds)`: wanders about the place it began, pausing (sitting
+    if `rest`), then goes.
+  - `Drift(leg, pause, seconds)`: grazes along in short legs of a slowly turning heading;
+    the `Herd` role keeps the rest loosely round the leader.
+  - `Chase(pass, length, pace, gain, hold)`: the leader is the quarry and runs a line like a
+    march at `pace`; its `Chaser`s run at the quarry at `gain` times that. One within 2.5
+    blocks has run it down: the stage is `Caught`, everyone stands about it for `hold` seconds
+    (a talk, a reward), then they march off together. No chasers left, or the quarry dead:
+    the chase is off.
+  - `Ambush(near, trigger, delay, patience, away, hold)`: the leader is the bait and settles
+    `near` blocks short of the player; the `Lurk`ers lie crouched to its sides. The stage is
+    `Waiting`. A player within `trigger` blocks of the bait or any lurker springs it `delay`
+    seconds later (time to talk, pay, or run): the lurkers turn on that player (`Sprung`,
+    `Avenge`), the bait is afraid. Every lurker gone is `Won`: the bait stays `hold` seconds
+    to be thanked. Nobody comes in `patience` seconds, or a `Wary` player stands by (see
+    Reactions) for twenty, and they march `away` blocks off (a paid toll or a won fight the same).
+  - `Lure(keep, length, pace, patience, linger)`: the leader stands watching where it appeared
+    until a player comes within `keep.1` blocks, then leads off along a line `length` blocks
+    long, away from them, hurrying if they come nearer than `keep.0`, waiting (alert) if they
+    fall behind, and giving up after `patience` seconds with no follower. At the end the
+    event's `reveal` (items, XP, an effect) goes to the nearest player within 18 blocks, with
+    the line `arrived`, and the lure goes `linger` seconds later.
+  - `Gather(reach, work, visits)`: everyone who walks works. Each goes to the nearest block
+    the event `seek`s (block names or `tag:`s) within `reach` of where the party began, one
+    block each, stands at it crouched for `work` seconds, then takes the next; after
+    `visits` works between them, or with nothing left, they go. A block that is gone (the
+    player picked it) sends its worker to another; one not reached in time is passed over.
+    A gathering kind comes only where something it seeks is within `reach` of the spot.
+    With `carry: Some((set, tend))`, each worker then takes what it worked to the nearest
+    block the event `deliver`s to (or, delivering nowhere, back to where the party began,
+    its pile), sets it down for `set` seconds, and only then counts the work; with `tend:
+    Some((near, stages))`, planted crops within `near` blocks of where it is set down grow
+    on `stages` (water poured on a field). A kind that delivers comes only where something
+    it delivers to is within `reach` as well.
   The leader strides in 6-block steps and turns aside where the ground will not do; with no
   headway for six seconds it detours, and after four detours the party gives up and leaves.
 - **Stopping.** A party with a `halt` stops for a player who comes within `near` of its
@@ -48,12 +88,41 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   first asks the party. Each speaking group has a meeting. The first line whose needs hold
   (`Skill` at least, `Below` a level, `Home`, `Hurt`, `Holds` an item with a tag, which is
   not taken) and whose `wants` the player holds is said, takes what it wants and gives its
-  rewards (items, XP, an effect, healing, `Free`, `Anger`). `once` is `Always`, `Player` or
-  `Party`. The speech is the lang key `wander.<package>.<event>.<line>`; the greeting
+  rewards. A line may `asks` instead of `wants`: a list of items with counts, of which each
+  party asks for one, picked by its seed; until the player holds it, a speaker whose line
+  otherwise applies says what it asks (`NAME_ask`, with `{thing}` and `{count}`) in place
+  of a greeting. The rewards are (items, XP, an effect, healing, `Free`, `Anger`, `Leave`: the party gives up what it
+  was about and goes, no grudge; `Point(selector, reach)`: tells the player which way, and
+  about how far, the nearest block of that name or `tag:` lies within `reach` of the speaker,
+  true to the land (a line that points is said only when something of the kind is near, so
+  a once-only line is not spent on nothing); `Hand(group)`: hands one member of that group to
+  the player as if tamed (a calf sold), said only when there is one and the player has room
+  for another kept animal; `Cook(station, most, keep)`: cooks what the line takes by the
+  game's own recipes at that station (cooking.ron), never burnt, up to `most` of what is in
+  hand, keeping `keep` for the speaker's pot, said only with something it cooks in hand). A
+  line can also need `When(stage)` (the party is at that
+  stage of its script: `Caught`, `Waiting`, `Sprung`, `Won`, `Leading`, `Arrived`; the stage
+  must belong to the event's script) or `Struck(group)` (this player struck a member of that
+  group of the cast, and the party did not turn on them for it). A line with only such needs
+  and no `wants` is the stage's own greeting. `once` is `Always`, `Player` or `Party`. The speech is the lang key `wander.<package>.<event>.<line>`; the greeting
   (when no line applies) is `.greet`, or with `greets: 3` one of `.greet`, `.greet_2`,
   `.greet_3`, drawn each time; the title is `.title`. Lessons are capped by the player's own
   levels (`Below`): a tutor teaches a beginner, asks more for the next step and has nothing
   for a master, so no lesson skips a step.
+- **Guarding.** A party with a `guard(near, warn, calm)` (a sow with her litter) warns a
+  player who comes within `near` of any member: they stand and face them, and the event's
+  `warn` line is told. One who stays `warn` seconds, or comes within half of `near`, is set
+  upon by those that fight while the rest run (as `Avenge`); one who backs off past `calm`
+  is let be. A player holding what the party's kind is shy of or drawn to (a `Shy` or `Draw`
+  reaction: a torch, food) is not warned at all.
+- **Startling.** A party with a `startle(near, least, still, still_for, stalk)` (a herd of
+  deer) bolts from a player who comes within `near` blocks of any member, less `stalk.1`
+  blocks a level of skill `stalk.0` (Hunter: a stalker comes nearer), no nearer than
+  `least`. A player who has not moved for `still_for` seconds is noticed only at `still`, and
+  a still one holding what draws the kind (food) not at all. Bolted, it runs off and is done.
+  A party that startles does not halt or guard.
+- **Young.** A group with `young: true` comes young (piglets, a calf, fawns) and grows up as
+  kept young do.
 - **Being struck.** `hurt` says what a party does when a player strikes one of its own:
   `Scatter` (the party runs and breaks up, and will not talk), `Avenge` (those who can
   fight turn on the player while they stay near, the rest run) or `Ignore` (already hostile).
@@ -71,10 +140,11 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
 - **Ending.** An event ends when no player is within `leave`, after its `lifetime`, or when its
   march is walked and nobody is within 40 blocks. Its people are taken away without a death.
   Killed members leave the party and the party goes on: when the leader is killed, the next
-  member who can lead (not a pet, a captive or a `Free` one) takes over, and when nobody who
-  can lead is left (a hound whose pedlar was killed) the rest are let go as creatures of the
-  land. Party members are never despawned for distance like wild creatures; the event takes
-  them away. A freed captive follows on a clock of its own from the moment it is freed.
+  member who can lead (not a pet, a flock, a captive or a `Free` one) takes over, and when
+  nobody who can lead is left (a hound whose pedlar was killed, a shepherd's flock) the rest
+  are let go as creatures of the land. Party members are never despawned for distance like
+  wild creatures; the event takes them away. A freed captive, or a befriended one, follows
+  on a clock of its own from the moment it is freed or befriended.
 - **Speech.** A speaker answers a right click only within `speak_reach`. A line that frees a
   captive (`Free`) is offered only while the party still holds one, so a bribe is never taken
   for nobody. Short skill names in lines mean the event's own package's skill first, then
@@ -82,6 +152,24 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   people budget.
 - **Admin.** `/wander` lists the parties about, `/wander list` the kinds, `/wander start
   NAME` begins one ahead of you, `/wander end` sends them all away.
+
+## Reactions
+
+`reactions` in `wandering.ron` are rules every kind inherits: how a *kind* of creature
+(`Animal`, `Monster`, `Spirit`, `Villager`) answers a player who holds an item with a *tag*
+within `range` blocks, optionally only for a `combat` level range. The response is one of:
+
+- `Wary`: it does not stop, and an ambush does not spring (and gives up after twenty seconds
+  of the player standing by).
+- `Shy`: an ambling animal walks away from the player, and a lure hangs back (alert, waiting)
+  until the tag is put away.
+- `Draw`: an ambling animal comes to the player and stands near.
+
+An ambush answers as its lurkers' kind, anything else as its leader's. The tag must be one
+some item has (checked at load), and a later package adds reactions, never rewrites one. The
+shipped three: a weapon in a hand of combat 14 or more makes monsters in wait let them by; a
+`fire` (torch) makes animals and spirits shy; food (`edible`) draws animals. Adding a kind
+that wants a new response to something held is a line in this list, not code in the kind.
 
 ## The bar every kind meets
 
@@ -127,9 +215,116 @@ Mariano's brief for the whole set, which a new kind is checked against:
 | 9 | bard band | March | Musicians pass by; a song refreshes the player. |
 | 10 | prison convoy | March | Two or three jailers march a prisoner. They leave you be until struck. Kill them, bribe them (three gold coins), or cut the ropes with a knife and the jailers turn on you. The freed prisoner follows you half the time and settles by your home, or goes off alone. |
 
+## Batch 2 (implemented, four kinds)
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| shepherd and flock | Drift | A shepherd grazes a flock of mouflon along, with a dog at heel. Stand still and the flock comes round you; any food teaches a beginner Farming once; two loaves buy wool. Tame one of the flock with the usual food and it is yours, and leaves the flock. |
+| lost child | Roam, then Follow | A child who followed a butterfly. Feed them and they follow you to the nearest settlement, where the family pays in coins and bread. Strike them and they run, lost again. |
+| stray hound | Roam | A hound with no one. Feed it meat with Hunter 2 and enough patience and it is yours (the usual taming), and leaves its party. |
+| wounded hunter | Roam (sitting) | Share food and they teach Hunter (to level 15) and give flints; nothing for the skilled. |
+
+New in the framework: the `Roam` and `Drift` scripts, the `Herd` role, a line can `wants`
+any item with a tag (`"tag:edible"`), the `Befriend` reward with an event `guide` (follow the
+player for so long, to `Home` or `Town`, thank them with rewards, stay), and a member a
+player has taken in (owner set) leaves its party. These are general rules in data: taming,
+feeding and trading already in the game are what the player combines with a wandering
+kind, and the kind needs no code of its own.
+
+## Batch 3 (implemented, five kinds, three scripts)
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| thief on the run | Chase | A cutpurse runs, the town watch (one or two constables) on his heels. They run him down in well under a minute and hold him a while. A blow on him as he passes earns the constables' bounty (coins, Attack XP) once; kill him and his purse drops; strike the watch and only the one struck fights. |
+| fox and farmer | Chase | A fox with feathers on its whiskers, a farmer after it. A blow that turns the fox earns eggs and Farming XP. |
+| wounded traveller | Ambush | A traveller sits hurt by the road, raiders lie in the rocks beside him. Going to him springs it (after six to ten seconds): fight, or slip a lurker three coins in time and they go. A combat 14 fighter with a weapon in hand is let by. Win and the traveller thanks you once. Only for players with a home and combat 4 to 60, far from the start. |
+| white stag | Lure | A white stag watches from the wood's edge, then leads off if you come near. Follow it to its glade for an antler, Hunter XP and a Refreshed effect. Strike it and it bolts; it waits for stragglers and gives you up if you do not come. |
+| wisp trail | Lure | A pale light over the marsh by night, shy of torches: hold one up and it hangs back until you put it away. At the end of its path, aether motes and Magic XP. |
+
+| the player | chase | ambush | lure |
+| --- | --- | --- | --- |
+| watches | the watch catch the quarry and march it off | nothing: it waits until `patience` | nothing: it gives you up |
+| walks into it | may block the quarry's way and slow it | springs after a moment; fight, flee or pay | it leads on |
+| talks | the held quarry pleads, the watch speak | a lurker takes three coins and goes; the bait thanks the winner | n/a (no speaker) |
+| strikes | the quarry: the watch pay you; the watch: that one fights | a lurker or the bait: it springs at once | it bolts, scattered |
+| holds a weapon | nothing | a seasoned fighter (combat 14) is let by | nothing |
+| holds a torch | nothing | nothing | a wisp hangs back (animals and spirits are shy of flame) |
+| holds food | nothing | nothing | animals ambling about come to it |
+| kills | the quarry's purse drops | the lurkers: the bait thanks you | only a deer |
+
+New in the framework: the `Chase`, `Ambush` and `Lure` scripts, the `Chaser` and `Lurk`
+roles, line stages (`When`) and `Struck`, the `Leave` reward, an event's `reveal`, and
+Reactions. The settled-companions save, the next batch, comes with a save change of its own.
+
+## Batch 4 (implemented, seven kinds): the early land
+
+The Nomad and Farm ages: folk at work a new player can walk up to with bare hands, and wild
+families that answer how they are approached. Every kind is data; the new pieces (the
+`Gather` script, `seek`, `guard`, `startle`, `young`, and the `Point`, `Hand` and `Cook`
+rewards) are each used by several kinds and the ones to come.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| berry pickers | Gather | Villagers and a child pick a patch of berry bushes, one bush each. Pick the bush one is at and they move on. They point out where mushrooms grow (true to the land, once), and eight berries buy a loaf. Only where berry bushes are. |
+| herb gatherer | Gather | An elder works the herbs of a meadow. Show a herb and a beginner learns Alchemy (once); Alchemy 5 is pointed to roots, Alchemy 20 to the glowing wonders, if any grow near. |
+| fisher folk | Gather | Fishers stand crouched at the water's edge. Three sticks from a beginner (Fishing below 5) buy twine enough for a rod; a rod held out gets a lesson (below 12); four fish buy line; the hurt are given a fish. Only by water. |
+| boar sounder | Drift, Herd, guard | A wild sow with two to four young piglets. Come within nine blocks and she grunts a warning; stay three seconds, or come within half that, and she charges while the piglets run. Hold up a torch and they go; hold out food and she lets you near (a piglet can then be tamed the usual way). |
+| deer herd | Drift, Herd, startle | A stag, hinds and a fawn or two. They bolt from a walker at 22 blocks, a still player at 6, and a hunter's step nearer (0.35 a Hunter level, to 8). Stand still holding food and they come to it; move and they are gone. |
+| travelling cook | Camp | A cook camps at dusk with a pot on. Raw meat or fish handed over comes back cooked, one kept for the pot; cooked food shown teaches a beginner (Cooking below 10); the hurt are fed. |
+| cowherd | Drift, Herd, Hand | A herder drives aurochs and a calf with a dog at heel, to players with a home. A pail held out is filled (once); to a player with the Hunter level that taming an aurochs takes (12), four coins buy the calf, kept from then on. |
+
+| the player | gatherers | sow and litter | deer herd |
+| --- | --- | --- | --- |
+| walks past | they halt if close, then work on | warned at 9 blocks | the herd bolts |
+| stands still | they work on | warned, then charged if close | they graze on round you |
+| picks what they work | the worker moves to the next | n/a | n/a |
+| holds a torch | nothing | the family goes off | they keep away |
+| holds food | trades and lessons as above | the sow comes to it, no warning | come to a still hand |
+| strikes one | scatter and will not talk | the sow fights, the piglets run | scatter |
+| is a skilled hunter | nothing | nothing | comes nearer unseen |
+
+## Batch 5 (implemented, six kinds): carrying and the crop ladder
+
+More of the Nomad and Farm ages: folk who carry their work somewhere, and traders whose
+goods follow a player's farming level. The new piece is `carry` on `Gather` (with
+`deliver` and `tend`), used by two kinds here and by the haulers to come; a `Point` line
+now waits until there is something to point to.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| woodcutters | Gather, carry | Woodcutters work the trees about a clearing, one each, and carry every load back to their pile. Eight logs buy four coins, once; an axe in a beginner's hand gets a word on felling (Construction below 10); they say where fruit trees grow, if any are near. |
+| water carriers | Gather, carry, tend | Farmers fill pails at the water and carry them to the nearest tilled field, to players with a home: the crops within a few blocks of where each pail is poured grow on a stage. Only where water and a field lie together. A beginner gets a farming tip; the hurt a drink. |
+| harvest family | March | A farming family with what they grew. Each crop buys the next a farmer can sow, once each and only at the level to sow it: six wheat buy rye seed at Farming 3, six rye buy carrots at 5, six carrots buy chickpeas at 7. A beginner with seed in hand learns to sow. |
+| charcoal burners | Camp | Burners camp by their mound, day or night. A dozen logs buy two charcoal, once; they say where coal shows at the surface (an ore sample) if any is near. |
+| wandering healer | March | An elder who mends the hurt once, and makes a salve of three herbs: Soothed, and a little Alchemy. |
+| story teller | Camp | Camps at dusk with listeners. The tale is of something strange and near, true to the land, once, and a listener leaves Focused. |
+
+| the player | woodcutters | water carriers | the traders |
+| --- | --- | --- | --- |
+| walks past | they halt if close, then work on | the same | they halt if close |
+| picks or cuts what they work | the worker moves to the next | n/a | n/a |
+| has a field near water | nothing | they water it: it grows | nothing |
+| holds what they want | logs buy coins, once | n/a | crops buy the next crop, by level |
+| strikes one | scatter and will not talk | the same | the same |
+
+## Batch 6 (implemented, six kinds): asks, and the rites of the road
+
+The farm age's people: a hermit and a travelling alchemist who each want something
+different, a goose girl, a prospector, and the processions of village life. The new piece
+is `asks` on a line, so two meetings with one kind can want different things and say so.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| hermit | Camp | Camps far from home (80 blocks or more). Each asks for its own thing (three feathers, two bones, two flints, two eggs, two mint, two nettles) and says so; bring it and the hermit points to a wonder near and teaches a little Magic, once. Only where a wonder is near. |
+| goose girl | Drift, Herd, Hand | A child drives ducks and a duckling to water. Four wheat seeds earn feathers, once; at Hunter 3 (taming a duck), two coins buy the duckling. |
+| prospector | Gather | Works the ore that shows at the surface. A pickaxe in a beginner's hand (Mining below 10) gets a lesson; at Mining 5 they point to more surface ore, if any is near. Only where surface ore is. |
+| travelling alchemist | March | Each wants two of one herb (lavender, chamomile, yarrow, sage, thyme or sorrel) and says which; bring it for Alchemy and Focused, once. Another herb is not taken. |
+| wedding | March | A priest, the couple and guests walk to the shrine. A flower given returns bread and Refreshed, once. |
+| funeral | March | A slow procession that does not stop for a player. A flower laid with them is a little Magic, once. |
+
 ## Catalogue of 100
 
-Status: `done` is in batch 1, `next` is the second batch (ages 1 and 2: Nomad and Farm
+Status: `done` is in a batch above, `next` is the second batch (ages 1 and 2: Nomad and Farm
 first), `later` the rest. "New" names what the kind needs that the framework lacks; those
 are the mechanics later batches add, each used by several kinds.
 
@@ -145,35 +340,35 @@ are the mechanics later batches add, each used by several kinds.
 | 8 | tinker camp | see batch 1 | | 1 | done |
 | 9 | bard band | see batch 1 | | 1 | done |
 | 10 | prison convoy | see batch 1 | Captive | 2 | done |
-| 11 | lost child | a child wanders crying; leading it to a settlement pays a coin and standing | Escort | 1 | next |
-| 12 | shepherd with flock | a villager and sheep drifting on pasture; lamb for wool | Herd | 2 | next |
-| 13 | cowherd and cows | milk for a bucket held out | Herd | 2 | next |
-| 14 | goose girl | geese on a march to water | Herd | 2 | next |
-| 15 | berry pickers | villagers gather and drop forage in a basket; trade a share | Forage | 1 | next |
-| 16 | fishers' file | villagers with rods walk to a shore and fish | Gather | 1 | next |
-| 17 | woodcutters | two villagers fell a lone tree and haul the logs | Haul | 2 | next |
-| 18 | charcoal burners | a small camp with a smoking mound | Camp, Haul | 2 | next |
-| 19 | water carriers | villagers with yokes go from well to field | Haul | 2 | next |
-| 20 | harvest cart | a cart-pushing family in the farm age; swaps seeds | Haul | 2 | next |
-| 21 | herb woman | a forager who names a herb patch nearby for a coin | Forage | 1 | next |
-| 22 | wandering healer | mends and sells a salve | | 1 | next |
-| 23 | hermit | lives off the path; a riddle gives a recipe | Vigil | 1 | next |
+| 11 | lost child | see batch 2 | Roam, Guide | 1 | done |
+| 12 | shepherd with flock | see batch 2 | Drift, Herd | 2 | done |
+| 13 | cowherd | see batch 4 | Herd | 2 | done |
+| 14 | goose girl | see batch 6 | Herd | 2 | done |
+| 15 | berry pickers | see batch 4 | Forage | 1 | done |
+| 16 | fisher folk | see batch 4 | Gather | 1 | done |
+| 17 | woodcutters | see batch 5 | Carry | 2 | done |
+| 18 | charcoal burners | see batch 5 | Camp | 2 | done |
+| 19 | water carriers | see batch 5 | Carry | 2 | done |
+| 20 | harvest family | see batch 5 | | 2 | done |
+| 21 | herb gatherer | see batch 4 | Forage | 1 | done |
+| 22 | wandering healer | see batch 5 | | 1 | done |
+| 23 | hermit | see batch 6 | Asks | 1 | done |
 | 24 | travelling smith | repairs held tools for coin | Camp | 2 | next |
-| 25 | travelling cook | a pot on the fire; a portion for an ingredient | Camp | 1 | next |
-| 26 | story teller | camps at dusk; players near get a journal page | Camp | 1 | next |
-| 27 | stray hound | a lone dog that follows the player until fed, then adopts | Lure | 1 | next |
-| 28 | deer herd | drifts through; flees when seen | Herd | 1 | next |
-| 29 | boar sounder | sow with piglets; charges what comes close | Herd | 1 | next |
-| 30 | fox and hens | a fox stalks a hen that runs | Chase | 2 | next |
-| 31 | thief and constable | a thief runs from a guard; stop the thief for the loot | Chase | 2 | later |
+| 25 | travelling cook | see batch 4 | Camp | 1 | done |
+| 26 | story teller | see batch 5 | Camp | 1 | done |
+| 27 | stray hound | see batch 2 | Roam | 1 | done |
+| 28 | deer herd | see batch 4 | Herd | 1 | done |
+| 29 | boar sounder | see batch 4 | Herd | 1 | done |
+| 30 | fox and farmer | see batch 3 (a fox runs, a farmer chases) | Chase | 2 | done |
+| 31 | thief and constable | see batch 3 | Chase | 2 | done |
 | 32 | poacher | hunts deer; reporting them to a guard pays | Hunt | 2 | later |
 | 33 | hunting party | villagers with hounds track a boar | Hunt | 2 | later |
 | 34 | scarecrow walker | a straw figure that stands among crops and moves when unseen | Shadow | 2 | later |
 | 35 | night watchman | walks a village ring with a lantern | Patrol | 2 | later |
 | 36 | village guard patrol | guards walk a loop between settlements | Patrol | 2 | later |
 | 37 | tax collector | asks coin from a player with a home; refusing makes guards hostile for a day | Meeting | 2 | later |
-| 38 | wedding procession | villagers walk to the shrine with flowers; a gift is returned in kind | March | 2 | later |
-| 39 | funeral procession | a quiet march to a grave | March | 2 | later |
+| 38 | wedding procession | see batch 6 | | 2 | done |
+| 39 | funeral procession | see batch 6 | | 2 | done |
 | 40 | festival drummers | drums and a dance ring; a refreshed effect | Dance | 2 | later |
 | 41 | dance circle | villagers circle a bonfire at night | Dance | 2 | later |
 | 42 | caravan | pack animals, guards and a merchant on a long road | March | 3 | later |
@@ -181,7 +376,7 @@ are the mechanics later batches add, each used by several kinds.
 | 44 | soldiers on the march | two columns that do not stop for a player | March | 3 | later |
 | 45 | knight errant | duels for a coin; wins a favour | Duel | 3 | later |
 | 46 | wandering monk | a vow of silence; sells a blessing for a mote | Meeting | 2 | later |
-| 47 | alchemist's mule | a laden mule; a reagent swap | March | 2 | later |
+| 47 | travelling alchemist | see batch 6 | Asks | 2 | done |
 | 48 | rat catcher | a piper followed by rats | Lure | 2 | later |
 | 49 | gypsy wagon | a wagon camps; fortunes told (a journal hint) | Camp | 2 | later |
 | 50 | puppeteers | a cart that opens into a stage | Camp | 2 | later |
@@ -189,7 +384,7 @@ are the mechanics later batches add, each used by several kinds.
 | 52 | messenger | runs between settlements; a letter for a coin | Errand | 2 | later |
 | 53 | postman with mule | delivers to a player's home mailbox | Errand | 3 | later |
 | 54 | cartographer | sells a sketched map of nearby ruins | Meeting | 2 | later |
-| 55 | prospector | with a pick and a donkey; points at a vein | Forage | 2 | later |
+| 55 | prospector | see batch 6 | Gather | 2 | done |
 | 56 | miners' shift | a row of miners with lamps walk to a mine mouth | March | 3 | later |
 | 57 | stonecutters | haul a block; leave a cut stone | Haul | 3 | later |
 | 58 | lamplighter | at dusk lights lamps along a road | Errand | 3 | later |
@@ -199,8 +394,8 @@ are the mechanics later batches add, each used by several kinds.
 | 62 | goblin scouts | a pair that slips away if seen, then returns with more | Chase | 2 | later |
 | 63 | skeleton march | at night, a file of bones along a road | March | 3 | later |
 | 64 | wight walk | a single wight on a grave road | Patrol | 3 | later |
-| 65 | ghost lantern | a lantern drifting over a marsh; follow it to a chest | Lure | 2 | later |
-| 66 | wisp trail | will-o-wisps lead off the path | Lure | 3 | later |
+| 65 | ghost lantern | a lantern drifting over a marsh; follow it to a chest (the wisp trail's cousin: a Lure whose reveal is a chest) | Lure | 2 | later |
+| 66 | wisp trail | see batch 3 (a light leads off the path, shy of torches) | Lure | 3 | done |
 | 67 | troll bridge | a troll under a bridge asks a toll | Meeting | 3 | later |
 | 68 | ogre and goats | an ogre drives goats | Herd | 4 | later |
 | 69 | giant on the hill | a slow giant strides over a ridge; the ground shakes | March | 5 | later |
@@ -229,7 +424,7 @@ are the mechanics later batches add, each used by several kinds.
 | 92 | shipwreck survivors | on a shore; bring food for a map | Escort | 3 | later |
 | 93 | pirate landing | a boat, a dozen, one keg | Ambush | 4 | later |
 | 94 | sea monster wake | a long shape in the water; a boat is chased | Chase | 5 | later |
-| 95 | mine canary | a bird that flies from bad air | Ambient | 3 | later |
+| 95 | wounded hunter | see batch 2 (a hunter hurt by a boar) | Roam | 3 | done |
 | 96 | mole people | emerge at dusk; carry a gem | Haul | 4 | later |
 | 97 | golem walk | a stone golem on an old road | Patrol | 4 | later |
 | 98 | ancient automaton | wakes at a ruin, rolls a ring, goes still | Patrol | 5 | later |
@@ -241,14 +436,15 @@ are the mechanics later batches add, each used by several kinds.
 Each is a script or a role used by many kinds, so every kind stays a few lines of data.
 
 - **Herd**: members drift together in a loose circle with a shepherd; they flee as one.
-- **Forage / Gather**: members stop at items or blocks of a tag, work a few seconds, drop
-  what they collected for a trade.
+- **Forage / Gather**: done (batch 4): members work the blocks of a name or tag about them.
+- **Carry**: done (batch 5): a `Gather` worker takes each load to a pile or a field.
 - **Haul**: two members carry a load along a line; kill one and it drops the load.
 - **Escort**: the party follows the player toward a settlement; arriving pays out, losing
   them (distance, death) ends it.
-- **Chase**: one cast member is the quarry, another the pursuer; stopping the quarry pays.
-- **Ambush**: hides out of sight until a player is within a distance, then rushes.
-- **Lure**: leads the player on if followed; the end is a reward or a trap.
+- **Chase**: done (batch 3): one cast member is the quarry, another the pursuer; stopping the quarry pays.
+- **Ambush**: done (batch 3): lies in wait until a player is within a distance, then rushes.
+- **Lure**: done (batch 3): leads the player on if followed; the end is a reward. A trap end is a
+  later `Lure` whose lurkers spring at the end.
 - **Duel / Dance / Crossing / Vigil**: fixed arrangements of the formation code.
 
 ## Notes
