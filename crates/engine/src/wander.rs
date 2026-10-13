@@ -577,8 +577,11 @@ pub enum Stage {
     Waiting,
     /// An `Ambush` sprung: the lurkers are on the player.
     Sprung,
-    /// An `Ambush` won: the lurkers are gone, the bait left standing.
+    /// An `Ambush` won: the lurkers are gone, the bait left standing. Or a bout (`Spar`)
+    /// won by the player.
     Won,
+    /// A bout (`Spar`) lost by the player.
+    Lost,
     /// A `Lure` on its way, a follower behind.
     Leading,
     /// A `Lure` or a `Journey` at its journey's end.
@@ -597,6 +600,8 @@ impl Stage {
             Stage::Leading => matches!(script, Script::Lure { .. }),
             Stage::Arrived => matches!(script, Script::Lure { .. } | Script::Journey { .. }),
             Stage::Took => matches!(script, Script::Hunt { .. }),
+            // A bout's, checked by the lines that spar.
+            Stage::Lost => false,
         }
     }
 }
@@ -667,6 +672,11 @@ pub enum Reward {
     /// water poured on a field does: a blessing on the fields. Said only with one there to
     /// grow.
     Grow(f32, u8),
+    /// The speaker spars with the player: a bout fought for real, which ends when either is
+    /// brought down to this share of their health (neither falls), after so many seconds,
+    /// or when the player walks off. Won or lost, the party's stage says so (`Won`,
+    /// `Lost`). From a line only; the speaker must be one that fights.
+    Spar(f32, f32),
 }
 
 /// A kind of event with its names resolved.
@@ -765,6 +775,8 @@ pub enum ResolvedReward {
     Weather(String, f32),
     Prayer(f32),
     Grow(f32, u8),
+    /// The share of health either may be brought down to, and the bout's seconds.
+    Spar(f32, f32),
 }
 
 /// A block name or a `tag:` selector, resolved: what a `seek` or a `Point` looks for.
@@ -845,6 +857,10 @@ fn resolve_reward_in(
             return Err(format!("grows crops within {reach} blocks by {stages} stages: 4 to 48 blocks, 1 to 3 stages"))
         }
         Reward::Grow(reach, stages) => ResolvedReward::Grow(*reach, *stages),
+        Reward::Spar(down_to, seconds) if !(0.2..=0.8).contains(down_to) || !(20.0..=180.0).contains(seconds) => {
+            return Err(format!("spars down to {down_to} of health for {seconds} seconds: 0.2 to 0.8, 20 to 180 seconds"))
+        }
+        Reward::Spar(down_to, seconds) => ResolvedReward::Spar(*down_to, *seconds),
     })
 }
 
@@ -1223,7 +1239,7 @@ impl WanderRegistry {
             }
             let mut reveal = Vec::new();
             for reward in &def.reveal {
-                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..)) {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Spar(..)) {
                     return Err(error("a lure's `reveal` gives items, experience, effects or healing only".into()));
                 }
                 reveal.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("reveal: {why}")))?);
@@ -1237,7 +1253,7 @@ impl WanderRegistry {
                     return Err(error(format!("a show is watched from 2 to 16 blocks for 3 to 120 seconds and gives something, not {} blocks for {} s", def_show.near, def_show.seconds)));
                 }
                 for reward in &def_show.gives {
-                    if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Point(..) | Reward::Town(_) | Reward::OneOf(_)) {
+                    if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Spar(..) | Reward::Point(..) | Reward::Town(_) | Reward::OneOf(_)) {
                         return Err(error("a show gives items, experience, effects or healing only".into()));
                     }
                     show.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("show: {why}")))?);
@@ -1246,7 +1262,7 @@ impl WanderRegistry {
             }
             let mut share = Vec::new();
             for reward in &def.share {
-                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..)) {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Spar(..)) {
                     return Err(error("a hunt's `share` gives items, experience, effects or healing only".into()));
                 }
                 share.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("share: {why}")))?);
@@ -1256,17 +1272,22 @@ impl WanderRegistry {
             }
             let mut guide_thanks = Vec::new();
             for reward in def.guide.iter().flat_map(|g| &g.thanks) {
-                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..)) {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Spar(..)) {
                     return Err(error("a guide's `thanks` gives items, experience, effects or healing only".into()));
                 }
                 guide_thanks.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("guide thanks: {why}")))?);
             }
             let mut thanks = Vec::new();
             for reward in def.freed.iter().flat_map(|f| &f.thanks) {
-                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..)) {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Spar(..)) {
                     return Err(error("a captive's `thanks` gives items, experience, effects or healing only".into()));
                 }
                 thanks.push(resolve_reward(reward, namespace, blocks, skills, effects, true).map_err(|why| error(format!("thanks: {why}")))?);
+            }
+            // A bout's two ends are stages of the party too, told as they come.
+            let spars = def.meetings.iter().flat_map(|m| &m.lines).any(|l| l.gives.iter().any(|r| matches!(r, Reward::Spar(..))));
+            if spars {
+                names.extend(["bout_won".into(), "bout_lost".into()]);
             }
             for meeting in &def.meetings {
                 if meeting.who >= def.cast.len() || matches!(def.cast[meeting.who].role, Role::Free) && meeting.who != 0 {
@@ -1299,7 +1320,9 @@ impl WanderRegistry {
                     let mut needs = Vec::new();
                     for need in &line.needs {
                         needs.push(match need {
-                            Need::When(stage) if !stage.belongs_to(&def.script) => return Err(at(format!("`{stage:?}` is no stage of this event's script"))),
+                            Need::When(stage) if !stage.belongs_to(&def.script) && !(spars && matches!(stage, Stage::Won | Stage::Lost)) => {
+                                return Err(at(format!("`{stage:?}` is no stage of this event's script")));
+                            }
                             Need::When(stage) => ResolvedNeed::When(*stage),
                             Need::Struck(group) if *group >= def.cast.len() => return Err(at(format!("`Struck({group})`: the cast has {} groups", def.cast.len()))),
                             Need::Struck(group) => ResolvedNeed::Struck(*group),
@@ -1338,6 +1361,9 @@ impl WanderRegistry {
                             && (*group >= groups.len() || *group == meeting.who || creatures.get(groups[*group].0).def.taming.is_none())
                         {
                             return Err(at(format!("`Hand({group})` hands over a group of the cast that can be kept, not the speaker's own")));
+                        }
+                        if matches!(reward, Reward::Spar(..)) && !creatures.get(groups[meeting.who].0).fights() {
+                            return Err(at("`Spar`: the speaker does not fight".into()));
                         }
                         if let Reward::Cook(station, ..) = reward {
                             if line.wants.is_none() && line.asks.is_empty() {

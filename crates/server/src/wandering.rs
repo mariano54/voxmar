@@ -59,6 +59,8 @@ const ADMIN_SPOT_AHEAD: [f32; 5] = [40.0, 24.0, 12.0, 4.0, 0.0];
 /// A struck party's grudge: seconds it lasts without the player near, and how near that is.
 const GRUDGE: f32 = 20.0;
 const GRUDGE_RANGE: f32 = 45.0;
+/// A bout ends, with nobody the winner, when the player walks this far from the fighter.
+const BOUT_RANGE: f32 = 16.0;
 /// A freed captive keeps this many blocks from the one it follows, and settles within this
 /// many of that player's home.
 const FOLLOW_CLOSE: f32 = 3.5;
@@ -155,6 +157,9 @@ struct Instance {
     settles: bool,
     /// How far its script has got (for the lines that go with it).
     stage: Stage,
+    /// How each player's bouts with the party ended (`Won` or `Lost`): a bout's lines are
+    /// for the one who fought it, not for everyone looking on.
+    bouts: Vec<(PlayerId, Stage)>,
     /// The players who struck a member of each group of the cast.
     struck: FxHashSet<(PlayerId, usize)>,
     /// Over now: taken away at the end of this update (a lure that has shown what it led to).
@@ -198,6 +203,7 @@ impl Instance {
             release: false,
             settles: false,
             stage: Stage::Passing,
+            bouts: Vec::new(),
             struck: Default::default(),
             ended: false,
             worked: 0,
@@ -270,6 +276,9 @@ enum Plan {
     /// Hunting until a tick: after its quarry (since a tick), with kills `took`, standing
     /// over the last until a tick, and the quarry it gave up on.
     Hunt { target: Option<u32>, since: u64, took: u8, until: u64, rest_until: u64, passed: Vec<u32> },
+    /// A bout: `fighter` spars with `player` until either is brought down to `down_to` of
+    /// their health, the tick `until`, or the player walks off; then the plan `next` goes on.
+    Bout { player: PlayerId, fighter: u32, down_to: f32, until: u64, next: Box<Plan> },
 }
 
 /// What the players near a party hold, and how the party's kind answers (`Reaction`).
@@ -1155,7 +1164,7 @@ impl Server {
                     let Some(from) = self.creatures.live.get(&source).map(|c| c.body.position) else { continue };
                     self.grow_around(from, reach, stages);
                 }
-                ResolvedReward::Free | ResolvedReward::Anger | ResolvedReward::Befriend | ResolvedReward::Leave | ResolvedReward::Hand(_) | ResolvedReward::Cook(..) => {}
+                ResolvedReward::Free | ResolvedReward::Anger | ResolvedReward::Befriend | ResolvedReward::Leave | ResolvedReward::Hand(_) | ResolvedReward::Cook(..) | ResolvedReward::Spar(..) => {}
             }
         }
     }
@@ -1168,6 +1177,13 @@ impl Server {
         let Some(inst) = self.wandering.active.get_mut(&instance) else { return };
         inst.last_blow = Some(player);
         inst.struck.insert((player, inst.members[member].group));
+        // A blow in a bout is the bout.
+        if let Plan::Bout { player: p, fighter, .. } = inst.plan
+            && p == player
+            && fighter == id
+        {
+            return;
+        }
         let role = self.content.wandering.get(inst.event).groups[inst.members[member].group].1.role;
         if role == Role::Captive || inst.freed {
             return;
@@ -1375,6 +1391,8 @@ impl Server {
         let mut take: Option<u32> = None;
         let mut escorted: Vec<PlayerId> = Vec::new();
         let mut hunted_out = false;
+        let mut spar: Option<(u32, PlayerId)> = None;
+        let mut bout_end: Option<(Stage, u32, PlayerId)> = None;
         match (&mut inst.plan, script) {
             // Warning a player off: everyone stands and faces them.
             (_, _) if warning.is_some() => {
@@ -1585,6 +1603,31 @@ impl Server {
                     goal = Some(*g);
                 }
             }
+            // A bout: the fighter's own nature fights it; it ends at a share of either's health.
+            (Plan::Bout { player, fighter, down_to, until, next }, _) => {
+                let them = self.players.get(player).filter(|p| p.health.alive());
+                let me = self.creatures.live.get(fighter);
+                let low = |health: f32, most: f32| health <= (most * *down_to).ceil();
+                let end = match (them, me) {
+                    (Some(p), Some(c)) if self.tick < *until && flat(p.position, c.body.position) <= BOUT_RANGE => {
+                        if low(p.health.current as f32, p.health.max as f32) {
+                            Some(Stage::Lost)
+                        } else if low(c.health as f32, self.content.creatures.get(c.species).def.health as f32) {
+                            Some(Stage::Won)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => Some(Stage::Passing),
+                };
+                match end {
+                    None => (free, spar) = (true, Some((*fighter, *player))),
+                    Some(stage) => {
+                        resume = Some(std::mem::replace(&mut **next, Plan::Shadow { until: 0 }));
+                        bout_end = Some((stage, *fighter, *player));
+                    }
+                }
+            }
             (Plan::Held { until, next }, _) => {
                 if let Plan::March { heading: h, .. } = &**next {
                     heading = *h;
@@ -1756,6 +1799,33 @@ impl Server {
         if let Some(plan) = resume {
             inst.plan = plan;
             inst.stage = Stage::Passing;
+        }
+        // A bout over: the fighter bears no grudge and binds its scrapes; won or lost, it says so.
+        if let Some((stage, fighter, player)) = bout_end {
+            if stage != Stage::Passing {
+                inst.bouts.retain(|&(who, _)| who != player);
+                inst.bouts.push((player, stage));
+            }
+            if let Some(c) = self.creatures.live.get_mut(&fighter) {
+                c.mind.forgive();
+                c.health = self.content.creatures.get(c.species).def.health;
+                c.changed = true;
+            }
+            let line = match stage {
+                Stage::Won => Some("bout_won"),
+                Stage::Lost => Some("bout_lost"),
+                _ => None,
+            };
+            if let (Some(line), Some(who), Some(p)) = (line, self.speaker_name(fighter), self.players.get(&player)) {
+                let key = self.content.wandering.get(inst.event).key(line);
+                p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&key)) });
+            }
+        }
+        if let Some((fighter, player)) = spar
+            && let Some(c) = self.creatures.live.get_mut(&fighter)
+        {
+            c.mind.anger = 1.0;
+            c.mind.remember(Memory::HurtBy(player), GRUDGE);
         }
         if leaving {
             inst.plan = self.march_away(lead, nearest, heading, 1.0, leaves(script));
@@ -2006,6 +2076,16 @@ impl Server {
     /// struck, or whose captive has been freed, says what suits that.
     /// Whether `player` stands near enough to wandering creature `id` to be heard
     /// (`speak_reach`).
+    /// The share of health a blow between creature `fighter` and `player` may bring either
+    /// down to, while the two are in a bout (`Spar`): neither falls in one.
+    pub(crate) fn bout_floor(&self, fighter: u32, player: PlayerId) -> Option<f32> {
+        let &(instance, _) = self.wandering.by_creature.get(&fighter)?;
+        match self.wandering.active.get(&instance)?.plan {
+            Plan::Bout { player: p, fighter: f, down_to, .. } if p == player && f == fighter => Some(down_to),
+            _ => None,
+        }
+    }
+
     pub(crate) fn within_speech(&self, player: PlayerId, id: u32) -> bool {
         let (Some(p), Some(c)) = (self.players.get(&player), self.creatures.live.get(&id)) else { return false };
         flat(p.position, c.body.position) <= self.content.wandering.rules().speak_reach && (p.position.y - c.body.position.y).abs() <= self.content.wandering.rules().speak_reach
@@ -2014,7 +2094,7 @@ impl Server {
     pub(crate) fn meet(&mut self, player: PlayerId, id: u32) -> bool {
         let Some(&(instance, member)) = self.wandering.by_creature.get(&id) else { return false };
         let Some(inst) = self.wandering.active.get(&instance) else { return false };
-        if inst.provoked.is_some() {
+        if inst.provoked.is_some() || matches!(inst.plan, Plan::Bout { .. }) {
             return false;
         }
         let registry = self.content.wandering.clone();
@@ -2040,7 +2120,7 @@ impl Server {
             };
             !used
                 && line.needs.iter().all(|need| match need {
-                    ResolvedNeed::When(stage) => inst.stage == *stage,
+                    ResolvedNeed::When(stage) => inst.stage == *stage || inst.bouts.contains(&(player, *stage)),
                     ResolvedNeed::Struck(group) => inst.struck.contains(&(player, *group)),
                     ResolvedNeed::Skill(skill, at_least) => level(*skill) >= *at_least,
                     ResolvedNeed::Below(skill, below) => level(*skill) < *below,
@@ -2057,6 +2137,12 @@ impl Server {
                     ResolvedReward::Prayer(_) => p.praying.points < self.prayer_most(player),
                     // A blessing on the fields wants a field with something growing in it.
                     ResolvedReward::Grow(reach, _) => self.creatures.live.get(&id).is_some_and(|c| self.unripe_near(c.body.position, *reach)),
+                    // A bout is offered only to two who are both above where it would stop.
+                    ResolvedReward::Spar(down_to, _) => {
+                        let above = |health: f32, most: f32| health > (most * down_to).ceil();
+                        above(p.health.current as f32, p.health.max as f32)
+                            && self.creatures.live.get(&id).is_some_and(|c| above(c.health as f32, self.content.creatures.get(c.species).def.health as f32))
+                    }
                     _ => true,
                 })
                 && (!held_too
@@ -2157,6 +2243,17 @@ impl Server {
         }
         if gives.contains(&ResolvedReward::Anger) {
             self.provoke(instance, player);
+        }
+        if let Some(&ResolvedReward::Spar(down_to, seconds)) = gives.iter().find(|g| matches!(g, ResolvedReward::Spar(..)))
+            && let Some(mut inst) = self.wandering.active.remove(&instance)
+        {
+            let next = std::mem::replace(&mut inst.plan, Plan::Shadow { until: 0 });
+            inst.plan = Plan::Bout { player, fighter: id, down_to, until: self.tick + ticks(seconds), next: Box::new(next) };
+            if let Some(c) = self.creatures.live.get_mut(&id) {
+                c.mind.anger = 1.0;
+                c.mind.remember(Memory::HurtBy(player), GRUDGE);
+            }
+            self.keep(inst);
         }
         if gives.contains(&ResolvedReward::Leave)
             && let Some(mut inst) = self.wandering.active.remove(&instance)
@@ -5047,5 +5144,587 @@ mod tests {
         give_held(&mut server, "base:coal_ore", 1);
         assert!(server.meet(1, miner));
         assert_eq!(count_of(&server, "base:coal_ore"), 1, "lit once is lit");
+    }
+
+    /// A bout begun with the sparring master, camped beside the player with a sword in hand.
+    fn sparring(server: &mut Server) -> (u64, u32) {
+        let (id, master) = camped(server, "sparring_master", 3.0);
+        give_held(server, "base:stone_sword", 1);
+        assert!(server.meet(1, master));
+        assert!(matches!(server.wandering.active[&id].plan, Plan::Bout { player: 1, .. }), "a bout");
+        (id, master)
+    }
+
+    #[test]
+    fn a_bout_won_stops_at_the_share_and_the_master_teaches_the_winner() {
+        let mut server = fixture();
+        let (id, master) = sparring(&mut server);
+        let most = server.content.creatures.get(server.creatures.live[&master].species).def.health;
+        let client = listen(&mut server);
+        server.hurt_creature(1, master, 1000, None, voxmar_engine::combat::Blow::Plain);
+        assert_eq!(server.creatures.live[&master].health, (most as f32 * 0.7).ceil() as u16, "brought down to the share, no further");
+        assert!(matches!(server.wandering.active[&id].plan, Plan::Bout { .. }), "a blow in a bout is no provocation");
+        run(&mut server, 20);
+        let inst = &server.wandering.active[&id];
+        assert_eq!(inst.bouts, vec![(1, Stage::Won)]);
+        assert!(matches!(inst.plan, Plan::Camp { .. }), "and the camp goes on");
+        assert_eq!(server.creatures.live[&master].health, most, "scrapes bound");
+        assert_eq!(server.creatures.live[&master].mind.anger, 0.0, "no grudge");
+        assert!(says(&told(&client), "wander.base.sparring_master.bout_won"));
+        assert!(server.meet(1, master));
+        assert!(says(&told(&client), "wander.base.sparring_master.won"));
+        assert!(xp_in(&server, "core:attack") > 0);
+    }
+
+    #[test]
+    fn a_bout_lost_leaves_the_player_standing_and_still_teaches() {
+        let mut server = fixture();
+        let (id, master) = sparring(&mut server);
+        let species = server.creatures.live[&master].species;
+        let max = server.players[&1].health.max;
+        let floor = (max as f32 * 0.7).ceil() as u8;
+        for _ in 0..400 {
+            server.tick += 1;
+            server.creature_strikes(master, species, 1, 1.0);
+        }
+        let health = server.players[&1].health;
+        assert!(health.alive() && health.current == floor, "beaten down to the share and no further: {} of {max}", health.current);
+        let client = listen(&mut server);
+        run(&mut server, 20);
+        assert_eq!(server.wandering.active[&id].bouts, vec![(1, Stage::Lost)]);
+        assert!(says(&told(&client), "wander.base.sparring_master.bout_lost"));
+        assert!(server.meet(1, master));
+        assert!(says(&told(&client), "wander.base.sparring_master.lost"));
+        assert!(xp_in(&server, "core:defence") > 0, "a lesson in losing");
+    }
+
+    #[test]
+    fn walking_off_ends_a_bout_with_no_winner() {
+        let mut server = fixture();
+        let (id, master) = sparring(&mut server);
+        let at = server.creatures.live[&master].body.position;
+        server.players.get_mut(&1).unwrap().position = at + Vec3::new(30.0, 0.0, 0.0);
+        run(&mut server, 20);
+        let inst = &server.wandering.active[&id];
+        assert!(matches!(inst.plan, Plan::Camp { .. }));
+        assert!(inst.bouts.is_empty(), "neither won");
+        assert_eq!(server.creatures.live[&master].mind.anger, 0.0);
+        // A blow after the bout is a blow: he fights in earnest.
+        server.wandering_hurt(master, 1);
+        assert!(matches!(server.wandering.active[&id].plan, Plan::Avenge { .. }));
+    }
+
+    #[test]
+    fn the_champion_doubles_a_wager_won() {
+        let mut server = fixture();
+        let (id, champion) = camped(&mut server, "village_champion", 3.0);
+        give_held(&mut server, "base:gold_coin", 6);
+        assert!(server.meet(1, champion));
+        assert_eq!(count_of(&server, "base:gold_coin"), 4, "the wager");
+        assert!(matches!(server.wandering.active[&id].plan, Plan::Bout { .. }));
+        server.hurt_creature(1, champion, 1000, None, voxmar_engine::combat::Blow::Plain);
+        assert!(server.creatures.live.contains_key(&champion), "nobody falls");
+        run(&mut server, 20);
+        assert_eq!(server.wandering.active[&id].bouts, vec![(1, Stage::Won)]);
+        assert!(server.meet(1, champion));
+        assert_eq!(count_of(&server, "base:gold_coin"), 8, "doubled");
+        assert!(server.meet(1, champion));
+        assert_eq!(count_of(&server, "base:gold_coin"), 8, "once");
+    }
+
+    /// A second player beside the party, holding `item`.
+    fn onlooker(server: &mut Server, near: u32, item: &str, count: u8) -> voxmar_protocol::ClientConnection {
+        let at = server.creatures.live[&near].body.position;
+        let (client, connection) = voxmar_protocol::local_pair();
+        let mut other = crate::player::Player::new(2, connection, at - Vec3::new(3.0, 0.0, 0.0), 2, server.tick, server.survival.max_health, &server.config.limits);
+        other.joined = true;
+        assert_eq!(other.inventory.add(server.content.blocks.expect(item), count), 0);
+        server.players.insert(2, other);
+        client
+    }
+
+    #[test]
+    fn a_bout_is_the_fighters_own_and_the_champion_takes_on_the_next_after_a_loss() {
+        let mut server = fixture();
+        let (id, champion) = camped(&mut server, "village_champion", 3.0);
+        give_held(&mut server, "base:gold_coin", 2);
+        let _client = onlooker(&mut server, champion, "base:gold_coin", 2);
+        assert!(server.meet(1, champion));
+        // Beaten down: player 1 loses the wager.
+        let species = server.creatures.live[&champion].species;
+        for _ in 0..400 {
+            server.tick += 1;
+            server.creature_strikes(champion, species, 1, 1.0);
+        }
+        run(&mut server, 20);
+        assert_eq!(server.wandering.active[&id].bouts, vec![(1, Stage::Lost)]);
+        assert!(server.meet(1, champion), "the loser hears it");
+        // The one looking on is not the loser: no loss line in the way, the wager is theirs.
+        assert!(server.meet(2, champion));
+        assert!(matches!(server.wandering.active[&id].plan, Plan::Bout { player: 2, .. }), "a bout with the onlooker");
+        server.hurt_creature(2, champion, 1000, None, voxmar_engine::combat::Blow::Plain);
+        run(&mut server, 20);
+        assert!(server.wandering.active[&id].bouts.contains(&(2, Stage::Won)));
+        // Player 1 cannot take player 2's winnings.
+        let coins = count_of(&server, "base:gold_coin");
+        server.meet(1, champion);
+        assert_eq!(count_of(&server, "base:gold_coin"), coins, "a win is the winner's");
+    }
+
+    #[test]
+    fn a_player_already_down_to_the_share_is_offered_no_bout() {
+        let mut server = fixture();
+        let (id, champion) = camped(&mut server, "village_champion", 3.0);
+        give_held(&mut server, "base:gold_coin", 2);
+        let max = server.players[&1].health.max;
+        server.players.get_mut(&1).unwrap().health.current = (max as f32 * 0.5).ceil() as u8;
+        server.meet(1, champion);
+        assert_eq!(count_of(&server, "base:gold_coin"), 2, "no wager taken from the wounded");
+        assert!(!matches!(server.wandering.active[&id].plan, Plan::Bout { .. }));
+    }
+
+    #[test]
+    fn stargazers_come_only_on_a_clear_night_and_the_sky_focuses_a_watcher() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (3.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) < 0.1).expect("a dark hour");
+        let gazers = event(&server, "stargazers");
+        let spot = land_for(&server, gazers, Vec3::new(128.0, 200.0, 128.0), |_| true);
+        let picks = |server: &Server, wet: bool| (0..800u64).filter_map(|seed| server.pick_event_in(1, spot, mix(seed, 3), wet)).collect::<Vec<_>>();
+        assert!(picks(&server, false).contains(&gazers), "a clear night");
+        assert!(!picks(&server, true).contains(&gazers), "not under cloud");
+        let mut server = fixture();
+        let (_, elder) = camped(&mut server, "stargazers", 4.0);
+        run(&mut server, 27 * TICKS_PER_SECOND as u64);
+        assert!(has_effect(&server, "focused"));
+        assert!(xp_in(&server, "core:magic") > 0);
+        let at = server.creatures.live[&elder].body.position.floor().as_ivec3();
+        let wonder = tagged(&server, "wonder");
+        let name = server.content.blocks.def(wonder).name.clone();
+        place(&mut server, &name, IVec3::new(at.x + 20, 200, at.z));
+        give_held(&mut server, "base:gold_coin", 1);
+        let client = listen(&mut server);
+        assert!(server.meet(1, elder));
+        assert!(told(&client).iter().any(|(k, _)| k == "wander.point"), "a look through the tube");
+        assert_eq!(count_of(&server, "base:gold_coin"), 0);
+    }
+
+    #[test]
+    fn a_sweeps_handshake_brings_luck_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "chimney_sweep", (110, 128));
+        let sweep = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, sweep));
+        assert!(says(&told(&client), "wander.base.chimney_sweep.luck"));
+        let lucky = |server: &Server| count_of(server, "base:gold_coin") == 1 || has_effect(server, "refreshed");
+        assert!(lucky(&server), "a coin found or a lighter step (no wonder near)");
+        assert!(server.meet(1, sweep));
+        assert!(count_of(&server, "base:gold_coin") <= 1, "once");
+    }
+
+    #[test]
+    fn a_quack_tonic_does_something_harmless_for_a_coin_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "quack_doctor", (110, 128));
+        let quack = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().health.current = 2;
+        give_held(&mut server, "base:gold_coin", 2);
+        assert!(server.meet(1, quack));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1);
+        let did = server.players[&1].health.current > 2 || ["refreshed", "focused", "soothed", "sustained"].iter().any(|e| has_effect(&server, e));
+        assert!(did, "it does something");
+        assert!(server.meet(1, quack));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "once");
+    }
+
+    #[test]
+    fn a_cart_sticks_only_in_rain_and_a_shoulder_to_the_wheel_frees_it() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        let cart = event(&server, "stuck_cart");
+        let spot = land_for(&server, cart, Vec3::new(128.0, 200.0, 128.0), |_| true);
+        let picks = |server: &Server, wet: bool| (0..800u64).filter_map(|seed| server.pick_event_in(1, spot, mix(seed, 3), wet)).collect::<Vec<_>>();
+        assert!(picks(&server, true).contains(&cart) && !picks(&server, false).contains(&cart), "mud wants rain");
+        let mut server = fixture();
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        camped(&mut server, "stuck_cart", 3.0);
+        run(&mut server, 14 * TICKS_PER_SECOND as u64);
+        assert_eq!((count_of(&server, "base:gold_coin"), count_of(&server, "base:bread")), (1, 1));
+    }
+
+    #[test]
+    fn wassailers_come_at_night_to_one_at_home_and_toast_the_fields_once() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (3.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) < 0.1).expect("a dark hour");
+        let singers = event(&server, "wassailers");
+        let spot = land_for(&server, singers, Vec3::new(128.0, 200.0, 128.0), |_| true);
+        let comes = |server: &Server| (0..800u64).any(|seed| server.pick_event(1, spot, mix(seed, 3)) == Some(singers));
+        let home = spot.as_vec3() + Vec3::new(10.0, 0.0, 0.0);
+        server.players.get_mut(&1).unwrap().position = home;
+        assert!(!comes(&server), "no home, no wassail");
+        server.players.get_mut(&1).unwrap().home = Some(home);
+        assert!(comes(&server), "at home, at night");
+        broad_day(&mut server);
+        assert!(!comes(&server), "not by day");
+
+        let mut server = fixture();
+        let (_, bard) = camped(&mut server, "wassailers", 3.0);
+        give_held(&mut server, "base:bread", 2);
+        assert!(!server.meet(1, bard) || count_of(&server, "base:bread") == 2, "no field, no toast");
+        assert_eq!(count_of(&server, "base:bread"), 2);
+        let at = server.creatures.live[&bard].body.position.floor().as_ivec3();
+        let sprout = field(&mut server, at.x - 2..at.x + 2, at.z + 6);
+        let client = listen(&mut server);
+        assert!(server.meet(1, bard));
+        assert!(says(&told(&client), "wander.base.wassailers.toast"));
+        assert_eq!(count_of(&server, "base:bread"), 1);
+        assert!(xp_in(&server, "core:farming") > 0);
+        let grown = (at.x - 2..at.x + 2).filter(|&x| server.block(IVec3::new(x, 200, at.z + 6)) != Some(sprout)).count();
+        assert_eq!(grown, 4, "the field grows on a stage");
+        server.meet(1, bard);
+        assert_eq!(count_of(&server, "base:bread"), 1, "one toast for the party");
+    }
+
+    #[test]
+    fn thatchers_show_a_beginner_builder_for_four_wheat_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "thatchers", (110, 128));
+        let thatcher = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:wheat", 8);
+        assert!(server.meet(1, thatcher));
+        assert_eq!(count_of(&server, "base:wheat"), 4);
+        assert!(xp_in(&server, "core:construction") > 0, "how straw is laid");
+        let before = xp_in(&server, "core:construction");
+        server.meet(1, thatcher);
+        assert_eq!((count_of(&server, "base:wheat"), xp_in(&server, "core:construction")), (4, before), "once");
+        // A builder past the lesson is not taught it.
+        let mut server = fixture();
+        let id = start(&mut server, "thatchers", (110, 128));
+        let thatcher = members_of(&server, id, 0)[0];
+        skill_to(&mut server, "core:construction", 12);
+        give_held(&mut server, "base:wheat", 8);
+        server.meet(1, thatcher);
+        assert_eq!(count_of(&server, "base:wheat"), 8, "nothing taken from the skilled");
+    }
+
+    #[test]
+    fn seed_swappers_trade_wheat_seed_for_another_crop_only_to_a_farmer_who_has_grown_a_little() {
+        let mut server = fixture();
+        let id = start(&mut server, "seed_swappers", (110, 128));
+        let farmer = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:wheat_seeds", 8);
+        assert!(server.meet(1, farmer));
+        assert!(xp_in(&server, "core:farming") > 0, "when to sow");
+        assert_eq!(count_of(&server, "base:wheat_seeds"), 8, "no swap for a beginner (Farming 3)");
+        skill_to(&mut server, "core:farming", 3);
+        assert!(server.meet(1, farmer));
+        assert_eq!((count_of(&server, "base:wheat_seeds"), count_of(&server, "base:rye")), (4, 2), "rye, the one crop sown at Farming 3");
+        // Carrot and chickpea are sown from Farming 7, and offered only then.
+        skill_to(&mut server, "core:farming", 7);
+        assert!(server.meet(1, farmer));
+        assert_eq!(count_of(&server, "base:wheat_seeds"), 0, "a swap is a swap, again and again");
+        let other = ["base:rye", "base:carrot", "base:chickpea"].iter().map(|crop| count_of(&server, crop)).sum::<u32>();
+        assert_eq!(other, 4, "two more of a crop to sow");
+    }
+
+    #[test]
+    fn flint_knappers_teach_trade_and_say_where_the_gravel_is() {
+        let mut server = fixture();
+        let id = start(&mut server, "flint_knappers", (110, 128));
+        let knapper = members_of(&server, id, 0)[0];
+        let at = server.creatures.live[&knapper].body.position.floor().as_ivec3();
+        let gravel = tagged(&server, "gravel");
+        server.world.set_block(IVec3::new(at.x + 20, 200, at.z), gravel);
+        give_held(&mut server, "base:flint", 2);
+        let client = listen(&mut server);
+        assert!(server.meet(1, knapper));
+        assert_eq!(count_of(&server, "base:flint"), 0);
+        assert!(xp_in(&server, "core:crafting") > 0, "the knack");
+        assert!(server.meet(1, knapper));
+        assert!(told(&client).iter().any(|(k, _)| k == "wander.point"), "where the gravel lies");
+        give_held(&mut server, "base:hide", 1);
+        assert!(server.meet(1, knapper));
+        assert!((3..=4).contains(&count_of(&server, "base:flint")), "a handful for a hide");
+    }
+
+    #[test]
+    fn frog_giggers_take_frogs_and_teach_a_beginner_to_still_the_light() {
+        let mut server = fixture();
+        let frogs: Vec<u32> = (0..4).map(|i| wild(&mut server, "base:common_frog", Vec3::new(96.5 + i as f32 * 3.0, 200.0, 146.5), 20 + i)).collect();
+        let id = start(&mut server, "frog_giggers", (110, 128));
+        let gigger = members_of(&server, id, 0)[0];
+        assert!(server.meet(1, gigger));
+        assert!(xp_in(&server, "core:hunter") > 0);
+        assert!(run_until(&mut server, id, 300, |inst| matches!(inst.plan, Plan::March { .. })), "the giggers are done");
+        let left = frogs.iter().filter(|f| server.creatures.live.contains_key(f)).count();
+        assert_eq!(left, 1, "three taken, one left to croak");
+    }
+
+    #[test]
+    fn a_messenger_runs_to_town_and_stands_a_coin_to_one_who_kept_up() {
+        let mut server = fixture();
+        let id = journey_to(&mut server, "messenger", Vec3::new(40.5, 200.0, 200.5));
+        if let Plan::Journey { pace, .. } = &mut server.wandering.active.get_mut(&id).unwrap().plan {
+            *pace = 1.5;
+        }
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        let arrived = (0..200).any(|_| {
+            if let Some(at) = leader_at(&server, id) {
+                server.players.get_mut(&1).unwrap().position = at + Vec3::new(3.0, 0.0, 0.0);
+            }
+            run(&mut server, 20);
+            server.wandering.active.get(&id).is_some_and(|inst| inst.stage == Stage::Arrived)
+        });
+        assert!(arrived, "the letter reaches the town");
+        assert!(says(&told(&client), "wander.base.messenger.arrived"));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1);
+        assert!(xp_in(&server, "core:hitpoints") > 0, "a run's worth");
+    }
+
+    #[test]
+    fn a_messenger_passes_on_news_of_something_strange_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "messenger", (110, 128));
+        let runner = members_of(&server, id, 0)[0];
+        let at = server.creatures.live[&runner].body.position.floor().as_ivec3();
+        let wonder = tagged(&server, "wonder");
+        server.world.set_block(IVec3::new(at.x + 30, 200, at.z), wonder);
+        let client = listen(&mut server);
+        assert!(server.meet(1, runner));
+        assert!(told(&client).iter().filter(|(k, _)| k == "wander.point").count() == 1, "news of it");
+        server.meet(1, runner);
+        assert!(told(&client).iter().filter(|(k, _)| k == "wander.point").count() == 0, "told once");
+    }
+
+    #[test]
+    fn a_sleepwalker_wanders_near_a_home_at_night_and_woken_pays_and_goes_home() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (3.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) < 0.1).expect("a dark hour");
+        let walker = event(&server, "sleepwalker");
+        let spot = land_for(&server, walker, Vec3::new(128.0, 200.0, 128.0), |_| true);
+        let comes = |server: &Server| (0..800u64).any(|seed| server.pick_event(1, spot, mix(seed, 3)) == Some(walker));
+        let home = spot.as_vec3() + Vec3::new(10.0, 0.0, 0.0);
+        server.players.get_mut(&1).unwrap().position = home;
+        assert!(!comes(&server), "no home, nobody's sleepwalker");
+        server.players.get_mut(&1).unwrap().home = Some(home);
+        assert!(comes(&server), "near home at night");
+        broad_day(&mut server);
+        assert!(!comes(&server), "awake by day");
+
+        let mut server = fixture();
+        let id = start(&mut server, "sleepwalker", (110, 128));
+        let sleeper = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        assert!(server.meet(1, sleeper));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "a coin for the kindness");
+        assert!(matches!(server.wandering.active[&id].plan, Plan::March { .. }), "and home they go");
+        server.meet(1, sleeper);
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "once");
+    }
+
+    #[test]
+    fn the_assayer_teaches_a_beginner_holding_ore_and_buys_copper_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "ore_assayer", (110, 128));
+        let assayer = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:copper_ore", 8);
+        assert!(server.meet(1, assayer));
+        assert!(xp_in(&server, "core:mining") > 0, "how to read ore");
+        assert_eq!(count_of(&server, "base:copper_ore"), 8, "read, not taken");
+        assert!(server.meet(1, assayer));
+        assert_eq!((count_of(&server, "base:copper_ore"), count_of(&server, "base:gold_coin")), (4, 1));
+        assert!(server.meet(1, assayer));
+        assert_eq!(count_of(&server, "base:copper_ore"), 4, "once");
+    }
+
+    #[test]
+    fn bloomery_smelters_smelt_copper_once_keeping_an_ingot() {
+        let mut server = fixture();
+        let id = start(&mut server, "bloomery_smelters", (110, 128));
+        let smith = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:copper_ore", 1);
+        assert!(server.meet(1, smith));
+        assert_eq!(count_of(&server, "base:copper_ore"), 1, "one lump is not worth the fire");
+        assert!(xp_in(&server, "core:engineering") > 0, "how bellows work");
+        give_held(&mut server, "base:copper_ore", 3);
+        assert!(server.meet(1, smith));
+        assert_eq!((count_of(&server, "base:copper_ore"), count_of(&server, "base:copper_ingot")), (0, 2), "three smelted, one kept");
+        give_held(&mut server, "base:copper_ore", 3);
+        server.meet(1, smith);
+        assert_eq!(count_of(&server, "base:copper_ore"), 3, "once");
+    }
+
+    #[test]
+    fn moth_netters_pay_one_who_holds_up_a_flame() {
+        let mut server = fixture();
+        let id = start(&mut server, "moth_netters", (110, 128));
+        let netter = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        server.meet(1, netter);
+        assert_eq!(count_of(&server, "base:gold_coin"), 0, "no light, no moths");
+        let flame = tagged(&server, "fire");
+        let name = server.content.blocks.def(flame).name.clone();
+        give_held(&mut server, &name, 1);
+        assert!(server.meet(1, netter));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1);
+        assert!(xp_in(&server, "core:hunter") > 0);
+        server.meet(1, netter);
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "once");
+    }
+
+    #[test]
+    fn the_potter_shows_a_beginner_a_burnish_and_buys_four_pots_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "potter", (110, 128));
+        let potter = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:fired_clay", 8);
+        assert!(server.meet(1, potter));
+        assert!(xp_in(&server, "core:crafting") > 0);
+        assert_eq!(count_of(&server, "base:fired_clay"), 8, "shown, not taken");
+        assert!(server.meet(1, potter));
+        assert_eq!((count_of(&server, "base:fired_clay"), count_of(&server, "base:gold_coin")), (4, 2));
+        server.meet(1, potter);
+        assert_eq!(count_of(&server, "base:fired_clay"), 4, "once");
+    }
+
+    #[test]
+    fn snail_races_are_run_in_the_rain_and_a_bet_pays_double_or_a_laugh() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        let races = event(&server, "snail_racers");
+        let spot = land_for(&server, races, Vec3::new(128.0, 200.0, 128.0), |_| true);
+        let picks = |server: &Server, wet: bool| (0..800u64).filter_map(|seed| server.pick_event_in(1, spot, mix(seed, 3), wet)).collect::<Vec<_>>();
+        assert!(picks(&server, true).contains(&races) && !picks(&server, false).contains(&races), "snails race in the wet");
+        let mut server = fixture();
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let (_, racer) = camped(&mut server, "snail_racers", 3.0);
+        run(&mut server, 22 * TICKS_PER_SECOND as u64);
+        assert!(has_effect(&server, "refreshed"), "a race watched through");
+        give_held(&mut server, "base:gold_coin", 1);
+        assert!(server.meet(1, racer));
+        let coins = count_of(&server, "base:gold_coin");
+        assert!(coins == 0 || coins == 2, "lost or doubled, not {coins}");
+        give_held(&mut server, "base:gold_coin", 1);
+        server.meet(1, racer);
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "one bet each");
+    }
+
+    #[test]
+    fn the_henwife_teaches_trades_eggs_and_gives_a_hen_to_a_farmer_with_a_home() {
+        let mut server = fixture();
+        let id = start(&mut server, "henwife", (110, 128));
+        let wife = members_of(&server, id, 0)[0];
+        let hens = members_of(&server, id, 1);
+        assert!((2..=3).contains(&hens.len()));
+        give_held(&mut server, "base:wheat_seeds", 6);
+        assert!(server.meet(1, wife));
+        assert!(xp_in(&server, "core:farming") > 0, "where hens lay");
+        assert_eq!(count_of(&server, "base:wheat_seeds"), 6, "no hen for a beginner without a home");
+        skill_to(&mut server, "core:farming", 3);
+        server.meet(1, wife);
+        assert_eq!(count_of(&server, "base:wheat_seeds"), 6, "nor for one without a home");
+        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        assert!(server.meet(1, wife));
+        assert_eq!(count_of(&server, "base:wheat_seeds"), 0);
+        assert_eq!(hens.iter().filter(|h| server.creatures.live[h].owner.as_deref() == Some("Tëster")).count(), 1, "one hen is the player's");
+        give_held(&mut server, "base:feather", 4);
+        assert!(server.meet(1, wife));
+        assert_eq!(count_of(&server, "base:egg"), 2, "feathers for eggs");
+    }
+
+    #[test]
+    fn mushroom_pickers_come_after_rain_and_teach_point_and_trade() {
+        let server = fixture();
+        let pickers = server.content.wandering.get(event(&server, "mushroom_pickers"));
+        assert_eq!(pickers.def.needs.wet, Some(true), "after rain (the wet rule's own tests cover the pick)");
+        let mut server = fixture();
+        let id = start(&mut server, "mushroom_pickers", (110, 128));
+        let picker = members_of(&server, id, 0)[0];
+        let at = server.creatures.live[&picker].body.position.floor().as_ivec3();
+        place(&mut server, "base:brown_mushroom", IVec3::new(at.x + 20, 200, at.z));
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, picker));
+        assert!(xp_in(&server, "core:cooking") > 0, "which are good to eat");
+        assert!(server.meet(1, picker));
+        assert!(told(&client).iter().any(|(k, _)| k == "wander.point"), "where more grow");
+        give_held(&mut server, "base:brown_mushroom", 4);
+        assert!(server.meet(1, picker));
+        assert_eq!((count_of(&server, "base:brown_mushroom"), count_of(&server, "base:bread")), (0, 1));
+    }
+
+    #[test]
+    fn the_woodcarver_answers_a_beginner_and_a_carver_of_skill_differently() {
+        let mut server = fixture();
+        let id = start(&mut server, "woodcarver", (110, 128));
+        let carver = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:oak_log", 8);
+        let client = listen(&mut server);
+        assert!(server.meet(1, carver));
+        assert!(says(&told(&client), "wander.base.woodcarver.grain"));
+        assert_eq!(count_of(&server, "base:oak_log"), 8, "shown, not taken");
+        assert!(server.meet(1, carver));
+        assert_eq!((count_of(&server, "base:oak_log"), count_of(&server, "base:gold_coin")), (0, 1), "eight logs for a coin");
+        skill_to(&mut server, "core:crafting", 12);
+        let before = xp_in(&server, "core:crafting");
+        assert!(server.meet(1, carver));
+        assert!(says(&told(&client), "wander.base.woodcarver.finer"));
+        assert!(xp_in(&server, "core:crafting") > before, "a finer cut for one with the feel");
+    }
+
+    #[test]
+    fn shearers_roll_a_fleece_for_a_beginner_and_buy_six_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "shearers", (110, 128));
+        let shearer = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:wool", 12);
+        assert!(server.meet(1, shearer));
+        assert!(xp_in(&server, "core:farming") > 0);
+        assert_eq!(count_of(&server, "base:wool"), 12);
+        assert!(server.meet(1, shearer));
+        assert_eq!((count_of(&server, "base:wool"), count_of(&server, "base:gold_coin")), (6, 1));
+        server.meet(1, shearer);
+        assert_eq!(count_of(&server, "base:wool"), 6, "once");
+    }
+
+    #[test]
+    fn an_apprentice_asks_a_master_for_a_lesson_in_each_skill_they_have() {
+        let mut server = fixture();
+        let id = start(&mut server, "apprentice", (110, 128));
+        let youth = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, youth));
+        assert!(says(&told(&client), "wander.base.apprentice.someday"), "a beginner is no master");
+        assert_eq!(count_of(&server, "base:gold_coin"), 0);
+        skill_to(&mut server, "core:farming", 15);
+        skill_to(&mut server, "core:mining", 15);
+        assert!(server.meet(1, youth));
+        assert!(server.meet(1, youth));
+        assert_eq!(count_of(&server, "base:gold_coin"), 2, "a lesson in each");
+        let farming = xp_in(&server, "core:farming");
+        server.meet(1, youth);
+        assert_eq!((count_of(&server, "base:gold_coin"), xp_in(&server, "core:farming")), (2, farming), "once each");
+    }
+
+    #[test]
+    fn the_hedge_witch_turns_three_herbs_to_a_mote_for_one_who_knows_herbs() {
+        let mut server = fixture();
+        let id = start(&mut server, "hedge_witch", (110, 128));
+        let witch = members_of(&server, id, 0)[0];
+        let herb = tagged(&server, "herb");
+        let name = server.content.blocks.def(herb).name.clone();
+        give_held(&mut server, &name, 3);
+        assert!(server.meet(1, witch));
+        assert!(xp_in(&server, "core:magic") > 0, "what the night air carries");
+        assert_eq!(count_of(&server, &name), 3, "no mote for one who knows no herbs");
+        skill_to(&mut server, "core:alchemy", 5);
+        assert!(server.meet(1, witch));
+        assert_eq!((count_of(&server, &name), count_of(&server, "base:aether_mote")), (0, 1));
+        give_held(&mut server, &name, 3);
+        server.meet(1, witch);
+        assert_eq!(count_of(&server, &name), 3, "once");
     }
 }
