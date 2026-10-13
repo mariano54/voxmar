@@ -537,6 +537,28 @@ the crucible, fired pots, a flame held up at night, a home at night, rain.
 | stays to watch | n/a | n/a | Refreshed |
 | strikes one | they scatter | they scatter | they scatter |
 
+## Batch 14 (implemented, six kinds): trades of the farm and wood, and answering skill
+
+No new mechanics. These kinds lean on interaction more than gifts: each has two or three
+lines, picked by the player's skill, home or what they hold. The apprentice answers what
+the player has become good at.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| henwife | Drift, Herd | Hens about a henwife. A beginner learns where hens lay; four feathers buy two eggs; a farmer with a home and Farming 3 has a hen of their own for six wheat seeds (once for the party). |
+| mushroom pickers | Gather, wet | After rain, in the wood. A beginner cook learns which are good to eat; they point to more; four mushrooms buy a loaf. |
+| woodcarver | Camp | A beginner holding a log learns the grain; a carver of some skill (Crafting 10 to 25) gets a finer tip; eight logs buy a coin. |
+| shearers | March (halts) | A beginner holding wool learns to roll a fleece; six wool buy a coin. |
+| apprentice | Shadow | A youth looking for a master. A farmer, miner or crafter of skill (15) is asked for a lesson in each (teaching teaches, and a coin); a beginner is told "when you're a master". |
+| hedge witch | Camp, night | Three herbs and Alchemy 5 make a mote of aether, once; a beginner at Magic learns what the night air carries. Herbs into magic. |
+
+| the player | henwife | woodcarver | apprentice |
+| --- | --- | --- | --- |
+| is a beginner | where hens lay | the grain | "come back a master" |
+| has the skill | a hen (Farming 3, home) | a finer cut (Crafting 10) | a lesson each (15) |
+| gives what's asked | eggs, a hen | a coin | n/a |
+| strikes one | they scatter | they scatter | they scatter |
+
 ## Quest hooks
 
 Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
@@ -565,6 +587,9 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **To the light** (moth netters): hold a flame up for the moth netters.
 - **Sound pots** (potter): sell four fired pots to a travelling potter.
 - **The green one** (snail racers): watch a snail race in the rain.
+- **A hen of your own** (henwife): take a hen home from a henwife.
+- **Teach a trade** (apprentice): be good enough at something that a would-be apprentice asks to learn it.
+- **Herbs into aether** (hedge witch): have three herbs made into a mote of aether.
 
 ## Catalogue of 100
 
@@ -647,7 +672,7 @@ are the mechanics later batches add, each used by several kinds.
 | 71 | werewolf night | a villager turns at moonrise | Chase | 3 | later |
 | 72 | vampire carriage | a black coach that avoids day | March | 4 | later |
 | 73 | witch and cats | a witch with a cat that sells a hex | Camp | 3 | later |
-| 74 | hedge witch circle | herbs for a mote of aether | Camp | 3 | later |
+| 74 | hedge witch circle | see batch 14 | Camp | 2 | done |
 | 75 | necromancer's thralls | skeleton servants fetch a body from a grave | Haul | 4 | later |
 | 76 | cultists' procession | masked, singing, to an altar | March | 4 | later |
 | 77 | demon summoners | a ring, a flash, one angry guest | Ambush | 5 | later |
@@ -701,6 +726,11 @@ are the mechanics later batches add, each used by several kinds.
 | 125 | moth netters | see batch 13 | Holds | 1 | done |
 | 126 | potter | see batch 13 | March | 1 | done |
 | 127 | snail racers | see batch 13 | wet, show | 1 | done |
+| 128 | henwife | see batch 14 | Hand | 2 | done |
+| 129 | mushroom pickers | see batch 14 | Gather, wet | 1 | done |
+| 130 | woodcarver | see batch 14 | Camp | 1 | done |
+| 131 | shearers | see batch 14 | March | 2 | done |
+| 132 | apprentice | see batch 14 | Skill | 2 | done |
 
 ## Mechanics the next batches add
 

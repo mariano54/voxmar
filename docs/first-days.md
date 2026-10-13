@@ -133,11 +133,32 @@ Next (Mac): run `tools/gate` (the cloud cannot build the client's graphics stack
 no GPU), then play the first three days once in a fresh survival world and note where you
 stalled.
 
+## The new-player bot
+
+`a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln` (crates/server/tests/gameplay.rs)
+runs in every test run and guards the loop. A scripted player starts with nothing and follows
+the main line in the book's order: Look It Up, the Nomad quests to the lit Homestead Hearth,
+then A Pit Kiln, Fire the Clay, The Potter, Charcoal, Red Metal, Brick by Brick, The Crucible
+and the lit Crucible Kiln. It gathers, crafts with the recipes it has unlocked, fires clay,
+burns charcoal, hunts, and claims each quest's rewards in the book as it finishes, since the
+levels later steps need come from those (Red Metal's copper takes Mining 5, and all the
+mining before it gives Mining 2; Charcoal's reward brings the rest). Nothing is given: the plot
+is laid out with /fill and /summon, standing in for terrain, and the only other shortcut is
+a /tp across the plot. Each quest must show done at its step, so a step whose text and
+recipes cannot be followed fails here.
+
+Its messages are stamped with the game's clock (`Fresh::now`), so mining, cooking, walking and
+blows go at the test server's ticks (60 times the clock's pace) and the run takes about 11 s
+of wall time for some nine minutes of game time. For that, a test server's swings land by the
+latest stamp heard when it is later than the clock (`tick_fights`), which over a network it
+never is.
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
 (about three minutes of real server time, so it is ignored in ordinary runs); run it after
-changing early-age quests, recipes or cooking.
+changing early-age quests, recipes or cooking. It shares its script with the bot above and
+claims each quest's rewards as it finishes.
 
 `a_fresh_survival_player_reaches_each_nomad_milestone` (crates/server/tests/gameplay.rs) plays
 the start of a fresh survival game headless, with only actions a player can propose: mine at
