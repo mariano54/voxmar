@@ -780,6 +780,7 @@ impl Server {
         self.tick_items();
         self.tick_creatures();
         self.tick_fights();
+        self.ping_players();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();

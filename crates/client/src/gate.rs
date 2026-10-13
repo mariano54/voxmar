@@ -515,6 +515,8 @@ struct Gate {
     sweep: Sweep,
     /// The player's states the server had sent when the wear step clicked.
     worn_states: u32,
+    /// The Defence level before the wear step raised it, to put back after.
+    worn_defence: u8,
     overlay_counted: (f32, f32),
 }
 
@@ -611,6 +613,7 @@ impl Gate {
             feel: FeelRun::default(),
             sweep: Sweep::default(),
             worn_states: 0,
+            worn_defence: 1,
             overlay_counted: (0.0, 0.0),
         }
     }
@@ -5113,6 +5116,10 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
 /// step of 0.05 cannot jump one.
 const FEEL_TRIES: u32 = 10;
 const FEEL_STEP: f32 = 0.05;
+/// Seconds past the moment tried that a frame may come late with the try still saying
+/// something of the moment: a frame that late answered after the blow could have landed
+/// (the wind-up is 0.7 s), and said nothing, as on a machine drawing a frame a second.
+const FEEL_SLOW_FRAME: f32 = 0.25;
 /// Server seconds the block, counter and dodge take at most together; past them the step
 /// fails what it is on and goes on to kill the bears, so none is left behind.
 const FEEL_LIMIT: f32 = 120.0;
@@ -5155,6 +5162,11 @@ struct FeelRun {
     facing_checked: bool,
     facing_camera: Option<(f32, f32)>,
     facing_frames: u8,
+    /// How late the frame that answered came past the moment tried, the worst of the tries
+    /// set aside for it, and how many were.
+    late: f32,
+    slowest: f32,
+    slow: u32,
 }
 
 impl FeelRun {
@@ -5319,6 +5331,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if gate.feel.answer(world, blocking, dodge_key, ours.is_some()) {
                 let seen = gate.feel.seen.expect("answered an observed wind-up");
+                gate.feel.late = seen.elapsed().as_secs_f32() - gate.feel.after;
                 let player = world.resource::<LocalPlayer>();
                 info!("gate: combat response phase {} try {} bear {}, requested {:.3}s, queued {:.3}s after wind-up, grounded {}, flying {}, frame {:.3}s", gate.phase, gate.feel.tries + 1, view.id, gate.feel.after, seen.elapsed().as_secs_f32(), player.on_ground, player.flying, world.resource::<Time>().delta_secs());
             } else if !blocking {
@@ -5359,6 +5372,28 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.feel.seen = None;
             gate.feel.outcomes.push(defended);
             let passed = if blocking { defended == Defended::Perfect } else { defended == Defended::Dodged };
+            // An answer sent by a frame that came this late may have gone after the blow
+            // landed, whatever moment was tried: the try says nothing of the moment, so it is
+            // set aside, not counted, and the search stays. Enough of them and the machine is
+            // too slow to judge (as `creature falls` is when it draws too few frames).
+            let late = std::mem::take(&mut gate.feel.late);
+            if !passed && answered && late > FEEL_SLOW_FRAME {
+                gate.feel.outcomes.pop();
+                gate.feel.slow += 1;
+                gate.feel.slowest = gate.feel.slowest.max(late);
+                if gate.feel.slow >= FEEL_TRIES {
+                    let detail = format!("{} answers came {:.2} s late at most, past a {windup} s wind-up, so none says whether the game judges the moment", gate.feel.slow, gate.feel.slowest);
+                    gate.known(if blocking { "perfect block" } else { "dodge" }, Err(detail), "frames slower than a wind-up, as on a loaded machine");
+                    gate.feel.slow = 0;
+                    gate.feel.slowest = 0.0;
+                    if blocking {
+                        to_dodge(gate, windup, now);
+                    } else {
+                        clear_feel(gate, now);
+                    }
+                }
+                return;
+            }
             if passed {
                 let detail = format!("{defended:?} for {damage} damage, requested {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
                 let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
@@ -5449,6 +5484,8 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// After the block and counter, passed or not: on to the dodge (phase 4) with its own tries.
 fn to_dodge(gate: &mut Gate, windup: f32, now: f32) {
     gate.feel.tries = 0;
+    gate.feel.slow = 0;
+    gate.feel.slowest = 0.0;
     gate.feel.outcomes.clear();
     gate.feel.seen = None;
     gate.feel.answered = false;
@@ -5512,6 +5549,9 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     };
     match gate.phase {
         0 => {
+            let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+            let skills = &launch.content.skills;
+            gate.worn_defence = skills.id("core:defence").map_or(1, |defence| skills.level(player.skills.xp(defence)));
             let net = world.resource::<Net>();
             net.command("skill defence 20");
             for (name, _) in [WORN_SHIRT, WORN_SHIELD] {
@@ -5636,7 +5676,8 @@ fn end_wear(world: &mut World, gate: &mut Gate, now: f32) {
     for (name, _) in [WORN_SHIRT, WORN_SHIELD] {
         net.command(&format!("clear {}", name.trim_start_matches("base:")));
     }
-    net.command("skill defence 1");
+    // Back to the level before, for the steps after.
+    net.command(&format!("skill defence {}", gate.worn_defence));
     // The fights before may have killed every creature about: one is summoned beside the
     // player, for `combat_hud` to tell its blows at.
     net.command(&format!("summon {} 1 ~ ~ ~2", CREATURE.trim_start_matches("base:")));

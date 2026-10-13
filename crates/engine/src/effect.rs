@@ -11,6 +11,14 @@
 //! several are active their modifiers combine: rates multiply, warmth and health add, the
 //! quickest hurt wins.
 //!
+//! Home is a condition too. A player's home (the lit Homestead Hearth, else the bed they last
+//! slept in) is surveyed for the tags of the blocks around it, and an effect may need the
+//! player to be there (`AtHome`), under a roof (`Indoors`) and to have so many blocks with a
+//! tag around it (`HomeHas("bed", 1)`). A ladder of such effects, each replacing the one
+//! below, is a home that gets cosier as it is furnished (base/effects.ron). Sleeping at a
+//! bed gives the effects the file's `sleeps` rules name, those whose `needs` effect would
+//! hold where the player sleeps: a better rest for a better home.
+//!
 //! Every effect has an icon (`ui/effect/<icon>` in the packs) and its name and a line on
 //! what it does as language keys (`effect.<package>.<name>` and `….description`).
 
@@ -48,6 +56,14 @@ pub struct EffectDef {
     /// Milder effects it hides while it lasts.
     #[serde(default)]
     pub replaces: Vec<String>,
+    /// Whether the player is told (in chat) when it comes on, with what it does: for the
+    /// steps of a ladder they work toward.
+    #[serde(default)]
+    pub announce: bool,
+    /// For an announced step, what to do to reach the next, which the chat line says after
+    /// what this one does (language key `….next`).
+    #[serde(default)]
+    pub next: String,
     #[serde(default)]
     pub modifiers: Modifiers,
     /// Levels it adds to skills' checks (a boost potion: `[("engineering", 3)]`); all
@@ -130,9 +146,27 @@ pub enum Condition {
     Storm(f32),
     /// Standing in a biome with this tag, or of this name (`forest`, `ocean`, `base:bog`).
     InBiome(String),
+    /// Within reach of the player's home: the lit hearth, else the bed last slept in.
+    AtHome,
+    /// Under a roof (something solid overhead).
+    Indoors,
+    /// At home, with at least this many blocks carrying the tag around it.
+    HomeHas(String, u32),
     All(Vec<Condition>),
     Any(Vec<Condition>),
     Not(Box<Condition>),
+}
+
+impl Condition {
+    /// The tags `HomeHas` asks of a home anywhere in this condition.
+    fn home_tags<'a>(&'a self, into: &mut Vec<&'a str>) {
+        match self {
+            Condition::HomeHas(tag, _) => into.push(tag),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.home_tags(into)),
+            Condition::Not(c) => c.home_tags(into),
+            _ => {}
+        }
+    }
 }
 
 /// What the conditions are checked against: the player's state and the weather where they
@@ -148,6 +182,21 @@ pub struct Situation<'a> {
     /// The biome where the player stands: its name and tags.
     pub biome: &'a str,
     pub biome_tags: &'a [String],
+    /// What lies around the player's home, if they stand within reach of it.
+    pub home: Option<&'a HomeSurvey>,
+}
+
+/// How many blocks with each tag lie around a home: the tags are those effects ask of it
+/// (`EffectRegistry::home_tags`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HomeSurvey {
+    pub counts: Vec<(String, u32)>,
+}
+
+impl HomeSurvey {
+    pub fn count(&self, tag: &str) -> u32 {
+        self.counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n)
+    }
 }
 
 impl Condition {
@@ -165,6 +214,9 @@ impl Condition {
             Condition::Dust(x) => s.outdoors && w.dust >= *x,
             Condition::Storm(x) => s.outdoors && w.lightning >= *x,
             Condition::InBiome(t) => s.biome_tags.contains(t) || s.biome == t || s.biome.rsplit(':').next() == Some(t.as_str()),
+            Condition::AtHome => s.home.is_some(),
+            Condition::Indoors => !s.outdoors,
+            Condition::HomeHas(tag, n) => s.home.is_some_and(|h| h.count(tag) >= *n),
             Condition::All(all) => all.iter().all(|c| c.holds(s)),
             Condition::Any(any) => any.iter().any(|c| c.holds(s)),
             Condition::Not(c) => !c.holds(s),
@@ -189,6 +241,17 @@ pub struct FoodRule {
     pub seconds: f32,
 }
 
+/// Sleeping at a bed gives `effect` for `seconds`, if the effect named by `needs` (when
+/// there is one) would hold where the player sleeps.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SleepRule {
+    pub effect: String,
+    pub seconds: f32,
+    #[serde(default)]
+    pub needs: Option<String>,
+}
+
 /// One package's `effects.ron`.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -197,6 +260,8 @@ pub struct EffectFile {
     pub effects: Vec<EffectDef>,
     #[serde(default)]
     pub foods: Vec<FoodRule>,
+    #[serde(default)]
+    pub sleeps: Vec<SleepRule>,
 }
 
 /// Every effect, in the order packages list them.
@@ -207,6 +272,10 @@ pub struct EffectRegistry {
     /// The effects each one hides.
     replaces: Vec<Vec<EffectId>>,
     foods: Vec<(Vec<String>, EffectId, f32)>,
+    /// What sleeping gives: the effect, its seconds, and the effect whose condition must hold.
+    sleeps: Vec<(EffectId, f32, Option<EffectId>)>,
+    /// The tags effects ask of a home, each once.
+    home_tags: Vec<String>,
 }
 
 impl EffectRegistry {
@@ -233,14 +302,19 @@ impl EffectRegistry {
             }
         }
         file.foods.iter_mut().for_each(|rule| qualify(&mut rule.effect));
+        for rule in &mut file.sleeps {
+            qualify(&mut rule.effect);
+            rule.needs.iter_mut().for_each(qualify);
+        }
         Ok(file)
     }
 
     pub fn new(files: Vec<EffectFile>) -> Result<Self, RegistryError> {
-        let (mut defs, mut rules) = (Vec::new(), Vec::new());
+        let (mut defs, mut rules, mut sleeps) = (Vec::new(), Vec::new(), Vec::new());
         for file in files {
             defs.extend(file.effects);
             rules.extend(file.foods);
+            sleeps.extend(file.sleeps);
         }
         let mut by_name = FxHashMap::default();
         for (i, def) in defs.iter().enumerate() {
@@ -264,7 +338,36 @@ impl EffectRegistry {
                 Ok((rule.tags, id, rule.seconds))
             })
             .collect::<Result<_, RegistryError>>()?;
-        Ok(Self { defs, by_name, replaces, foods })
+        let sleeps = sleeps
+            .into_iter()
+            .map(|rule| {
+                let id = by_name.get(&rule.effect).copied().ok_or_else(|| RegistryError(format!("a sleep rule gives `{}`, which does not exist", rule.effect)))?;
+                if !(rule.seconds > 0.0) {
+                    return Err(RegistryError(format!("the sleep rule for `{}` lasts {} seconds", rule.effect, rule.seconds)));
+                }
+                let needs = rule
+                    .needs
+                    .map(|name| {
+                        let needed = by_name.get(&name).copied().ok_or_else(|| RegistryError(format!("the sleep rule for `{}` needs `{name}`, which does not exist", rule.effect)))?;
+                        defs[needed.0 as usize].when.is_some().then_some(needed).ok_or_else(|| RegistryError(format!("the sleep rule for `{}` needs `{name}`, which has no `when` to hold", rule.effect)))
+                    })
+                    .transpose()?;
+                Ok((id, rule.seconds, needs))
+            })
+            .collect::<Result<_, RegistryError>>()?;
+        let mut tags: Vec<&str> = Vec::new();
+        for def in &defs {
+            if let Some(when) = &def.when {
+                when.home_tags(&mut tags);
+            }
+        }
+        let mut home_tags: Vec<String> = Vec::new();
+        for tag in tags {
+            if !home_tags.iter().any(|t| t == tag) {
+                home_tags.push(tag.to_owned());
+            }
+        }
+        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -343,6 +446,27 @@ impl EffectRegistry {
         given
     }
 
+    /// Whether effect `winner` hides `loser` while it lasts.
+    pub fn hides(&self, winner: EffectId, loser: EffectId) -> bool {
+        self.replaces[winner.0 as usize].contains(&loser)
+    }
+
+    /// The tags effects ask of a home (`HomeHas`): what surveying a home counts.
+    pub fn home_tags(&self) -> &[String] {
+        &self.home_tags
+    }
+
+    /// Whether the effects a sleep gives are among `active` (the player is rested already).
+    pub fn rested(&self, active: &[(EffectId, f32)]) -> bool {
+        self.sleeps.iter().any(|(effect, ..)| active.iter().any(|(a, _)| a == effect))
+    }
+
+    /// The timed effects sleeping at a bed gives where `situation` is: each sleep rule whose
+    /// needed effect would hold there.
+    pub fn given_by_sleep(&self, situation: &Situation) -> Vec<(EffectId, f32)> {
+        self.sleeps.iter().filter(|(_, _, needs)| needs.is_none_or(|n| self.get(n).when.as_ref().is_some_and(|c| c.holds(situation)))).map(|&(id, seconds, _)| (id, seconds)).collect()
+    }
+
     pub fn fingerprint(&self) -> u64 {
         let mut h = 0xcbf2_9ce4_8422_2325u64;
         for def in &self.defs {
@@ -371,7 +495,7 @@ mod tests {
     }
 
     fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[] }
+        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None }
     }
 
     #[test]
@@ -426,5 +550,68 @@ mod tests {
         assert_eq!((m.heal, m.hurt_every, m.max_health), (0.0, Some(10.0), 4));
         let m = effects.modifiers(&effects.active(&situation(&calm, true, 2.0, true), &[]));
         assert_eq!((m.heal, m.speed), (1.0, 0.9));
+    }
+
+    const HOME: &str = r#"(effects: [
+        (name: "camp", kind: Buff, title: "Camp", description: "", when: Some(All([AtHome, HomeHas("bed", 1)])), modifiers: (heal: 1.2)),
+        (name: "snug", kind: Buff, title: "Snug", description: "", announce: true, when: Some(All([AtHome, Indoors, HomeHas("bed", 1), HomeHas("seat", 2)])), replaces: ["camp"], modifiers: (heal: 1.5)),
+        (name: "rested", kind: Buff, title: "Rested", description: "", modifiers: (xp: 1.05)),
+        (name: "well_rested", kind: Buff, title: "Well rested", description: "", replaces: ["rested"], modifiers: (xp: 1.1)),
+    ], sleeps: [
+        (effect: "rested", seconds: 600.0),
+        (effect: "well_rested", seconds: 900.0, needs: "snug"),
+    ])"#;
+
+    fn home_registry() -> EffectRegistry {
+        EffectRegistry::new(vec![EffectRegistry::read("core", HOME).unwrap()]).unwrap()
+    }
+
+    fn survey(counts: &[(&str, u32)]) -> HomeSurvey {
+        HomeSurvey { counts: counts.iter().map(|&(t, n)| (t.to_owned(), n)).collect() }
+    }
+
+    #[test]
+    fn a_home_asks_for_its_furnishings_and_a_roof() {
+        let effects = home_registry();
+        assert_eq!(effects.home_tags(), ["bed", "seat"], "each tag once, in the order effects ask");
+        let calm = Weather::NONE;
+        let names = |situation: &Situation| effects.active(situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).collect::<Vec<_>>();
+        let away = situation(&calm, false, 15.0, false);
+        assert!(names(&away).is_empty(), "nothing away from home");
+        let bare = survey(&[("bed", 0), ("seat", 0)]);
+        assert!(names(&Situation { home: Some(&bare), ..away }).is_empty(), "home without a bed is just a place");
+        let camp = survey(&[("bed", 1), ("seat", 1)]);
+        assert_eq!(names(&Situation { home: Some(&camp), ..away }), ["core:camp"]);
+        let snug = survey(&[("bed", 1), ("seat", 2)]);
+        assert_eq!(names(&Situation { home: Some(&snug), ..away }), ["core:snug"], "snug replaces camp");
+        let roofless = situation(&calm, false, 15.0, true);
+        assert_eq!(names(&Situation { home: Some(&snug), ..roofless }), ["core:camp"], "no roof, no snug");
+    }
+
+    #[test]
+    fn sleep_gives_the_rest_the_home_allows_once() {
+        let effects = home_registry();
+        let calm = Weather::NONE;
+        let given = |situation: &Situation| effects.given_by_sleep(situation).iter().map(|&(id, s)| (effects.get(id).name.clone(), s)).collect::<Vec<_>>();
+        assert_eq!(given(&situation(&calm, false, 15.0, true)), [("core:rested".to_owned(), 600.0)], "a bed in the open is a plain rest");
+        let snug = survey(&[("bed", 1), ("seat", 2)]);
+        let indoors = Situation { home: Some(&snug), ..situation(&calm, false, 15.0, false) };
+        assert_eq!(given(&indoors), [("core:rested".to_owned(), 600.0), ("core:well_rested".to_owned(), 900.0)]);
+        let rested = effects.id("core:rested").unwrap();
+        assert!(effects.rested(&[(rested, 5.0)]));
+        assert!(!effects.rested(&[]));
+        let active = effects.active(&indoors, &[(rested, 5.0), (effects.id("core:well_rested").unwrap(), 5.0)]);
+        assert!(active.iter().all(|a| effects.get(a.effect).name != "core:rested"), "the better rest hides the plain one");
+    }
+
+    #[test]
+    fn broken_sleep_rules_are_refused() {
+        let read = |source: &str| EffectRegistry::new(vec![EffectRegistry::read("core", source).unwrap()]).map(|_| ()).unwrap_err().0;
+        let day = r#"(effects: [(name: "x", kind: Buff, title: "X", description: "")], sleeps: [(effect: "y", seconds: 1.0)])"#;
+        assert!(read(day).contains("gives `core:y`"));
+        let no_when = r#"(effects: [(name: "x", kind: Buff, title: "X", description: "")], sleeps: [(effect: "x", seconds: 1.0, needs: "x")])"#;
+        assert!(read(no_when).contains("no `when`"));
+        let zero = r#"(effects: [(name: "x", kind: Buff, title: "X", description: "")], sleeps: [(effect: "x", seconds: 0.0)])"#;
+        assert!(read(zero).contains("0 seconds"));
     }
 }
