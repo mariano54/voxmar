@@ -5432,3 +5432,578 @@ fn an_hv_hall_runs_a_processing_array_and_an_induction_smelter_on_one_cable() {
     assert!(powered(&machine_says(&mut client, &at(array), "making", 20)));
     assert!(powered(&machine_says(&mut client, &at(smelter), "making", 20)));
 }
+
+// A fresh survival player's first day, played with legitimate actions only and timed by the
+// server's own tick counter (never the wall clock), so the numbers say how long the early
+// game takes. See docs/first-days.md, "Measured pacing".
+
+/// Server seconds each milestone may take at most, counted from the moment the player can
+/// first act. The budgets are generous on purpose, about three times what was measured: they
+/// catch a stall, or a change that makes an early step far slower, not a few seconds of drift.
+/// A slow machine slows ticks and actions together, so the server-second numbers hold, and
+/// the test waits by ticks and by state, never for a fixed time.
+const FRESH_BUDGETS: &[(&str, f32)] = &[
+    ("timber", 60.0),
+    ("crafting_table", 60.0),
+    ("stone_in_hand", 120.0),
+    ("first_night", 240.0),
+    ("a_bed_of_your_own", 420.0),
+    ("torchlight", 480.0),
+    ("hearth_materials", 600.0),
+    ("hearth_lit", 700.0),
+    ("pit_kiln", 800.0),
+    ("fire_the_clay", 1000.0),
+];
+
+/// What the player's time goes on, besides crafting, placing and waiting.
+#[derive(Clone, Copy)]
+enum Act {
+    Mine,
+    Walk,
+    Hunt,
+    Cook,
+}
+
+/// A milestone: the server seconds since the clock started, and how much of that went on each
+/// activity so far.
+struct Mark {
+    name: &'static str,
+    at: f32,
+    acts: [f32; 4],
+}
+
+/// A player at the start of a survival game, and the plot built beside them to stand in for
+/// terrain the test cannot walk to.
+struct Fresh {
+    c: Client,
+    /// The cell the player started in; the plot is laid out from it, with the ground a block
+    /// below.
+    origin: IVec3,
+    /// Where the player stands (feet) as last told to the server.
+    at: Vec3,
+    /// The hotbar slot held.
+    held: u8,
+    /// The server tick the clock started at.
+    t0: u64,
+    marks: Vec<Mark>,
+    /// Blocks the player broke, and the server ticks spent on each activity.
+    mined: u32,
+    acts: [u64; 4],
+    /// Times the lane ran out of animals and was stocked again.
+    restocks: u32,
+}
+
+/// How many of `item` the pack and its pouches carry.
+fn holding(c: &Client, item: &str) -> u32 {
+    let id = c.content.blocks.expect(item);
+    c.inventory.slots.iter().flatten().filter(|s| s.item == id).map(|s| s.count as u32).sum::<u32>() + c.inventory.pouched(id) as u32
+}
+
+/// How many of `item` lie loose in the world in sight.
+fn loose(c: &Client, item: &str) -> u32 {
+    let id = c.content.blocks.expect(item);
+    c.items.values().filter(|i| i.stack.item == id).map(|i| i.stack.count as u32).sum()
+}
+
+/// The animals in the lane of the plot at `origin`, by id, place and species.
+fn lane(c: &Client, origin: IVec3) -> Vec<(u32, Vec3, voxmar_engine::creature::CreatureId)> {
+    let (x, z0, z1) = ((origin.x - 9) as f32, (origin.z - 10) as f32, origin.z as f32 + 1.0);
+    c.creatures.values().filter(|v| v.position.x >= x && v.position.x < x + 1.0 && v.position.z >= z0 && v.position.z < z1).map(|v| (v.id, v.position, v.species)).collect()
+}
+
+/// Whether the block at `cell` is solid in the client's view (water and air are not).
+fn solid(c: &Client, cell: IVec3) -> bool {
+    c.world.block(cell).is_some_and(|b| c.content.blocks.info(b).solid)
+}
+
+/// Across the ground, between two points.
+fn across(a: Vec3, b: Vec3) -> f32 {
+    (a - b).with_y(0.0).length()
+}
+
+impl Fresh {
+    fn secs(&self) -> f32 {
+        (self.c.ticks() - self.t0) as f32 / TICKS_PER_SECOND as f32
+    }
+
+    fn mark(&mut self, name: &'static str) {
+        let (at, acts) = (self.secs(), self.acts.map(|t| t as f32 / TICKS_PER_SECOND as f32));
+        self.marks.push(Mark { name, at, acts });
+    }
+
+    fn rel(&self, x: i32, y: i32, z: i32) -> IVec3 {
+        self.origin + IVec3::new(x, y, z)
+    }
+
+    /// The middle of `cell`'s floor.
+    fn middle(cell: IVec3) -> Vec3 {
+        cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
+    }
+
+    fn have(&self, item: &str) -> u32 {
+        holding(&self.c, item)
+    }
+
+    /// Runs `run`, and counts the server ticks it took as spent on `act`.
+    fn spend<T>(&mut self, act: Act, run: impl FnOnce(&mut Self) -> T) -> T {
+        let from = self.c.ticks();
+        let made = run(self);
+        self.acts[act as usize] += self.c.ticks() - from;
+        made
+    }
+
+    /// Waits for `done`, at most `limit` server seconds by the tick counter.
+    fn wait(&mut self, limit: f32, what: &str, done: impl Fn(&Client) -> bool) {
+        let until = self.c.ticks() + (limit * TICKS_PER_SECOND as f32) as u64;
+        self.c.pump_until(|c| done(c) || c.ticks() >= until);
+        assert!(done(&self.c), "{what}: not done within {limit} server seconds (now {:.1} s into the run)", self.secs());
+    }
+
+    /// Lets one server tick pass.
+    fn tick(&mut self) {
+        let t = self.c.ticks();
+        self.c.pump_until(|c| c.ticks() > t);
+    }
+
+    fn send(&self) {
+        let c = &self.c;
+        c.connection.send(ClientMessage::Input(PlayerInput { teleport: c.teleports, position: self.at, yaw: 0.0, pitch: 0.0, selected_slot: self.held, flying: false }));
+    }
+
+    /// Walks towards `goal` over the ground, a fifth of a block a tick (four blocks a second,
+    /// under the walking speed the server allows), until `stop` blocks from it. Where a
+    /// block is in the way, as the table or a fire is, the player turns aside the way a
+    /// person would.
+    fn walk_toward(&mut self, goal: Vec3, stop: f32) {
+        self.spend(Act::Walk, |me| {
+            let mut corrections = 0;
+            for _ in 0..2000 {
+                let to = (goal - me.at).with_y(0.0);
+                let left = to.length() - stop;
+                // (Coordinates are large: a step under a hundredth of a block changes nothing.)
+                if left <= 0.01 {
+                    return;
+                }
+                let want = to.normalize();
+                // The first heading, turning aside by degrees, whose step has room for the body.
+                let step = left.min(0.2);
+                let clear = |me: &Self, heading: Vec3| {
+                    let to = me.at + heading * step;
+                    [(-0.32, -0.32), (-0.32, 0.32), (0.32, -0.32), (0.32, 0.32)]
+                        .iter()
+                        .all(|&(dx, dz)| (0..2).all(|dy| me.c.world.block(IVec3::new((to.x + dx).floor() as i32, me.origin.y + dy, (to.z + dz).floor() as i32)) == Some(BlockId::AIR)))
+                };
+                let turn = |degrees: f32| Vec3::new(want.x * degrees.to_radians().cos() - want.z * degrees.to_radians().sin(), 0.0, want.x * degrees.to_radians().sin() + want.z * degrees.to_radians().cos());
+                let heading = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0].into_iter().map(turn).find(|&h| clear(me, h)).expect("a way round");
+                me.at += heading * step;
+                me.send();
+                me.tick();
+                // Put back by the server (a hitch, a creature in the way): carry on from there.
+                if let Some(back) = me.c.teleported.take() {
+                    corrections += 1;
+                    assert!(corrections <= 20, "the server keeps moving the player back, to {back:?}, walking to {goal:?}");
+                    me.at = back;
+                }
+            }
+            panic!("walked 2000 steps from {:?} and did not reach {goal:?}", me.at);
+        })
+    }
+
+    /// Puts `item` in the hand: on the hotbar already, or swapped onto its last slot.
+    fn hold(&mut self, item: &str) {
+        let id = self.c.content.blocks.expect(item);
+        let on = |c: &Client, s: usize| c.inventory.get(s).is_some_and(|x| x.item == id);
+        let hotbar = voxmar_engine::inventory::HOTBAR_SLOTS;
+        let slot = match (0..hotbar).find(|&s| on(&self.c, s)) {
+            Some(slot) => slot,
+            None => {
+                let from = (hotbar..voxmar_engine::inventory::SLOTS).find(|&s| on(&self.c, s)).unwrap_or_else(|| panic!("no {item} to hold"));
+                self.c.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: hotbar as u8 - 1, count: u8::MAX });
+                self.wait(5.0, "bringing it to the hotbar", |c| on(c, hotbar - 1));
+                hotbar - 1
+            }
+        };
+        self.held = slot as u8;
+        self.send();
+    }
+
+    /// Breaks one block with what is in hand, waiting out its time by the server's ticks.
+    fn mine(&mut self, block: IVec3) {
+        self.c.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
+        self.spend(Act::Mine, |me| me.wait(30.0, "mining", |c| !solid(c, block)));
+        self.mined += 1;
+    }
+
+    /// Breaks `targets` that lie within the drops' pull of `stands` (visited in turn) with
+    /// `tool`, nearest and highest first, until the blocks broken will have given `need` of
+    /// `item` (the player counts the drops coming, as one watching them would). Then waits for
+    /// them to arrive.
+    fn gather_from(&mut self, tool: &str, stands: &[Vec3], mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.hold(tool);
+        let id = self.c.content.blocks.expect(item);
+        let mut owed = self.have(item);
+        for &stand in stands {
+            let near = |t: &IVec3| across(Self::middle(*t), stand) <= 2.3;
+            targets.retain(|&t| solid(&self.c, t));
+            if owed >= need || !targets.iter().any(near) {
+                continue;
+            }
+            self.walk_toward(stand, 0.05);
+            while owed < need {
+                targets.retain(|&t| solid(&self.c, t));
+                let Some(target) = targets.iter().copied().filter(near).min_by_key(|t| ((across(Self::middle(*t), stand) * 10.0) as i32, -t.y)) else { break };
+                let info = self.c.content.blocks.info(self.c.world.block(target).unwrap());
+                owed += if info.drops == id { info.drop_count as u32 } else { 0 };
+                self.mine(target);
+            }
+        }
+        assert!(owed >= need, "the blocks ran out: {owed} of {need} {item}");
+        self.collect(item, need);
+    }
+
+    /// As [`Fresh::gather_from`] over open ground: the player walks up to the nearest block
+    /// that is out of the pull and goes on.
+    fn gather(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.hold(tool);
+        let id = self.c.content.blocks.expect(item);
+        let mut owed = self.have(item);
+        while owed < need {
+            targets.retain(|&t| solid(&self.c, t));
+            let from = self.at;
+            let target = targets.iter().copied().min_by_key(|t| ((across(Self::middle(*t), from) * 10.0) as i32, t.y)).expect("blocks to gather from");
+            let centre = Self::middle(target);
+            if across(centre, self.at) > 2.3 {
+                self.walk_toward(centre, 1.3);
+            } else {
+                let info = self.c.content.blocks.info(self.c.world.block(target).unwrap());
+                owed += if info.drops == id { info.drop_count as u32 } else { 0 };
+                self.mine(target);
+            }
+        }
+        self.collect(item, need);
+    }
+
+    /// Waits until `need` of `item` are carried, walking to loose ones out of the pull.
+    fn collect(&mut self, item: &str, need: u32) {
+        let id = self.c.content.blocks.expect(item);
+        let until = self.c.ticks() + 30 * TICKS_PER_SECOND as u64;
+        self.spend(Act::Mine, |me| {
+            while me.have(item) < need {
+                assert!(me.c.ticks() < until, "{item}: only {} of {need} came in, {} loose", me.have(item), loose(&me.c, item));
+                let at = me.at;
+                let far = me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
+                match far {
+                    Some(p) if across(p, me.at) > 2.0 => me.walk_toward(p, 0.5),
+                    _ => me.tick(),
+                }
+            }
+        });
+    }
+
+    /// Lays `cells` (grid cell, item, how many) in the crafting grid and crafts as often as
+    /// they allow, waiting for `made` more of `makes`; leftovers go back to the pack.
+    fn craft(&mut self, cells: &[(usize, &str, u8)], makes: &str, made: u32) {
+        let before = self.have(makes);
+        let slots = voxmar_engine::inventory::SLOTS;
+        let mut left: Vec<u32> = (0..slots).map(|s| self.c.inventory.get(s).map_or(0, |x| x.count as u32)).collect();
+        for &(cell, item, count) in cells {
+            let id = self.c.content.blocks.expect(item);
+            let from = (0..slots)
+                .find(|&s| self.c.inventory.get(s).is_some_and(|x| x.item == id) && left[s] >= count as u32)
+                .unwrap_or_else(|| panic!("not enough {item} for {makes}: {count} wanted"));
+            left[from] -= count as u32;
+            self.c.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (voxmar_engine::inventory::CRAFT + cell) as u8, count });
+        }
+        self.c.propose("core:craft", ActionTarget::Slot(0));
+        self.wait(10.0, &format!("crafting {makes}"), |c| holding(c, makes) >= before + made);
+        self.c.propose("core:stow", ActionTarget::None);
+        self.wait(10.0, "clearing the grid", |c| c.inventory.craft.iter().all(Option::is_none));
+    }
+
+    /// Goes near the crafting table at `table` and opens it.
+    fn at_table(&mut self, table: IVec3) {
+        self.walk_toward(Self::middle(table), 3.0);
+        self.c.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
+    }
+
+    /// Sets down what is in hand on top of `ground`, which must be in reach.
+    fn place(&mut self, item: &str, ground: IVec3) -> IVec3 {
+        self.hold(item);
+        self.c.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+        let cell = ground + IVec3::Y;
+        self.wait(5.0, &format!("placing {item}"), |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
+        cell
+    }
+
+    /// Cooks one `food` at `station` (two seconds); whether it came out as `cooked`, not burnt.
+    fn cook(&mut self, station: IVec3, food: &str, cooked: &str) -> bool {
+        self.hold(food);
+        let (raw, done) = (self.have(food), self.have(cooked));
+        self.c.propose("base:cook", ActionTarget::Block { block: station, face: Face::PosY });
+        self.spend(Act::Cook, |me| me.wait(10.0, "cooking", |c| holding(c, food) < raw));
+        self.have(cooked) > done
+    }
+
+    /// Puts an animal in the lane at `z`. (/summon puts the first of a group 1.8 blocks west
+    /// of the spot it is given.)
+    fn stock(&mut self, species: &str, z: i32) {
+        let at = self.rel(-7, 0, z);
+        self.c.ok(&format!("/summon {species} 1 {} {} {}", at.x, at.y, at.z));
+    }
+
+    /// Hunts the lane's animals, walking in from its open end after the nearest of the kind
+    /// `prefer` names (any kind, if it names none), until `done`. With the lane empty, a few
+    /// more are brought in (the wild would hold more than a lane of them).
+    fn hunt(&mut self, prefer: impl Fn(&Client) -> &'static str, done: impl Fn(&Client) -> bool) {
+        let (mouth, lane_x) = (Self::middle(self.rel(-9, 0, 2)), self.rel(-9, 0, 0).x as f32 + 0.5);
+        let started = self.c.ticks();
+        let hand = if self.have("base:stone_axe") > 0 { "base:stone_axe" } else { "base:wooden_axe" };
+        self.hold(hand);
+        // In by the open end.
+        if (self.at.x - lane_x).abs() > 0.5 {
+            self.walk_toward(mouth, 0.05);
+        }
+        while !done(&self.c) {
+            assert!(self.c.ticks() < started + 300 * TICKS_PER_SECOND as u64, "hunting took over five minutes");
+            let (at, wanted) = (self.at, self.c.content.creatures.find(prefer(&self.c)));
+            let Some((id, p, _)) = lane(&self.c, self.origin).into_iter().min_by(|a, b| {
+                let key = |x: &(u32, Vec3, voxmar_engine::creature::CreatureId)| (Some(x.2) != wanted, (x.1.z - at.z).abs());
+                key(a).0.cmp(&key(b).0).then(key(a).1.total_cmp(&key(b).1))
+            }) else {
+                for (species, z) in [("rabbit", -10), ("junglefowl", -8), ("junglefowl", -6), ("rabbit", -4)] {
+                    self.stock(species, z);
+                }
+                self.restocks += 1;
+                let origin = self.origin;
+                self.wait(5.0, "animals in the lane", |c| !lane(c, origin).is_empty());
+                continue;
+            };
+            // Up close behind it, in the lane.
+            if (p.z - at.z).abs() > 1.6 {
+                self.walk_toward(Vec3::new(lane_x, at.y, p.z + 1.3), 0.1);
+            }
+            self.c.propose("core:attack", ActionTarget::Creature(id));
+            // One swing a beat, and on to the next once it is down.
+            let t = self.c.ticks();
+            self.spend(Act::Hunt, |me| me.c.pump_until(|c| c.ticks() >= t + 14 || !c.creatures.contains_key(&id)));
+        }
+    }
+
+    /// Builds the plot beside a player who has just joined, and starts the clock. Coordinates
+    /// are from the player's cell: +x east, +z south, ground at y -1.
+    fn lay_out(mut c: Client) -> Self {
+        let origin = c.position.floor().as_ivec3();
+        let v = IVec3::new;
+        // Level ground, clear of whatever grew there.
+        c.fill(origin, v(-13, 0, -11), v(20, 10, 13), "air");
+        c.fill(origin, v(-13, -4, -11), v(20, -1, 13), "dirt");
+        // Three oak trunks, four logs each.
+        for x in [3, 5, 7] {
+            c.fill(origin, v(x, 0, -5), v(x, 3, -5), "oak_log");
+        }
+        // A patch of natural stone one block high, with two coal ores on its near edge.
+        c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
+        c.fill(origin, v(9, 0, 3), v(9, 0, 4), "coal_ore");
+        // A pond two blocks wide, one block of water over two of clay.
+        c.fill(origin, v(-2, -3, 2), v(-1, -2, 11), "clay");
+        c.fill(origin, v(-2, -1, 2), v(-1, -1, 11), "water");
+        // A lane two blocks high and one wide, closed at its far end and open at the near one,
+        // where the animals cannot get past the player.
+        c.fill(origin, v(-10, 0, -11), v(-8, 1, 0), "stone");
+        c.fill(origin, v(-9, 0, -10), v(-9, 1, 0), "air");
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone")];
+        c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
+        let (at, t0) = (c.position, c.ticks());
+        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0 };
+        // Ten animals in the lane: three rabbits and seven junglefowl.
+        for (i, z) in (-10..=-1).enumerate() {
+            plot.stock(if i % 3 == 1 { "rabbit" } else { "junglefowl" }, z);
+        }
+        plot.wait(10.0, "ten animals in the lane", |c| lane(c, origin).len() >= 10);
+        // The clock starts when the player can act, with the animals standing in the lane.
+        plot.t0 = plot.c.ticks();
+        plot
+    }
+}
+
+#[test]
+fn a_fresh_survival_player_reaches_each_nomad_milestone() {
+    let c = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    let mut f = Fresh::lay_out(c);
+    let v = IVec3::new;
+    let up = IVec3::Y;
+    let rel = |f: &Fresh, cells: Vec<IVec3>| -> Vec<IVec3> { cells.into_iter().map(|p| f.origin + p).collect() };
+    let (cobble, clay, stick, log) = ("base:cobblestone", "base:clay", "base:stick", "base:oak_log");
+
+    // Timber: eight logs, and four more for the two campfires.
+    let trunks = rel(&f, [3, 5, 7].into_iter().flat_map(|x| (0..4).map(move |y| v(x, y, -5))).collect());
+    f.gather("base:wooden_axe", trunks, log, 12);
+    f.mark("timber");
+
+    // A crafting table from four planks, set down where it serves the stone and the fire, and
+    // sticks from planks.
+    let table = f.rel(6, 0, -1);
+    f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (3, "base:oak_planks", 1), (4, "base:oak_planks", 1)], "base:crafting_table", 1);
+    f.mark("crafting_table");
+    f.walk_toward(Fresh::middle(table), 3.0);
+    f.place("base:crafting_table", table - up);
+    f.craft(&[(0, "base:oak_planks", 3), (3, "base:oak_planks", 3)], stick, 12);
+
+    // Stone in Hand: cobblestone with the wooden pickaxe, then a stone pickaxe and axe.
+    let stone = rel(&f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
+    f.gather("base:wooden_pickaxe", stone.clone(), cobble, 9);
+    f.at_table(table);
+    f.craft(&[(0, cobble, 1), (1, cobble, 1), (2, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_pickaxe", 1);
+    f.craft(&[(0, cobble, 1), (1, cobble, 1), (3, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_axe", 1);
+    f.mark("stone_in_hand");
+
+    // First Night: a campfire (two logs over two cobblestones), set down; three animals
+    // hunted for meat, and a meal cooked on the fire. Cooking at Cooking 1 burns about half
+    // of what it cooks, so more are hunted if the meat runs out first.
+    let fire = f.rel(6, 0, 2);
+    f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
+    f.place("base:campfire", fire - up);
+    let meats = [("base:raw_rabbit", "base:cooked_rabbit"), ("base:raw_chicken", "base:cooked_chicken")];
+    let raw = |c: &Client| meats.iter().map(|(raw, _)| holding(c, raw) + loose(c, raw)).sum::<u32>();
+    f.hunt(|_| "", |c| raw(c) >= 3);
+    for (raw, _) in meats {
+        let seen = f.have(raw) + loose(&f.c, raw);
+        f.collect(raw, seen);
+    }
+    f.walk_toward(Fresh::middle(fire), 2.5);
+    while meats.iter().all(|(_, cooked)| f.have(cooked) == 0) {
+        let Some(&(raw, cooked)) = meats.iter().find(|(raw, _)| f.have(raw) > 0) else {
+            f.hunt(|_| "", |c| raw(c) >= 2);
+            for (raw, _) in meats {
+                let seen = f.have(raw) + loose(&f.c, raw);
+                f.collect(raw, seen);
+            }
+            f.walk_toward(Fresh::middle(fire), 2.5);
+            continue;
+        };
+        f.cook(fire, raw, cooked);
+    }
+    f.mark("first_night");
+
+    // A Bed of Your Own: seven feathers (junglefowl) and two hides (rabbits) for a sleeping
+    // bag, crafted at the table.
+    let (feather, hide) = ("base:feather", "base:hide");
+    let (feathers, hides) = (|c: &Client| holding(c, feather) + loose(c, feather), |c: &Client| holding(c, hide) + loose(c, hide));
+    f.hunt(|c| if hides(c) < 2 { "rabbit" } else { "junglefowl" }, |c| feathers(c) >= 7 && hides(c) >= 2);
+    f.collect(feather, 7);
+    f.collect(hide, 2);
+    f.at_table(table);
+    f.craft(&[(0, feather, 1), (1, feather, 1), (2, feather, 1), (3, feather, 1), (4, hide, 1), (5, feather, 1), (6, feather, 1), (7, hide, 1), (8, feather, 1)], "base:sleeping_bag", 1);
+    f.mark("a_bed_of_your_own");
+
+    // Torchlight: two coal ores, each with a stick making four torches.
+    let coal = rel(&f, vec![v(9, 0, 3), v(9, 0, 4)]);
+    f.gather_from("base:stone_pickaxe", &[Fresh::middle(f.rel(7, 0, 3))], coal, "base:coal_ore", 2);
+    f.at_table(table);
+    f.craft(&[(0, "base:coal_ore", 2), (3, stick, 2)], "base:torch", 8);
+    f.mark("torchlight");
+
+    // The Homestead Hearth: a shovel for the clay (four, from the pond's bed), twenty-eight
+    // cobblestones, a hearthstone (eight round an empty middle) and two chimneys (six and two
+    // clay each) crafted at the table, the hearthstone set in a ring of eight stone with both
+    // chimneys stacked on one corner stone, and lit.
+    let bed = rel(&f, (2..=11).flat_map(|z| [-2, -1].into_iter().flat_map(move |x| [-2, -3].into_iter().map(move |y| v(x, y, z)))).collect());
+    let banks: Vec<Vec3> = (2..=11).step_by(2).map(|z| Fresh::middle(f.rel(0, 0, z))).collect();
+    f.at_table(table);
+    f.craft(&[(0, cobble, 1), (3, stick, 1), (6, stick, 1)], "base:stone_shovel", 1);
+    f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 4);
+    f.gather("base:stone_pickaxe", stone.clone(), cobble, 28);
+    f.mark("hearth_materials");
+    f.at_table(table);
+    f.craft(&[0, 1, 2, 3, 5, 6, 7, 8].map(|cell| (cell, cobble, 1)), "base:hearthstone", 1);
+    f.craft(&[(0, cobble, 2), (1, clay, 2), (2, cobble, 2), (3, cobble, 2), (5, cobble, 2), (6, cobble, 2), (7, clay, 2), (8, cobble, 2)], "base:chimney", 2);
+    // Set down from the north side of the site: the ring round (4, 7), the hearthstone in it.
+    f.walk_toward(Fresh::middle(f.rel(4, 0, 4)), 0.05);
+    for (dx, dz) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+        f.place(cobble, f.rel(4 + dx, -1, 7 + dz));
+    }
+    let core = f.place("base:hearthstone", f.rel(4, -1, 7));
+    let first = f.place("base:chimney", f.rel(3, 0, 6));
+    f.place("base:chimney", first);
+    f.c.chat.clear();
+    f.c.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    f.wait(5.0, "lighting the hearth", |c| c.chat.iter().any(|(_, t)| t.contains("your home")));
+    f.mark("hearth_lit");
+
+    // The Farm age's first fire: a campfire and five cobblestones make a pit kiln, set down;
+    // clay from the pond fired in it (a fair share cracks at Crafting 1) until twelve fired
+    // clay are in hand.
+    f.gather("base:stone_pickaxe", stone, cobble, 7u32.max(f.have(cobble)));
+    f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
+    f.at_table(table);
+    f.craft(&[(0, cobble, 1), (2, cobble, 1), (3, cobble, 1), (4, "base:campfire", 1), (5, cobble, 1)], "base:pit_kiln", 1);
+    f.mark("pit_kiln");
+    let kiln = f.rel(2, 0, 1);
+    f.walk_toward(Fresh::middle(kiln), 3.0);
+    f.place("base:pit_kiln", kiln - up);
+    f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 28);
+    f.walk_toward(Fresh::middle(kiln), 3.0);
+    let fired = "base:fired_clay";
+    while f.have(fired) < 12 {
+        if f.have(clay) == 0 {
+            f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 12);
+            f.walk_toward(Fresh::middle(kiln), 3.0);
+        }
+        f.cook(kiln, clay, fired);
+    }
+    f.mark("fire_the_clay");
+    finish(f)
+}
+
+/// What the server says of a quest: whether it is done, and whether one of its tasks holds.
+fn quest_status(c: &Client, quest: &str) -> (bool, bool) {
+    let name = format!("base:{quest}");
+    c.quests.iter().find(|q| q.name == name).map_or((false, false), |q| (q.done, q.tasks.iter().any(|t| t.iter().all(|&(have, need)| have >= need))))
+}
+
+/// The quest each milestone is, as the server counts it.
+const FRESH_QUESTS: &[(&str, &str)] = &[
+    ("timber", "timber"),
+    ("crafting_table", "crafting_table"),
+    ("stone_in_hand", "stone_in_hand"),
+    ("first_night", "first_night"),
+    ("a_bed_of_your_own", "a_bed_of_your_own"),
+    ("torchlight", "torchlight"),
+    ("hearth_lit", "homestead_hearth"),
+    ("pit_kiln", "a_pit_kiln"),
+    ("fire_the_clay", "fire_the_clay"),
+];
+
+/// Checks the server's own books agree with what the player did, prints the run's one summary
+/// block, and holds each milestone to its budget.
+fn finish(mut f: Fresh) {
+    assert_eq!(f.c.died, 0, "the player died on the way");
+    let mut report = String::from("fresh survival player, server seconds since the first action\n");
+    let mut before = (0.0f32, [0.0f32; 4]);
+    for (name, at, acts) in f.marks.iter().map(|m| (m.name, m.at, m.acts)).collect::<Vec<_>>() {
+        let quest = FRESH_QUESTS.iter().find(|(mark, _)| *mark == name).map(|(_, quest)| *quest);
+        // The server checks quests once a second, so give it a few.
+        if let Some(quest) = quest {
+            f.wait(5.0, &format!("the server counting {quest}"), |c| quest_status(c, quest) != (false, false));
+        }
+        let status = quest.map_or(String::new(), |q| match quest_status(&f.c, q) {
+            (true, _) => format!("; quest {q} done"),
+            _ => format!("; quest {q} held, not done (it waits on earlier quests)"),
+        });
+        let spent: Vec<String> = ["mining", "walking", "hunting", "cooking"].iter().zip(acts.iter().zip(before.1)).map(|(what, (now, then))| format!("{what} {:.0}", now - then)).collect();
+        let phase = at - before.0;
+        let other = phase - acts.iter().zip(before.1).map(|(now, then)| now - then).sum::<f32>();
+        report += &format!("  {name:<18} {at:>6.1} s  (phase {phase:>5.1} s: {}, other {:.0}{status})\n", spent.join(", "), other.max(0.0));
+        before = (at, acts);
+    }
+    let settle = f.c.quests.iter().find(|q| q.name == "base:where_to_settle").map_or((0, 0), |q| q.tasks[0][0]);
+    report += &format!(
+        "  blocks mined {}, animals killed {} (lane restocked {} times), biomes seen {} of {} for Where to Settle, total {:.1} s",
+        f.mined, f.c.deaths, f.restocks, settle.0, settle.1, f.secs()
+    );
+    eprintln!("{report}");
+    for &(name, budget) in FRESH_BUDGETS {
+        let m = f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached"));
+        assert!(m.at <= budget, "{name} took {:.1} server seconds, over its budget of {budget}", m.at);
+    }
+}
