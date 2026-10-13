@@ -113,12 +113,17 @@ impl JournalRules {
         options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/journal.ron: {e}")))
     }
 
-    /// Several packages' rules: a later package's rule for a page replaces an earlier one.
-    pub fn merge(files: Vec<JournalRules>) -> JournalRules {
+    /// Several packages' rules (with their package's name): a later package's rule for a
+    /// page replaces an earlier one, and `notes` names both packages.
+    pub fn merge(files: Vec<(String, JournalRules)>, notes: &mut Vec<String>) -> JournalRules {
         let mut pages: Vec<PageRule> = Vec::new();
-        for rule in files.into_iter().flat_map(|f| f.pages) {
-            pages.retain(|r| r.page != rule.page);
-            pages.push(rule);
+        let mut laid = crate::content::Laid::default();
+        for (package, file) in files {
+            laid.set(&package, "journal.ron", "journal rules", file.pages.iter().map(|rule| format!("{:?}", rule.page)), notes);
+            for rule in file.pages {
+                pages.retain(|r| r.page != rule.page);
+                pages.push(rule);
+            }
         }
         JournalRules { pages }
     }

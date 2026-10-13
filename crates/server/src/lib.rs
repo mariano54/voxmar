@@ -253,13 +253,15 @@ const NAMED_ACTIONS: &[&str] =
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
-    let content = Content::load(&assets.join("content"))?;
+    let mut content = Content::load(&assets.join("content"))?;
     if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {
         return Err(format!("no package defines the action {missing}, which the game needs").into());
     }
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
-    rules::SurvivalRules::load(&content.files, &content.blocks)?;
+    let mut notes = Vec::new();
+    rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
+    std::sync::Arc::make_mut(&mut content.notes).extend(notes);
     for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
         tracing::warn!("the fluid {} is neither swum in (swim: true) nor burns (tagged \"lava\"): players wade through it unharmed", fluid.name);
     }
@@ -566,7 +568,7 @@ impl Server {
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
-        let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks).expect("checked by load_content"));
+        let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
             tick,
@@ -774,6 +776,7 @@ impl Server {
         self.tick_items();
         self.tick_creatures();
         self.tick_fights();
+        self.ping_players();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();

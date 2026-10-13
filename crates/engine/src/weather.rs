@@ -712,6 +712,23 @@ fn overlay(base: &mut ron::Value, over: ron::Value) {
     }
 }
 
+/// The paths of the values `value` sets, as `shown.fractions.fog`: a map goes down to its
+/// entries, anything else (a number, a list) is set whole.
+fn leaves(path: &str, value: &ron::Value, out: &mut Vec<String>) {
+    match value {
+        ron::Value::Map(map) if !map.is_empty() => {
+            for (key, value) in map.iter() {
+                let name = match key {
+                    ron::Value::String(name) => name.clone(),
+                    other => format!("{other:?}"),
+                };
+                leaves(&if path.is_empty() { name } else { format!("{path}.{name}") }, value, out);
+            }
+        }
+        _ => out.push(path.to_owned()),
+    }
+}
+
 /// Every package's weather effects and kinds of weather.
 #[derive(Debug, Default)]
 pub struct WeatherTable {
@@ -726,6 +743,9 @@ pub struct WeatherTable {
     /// The tuning as every package so far has set it, and read, once complete.
     tuning_source: Option<ron::Value>,
     tuning: Option<WeatherTuning>,
+    /// Which package set each part of the tuning, and what replacing one noted.
+    tuning_laid: crate::content::Laid,
+    notes: Vec<String>,
 }
 
 impl WeatherTable {
@@ -786,6 +806,9 @@ impl WeatherTable {
         }
         self.snow_cover.extend(file.snow_cover);
         if let Some(tuning) = file.tuning {
+            let mut paths = Vec::new();
+            leaves("", &tuning, &mut paths);
+            self.tuning_laid.set(namespace, "weather.ron", "weather tuning", paths, &mut self.notes);
             match &mut self.tuning_source {
                 Some(source) => overlay(source, tuning),
                 None => self.tuning_source = Some(tuning),
@@ -819,6 +842,11 @@ impl WeatherTable {
     /// `validate`).
     pub fn tuning(&self) -> &WeatherTuning {
         self.tuning.as_ref().expect("weather.ron sets no complete tuning")
+    }
+
+    /// What a later package's tuning replaced of an earlier one's, for the load log.
+    pub fn notes(&self) -> &[String] {
+        &self.notes
     }
 
     /// The tuning, if the packages so far set all of it.
