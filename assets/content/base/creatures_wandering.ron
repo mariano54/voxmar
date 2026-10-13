@@ -376,7 +376,7 @@
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 3.0)), (do: Wander(radius: 14.0)), (do: LookAround)],
         ),
-        // A cutpurse on the run: a dark hood, a mended jerkin and a stolen purse at the belt. Runs from anyone.
+        // A cutpurse on the run: a dark hood, a mended jerkin and a stolen purse at the belt. Runs from the watch, not from you.
         (
             name: "thief", title: "Thief", kind: Villager, level: 4, health: 10,
             body: (
@@ -414,7 +414,7 @@
             leash: 60.0,
             loot: [(item: "gold_coin", count: (1, 2), chance: 0.7)],
             xp: (combat: 0.0),
-            behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 6.0)), (do: LookAround)],
+            behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: LookAround)],
         ),
         // The watch of a faraway town: a blue tabard, a cap and a cudgel. Runs thieves down.
         (

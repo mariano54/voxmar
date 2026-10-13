@@ -862,7 +862,7 @@ impl WanderRegistry {
                 if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave) {
                     return Err(error("a lure's `reveal` gives items, experience, effects or healing only".into()));
                 }
-                reveal.push(resolve_reward(reward, blocks, skills, effects, false).map_err(|why| error(format!("reveal: {why}")))?);
+                reveal.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("reveal: {why}")))?);
             }
             let mut guide_thanks = Vec::new();
             for reward in def.guide.iter().flat_map(|g| &g.thanks) {

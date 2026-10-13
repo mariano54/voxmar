@@ -2201,6 +2201,28 @@ mod tests {
     }
 
     #[test]
+    fn a_thief_struck_by_a_player_beside_him_runs_on_into_the_watch() {
+        let mut server = fixture();
+        let id = start(&mut server, "thief_chase", (60, 128));
+        let thief = members_of(&server, id, 0)[0];
+        // A real blow, from beside him as he runs past: his fear is the chase's, not a bolt
+        // of his own.
+        run(&mut server, 20);
+        let at = server.creatures.live[&thief].body.position;
+        server.players.get_mut(&1).unwrap().position = at + Vec3::new(1.5, 0.0, 0.0);
+        server.hurt_creature(1, thief, 1, None, voxmar_engine::combat::Blow::Plain);
+        assert!(run_until(&mut server, id, 240, |i| i.stage == Stage::Caught), "the watch still catch him");
+        // Walking up to him while he is held does not set him running.
+        let held = server.creatures.live[&thief].body.position;
+        server.players.get_mut(&1).unwrap().position = held + Vec3::new(1.5, 0.0, 0.0);
+        run(&mut server, 20 * 4);
+        assert!(flat(server.creatures.live[&thief].body.position, held) < 4.0, "he stays held");
+        let constable = members_of(&server, id, 1)[0];
+        assert!(server.meet(1, constable));
+        assert!(count_of(&server, "base:gold_coin") > 0, "and the bounty is paid");
+    }
+
+    #[test]
     fn a_stranger_who_never_struck_the_thief_gets_no_bounty() {
         let mut server = fixture();
         let id = start(&mut server, "thief_chase", (60, 128));
