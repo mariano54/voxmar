@@ -35,6 +35,48 @@
             when: Some(InBiome("fantastical")), modifiers: (xp: 1.05)),
         (name: "mired", kind: Debuff, title: "Mired", description: "Soft wet ground: a little slower going.",
             when: Some(InBiome("wetland")), modifiers: (speed: 0.93)),
+
+        // Home (engine/src/effect.rs, "Home is a condition too"). A player's home is the lit hearth,
+        // else the bed they last slept in; these effects hold while they stand within its reach
+        // (survival.ron's home_reach) and it has the furnishings each asks for, counted by block tag.
+        // Each step asks for everything the one below does and replaces it, so the player always
+        // sees the highest they have reached, and is told when they first reach one. Hearthside is
+        // the lit Homestead Hearth, the Nomad age's end; Snug wants it roofed over; the Farm age
+        // furnishes the rest. What each tag is: bed (sleeping bag, beds), light (torches, candles,
+        // lanterns), hearth (the hearthstone), seat, table, storage, rug, curtain, cushion,
+        // crockery, books (bookshelves), cooking (stove, cauldron), workshop (loom, spindle, quern),
+        // banner. A step reached counts for quests as `Built("home_NAME", 1)`.
+        (name: "camp", kind: Buff, title: "Camp", description: "Your own bed and light: you heal a fifth faster here.", announce: true,
+            next: "Next: build a Homestead Hearth near your bed and light it.",
+            when: Some(All([AtHome, HomeHas("bed", 1), HomeHas("light", 1)])),
+            replaces: [], modifiers: (heal: 1.2)),
+        (name: "hearthside", kind: Buff, title: "Hearthside", description: "Your hearth keeps the cold off: you heal a third faster here.", announce: true,
+            next: "Next: roof it over, with your bed and two lights, to be snug.",
+            when: Some(All([AtHome, HomeHas("hearth", 1)])),
+            replaces: ["camp"], modifiers: (heal: 1.33, warmth: 4.0)),
+        (name: "snug", kind: Buff, title: "Snug", description: "Warm under a roof: you heal half as fast again here.", announce: true,
+            next: "Next: two seats, a table, two places to store things and a third light make it homely.",
+            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 2)])),
+            replaces: ["camp", "hearthside"], modifiers: (heal: 1.5, warmth: 6.0)),
+        (name: "homely", kind: Buff, title: "Homely", description: "Room to sit, work and store: you learn a twentieth more here.", announce: true,
+            next: "Next: two rugs, two curtains, a cushion, three pieces of crockery and a fourth light make it cosy.",
+            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 3), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2)])),
+            replaces: ["camp", "hearthside", "snug"], modifiers: (heal: 1.5, warmth: 6.0, xp: 1.05)),
+        (name: "cosy", kind: Buff, title: "Cosy", description: "Soft and bright: you heal faster and learn a tenth more here.", announce: true,
+            next: "Next: a bookshelf, a stove or cauldron, a loom, spindle or quern, and a banner make it the heart of the home.",
+            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 4), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2), HomeHas("rug", 2), HomeHas("curtain", 2), HomeHas("cushion", 1), HomeHas("crockery", 3)])),
+            replaces: ["camp", "hearthside", "snug", "homely"], modifiers: (heal: 1.75, warmth: 6.0, xp: 1.1)),
+        (name: "heart_of_the_home", kind: Buff, title: "Heart of the Home", description: "Everything a home needs: heal twice as fast, learn an eighth more.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 4), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2), HomeHas("rug", 2), HomeHas("curtain", 2), HomeHas("cushion", 1), HomeHas("crockery", 3), HomeHas("books", 1), HomeHas("cooking", 1), HomeHas("workshop", 1), HomeHas("banner", 1)])),
+            replaces: ["camp", "hearthside", "snug", "homely", "cosy"], modifiers: (heal: 2.0, warmth: 6.0, xp: 1.125)),
+        // Sleeping at a bed (the sleeps rules below): the better the home around the bed, the
+        // better the rest, which lasts a while wherever you go, and keeps you from sleeping again.
+        (name: "rested", kind: Buff, title: "Rested", description: "You slept: you heal and learn a little more for a while.",
+            replaces: [], modifiers: (heal: 1.1, xp: 1.03)),
+        (name: "well_rested", kind: Buff, title: "Well rested", description: "Slept in a snug home: you learn more and mine faster for a while.",
+            replaces: ["rested"], modifiers: (heal: 1.15, xp: 1.05, mining: 1.03)),
+        (name: "deep_rest", kind: Buff, title: "Deep rest", description: "Slept in a cosy home: you heal, learn, mine and walk faster for a while.",
+            replaces: ["rested", "well_rested"], modifiers: (heal: 1.25, xp: 1.1, mining: 1.06, speed: 1.03)),
     ],
     foods: [
         (tags: ["meat", "cooked"], effect: "hearty", seconds: 300),
@@ -48,5 +90,13 @@
         (tags: ["alchemy:warming", "edible"], effect: "ember_warmed", seconds: 300),
         (tags: ["alchemy:cooling", "edible"], effect: "cooled", seconds: 300),
         (tags: ["meat", "raw"], effect: "queasy", seconds: 60),
+    ],
+    // What sleeping at a bed gives: each rule whose `needs` effect would hold where the player
+    // sleeps (none: anywhere). A rest lasts this many seconds (a day is 1200), and a rested
+    // player cannot sleep again until it wears off.
+    sleeps: [
+        (effect: "rested", seconds: 600.0),
+        (effect: "well_rested", seconds: 900.0, needs: "snug"),
+        (effect: "deep_rest", seconds: 1200.0, needs: "cosy"),
     ],
 )

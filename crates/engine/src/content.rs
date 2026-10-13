@@ -113,25 +113,64 @@ macro_rules! settable {
 }
 pub(crate) use settable;
 
-/// Single-valued data as the packages so far set it, and the last package that did.
+/// Who set each piece of single-valued data last (Design draft 91): every place a later
+/// package's number or list replaces an earlier one's goes through [`Laid::set`], so the
+/// load log names both packages. A piece is named by the field (or path, or key) it sits at.
+#[derive(Clone, Debug, Default)]
+pub struct Laid {
+    /// The package that set everything not named in `by`: a first file that sets it all.
+    whole: Option<String>,
+    by: std::collections::BTreeMap<String, String>,
+}
+
+impl Laid {
+    /// Everything set by `package`, so far.
+    pub fn whole(package: &str) -> Self {
+        Self { whole: Some(package.to_owned()), ..Self::default() }
+    }
+
+    /// Records that `package`'s `file` sets `keys` of `what`. Where that replaces what
+    /// another package set, pushes one note per earlier package (and logs it): "mod/x.ron
+    /// replaces the what base set (key, key)".
+    pub fn set<S: AsRef<str>>(&mut self, package: &str, file: &str, what: &str, keys: impl IntoIterator<Item = S>, notes: &mut Vec<String>) {
+        let mut replaced: Vec<(String, Vec<String>)> = Vec::new();
+        for key in keys {
+            let key = key.as_ref();
+            let earlier = self.by.insert(key.to_owned(), package.to_owned()).or_else(|| self.whole.clone());
+            let Some(earlier) = earlier.filter(|earlier| earlier != package) else { continue };
+            match replaced.iter_mut().find(|(name, _)| *name == earlier) {
+                Some((_, keys)) => keys.push(key.to_owned()),
+                None => replaced.push((earlier, vec![key.to_owned()])),
+            }
+        }
+        for (earlier, keys) in replaced {
+            let note = format!("{package}/{file} replaces the {what} {earlier} set ({})", keys.join(", "));
+            tracing::info!("{note}");
+            notes.push(note);
+        }
+    }
+}
+
+/// Single-valued data as the packages so far set it.
 #[derive(Default)]
 pub(crate) struct Setting<T> {
     pub(crate) value: T,
-    by: Option<String>,
+    laid: Laid,
 }
 
 impl<T: Settable> Setting<T> {
-    /// Lays what `package`'s `file` sets of `what` over the value, noting when that
-    /// replaces an earlier package's.
+    /// A value one package's file set whole.
+    pub(crate) fn whole(value: T, package: &str) -> Self {
+        Self { value, laid: Laid::whole(package) }
+    }
+
+    /// Lays what `package`'s `file` sets of `what` over the value, noting what that
+    /// replaces of an earlier package's.
     pub(crate) fn set(&mut self, package: &str, file: &str, what: &str, set: Option<T::Set>, notes: &mut Vec<String>) {
         let Some(set) = set else { return };
         let changed;
         (self.value, changed) = self.value.clone().with(&set);
-        if let Some(earlier) = self.by.replace(package.to_owned()) {
-            let note = format!("{package}/{file} replaces the {what} {earlier} set ({})", changed.join(", "));
-            tracing::info!("{note}");
-            notes.push(note);
-        }
+        self.laid.set(package, file, what, changed, notes);
     }
 }
 
@@ -270,7 +309,7 @@ impl Content {
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "journal.ron" => {
-                        journal.push(crate::journal::JournalRules::read(package, &source)?);
+                        journal.push((package.clone(), crate::journal::JournalRules::read(package, &source)?));
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "regrowth.ron" => {
@@ -290,7 +329,7 @@ impl Content {
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "value.ron" => {
-                        value.push(crate::value::Value::read(package, &source)?);
+                        value.push((package.clone(), crate::value::Value::read(package, &source)?));
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "combat.ron" => {
@@ -302,8 +341,14 @@ impl Content {
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "movement.ron" => {
-                        if movement.replace(Tuning::from_ron(&source)?).is_some() {
-                            return Err(RegistryError(format!("{package}/movement.ron: another package already sets movement")));
+                        // The first package sets every number; each later one only what it
+                        // changes, which replaces the earlier packages' (Design draft 91).
+                        match movement.as_mut() {
+                            None => movement = Some(Setting::whole(Tuning::from_ron(&source)?, package)),
+                            Some(setting) => {
+                                setting.set(package, &name, "movement", Some(Tuning::set_from_ron(&source)?), &mut notes);
+                                setting.value.validate().map_err(|e| RegistryError(format!("{package}/{e}")))?;
+                            }
                         }
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -314,10 +359,11 @@ impl Content {
         }
         let blocks = BlockRegistry::expand(blocks)?;
         weather.validate()?;
+        notes.extend(weather.notes().iter().cloned());
         if weather.try_tuning().is_none() {
             return Err(RegistryError("no package's weather.ron sets its `tuning`".to_owned()));
         }
-        let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?;
+        let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?.value;
         skills.validate()?;
         let blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
@@ -326,6 +372,10 @@ impl Content {
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
         let effects = EffectRegistry::new(effects)?;
+        // A home asks for tags blocks carry: a misspelt one would be a step nobody can climb.
+        if let Some(tag) = effects.home_tags().iter().find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: a home is asked for blocks tagged `{tag}`, which no block carries")));
+        }
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
@@ -335,7 +385,7 @@ impl Content {
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
         }
-        let value = crate::value::Value::merge(value);
+        let value = crate::value::Value::merge(value, &mut notes);
         let limits = stack_limits(&blocks, &stacking)?;
         let treasure = crate::treasure::Treasure::new(treasure, &blocks, &value, &limits, &mut notes)?;
         // An opened chest becomes a bin with room for all it can give.
@@ -380,7 +430,7 @@ impl Content {
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
             quests: Arc::new(quests),
-            journal: Arc::new(crate::journal::JournalRules::merge(journal)),
+            journal: Arc::new(crate::journal::JournalRules::merge(journal, &mut notes)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
             notes: Arc::new(notes),

@@ -312,6 +312,11 @@ feel! {
     /// Seconds after leaving the ground a dodge may still start (stepping off an edge as
     /// you press it).
     dodge_grace: f32 = 0.15,
+    /// The most seconds of a player's round trip a guard or dodge is judged earlier by: a
+    /// player sees a wind-up begin and their answer arrives that much after they made it.
+    /// Measured for each player, never past this, so a slower connection earns no wider a
+    /// window (as breaking is judged by when the client's message came, `actions`).
+    lag_allowance: f32 = 0.2,
     /// Player reach, blocks from the eye to a creature's nearest edge, for classes that set
     /// none (the wiki's "Reach": Minecraft's 3, less a little), and how much further a blow
     /// may still land, for the time a view of the fight lags.
@@ -675,7 +680,8 @@ impl Guarding {
     /// The guard comes down at `now`. Returns whether it was up.
     pub fn lower(&mut self, now: f64) -> bool {
         let Some((up, perfect)) = self.up.take() else { return false };
-        self.last = Some((up, now, perfect));
+        // Never down before up, for a round trip measured longer between the two.
+        self.last = Some((up, now.max(up), perfect));
         true
     }
 

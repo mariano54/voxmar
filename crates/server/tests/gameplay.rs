@@ -142,6 +142,15 @@ impl Client {
         Self::greet_content(|| local_connection(accepted), name, Some(server), None, || content)
     }
 
+    /// Joins a new server through a connection that takes half of `round_trip` each way
+    /// (`delayed`): a player far from it.
+    fn join_delayed(round_trip: Duration) -> Self {
+        let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
+        let (connection, server_side) = delayed(round_trip);
+        server.connections().send(server_side).unwrap();
+        Self::hello(|| connection, "test", server)
+    }
+
     /// Joins a new server over TCP as `name`.
     fn join_remote(name: &str, admins: &[&str]) -> Self {
         let admins = admins.iter().map(|&a| a.to_owned()).collect();
@@ -331,6 +340,9 @@ impl Client {
                 self.damage.push(damage);
                 self.kinds.push(blow);
                 self.pips.push(pips);
+            }
+            ServerMessage::Ping { id } => {
+                self.connection.send(ClientMessage::Pong { id });
             }
             ServerMessage::Hurt { creature, damage, defended } => {
                 self.hurt.push((damage, defended));
@@ -1439,6 +1451,39 @@ fn a_finished_break_the_server_refused_is_undone_on_the_client() {
     client.pump_until(|c| c.world.block(far) == Some(stone));
 }
 
+/// An in-process connection whose messages take half of `round_trip` each way, each
+/// stamped as it comes out, as over a network.
+fn delayed(round_trip: Duration) -> (voxmar_protocol::ClientConnection, voxmar_protocol::ServerConnection) {
+    use std::collections::VecDeque;
+    let (client, from_client) = local_pair();
+    let (to_server, server) = local_pair();
+    let way = round_trip / 2;
+    std::thread::spawn(move || {
+        let (mut up, mut down) = (VecDeque::new(), VecDeque::new());
+        loop {
+            while let Ok(Some((at, message))) = from_client.try_recv_at() {
+                up.push_back((at + way, message));
+            }
+            while let Ok(Some((at, message))) = to_server.try_recv_at() {
+                down.push_back((at + way, message));
+            }
+            let now = Instant::now();
+            while up.front().is_some_and(|(due, _)| *due <= now) {
+                if !to_server.send(up.pop_front().expect("checked").1) {
+                    return;
+                }
+            }
+            while down.front().is_some_and(|(due, _)| *due <= now) {
+                if !from_client.send(down.pop_front().expect("checked").1) {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    (client, server)
+}
+
 /// A server held up as on a busy machine: every tick slow, every fifth stalled, and a
 /// stall as every other action is proposed (as `voxmar_client::gate::SERVER_LAG`).
 const SLOW: voxmar_server::Lag = voxmar_server::Lag {
@@ -1970,6 +2015,50 @@ fn a_sleeping_bag_is_where_the_homeless_wake() {
     client.pump_until(|c| c.health == 0);
     client.propose("core:respawn", ActionTarget::None);
     client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(bag.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
+}
+
+#[test]
+fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    // A sleeping bag and a torch are a camp, once slept in; the sleep is a rest.
+    let bag = feet + IVec3::new(2, 0, 0);
+    for line in [format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z), format!("/setblock {} {} {} torch", feet.x + 3, feet.y, feet.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(feet + IVec3::new(3, 0, 0)) == c.content.blocks.id("base:torch"));
+    assert!(!has(&client, "base:camp"), "no bed slept in yet, so no camp");
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:camp") && has(c, "base:rested") && told(c, "Camp:") && told(c, "You sleep soundly"));
+    // Rested, they are not tired again until it wears off.
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| told(c, "not tired"));
+    assert!(!has(&client, "base:well_rested"));
+    // Light a hearth with a chimney (a lit one is home), a second light and a roof: snug.
+    let core = feet + IVec3::new(4, 0, 0);
+    for line in [
+        format!("/setblock {} {} {} hearthstone", core.x, core.y, core.z),
+        format!("/setblock {} {} {} torch", feet.x + 3, feet.y + 1, feet.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 6, feet.y + 4, feet.z + 3),
+    ] {
+        client.ok(&line);
+    }
+    client.chat.clear();
+    client.pump_until(|c| has(c, "base:snug") && told(c, "Snug:"));
+    // Another night, now in a snug home, rests them better.
+    client.ok("/effect clear");
+    client.pump_until(|c| !has(c, "base:rested"));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:well_rested") && told(c, "Well rested"));
+    assert!(!has(&client, "base:rested"), "the better rest hides the plain one");
+    // Out of reach of home, none of it holds.
+    client.tp(feet.as_vec3() + Vec3::new(30.5, 0.0, 0.5));
+    client.pump_until(|c| !has(c, "base:snug") && has(c, "base:well_rested"));
 }
 
 #[test]
@@ -3522,6 +3611,71 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     client.wait_server(1);
     let dodged = answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
     assert_eq!(client.hurt[dodged].0, 0, "a dodged blow takes nothing");
+}
+
+#[test]
+fn a_guard_and_a_dodge_count_from_when_the_player_saw_the_wind_up() {
+    use voxmar_engine::combat::Defended;
+    // Review: a player sees a wind-up begin half their round trip late, and their answer
+    // comes half of it late again. A guard or dodge is judged that much earlier, by the
+    // round trip the server measures, never past `feel.lag_allowance`: answered on time on
+    // their own screen at 0 or 150 ms, it lands; late, it does not; at 400 ms, past the
+    // allowance, even on time it does not. (Unanswered it would come 150 ms late, past a
+    // perfect window's middle, so the 150 ms answers fail without the allowance.)
+    for round_trip in [0, 150, 400] {
+        let mut client = if round_trip == 0 { Client::join() } else { Client::join_delayed(Duration::from_millis(round_trip)) };
+        client.ok("/gamemode survival");
+        client.ok("/skill hitpoints 60");
+        client.pump_until(|c| c.health >= 100);
+        let (id, slot) = beside_a_bear(&mut client);
+        // A few pings answered, so the round trip is measured.
+        client.wait_server(3);
+        let bear = client.creatures[&id].species;
+        let feel = client.content.combat.feel;
+        let windup = client.content.creatures.get(bear).def.attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup);
+        let combat = &client.content.combat;
+        let level = |_| 20;
+        let perfect = combat.guard_of(client.inventory.get(slot).map(|s| s.item), &client.inventory.worn, level).expect("a sword guards").perfect;
+        let dodge = combat.dodge_of(&client.inventory.worn).clone();
+        // Answers the bear's next blow `after` seconds after its wind-up is seen to begin,
+        // answering pings meanwhile; returns what came of it.
+        let answer = |client: &mut Client, after: f32, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| -> Defended {
+            let before = provoke_until_it_winds_up(client, id, slot, "bear");
+            let seen = Instant::now();
+            client.pump_until(|_| seen.elapsed().as_secs_f32() >= after);
+            respond(client);
+            client.pump_until(|c| c.hurt.len() > before);
+            undo(client);
+            client.wait_server(1);
+            client.hurt[before].1
+        };
+        let raise = |c: &Client| {
+            c.connection.send(ClientMessage::Guard { up: true });
+        };
+        let lower = |c: &Client| {
+            c.connection.send(ClientMessage::Guard { up: false });
+        };
+        let dash = |c: &Client| c.propose("core:dodge", ActionTarget::None);
+        let allowed = round_trip as f32 / 1000.0 <= feel.lag_allowance;
+        // On time on their screen: the middle of the perfect window, and of the dodge's.
+        // A machine too slow for a try only makes it later, so a few are allowed for it.
+        for (want, after, respond, undo) in [
+            (Defended::Perfect, windup - perfect / 2.0, &raise as &dyn Fn(&Client), &lower as &dyn Fn(&Client)),
+            (Defended::Dodged, windup - (dodge.safe.0 + dodge.safe.1) / 2.0, &dash, &(|_: &Client| {}) as &dyn Fn(&Client)),
+        ] {
+            let mut outcomes = Vec::new();
+            for _ in 0..if allowed { 4 } else { 3 } {
+                outcomes.push(answer(&mut client, after, respond, undo));
+                if outcomes.last() == Some(&want) {
+                    break;
+                }
+            }
+            assert_eq!(outcomes.contains(&want), allowed, "{want:?} on time at {round_trip} ms came to {outcomes:?}");
+        }
+        // Late on their screen too: the blow lands.
+        let late = answer(&mut client, windup + 0.25, &raise, &lower);
+        assert!(matches!(late, Defended::Hit | Defended::Missed), "a guard raised late at {round_trip} ms came to {late:?}");
+    }
 }
 
 #[test]
