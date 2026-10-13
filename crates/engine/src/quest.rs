@@ -305,6 +305,7 @@ impl QuestRegistry {
                     Goal::Kill(name, _) => find(name, &creature)?,
                     Goal::Tame(name, _) => find(name, &tame)?,
                     Goal::Built(name, _) => find(name, &multiblock)?,
+                    Goal::LookUp(name) => find(name, &made)?,
                     Goal::Visit(_) | Goal::Discover(..) | Goal::Home => {}
                 }
             }
