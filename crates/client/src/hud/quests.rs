@@ -291,7 +291,11 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Have(item, _) => locale.format("quest.goal.have", &[("item", &item_words(locale, content, package, item))]),
         Goal::Home => return locale.get("quest.goal.home").to_owned(),
         Goal::Thriving(..) => locale.get("quest.goal.thriving").to_owned(),
-        Goal::Built(name, _) => locale.format("quest.goal.built", &[("item", &multiblock_words(locale, content, package, name))]),
+        Goal::Built(name, _) => match qualified(package, name).iter().find_map(|name| content.effects.step(name)) {
+            // A step of a ladder (a home's) is reached, not built.
+            Some(step) => locale.format("quest.goal.step", &[("step", &locale.get_or(&def_key("effect", &step.name), &step.title))]),
+            None => locale.format("quest.goal.built", &[("item", &multiblock_words(locale, content, package, name))]),
+        },
         Goal::Lit(name, _) => {
             let fuels = qualified(package, name).iter().find_map(|name| content.multiblocks.get(name)).map(|m| {
                 m.fuels.iter().map(|&(item, count)| locale.format("multiblock.fuel_stack", &[("count", &count), ("item", &locale.block(content.blocks.def(item)))])).collect::<Vec<_>>().join(locale.get("multiblock.fuel_or"))
@@ -936,7 +940,8 @@ mod tests {
                     Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
                     Goal::Catch(name, _) => name == "Kinds" || item(name),
                     Goal::Kill(name, _) | Goal::Tame(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
-                    Goal::Built(name, _) | Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
+                    Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some() || content.effects.step(name).is_some()),
+                    Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
                     Goal::Level(skill, _) => skill_id(&content, skill).is_some(),
                     _ => true,
                 };

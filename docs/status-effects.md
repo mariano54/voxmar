@@ -13,7 +13,9 @@ weather; base's: what food does), read by `crates/engine/src/effect.rs`.
   `effect.<package>.<name>.description` (English and Japanese, with a hiragana reading
   for a Japanese name with kanji);
 - **modifiers**, a fixed vocabulary the engine owns: `heal`, `speed`, `mining`, `xp`
-  and `fishing` (how often a cast lands) multiply (1 changes nothing; `heal: 0` stops healing), `warmth` adds degrees to
+  and `fishing` (how often a cast lands) multiply (1 changes nothing; `heal: 0` stops healing), `finds` adds to
+  the chance of an extra piece from natural ground and rock (0.05 is one time in twenty, on
+  top of the tool's `yield` and the skill level; `tools.ron`'s rules say which blocks), `warmth` adds degrees to
   how warm you feel, `max_health` adds health points, `hurt_every` hurts a point every so
   many seconds. While several effects are on, rates multiply, warmth and health add, and
   the quickest hurt wins;
@@ -28,6 +30,19 @@ Biomes give their own (base effects.ron): waterside (sea, river and marsh: casts
 fifth more often), forest calm (heal a fifth faster), rich rock (mountains: mine a tenth
 faster), aether-touched (fantastical biomes: a twentieth more experience) and mired
 (marsh: a little slower), so where you go matters as well as what you eat.
+
+**Know-how: what a quest taught stays.** The condition `Done("quest")` holds from the moment
+the player has finished that quest (its package's name unless written in full; a quest no
+package has is refused at launch). It is how finishing an early gathering quest becomes an
+upgrade the player feels at once, with no new item: base's ladder `steady_hands` (Stone in
+Hand: every tool a tenth faster), `practised_hands` (A Full Stone Kit: a fifth, and
+extras three times in a hundred), `copper_hands` (Copper Kit: nearly a third, extras twice as
+often: 6 in a hundred); each replaces the one below, says so in chat once with a **Next:** line, and counts
+for quests as `Built("knack_NAME", 1)` (`ladder: "knack"` on the effect; the ladder name is
+`home` unless given). It combines with every other condition, so what was learnt can pair
+with where it is used: `stonewise` (A Pile of Stone, in mountain biomes: extra finds) and
+`anglers_knack` (A Fish Supper: casts land a tenth more often) are two. A mod adds a perk by
+adding an effect that waits on a quest, and its chat line, icon and Japanese come with it.
 
 Warmth from food and weather counts before the bands of warmth are judged: soaked through
 on a mild day, you feel chilly.

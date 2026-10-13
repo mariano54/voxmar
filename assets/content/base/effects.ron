@@ -111,6 +111,52 @@
             replaces: ["rested"], modifiers: (heal: 1.15, xp: 1.05, mining: 1.03)),
         (name: "deep_rest", kind: Buff, title: "Deep rest", description: "Slept in a cosy home: you heal, learn, mine and walk faster for a while.",
             replaces: ["rested", "well_rested"], modifiers: (heal: 1.25, xp: 1.1, mining: 1.06, speed: 1.03)),
+
+        // Know-how (condition `Done`: a quest the player has finished). What a quest taught
+        // stays with them, so finishing the early gathering quests is itself an upgrade,
+        // felt at once: `mining` is how fast every tool bites, `finds` the added chance of an
+        // extra piece from natural rock and soil. They stack with the tool, the skill, food
+        // and the place (Rich rock, Waterside), and the steps of a ladder replace each other.
+        // `ladder: "knack"` makes the steps countable by quests (`Built("knack_steady_hands", 1)`).
+        (name: "steady_hands", kind: Buff, title: "Steady hands", description: "A stone tool in your fist: every tool bites a tenth faster.", announce: true, ladder: "knack",
+            next: "Next: carry a full stone kit (pickaxe, axe, shovel, hoe and knife).",
+            when: Some(Done("stone_in_hand")),
+            replaces: [], modifiers: (mining: 1.1)),
+        (name: "practised_hands", kind: Buff, title: "Practised hands", description: "A whole kit and the habit of it: a fifth faster, and now and then an extra piece turns up.", announce: true, ladder: "knack",
+            next: "Next: forge a copper kit (axe, shovel, hoe and knife) from red metal.",
+            when: Some(Done("full_stone_kit")),
+            replaces: ["steady_hands"], modifiers: (mining: 1.2, finds: 0.03)),
+        (name: "copper_hands", kind: Buff, title: "Copper hands", description: "Copper in every grip: nearly a third faster, and extras turn up twice as often.", announce: true, ladder: "knack",
+            when: Some(Done("copper_kit")),
+            replaces: ["steady_hands", "practised_hands"], modifiers: (mining: 1.3, finds: 0.06)),
+        // What was learnt, paired with where it is used.
+        (name: "stonewise", kind: Buff, title: "Stonewise", description: "A hand that knows stone reads mountain rock: it splits to give more.",
+            when: Some(All([Done("a_pile_of_stone"), InBiome("mountain")])), modifiers: (finds: 0.05)),
+        (name: "anglers_knack", kind: Buff, title: "Angler's knack", description: "A supper caught and cooked: you read the water, and casts land a tenth more often.",
+            when: Some(Done("a_fish_supper")), modifiers: (fishing: 1.1)),
+        // Home know-how: what a home quest taught, kept at home. Each holds from the quest
+        // done, but only where it is used (`AtHome`, and the furnishing it is about), so the
+        // home grows more useful with every step of the home line, on top of the ladder's own
+        // comfort. `ladder: "homecraft"` keeps them out of `/home`'s steps and countable by
+        // quests (`Built("homecraft_banked_fire", 1)`).
+        (name: "banked_fire", kind: Buff, title: "Banked fire", description: "A camp taught you to bank a fire: at home with a fire lit, 3° warmer.", announce: true, ladder: "homecraft",
+            when: Some(All([Done("make_camp"), AtHome, Any([HomeHas("hearth", 1), HomeHas("heat", 1)])])),
+            replaces: [], modifiers: (warmth: 3.0)),
+        (name: "snowed_in", kind: Buff, title: "Snowed in", description: "Snug for winter: snow or hail outside, you heal and learn more at home.", announce: true, ladder: "homecraft",
+            when: Some(All([Done("snug_for_winter"), AtHome, Sheltered(Any([Snow(0.1), Hail(0.1)]))])),
+            replaces: [], modifiers: (heal: 1.15, xp: 1.1)),
+        (name: "everything_in_its_place", kind: Buff, title: "Everything in its place", description: "A homely home: with room to store things, you build a level higher at home.", announce: true, ladder: "homecraft",
+            when: Some(All([Done("a_homely_home"), AtHome, HomeHas("storage", 2)])),
+            replaces: [], boosts: [("construction", 1)]),
+        (name: "home_cooking", kind: Buff, title: "Home cooking", description: "Stove and quern learnt: meals at home heal a tenth more and last longer.", announce: true, ladder: "homecraft",
+            when: Some(All([Done("workshop_and_stove"), AtHome, HomeHas("cooking", 1)])),
+            replaces: [], modifiers: (meal_heal: 1.1, meal_time: 1.1)),
+        (name: "studious", kind: Buff, title: "Studious", description: "Books on the shelf: indoors at home you learn a twentieth more.", announce: true, ladder: "homecraft",
+            when: Some(All([Done("books_and_banners"), AtHome, Indoors, HomeHas("books", 1)])),
+            replaces: [], modifiers: (xp: 1.05)),
+        (name: "hearthkeeper", kind: Buff, title: "Hearthkeeper", description: "Your own hearth is the best bench: craft and cook as if a level higher at home.", announce: true, ladder: "homecraft",
+            when: Some(All([Done("heart_of_the_home"), AtHome])),
+            replaces: [], boosts: [("crafting", 1), ("cooking", 1)]),
     ],
     foods: [
         (tags: ["meat", "cooked"], effect: "hearty", seconds: 300),

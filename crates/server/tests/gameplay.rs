@@ -1993,6 +1993,58 @@ fn a_quest_is_done_at_the_next_check_once_its_goal_holds_and_rewards_once() {
     std::fs::remove_dir_all(&assets).unwrap();
 }
 
+/// What a quest taught stays as an effect (`Done` in an effect's `when`): it is not there
+/// before the quest, it comes on at the check that finishes it with its say in chat, it
+/// changes the player's modifiers, and as an announced step of a ladder it counts for a
+/// quest that asks for the step (`Built("knack_trick", 1)`).
+#[test]
+fn a_finished_quest_teaches_an_effect_that_changes_modifiers_and_counts_as_a_step() {
+    let quests = r#"(quests: [
+    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("stick", 3)]], rewards: []),
+    (name: "tricky", age: "nomad", branch: "main", title: "Tricky", why: "", tasks: [[Built("knack_trick", 1)]], after: ["sticks"], rewards: [Xp("crafting", 50.0)]),
+])"#;
+    let effects = r#"(effects: [
+    (name: "trick", kind: Buff, title: "Trick", description: "A trick of the hand.", announce: true, ladder: "knack", when: Some(Done("sticks")), modifiers: (mining: 1.5, finds: 0.25)),
+])"#;
+    let (assets, content) = with_mod("quests-know-how", &[("quests.ron", quests), ("effects.ron", effects)]);
+    let mut client = join_content(content);
+    let known = |c: &Client| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == "zz_test:trick");
+    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
+    client.pump_until(|c| !c.quests.is_empty());
+    client.ok("/clear");
+    client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
+    assert!(!known(&client) && !done(&client, "zz_test:tricky"), "nothing is known before the quest");
+    assert_eq!(client.content.effects.modifiers(&client.vitals.effects).finds, 0.0);
+    client.chat.clear();
+    client.ok("/give stick 3");
+    client.pump_until(|c| done(c, "zz_test:sticks") && known(c) && c.chat.iter().any(|(_, t)| t.contains("Trick")));
+    let modifiers = client.content.effects.modifiers(&client.vitals.effects);
+    assert_eq!((modifiers.mining, modifiers.finds), (1.5, 0.25));
+    // Reaching the step counts for the quest that asks for it.
+    client.pump_until(|c| done(c, "zz_test:tricky"));
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
+/// An effect's `finds` adds to the chance of an extra piece from a natural block: at 1 the
+/// extra always comes, so breaking one clay bank gives two clay.
+#[test]
+fn an_effect_that_adds_finds_turns_up_an_extra_piece_from_natural_ground() {
+    let effects = r#"(effects: [(name: "lucky", kind: Buff, title: "Lucky", description: "", when: Some(Not(InBiome("zz_nowhere"))), modifiers: (finds: 1.0))])"#;
+    let (assets, content) = with_mod("effects-finds", &[("effects.ron", effects)]);
+    let mut client = join_content(content);
+    let feet = client.position.floor().as_ivec3();
+    let bank = feet + IVec3::new(2, 0, 0);
+    client.ok("/clear");
+    client.ok(&format!("/setblock {} {} {} clay", bank.x, bank.y, bank.z));
+    client.pump_until(|c| c.world.block(bank) == c.content.blocks.id("base:clay") && c.content.effects.modifiers(&c.vitals.effects).finds == 1.0);
+    client.propose("core:mine", ActionTarget::Block { block: bank, face: Face::NegX });
+    client.pump_until(|c| holding(c, "base:clay") + loose(c, "base:clay") >= 2);
+    assert_eq!(holding(&client, "base:clay") + loose(&client, "base:clay"), 2, "the clay and one more");
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
+}
+
 /// A level goal holds from that level, not a level before, and its experience comes once.
 #[test]
 fn a_level_quest_waits_for_the_level_and_grants_its_experience() {
@@ -2123,6 +2175,9 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
     client.pump_until(|c| has(c, "base:camp") && has(c, "base:rested") && told(c, "Camp:") && told(c, "You sleep soundly"));
+    // The quests that ask for the steps see them (the whole of Make Camp's task holds; whether it is done waits on its earlier quests).
+    client.pump_until(|c| quest_status(c, "make_camp").1);
+    assert!(!quest_status(&client, "snug_for_winter").1, "a camp is not yet snug");
     // Rested, they are not tired again until it wears off.
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
@@ -2139,6 +2194,7 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     }
     client.chat.clear();
     client.pump_until(|c| has(c, "base:snug") && told(c, "Snug:"));
+    client.pump_until(|c| quest_status(c, "snug_for_winter").1);
     // Another night, now in a snug home, rests them better.
     client.ok("/effect clear");
     client.pump_until(|c| !has(c, "base:rested"));

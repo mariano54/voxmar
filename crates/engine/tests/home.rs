@@ -53,12 +53,12 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
         HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), wanted.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() }
     };
     let top = |survey: &HomeSurvey, outdoors: bool| {
-        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey) };
+        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[] };
         // The ladder's own step alone: rooms (below) come on beside it.
         effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| LADDER.iter().any(|step| *name == format!("base:{step}"))).collect::<Vec<_>>()
     };
     let rest = |survey: &HomeSurvey, outdoors: bool| {
-        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey) };
+        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[] };
         effects.given_by_sleep(&situation).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
     };
     for step in LADDER {
@@ -78,7 +78,7 @@ fn rooms_in(counts: &[(&str, u32)], weather: &Weather, outdoors: bool) -> Vec<St
     let content = content();
     let effects = &content.effects;
     let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
-    let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey) };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[] };
     effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| !LADDER.iter().any(|step| *name == format!("base:{step}"))).collect()
 }
 
@@ -120,7 +120,7 @@ fn a_workshop_boosts_the_levels_recipes_are_checked_against() {
     let effects = &content.effects;
     let calm = Weather::NONE;
     let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 4)).collect() };
-    let at_home = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey) };
+    let at_home = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[] };
     let active = effects.active(&at_home, &[]);
     assert_eq!((effects.boost(&active, "core:crafting"), effects.boost(&active, "core:engineering")), (2, 1));
     let away = Situation { home: None, ..at_home };
@@ -164,4 +164,66 @@ fn crops_by_the_door_are_a_kitchen_garden_that_makes_meals_heal_more() {
     // It stacks with a larder: both lift a meal's healing.
     let larder = [("storage", 4), ("cooking", 1), ("table", 1), ("hearth", 1), ("crop", 4)];
     assert_eq!(rooms(&larder), ["base:larder", "base:kitchen_garden"]);
+}
+
+/// The home perks showing for a player who has finished `done`, at a home with these counts,
+/// in this weather.
+fn perks(counts: &[(&str, u32)], weather: &Weather, outdoors: bool, done: &[String]) -> Vec<String> {
+    let content = content();
+    let effects = &content.effects;
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done };
+    effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| effects.get(effects.id(name).unwrap()).ladder == "homecraft").collect()
+}
+
+fn finished(quests: &[&str]) -> Vec<String> {
+    quests.iter().map(|q| format!("base:{q}")).collect()
+}
+
+#[test]
+fn a_finished_home_quest_teaches_a_perk_that_works_at_home_where_it_is_used() {
+    let calm = Weather::NONE;
+    let snow = Weather { precipitation: 0.9, snow: 1.0, ..Weather::NONE };
+    // (quest, the home it works in, the weather, indoors?, the perk it gives)
+    let cases: [(&str, &[(&str, u32)], &Weather, bool, &str); 6] = [
+        ("make_camp", &[("hearth", 1)], &calm, true, "base:banked_fire"),
+        ("snug_for_winter", &[], &snow, false, "base:snowed_in"),
+        ("a_homely_home", &[("storage", 2)], &calm, true, "base:everything_in_its_place"),
+        ("workshop_and_stove", &[("cooking", 1)], &calm, true, "base:home_cooking"),
+        ("books_and_banners", &[("books", 1)], &calm, false, "base:studious"),
+        ("heart_of_the_home", &[], &calm, true, "base:hearthkeeper"),
+    ];
+    for (quest, home, weather, outdoors, perk) in cases {
+        let known = finished(&[quest]);
+        assert_eq!(perks(home, weather, outdoors, &known), [perk], "{quest} teaches {perk} where it is used");
+        assert!(perks(home, weather, outdoors, &[]).is_empty(), "{perk} needs {quest} done first");
+    }
+    // Where it is used: a fire to bank, a store to sort, a stove, a shelf of books, snow outside
+    // from indoors, and indoors to read.
+    assert!(perks(&[], &calm, false, &finished(&["make_camp"])).is_empty(), "no fire, nothing to bank");
+    assert!(perks(&[("storage", 1)], &calm, false, &finished(&["a_homely_home"])).is_empty(), "one crate is not a store");
+    assert!(perks(&[("cooking", 0)], &calm, false, &finished(&["workshop_and_stove"])).is_empty(), "no stove, no home cooking");
+    assert!(perks(&[("books", 1)], &calm, true, &finished(&["books_and_banners"])).is_empty(), "no reading out in the open");
+    assert!(perks(&[], &calm, false, &finished(&["snug_for_winter"])).is_empty(), "snowed in needs snow");
+    assert!(perks(&[], &snow, true, &finished(&["snug_for_winter"])).is_empty(), "out in the snow you are not snowed in, you are snowed on");
+}
+
+#[test]
+fn home_perks_are_countable_by_quests_and_stay_out_of_the_homes_steps() {
+    let content = content();
+    let effects = &content.effects;
+    let steps = effects.steps();
+    for name in ["homecraft_banked_fire", "homecraft_hearthkeeper", "home_workbench", "home_workshop", "home_pantry", "home_larder", "home_company", "home_full_house", "home_kitchen_garden", "home_camp", "home_heart_of_the_home"] {
+        assert!(steps.contains(&format!("base:{name}")), "a quest can ask for base:{name}");
+    }
+    // `/home` tells the ladder and the rooms, never the perks.
+    let calm = Weather::NONE;
+    let done = finished(&["make_camp", "heart_of_the_home"]);
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 0)).collect() };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &done };
+    for chain in effects.home_progress(&situation) {
+        for id in chain.reached.into_iter().chain(chain.next.map(|(id, _)| id)) {
+            assert_eq!(effects.get(id).ladder, "home", "{} is not a step of the home", effects.get(id).name);
+        }
+    }
 }

@@ -81,6 +81,28 @@ every crop stage carries, so a garden needs no new tag. Other players' animals n
 Ideas left: species rules (`kept:hen` for eggs, a cat for fewer mice), wandering visitors
 who stop at a lit home (needs hooks from the wandering events work), a herb nook.
 
+## Home perks (know-how kept at home)
+
+A finished home quest teaches something that stays, through `Done("quest")` (see
+`docs/early-upgrades.md`), and it works where it is used: `AtHome` and the furnishing it is
+about. They are effects with `ladder: "homecraft"` (announced once in chat, countable by
+quests as `Built("homecraft_NAME", 1)`, and left out of `/home`, which tells only the home's
+own steps):
+
+| Perk | Quest | Where it works | Gives |
+| --- | --- | --- | --- |
+| Banked fire | Make Camp | at home, a hearth or heat block | 3° warmer |
+| Snowed in | Snug for Winter | indoors at home while snow or hail falls outside | heal x1.15, learn x1.1 |
+| Everything in its place | A Homely Home | at home with 2 storage | construction +1 level |
+| Home cooking | A Stove and a Quern | at home with a stove or cauldron | meals heal x1.1, last x1.1 |
+| Studious | Books and Banners | indoors at home with a bookshelf | learn x1.05 |
+| Hearthkeeper | Heart of the Home | at home | crafting and cooking +1 level |
+
+They stack with the ladder, the rooms and the reactions: a Snug home in snow with Snug for
+Winter done gets the ladder's heal, Snowed in's and, with a fire, Sheltered's. Rooms are
+steps too: `Built("home_workbench", 1)`, `home_larder`, `home_company`, `home_kitchen_garden`
+and the rest work as quest goals, written short and tallied in full (`base:home_larder`).
+
 ## `/home`
 
 `/home` tells where the home is and, for each chain of steps (the ladder, and with the rooms
@@ -105,12 +127,16 @@ All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST`
 Home tiers use `heal`, `warmth` and `xp` only: a location effect that changed maximum health
 would cost health every time the player stepped out.
 
-## Quest hooks (for the quests thread)
+## Quest hooks (written, in base/quests.ron)
 
-`Built("home_camp", 1)` ... as above. Suggested chapters: Nomad "Make Camp" (sleep in a bag
-with a torch beside it), "Hearthside" (light the hearth, already `Home`), "Snug" (roof it);
-Farm "Homely", "Cosy", "Heart of the Home", each a multi-part quest (craft the pieces, then
-reach the step).
+`Built("home_camp", 1)` and the other steps are real goals (a step is tallied as
+`base:home_NAME`, and quests write it short). The home branch: Make Camp (Nomad: sleep in a
+bag with a torch beside it); Snug for Winter, A Homely Home, A Cosy Home and Heart of the
+Home (Farm), each with routes that also accept any higher step, because a player who first
+reaches a higher step never gets the lower one announced; they come after the craft quests
+that make the pieces (seats, a table, shelves, rugs, crockery, candles) and A Stove and a
+Quern, Books and Banners, the two parts the last step needs. Hearthside is the Homestead
+Hearth quest itself.
 
 ## Not built (ideas)
 

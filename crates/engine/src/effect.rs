@@ -60,6 +60,11 @@ pub struct EffectDef {
     /// steps of a ladder they work toward.
     #[serde(default)]
     pub announce: bool,
+    /// The ladder an announced step belongs to; reaching it counts for quests as
+    /// `Built("LADDER_NAME", 1)`, with the effect's name alone after the ladder's. `home`
+    /// unless given.
+    #[serde(default = "home_ladder")]
+    pub ladder: String,
     /// For an announced step, what to do to reach the next, which the chat line says after
     /// what this one does (language key `….next`).
     #[serde(default)]
@@ -70,6 +75,10 @@ pub struct EffectDef {
     /// boosts together stop at +6 (`level::MAX_BOOST`).
     #[serde(default)]
     pub boosts: Vec<(String, i8)>,
+}
+
+fn home_ladder() -> String {
+    "home".to_owned()
 }
 
 /// What an effect changes. Rates are multipliers (1 changes nothing).
@@ -98,11 +107,15 @@ pub struct Modifiers {
     /// How much a meal heals, and how long the effects it gives last.
     pub meal_heal: f32,
     pub meal_time: f32,
+    /// What is added to the chance of an extra find when the player breaks a natural block
+    /// (`tools.ron`'s rules): 0.05 is one more time in twenty. It adds to what the tool's
+    /// `yield` and the skill level give.
+    pub finds: f32,
 }
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0 }
     }
 }
 
@@ -124,6 +137,7 @@ impl Modifiers {
             fishing: sum.fishing * m.fishing,
             meal_heal: sum.meal_heal * m.meal_heal,
             meal_time: sum.meal_time * m.meal_time,
+            finds: sum.finds + m.finds,
         })
     }
 }
@@ -161,12 +175,36 @@ pub enum Condition {
     /// Under a roof while the inner condition (the weather) holds out in the open: the
     /// storm outside, from indoors.
     Sheltered(Box<Condition>),
+    /// The player has finished this quest (its full name, or its name alone in the package
+    /// that lists the effect): what a quest taught stays with them, as an effect that holds
+    /// from then on.
+    Done(String),
     All(Vec<Condition>),
     Any(Vec<Condition>),
     Not(Box<Condition>),
 }
 
 impl Condition {
+    /// The quests `Done` asks after anywhere in this condition.
+    fn quests<'a>(&'a self, into: &mut Vec<&'a str>) {
+        match self {
+            Condition::Done(quest) => into.push(quest),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.quests(into)),
+            Condition::Not(c) => c.quests(into),
+            _ => {}
+        }
+    }
+
+    /// Names every quest `Done` asks after in full.
+    fn qualify_quests(&mut self, qualify: &impl Fn(&mut String)) {
+        match self {
+            Condition::Done(quest) => qualify(quest),
+            Condition::All(list) | Condition::Any(list) => list.iter_mut().for_each(|c| c.qualify_quests(qualify)),
+            Condition::Not(c) => c.qualify_quests(qualify),
+            _ => {}
+        }
+    }
+
     /// The tags `HomeHas` asks of a home anywhere in this condition.
     fn home_tags<'a>(&'a self, into: &mut Vec<&'a str>) {
         match self {
@@ -243,6 +281,8 @@ pub struct Situation<'a> {
     pub biome_tags: &'a [String],
     /// What lies around the player's home, if they stand within reach of it.
     pub home: Option<&'a HomeSurvey>,
+    /// The quests the player has finished (full names).
+    pub done: &'a [String],
 }
 
 /// How many blocks with each tag lie around a home: the tags are those effects ask of it
@@ -277,6 +317,7 @@ impl Condition {
             Condition::Indoors => !s.outdoors,
             Condition::HomeHas(tag, n) => s.home.is_some_and(|h| h.count(tag) >= *n),
             Condition::Sheltered(c) => !s.outdoors && c.holds(&Situation { outdoors: true, ..*s }),
+            Condition::Done(quest) => s.done.iter().any(|d| d == quest),
             Condition::All(all) => all.iter().all(|c| c.holds(s)),
             Condition::Any(any) => any.iter().any(|c| c.holds(s)),
             Condition::Not(c) => !c.holds(s),
@@ -336,6 +377,8 @@ pub struct EffectRegistry {
     sleeps: Vec<(EffectId, f32, Option<EffectId>)>,
     /// The tags effects ask of a home, each once.
     home_tags: Vec<String>,
+    /// The quests effects wait on, each once.
+    quests: Vec<String>,
 }
 
 impl EffectRegistry {
@@ -351,6 +394,9 @@ impl EffectRegistry {
         for def in &mut file.effects {
             qualify(&mut def.name);
             def.replaces.iter_mut().for_each(qualify);
+            if let Some(when) = &mut def.when {
+                when.qualify_quests(&qualify);
+            }
             // Skills are all core's.
             for (skill, _) in &mut def.boosts {
                 if !skill.contains(':') {
@@ -427,7 +473,19 @@ impl EffectRegistry {
                 home_tags.push(tag.to_owned());
             }
         }
-        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags })
+        let mut asked: Vec<&str> = Vec::new();
+        for def in &defs {
+            if let Some(when) = &def.when {
+                when.quests(&mut asked);
+            }
+        }
+        let mut quests: Vec<String> = Vec::new();
+        for quest in asked {
+            if !quests.iter().any(|q| q == quest) {
+                quests.push(quest.to_owned());
+            }
+        }
+        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, quests })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -516,7 +574,7 @@ impl EffectRegistry {
     /// first), a chain's highest step met and the lowest one it has yet to reach with what
     /// that lacks.
     pub fn home_progress(&self, situation: &Situation) -> Vec<HomeProgress> {
-        let steps: Vec<EffectId> = self.ids().filter(|&id| self.get(id).announce && self.get(id).when.as_ref().is_some_and(Condition::about_home)).collect();
+        let steps: Vec<EffectId> = self.ids().filter(|&id| self.get(id).announce && self.get(id).ladder == "home" && self.get(id).when.as_ref().is_some_and(Condition::about_home)).collect();
         // Chains: steps joined by one replacing the other.
         let mut chain: Vec<usize> = (0..steps.len()).collect();
         for (i, &a) in steps.iter().enumerate() {
@@ -546,6 +604,32 @@ impl EffectRegistry {
     /// The tags effects ask of a home (`HomeHas`): what surveying a home counts.
     pub fn home_tags(&self) -> &[String] {
         &self.home_tags
+    }
+
+    /// The announced steps of every ladder, by the names `Built` goals and tallies use:
+    /// the effect's package, then the ladder and the effect's own name (`base:home_snug`).
+    pub fn steps(&self) -> Vec<String> {
+        self.defs
+            .iter()
+            .filter(|def| def.announce)
+            .map(|def| {
+                let (package, own) = def.name.split_once(':').unwrap_or(("", &def.name));
+                format!("{package}:{}_{own}", def.ladder)
+            })
+            .collect()
+    }
+
+    /// The announced step named `name` (as `steps` gives it), if there is one.
+    pub fn step(&self, name: &str) -> Option<&EffectDef> {
+        self.defs.iter().filter(|def| def.announce).find(|def| {
+            let (package, own) = def.name.split_once(':').unwrap_or(("", &def.name));
+            name.strip_prefix(package).and_then(|rest| rest.strip_prefix(':')).and_then(|rest| rest.strip_prefix(def.ladder.as_str())).and_then(|rest| rest.strip_prefix('_')) == Some(own)
+        })
+    }
+
+    /// The quests (full names) some effect waits on, each once: content checks they exist.
+    pub fn quests(&self) -> &[String] {
+        &self.quests
     }
 
     /// Whether the effects a sleep gives are among `active` (the player is rested already).
@@ -587,7 +671,7 @@ mod tests {
     }
 
     fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None }
+        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[] }
     }
 
     #[test]
@@ -656,6 +740,35 @@ mod tests {
 
     fn home_registry() -> EffectRegistry {
         EffectRegistry::new(vec![EffectRegistry::read("core", HOME).unwrap()]).unwrap()
+    }
+
+    const KNOW_HOW: &str = r#"(effects: [
+        (name: "steady", kind: Buff, title: "Steady", description: "", announce: true, ladder: "knack", when: Some(Done("full_kit")), modifiers: (mining: 1.1)),
+        (name: "practised", kind: Buff, title: "Practised", description: "", when: Some(All([Done("full_kit"), Done("base:copper_kit")])), replaces: ["steady"], modifiers: (mining: 1.2, finds: 0.04)),
+        (name: "mountain_craft", kind: Buff, title: "Mountain craft", description: "", when: Some(All([Done("full_kit"), InBiome("mountain")])), modifiers: (finds: 0.03)),
+    ])"#;
+
+    #[test]
+    fn what_a_quest_taught_stays_as_an_effect_and_combines_with_where_you_are() {
+        let effects = EffectRegistry::new(vec![EffectRegistry::read("core", KNOW_HOW).unwrap()]).unwrap();
+        assert_eq!(effects.quests(), ["core:full_kit", "base:copper_kit"], "each quest once, qualified by the package unless it names one");
+        assert_eq!(effects.steps(), ["core:knack_steady"], "an announced step is named by its ladder, and only an announced one");
+        assert_eq!(effects.step("core:knack_steady").map(|d| d.title.as_str()), Some("Steady"));
+        assert!(effects.step("core:knack_practised").is_none() && effects.step("core:home_steady").is_none() && effects.step("steady").is_none());
+        let calm = Weather::NONE;
+        let away = situation(&calm, false, 15.0, true);
+        let names = |situation: &Situation| effects.active(situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).collect::<Vec<_>>();
+        assert!(names(&away).is_empty(), "nothing is known before the quest");
+        let kit = ["core:full_kit".to_owned()];
+        assert_eq!(names(&Situation { done: &kit, ..away }), ["core:steady"]);
+        let both = ["core:full_kit".to_owned(), "base:copper_kit".to_owned()];
+        assert_eq!(names(&Situation { done: &both, ..away }), ["core:practised"], "the better step hides the milder");
+        let tags = ["mountain".to_owned()];
+        let high = Situation { biome: "base:crags", biome_tags: &tags, done: &kit, ..away };
+        assert_eq!(names(&high), ["core:steady", "core:mountain_craft"], "what was learnt pairs with where it is used");
+        let active = effects.active(&Situation { done: &both, ..high }, &[]);
+        let modifiers = effects.modifiers(&active);
+        assert_eq!((modifiers.mining, modifiers.finds), (1.2, 0.07), "speeds multiply and extra finds add");
     }
 
     fn survey(counts: &[(&str, u32)]) -> HomeSurvey {

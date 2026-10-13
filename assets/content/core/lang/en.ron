@@ -437,6 +437,7 @@
     "multiblock.cold": "The {structure} is cold. {fuel}",
     "tag.edible": "food",
     "quest.goal.built": "Build the {item}",
+    "quest.goal.step": "Reach {step}",
     "screen.journal": "Journal",
     "settings.key.journal": "Journal key",
     "settings.key.journal.hint": "Opens the journal of everything you have found.",

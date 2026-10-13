@@ -24,7 +24,7 @@ reward, shown first), tasks, after, rewards. Goals:
 | --- | --- |
 | `Craft(item, n)`, `Cook(item, n)` | the player's tallies of things made and cooked |
 | `CookAt(item, station, n)` | successful cooking tallies for a station tag; First Night asks for edible food at a campfire, plus crafting the campfire |
-| `Built(structure, n)`, `Lit(structure, n)` | standing construction and successful fuelled lighting, separately; factory construction never supplies lighting credit |
+| `Built(structure, n)`, `Lit(structure, n)` | standing construction and successful fuelled lighting, separately; factory construction never supplies lighting credit. `Built` also takes the announced steps of an effect ladder, written short and tallied in full: `Built("home_snug", 1)`, `Built("knack_practised_hands", 1)` (the effect's `ladder` and name; docs/home.md, docs/status-effects.md) |
 | `Tame(creature, n)` | the tally of animals tamed |
 | `Catch(fish, n)`, `Catch("Kinds", n)` | the journal's Fish page |
 | `Kill(creature, n)` | the journal's Animals and Monsters pages |
