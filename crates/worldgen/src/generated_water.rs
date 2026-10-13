@@ -12,7 +12,7 @@ use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::fluid::{Fluids, unsettled};
 use voxmar_engine::glam::{IVec2, IVec3};
-use voxmar_engine::world::VoxelWorld;
+use voxmar_engine::world::{Column, VoxelWorld};
 
 use crate::{Generator, Overworld, WaterSight, WorldContent};
 
@@ -159,22 +159,14 @@ fn count_fluid(registry: &BlockRegistry, world: &VoxelWorld, pos: ColumnPos) -> 
     (all, pouring, pinned)
 }
 
-/// A `SIDE` × `SIDE` area of columns from `first`, generated on all cores.
+/// A `SIDE` × `SIDE` area of columns from `first`, generated on the test threads' pool.
 fn generate(generator: &Overworld, first: ColumnPos) -> VoxelWorld {
     let positions: Vec<ColumnPos> = (0..SIDE * SIDE).map(|i| first.offset(i % SIDE, i / SIDE)).collect();
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let columns: Vec<Column> = positions.par_iter().map(|&pos| generator.generate(pos)).collect();
     let mut world = VoxelWorld::default();
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = positions
-            .chunks(positions.len().div_ceil(threads))
-            .map(|part| scope.spawn(move || part.iter().map(|&pos| (pos, generator.generate(pos))).collect::<Vec<_>>()))
-            .collect();
-        for handle in handles {
-            for (pos, column) in handle.join().unwrap() {
-                world.insert(pos, Arc::new(column));
-            }
-        }
-    });
+    for (pos, column) in positions.into_iter().zip(columns) {
+        world.insert(pos, Arc::new(column));
+    }
     world
 }
 
