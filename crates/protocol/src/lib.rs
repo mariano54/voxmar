@@ -27,7 +27,8 @@ pub use voxmar_engine::weather::Weather;
 
 // 31: the server hardening's 27/28 (numbered teleports, keepalive), after main's 29 and 30 (armour).
 // 32: ClientMessage::LookedUp (the recipe viewer opened on an item, for the quest book's LookUp goals).
-pub const PROTOCOL_VERSION: u32 = 32;
+// 33: Ping and Pong, the round trip a fight's lag allowance reads.
+pub const PROTOCOL_VERSION: u32 = 33;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -75,6 +76,8 @@ pub enum ClientMessage {
     LookedUp { item: BlockId },
     /// The player raised (`up`) or lowered their guard (`voxmar_engine::combat`).
     Guard { up: bool },
+    /// The answer to `ServerMessage::Ping` number `id`, sent as soon as it is read.
+    Pong { id: u32 },
 }
 
 /// The client's predicted movement state, sent every tick. The server checks it against
@@ -162,6 +165,9 @@ pub enum ServerMessage {
     /// `defended` says. Every blow that comes down is answered; a wind-up a daze cuts short
     /// comes to nothing and is not.
     Hurt { creature: u32, damage: u16, defended: voxmar_engine::combat::Defended },
+    /// Asks for a `ClientMessage::Pong` straight back: the round trip it takes is how late
+    /// the player sees what happens and answers it (fights judge guards and dodges by it).
+    Ping { id: u32 },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

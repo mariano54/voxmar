@@ -514,6 +514,9 @@ mod tests {
             if first_party(&def.name) {
                 let key = def_key("effect", &def.name);
                 own.push((format!("{key}.description"), def.description.clone()));
+                if !def.next.is_empty() {
+                    own.push((format!("{key}.next"), def.next.clone()));
+                }
                 own.push((key, def.title.clone()));
             }
         }

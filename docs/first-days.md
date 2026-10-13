@@ -73,8 +73,7 @@ Mostly yes, with these checks:
    ranged weapon exists either, so the rest of that guide is still all future.
 6. **Worldgen never places the locked age chests**, so no quest depends on them.
 7. **Prayers and altars, the quern and stove are not built.** No quest asks for them.
-8. **Bedding is crafted but never used**: Sleep sets the respawn point only; no Rested
-   effect.
+8. **Bedding is crafted but never used**: fixed by [home.md](home.md): sleeping gives a rest, and a bed, light and hearth start a ladder of home comfort.
 9. **Clay was only mentioned by Farm quests** though the Hearth needs it: the Hearth quest
    now says where to dig it.
 10. **The First Night reward never arrived in Codex's last live gate run.** The server side

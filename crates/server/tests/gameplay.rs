@@ -101,6 +101,15 @@ impl Client {
         Self::greet_content(|| local_connection(accepted), name, Some(server), None, || content)
     }
 
+    /// Joins a new server through a connection that takes half of `round_trip` each way
+    /// (`delayed`): a player far from it.
+    fn join_delayed(round_trip: Duration) -> Self {
+        let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
+        let (connection, server_side) = delayed(round_trip);
+        server.connections().send(server_side).unwrap();
+        Self::hello(|| connection, "test", server)
+    }
+
     /// Joins a new server over TCP as `name`.
     fn join_remote(name: &str, admins: &[&str]) -> Self {
         let admins = admins.iter().map(|&a| a.to_owned()).collect();
@@ -290,6 +299,9 @@ impl Client {
                 self.damage.push(damage);
                 self.kinds.push(blow);
                 self.pips.push(pips);
+            }
+            ServerMessage::Ping { id } => {
+                self.connection.send(ClientMessage::Pong { id });
             }
             ServerMessage::Hurt { creature, damage, defended } => {
                 self.hurt.push((damage, defended));
@@ -1392,6 +1404,39 @@ fn a_finished_break_the_server_refused_is_undone_on_the_client() {
     client.pump_until(|c| c.world.block(far) == Some(stone));
 }
 
+/// An in-process connection whose messages take half of `round_trip` each way, each
+/// stamped as it comes out, as over a network.
+fn delayed(round_trip: Duration) -> (voxmar_protocol::ClientConnection, voxmar_protocol::ServerConnection) {
+    use std::collections::VecDeque;
+    let (client, from_client) = local_pair();
+    let (to_server, server) = local_pair();
+    let way = round_trip / 2;
+    std::thread::spawn(move || {
+        let (mut up, mut down) = (VecDeque::new(), VecDeque::new());
+        loop {
+            while let Ok(Some((at, message))) = from_client.try_recv_at() {
+                up.push_back((at + way, message));
+            }
+            while let Ok(Some((at, message))) = to_server.try_recv_at() {
+                down.push_back((at + way, message));
+            }
+            let now = Instant::now();
+            while up.front().is_some_and(|(due, _)| *due <= now) {
+                if !to_server.send(up.pop_front().expect("checked").1) {
+                    return;
+                }
+            }
+            while down.front().is_some_and(|(due, _)| *due <= now) {
+                if !from_client.send(down.pop_front().expect("checked").1) {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    (client, server)
+}
+
 /// A server held up as on a busy machine: every tick slow, every fifth stalled, and a
 /// stall as every other action is proposed (as `voxmar_client::gate::SERVER_LAG`).
 const SLOW: voxmar_server::Lag = voxmar_server::Lag {
@@ -1911,8 +1956,9 @@ fn join_content(content: Content) -> Client {
     Client::greet_content(|| local_connection(accepted), "test", Some(server), None, || content)
 }
 
+/// Short names, as shipped quests write them: `stick` and `torch` are base's, found at load.
 const TEST_QUESTS: &str = r#"(quests: [
-    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("base:stick", 3)]], rewards: [Item("base:torch", 2)]),
+    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("stick", 3)]], rewards: [Item("torch", 2)]),
     (name: "miner", age: "nomad", branch: "main", title: "Miner", why: "", tasks: [[Level("mining", 10)]], rewards: [Xp("crafting", 50.0)]),
     (name: "laden", age: "nomad", branch: "main", title: "Laden", why: "", tasks: [[Have("base:cobblestone", 2304)]], rewards: [Item("base:apple", 3)]),
 ])"#;
@@ -2059,6 +2105,50 @@ fn a_sleeping_bag_is_where_the_homeless_wake() {
     client.pump_until(|c| c.health == 0);
     client.propose("core:respawn", ActionTarget::None);
     client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(bag.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
+}
+
+#[test]
+fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    // A sleeping bag and a torch are a camp, once slept in; the sleep is a rest.
+    let bag = feet + IVec3::new(2, 0, 0);
+    for line in [format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z), format!("/setblock {} {} {} torch", feet.x + 3, feet.y, feet.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(feet + IVec3::new(3, 0, 0)) == c.content.blocks.id("base:torch"));
+    assert!(!has(&client, "base:camp"), "no bed slept in yet, so no camp");
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:camp") && has(c, "base:rested") && told(c, "Camp:") && told(c, "You sleep soundly"));
+    // Rested, they are not tired again until it wears off.
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| told(c, "not tired"));
+    assert!(!has(&client, "base:well_rested"));
+    // Light a hearth with a chimney (a lit one is home), a second light and a roof: snug.
+    let core = feet + IVec3::new(4, 0, 0);
+    for line in [
+        format!("/setblock {} {} {} hearthstone", core.x, core.y, core.z),
+        format!("/setblock {} {} {} torch", feet.x + 3, feet.y + 1, feet.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 6, feet.y + 4, feet.z + 3),
+    ] {
+        client.ok(&line);
+    }
+    client.chat.clear();
+    client.pump_until(|c| has(c, "base:snug") && told(c, "Snug:"));
+    // Another night, now in a snug home, rests them better.
+    client.ok("/effect clear");
+    client.pump_until(|c| !has(c, "base:rested"));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:well_rested") && told(c, "Well rested"));
+    assert!(!has(&client, "base:rested"), "the better rest hides the plain one");
+    // Out of reach of home, none of it holds.
+    client.tp(feet.as_vec3() + Vec3::new(30.5, 0.0, 0.5));
+    client.pump_until(|c| !has(c, "base:snug") && has(c, "base:well_rested"));
 }
 
 #[test]
@@ -2868,22 +2958,108 @@ fn say_hello(connection: &ClientConnection, name: &str, content: &Content) {
     connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: None });
 }
 
+/// A name already playing is turned away, in any case, from anywhere else, and from the
+/// same address while that player's game is still heard (an address can be a whole
+/// school's). A game that froze or lost its network without closing its socket still looks
+/// joined until it is idle too long; once it has been silent `rejoin_silence`, its player
+/// coming back from that address is them: the earlier connection leaves, saved, and the new
+/// one joins as anyone joining would, with what the save holds and no admin rights it was
+/// given (`/op`). The integrated server's own player always comes back.
 #[test]
-fn a_name_already_playing_is_turned_away_in_any_case() {
+fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_a_silent_game_there() {
     let dir = world_dir("names");
-    let client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
-    for name in ["test", "TeSt"] {
+    let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
+    let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
+    host.connection.send(ClientMessage::Command { line: "/op guest".into() });
+    guest.pump_until(|c| c.admin);
+    guest.ok("/skill mining 7");
+    // In process is not where either plays.
+    for name in ["guest", "GuEsT", "host"] {
         let (connection, server_side) = local_pair();
-        client._server.as_ref().unwrap().connections().send(server_side).unwrap();
-        say_hello(&connection, name, &client.content);
-        let reason = turned_away(&connection, &client.content);
+        host._server.as_ref().unwrap().connections().send(server_side).unwrap();
+        say_hello(&connection, name, &host.content);
+        let reason = turned_away(&connection, &host.content);
         assert!(reason.contains("already playing"), "{name}: {reason}");
     }
-    drop(client);
+    // From the same address while the guest plays: taken, and the guest plays on.
+    let connection = tcp::connect(addr).unwrap();
+    say_hello(&connection, "GuEsT", &host.content);
+    let reason = turned_away(&connection, &host.content);
+    assert!(reason.contains("already playing"), "a playing session was replaced: {reason}");
+    assert!(guest.ok("/seed").contains(char::is_numeric), "the playing guest was let go");
+    drop(guest);
+    gone(&mut host, "guest");
+    // The guest's game joins again and freezes with its socket open: it says hello and
+    // then nothing, not even the network thread's keepalive. An admin makes it an admin.
+    let mut frozen = std::net::TcpStream::connect(addr).unwrap();
+    let hello = ClientMessage::Hello { name: "guest".into(), protocol: PROTOCOL_VERSION, content: host.content.fingerprint(), admin_token: None };
+    let frame = postcard::to_stdvec(&hello).unwrap();
+    std::io::Write::write_all(&mut frozen, &[&(frame.len() as u32).to_le_bytes()[..], &frame].concat()).unwrap();
+    let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
+    while host.command("/op guest").iter().any(|(kind, _)| *kind == ChatKind::Error) {
+        host.after_ticks(1);
+    }
+    // Silent past `rejoin_silence` by the server's clock, the guest comes back from there.
+    let silence = Limits::default().rejoin_silence;
+    let until = ticks(&host) + (silence * TICKS_PER_SECOND as f32) as u64 + 2;
+    host.pump_until(|c| ticks(c) >= until);
+    let mining = host.content.skills.id("core:mining").unwrap();
+    let again = Client::greet(|| tcp::connect(addr).unwrap(), "GuEsT", None);
+    assert!(!again.admin, "admin rights given for a session lasted into the next");
+    assert_eq!(again.content.skills.level(again.skills.xp(mining)), 7, "joined again without what the save holds");
+    // The same in process: the integrated server's own player coming back, never silent.
+    let first = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    let second = first.another("test");
+    assert!(second.admin, "the integrated server's own player is its admin");
+    assert!(turned_away(&first.connection, &first.content).contains("joined again"));
+    drop((again, frozen, host, second, first));
     // One file for the name in any case (macOS and Windows would not tell them apart).
-    assert!(dir.join("players/test.ron").is_file());
-    let joined_as = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
-    drop(joined_as);
+    assert!(dir.join("players/guest.ron").is_file());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A game that says hello as `name` and, whatever it sends after (`frozen_says`), can go
+/// silent with its socket open: frozen, or its network gone. The server hears nothing more,
+/// not even keepalives.
+fn frozen_game(addr: std::net::SocketAddr, name: &str, content: &Content) -> std::net::TcpStream {
+    let mut stream = std::net::TcpStream::connect(addr).unwrap();
+    let hello = ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: None };
+    frozen_says(&mut stream, hello);
+    stream
+}
+
+fn frozen_says(stream: &mut std::net::TcpStream, message: ClientMessage) {
+    let frame = postcard::to_stdvec(&message).unwrap();
+    std::io::Write::write_all(stream, &[&(frame.len() as u32).to_le_bytes()[..], &frame].concat()).unwrap();
+}
+
+/// A player's game that went silent holds more than their file does: leaving saves the
+/// whole world, and a save that cannot write the file (`cut_saves` stops every one short of
+/// the players) leaves the old one. Joining again takes what the earlier session held, or
+/// what they gained since the last save would be gone, and what they had dropped or stored
+/// would come back with the file.
+#[test]
+fn joining_again_takes_what_the_silent_session_held_not_an_older_file() {
+    let dir = world_dir("again");
+    let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), cut_saves: true, ..Default::default() });
+    let mut frozen = frozen_game(addr, "guest", &host.content);
+    // An admin made the guest one, so its commands count (it is theirs for the session).
+    while host.command("/op guest").iter().any(|(kind, _)| *kind == ChatKind::Error) {
+        host.after_ticks(1);
+    }
+    for line in ["/skill mining 7", "/give iron_ore 5"] {
+        frozen_says(&mut frozen, ClientMessage::Command { line: line.into() });
+    }
+    let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
+    let until = ticks(&host) + (Limits::default().rejoin_silence * TICKS_PER_SECOND as f32) as u64 + 2 * TICKS_PER_SECOND as u64;
+    host.pump_until(|c| ticks(c) >= until);
+    let again = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
+    let (mining, ore) = (host.content.skills.id("core:mining").unwrap(), host.content.blocks.expect("base:iron_ore"));
+    assert_eq!(again.content.skills.level(again.skills.xp(mining)), 7, "joined again without what the silent session had gained");
+    let held: u32 = again.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum();
+    assert_eq!(held, 5, "joined again without what the silent session carried");
+    assert!(!dir.join("players/guest.ron").exists(), "the cut saves wrote the player's file, so this proves nothing");
+    drop((again, frozen, host));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -3507,6 +3683,71 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     client.wait_server(1);
     let dodged = answer(&mut client, Defended::Dodged, &|c| c.propose("core:dodge", ActionTarget::None), &|_| {});
     assert_eq!(client.hurt[dodged].0, 0, "a dodged blow takes nothing");
+}
+
+#[test]
+fn a_guard_and_a_dodge_count_from_when_the_player_saw_the_wind_up() {
+    use voxmar_engine::combat::Defended;
+    // Review: a player sees a wind-up begin half their round trip late, and their answer
+    // comes half of it late again. A guard or dodge is judged that much earlier, by the
+    // round trip the server measures, never past `feel.lag_allowance`: answered on time on
+    // their own screen at 0 or 150 ms, it lands; late, it does not; at 400 ms, past the
+    // allowance, even on time it does not. (Unanswered it would come 150 ms late, past a
+    // perfect window's middle, so the 150 ms answers fail without the allowance.)
+    for round_trip in [0, 150, 400] {
+        let mut client = if round_trip == 0 { Client::join() } else { Client::join_delayed(Duration::from_millis(round_trip)) };
+        client.ok("/gamemode survival");
+        client.ok("/skill hitpoints 60");
+        client.pump_until(|c| c.health >= 100);
+        let (id, slot) = beside_a_bear(&mut client);
+        // A few pings answered, so the round trip is measured.
+        client.wait_server(3);
+        let bear = client.creatures[&id].species;
+        let feel = client.content.combat.feel;
+        let windup = client.content.creatures.get(bear).def.attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup);
+        let combat = &client.content.combat;
+        let level = |_| 20;
+        let perfect = combat.guard_of(client.inventory.get(slot).map(|s| s.item), &client.inventory.worn, level).expect("a sword guards").perfect;
+        let dodge = combat.dodge_of(&client.inventory.worn).clone();
+        // Answers the bear's next blow `after` seconds after its wind-up is seen to begin,
+        // answering pings meanwhile; returns what came of it.
+        let answer = |client: &mut Client, after: f32, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| -> Defended {
+            let before = provoke_until_it_winds_up(client, id, slot, "bear");
+            let seen = Instant::now();
+            client.pump_until(|_| seen.elapsed().as_secs_f32() >= after);
+            respond(client);
+            client.pump_until(|c| c.hurt.len() > before);
+            undo(client);
+            client.wait_server(1);
+            client.hurt[before].1
+        };
+        let raise = |c: &Client| {
+            c.connection.send(ClientMessage::Guard { up: true });
+        };
+        let lower = |c: &Client| {
+            c.connection.send(ClientMessage::Guard { up: false });
+        };
+        let dash = |c: &Client| c.propose("core:dodge", ActionTarget::None);
+        let allowed = round_trip as f32 / 1000.0 <= feel.lag_allowance;
+        // On time on their screen: the middle of the perfect window, and of the dodge's.
+        // A machine too slow for a try only makes it later, so a few are allowed for it.
+        for (want, after, respond, undo) in [
+            (Defended::Perfect, windup - perfect / 2.0, &raise as &dyn Fn(&Client), &lower as &dyn Fn(&Client)),
+            (Defended::Dodged, windup - (dodge.safe.0 + dodge.safe.1) / 2.0, &dash, &(|_: &Client| {}) as &dyn Fn(&Client)),
+        ] {
+            let mut outcomes = Vec::new();
+            for _ in 0..if allowed { 4 } else { 3 } {
+                outcomes.push(answer(&mut client, after, respond, undo));
+                if outcomes.last() == Some(&want) {
+                    break;
+                }
+            }
+            assert_eq!(outcomes.contains(&want), allowed, "{want:?} on time at {round_trip} ms came to {outcomes:?}");
+        }
+        // Late on their screen too: the blow lands.
+        let late = answer(&mut client, windup + 0.25, &raise, &lower);
+        assert!(matches!(late, Defended::Hit | Defended::Missed), "a guard raised late at {round_trip} ms came to {late:?}");
+    }
 }
 
 #[test]

@@ -73,6 +73,9 @@
         riposte: 0.8,
         dodge_early: 0.1,
         dodge_grace: 0.15,
+        // A guard or dodge counts from when the player saw the wind-up: their round trip,
+        // measured, but never more than this (a laggier connection gets no wider window).
+        lag_allowance: 0.2,
         // The wiki's "Reach" (draft 58): 2.8 blocks for a class that sets none (a fist or
         // dagger 2.5, a spear 3.8), and 0.6 more for the lag of a view of the fight; at a
         // moving creature, also as far as it goes in 0.15 s.

@@ -2,13 +2,15 @@
 //! Processes never decide; they change values and raise events (here: death).
 
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::effect::Situation;
+use voxmar_engine::effect::{HomeSurvey, Situation};
 use voxmar_engine::fluid::FluidId;
-use voxmar_engine::glam::Vec3;
+use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits::{self, Replication};
 use voxmar_engine::vitals;
-use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_engine::effect::EffectId;
+use voxmar_engine::lang::Words;
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::weather::Weather;
@@ -122,6 +124,8 @@ impl Process for Survival {
         let seconds = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
         let effects = server.content.effects.clone();
         let hitpoints = server.content.skills.id("core:hitpoints");
+        // Steps of a home reached this second, counted for quests (`Built("home_snug", 1)`).
+        let mut reached: Vec<(PlayerId, String)> = Vec::new();
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
             let player = &server.players[&id];
@@ -138,6 +142,7 @@ impl Process for Survival {
             let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
             let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
             let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
+            let home = server.home_survey(id);
             let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
 
             let player = server.players.get_mut(&id).unwrap();
@@ -157,7 +162,7 @@ impl Process for Survival {
             // Warmth from what was eaten and the weather counts before the bands of warmth
             // are judged: soaked through, a mild day feels chilly.
             let biome = server.overworld.biome_at(feet.x, feet.z);
-            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags };
+            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref() };
             let first = effects.active(&situation, &player.timed_effects);
             situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
             let active = effects.active(&situation, &player.timed_effects);
@@ -202,6 +207,19 @@ impl Process for Survival {
             // The felt temperature is sent to the degree, so it does not resend every tick.
             player.vitals.felt = situation.felt.round();
             player.vitals.effects = effects.active(&situation, &player.timed_effects);
+            // The steps of a ladder say so when first reached.
+            let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
+            player.announced.extend(&gained);
+            for effect in gained {
+                let def = effects.get(effect);
+                reached.push((id, format!("home_{}", def.name.rsplit(':').next().unwrap_or_default())));
+                let key = voxmar_engine::lang::def_key("effect", &def.name);
+                let mut words = Words::key("effect.gained").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
+                if !def.next.is_empty() {
+                    words = Words::key("effect.gained_next").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone())).with("next", Words::Own(format!("{key}.next"), def.next.clone()));
+                }
+                player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
+            }
             if player.vitals != before.0 {
                 player.changed(traits::VITALS);
             }
@@ -209,10 +227,51 @@ impl Process for Survival {
                 player.changed(traits::HEALTH);
             }
         }
+        for (id, step) in reached {
+            server.tally(id, "built", &step, 1);
+        }
     }
 }
 
 impl Server {
+    /// What lies around player `id`'s home (the lit hearth, else the bed last slept in),
+    /// counted by the tags effects ask of it, if they stand within its reach.
+    pub(crate) fn home_survey(&self, id: PlayerId) -> Option<HomeSurvey> {
+        let player = self.players.get(&id)?;
+        let anchor = player.home.or(player.bed)?.floor().as_ivec3();
+        let rules = &self.survival;
+        let (up, down) = (rules.home_up, rules.home_down);
+        let feet = player.position.floor().as_ivec3();
+        let near = (feet - anchor).abs();
+        if near.x > rules.home_reach || near.z > rules.home_reach || feet.y > anchor.y + up || feet.y < anchor.y - down {
+            return None;
+        }
+        let wanted = self.content.effects.home_tags();
+        let mut counts: Vec<(String, u32)> = wanted.iter().map(|tag| (tag.clone(), 0)).collect();
+        if wanted.is_empty() {
+            return Some(HomeSurvey { counts });
+        }
+        let blocks = &self.content.blocks;
+        let reach = rules.home_reach;
+        for dy in -down..=up {
+            for dz in -reach..=reach {
+                for dx in -reach..=reach {
+                    let Some(block) = self.block(anchor + IVec3::new(dx, dy, dz)) else { continue };
+                    let tags = &blocks.def(block).tags;
+                    if tags.is_empty() {
+                        continue;
+                    }
+                    for (tag, n) in &mut counts {
+                        if tags.contains(tag) {
+                            *n += 1;
+                        }
+                    }
+                }
+            }
+        }
+        Some(HomeSurvey { counts })
+    }
+
     /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in
     /// the rain.
     pub(crate) fn open_sky(&self, at: voxmar_engine::glam::IVec3) -> bool {
