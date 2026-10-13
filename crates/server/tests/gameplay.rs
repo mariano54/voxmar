@@ -602,13 +602,21 @@ fn a_block_the_client_finished_breaks_even_if_the_server_started_it_late() {
 #[test]
 fn falling_hurts() {
     let mut client = Client::join();
+    let height = fall_from_open_sky(&mut client);
+    let expected = 20 - (height - 3) as u8;
+    assert_eq!(client.health, expected, "a {height} block fall should cost {} health", height - 3);
+}
+
+/// Falls from as high as the open sky above spawn allows, so the player lands hurt, and
+/// returns the height fallen.
+fn fall_from_open_sky(client: &mut Client) -> i32 {
     let start = client.position;
     let feet = start.floor().as_ivec3();
     // Rise as high as the open air (or grass) above spawn allows (at most 11 blocks), by a
     // teleport (on foot nobody may rise more than a jump), then drop back down one plausible
     // step per input.
     let open = |c: &Client, p: IVec3| c.world.block(p).is_some_and(|b| !c.content.blocks.info(b).solid);
-    let height = (1..=12).take_while(|&dy| open(&client, feet + IVec3::Y * dy)).count() as i32 - 1;
+    let height = (1..=12).take_while(|&dy| open(client, feet + IVec3::Y * dy)).count() as i32 - 1;
     assert!(height >= 6, "need open sky above spawn, have {height} blocks");
     let top = start + Vec3::Y * height as f32;
     client.ok(&format!("/tp {} {} {}", top.x, top.y, top.z));
@@ -628,8 +636,45 @@ fn falling_hurts() {
         client.after_server_ticks(1);
     }
     client.pump_until(|c| c.health < 20);
-    let expected = 20 - (height - 3) as u8;
-    assert_eq!(client.health, expected, "a {height} block fall should cost {} health", height - 3);
+    height
+}
+
+/// A bite of food takes 0.6 s, and while it is under way a click does not swing. Starting
+/// to eat drops the swing already under way, so the blow it would have struck never lands;
+/// a swing once the bite is done lands as usual.
+#[test]
+fn a_bite_of_food_holds_the_swing_and_drops_the_one_under_way() {
+    let mut client = Client::join();
+    fall_from_open_sky(&mut client);
+    let snail = client.content.creatures.find("lumen_snail").expect("a lumen snail in the content");
+    let bread = client.content.blocks.expect("base:bread");
+    let eat = client.content.actions.expect("core:eat");
+    let seconds = match client.content.actions.get(eat).expect("core:eat is defined").duration {
+        voxmar_engine::action::Duration::Seconds(s) => s,
+        other => panic!("a bite is timed in seconds, not {other:?}"),
+    };
+    assert!((seconds - 0.6).abs() < 1e-6, "a bite takes 0.6 s, not {seconds}");
+    client.ok("/clear");
+    client.ok("/give bread 1");
+    client.ok("/summon lumen_snail 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == snail));
+    let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == snail).unwrap();
+    let at = view.position;
+    client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == bread));
+    // A blow with what is in hand is on its way (0.08 s on foot) when the bite starts.
+    let base = Instant::now();
+    client.propose_at("core:attack", ActionTarget::Creature(id), base);
+    client.propose_at("core:eat", ActionTarget::None, base + Duration::from_millis(20));
+    // Still eating, and past the quickest a click fires: refused, so no blow.
+    client.propose_at("core:attack", ActionTarget::Creature(id), base + Duration::from_millis(400));
+    client.after_server_ticks(12);
+    assert_eq!(client.blows, 0, "no blow while eating, and the swing under way was dropped");
+    // Once the bite is done, a swing lands.
+    client.propose_at("core:attack", ActionTarget::Creature(id), base + Duration::from_millis(650));
+    client.pump_until(|c| c.blows >= 1);
+    client.after_server_ticks(4);
+    assert_eq!(client.blows, 1, "one swing after the bite, and nothing else");
 }
 
 #[test]
