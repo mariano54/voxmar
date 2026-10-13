@@ -3755,18 +3755,23 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             let tilled = farmland.is_some() && world.resource::<ClientWorld>().block(plot) == farmland;
             // Rice takes Farming 10: below it the client refuses it itself, for the level.
             let level = skill_level(world, "core:farming").0 >= 10;
-            match (tilled && level, in_hotbar(world, &mut gate.food_moved, rice)) {
+            // The aim is from the feet: the player stands there first, whatever the steps
+            // before left (a teleport of theirs still on its way on a server behind once
+            // put the eye where the ray met the ground short of the plot).
+            let posed = open_scene_pose(world, gate);
+            match (tilled && level && posed, in_hotbar(world, &mut gate.food_moved, rice)) {
                 (true, Some(slot)) => {
                     world.resource_mut::<LocalPlayer>().selected = slot;
                     gate.advance(now);
                 }
                 _ if gate.server_in_phase() > UNANSWERED => {
-                    gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came")));
+                    let at = if posed { "stood at the feet".to_owned() } else { unsettled(world, gate) };
+                    gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came, or {at}")));
                     gate.next(Step::Merged, now);
                 }
                 (ready, slot) => {
                     if gate.frames % 120 == 0 {
-                        info!("gate: refusal: farmland {tilled}, Farming 10 {level} (ready {ready}), rice in the hotbar at {slot:?}");
+                        info!("gate: refusal: farmland {tilled}, Farming 10 {level}, at the feet {posed} (ready {ready}), rice in the hotbar at {slot:?}");
                     }
                 }
             }
@@ -3789,7 +3794,8 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     let (target, player) = (world.resource::<crate::interact::Target>(), world.resource::<LocalPlayer>());
                     (target.hit.as_ref().map(|hit| (hit.block - gate.feet, hit.face)), player.inventory.get(player.selected).map(|s| s.item))
                 };
-                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name} (aimed at {target:?} from the feet, holding {held:?})")));
+                let from = world.resource::<LocalPlayer>().position - gate.feet.as_vec3();
+                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name} (aimed at {target:?} from the feet, standing at {from:.2} from them, holding {held:?})")));
                 gate.advance(now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
