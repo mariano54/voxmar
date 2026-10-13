@@ -60,8 +60,8 @@ impl Default for Rules {
     fn default() -> Self {
         Self {
             scan_every: 20.0,
-            chance: 0.3,
-            gap: 240.0,
+            chance: 0.25,
+            gap: 600.0,
             most_near: 1,
             near: 110.0,
             most_total: 8,
@@ -151,9 +151,18 @@ pub struct EventDef {
     /// Who comes. The first group's first member leads.
     pub cast: Vec<Group>,
     pub script: Script,
-    /// What those who talk say and give.
+    /// What those who talk say and give, a meeting for each group that speaks.
     #[serde(default)]
-    pub meeting: Option<Meeting>,
+    pub meetings: Vec<Meeting>,
+    /// Whether the party stops for a player who comes near, and how.
+    #[serde(default)]
+    pub halt: Option<Halt>,
+    /// What the party does when a player strikes one of its own.
+    #[serde(default)]
+    pub hurt: Hurt,
+    /// What becomes of a captive when its captors are gone.
+    #[serde(default)]
+    pub freed: Option<Freed>,
     /// Seconds it lasts at most; it ends sooner when it has gone by.
     #[serde(default = "lifetime")]
     pub lifetime: f32,
@@ -161,6 +170,14 @@ pub struct EventDef {
 
 fn one() -> f32 {
     1.0
+}
+
+fn greet() -> String {
+    "greet".into()
+}
+
+fn one_u8() -> u8 {
+    1
 }
 
 fn any_light() -> (f32, f32) {
@@ -182,6 +199,51 @@ pub struct Needs {
     pub combat: Option<(u8, u8)>,
     /// World days that have passed.
     pub days: f32,
+    /// How far from where the world began it comes, least and most, in blocks: the far
+    /// parts of the world have the rare parties.
+    pub away: Option<(f32, f32)>,
+}
+
+/// A party that stops for a player: when one comes within `near` blocks of its leader, it
+/// stands for `seconds` (least and most), then goes on, and does not stop again for
+/// `cooldown` seconds. Talking to it keeps it standing.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Halt {
+    pub near: f32,
+    pub seconds: (f32, f32),
+    #[serde(default = "cooldown")]
+    pub cooldown: f32,
+}
+
+fn cooldown() -> f32 {
+    90.0
+}
+
+/// What a party does when a player strikes one of its members.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub enum Hurt {
+    /// They run, and the party breaks up and goes (the people who cannot fight).
+    #[default]
+    Scatter,
+    /// Those who fight turn on the player and the rest run.
+    Avenge,
+    /// Nothing changes: what already fights, fights.
+    Ignore,
+}
+
+/// What a freed captive does: it thanks whoever freed it (`thanks` is said, with these
+/// rewards), then with chance `follow` it follows them, for `follow_for` seconds or until
+/// it reaches their home, where it settles; else it goes its own way, a peaceful wanderer
+/// of the land for as long as anyone is near. Its words are `thanks` (at the moment) and
+/// `freed` (when talked to after).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Freed {
+    pub follow: f32,
+    pub follow_for: f32,
+    #[serde(default)]
+    pub thanks: Vec<Reward>,
 }
 
 /// A group of one species in a cast.
@@ -217,6 +279,9 @@ pub enum Role {
     Pet(usize),
     /// Has no errand: acts by its own nature where the party stands.
     Free,
+    /// Held by the rest: walks close behind the leader until every other member is gone or
+    /// the bonds are cut (the `Free` reward), then is a freed captive (`freed`).
+    Captive,
 }
 
 /// Where the cast goes.
@@ -243,6 +308,12 @@ pub struct Meeting {
     /// The group that speaks: an index into the cast.
     #[serde(default)]
     pub who: usize,
+    /// The name of the greeting said when no line applies (`greet`), and how many ways
+    /// it is said: the first by that name, the others with `_2`, `_3`... after it.
+    #[serde(default = "greet")]
+    pub greet: String,
+    #[serde(default = "one_u8")]
+    pub greets: u8,
     /// Tried in order; the first that applies is said and given. If none applies, the
     /// greeting is said.
     pub lines: Vec<LineDef>,
@@ -281,10 +352,15 @@ pub enum Once {
 /// What a player must be, for a line.
 #[derive(Clone, Debug, Deserialize)]
 pub enum Need {
+    /// At least this level in a skill.
     Skill(String, u8),
+    /// Below this level in a skill: a teacher teaches no more than it knows to be useful.
+    Below(String, u8),
     Home(bool),
     /// Hurt: below full health.
     Hurt,
+    /// Holds an item with this tag (which is not taken).
+    Holds(String),
 }
 
 /// What a line gives.
@@ -298,6 +374,10 @@ pub enum Reward {
     Effect(String, f32),
     /// Health restored.
     Heal(u8),
+    /// Cuts the bonds of the party's captive, and does nothing for the captors' mood.
+    Free,
+    /// The party turns on the player, as if one of them had been struck.
+    Anger,
 }
 
 /// A kind of event with its names resolved.
@@ -305,6 +385,17 @@ pub enum Reward {
 pub struct Event {
     pub def: EventDef,
     pub groups: Vec<(CreatureId, Group)>,
+    pub meetings: Vec<ResolvedMeeting>,
+    /// What a freed captive gives its rescuer.
+    pub thanks: Vec<ResolvedReward>,
+}
+
+/// A meeting with its lines resolved.
+#[derive(Clone, Debug)]
+pub struct ResolvedMeeting {
+    pub who: usize,
+    pub greet: String,
+    pub greets: u8,
     pub lines: Vec<Line>,
 }
 
@@ -318,11 +409,13 @@ pub struct Line {
     pub once: Once,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ResolvedNeed {
     Skill(SkillId, u8),
+    Below(SkillId, u8),
     Home(bool),
     Hurt,
+    Holds(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -331,6 +424,23 @@ pub enum ResolvedReward {
     Xp(SkillId, f32),
     Effect(EffectId, f32),
     Heal(u8),
+    Free,
+    Anger,
+}
+
+/// A reward with its names resolved, or what is wrong with it.
+fn resolve_reward(reward: &Reward, blocks: &BlockRegistry, skills: &SkillRegistry, effects: &EffectRegistry, captive: bool) -> Result<ResolvedReward, String> {
+    Ok(match reward {
+        Reward::Item(name, (low, high)) if low > high || *high == 0 => return Err(format!("gives {low} to {high} of `{name}`")),
+        Reward::Item(name, count) => ResolvedReward::Item(blocks.id(name).ok_or_else(|| format!("no item `{name}`"))?, *count),
+        Reward::Xp(name, xp) if !(xp.is_finite() && *xp > 0.0 && *xp <= 500.0) => return Err(format!("gives {xp} experience in `{name}`: 0 to 500")),
+        Reward::Xp(name, xp) => ResolvedReward::Xp(skills.id(name).ok_or_else(|| format!("no skill `{name}`"))?, *xp),
+        Reward::Effect(name, seconds) => ResolvedReward::Effect(effects.find(name).ok_or_else(|| format!("no effect `{name}`"))?, *seconds),
+        Reward::Heal(health) => ResolvedReward::Heal(*health),
+        Reward::Free if !captive => return Err("frees a captive, but there is none".into()),
+        Reward::Free => ResolvedReward::Free,
+        Reward::Anger => ResolvedReward::Anger,
+    })
 }
 
 impl Event {
@@ -344,9 +454,27 @@ impl Event {
         self.key("title")
     }
 
-    /// The group that speaks, if the event has a meeting.
-    pub fn speaker(&self) -> Option<usize> {
-        self.def.meeting.as_ref().map(|m| m.who)
+    /// What group `group` says, if it speaks.
+    pub fn meeting(&self, group: usize) -> Option<&ResolvedMeeting> {
+        self.meetings.iter().find(|m| m.who == group)
+    }
+
+    /// The lang key of a meeting's greeting, the `variant`th way (counting from 0).
+    pub fn greeting(&self, meeting: &ResolvedMeeting, variant: u8) -> String {
+        match variant {
+            0 => self.key(&meeting.greet),
+            n => self.key(&format!("{}_{}", meeting.greet, n + 1)),
+        }
+    }
+
+    /// Whether the cast holds a captive.
+    pub fn has_captive(&self) -> bool {
+        self.def.cast.iter().any(|g| g.role == Role::Captive)
+    }
+
+    /// Whether a place `distance` blocks from where the world began suits it.
+    pub fn suits_distance(&self, distance: f32) -> bool {
+        self.def.needs.away.is_none_or(|(low, high)| (low..=high).contains(&distance))
     }
 
     /// The weight of a biome with `name` and `tags`, 0 if the event does not come there.
@@ -394,7 +522,17 @@ impl WanderRegistry {
         for event in &mut events {
             qualify(&mut event.name);
             event.cast.iter_mut().for_each(|g| qualify(&mut g.species));
-            if let Some(meeting) = &mut event.meeting {
+            if let Some(freed) = &mut event.freed {
+                for reward in &mut freed.thanks {
+                    match reward {
+                        Reward::Item(item, _) => qualify(item),
+                        Reward::Xp(skill, _) if !skill.contains(':') => *skill = format!("core:{skill}"),
+                        Reward::Effect(effect, _) => qualify(effect),
+                        _ => {}
+                    }
+                }
+            }
+            for meeting in &mut event.meetings {
                 for line in &mut meeting.lines {
                     if let Some((item, _)) = &mut line.wants {
                         qualify(item);
@@ -408,7 +546,7 @@ impl WanderRegistry {
                         }
                     }
                     for need in &mut line.needs {
-                        if let Need::Skill(skill, _) = need
+                        if let Need::Skill(skill, _) | Need::Below(skill, _) = need
                             && !skill.contains(':')
                         {
                             *skill = format!("core:{skill}");
@@ -484,18 +622,68 @@ impl WanderRegistry {
                 }
                 _ => {}
             }
-            let mut lines = Vec::new();
-            if let Some(meeting) = &def.meeting {
+            let captives = def.cast.iter().filter(|g| g.role == Role::Captive).count();
+            if captives > 1 {
+                return Err(error("only one group may be captive".into()));
+            }
+            if captives == 1 && def.cast.iter().all(|g| matches!(g.role, Role::Captive | Role::Free)) {
+                return Err(error("a captive needs captors that walk".into()));
+            }
+            match (captives, &def.freed) {
+                (1, Some(f)) if !(0.0..=1.0).contains(&f.follow) || f.follow_for < 10.0 || f.follow_for > def.lifetime => {
+                    return Err(error(format!("`freed` needs a `follow` chance of 0 to 1 and a `follow_for` of 10 seconds up to the lifetime, not {}, {}", f.follow, f.follow_for)));
+                }
+                (1, None) => return Err(error("has a captive, so it needs `freed`".into())),
+                (0, Some(_)) => return Err(error("has `freed` but no captive".into())),
+                _ => {}
+            }
+            if let Some(halt) = def.halt
+                && (halt.near < 2.0 || halt.seconds.0 < 1.0 || halt.seconds.0 > halt.seconds.1 || halt.cooldown < 0.0)
+            {
+                return Err(error(format!("`halt` needs near of at least 2, seconds of at least 1 (least <= most) and a cooldown, not {halt:?}")));
+            }
+            if let Some((low, high)) = def.needs.away
+                && (low < 0.0 || low > high)
+            {
+                return Err(error("`away` is a range from 0 up".into()));
+            }
+            let mut meetings = Vec::new();
+            let mut names: Vec<String> = vec!["title".into()];
+            if captives == 1 {
+                names.extend(["thanks".into(), "freed".into()]);
+            }
+            let mut thanks = Vec::new();
+            for reward in def.freed.iter().flat_map(|f| &f.thanks) {
+                if matches!(reward, Reward::Free | Reward::Anger) {
+                    return Err(error("a captive's `thanks` gives items, experience, effects or healing only".into()));
+                }
+                thanks.push(resolve_reward(reward, blocks, skills, effects, true).map_err(|why| error(format!("thanks: {why}")))?);
+            }
+            for meeting in &def.meetings {
                 if meeting.who >= def.cast.len() || matches!(def.cast[meeting.who].role, Role::Free) && meeting.who != 0 {
                     return Err(error(format!("the speaker is group {}, which is not in the cast or does not walk with it", meeting.who)));
+                }
+                if meetings.iter().any(|m: &ResolvedMeeting| m.who == meeting.who) {
+                    return Err(error(format!("group {} has two meetings", meeting.who)));
                 }
                 if meeting.lines.is_empty() {
                     return Err(error("a meeting needs at least one line".into()));
                 }
+                if meeting.greets == 0 || meeting.greets > 9 || meeting.greet == "title" {
+                    return Err(error(format!("`greets` is 1 to 9 and `greet` is not `title`, not {} of `{}`", meeting.greets, meeting.greet)));
+                }
+                for n in 0..meeting.greets {
+                    let name = if n == 0 { meeting.greet.clone() } else { format!("{}_{}", meeting.greet, n + 1) };
+                    if names.contains(&name) {
+                        return Err(error(format!("`{name}` is used twice: greetings and lines need names of their own")));
+                    }
+                    names.push(name);
+                }
+                let mut lines = Vec::new();
                 for line in &meeting.lines {
                     let at = |why: String| error(format!("line `{}`: {why}", line.name));
-                    if line.name == "greet" || line.name == "title" {
-                        return Err(at("`greet` and `title` are reserved: the greeting is said when no line applies".into()));
+                    if names.contains(&line.name) {
+                        return Err(at("another line or a greeting has this name (`title` is reserved)".into()));
                     }
                     let item = |name: &str| blocks.id(name).ok_or_else(|| at(format!("no item `{name}`")));
                     let skill = |name: &str| skills.id(name).ok_or_else(|| at(format!("no skill `{name}`")));
@@ -503,8 +691,11 @@ impl WanderRegistry {
                     for need in &line.needs {
                         needs.push(match need {
                             Need::Skill(name, level) => ResolvedNeed::Skill(skill(name)?, *level),
+                            Need::Below(name, level) if *level == 0 => return Err(at(format!("below level 0 of `{name}` is no one"))),
+                            Need::Below(name, level) => ResolvedNeed::Below(skill(name)?, *level),
                             Need::Home(has) => ResolvedNeed::Home(*has),
                             Need::Hurt => ResolvedNeed::Hurt,
+                            Need::Holds(tag) => ResolvedNeed::Holds(tag.clone()),
                         });
                     }
                     let wants = match &line.wants {
@@ -514,26 +705,15 @@ impl WanderRegistry {
                     };
                     let mut gives = Vec::new();
                     for reward in &line.gives {
-                        gives.push(match reward {
-                            Reward::Item(name, (low, high)) if low > high || *high == 0 => return Err(at(format!("gives {low} to {high} of `{name}`"))),
-                            Reward::Item(name, count) => ResolvedReward::Item(item(name)?, *count),
-                            Reward::Xp(name, xp) if !(xp.is_finite() && *xp > 0.0 && *xp <= 500.0) => return Err(at(format!("gives {xp} experience in `{name}`: 0 to 500"))),
-                            Reward::Xp(name, xp) => ResolvedReward::Xp(skill(name)?, *xp),
-                            Reward::Effect(name, seconds) => {
-                                let id = effects.find(name).ok_or_else(|| at(format!("no effect `{name}`")))?;
-                                ResolvedReward::Effect(id, *seconds)
-                            }
-                            Reward::Heal(health) => ResolvedReward::Heal(*health),
-                        });
+                        gives.push(resolve_reward(reward, blocks, skills, effects, captives == 1).map_err(&at)?);
                     }
-                    if lines.iter().any(|l: &Line| l.name == line.name) {
-                        return Err(at("another line has this name".into()));
-                    }
+                    names.push(line.name.clone());
                     lines.push(Line { name: line.name.clone(), needs, wants, gives, once: line.once });
                 }
+                meetings.push(ResolvedMeeting { who: meeting.who, greet: meeting.greet.clone(), greets: meeting.greets, lines });
             }
             registry.by_name.insert(def.name.clone(), registry.events.len());
-            registry.events.push(Event { def, groups, lines });
+            registry.events.push(Event { def, groups, meetings, thanks });
         }
         Ok(registry)
     }
@@ -584,6 +764,7 @@ pub fn slot(role: Role, i: usize, n: usize, seed: u64) -> glam::Vec2 {
         Role::Rear => glam::Vec2::new(jitter(4) * 3.0, 9.0 + rank * 2.0 + n as f32 * 0.5),
         Role::Ahead => glam::Vec2::new(jitter(5) * 5.0, -14.0 - rank * 2.0),
         Role::Pet(_) => glam::Vec2::new(1.6 + jitter(6) * 1.4, 0.4 + jitter(7) * 1.6),
+        Role::Captive => glam::Vec2::new(jitter(8) * 0.8, 2.4),
         Role::Lead | Role::Free => glam::Vec2::ZERO,
     }
 }

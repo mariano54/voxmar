@@ -715,6 +715,7 @@ impl Server {
             target.changed(traits::SKILLS);
         }
         let killed = self.creatures.live[&id].health == 0;
+        self.wandering_hurt(id, player);
         self.struck(player, id, damage, killed, blow);
         if killed {
             self.creature_dies(id);

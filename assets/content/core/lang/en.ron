@@ -762,6 +762,7 @@
     "command.wander.no_room": "There is no room for that party there.",
     "command.wander.started": "{event} sets out ahead of you.",
     "wander.said": "{who}: “{text}”",
+    "wander.settled": "{who} settles in near your home.",
     "command.creatures.none": "No creatures within 64 blocks.",
     "command.creatures.title": "Within 64 blocks:",
     "command.creatures.line": "{count} × {creature}, nearest {distance} blocks away ({doing})",

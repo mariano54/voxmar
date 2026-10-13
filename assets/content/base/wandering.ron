@@ -5,14 +5,17 @@
 // meeting: right click one to hear it and, with something in hand, to swap or be taught.
 // Their words are lang keys `wander.base.EVENT.LINE` (`title`, `greet` and each line).
 //
-// Rare by design: one party near a player at a time, minutes between them, and the
-// creature caps of the land count their animals and monsters. `/wander list` names the
-// kinds, `/wander start NAME` brings one ahead of an admin.
+// Rare by design: one party near a player at a time, ten minutes between them, the far
+// ones (`away`) only far from where the world began, and the creature caps of the land
+// count their animals and monsters. A party with a `halt` stops for a player who comes
+// near; what a party does when struck is its `hurt`. What it teaches or sells is gated on
+// the player's own levels (`Below`, `Skill`) so it never skips a step. `/wander list`
+// names the kinds, `/wander start NAME` brings one ahead of an admin.
 (
     rules: (
         scan_every: 20.0,
         chance: 0.25,
-        gap: 300.0,
+        gap: 600.0,
         most_near: 1,
         near: 110.0,
         most_total: 8,
@@ -27,17 +30,23 @@
         repeat_memory: 1800.0,
     ),
     events: [
-        // A mage on the road with apprentices. Teaches Magic, by the mote.
+        // A mage on the road with apprentices, far from towns. Teaches Magic by the mote, but
+        // only what a beginner needs: past level 15 it asks three motes for a harder lesson,
+        // and past 35 it has nothing left to teach.
         (
-            name: "mage_tutors", weight: 0.5,
+            name: "mage_tutors", weight: 0.35,
             biomes: [("tag:open", 1.0), ("tag:forest", 0.6), ("tag:fantastical", 1.5)],
-            daylight: (0.35, 1.0), needs: (days: 0.8),
+            daylight: (0.35, 1.0), needs: (days: 0.8, away: Some((140.0, 100000.0))),
             cast: [(species: "mage"), (species: "villager", count: (1, 2), role: Follow)],
             script: March(pass: (14.0, 26.0), length: 150.0, pace: 0.9),
-            meeting: (who: 0, lines: [
-                (name: "lesson_pair", wants: ("aether_mote", 2), gives: [Xp("magic", 32.0), Effect("focused", 300.0)], once: Player),
-                (name: "lesson", wants: ("aether_mote", 1), gives: [Xp("magic", 15.0), Effect("focused", 300.0)], once: Player),
-            ]),
+            halt: (near: 7.0, seconds: (25.0, 40.0)),
+            meetings: [(who: 0, greets: 3, lines: [
+                (name: "master", needs: [Skill("magic", 35)]),
+                (name: "adept", needs: [Skill("magic", 15), Below("magic", 35)], wants: ("aether_mote", 3), gives: [Xp("magic", 45.0), Effect("focused", 300.0)], once: Player),
+                (name: "grown", needs: [Skill("magic", 15)]),
+                (name: "lesson_pair", needs: [Below("magic", 15)], wants: ("aether_mote", 2), gives: [Xp("magic", 32.0), Effect("focused", 300.0)], once: Player),
+                (name: "lesson", needs: [Below("magic", 15)], wants: ("aether_mote", 1), gives: [Xp("magic", 15.0), Effect("focused", 300.0)], once: Player),
+            ])],
         ),
         // A pedlar and their hound, swapping what they carry for what the road gives.
         (
@@ -46,23 +55,25 @@
             daylight: (0.4, 1.0),
             cast: [(species: "pedlar"), (species: "hound", role: Pet(0))],
             script: March(pass: (10.0, 22.0), length: 130.0, pace: 1.0),
-            meeting: (who: 0, lines: [
+            halt: (near: 6.0, seconds: (20.0, 35.0)),
+            meetings: [(who: 0, greets: 2, lines: [
                 (name: "swap_hide", wants: ("hide", 2), gives: [Item("twine", (6, 6))]),
                 (name: "swap_bone", wants: ("bone", 3), gives: [Item("seed_mix", (4, 4))]),
                 (name: "swap_feather", wants: ("feather", 6), gives: [Item("bread", (2, 2))]),
-            ]),
+            ])],
         ),
         // Pilgrims bound for some far shrine, slowly. The priest blesses those who ask.
         (
-            name: "pilgrims", weight: 0.7,
+            name: "pilgrims", weight: 0.6,
             biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:mountain", 0.4)],
-            daylight: (0.3, 1.0), needs: (days: 0.6),
+            daylight: (0.3, 1.0), needs: (days: 0.6, away: Some((60.0, 100000.0))),
             cast: [(species: "priest"), (species: "pilgrim", count: (2, 4), role: Follow), (species: "child", count: (0, 1), role: Follow)],
             script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.85),
-            meeting: (who: 0, lines: [
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
                 (name: "mend", needs: [Hurt], gives: [Heal(8)], once: Player),
                 (name: "blessing", gives: [Effect("sustained", 600.0)], once: Player),
-            ]),
+            ])],
         ),
         // Someone out for a walk with their dog.
         (
@@ -71,17 +82,20 @@
             daylight: (0.5, 1.0),
             cast: [(species: "villager"), (species: "hound", role: Pet(0))],
             script: March(pass: (8.0, 18.0), length: 90.0, pace: 0.8),
-            meeting: (who: 0, lines: [
+            halt: (near: 5.0, seconds: (8.0, 15.0)),
+            meetings: [(who: 0, lines: [
                 (name: "treat", wants: ("bone", 1), gives: [Item("twine", (1, 2))], once: Player),
-            ]),
+            ])],
         ),
-        // Bandits walking a ring round their camp, who go for anyone who comes near.
+        // Bandits walking a ring round their camp, who go for anyone who comes near. They
+        // keep to the wild, and leave a player with no home yet alone.
         (
             name: "bandit_patrol", weight: 0.6,
             biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:rocky", 0.5)],
-            daylight: (0.0, 0.7), needs: (days: 1.5, home: true, combat: (3, 40)),
+            daylight: (0.0, 0.7), needs: (days: 1.5, home: true, combat: (3, 40), away: Some((80.0, 100000.0))),
             cast: [(species: "raider"), (species: "raider", count: (1, 2), role: Flank)],
             script: Patrol(radius: 22.0, stops: 4, pause: (4.0, 9.0), laps: 2),
+            hurt: Ignore,
         ),
         // A wolf pack on its night round.
         (
@@ -90,6 +104,7 @@
             daylight: (0.0, 0.3), needs: (days: 1.0),
             cast: [(species: "wolf"), (species: "wolf", count: (1, 3), role: Follow)],
             script: Patrol(radius: 28.0, stops: 5, pause: (5.0, 12.0), laps: 2),
+            hurt: Ignore,
         ),
         // A hooded stranger who keeps their distance and stands still when watched. Walk up
         // to them and they are not so shy.
@@ -98,22 +113,22 @@
             daylight: (0.0, 0.35), needs: (days: 1.5),
             cast: [(species: "stranger")],
             script: Shadow(keep: (12.0, 20.0), seconds: 150.0),
-            meeting: (who: 0, lines: [
+            meetings: [(who: 0, lines: [
                 (name: "light", gives: [Item("torch", (1, 2))], once: Player),
-            ]),
+            ])],
         ),
         // A tinker's camp: a trader, a helper or two and a dog, resting a while by the road.
         (
-            name: "tinker_camp", weight: 0.7,
+            name: "tinker_camp", weight: 0.6,
             biomes: [("tag:open", 1.0), ("tag:forest", 0.6)],
-            daylight: (0.2, 1.0), needs: (days: 1.2),
+            daylight: (0.2, 1.0), needs: (days: 1.2, away: Some((50.0, 100000.0))),
             cast: [(species: "trader"), (species: "villager", count: (1, 2), role: Follow), (species: "hound", role: Pet(0))],
             script: Camp(near: 26.0, stay: (240.0, 420.0), mill: 5.0, away: 140.0),
-            meeting: (who: 0, lines: [
+            meetings: [(who: 0, greets: 2, lines: [
                 (name: "swap_hide", wants: ("hide", 4), gives: [Item("bread", (6, 6))]),
                 (name: "swap_wool", wants: ("wool", 3), gives: [Item("twine", (8, 8))]),
                 (name: "swap_fang", wants: ("fang", 1), gives: [Item("seed_mix", (6, 6))]),
-            ]),
+            ])],
         ),
         // Singers and their hangers-on, walking the road from fair to fair.
         (
@@ -122,9 +137,33 @@
             daylight: (0.4, 1.0),
             cast: [(species: "bard"), (species: "villager", count: (1, 3), role: Follow)],
             script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.95),
-            meeting: (who: 0, lines: [
+            halt: (near: 8.0, seconds: (20.0, 30.0)),
+            meetings: [(who: 0, lines: [
                 (name: "song", gives: [Effect("refreshed", 240.0)], once: Player),
-            ]),
+            ])],
+        ),
+        // A prisoner marched through the wild by two or three jailers. They are no bandits:
+        // they leave you be, until struck. Kill them all and the prisoner is free; hand them
+        // three gold coins and they look the other way; cut the ropes with a knife and the
+        // jailers turn on you. A freed prisoner follows whoever freed them half the time
+        // (settling by that player's home if they have one), else wanders off alone.
+        (
+            name: "prison_convoy", weight: 0.3,
+            biomes: [("tag:open", 1.0), ("tag:forest", 1.0), ("tag:mountain", 0.5), ("tag:rocky", 0.5)],
+            daylight: (0.35, 1.0), needs: (days: 1.5, home: true, combat: (4, 45), away: Some((100.0, 100000.0))),
+            cast: [(species: "jailer"), (species: "jailer", count: (1, 2), role: Flank), (species: "captive", role: Captive)],
+            script: March(pass: (12.0, 24.0), length: 140.0, pace: 0.8),
+            halt: (near: 9.0, seconds: (6.0, 10.0)),
+            hurt: Avenge,
+            freed: (follow: 0.5, follow_for: 600.0, thanks: [Item("gold_coin", (1, 3))]),
+            meetings: [
+                (who: 0, greet: "jailer_greet", greets: 2, lines: [
+                    (name: "bribe", wants: ("gold_coin", 3), gives: [Free], once: Party),
+                ]),
+                (who: 2, greet: "captive_greet", greets: 2, lines: [
+                    (name: "cut", needs: [Holds("knife")], gives: [Free, Anger], once: Party),
+                ]),
+            ],
         ),
     ],
 )

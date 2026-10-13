@@ -19,10 +19,13 @@ fn every_event_word_is_a_key_in_both_languages() {
         let lang = Lang::load(&dir(), code);
         for (_, event) in content.wandering.iter() {
             let mut keys = vec![event.title_key()];
-            if event.speaker().is_some() {
-                keys.push(event.key("greet"));
+            for meeting in &event.meetings {
+                keys.extend((0..meeting.greets).map(|n| event.greeting(meeting, n)));
+                keys.extend(meeting.lines.iter().map(|line| event.key(&line.name)));
             }
-            keys.extend(event.lines.iter().map(|line| event.key(&line.name)));
+            if event.has_captive() {
+                keys.extend([event.key("thanks"), event.key("freed")]);
+            }
             for key in keys {
                 assert!(lang.find(&key).is_some(), "{code}: `{key}` is missing for {}", event.def.name);
             }

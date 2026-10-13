@@ -24,12 +24,12 @@ use std::collections::BTreeMap;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::creature::brain::{Errand, Pose};
+use voxmar_engine::creature::brain::{Errand, Memory, Pose};
 use voxmar_engine::creature::{CreatureId, Kind, mix, unit_from};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::lang::{Words, def_key};
 use voxmar_engine::traits;
-use voxmar_engine::wander::{Role, Script, ResolvedNeed, ResolvedReward, Once};
+use voxmar_engine::wander::{Hurt, Once, ResolvedNeed, ResolvedReward, Role, Script};
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
@@ -47,6 +47,15 @@ const THERE: f32 = 2.5;
 const HURRY: f32 = 4.0;
 /// Blocks a watcher must be from the party for it to be taken away unseen.
 const UNSEEN_BEYOND: f32 = 40.0;
+/// A struck party's grudge: seconds it lasts without the player near, and how near that is.
+const GRUDGE: f32 = 20.0;
+const GRUDGE_RANGE: f32 = 45.0;
+/// A freed captive keeps this many blocks from the one it follows, and settles within this
+/// many of that player's home.
+const FOLLOW_CLOSE: f32 = 3.5;
+const SETTLE_AT: f32 = 12.0;
+/// Seconds a talk keeps a halted party standing.
+const TALK_HOLDS: f32 = 12.0;
 
 fn ticks(seconds: f32) -> u64 {
     (seconds * TICKS_PER_SECOND as f32).round().max(1.0) as u64
@@ -83,6 +92,16 @@ struct Instance {
     lost: u8,
     /// The plan has been walked: members wait about until nobody watches.
     done: bool,
+    /// Standing for a player until this tick (0 when not), and the earliest it halts again.
+    halt: (u64, u64),
+    /// The player whose blow, or whose cut ropes, turned the party against them.
+    provoked: Option<PlayerId>,
+    /// A freed captive, on their own.
+    freed: bool,
+    /// The last player to strike one of the party.
+    last_blow: Option<PlayerId>,
+    /// To be let go: its members become creatures of the land like any other.
+    release: bool,
 }
 
 struct Member {
@@ -97,14 +116,18 @@ struct Member {
 }
 
 enum Plan {
-    /// A line to its goal.
-    March { heading: Vec2, goal: Vec3 },
+    /// A line to its goal, at a share of the walk.
+    March { heading: Vec2, goal: Vec3, pace: f32 },
     /// A ring of stops, each paused at, a number of laps.
     Patrol { anchor: Vec3, next: usize, stops: u8, laps_left: u8, wait_until: Option<u64>, turn: f32 },
     /// To a spot, a stay there, then away.
     Camp { spot: Vec3, since: u64, stay_until: Option<u64>, arrive_by: u64, away: f32 },
     /// Keeping to a player, until a tick.
     Shadow { until: u64 },
+    /// Turned on a player: the party fights on by its own nature while they stay near.
+    Avenge { player: PlayerId, until: u64 },
+    /// A freed captive walking with the player who freed them.
+    Follow { player: PlayerId, until: u64 },
 }
 
 impl Wandering {
@@ -241,6 +264,7 @@ impl Server {
         for (index, event) in self.content.wandering.iter() {
             let needs = &event.def.needs;
             let suits = event.suits_light(daylight)
+                && event.suits_distance(flat(spot.as_vec3(), self.spawn))
                 && days >= needs.days
                 && needs.home.is_none_or(|h| h == p.home.is_some())
                 && needs.combat.is_none_or(|(low, high)| (low..=high).contains(&combat));
@@ -323,7 +347,7 @@ impl Server {
             self.wandering.by_creature.insert(member.creature, (id, i));
         }
         let born = self.tick;
-        self.wandering.active.insert(id, Instance { id, event, seed, born, members, plan, told: Default::default(), spent: Default::default(), best: (f32::MAX, born), aim: None, detour: None, lost: 0, done: false });
+        self.wandering.active.insert(id, Instance { id, event, seed, born, members, plan, told: Default::default(), spent: Default::default(), best: (f32::MAX, born), aim: None, detour: None, lost: 0, done: false, halt: (0, 0), provoked: None, freed: false, last_blow: None, release: false });
         if let Some(player) = player {
             self.wandering.quiet_until.insert(player, self.tick + ticks(rules.gap));
             let recent = self.wandering.recent.entry(player).or_default();
@@ -341,11 +365,11 @@ impl Server {
         let towards = target.map_or_else(|| turned(Vec2::X, roll(30) * std::f32::consts::TAU), |t| (xz(t) - xz(at)).try_normalize().unwrap_or(Vec2::X));
         let side = if roll(31) < 0.5 { 1.0 } else { -1.0 };
         match script {
-            Script::March { pass, length, .. } => {
+            Script::March { pass, length, pace } => {
                 let distance = target.map_or(60.0, |t| flat(t, at)).max(8.0);
                 let nearest = pass.0 + roll(32) * (pass.1 - pass.0);
                 let heading = turned(towards, side * (nearest / distance).clamp(0.0, 0.95).asin());
-                Plan::March { heading, goal: at + Vec3::new(heading.x, 0.0, heading.y) * length }
+                Plan::March { heading, goal: at + Vec3::new(heading.x, 0.0, heading.y) * length, pace }
             }
             Script::Patrol { stops, laps, .. } => Plan::Patrol { anchor: at, next: 0, stops, laps_left: laps, wait_until: None, turn: side * std::f32::consts::TAU / stops as f32 },
             Script::Camp { near, stay, away, .. } => {
@@ -402,8 +426,188 @@ impl Server {
             self.end_event(inst);
             return;
         }
-        self.walk_plan(&mut inst, &players);
+        // Left with no captors, a captive is free.
+        let event = self.content.wandering.get(inst.event);
+        if event.has_captive() && !inst.freed {
+            let captors = inst.members.iter().any(|m| event.groups[m.group].1.role != Role::Captive);
+            if !captors && !inst.members.is_empty() {
+                let by = inst.last_blow;
+                self.free_captive(&mut inst, by);
+            }
+        }
+        if !inst.release {
+            self.walk_plan(&mut inst, &players);
+        }
+        self.keep(inst);
+    }
+
+    /// Puts an instance back among the running, or lets its members go when it is released.
+    fn keep(&mut self, inst: Instance) {
+        if inst.release {
+            for member in &inst.members {
+                self.wandering.by_creature.remove(&member.creature);
+                if let Some(creature) = self.creatures.live.get_mut(&member.creature) {
+                    // Wherever they were let go is home now.
+                    creature.mind.forgive();
+                    creature.home = creature.body.position;
+                }
+            }
+            tracing::info!("wandering: {} lets its people go", self.content.wandering.get(inst.event).def.name);
+            return;
+        }
+        for (i, m) in inst.members.iter().enumerate() {
+            self.wandering.by_creature.insert(m.creature, (inst.id, i));
+        }
+        self.wandering.active.insert(inst.id, inst);
+    }
+
+    /// The name a creature is spoken of by.
+    fn speaker_name(&self, id: u32) -> Option<Words> {
+        let species = self.creatures.live.get(&id)?.species;
+        let def = &self.content.creatures.get(species).def;
+        Some(Words::Own(def_key("creature", &def.name), def.title.clone()))
+    }
+
+    /// Cuts the captive's bonds. Whoever freed it (if a player) is thanked, and with the
+    /// chance the event gives it follows them; else it goes its own way, a peaceful
+    /// wanderer of the land. When captors are left, it leaves them as an event of its own.
+    fn free_captive(&mut self, inst: &mut Instance, by: Option<PlayerId>) {
+        let event = self.content.wandering.get(inst.event).clone();
+        let Some(freed) = event.def.freed.clone() else { return };
+        let Some(at) = inst.members.iter().position(|m| event.groups[m.group].1.role == Role::Captive) else { return };
+        let captive = inst.members[at].creature;
+        let seed = mix(inst.seed, 0xf4ee ^ self.tick);
+        let follows = by.filter(|p| self.players.get(p).is_some_and(|p| p.health.alive())).filter(|_| unit_from(seed) < freed.follow);
+        if let Some(player) = by.and_then(|p| self.players.get(&p).map(|_| p)) {
+            if let Some(who) = self.speaker_name(captive) {
+                self.players[&player].connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("thanks"))) });
+            }
+            self.hand_out(player, captive, &event.thanks);
+        }
+        let plan = follows.map(|player| Plan::Follow { player, until: self.tick + ticks(freed.follow_for) });
+        let alone = inst.members.len() == 1;
+        let mut me = if alone {
+            None
+        } else {
+            let member = inst.members.remove(at);
+            let id = self.wandering.next;
+            self.wandering.next += 1;
+            Some(Instance {
+                id,
+                event: inst.event,
+                seed,
+                born: self.tick,
+                members: vec![member],
+                plan: Plan::Shadow { until: 0 },
+                told: Default::default(),
+                spent: Default::default(),
+                best: (f32::MAX, self.tick),
+                aim: None,
+                detour: None,
+                lost: 0,
+                done: false,
+                halt: (0, 0),
+                provoked: None,
+                freed: true,
+                last_blow: None,
+                release: false,
+            })
+        };
+        let target = me.as_mut().unwrap_or(inst);
+        target.freed = true;
+        target.members[0].errand = None;
+        match plan {
+            Some(plan) => target.plan = plan,
+            None => target.release = true,
+        }
+        if let Some(me) = me {
+            self.keep(me);
+        }
+    }
+
+    /// Reward `gifts` to `player`, from creature `source` (whose id seeds the draws).
+    fn hand_out(&mut self, player: PlayerId, source: u32, gifts: &[ResolvedReward]) {
+        for gift in gifts {
+            match *gift {
+                ResolvedReward::Item(item, (low, high)) => {
+                    let count = low + (unit_from(mix(self.tick, source as u64 ^ item.0 as u64)) * (high - low + 1) as f32) as u8;
+                    let Some(p) = self.players.get_mut(&player) else { return };
+                    let left = p.inventory.add(item, count.min(high));
+                    p.changed(traits::INVENTORY);
+                    if left > 0 {
+                        let body = voxmar_engine::dropped::thrown(p.eye(), p.look());
+                        self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: left }, body, voxmar_engine::dropped::PICKUP_DELAY);
+                    }
+                }
+                ResolvedReward::Xp(skill, xp) => self.grant_xp(player, skill, xp),
+                ResolvedReward::Effect(effect, seconds) => {
+                    let Some(p) = self.players.get_mut(&player) else { return };
+                    p.give_effects(&[(effect, seconds)]);
+                    p.changed(traits::VITALS);
+                }
+                ResolvedReward::Heal(health) => {
+                    let Some(p) = self.players.get_mut(&player) else { return };
+                    p.health.heal(health);
+                    p.changed(traits::HEALTH);
+                }
+                ResolvedReward::Free | ResolvedReward::Anger => {}
+            }
+        }
+    }
+
+    /// `player` struck creature `id`: if it is of a party, the party answers as its kind
+    /// does (`hurt`): scatters, turns on them, or goes on as it was. A captive's pain is
+    /// its captors' business, not an alarm.
+    pub(crate) fn wandering_hurt(&mut self, id: u32, player: PlayerId) {
+        let Some(&(instance, member)) = self.wandering.by_creature.get(&id) else { return };
+        let Some(inst) = self.wandering.active.get_mut(&instance) else { return };
+        inst.last_blow = Some(player);
+        let role = self.content.wandering.get(inst.event).groups[inst.members[member].group].1.role;
+        if role == Role::Captive || inst.freed {
+            return;
+        }
+        self.provoke(instance, player);
+    }
+
+    /// Turns party `id` against `player`, by its event's `hurt`.
+    fn provoke(&mut self, id: u64, player: PlayerId) {
+        let Some(mut inst) = self.wandering.active.remove(&id) else { return };
+        let event = self.content.wandering.get(inst.event);
+        let lead = inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map(|c| c.body.position);
+        match (event.def.hurt, lead) {
+            (Hurt::Avenge, _) => {
+                inst.provoked = Some(player);
+                inst.plan = Plan::Avenge { player, until: self.tick + ticks(GRUDGE) };
+                self.stir(&inst, player, true);
+            }
+            (Hurt::Scatter, Some(lead)) => {
+                inst.provoked = Some(player);
+                let from = self.players.get(&player).map_or(lead, |p| p.position);
+                let away = (xz(lead) - xz(from)).try_normalize().unwrap_or(Vec2::X);
+                inst.plan = Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * 90.0, pace: 1.3 };
+                inst.done = false;
+                inst.halt = (0, u64::MAX);
+                (inst.aim, inst.detour) = (None, None);
+                self.stir(&inst, player, false);
+            }
+            _ => {}
+        }
         self.wandering.active.insert(id, inst);
+    }
+
+    /// Angers (or, if they cannot fight, frightens) every member of a party at `player`.
+    fn stir(&mut self, inst: &Instance, player: PlayerId, fight: bool) {
+        for member in &inst.members {
+            let Some(creature) = self.creatures.live.get_mut(&member.creature) else { continue };
+            let fights = fight && self.content.creatures.get(creature.species).fights();
+            if fights {
+                creature.mind.anger = 1.0;
+                creature.mind.remember(Memory::HurtBy(player), GRUDGE);
+            } else {
+                creature.mind.fear = 1.0;
+                creature.mind.remember(Memory::ScaredBy(player), GRUDGE);
+            }
+        }
     }
 
     /// Takes the cast away, those not dead, without a death.
@@ -434,13 +638,42 @@ impl Server {
         let lead = self.creatures.live[&leader].body.position;
         let nearest = players.iter().map(|&(_, p)| p).min_by(|a, b| a.distance(lead).total_cmp(&b.distance(lead)));
         let night = self.daylight() < 0.3;
+        // Standing for a player who has come near: a party that halts does, for a while, then
+        // goes on, and not again for a while.
+        let mut halted = false;
+        if let (Some(halt), Plan::March { .. }) = (event.def.halt, &inst.plan)
+            && !inst.done
+            && inst.provoked.is_none()
+        {
+            let close = nearest.filter(|p| flat(lead, *p) <= halt.near);
+            if self.tick < inst.halt.0 {
+                halted = nearest.is_some_and(|p| flat(lead, p) <= halt.near * 2.0);
+                if !halted {
+                    inst.halt = (0, self.tick + ticks(halt.cooldown));
+                }
+            } else if inst.halt.0 > 0 {
+                inst.halt = (0, self.tick + ticks(halt.cooldown));
+                inst.aim = None;
+            } else if self.tick >= inst.halt.1 && close.is_some() {
+                let seconds = halt.seconds.0 + unit_from(mix(inst.seed, self.tick)) * (halt.seconds.1 - halt.seconds.0);
+                inst.halt.0 = self.tick + ticks(seconds);
+                halted = true;
+            }
+        }
         // Where the leader goes, and how it is once there.
         let (mut goal, mut pose, mut face, mut heading, mut last): (Option<Vec3>, Pose, Option<Vec3>, Vec2, bool) = (None, Pose::Idle, None, Vec2::new(1.0, 0.0), false);
         let mut pace = 1.0;
+        let mut free = false;
+        let mut stir: Option<(PlayerId, bool)> = None;
         match (&mut inst.plan, script) {
-            (Plan::March { heading: h, goal: g }, Script::March { pace: p, .. }) => {
+            (Plan::March { heading: h, .. }, _) if halted => {
                 heading = *h;
-                pace = p;
+                last = true;
+                face = nearest;
+            }
+            (Plan::March { heading: h, goal: g, pace: p }, _) => {
+                heading = *h;
+                pace = *p;
                 if flat(lead, *g) < THERE * 2.0 {
                     inst.done = true;
                     last = true;
@@ -467,7 +700,7 @@ impl Server {
                             if *laps_left == 0 {
                                 // Done with the round: march off, away from whoever is nearest.
                                 let away = nearest.map_or(heading, |p| (xz(lead) - xz(p)).try_normalize().unwrap_or(heading));
-                                inst.plan = Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * 80.0 };
+                                inst.plan = Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * 80.0, pace: 1.0 };
                             }
                         }
                     }
@@ -494,7 +727,7 @@ impl Server {
                     Some(_) => {
                         let away_heading = turned(Vec2::X, unit_from(mix(inst.seed, 77)) * std::f32::consts::TAU);
                         let length = *away;
-                        inst.plan = Plan::March { heading: away_heading, goal: *spot + Vec3::new(away_heading.x, 0.0, away_heading.y) * length };
+                        inst.plan = Plan::March { heading: away_heading, goal: *spot + Vec3::new(away_heading.x, 0.0, away_heading.y) * length, pace: 1.0 };
                     }
                 }
             }
@@ -519,10 +752,53 @@ impl Server {
                 }
                 _ => {
                     let away = nearest.map_or(heading, |p| (xz(lead) - xz(p)).try_normalize().unwrap_or(heading));
-                    inst.plan = Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * 80.0 };
+                    inst.plan = Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * 80.0, pace: 1.0 };
                 }
             },
+            (Plan::Avenge { player, until }, _) => {
+                // The grudge holds while the player stays near; the party's own nature does
+                // the fighting, and nothing walks it.
+                let target = self.players.get(player).filter(|p| p.health.alive()).map(|p| p.position);
+                if target.is_some_and(|p| flat(lead, p) < GRUDGE_RANGE) {
+                    *until = (*until).max(self.tick + ticks(GRUDGE));
+                }
+                if self.tick >= *until || target.is_none() {
+                    let away = nearest.map_or(heading, |p| (xz(lead) - xz(p)).try_normalize().unwrap_or(heading));
+                    inst.plan = Plan::March { heading: away, goal: lead + Vec3::new(away.x, 0.0, away.y) * 80.0, pace: 1.0 };
+                } else {
+                    free = true;
+                    stir = Some((*player, true));
+                }
+            }
+            (Plan::Follow { player, until }, _) => match self.players.get(player).filter(|p| p.health.alive()) {
+                Some(p) if self.tick < *until => {
+                    heading = (xz(p.position) - xz(lead)).try_normalize().unwrap_or(heading);
+                    if p.home.is_some_and(|h| flat(h, lead) < SETTLE_AT) {
+                        // At their door: it stays, a person of the land.
+                        inst.release = true;
+                        if let Some(who) = self.speaker_name(leader) {
+                            p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.settled").with("who", who) });
+                        }
+                    } else if flat(lead, p.position) <= FOLLOW_CLOSE {
+                        last = true;
+                        face = Some(p.position);
+                    } else {
+                        goal = Some(p.position);
+                        pace = if flat(lead, p.position) > 12.0 { 1.5 } else { 1.1 };
+                    }
+                }
+                _ => inst.release = true,
+            },
             _ => {}
+        }
+        if let Some((player, fight)) = stir {
+            self.stir(inst, player, fight);
+        }
+        if free || inst.release {
+            for member in &mut inst.members {
+                member.errand = None;
+            }
+            return;
         }
         // The leader's errand, by a stride toward its goal.
         let mut errands: Vec<Option<Errand>> = vec![None; inst.members.len()];
@@ -582,7 +858,7 @@ impl Server {
             let me = self.creatures.live[&inst.members[i].creature].body.position;
             let out = match role {
                 Role::Free => None,
-                Role::Lead | Role::Follow | Role::Flank | Role::Rear | Role::Ahead => {
+                Role::Lead | Role::Follow | Role::Flank | Role::Rear | Role::Ahead | Role::Captive => {
                     let to = lead - forward * slot.y + right * slot.x;
                     let apart = flat(me, to);
                     let there = apart < 1.2;
@@ -621,88 +897,78 @@ impl Server {
     }
 
     /// `player` right-clicks creature `id`: if it speaks for a wandering party, it answers
-    /// (and gives), and the click is spent. Returns whether it did.
+    /// (and gives), and the click is spent. Returns whether it did. A party that has been
+    /// struck, or whose captive has been freed, says what suits that.
     pub(crate) fn meet(&mut self, player: PlayerId, id: u32) -> bool {
         let Some(&(instance, member)) = self.wandering.by_creature.get(&id) else { return false };
         let Some(inst) = self.wandering.active.get(&instance) else { return false };
-        let event = self.content.wandering.get(inst.event);
-        let Some(speaker) = event.speaker().filter(|&who| inst.members.get(member).is_some_and(|m| m.group == who)) else { return false };
-        let _ = speaker;
+        if inst.provoked.is_some() {
+            return false;
+        }
+        let registry = self.content.wandering.clone();
+        let event = registry.get(inst.event);
+        let Some(meeting) = inst.members.get(member).and_then(|m| event.meeting(m.group)) else { return false };
         let Some(p) = self.players.get(&player).filter(|p| p.health.alive()) else { return false };
         let held = p.inventory.get(p.selected);
-        let (levels, has_home, hurt) = (
-            |skill| self.content.skills.level(p.skills.xp(skill)),
-            p.home.is_some(),
-            p.health.current < p.health.max,
-        );
-        let line = event.lines.iter().enumerate().find(|(i, line)| {
+        let level = |skill| self.content.skills.level(p.skills.xp(skill));
+        let (has_home, hurt) = (p.home.is_some(), p.health.current < p.health.max);
+        let line = meeting.lines.iter().enumerate().filter(|_| !inst.freed).find(|(i, line)| {
             let used = match line.once {
                 Once::Always => false,
-                Once::Player => inst.told.contains(&(player, *i)),
-                Once::Party => inst.spent.contains(i),
+                Once::Player => inst.told.contains(&(player, *i + meeting.who * 64)),
+                Once::Party => inst.spent.contains(&(*i + meeting.who * 64)),
             };
             !used
-                && line.needs.iter().all(|need| match *need {
-                    ResolvedNeed::Skill(skill, level) => levels(skill) >= level,
-                    ResolvedNeed::Home(want) => has_home == want,
+                && line.needs.iter().all(|need| match need {
+                    ResolvedNeed::Skill(skill, at_least) => level(*skill) >= *at_least,
+                    ResolvedNeed::Below(skill, below) => level(*skill) < *below,
+                    ResolvedNeed::Home(want) => has_home == *want,
                     ResolvedNeed::Hurt => hurt,
+                    ResolvedNeed::Holds(tag) => held.is_some_and(|h| self.content.blocks.def(h.item).has_tag(tag)),
                 })
                 && line.wants.is_none_or(|(item, count)| held.is_some_and(|h| h.item == item && h.count >= count))
         });
-        let (name, line_gives, line_wants, index) = match line {
-            Some((i, line)) => (event.key(&line.name), line.gives.clone(), line.wants, Some(i)),
-            None => (event.key("greet"), Vec::new(), None, None),
+        let variant = ((unit_from(mix(self.tick, id as u64 ^ 0x6e37)) * meeting.greets as f32) as u8).min(meeting.greets - 1);
+        let (words, gives, wants, mark) = match line {
+            Some((i, line)) => (event.key(&line.name), line.gives.clone(), line.wants, Some((i + meeting.who * 64, line.once))),
+            None if inst.freed => (event.key("freed"), Vec::new(), None, None),
+            None => (event.greeting(meeting, variant), Vec::new(), None, None),
         };
-        let once = index.map(|i| event.lines[i].once);
-        let species = self.creatures.live.get(&id).map(|c| c.species);
-        let creature = species.map(|s| {
-            let def = &self.content.creatures.get(s).def;
-            Words::Own(def_key("creature", &def.name), def.title.clone())
-        });
+        let who = self.speaker_name(id);
+        let halts = event.def.halt.is_some();
         let inst = self.wandering.active.get_mut(&instance).expect("checked");
-        match (once, index) {
-            (Some(Once::Player), Some(i)) => {
+        match mark {
+            Some((i, Once::Player)) => {
                 inst.told.insert((player, i));
             }
-            (Some(Once::Party), Some(i)) => {
+            Some((i, Once::Party)) => {
                 inst.spent.insert(i);
             }
             _ => {}
         }
+        // A talk keeps the party standing a while longer.
+        if halts && inst.halt.0 > 0 {
+            inst.halt.0 = inst.halt.0.max(self.tick + ticks(TALK_HOLDS));
+        }
         // What the player hands over, and what they are given.
-        if let Some((_, count)) = line_wants {
+        if let Some((_, count)) = wants {
             let p = self.players.get_mut(&player).expect("checked");
             let selected = p.selected;
             p.inventory.take(selected, count);
             p.changed(traits::INVENTORY);
         }
-        for gift in line_gives {
-            match gift {
-                ResolvedReward::Item(item, (low, high)) => {
-                    let count = low + (unit_from(mix(self.tick, id as u64 ^ item.0 as u64)) * (high - low + 1) as f32) as u8;
-                    let p = self.players.get_mut(&player).expect("checked");
-                    let left = p.inventory.add(item, count.min(high));
-                    p.changed(traits::INVENTORY);
-                    if left > 0 {
-                        let body = voxmar_engine::dropped::thrown(p.eye(), p.look());
-                        self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: left }, body, voxmar_engine::dropped::PICKUP_DELAY);
-                    }
-                }
-                ResolvedReward::Xp(skill, xp) => self.grant_xp(player, skill, xp),
-                ResolvedReward::Effect(effect, seconds) => {
-                    let p = self.players.get_mut(&player).expect("checked");
-                    p.give_effects(&[(effect, seconds)]);
-                    p.changed(traits::VITALS);
-                }
-                ResolvedReward::Heal(health) => {
-                    let p = self.players.get_mut(&player).expect("checked");
-                    p.health.heal(health);
-                    p.changed(traits::HEALTH);
-                }
-            }
+        if let (Some(who), Some(p)) = (who, self.players.get(&player)) {
+            p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&words)) });
         }
-        if let (Some(who), Some(p)) = (creature, self.players.get(&player)) {
-            p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&name)) });
+        self.hand_out(player, id, &gives);
+        if gives.contains(&ResolvedReward::Free)
+            && let Some(mut inst) = self.wandering.active.remove(&instance)
+        {
+            self.free_captive(&mut inst, Some(player));
+            self.keep(inst);
+        }
+        if gives.contains(&ResolvedReward::Anger) {
+            self.provoke(instance, player);
         }
         true
     }
@@ -870,6 +1136,9 @@ mod tests {
         }
         assert!(sides.len() >= 3, "a ring of four stops visits at least three sides of its anchor: {sides:?}");
         assert!(matches!(server.wandering.active[&id].plan, Plan::March { .. }), "after its laps the patrol marches off");
+        run(&mut server, 1200);
+        let gone = leader_at(&server, id).map(|at| flat(at, anchor)).unwrap_or(f32::MAX);
+        assert!(gone > 40.0, "and it does march: {gone:.0} blocks from its ring");
     }
 
     #[test]
@@ -988,5 +1257,221 @@ mod tests {
         }
         assert!(!server.nearby_room(Vec3::new(128.5, 200.0, 128.5), false, cap));
         assert!(!server.wandering_room(hound, Vec3::new(128.5, 200.0, 128.5)), "no room for another dog");
+    }
+
+    /// Clears the world of parties and creatures between tries on one server.
+    fn clear(server: &mut Server) {
+        server.wandering.active.clear();
+        server.wandering.by_creature.clear();
+        server.creatures.live.clear();
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.clear(|_| true);
+        (player.home, player.position) = (None, Vec3::new(128.5, 200.0, 128.5));
+    }
+
+    fn members_of(server: &Server, id: u64, group: usize) -> Vec<u32> {
+        server.wandering.active[&id].members.iter().filter(|m| m.group == group).map(|m| m.creature).collect()
+    }
+
+    fn put_next_to(server: &mut Server, id: u32, offset: Vec3) {
+        let at = server.players[&1].position + offset;
+        server.creatures.live.get_mut(&id).unwrap().body.position = at;
+    }
+
+    /// Raises skill `name` to `level`.
+    fn skill_to(server: &mut Server, name: &str, level: u8) {
+        let skill = server.content.skills.id(name).unwrap();
+        let xp = server.content.skills.xp_for(level);
+        server.players.get_mut(&1).unwrap().skills.grant(skill, xp);
+    }
+
+    #[test]
+    fn a_peaceful_party_stops_for_a_player_who_comes_near_and_goes_on() {
+        let mut server = fixture();
+        let id = start(&mut server, "pedlar_and_hound", (68, 128));
+        run(&mut server, 200);
+        let pedlar = members_of(&server, id, 0)[0];
+        let spot = server.creatures.live[&pedlar].body.position;
+        server.players.get_mut(&1).unwrap().position = Vec3::new(spot.x + 12.0, 200.0, spot.z);
+        // The party walks up to the player; the pedlar halts when it is within six blocks.
+        run(&mut server, 400);
+        let met = server.creatures.live[&pedlar].body.position;
+        assert!(flat(met, server.players[&1].position) <= 8.0, "it came up to the player: {:.1}", flat(met, server.players[&1].position));
+        run(&mut server, 100);
+        let held = server.creatures.live[&pedlar].body.position;
+        assert!(flat(met, held) < 2.0, "it stands for the player: moved {:.1}", flat(met, held));
+        // After its stay (35 seconds at most) it goes on, even with the player still there.
+        run(&mut server, 20 * 40);
+        let later = server.creatures.live[&pedlar].body.position;
+        assert!(flat(held, later) > 6.0, "and goes on: moved {:.1}", flat(held, later));
+    }
+
+    #[test]
+    fn striking_a_peaceful_party_scatters_it_and_it_will_not_talk() {
+        let mut server = fixture();
+        let id = start(&mut server, "stroll_with_dog", (68, 128));
+        let person = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:bone", 1);
+        server.wandering_hurt(person, 1);
+        let inst = &server.wandering.active[&id];
+        assert_eq!(inst.provoked, Some(1));
+        assert!(matches!(inst.plan, Plan::March { pace, .. } if pace > 1.0), "it hurries away");
+        assert!(server.creatures.live[&person].mind.fear > 0.0, "and is afraid");
+        assert!(!server.meet(1, person), "a person just struck says nothing");
+        assert_eq!(count_of(&server, "base:bone"), 1);
+    }
+
+    #[test]
+    fn striking_a_convoys_jailer_turns_the_jailers_on_the_player_and_the_prisoner_runs() {
+        let mut server = fixture();
+        let id = start(&mut server, "prison_convoy", (68, 128));
+        let jailers = members_of(&server, id, 0).into_iter().chain(members_of(&server, id, 1)).collect::<Vec<_>>();
+        let captive = members_of(&server, id, 2)[0];
+        // Before a blow they leave the player be, however near.
+        put_next_to(&mut server, jailers[0], Vec3::new(2.0, 0.0, 0.0));
+        assert!(server.creatures.live[&jailers[0]].mind.anger == 0.0);
+        server.wandering_hurt(jailers[0], 1);
+        assert!(matches!(server.wandering.active[&id].plan, Plan::Avenge { player: 1, .. }));
+        run(&mut server, 10);
+        for &j in &jailers {
+            assert!(server.creatures.live[&j].mind.anger > 0.0, "a jailer is angry");
+        }
+        assert!(server.creatures.live[&captive].mind.fear > 0.0, "the prisoner is afraid");
+        assert!(server.creatures.live[&captive].mind.anger == 0.0);
+    }
+
+    #[test]
+    fn killing_the_jailers_frees_the_prisoner_who_thanks_and_follows_or_goes_alone() {
+        let (mut follows, mut alone) = (0, 0);
+        let mut server = fixture();
+        for seed in 0..12u64 {
+            clear(&mut server);
+            let event = event(&server, "prison_convoy");
+            let spot = server.standing_spot(68, 128, 200).unwrap();
+            let id = server.begin_event_at(Some(1), event, spot, seed * 7919 + 3, true).unwrap();
+            let captive = members_of(&server, id, 2)[0];
+            let jailers: Vec<u32> = members_of(&server, id, 0).into_iter().chain(members_of(&server, id, 1)).collect();
+            for &j in &jailers {
+                server.wandering_hurt(j, 1);
+            }
+            for &j in &jailers {
+                server.creature_dies(j);
+            }
+            run(&mut server, 40);
+            let coins = count_of(&server, "base:gold_coin");
+            assert!((1..=3).contains(&coins), "the thanks is a few coins: {coins}");
+            assert!(server.creatures.live.contains_key(&captive), "the prisoner lives");
+            match server.wandering.by_creature.get(&captive) {
+                Some(&(i, _)) => {
+                    assert!(matches!(server.wandering.active[&i].plan, Plan::Follow { player: 1, .. }));
+                    follows += 1;
+                }
+                None => alone += 1,
+            }
+        }
+        assert!(follows > 0 && alone > 0, "both happen: {follows} follow, {alone} go alone");
+    }
+
+    impl Server {
+        /// Frees the captive of party `id` as if player 1 had.
+        fn free_in_test(&mut self, id: u64) {
+            let mut inst = self.wandering.active.remove(&id).unwrap();
+            self.free_captive(&mut inst, Some(1));
+            self.keep(inst);
+        }
+    }
+
+    #[test]
+    fn a_freed_prisoner_follows_the_player_and_settles_at_their_home() {
+        let home = Vec3::new(150.5, 200.0, 128.5);
+        let mut server = fixture();
+        for seed in 0..40u64 {
+            clear(&mut server);
+            let event = event(&server, "prison_convoy");
+            let spot = server.standing_spot(100, 128, 200).unwrap();
+            let id = server.begin_event_at(Some(1), event, spot, seed, true).unwrap();
+            let captive = members_of(&server, id, 2)[0];
+            server.free_in_test(id);
+            if !server.wandering.by_creature.contains_key(&captive) {
+                continue;
+            }
+            // The player has a home a little way off; the prisoner walks with them and stays.
+            let player = server.players.get_mut(&1).unwrap();
+            (player.home, player.position) = (Some(home), home);
+            run(&mut server, 20 * 120);
+            assert!(server.creatures.live.contains_key(&captive));
+            assert!(!server.wandering.by_creature.contains_key(&captive), "it is a person of the land now");
+            let at = server.creatures.live[&captive].body.position;
+            assert!(flat(at, home) < 20.0, "and it is by the player's home: {at}");
+            return;
+        }
+        panic!("some seed has the prisoner follow");
+    }
+
+    #[test]
+    fn three_coins_buy_the_prisoners_freedom_without_a_fight() {
+        let mut server = fixture();
+        let id = start(&mut server, "prison_convoy", (68, 128));
+        let jailer = members_of(&server, id, 0)[0];
+        let captive = members_of(&server, id, 2)[0];
+        give_held(&mut server, "base:gold_coin", 3);
+        assert!(server.meet(1, jailer));
+        assert_eq!(count_of(&server, "base:gold_coin") >= 1 && count_of(&server, "base:gold_coin") <= 3, true, "three paid, one to three given back");
+        assert!(server.wandering.active[&id].provoked.is_none(), "the jailers mind nothing");
+        assert!(server.wandering.active[&id].members.iter().all(|m| m.creature != captive), "the prisoner is out of the party");
+        assert!(server.creatures.live.contains_key(&captive));
+    }
+
+    #[test]
+    fn a_knife_cuts_the_ropes_and_the_jailers_notice() {
+        let mut server = fixture();
+        let id = start(&mut server, "prison_convoy", (68, 128));
+        let captive = members_of(&server, id, 2)[0];
+        let jailer = members_of(&server, id, 0)[0];
+        // Without a knife there is nothing to do but listen.
+        give_held(&mut server, "base:bone", 1);
+        assert!(server.meet(1, captive));
+        assert!(server.wandering.active[&id].members.iter().any(|m| m.creature == captive), "still bound");
+        give_held(&mut server, "base:wooden_knife", 1);
+        assert!(server.meet(1, captive));
+        assert!(server.wandering.active[&id].members.iter().all(|m| m.creature != captive), "free");
+        assert_eq!(server.wandering.active[&id].provoked, Some(1), "and the jailers saw");
+        assert!(matches!(server.wandering.active[&id].plan, Plan::Avenge { .. }));
+        run(&mut server, 10);
+        assert!(server.creatures.live[&jailer].mind.anger > 0.0);
+        assert_eq!(count_of(&server, "base:wooden_knife"), 1, "the knife is kept");
+    }
+
+    #[test]
+    fn a_tutor_teaches_a_beginner_and_sends_the_skilled_on() {
+        let mut server = fixture();
+        let id = start(&mut server, "mage_tutors", (68, 128));
+        let mage = members_of(&server, id, 0)[0];
+        let magic = server.content.skills.id("core:magic").unwrap();
+        skill_to(&mut server, "core:magic", 20);
+        let before = server.players[&1].skills.xp(magic);
+        give_held(&mut server, "base:aether_mote", 1);
+        assert!(server.meet(1, mage));
+        assert_eq!(server.players[&1].skills.xp(magic), before, "one mote teaches nothing at level 20");
+        assert_eq!(count_of(&server, "base:aether_mote"), 1, "and is kept");
+        give_held(&mut server, "base:aether_mote", 3);
+        assert!(server.meet(1, mage));
+        assert!(server.players[&1].skills.xp(magic) > before, "three motes buy the second step");
+        assert_eq!(count_of(&server, "base:aether_mote"), 0);
+        skill_to(&mut server, "core:magic", 40);
+        let high = server.players[&1].skills.xp(magic);
+        give_held(&mut server, "base:aether_mote", 3);
+        assert!(server.meet(1, mage));
+        assert_eq!(server.players[&1].skills.xp(magic), high, "a master learns nothing here");
+        assert_eq!(count_of(&server, "base:aether_mote"), 3);
+    }
+
+    #[test]
+    fn far_parties_come_only_far_from_where_the_world_began() {
+        let server = fixture();
+        let tutors = server.content.wandering.get(event(&server, "mage_tutors"));
+        assert!(!tutors.suits_distance(50.0) && tutors.suits_distance(400.0));
+        let dog = server.content.wandering.get(event(&server, "stroll_with_dog"));
+        assert!(dog.suits_distance(0.0), "a walk with a dog is anywhere");
     }
 }

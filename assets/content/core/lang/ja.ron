@@ -1143,6 +1143,7 @@
     "command.wander.no_room": "そこには一行が立つ場所がありません。",
     "command.wander.started": "{event}が目の前から出発します。",
     "wander.said": "{who}「{text}」",
+    "wander.settled": "{who}はあなたの家の近くに住みついた。",
     "command.creatures.none": "64ブロック以内に生き物はいません。",
     "command.creatures.title": "64ブロック以内:",
     "command.creatures.line": "{creature} ×{count}、いちばん近いのは{distance}ブロック先({doing})",

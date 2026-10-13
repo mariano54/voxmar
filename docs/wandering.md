@@ -13,11 +13,13 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
 ## How it runs
 
 - **Spawning.** Every `scan_every` seconds each joined player gets one try at `chance`. A
-  try needs: past `first_days`, out of the `gap` after the last event began near them, fewer
-  than `most_near` parties within `near`, fewer than `most_total` on the server. The spot is
+  try needs: past `first_days`, out of the `gap` (ten minutes) after the last event began
+  near them, fewer than `most_near` parties within `near`, fewer than `most_total` on the
+  server. The spot is
   a standable cell at `appear_near` to `appear_far` blocks, out of every player's view. The
   kind is drawn by weight from the kinds that suit the biome (name or tag), the hour
-  (`daylight`), and the player (`needs`: days, home or not, combat level); a kind met in the
+  (`daylight`), and the player (`needs`: days, home or not, combat level, and `away`: how far from where the world began,
+  so the tutors and the convoys are for those who go exploring); a kind met in the
   last `repeat_memory` seconds weighs `repeat_weight` of itself.
 - **Budgets.** People of a party count against `people_most`, not against the settlements'
   villager cap. Animals and monsters of a party count against the usual land caps near
@@ -38,24 +40,71 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   - `Shadow(keep, seconds)`: keeps `keep` blocks from the player, stands still when looked at.
   The leader strides in 6-block steps and turns aside where the ground will not do; with no
   headway for six seconds it detours, and after four detours the party gives up and leaves.
-- **Meetings.** Right-clicking the speaker with nothing the click wants runs `inspect`, which
-  first asks the party. The first line whose needs hold (skill level, home, hurt) and whose
-  `wants` the player holds is said, takes what it wants and gives its rewards (items, XP,
-  an effect, healing). `once` is `Always`, `Player` or `Party`. The speech is the lang key
-  `wander.<package>.<event>.<line>`; the greeting is `.greet`; the title `.title`. A line
-  that gives XP follows the XP rules already in force (a tutor's lesson trains Magic but
-  never pays more than doing it by hand).
+- **Stopping.** A party with a `halt` stops for a player who comes within `near` of its
+  leader: it stands facing them for a few seconds, a talk keeps it standing, then it goes
+  on and does not stop again for `cooldown` seconds. Parties that hunt (bandits, wolves)
+  never halt.
+- **Meetings.** Right-clicking a speaker with nothing the click wants runs `inspect`, which
+  first asks the party. Each speaking group has a meeting. The first line whose needs hold
+  (`Skill` at least, `Below` a level, `Home`, `Hurt`, `Holds` an item with a tag, which is
+  not taken) and whose `wants` the player holds is said, takes what it wants and gives its
+  rewards (items, XP, an effect, healing, `Free`, `Anger`). `once` is `Always`, `Player` or
+  `Party`. The speech is the lang key `wander.<package>.<event>.<line>`; the greeting
+  (when no line applies) is `.greet`, or with `greets: 3` one of `.greet`, `.greet_2`,
+  `.greet_3`, drawn each time; the title is `.title`. Lessons are capped by the player's own
+  levels (`Below`): a tutor teaches a beginner, asks more for the next step and has nothing
+  for a master, so no lesson skips a step.
+- **Being struck.** `hurt` says what a party does when a player strikes one of its own:
+  `Scatter` (the party runs and breaks up, and will not talk), `Avenge` (those who can
+  fight turn on the player while they stay near, the rest run) or `Ignore` (already hostile).
+- **Captives.** A cast may hold one `Captive` that walks with its captors. When every
+  captor is gone, or a line gives `Free`, the captive is free: it thanks whoever freed it
+  (`thanks` and some coins, as the event says), then, with chance `follow`, follows that
+  player, and settles by their home if they have one; otherwise it goes its own way, a
+  peaceful person of the land for as long as anyone is near. The same cast can be solved
+  by killing the jailers, by a bribe, or by a knife (which the jailers see).
+- **Persistence.** A party is a passing thing and is not saved. A freed prisoner who settles
+  stays while players are near like any creature of the land; a restart does not keep them.
 - **Ending.** An event ends when no player is within `leave`, after its `lifetime`, when its
   march is walked and nobody is within 40 blocks, or when its leader is gone. Its people are
   taken away without a death. Killed members leave the party; the party goes on.
 - **Admin.** `/wander` lists the parties about, `/wander list` the kinds, `/wander start
   NAME` begins one ahead of you, `/wander end` sends them all away.
 
-## Batch 1 (implemented)
+## The bar every kind meets
+
+Mariano's brief for the whole set, which a new kind is checked against:
+
+- Fresh, not a reskin: each kind has its own cast, script and mechanic, and the same
+  framework piece is reused only where the behaviour really is the same.
+- Modular: a kind is data (`wandering.ron`, lang keys); a new mechanic is a script, role or
+  reward added once and used by many kinds, never a special case for one kind.
+- Skills and progression: lessons, trades and rewards are gated on the player's levels
+  (`Skill`, `Below`, `Holds`), pay small amounts, and never skip an age's steps.
+- Exploration: the rare kinds need `away` from where the world began; biome, hour, home and
+  combat level decide what comes.
+- Rare: a gap of ten minutes between parties near a player, one at a time, weights below 1
+  for the interesting ones, and a lesser chance for one met lately.
+- They stop for you: peaceful parties halt when a player comes near and stay for a talk.
+- What a player might do is thought through for each kind: watch, approach, wait, talk,
+  trade, give a gift, follow, strike, steal a march, bring a knife or coins, flee; the
+  table below says what each does.
+
+| the player | peaceful party | prison convoy | bandits, wolves |
+| --- | --- | --- | --- |
+| walks past | halts if close, then goes on | halts a few seconds, watches | hunts if within sight |
+| talks, empty-handed | a greeting, one of several | a warning | n/a |
+| offers what they want | trades, or teaches by level | three coins buy the prisoner | n/a |
+| strikes one | scatters and will not talk | jailers turn on them, prisoner runs | fights as it did |
+| kills the captors | n/a | prisoner thanks, follows or goes alone | n/a |
+| cuts the ropes (knife) | n/a | prisoner free, jailers angry | n/a |
+| flees | they go on | they stop the grudge when far | give up past the leash |
+
+## Batch 1 (implemented, ten kinds)
 
 | # | kind | script | what it adds |
 | --- | --- | --- | --- |
-| 1 | mage tutors | March | A wandering mage and apprentices. A mote of aether buys a lesson: Magic XP and a Focused effect. Once per player. |
+| 1 | mage tutors | March | A wandering mage and apprentices, far from towns. Motes of aether buy lessons by level: one or two for a beginner, three past level 15, nothing for a master. Magic XP and a Focused effect, once per player. |
 | 2 | pedlar and hound | March | A pedlar with a pack hound. Swaps what the player holds (hide, bone, feather) for twine, seed mix or bread. |
 | 3 | pilgrims | March | A priest with pilgrims and a child. Mends wounds, and gives a blessing once. |
 | 4 | stroll with a dog | March | A villager and their dog; a bone from the player's hand earns twine. The dog circles its person. |
@@ -64,6 +113,7 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
 | 7 | hooded stranger | Shadow | A shy figure that keeps 12 to 20 blocks off and freezes when looked at. Gives a torch, once, to whoever reaches it. |
 | 8 | tinker camp | Camp | A trader, villagers and a hound settle near the player for a while. Three swaps. |
 | 9 | bard band | March | Musicians pass by; a song refreshes the player. |
+| 10 | prison convoy | March | Two or three jailers march a prisoner. They leave you be until struck. Kill them, bribe them (three gold coins), or cut the ropes with a knife and the jailers turn on you. The freed prisoner follows you half the time and settles by your home, or goes off alone. |
 
 ## Catalogue of 100
 
@@ -82,27 +132,27 @@ are the mechanics later batches add, each used by several kinds.
 | 7 | hooded stranger | see batch 1 | | 1 | done |
 | 8 | tinker camp | see batch 1 | | 1 | done |
 | 9 | bard band | see batch 1 | | 1 | done |
-| 10 | lost child | a child wanders crying; leading it to a settlement pays a coin and standing | Escort | 1 | next |
-| 11 | shepherd with flock | a villager and sheep drifting on pasture; lamb for wool | Herd | 2 | next |
-| 12 | cowherd and cows | milk for a bucket held out | Herd | 2 | next |
-| 13 | goose girl | geese on a march to water | Herd | 2 | next |
-| 14 | berry pickers | villagers gather and drop forage in a basket; trade a share | Forage | 1 | next |
-| 15 | fishers' file | villagers with rods walk to a shore and fish | Gather | 1 | next |
-| 16 | woodcutters | two villagers fell a lone tree and haul the logs | Haul | 2 | next |
-| 17 | charcoal burners | a small camp with a smoking mound | Camp, Haul | 2 | next |
-| 18 | water carriers | villagers with yokes go from well to field | Haul | 2 | next |
-| 19 | harvest cart | a cart-pushing family in the farm age; swaps seeds | Haul | 2 | next |
-| 20 | herb woman | a forager who names a herb patch nearby for a coin | Forage | 1 | next |
-| 21 | wandering healer | mends and sells a salve | | 1 | next |
-| 22 | hermit | lives off the path; a riddle gives a recipe | Vigil | 1 | next |
-| 23 | travelling smith | repairs held tools for coin | Camp | 2 | next |
-| 24 | travelling cook | a pot on the fire; a portion for an ingredient | Camp | 1 | next |
-| 25 | story teller | camps at dusk; players near get a journal page | Camp | 1 | next |
-| 26 | stray hound | a lone dog that follows the player until fed, then adopts | Lure | 1 | next |
-| 27 | deer herd | drifts through; flees when seen | Herd | 1 | next |
-| 28 | boar sounder | sow with piglets; charges what comes close | Herd | 1 | next |
-| 29 | fox and hens | a fox stalks a hen that runs | Chase | 2 | next |
-| 30 | geese in a vee | pass overhead and call | Ambient | 1 | later |
+| 10 | prison convoy | see batch 1 | Captive | 2 | done |
+| 11 | lost child | a child wanders crying; leading it to a settlement pays a coin and standing | Escort | 1 | next |
+| 12 | shepherd with flock | a villager and sheep drifting on pasture; lamb for wool | Herd | 2 | next |
+| 13 | cowherd and cows | milk for a bucket held out | Herd | 2 | next |
+| 14 | goose girl | geese on a march to water | Herd | 2 | next |
+| 15 | berry pickers | villagers gather and drop forage in a basket; trade a share | Forage | 1 | next |
+| 16 | fishers' file | villagers with rods walk to a shore and fish | Gather | 1 | next |
+| 17 | woodcutters | two villagers fell a lone tree and haul the logs | Haul | 2 | next |
+| 18 | charcoal burners | a small camp with a smoking mound | Camp, Haul | 2 | next |
+| 19 | water carriers | villagers with yokes go from well to field | Haul | 2 | next |
+| 20 | harvest cart | a cart-pushing family in the farm age; swaps seeds | Haul | 2 | next |
+| 21 | herb woman | a forager who names a herb patch nearby for a coin | Forage | 1 | next |
+| 22 | wandering healer | mends and sells a salve | | 1 | next |
+| 23 | hermit | lives off the path; a riddle gives a recipe | Vigil | 1 | next |
+| 24 | travelling smith | repairs held tools for coin | Camp | 2 | next |
+| 25 | travelling cook | a pot on the fire; a portion for an ingredient | Camp | 1 | next |
+| 26 | story teller | camps at dusk; players near get a journal page | Camp | 1 | next |
+| 27 | stray hound | a lone dog that follows the player until fed, then adopts | Lure | 1 | next |
+| 28 | deer herd | drifts through; flees when seen | Herd | 1 | next |
+| 29 | boar sounder | sow with piglets; charges what comes close | Herd | 1 | next |
+| 30 | fox and hens | a fox stalks a hen that runs | Chase | 2 | next |
 | 31 | thief and constable | a thief runs from a guard; stop the thief for the loot | Chase | 2 | later |
 | 32 | poacher | hunts deer; reporting them to a guard pays | Hunt | 2 | later |
 | 33 | hunting party | villagers with hounds track a boar | Hunt | 2 | later |
