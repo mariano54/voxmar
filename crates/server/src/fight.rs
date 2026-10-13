@@ -344,7 +344,11 @@ impl Server {
     /// Lands every swing, creature blow and bleed that is due. Runs each tick, after
     /// creatures move.
     pub(crate) fn tick_fights(&mut self) {
-        let now = self.fights.now();
+        // The clock, or the stamp of the last message heard if that is later: never, over a
+        // network, where messages are stamped as they arrive; in process, a test's player
+        // can stamp its messages with a game clock that runs as quick as the ticks
+        // (`Connection::send_at`), and its swings then land by that clock.
+        let now = self.fights.now().max(self.fight_arrival());
         let feel = self.content.combat.feel;
         self.fights.fighters.retain(|id, _| self.players.contains_key(id));
         let live = &self.creatures.live;

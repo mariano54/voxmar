@@ -5610,4 +5610,121 @@ mod tests {
         server.meet(1, racer);
         assert_eq!(count_of(&server, "base:gold_coin"), 1, "one bet each");
     }
+
+    #[test]
+    fn the_henwife_teaches_trades_eggs_and_gives_a_hen_to_a_farmer_with_a_home() {
+        let mut server = fixture();
+        let id = start(&mut server, "henwife", (110, 128));
+        let wife = members_of(&server, id, 0)[0];
+        let hens = members_of(&server, id, 1);
+        assert!((2..=3).contains(&hens.len()));
+        give_held(&mut server, "base:wheat_seeds", 6);
+        assert!(server.meet(1, wife));
+        assert!(xp_in(&server, "core:farming") > 0, "where hens lay");
+        assert_eq!(count_of(&server, "base:wheat_seeds"), 6, "no hen for a beginner without a home");
+        skill_to(&mut server, "core:farming", 3);
+        server.meet(1, wife);
+        assert_eq!(count_of(&server, "base:wheat_seeds"), 6, "nor for one without a home");
+        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        assert!(server.meet(1, wife));
+        assert_eq!(count_of(&server, "base:wheat_seeds"), 0);
+        assert_eq!(hens.iter().filter(|h| server.creatures.live[h].owner.as_deref() == Some("Tëster")).count(), 1, "one hen is the player's");
+        give_held(&mut server, "base:feather", 4);
+        assert!(server.meet(1, wife));
+        assert_eq!(count_of(&server, "base:egg"), 2, "feathers for eggs");
+    }
+
+    #[test]
+    fn mushroom_pickers_come_after_rain_and_teach_point_and_trade() {
+        let server = fixture();
+        let pickers = server.content.wandering.get(event(&server, "mushroom_pickers"));
+        assert_eq!(pickers.def.needs.wet, Some(true), "after rain (the wet rule's own tests cover the pick)");
+        let mut server = fixture();
+        let id = start(&mut server, "mushroom_pickers", (110, 128));
+        let picker = members_of(&server, id, 0)[0];
+        let at = server.creatures.live[&picker].body.position.floor().as_ivec3();
+        place(&mut server, "base:brown_mushroom", IVec3::new(at.x + 20, 200, at.z));
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, picker));
+        assert!(xp_in(&server, "core:cooking") > 0, "which are good to eat");
+        assert!(server.meet(1, picker));
+        assert!(told(&client).iter().any(|(k, _)| k == "wander.point"), "where more grow");
+        give_held(&mut server, "base:brown_mushroom", 4);
+        assert!(server.meet(1, picker));
+        assert_eq!((count_of(&server, "base:brown_mushroom"), count_of(&server, "base:bread")), (0, 1));
+    }
+
+    #[test]
+    fn the_woodcarver_answers_a_beginner_and_a_carver_of_skill_differently() {
+        let mut server = fixture();
+        let id = start(&mut server, "woodcarver", (110, 128));
+        let carver = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:oak_log", 8);
+        let client = listen(&mut server);
+        assert!(server.meet(1, carver));
+        assert!(says(&told(&client), "wander.base.woodcarver.grain"));
+        assert_eq!(count_of(&server, "base:oak_log"), 8, "shown, not taken");
+        assert!(server.meet(1, carver));
+        assert_eq!((count_of(&server, "base:oak_log"), count_of(&server, "base:gold_coin")), (0, 1), "eight logs for a coin");
+        skill_to(&mut server, "core:crafting", 12);
+        let before = xp_in(&server, "core:crafting");
+        assert!(server.meet(1, carver));
+        assert!(says(&told(&client), "wander.base.woodcarver.finer"));
+        assert!(xp_in(&server, "core:crafting") > before, "a finer cut for one with the feel");
+    }
+
+    #[test]
+    fn shearers_roll_a_fleece_for_a_beginner_and_buy_six_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "shearers", (110, 128));
+        let shearer = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:wool", 12);
+        assert!(server.meet(1, shearer));
+        assert!(xp_in(&server, "core:farming") > 0);
+        assert_eq!(count_of(&server, "base:wool"), 12);
+        assert!(server.meet(1, shearer));
+        assert_eq!((count_of(&server, "base:wool"), count_of(&server, "base:gold_coin")), (6, 1));
+        server.meet(1, shearer);
+        assert_eq!(count_of(&server, "base:wool"), 6, "once");
+    }
+
+    #[test]
+    fn an_apprentice_asks_a_master_for_a_lesson_in_each_skill_they_have() {
+        let mut server = fixture();
+        let id = start(&mut server, "apprentice", (110, 128));
+        let youth = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, youth));
+        assert!(says(&told(&client), "wander.base.apprentice.someday"), "a beginner is no master");
+        assert_eq!(count_of(&server, "base:gold_coin"), 0);
+        skill_to(&mut server, "core:farming", 15);
+        skill_to(&mut server, "core:mining", 15);
+        assert!(server.meet(1, youth));
+        assert!(server.meet(1, youth));
+        assert_eq!(count_of(&server, "base:gold_coin"), 2, "a lesson in each");
+        let farming = xp_in(&server, "core:farming");
+        server.meet(1, youth);
+        assert_eq!((count_of(&server, "base:gold_coin"), xp_in(&server, "core:farming")), (2, farming), "once each");
+    }
+
+    #[test]
+    fn the_hedge_witch_turns_three_herbs_to_a_mote_for_one_who_knows_herbs() {
+        let mut server = fixture();
+        let id = start(&mut server, "hedge_witch", (110, 128));
+        let witch = members_of(&server, id, 0)[0];
+        let herb = tagged(&server, "herb");
+        let name = server.content.blocks.def(herb).name.clone();
+        give_held(&mut server, &name, 3);
+        assert!(server.meet(1, witch));
+        assert!(xp_in(&server, "core:magic") > 0, "what the night air carries");
+        assert_eq!(count_of(&server, &name), 3, "no mote for one who knows no herbs");
+        skill_to(&mut server, "core:alchemy", 5);
+        assert!(server.meet(1, witch));
+        assert_eq!((count_of(&server, &name), count_of(&server, "base:aether_mote")), (0, 1));
+        give_held(&mut server, &name, 3);
+        server.meet(1, witch);
+        assert_eq!(count_of(&server, &name), 3, "once");
+    }
 }
