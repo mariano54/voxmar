@@ -92,8 +92,9 @@ mesa-vulkan-drivers`), as a look: frames take half a second, so the steps that t
    rest run at full speed, three times sooner. It also
    fails when placing or digging hitches (a frame over 150 ms, or six times the median: the
    first break once compiled three pipelines on the spot); on a machine asked for more
-   than all its cores (load average over the core count) the bar rises by how far over it
-   is, since the machine is rarely calm enough to wait for, and the pipelines check catches
+   than all its cores (the load now over the core count: the one-minute average, or the
+   load a rising average comes from, `Gate::load_now`, since the average lags a gate's
+   start by most of a minute) the bar rises by how far over it is, since the machine is rarely calm enough to wait for, and the pipelines check catches
    compiles at any load. A check a session cannot judge is reported as SKIPPED, and is not
    a pass: the gate waits for the load to fall under the core count (up to 20 minutes),
    plays the session again on its own and judges that run (the first run's log and shots
