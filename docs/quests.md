@@ -135,6 +135,17 @@ so that what the game already does is something the book points to:
   twenty-four fired in all; pays twelve clay), The Last Sheaf (the harvest home procession,
   and twelve wheat brought in; pays eight wheat seed) and Mice in the Stores (follow the
   piper to the end of his tune, and a pantry or larder at home; pays four seed mix).
+- **Wanderers that come back** (the Nomad thread's hooks, Oct 13): quests that ask for a
+  kind and the kind that follows it, all Farm side branches. The Keepers' Word (the
+  poacher, the gamekeepers on his trail and, days later, his gang), Catch Up the Shrine (the
+  shrine bearer and the stragglers asking after it), From Wedding to Christening, Those
+  Taken In (refugees, then their kin), First Metal (the bloomery smelters before the
+  Crucible Kiln, and four copper ore) and A Hen of Your Own (the henwife's hen, kept near
+  home). Three more from batch 16: Master and Journeyman (Farm: the apprentice
+  who asks to learn your best skill at 15, then the journeyman), The Market Road (Nomad,
+  after To Market: the market folk, then beat the highwaymen's ambush; the win is the
+  dealing their tally counts) and Found and Thanked (Nomad, after A Kind Turn: the lost
+  child brought to town, then the parents who come to your home).
 
 ## Quick upgrades
 
@@ -143,3 +154,110 @@ by hand, the planks for the table, sticks and both wooden tools, and An Axe to I
 Crafting Table) asks for the wooden axe and eight logs chopped with it, so the first tool
 upgrade comes in the first minute. First Night tells the player the stone axe hits three
 times as hard as a fist.
+
+## Structure (Oct 13)
+
+A pass on the Nomad and Farm chapters against the way a long modpack's quest book is laid
+out: each chapter a spine of main quests to one goal, side branches hanging off it, nothing
+on the spine gated by a side quest, and a quest that is several steps shown as several.
+
+| Check | Before | After |
+|---|---|---|
+| A clear goal per chapter | Nomad's goal Homestead Hearth ("the Farm age opens"); Farm's goal the lit Crucible Kiln ("starts the Bronze age"), with First Bronze after it as the bridge to the next age | Unchanged: both goals are the last spine quest their text names as the age's end |
+| Side branches read as optional | No spine quest comes after a side quest (the_potter, brick_by_brick and crucible_kiln come only after spine quests or the hearth); the wanderer quests say "may" | Unchanged |
+| Nothing unreachable or a dead end | Every `after` names a quest that exists (load-checked); no Nomad quest waits on a Farm one; no Craft or Level goal asks more than Engineering 10 (The Crucible). A Place to Pray stood in the Farm tab with no `after`, so it could finish before the Farm age opened. Stone in Hand had no `after`, so the spine read as three loose starts | A Place to Pray comes after Homestead Hearth like the rest of its tab; Stone in Hand after Crafting Table, so the Nomad spine reads Crafting Table, Stone in Hand, then First Night's line (First Night stays pinned at the start, with no `after`) |
+| Several steps shown as several | Homestead Hearth was one goal (`Home`) for a hearthstone, two chimneys and the lighting | Three parts: the hearthstone, two chimneys, and the lit hearth (`Home`). The book ticks each as it is made |
+
+Left as they are: Timber stays off the spine (branch `start`, with An Axe to It), since the
+main-line walk test models only the spine's goals; Crafting Table stays a root so a player
+who already has a table finds it done.
+
+## Readable to a newcomer (Oct 13)
+
+Every Nomad and Farm quest was read as someone who has never played would: does its text
+say what to make, where to find it, and which tool or station to use, and can everything
+it asks for be come by by then? `early_quests.rs`
+`every_early_quest_asks_for_what_the_land_and_recipes_give` now checks the second half on
+every build: it walks from what the land, crops, catches and animals give through every
+crafting and cooking recipe (a station counts only once it can be made) and fails on any
+item a Nomad or Farm quest asks for that nothing reaches. Run it with
+`VOXMAR_QUEST_REACH=1 -- --nocapture` for each asked item's cheapest way and level.
+
+| Quest | Gap | Fix |
+| --- | --- | --- |
+| A Place to Pray | Nothing gave stone (stone breaks to cobblestone), so stone bricks, and the altar, could not be made; the text gave the wrong shape | Cobblestone fires to stone in the pit kiln (`cooking.ron`, Construction 1, never cracks). The quest comes after A Pit Kiln and says the chain: cobblestone fired to stone, four stone to four bricks, seven bricks to the altar in its real shape |
+| A Pit Kiln | Said five cobblestones; the recipe takes four | Four, and where each goes |
+| Workshop and Stove | Said six cobblestones for the stove (it takes five); no recipe for the quern, spindle or loom | Five, and each workshop piece's recipe and level |
+| Ducks on the Pond | "Hold its favourite food" named no food | Wheat seeds or wheat; rivers and wetlands |
+| The Milk Pail | Did not say how to tame a goat, reindeer or aurochs | Each one's food: wheat or an apple, a mushroom, wheat |
+| Copper Arms | No recipe for the copper shield | Six ingots round a plank |
+| Earthenware | No recipe for any piece | Plates, bowls, jars, jugs and the basket, with levels |
+| A Friend in the Wild, Hens in a Row | Wheat seeds with no source | Break wild wheat (or your own field) for them |
+| A Seat by the Fire, A Proper Bed | Furniture comes in oak, birch and dark oak only; a player with spruce planks was stuck | Both name the three woods, and the crafting table |
+| First Bronze | "Put the blend in the crucible" | Hold the blend and right-click the lit kiln's crucible; four blend from one craft |
+| Food Enough | Rye with no source | Rye seed comes from village fields |
+| The Potter, Copper Mail | No station | At the crafting table, with the shape or level |
+| Torchlight | Did not say what breaks coal | Any pickaxe, even a wooden one |
+
+The Crucible Kiln is now three parts, as Homestead Hearth is: the crucible made, the kiln
+standing (`Built`, counted when its crucible is right-clicked whole, which also names the
+fuel it wants), and the kiln lit (`Lit`). Lighting always counts both, so a kiln lit
+before this still reads done, and `quests_done` keeps finished quests finished.
+
+## Every skill in the first two ages (Oct 13)
+
+Each of the fourteen skills, the first Nomad or Farm quest that teaches it, what its early
+levels open (core's `skills.ron` guide), and its first tool or station upgrade.
+
+| Skill | First quest that teaches it | What it opens early | First upgrade |
+| --- | --- | --- | --- |
+| Farming | A Handful of Grain (Nomad) | Sow wheat at 1, mallards 3, carrots and mouflon 5 | Wooden to stone hoe (Break Ground) |
+| Hunter | A Friend in the Wild (Nomad) | Tame fowl and rabbits at 1, mallards 3, mouflon 5, goats 8 | A knife, for more hide (A Sharp Edge) |
+| Mining | A Pile of Stone (Nomad) | Stone and coal at 1, copper 5, tin 10 | Wooden to stone pickaxe (Stone in Hand), then copper (Red Metal) |
+| Cooking | First Night (Nomad) | Campfire meat and fish at 1, carrots 2, mutton 5, seed mix 8 | Campfire to cottage stove (Workshop and Stove) |
+| Engineering | Crafting Table (Nomad) | Tools at 1, copper ingots and tools 5, crucible 10, bronze 12 | The crafting table, then the Crucible Kiln |
+| Crafting | Look It Up and Twine and Thong (Nomad) | Pouches 3, kiln bricks and workshop pieces 5, loom 8; fired clay cracks until 12 | The pit kiln (A Pit Kiln) |
+| Construction | Homestead Hearth (Nomad) | Stool 1, table 3, bed and altar 5, bookshelf 8 | A workbench at home (A Bench to Work At) |
+| Fishing | Rod and Line (Nomad) | Shrimp and minnows at 1, sardines 5, perch 10 | The fishing rod |
+| Attack | Something to Swing (Nomad) | Stone weapons at 1, copper 5 | Fist to stone sword or bone club, then copper (Copper Arms) |
+| Defence | Hide Wraps, then **Hard to Put Down** (Nomad, new) | Hide armour at 1, copper armour 10 | Hide wraps, then a shield (Raise Your Guard) |
+| Hitpoints | **Hard to Put Down** (Nomad, new) | Twice your level in health; 12 is 24 | None: it grows with blows landed |
+| Magic | A Place to Pray (Farm) | Bark Skin at 1, Ember Arm 4, Mending 10 | The stone altar |
+| Alchemy | **Herb Lore** (Nomad, new) | A taste only: herb lore from three kinds of wanderer | None yet |
+| Ranged | None | None yet | None yet |
+
+Two new side quests fill the skills that had nothing before:
+- **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 3 and Hitpoints 12. Both
+  skills train only in a fight, and nothing had pointed at either of them.
+- **Herb Lore** (Nomad, farming, after Herb Gatherer) asks the player to deal with a herb
+  gatherer, a travelling alchemist or a wandering healer. These are the three wanderers that
+  teach Alchemy for herbs, and they are the only Alchemy anything gives today.
+
+Left for later, on purpose:
+- **Alchemy past a taste.** Alchemy 5 and up is brewing: tonics, then cauldrons and draughts.
+  None of it exists yet, so a quest for an Alchemy level would be grinding the same three
+  wanderers. Alchemy quests wait for brewing.
+- **Ranged.** No bow, sling or thrown weapon exists. The guide's shortbow at 5 has no
+  recipe, so Ranged waits for its weapons.
+
+## A wait always has something beside it (Oct 13)
+
+The main line has no idle waits: in the bot's timeline (docs/first-days.md), every stretch
+is digging, firing or crafting. The idle waits are off it: crops growing, animals laying or
+regrowing, a herb growing back, and the night. Each quest that sets one off now names, in
+en and ja, an optional quest that is already open at that moment:
+
+| Wait | Length | Quest that sets it off | What its text offers meanwhile (all open by then) |
+| --- | --- | --- | --- |
+| Wheat ripening | 12 min | First Harvest | Patient Angler, Hens in a Row, A Seat by the Fire |
+| A field resown | 12 min a crop | A Field of Gold | Camp Cook, Herb Garden |
+| Carrots ripening | 14 min | Carrot Patch | A Kitchen Garden, which grows on the same crops |
+| A hen laying | 5 min an egg | Fresh Eggs | A Woolly Flock, A Full House |
+| Wool growing back | 6 min | Wool Gathering | Wool and Dye, The Milk Pail |
+| Milk | 5 min | The Milk Pail | A Full Pen |
+| A herb growing back | Its regrowth | Herb Garden | Herb Lore (new) |
+| Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Coal and Cinders underground, cooking and crafting at home |
+| Long clay firing | 59 + 97 s of firing for the bot | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+
+A script checked that every quest title written in parentheses in a why is a real quest's
+title, and every 「」 name in ja is a real ja title, apart from the Prayers menu.
