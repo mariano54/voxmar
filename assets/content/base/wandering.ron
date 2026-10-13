@@ -970,5 +970,85 @@
                 (name: "seam", gives: [Point("coal_ore_sample", 128.0)], once: Player),
             ])],
         ),
+        // Batch 11 (docs/wandering.md): bouts, clear skies and folk of the lanes.
+        // An old soldier on the road, a recruit or two with him. A beginner with a weapon in
+        // hand is offered a bout: fought for real, but it ends when either is brought to
+        // seven tenths of their health, and nobody falls. Lose and you learn; win and you
+        // learn more. Strike him outside a bout and he fights in earnest.
+        (
+            name: "sparring_master", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.3, 0.9), needs: (days: 1.0),
+            cast: [(species: "guard"), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 3.0, away: 120.0),
+            hurt: Avenge,
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "won", needs: [When(Won)], gives: [Xp("attack", 20.0), Xp("defence", 10.0)], once: Player),
+                (name: "lost", needs: [When(Lost)], gives: [Xp("defence", 8.0)], once: Player),
+                (name: "master", needs: [Skill("attack", 20)]),
+                (name: "spar", needs: [Holds("weapon"), Below("attack", 20)], gives: [Spar(0.7, 90.0)], once: Player),
+            ])],
+        ),
+        // A town's champion holds a ring near it, onlookers about. Two coins wagered and
+        // they fight a bout to half health; win and the wager comes back doubled.
+        (
+            name: "village_champion", weight: 0.5,
+            daylight: (0.35, 0.9), needs: (days: 1.5, town: Some(220.0)),
+            cast: [(species: "constable"), (species: "villager", count: (1, 3), role: Follow)],
+            script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
+            hurt: Avenge,
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "won", needs: [When(Won)], gives: [Item("gold_coin", (4, 4)), Xp("attack", 10.0)], once: Player),
+                (name: "lost", needs: [When(Lost)]),
+                (name: "wager", wants: ("gold_coin", 2), gives: [Spar(0.5, 60.0)], once: Player),
+            ])],
+        ),
+        // Stargazers camp on a clear night with a brass tube. Lie back and watch the sky with
+        // them a while and you go off Focused; a coin for a look through the tube and they
+        // show you where something strange glows on the land.
+        (
+            name: "stargazers", weight: 0.4,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:mountain", 1.0), ("tag:dry", 0.8)],
+            daylight: (0.0, 0.2), needs: (days: 1.2, wet: Some(false)),
+            cast: [(species: "elder"), (species: "child", count: (0, 1), role: Follow)],
+            script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
+            show: (near: 8.0, seconds: 25.0, gives: [Effect("focused", 600.0), Xp("magic", 6.0)]),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "tube", wants: ("gold_coin", 1), gives: [Point("tag:wonder", 128.0)], once: Player),
+            ])],
+        ),
+        // A chimney sweep and a lad on their round of folk's homes. Shake a sweep's hand for
+        // luck, once: a coin found, a lighter step, or word of a wonder near.
+        (
+            name: "chimney_sweep", weight: 0.5,
+            daylight: (0.3, 0.9), needs: (days: 1.5, home: Some(true), near_home: Some(48.0)),
+            cast: [(species: "villager"), (species: "child", role: Follow)],
+            script: March(pass: (5.0, 12.0), length: 130.0, pace: 0.8),
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "luck", gives: [OneOf([Item("gold_coin", (1, 1)), Effect("refreshed", 900.0), Point("tag:wonder", 128.0)])], once: Player),
+            ])],
+        ),
+        // A quack doctor sells tonics near a town from a painted cart. A coin buys one; what
+        // it does, nobody knows until it is drunk, but it does no harm.
+        (
+            name: "quack_doctor", weight: 0.5,
+            daylight: (0.3, 0.9), needs: (days: 1.0, town: Some(300.0)),
+            cast: [(species: "trader"), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.5, away: 120.0),
+            meetings: [(who: 0, greets: 3, lines: [
+                (name: "tonic", wants: ("gold_coin", 1), gives: [OneOf([Heal(6), Effect("refreshed", 600.0), Effect("focused", 600.0), Effect("soothed", 600.0), Effect("sustained", 600.0)])], once: Player),
+            ])],
+        ),
+        // A farmer whose cart has sunk to the axles in the rain. Put your shoulder to it
+        // (stand by it a while) and it comes free: a coin and a loaf for the help.
+        (
+            name: "stuck_cart", weight: 0.6,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
+            daylight: (0.25, 0.9), needs: (days: 0.8, wet: Some(true)),
+            cast: [(species: "farmer"), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 18.0, stay: (180.0, 300.0), mill: 1.0, away: 100.0),
+            show: (near: 4.0, seconds: 12.0, gives: [Item("gold_coin", (1, 1)), Item("bread", (1, 1))]),
+        ),
     ],
 )

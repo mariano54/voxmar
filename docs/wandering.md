@@ -132,10 +132,11 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   `/weather` does, from a line only; `Prayer(points)`: restores prayer points up to the
   player's most, said only to one short of them; `Grow(reach, stages)`: the crops planted
   within `reach` blocks of the speaker grow on `stages`, as water carried to a field does,
-  said only with one there still growing). A
+  said only with one there still growing; `Spar(down_to, seconds)`: the speaker, one that
+  fights, spars with the player: see Bouts). A
   line can also need `When(stage)` (the party is at that
   stage of its script: `Caught`, `Waiting`, `Sprung`, `Won`, `Leading`, `Arrived`, `Took`; the stage
-  must belong to the event's script) or `Struck(group)` (this player struck a member of that
+  must belong to the event's script, or be `Won` or `Lost` of a bout) or `Struck(group)` (this player struck a member of that
   group of the cast, and the party did not turn on them for it). A line with only such needs
   and no `wants` is the stage's own greeting. `once` is `Always`, `Player` or `Party`. The speech is the lang key `wander.<package>.<event>.<line>`; the greeting
   (when no line applies) is `.greet`, or with `greets: 3` one of `.greet`, `.greet_2`,
@@ -158,6 +159,14 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   its spot: a player who stands within `near` blocks of its leader for `seconds` together
   is given `gives` (items, XP, effects, healing), once each, with the event's `show`
   line. One who walks off starts the count again; a party struck or startled shows nothing.
+- **Bouts.** A line that gives `Spar(down_to, seconds)` starts a bout between its speaker and
+  the player: fought for real, by the fighter's own nature and the player's weapon, but no
+  blow between the two takes either below `down_to` of their health, so neither falls. The
+  first brought down to it loses: the stage is `Won` (the player won) or `Lost`, the fighter
+  says `bout_won` or `bout_lost`, bears no grudge and binds its scrapes, and the party goes
+  on with what it was doing. After `seconds`, or with the player 16 blocks off, the bout
+  ends with nobody the winner. A blow on the fighter in a bout is the bout, not an offence;
+  one after it is. Nobody talks mid-bout.
 - **Young.** A group with `young: true` comes young (piglets, a calf, fawns) and grows up as
   kept young do.
 - **Being struck.** `hurt` says what a party does when a player strikes one of its own:
@@ -456,6 +465,30 @@ line can want either.
 | has no field near | n/a | the sheaf is not taken | n/a | n/a |
 | strikes one | scatter | scatter | scatter | scatter |
 
+## Batch 11 (implemented, six kinds): bouts, clear skies and folk of the lanes
+
+The new piece is the bout (`Spar`, and the `Lost` stage): a fight for real that ends at a
+share of either's health, so a beginner can learn by losing. Used by two kinds here, and by
+the knight errant to come.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| sparring master | Camp, Spar | An old soldier offers a beginner with a weapon in hand (Attack below 20) a bout to seven tenths of health, once. Lose and you learn a little Defence; win and you learn Attack and Defence. Past Attack 20 he has nothing to teach. Struck outside a bout, he fights in earnest. |
+| village champion | Camp, Spar, town | Holds a ring near a town. Two coins wagered for a bout to half health, once; win and the wager comes back doubled. |
+| stargazers | Camp, show, dry | Only on a clear night. Lie and watch the sky with them (25 s) for Focused and a little Magic; a coin for a look through the tube, and they point to a wonder near. |
+| chimney sweep | March, near home | On their round of folk's homes. Shake a sweep's hand for luck, once: a coin, Refreshed, or word of a wonder near. |
+| quack doctor | Camp, town | Tonics near a town. A coin buys one, once: healing or one of four buffs, by chance, never harm. |
+| stuck cart | Camp, show, wet | Only in rain: a farmer's cart sunk to the axles. Stand by it 12 s (a shoulder to the wheel) and it comes free: a coin and a loaf. |
+
+| the player | sparring master | village champion | stuck cart |
+| --- | --- | --- | --- |
+| holds a weapon | a bout, once (a beginner) | n/a | n/a |
+| wagers two coins | n/a | a bout, once | n/a |
+| wins the bout | Attack and Defence | four coins | n/a |
+| loses the bout | a little Defence | nothing | n/a |
+| walks off mid-bout | no winner | no winner, the wager kept | the push starts again |
+| strikes outside a bout | he fights in earnest | the same | they scatter |
+
 ## Quest hooks
 
 Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
@@ -473,6 +506,9 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **Harvest home** (harvest home): give a sheaf to the dolly and see the field grow.
 - **Coal by road** (coal carters): walk the coal to town; the first coal for torchlight.
 - **The piper's tune** (rat catcher): follow the piper to the end of his tune.
+- **A first bout** (sparring master): spar with a wandering soldier, win or lose.
+- **Ring champion** (village champion): win a wager in the champion's ring.
+- **Under the stars** (stargazers): watch the sky with the stargazers.
 
 ## Catalogue of 100
 
@@ -526,7 +562,7 @@ are the mechanics later batches add, each used by several kinds.
 | 42 | caravan | pack animals, guards and a merchant on a long road | March | 3 | later |
 | 43 | refugees | see batch 7 | Guide | 2 | done |
 | 44 | soldiers on the march | two columns that do not stop for a player | March | 3 | later |
-| 45 | knight errant | duels for a coin; wins a favour | Duel | 3 | later |
+| 45 | knight errant | duels for a coin; wins a favour | Spar (batch 11) | 3 | later |
 | 46 | wandering monk | see batch 7 | Meeting | 2 | done |
 | 47 | travelling alchemist | see batch 6 | Asks | 2 | done |
 | 48 | rat catcher | see batch 10 (a piper and field mice) | Lure | 2 | done |
@@ -565,7 +601,7 @@ are the mechanics later batches add, each used by several kinds.
 | 81 | lost mage | a mage whose spell went wrong; fetch three motes | Meeting | 3 | later |
 | 82 | mage duel | two mages cast at each other and ignore you | Duel | 4 | later |
 | 83 | archmage and pupils | a tutor with five pupils; a tougher lesson | March | 4 | later |
-| 84 | star gazers | at night, with a brass tube; shows the sky for a bonus | Camp | 3 | later |
+| 84 | star gazers | see batch 11 | Camp | 1 | done |
 | 85 | rainmakers | see batch 9 | Weather | 2 | done |
 | 86 | storm chasers | follow lightning and gather a charged rock | Chase | 4 | later |
 | 87 | frost caravan | in the cold biomes; furs to swap | March | 3 | later |
@@ -593,6 +629,11 @@ are the mechanics later batches add, each used by several kinds.
 | 109 | coal carters | see batch 10 | Journey | 1 | done |
 | 110 | tanner | see batch 10 | Camp | 1 | done |
 | 111 | benighted miners | see batch 10 | night | 1 | done |
+| 112 | sparring master | see batch 11 | Spar | 1 | done |
+| 113 | village champion | see batch 11 | Spar | 2 | done |
+| 114 | chimney sweep | see batch 11 | near home | 2 | done |
+| 115 | quack doctor | see batch 11 | OneOf | 1 | done |
+| 116 | stuck cart | see batch 11 | wet, show | 1 | done |
 
 ## Mechanics the next batches add
 
