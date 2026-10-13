@@ -1274,7 +1274,7 @@ impl WanderRegistry {
                     return Err(error(format!("a show is watched from 2 to 16 blocks for 3 to 120 seconds and gives something, not {} blocks for {} s", def_show.near, def_show.seconds)));
                 }
                 for reward in &def_show.gives {
-                    if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Spar(..) | Reward::Point(..) | Reward::Town(_) | Reward::OneOf(_)) {
+                    if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Spar(..) | Reward::Point(..) | Reward::Town(_) | Reward::Toward(..) | Reward::OneOf(_)) {
                         return Err(error("a show gives items, experience, effects or healing only".into()));
                     }
                     show.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("show: {why}")))?);
