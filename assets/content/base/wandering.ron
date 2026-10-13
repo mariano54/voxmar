@@ -999,7 +999,7 @@
             hurt: Avenge,
             meetings: [(who: 0, greets: 2, lines: [
                 (name: "won", needs: [When(Won)], gives: [Item("gold_coin", (4, 4)), Xp("attack", 10.0)], once: Player),
-                (name: "lost", needs: [When(Lost)]),
+                (name: "lost", needs: [When(Lost)], once: Player),
                 (name: "wager", wants: ("gold_coin", 2), gives: [Spar(0.5, 60.0)], once: Player),
             ])],
         ),

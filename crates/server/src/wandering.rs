@@ -154,6 +154,9 @@ struct Instance {
     settles: bool,
     /// How far its script has got (for the lines that go with it).
     stage: Stage,
+    /// How each player's bouts with the party ended (`Won` or `Lost`): a bout's lines are
+    /// for the one who fought it, not for everyone looking on.
+    bouts: Vec<(PlayerId, Stage)>,
     /// The players who struck a member of each group of the cast.
     struck: FxHashSet<(PlayerId, usize)>,
     /// Over now: taken away at the end of this update (a lure that has shown what it led to).
@@ -197,6 +200,7 @@ impl Instance {
             release: false,
             settles: false,
             stage: Stage::Passing,
+            bouts: Vec::new(),
             struck: Default::default(),
             ended: false,
             worked: 0,
@@ -1791,7 +1795,10 @@ impl Server {
         }
         // A bout over: the fighter bears no grudge and binds its scrapes; won or lost, it says so.
         if let Some((stage, fighter, player)) = bout_end {
-            inst.stage = stage;
+            if stage != Stage::Passing {
+                inst.bouts.retain(|&(who, _)| who != player);
+                inst.bouts.push((player, stage));
+            }
             if let Some(c) = self.creatures.live.get_mut(&fighter) {
                 c.mind.forgive();
                 c.health = self.content.creatures.get(c.species).def.health;
@@ -2106,7 +2113,7 @@ impl Server {
             };
             !used
                 && line.needs.iter().all(|need| match need {
-                    ResolvedNeed::When(stage) => inst.stage == *stage,
+                    ResolvedNeed::When(stage) => inst.stage == *stage || inst.bouts.contains(&(player, *stage)),
                     ResolvedNeed::Struck(group) => inst.struck.contains(&(player, *group)),
                     ResolvedNeed::Skill(skill, at_least) => level(*skill) >= *at_least,
                     ResolvedNeed::Below(skill, below) => level(*skill) < *below,
@@ -2123,6 +2130,12 @@ impl Server {
                     ResolvedReward::Prayer(_) => p.praying.points < self.prayer_most(player),
                     // A blessing on the fields wants a field with something growing in it.
                     ResolvedReward::Grow(reach, _) => self.creatures.live.get(&id).is_some_and(|c| self.unripe_near(c.body.position, *reach)),
+                    // A bout is offered only to two who are both above where it would stop.
+                    ResolvedReward::Spar(down_to, _) => {
+                        let above = |health: f32, most: f32| health > (most * down_to).ceil();
+                        above(p.health.current as f32, p.health.max as f32)
+                            && self.creatures.live.get(&id).is_some_and(|c| above(c.health as f32, self.content.creatures.get(c.species).def.health as f32))
+                    }
                     _ => true,
                 })
                 && (!held_too
@@ -2229,7 +2242,6 @@ impl Server {
         {
             let next = std::mem::replace(&mut inst.plan, Plan::Shadow { until: 0 });
             inst.plan = Plan::Bout { player, fighter: id, down_to, until: self.tick + ticks(seconds), next: Box::new(next) };
-            inst.stage = Stage::Passing;
             if let Some(c) = self.creatures.live.get_mut(&id) {
                 c.mind.anger = 1.0;
                 c.mind.remember(Memory::HurtBy(player), GRUDGE);
@@ -5115,7 +5127,7 @@ mod tests {
         assert!(matches!(server.wandering.active[&id].plan, Plan::Bout { .. }), "a blow in a bout is no provocation");
         run(&mut server, 20);
         let inst = &server.wandering.active[&id];
-        assert_eq!(inst.stage, Stage::Won);
+        assert_eq!(inst.bouts, vec![(1, Stage::Won)]);
         assert!(matches!(inst.plan, Plan::Camp { .. }), "and the camp goes on");
         assert_eq!(server.creatures.live[&master].health, most, "scrapes bound");
         assert_eq!(server.creatures.live[&master].mind.anger, 0.0, "no grudge");
@@ -5140,7 +5152,7 @@ mod tests {
         assert!(health.alive() && health.current == floor, "beaten down to the share and no further: {} of {max}", health.current);
         let client = listen(&mut server);
         run(&mut server, 20);
-        assert_eq!(server.wandering.active[&id].stage, Stage::Lost);
+        assert_eq!(server.wandering.active[&id].bouts, vec![(1, Stage::Lost)]);
         assert!(says(&told(&client), "wander.base.sparring_master.bout_lost"));
         assert!(server.meet(1, master));
         assert!(says(&told(&client), "wander.base.sparring_master.lost"));
@@ -5156,7 +5168,7 @@ mod tests {
         run(&mut server, 20);
         let inst = &server.wandering.active[&id];
         assert!(matches!(inst.plan, Plan::Camp { .. }));
-        assert_eq!(inst.stage, Stage::Passing, "neither won");
+        assert!(inst.bouts.is_empty(), "neither won");
         assert_eq!(server.creatures.live[&master].mind.anger, 0.0);
         // A blow after the bout is a blow: he fights in earnest.
         server.wandering_hurt(master, 1);
@@ -5174,11 +5186,62 @@ mod tests {
         server.hurt_creature(1, champion, 1000, None, voxmar_engine::combat::Blow::Plain);
         assert!(server.creatures.live.contains_key(&champion), "nobody falls");
         run(&mut server, 20);
-        assert_eq!(server.wandering.active[&id].stage, Stage::Won);
+        assert_eq!(server.wandering.active[&id].bouts, vec![(1, Stage::Won)]);
         assert!(server.meet(1, champion));
         assert_eq!(count_of(&server, "base:gold_coin"), 8, "doubled");
         assert!(server.meet(1, champion));
         assert_eq!(count_of(&server, "base:gold_coin"), 8, "once");
+    }
+
+    /// A second player beside the party, holding `item`.
+    fn onlooker(server: &mut Server, near: u32, item: &str, count: u8) -> voxmar_protocol::ClientConnection {
+        let at = server.creatures.live[&near].body.position;
+        let (client, connection) = voxmar_protocol::local_pair();
+        let mut other = crate::player::Player::new(2, connection, at - Vec3::new(3.0, 0.0, 0.0), 2, server.tick, server.survival.max_health, &server.config.limits);
+        other.joined = true;
+        assert_eq!(other.inventory.add(server.content.blocks.expect(item), count), 0);
+        server.players.insert(2, other);
+        client
+    }
+
+    #[test]
+    fn a_bout_is_the_fighters_own_and_the_champion_takes_on_the_next_after_a_loss() {
+        let mut server = fixture();
+        let (id, champion) = camped(&mut server, "village_champion", 3.0);
+        give_held(&mut server, "base:gold_coin", 2);
+        let _client = onlooker(&mut server, champion, "base:gold_coin", 2);
+        assert!(server.meet(1, champion));
+        // Beaten down: player 1 loses the wager.
+        let species = server.creatures.live[&champion].species;
+        for _ in 0..400 {
+            server.tick += 1;
+            server.creature_strikes(champion, species, 1, 1.0);
+        }
+        run(&mut server, 20);
+        assert_eq!(server.wandering.active[&id].bouts, vec![(1, Stage::Lost)]);
+        assert!(server.meet(1, champion), "the loser hears it");
+        // The one looking on is not the loser: no loss line in the way, the wager is theirs.
+        assert!(server.meet(2, champion));
+        assert!(matches!(server.wandering.active[&id].plan, Plan::Bout { player: 2, .. }), "a bout with the onlooker");
+        server.hurt_creature(2, champion, 1000, None, voxmar_engine::combat::Blow::Plain);
+        run(&mut server, 20);
+        assert!(server.wandering.active[&id].bouts.contains(&(2, Stage::Won)));
+        // Player 1 cannot take player 2's winnings.
+        let coins = count_of(&server, "base:gold_coin");
+        server.meet(1, champion);
+        assert_eq!(count_of(&server, "base:gold_coin"), coins, "a win is the winner's");
+    }
+
+    #[test]
+    fn a_player_already_down_to_the_share_is_offered_no_bout() {
+        let mut server = fixture();
+        let (id, champion) = camped(&mut server, "village_champion", 3.0);
+        give_held(&mut server, "base:gold_coin", 2);
+        let max = server.players[&1].health.max;
+        server.players.get_mut(&1).unwrap().health.current = (max as f32 * 0.5).ceil() as u8;
+        server.meet(1, champion);
+        assert_eq!(count_of(&server, "base:gold_coin"), 2, "no wager taken from the wounded");
+        assert!(!matches!(server.wandering.active[&id].plan, Plan::Bout { .. }));
     }
 
     #[test]
