@@ -163,6 +163,9 @@ pub struct EventDef {
     /// What becomes of a captive when its captors are gone.
     #[serde(default)]
     pub freed: Option<Freed>,
+    /// What befriending one of the party (the `Befriend` reward) comes to.
+    #[serde(default)]
+    pub guide: Option<Guide>,
     /// Seconds it lasts at most; it ends sooner when it has gone by.
     #[serde(default = "lifetime")]
     pub lifetime: f32,
@@ -218,6 +221,27 @@ pub struct Halt {
 
 fn cooldown() -> f32 {
     90.0
+}
+
+/// Where a befriended one is led, and what it comes to: it follows the player for up to
+/// `follow_for` seconds and, at `arrive`, thanks them (`arrived` is said, with `thanks`) and
+/// stays there, a person of the land. Led nowhere in time, it is lost again.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Guide {
+    pub follow_for: f32,
+    pub arrive: Arrival,
+    #[serde(default)]
+    pub thanks: Vec<Reward>,
+}
+
+/// Where a follower is going.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub enum Arrival {
+    /// The player's home.
+    Home,
+    /// Any settlement.
+    Town,
 }
 
 /// What a party does when a player strikes one of its members.
@@ -279,6 +303,8 @@ pub enum Role {
     Pet(usize),
     /// Has no errand: acts by its own nature where the party stands.
     Free,
+    /// Part of a herd: keeps loosely about the leader, wherever it grazes.
+    Herd,
     /// Held by the rest: walks close behind the leader until every other member is gone or
     /// the bonds are cut (the `Free` reward), then is a freed captive (`freed`).
     Captive,
@@ -299,6 +325,12 @@ pub enum Script {
     /// Keeps `keep` blocks (least and most) from the nearest player, standing still when
     /// looked at, for `seconds`, then goes.
     Shadow { keep: (f32, f32), seconds: f32 },
+    /// Wanders about the place it began, within `radius` blocks, pausing `pause` seconds
+    /// (least and most) at each spot, sitting if `rest`, for `seconds`, then goes.
+    Roam { radius: f32, pause: (f32, f32), rest: bool, seconds: f32 },
+    /// Grazes along: short legs of `leg` blocks (least and most) in a slowly turning
+    /// direction with a pause between, for `seconds`, then goes.
+    Drift { leg: (f32, f32), pause: (f32, f32), seconds: f32 },
 }
 
 /// What speakers of an event say and give.
@@ -374,6 +406,8 @@ pub enum Reward {
     Effect(String, f32),
     /// Health restored.
     Heal(u8),
+    /// The speaker follows the player toward the event's `guide` arrival.
+    Befriend,
     /// Cuts the bonds of the party's captive, and does nothing for the captors' mood.
     Free,
     /// The party turns on the player, as if one of them had been struck.
@@ -388,6 +422,8 @@ pub struct Event {
     pub meetings: Vec<ResolvedMeeting>,
     /// What a freed captive gives its rescuer.
     pub thanks: Vec<ResolvedReward>,
+    /// What a led one gives the player who brought it to its journey's end.
+    pub guide_thanks: Vec<ResolvedReward>,
 }
 
 /// A meeting with its lines resolved.
@@ -404,9 +440,17 @@ pub struct ResolvedMeeting {
 pub struct Line {
     pub name: String,
     pub needs: Vec<ResolvedNeed>,
-    pub wants: Option<(BlockId, u8)>,
+    pub wants: Option<(Want, u8)>,
     pub gives: Vec<ResolvedReward>,
     pub once: Once,
+}
+
+/// What a line takes from the player's hand.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Want {
+    Item(BlockId),
+    /// Any item with this tag.
+    Tag(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -424,6 +468,7 @@ pub enum ResolvedReward {
     Xp(SkillId, f32),
     Effect(EffectId, f32),
     Heal(u8),
+    Befriend,
     Free,
     Anger,
 }
@@ -437,6 +482,7 @@ fn resolve_reward(reward: &Reward, blocks: &BlockRegistry, skills: &SkillRegistr
         Reward::Xp(name, xp) => ResolvedReward::Xp(skills.id(name).ok_or_else(|| format!("no skill `{name}`"))?, *xp),
         Reward::Effect(name, seconds) => ResolvedReward::Effect(effects.find(name).ok_or_else(|| format!("no effect `{name}`"))?, *seconds),
         Reward::Heal(health) => ResolvedReward::Heal(*health),
+        Reward::Befriend => ResolvedReward::Befriend,
         Reward::Free if !captive => return Err("frees a captive, but there is none".into()),
         Reward::Free => ResolvedReward::Free,
         Reward::Anger => ResolvedReward::Anger,
@@ -522,14 +568,12 @@ impl WanderRegistry {
         for event in &mut events {
             qualify(&mut event.name);
             event.cast.iter_mut().for_each(|g| qualify(&mut g.species));
-            if let Some(freed) = &mut event.freed {
-                for reward in &mut freed.thanks {
-                    match reward {
-                        Reward::Item(item, _) => qualify(item),
-                        Reward::Xp(skill, _) if !skill.contains(':') => *skill = format!("core:{skill}"),
-                        Reward::Effect(effect, _) => qualify(effect),
-                        _ => {}
-                    }
+            for reward in event.freed.iter_mut().flat_map(|f| f.thanks.iter_mut()).chain(event.guide.iter_mut().flat_map(|g| g.thanks.iter_mut())) {
+                match reward {
+                    Reward::Item(item, _) => qualify(item),
+                    Reward::Xp(skill, _) if !skill.contains(':') => *skill = format!("core:{skill}"),
+                    Reward::Effect(effect, _) => qualify(effect),
+                    _ => {}
                 }
             }
             for meeting in &mut event.meetings {
@@ -617,6 +661,12 @@ impl WanderRegistry {
                 Script::Camp { near, stay, mill, away } if near < 8.0 || stay.0 > stay.1 || mill < 1.0 || away < 40.0 => {
                     return Err(error(format!("Camp needs near of at least 8, stay.0 <= stay.1, a mill of at least 1 and away of at least 40: not {near}, {stay:?}, {mill}, {away}")));
                 }
+                Script::Roam { radius, pause, seconds, .. } if !(0.0..=40.0).contains(&radius) || pause.0 > pause.1 || pause.0 < 0.0 || seconds < 30.0 => {
+                    return Err(error(format!("Roam needs a radius of 0 to 40, pause.0 <= pause.1 and 30 seconds or more, not {radius}, {pause:?}, {seconds}")));
+                }
+                Script::Drift { leg, pause, seconds } if leg.0 < 3.0 || leg.0 > leg.1 || pause.0 > pause.1 || pause.0 < 0.0 || seconds < 30.0 => {
+                    return Err(error(format!("Drift needs legs of at least 3 blocks (least <= most), pause.0 <= pause.1 and 30 seconds or more, not {leg:?}, {pause:?}, {seconds}")));
+                }
                 Script::Shadow { keep, seconds } if keep.0 < 4.0 || keep.0 > keep.1 || seconds < 10.0 => {
                     return Err(error(format!("Shadow needs keep of at least 4 (least <= most) and 10 seconds or more, not {keep:?}, {seconds}")));
                 }
@@ -637,6 +687,15 @@ impl WanderRegistry {
                 (0, Some(_)) => return Err(error("has `freed` but no captive".into())),
                 _ => {}
             }
+            if let Some(g) = &def.guide
+                && (g.follow_for < 30.0 || g.follow_for > def.lifetime)
+            {
+                return Err(error(format!("`guide.follow_for` ({}) must be 30 seconds up to the lifetime ({})", g.follow_for, def.lifetime)));
+            }
+            let befriends = def.meetings.iter().flat_map(|m| &m.lines).any(|l| l.gives.iter().any(|r| matches!(r, Reward::Befriend)));
+            if befriends != def.guide.is_some() {
+                return Err(error("`guide` and the `Befriend` reward go together: one without the other does nothing".into()));
+            }
             if let Some(halt) = def.halt
                 && (halt.near < 2.0 || halt.seconds.0 < 1.0 || halt.seconds.0 > halt.seconds.1 || halt.cooldown < 0.0)
             {
@@ -652,9 +711,19 @@ impl WanderRegistry {
             if captives == 1 {
                 names.extend(["thanks".into(), "freed".into()]);
             }
+            if def.guide.is_some() {
+                names.extend(["arrived".into(), "company".into()]);
+            }
+            let mut guide_thanks = Vec::new();
+            for reward in def.guide.iter().flat_map(|g| &g.thanks) {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend) {
+                    return Err(error("a guide's `thanks` gives items, experience, effects or healing only".into()));
+                }
+                guide_thanks.push(resolve_reward(reward, blocks, skills, effects, false).map_err(|why| error(format!("guide thanks: {why}")))?);
+            }
             let mut thanks = Vec::new();
             for reward in def.freed.iter().flat_map(|f| &f.thanks) {
-                if matches!(reward, Reward::Free | Reward::Anger) {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend) {
                     return Err(error("a captive's `thanks` gives items, experience, effects or healing only".into()));
                 }
                 thanks.push(resolve_reward(reward, blocks, skills, effects, true).map_err(|why| error(format!("thanks: {why}")))?);
@@ -700,7 +769,13 @@ impl WanderRegistry {
                     }
                     let wants = match &line.wants {
                         Some((name, count)) if *count == 0 => return Err(at(format!("wants 0 of `{name}`"))),
-                        Some((name, count)) => Some((item(name)?, *count)),
+                        Some((name, count)) => Some((
+                            match name.strip_prefix("tag:") {
+                                Some(tag) => Want::Tag(tag.to_owned()),
+                                None => Want::Item(item(name)?),
+                            },
+                            *count,
+                        )),
                         None => None,
                     };
                     let mut gives = Vec::new();
@@ -713,7 +788,7 @@ impl WanderRegistry {
                 meetings.push(ResolvedMeeting { who: meeting.who, greet: meeting.greet.clone(), greets: meeting.greets, lines });
             }
             registry.by_name.insert(def.name.clone(), registry.events.len());
-            registry.events.push(Event { def, groups, meetings, thanks });
+            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks });
         }
         Ok(registry)
     }
@@ -765,6 +840,7 @@ pub fn slot(role: Role, i: usize, n: usize, seed: u64) -> glam::Vec2 {
         Role::Ahead => glam::Vec2::new(jitter(5) * 5.0, -14.0 - rank * 2.0),
         Role::Pet(_) => glam::Vec2::new(1.6 + jitter(6) * 1.4, 0.4 + jitter(7) * 1.6),
         Role::Captive => glam::Vec2::new(jitter(8) * 0.8, 2.4),
+        Role::Herd => glam::Vec2::new(jitter(9) * 9.0, 1.0 + (jitter(10) + 0.5) * 6.0),
         Role::Lead | Role::Free => glam::Vec2::ZERO,
     }
 }

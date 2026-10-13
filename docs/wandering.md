@@ -27,7 +27,7 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   with `habitat: (party_only: true)` is never spawned naturally.
 - **Cast and roles.** A cast is groups, each a species, a count range and a role: `Lead`
   (the first group's first member leads everything), `Follow`, `Flank` (alternating sides),
-  `Rear`, `Ahead` (scouts), `Pet(group)` (keeps to that group's first member), `Free` (its
+  `Rear`, `Ahead` (scouts), `Herd` (loosely about the leader), `Captive`, `Pet(group)` (keeps to that group's first member), `Free` (its
   own brain, only kept in the party's books).
 - **Scripts.** The script decides where the leader goes; every other member gets a formation
   slot from its role. The server hands each member an `Errand`, the same handoff villagers
@@ -38,6 +38,10 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   - `Camp(near, stay, mill, away)`: settles near the player, mills about (rests at night),
     leaves.
   - `Shadow(keep, seconds)`: keeps `keep` blocks from the player, stands still when looked at.
+  - `Roam(radius, pause, rest, seconds)`: wanders about the place it began, pausing (sitting
+    if `rest`), then goes.
+  - `Drift(leg, pause, seconds)`: grazes along in short legs of a slowly turning heading;
+    the `Herd` role keeps the rest loosely round the leader.
   The leader strides in 6-block steps and turns aside where the ground will not do; with no
   headway for six seconds it detours, and after four detours the party gives up and leaves.
 - **Stopping.** A party with a `halt` stops for a player who comes within `near` of its
@@ -115,6 +119,22 @@ Mariano's brief for the whole set, which a new kind is checked against:
 | 9 | bard band | March | Musicians pass by; a song refreshes the player. |
 | 10 | prison convoy | March | Two or three jailers march a prisoner. They leave you be until struck. Kill them, bribe them (three gold coins), or cut the ropes with a knife and the jailers turn on you. The freed prisoner follows you half the time and settles by your home, or goes off alone. |
 
+## Batch 2 (implemented, four kinds)
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| shepherd and flock | Drift | A shepherd grazes a flock of mouflon along, with a dog at heel. Stand still and the flock comes round you; any food teaches a beginner Farming once; two loaves buy wool. Tame one of the flock with the usual food and it is yours, and leaves the flock. |
+| lost child | Roam, then Follow | A child who followed a butterfly. Feed them and they follow you to the nearest settlement, where the family pays in coins and bread. Strike them and they run, lost again. |
+| stray hound | Roam | A hound with no one. Feed it meat with Hunter 2 and enough patience and it is yours (the usual taming), and leaves its party. |
+| wounded hunter | Roam (sitting) | Share food and they teach Hunter (to level 15) and give flints; nothing for the skilled. |
+
+New in the framework: the `Roam` and `Drift` scripts, the `Herd` role, a line can `wants`
+any item with a tag (`"tag:edible"`), the `Befriend` reward with an event `guide` (follow the
+player for so long, to `Home` or `Town`, thank them with rewards, stay), and a member a
+player has taken in (owner set) leaves its party. These are general rules in data: taming,
+feeding and trading already in the game are what the player combines with a wandering
+kind, and the kind needs no code of its own.
+
 ## Catalogue of 100
 
 Status: `done` is in batch 1, `next` is the second batch (ages 1 and 2: Nomad and Farm
@@ -133,8 +153,8 @@ are the mechanics later batches add, each used by several kinds.
 | 8 | tinker camp | see batch 1 | | 1 | done |
 | 9 | bard band | see batch 1 | | 1 | done |
 | 10 | prison convoy | see batch 1 | Captive | 2 | done |
-| 11 | lost child | a child wanders crying; leading it to a settlement pays a coin and standing | Escort | 1 | next |
-| 12 | shepherd with flock | a villager and sheep drifting on pasture; lamb for wool | Herd | 2 | next |
+| 11 | lost child | see batch 2 | Roam, Guide | 1 | done |
+| 12 | shepherd with flock | see batch 2 | Drift, Herd | 2 | done |
 | 13 | cowherd and cows | milk for a bucket held out | Herd | 2 | next |
 | 14 | goose girl | geese on a march to water | Herd | 2 | next |
 | 15 | berry pickers | villagers gather and drop forage in a basket; trade a share | Forage | 1 | next |
@@ -149,7 +169,7 @@ are the mechanics later batches add, each used by several kinds.
 | 24 | travelling smith | repairs held tools for coin | Camp | 2 | next |
 | 25 | travelling cook | a pot on the fire; a portion for an ingredient | Camp | 1 | next |
 | 26 | story teller | camps at dusk; players near get a journal page | Camp | 1 | next |
-| 27 | stray hound | a lone dog that follows the player until fed, then adopts | Lure | 1 | next |
+| 27 | stray hound | see batch 2 | Roam | 1 | done |
 | 28 | deer herd | drifts through; flees when seen | Herd | 1 | next |
 | 29 | boar sounder | sow with piglets; charges what comes close | Herd | 1 | next |
 | 30 | fox and hens | a fox stalks a hen that runs | Chase | 2 | next |
@@ -217,7 +237,7 @@ are the mechanics later batches add, each used by several kinds.
 | 92 | shipwreck survivors | on a shore; bring food for a map | Escort | 3 | later |
 | 93 | pirate landing | a boat, a dozen, one keg | Ambush | 4 | later |
 | 94 | sea monster wake | a long shape in the water; a boat is chased | Chase | 5 | later |
-| 95 | mine canary | a bird that flies from bad air | Ambient | 3 | later |
+| 95 | wounded hunter | see batch 2 (a hunter hurt by a boar) | Roam | 3 | done |
 | 96 | mole people | emerge at dusk; carry a gem | Haul | 4 | later |
 | 97 | golem walk | a stone golem on an old road | Patrol | 4 | later |
 | 98 | ancient automaton | wakes at a ruin, rolls a ring, goes still | Patrol | 5 | later |

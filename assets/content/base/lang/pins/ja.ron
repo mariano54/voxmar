@@ -72,6 +72,7 @@
     "creature.base.quail": ("Quail", "ウズラ"),
     "creature.base.rabbit": ("Rabbit", "ウサギ"),
     "creature.base.raider": ("Raider", "野盗"),
+    "creature.base.hunter": ("Hunter", "狩人"),
     "creature.base.jailer": ("Jailer", "看守"),
     "creature.base.captive": ("Captive", "囚人"),
     "creature.base.red_deer": ("Red deer", "アカシカ"),

@@ -26,6 +26,9 @@ fn every_event_word_is_a_key_in_both_languages() {
             if event.has_captive() {
                 keys.extend([event.key("thanks"), event.key("freed")]);
             }
+            if event.def.guide.is_some() {
+                keys.extend([event.key("arrived"), event.key("company")]);
+            }
             for key in keys {
                 assert!(lang.find(&key).is_some(), "{code}: `{key}` is missing for {}", event.def.name);
             }

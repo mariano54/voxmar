@@ -165,5 +165,57 @@
                 ]),
             ],
         ),
+        // A shepherd drifting a flock over the grass with a dog at heel. Stand still and the
+        // flock comes round you; run and it scatters. A kind word and a crust teach Farming
+        // to a beginner, and the shepherd shears for bread. (Tame one of the mouflon with the
+        // usual food and it is yours, and leaves the flock.)
+        (
+            name: "shepherd_and_flock", weight: 0.9,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.5)],
+            daylight: (0.35, 0.95), needs: (days: 0.8),
+            cast: [(species: "herder"), (species: "mouflon", count: (4, 6), role: Herd), (species: "hound", role: Pet(0))],
+            script: Drift(leg: (7.0, 14.0), pause: (6.0, 20.0), seconds: 420.0),
+            halt: (near: 6.0, seconds: (15.0, 25.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "tip", needs: [Below("farming", 12)], wants: ("tag:edible", 1), gives: [Xp("farming", 12.0)], once: Player),
+                (name: "swap_bread", wants: ("bread", 2), gives: [Item("wool", (3, 5))]),
+            ])],
+        ),
+        // A child who followed a butterfly too far. Feed them and they walk with you to the
+        // nearest settlement; their family pays what it can. Strike them and they run, lost
+        // again. Far from any town they are in more danger, and it is a long walk.
+        (
+            name: "lost_child", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.7)],
+            daylight: (0.35, 0.9), needs: (days: 0.8, away: Some((60.0, 100000.0))),
+            cast: [(species: "child")],
+            script: Roam(radius: 14.0, pause: (4.0, 12.0), rest: false, seconds: 600.0),
+            guide: (follow_for: 900.0, arrive: Town, thanks: [Item("gold_coin", (1, 2)), Item("bread", (2, 3))]),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "comfort", wants: ("tag:edible", 1), gives: [Befriend], once: Party),
+            ])],
+        ),
+        // A hound with no one: thin, curious, ready to bolt. Feed it meat and, with enough of
+        // a hunter's patience (Hunter 2), it takes to you and is yours.
+        (
+            name: "stray_hound", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:grassland", 0.8)],
+            daylight: (0.2, 1.0), needs: (days: 0.6, away: Some((40.0, 100000.0))),
+            cast: [(species: "hound")],
+            script: Roam(radius: 18.0, pause: (6.0, 16.0), rest: false, seconds: 600.0),
+        ),
+        // A hunter hurt by a boar, sitting out the day. Share food and they show you how to
+        // read a track (Hunter, to level 15) and press on you the flints they carry.
+        (
+            name: "wounded_hunter", weight: 0.4,
+            biomes: [("tag:forest", 1.0), ("tag:mountain", 0.5), ("tag:grassland", 0.3)],
+            daylight: (0.3, 1.0), needs: (days: 1.0, away: Some((50.0, 100000.0))),
+            cast: [(species: "hunter")],
+            script: Roam(radius: 0.0, pause: (30.0, 60.0), rest: true, seconds: 700.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "grown", needs: [Skill("hunter", 15)]),
+                (name: "meal", wants: ("tag:edible", 1), gives: [Xp("hunter", 12.0), Item("flint", (2, 3))], once: Player),
+            ])],
+        ),
     ],
 )

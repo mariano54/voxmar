@@ -113,6 +113,12 @@ impl Villagers {
         self.dead.get(&(town, i)).map_or(0, |d| d.generation)
     }
 
+    /// Whether a settlement's centre is within `reach` blocks of `at` (settlements that are
+    /// loaded: those near a player).
+    pub(crate) fn town_within(&self, at: Vec3, reach: f32) -> bool {
+        self.towns.values().any(|t| Vec2::new(t.info.centre.x as f32 - at.x, t.info.centre.z as f32 - at.z).length() < reach)
+    }
+
     /// Whether creature `id` is someone's, kept here rather than by the land.
     pub(crate) fn manages(&self, id: u32) -> bool {
         self.by_creature.contains_key(&id)
