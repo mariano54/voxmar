@@ -18,8 +18,9 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   server. The spot is
   a standable cell at `appear_near` to `appear_far` blocks, out of every player's view. The
   kind is drawn by weight from the kinds that suit the biome (name or tag), the hour
-  (`daylight`), and the player (`needs`: days, home or not, combat level, and `away`: how far from where the world began,
-  so the tutors and the convoys are for those who go exploring); a kind met in the
+  (`daylight`), and the player (`needs`: days, home or not, combat level, `away`: how far from where the world began,
+  so the tutors and the convoys are for those who go exploring, and `town`: within so many
+  blocks of a settlement of the world's plan, so the town watch keeps to its town's land); a kind met in the
   last `repeat_memory` seconds weighs `repeat_weight` of itself.
 - **Budgets.** People of a party count against `people_most`, not against the settlements'
   villager cap. Animals and monsters of a party count against the usual land caps near
@@ -81,6 +82,17 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
     Some((near, stages))`, planted crops within `near` blocks of where it is set down grow
     on `stages` (water poured on a field). A kind that delivers comes only where something
     it delivers to is within `reach` as well.
+  - `Hunt(reach, strike, takes, seconds)`: goes after the nearest wild creature of the
+    event's `quarry` (species; animals only) within `reach` blocks of the leader: nobody's,
+    of no party. It walks up, stalks slowly from 10 blocks and rushes the last few; one of
+    the party within `strike` blocks of it brings it down (a death with no loot and no
+    experience for anyone), the stage is `Took`, and they stand over it six seconds. A
+    quarry not reached in a minute is given up for another. After `takes` kills, `seconds`,
+    or with nothing left in reach, they march off. A player who drew first blood on what
+    they took is given the event's `share` (items, XP, effects, healing) with its `share`
+    line, and the kill's own loot drops for them; with no `share`, the party keeps it all.
+    A hunting kind comes only where its quarry is within `reach` of the spot, and does not
+    halt, guard, startle or hold a captive.
   The leader strides in 6-block steps and turns aside where the ground will not do; with no
   headway for six seconds it detours, and after four detours the party gives up and leaves.
 - **Stopping.** A party with a `halt` stops for a player who comes within `near` of its
@@ -104,9 +116,11 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   within `reach` blocks of the speaker, which way and about how far (as `/locate
   settlement` finds it; said only when there is one); `Cook(station, most, keep)`: cooks what the line takes by the
   game's own recipes at that station (cooking.ron), never burnt, up to `most` of what is in
-  hand, keeping `keep` for the speaker's pot, said only with something it cooks in hand). A
+  hand, keeping `keep` for the speaker's pot, said only with something it cooks in hand; `OneOf([...])`: one of two or more items, XP,
+  effects, healing, `Point`s or `Town`s, picked by chance among those that have something
+  to tell where the speaker stands, a fortune; said only when one has). A
   line can also need `When(stage)` (the party is at that
-  stage of its script: `Caught`, `Waiting`, `Sprung`, `Won`, `Leading`, `Arrived`; the stage
+  stage of its script: `Caught`, `Waiting`, `Sprung`, `Won`, `Leading`, `Arrived`, `Took`; the stage
   must belong to the event's script) or `Struck(group)` (this player struck a member of that
   group of the cast, and the party did not turn on them for it). A line with only such needs
   and no `wants` is the stage's own greeting. `once` is `Always`, `Player` or `Party`. The speech is the lang key `wander.<package>.<event>.<line>`; the greeting
@@ -358,6 +372,32 @@ species, the scarecrow.
 | holds what they want | a coin in the hat | food: one follows home | n/a |
 | strikes one | scatter, no show | scatter | scatter |
 
+## Batch 8 (implemented, six kinds): the hunt, the town watch, a fortune
+
+The new pieces are the `Hunt` script (a party that goes after wild quarry and brings it
+down itself), `needs.town` (a kind that keeps near a settlement) and the `OneOf` reward (a
+fortune: one true thing among several), and a new species, the poacher.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| hunting party | Hunt | A hunter, a beater and hounds after boar and deer by day. They take the nearest in reach, twice. Whoever drew first blood on what they bring down gets a share: the kill's loot and a little Hunter XP. A beginner (Hunter below 10) is shown how to read the ground. |
+| poacher | Hunt | A poacher after deer at dusk, alone. Once he has one, a cut of venison buys your silence; a fighter with a weapon in hand (Attack 10) sends him off before he takes it, and the deer lives. Struck, he runs; killed, he drops what he carried. |
+| trapper | Hunt | A trapper takes three of the rabbits, hares and pheasant about. First blood drawn on one of them is shared; a beginner (Hunter below 8) learns to set a snare. |
+| night watchman | Patrol, town | Walks a round near a town at night. Binds the hurt, shows a beginner how to keep their guard (Defence below 10) and tells the lost the way to town. Strike him and he fights. |
+| guard patrol | Patrol, town | Two or three guards walk a town's land by day. A fang earns the town's bounty (a coin, Attack XP, once); a beginner with a weapon in hand is drilled. Strike one and they fight. |
+| fortune teller | Camp, OneOf | Camps of an evening. A coin buys a fortune, once: a wonder, a surface ore, a root or the way to a town, whichever is near and true. With nothing to tell, she takes nothing. |
+
+| the player | hunting party | poacher | town watch |
+| --- | --- | --- | --- |
+| walks past | they hunt on | he hunts on | they walk their round |
+| strikes the quarry first | a share of the kill | nothing | n/a |
+| kills the quarry first | they hunt the next | he hunts the next | n/a |
+| holds a weapon | nothing | a fighter sends him off | a beginner is drilled |
+| strikes one | scatter | he runs | they fight |
+
+The beekeeper waits for bees: honey only comes with the farming age's skeps, as one item
+that both heals and goes into a recipe, not before.
+
 ## Catalogue of 100
 
 Status: `done` is in a batch above, `next` is the second batch (ages 1 and 2: Nomad and Farm
@@ -397,11 +437,11 @@ are the mechanics later batches add, each used by several kinds.
 | 29 | boar sounder | see batch 4 | Herd | 1 | done |
 | 30 | fox and farmer | see batch 3 (a fox runs, a farmer chases) | Chase | 2 | done |
 | 31 | thief and constable | see batch 3 | Chase | 2 | done |
-| 32 | poacher | hunts deer; reporting them to a guard pays | Hunt | 2 | later |
-| 33 | hunting party | villagers with hounds track a boar | Hunt | 2 | later |
+| 32 | poacher | see batch 8 | Hunt | 2 | done |
+| 33 | hunting party | see batch 8 | Hunt | 2 | done |
 | 34 | scarecrow walker | see batch 7 | Shadow | 2 | done |
-| 35 | night watchman | walks a village ring with a lantern | Patrol | 2 | later |
-| 36 | village guard patrol | guards walk a loop between settlements | Patrol | 2 | later |
+| 35 | night watchman | see batch 8 | Patrol | 2 | done |
+| 36 | village guard patrol | see batch 8 | Patrol | 2 | done |
 | 37 | tax collector | asks coin from a player with a home; refusing makes guards hostile for a day | Meeting | 2 | later |
 | 38 | wedding procession | see batch 6 | | 2 | done |
 | 39 | funeral procession | see batch 6 | | 2 | done |
@@ -414,7 +454,7 @@ are the mechanics later batches add, each used by several kinds.
 | 46 | wandering monk | see batch 7 | Meeting | 2 | done |
 | 47 | travelling alchemist | see batch 6 | Asks | 2 | done |
 | 48 | rat catcher | a piper followed by rats | Lure | 2 | later |
-| 49 | gypsy wagon | a wagon camps; fortunes told (a journal hint) | Camp | 2 | later |
+| 49 | fortune teller | see batch 8 | OneOf | 2 | done |
 | 50 | puppeteers | see batch 7 | Show | 2 | done |
 | 51 | circus | acrobats, a bear on a chain; scares animals | Camp | 3 | later |
 | 52 | messenger | runs between settlements; a letter for a coin | Errand | 2 | later |
@@ -466,6 +506,7 @@ are the mechanics later batches add, each used by several kinds.
 | 98 | ancient automaton | wakes at a ruin, rolls a ring, goes still | Patrol | 5 | later |
 | 99 | angel passing | a light; heals the hurt | Ambient | 5 | later |
 | 100 | wandering god | a veiled figure; a single wish for a price | Meeting | 5 | later |
+| 101 | trapper | see batch 8 | Hunt | 1 | done |
 
 ## Mechanics the next batches add
 
@@ -482,6 +523,7 @@ Each is a script or a role used by many kinds, so every kind stays a few lines o
 - **Lure**: done (batch 3): leads the player on if followed; the end is a reward. A trap end is a
   later `Lure` whose lurkers spring at the end.
 - **Show**: done (batch 7): a camped party puts on something to watch; staying pays.
+- **Hunt**: done (batch 8): a party goes after wild quarry and brings it down; first blood shares.
 - **Duel / Dance / Crossing / Vigil**: fixed arrangements of the formation code.
 
 ## Notes

@@ -226,6 +226,14 @@ pub struct EventDef {
     /// What a camped party puts on for whoever stays to watch (a puppet play, a dance).
     #[serde(default)]
     pub show: Option<Show>,
+    /// What a `Hunt` party hunts: wild creatures of these species. It comes only where one
+    /// is within its `reach`.
+    #[serde(default)]
+    pub quarry: Vec<String>,
+    /// What a `Hunt` party gives the player who drew first blood on what it took, besides
+    /// the kill's own loot, with the event's `share` line. Without it, they keep it all.
+    #[serde(default)]
+    pub share: Vec<Reward>,
     /// Seconds it lasts at most; it ends sooner when it has gone by.
     #[serde(default = "lifetime")]
     pub lifetime: f32,
@@ -276,6 +284,9 @@ pub struct Needs {
     /// How far from where the world began it comes, least and most, in blocks: the far
     /// parts of the world have the rare parties.
     pub away: Option<(f32, f32)>,
+    /// It comes only within this many blocks of a settlement of the world's plan (the
+    /// town watch keeps near its town).
+    pub town: Option<f32>,
 }
 
 /// A party that stops for a player: when one comes within `near` blocks of its leader, it
@@ -470,6 +481,11 @@ pub enum Script {
         #[serde(default)]
         carry: Option<Carry>,
     },
+    /// Goes after the nearest wild creature of the event's `quarry` within `reach` blocks
+    /// of its leader, stalking the last of the way; when one of the party comes within
+    /// `strike` blocks of it, it falls to them (the stage `Took`), and they stand over it a
+    /// moment. After `takes` kills, or `seconds`, or with nothing left in reach, they go.
+    Hunt { reach: f32, strike: f32, takes: u8, seconds: f32 },
 }
 
 /// What a `Gather` worker does with what it worked.
@@ -555,6 +571,8 @@ pub enum Stage {
     Leading,
     /// A `Lure` at its journey's end.
     Arrived,
+    /// A `Hunt` that has taken something.
+    Took,
 }
 
 impl Stage {
@@ -565,6 +583,7 @@ impl Stage {
             Stage::Caught => matches!(script, Script::Chase { .. }),
             Stage::Waiting | Stage::Sprung | Stage::Won => matches!(script, Script::Ambush { .. }),
             Stage::Leading | Stage::Arrived => matches!(script, Script::Lure { .. }),
+            Stage::Took => matches!(script, Script::Hunt { .. }),
         }
     }
 }
@@ -622,6 +641,10 @@ pub enum Reward {
     /// (cooking.ron), never burnt: up to the second number of what is in hand, keeping the
     /// third of the cooked for the speaker's pot. Said only with something it cooks in hand.
     Cook(String, u8, u8),
+    /// One of these (items, experience, effects, healing, a `Point` or a `Town`), picked
+    /// by chance among those that have something to tell where the speaker stands: a
+    /// fortune. Said only when one of them has.
+    OneOf(Vec<Reward>),
 }
 
 /// A kind of event with its names resolved.
@@ -644,6 +667,9 @@ pub struct Event {
     pub stalk: Option<(SkillId, f32)>,
     /// What watching its show gives.
     pub show: Vec<ResolvedReward>,
+    /// What a `Hunt` party hunts, and what it gives the one who drew first blood.
+    pub quarry: Vec<CreatureId>,
+    pub share: Vec<ResolvedReward>,
 }
 
 /// A meeting with its lines resolved.
@@ -713,6 +739,7 @@ pub enum ResolvedReward {
     Hand(usize),
     /// A station's tag, the most cooked at once, and how many of them are kept.
     Cook(String, u8, u8),
+    OneOf(Vec<ResolvedReward>),
 }
 
 /// A block name or a `tag:` selector, resolved: what a `seek` or a `Point` looks for.
@@ -758,7 +785,27 @@ fn resolve_reward(reward: &Reward, namespace: &str, blocks: &BlockRegistry, skil
         Reward::Hand(group) => ResolvedReward::Hand(*group),
         Reward::Cook(_, most, keep) if *most == 0 || keep >= most => return Err(format!("cooks up to {most} and keeps {keep}: it must give some back")),
         Reward::Cook(station, most, keep) => ResolvedReward::Cook(station.clone(), *most, *keep),
+        Reward::OneOf(choices) if choices.len() < 2 => return Err("`OneOf` picks one of two or more".into()),
+        Reward::OneOf(choices) => ResolvedReward::OneOf(
+            choices
+                .iter()
+                .map(|choice| match choice {
+                    Reward::Item(..) | Reward::Xp(..) | Reward::Effect(..) | Reward::Heal(_) | Reward::Point(..) | Reward::Town(_) => resolve_reward(choice, namespace, blocks, skills, effects, false),
+                    _ => Err("`OneOf` picks among items, experience, effects, healing, `Point`s and `Town`s".into()),
+                })
+                .collect::<Result<_, _>>()?,
+        ),
     })
+}
+
+/// Qualifies the names a reward gives with `namespace`, as `qualify` does.
+fn qualify_reward(reward: &mut Reward, qualify: &impl Fn(&mut String)) {
+    match reward {
+        Reward::Item(item, _) | Reward::Point(item, _) => qualify(item),
+        Reward::Effect(effect, _) => qualify(effect),
+        Reward::OneOf(choices) => choices.iter_mut().for_each(|c| qualify_reward(c, qualify)),
+        _ => {}
+    }
 }
 
 impl Event {
@@ -843,12 +890,17 @@ impl WanderRegistry {
             event.cast.iter_mut().for_each(|g| qualify(&mut g.species));
             event.seek.iter_mut().for_each(qualify);
             event.deliver.iter_mut().for_each(qualify);
-            for reward in event.freed.iter_mut().flat_map(|f| f.thanks.iter_mut()).chain(event.guide.iter_mut().flat_map(|g| g.thanks.iter_mut())).chain(event.reveal.iter_mut()).chain(event.show.iter_mut().flat_map(|s| s.gives.iter_mut())) {
-                match reward {
-                    Reward::Item(item, _) | Reward::Point(item, _) => qualify(item),
-                    Reward::Effect(effect, _) => qualify(effect),
-                    _ => {}
-                }
+            event.quarry.iter_mut().for_each(qualify);
+            for reward in event
+                .freed
+                .iter_mut()
+                .flat_map(|f| f.thanks.iter_mut())
+                .chain(event.guide.iter_mut().flat_map(|g| g.thanks.iter_mut()))
+                .chain(event.reveal.iter_mut())
+                .chain(event.show.iter_mut().flat_map(|s| s.gives.iter_mut()))
+                .chain(event.share.iter_mut())
+            {
+                qualify_reward(reward, &qualify);
             }
             for meeting in &mut event.meetings {
                 for line in &mut meeting.lines {
@@ -857,11 +909,7 @@ impl WanderRegistry {
                     }
                     line.asks.iter_mut().for_each(|(item, _)| qualify(item));
                     for reward in &mut line.gives {
-                        match reward {
-                            Reward::Item(item, _) | Reward::Point(item, _) => qualify(item),
-                            Reward::Effect(effect, _) => qualify(effect),
-                            _ => {}
-                        }
+                        qualify_reward(reward, &qualify);
                     }
                 }
             }
@@ -975,6 +1023,9 @@ impl WanderRegistry {
                 Script::Gather { reach, work, visits, .. } if !(4.0..=32.0).contains(&reach) || work.0 < 2.0 || work.0 > work.1 || visits == 0 => {
                     return Err(error(format!("Gather needs a reach of 4 to 32, work of at least 2 seconds (least <= most) and a visit, not {reach}, {work:?}, {visits}")));
                 }
+                Script::Hunt { reach, strike, takes, seconds } if !(8.0..=64.0).contains(&reach) || !(1.5..=4.0).contains(&strike) || !(1..=4).contains(&takes) || seconds < 60.0 => {
+                    return Err(error(format!("Hunt needs a reach of 8 to 64, a strike of 1.5 to 4, 1 to 4 takes and 60 seconds or more, not {reach}, {strike}, {takes}, {seconds}")));
+                }
                 Script::Gather { carry: Some(Carry { set, tend }), .. }
                     if set.0 < 1.0 || set.0 > set.1 || tend.is_some_and(|(near, stages)| !(1.0..=6.0).contains(&near) || !(1..=2).contains(&stages)) =>
                 {
@@ -1011,6 +1062,21 @@ impl WanderRegistry {
             }
             if (chase || ambush || lure) && (def.guard.is_some() || def.startle.is_some()) {
                 return Err(error("a chase, an ambush or a lure does not `guard` or `startle`".into()));
+            }
+            let hunt = matches!(def.script, Script::Hunt { .. });
+            if hunt == def.quarry.is_empty() || !hunt && !def.share.is_empty() {
+                return Err(error("a `Hunt` goes after its `quarry` and gives its `share`, and nothing else has either".into()));
+            }
+            if hunt && (def.halt.is_some() || def.guard.is_some() || def.startle.is_some() || captives_in(&def) > 0 || def.guide.is_some()) {
+                return Err(error("a hunt minds its quarry: no `halt`, `guard`, `startle`, captive or `guide`".into()));
+            }
+            let mut quarry = Vec::new();
+            for name in &def.quarry {
+                let species = creatures.id(name).ok_or_else(|| error(format!("quarry: no creature `{name}`")))?;
+                if creatures.get(species).def.kind != Kind::Animal {
+                    return Err(error(format!("quarry: `{name}` is no animal")));
+                }
+                quarry.push(species);
             }
             if def.guard.is_some() && def.startle.is_some() || def.startle.is_some() && def.halt.is_some() {
                 return Err(error("a party that bolts (`startle`) neither stands its ground (`guard`) nor stops for a player (`halt`)".into()));
@@ -1069,6 +1135,11 @@ impl WanderRegistry {
             {
                 return Err(error("`away` is a range from 0 up".into()));
             }
+            if let Some(town) = def.needs.town
+                && !(16.0..=1000.0).contains(&town)
+            {
+                return Err(error(format!("`town` is 16 to 1000 blocks, not {town}")));
+            }
             let mut meetings = Vec::new();
             let mut names: Vec<String> = vec!["title".into()];
             if captives == 1 {
@@ -1100,12 +1171,22 @@ impl WanderRegistry {
                     return Err(error(format!("a show is watched from 2 to 16 blocks for 3 to 120 seconds and gives something, not {} blocks for {} s", def_show.near, def_show.seconds)));
                 }
                 for reward in &def_show.gives {
-                    if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Point(..) | Reward::Town(_)) {
+                    if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Point(..) | Reward::Town(_) | Reward::OneOf(_)) {
                         return Err(error("a show gives items, experience, effects or healing only".into()));
                     }
                     show.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("show: {why}")))?);
                 }
                 names.push("show".into());
+            }
+            let mut share = Vec::new();
+            for reward in &def.share {
+                if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..)) {
+                    return Err(error("a hunt's `share` gives items, experience, effects or healing only".into()));
+                }
+                share.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("share: {why}")))?);
+            }
+            if !share.is_empty() {
+                names.push("share".into());
             }
             let mut guide_thanks = Vec::new();
             for reward in def.guide.iter().flat_map(|g| &g.thanks) {
@@ -1211,7 +1292,7 @@ impl WanderRegistry {
                 meetings.push(ResolvedMeeting { who: meeting.who, greet: meeting.greet.clone(), greets: meeting.greets, lines });
             }
             registry.by_name.insert(def.name.clone(), registry.events.len());
-            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk, show });
+            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk, show, quarry, share });
         }
         Ok(registry)
     }
@@ -1249,6 +1330,11 @@ impl WanderRegistry {
     pub fn iter(&self) -> impl Iterator<Item = (usize, &Event)> {
         self.events.iter().enumerate()
     }
+}
+
+/// How many groups of a cast are captive.
+fn captives_in(def: &EventDef) -> usize {
+    def.cast.iter().filter(|g| g.role == Role::Captive).count()
 }
 
 /// Where member `i` of `n` stands behind (positive `depth`) or beside a leader walking
