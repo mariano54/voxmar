@@ -200,6 +200,9 @@ struct Pack {
     resolution: u32,
     /// Other drawings of its textures, from `variants.ron` (see [`Source::block_variants`]).
     variants: HashMap<String, Vec<String>>,
+    /// How things are held in the hand, from `held.ron` (see `held`), over those of the packs
+    /// it builds on.
+    held: Option<crate::held::Book>,
     /// Textures this pack provided since the last log.
     served: usize,
     /// Whether the game ships it (our default pack and Voxmar HD), which a test holds to
@@ -229,8 +232,17 @@ impl Pack {
                 Err(e) => bevy::log::warn!("texture pack {name}: {VARIANTS_FILE}: {e}; leaving it out"),
             }
         }
+        // So do its own poses of the hand over those of the packs it builds on.
+        let mut held: Option<crate::held::Book> = None;
+        for layer in files.iter_mut().rev() {
+            let Some(bytes) = layer.read(crate::held::FILE) else { continue };
+            match std::str::from_utf8(&bytes).map_err(|e| e.to_string()).and_then(|s| crate::held::Book::parse(s)) {
+                Ok(book) => held.get_or_insert_with(Default::default).overlay(book, &mut |what| bevy::log::info!("texture pack {name}: {} replaces {what} of a pack it builds on", crate::held::FILE)),
+                Err(e) => bevy::log::warn!("texture pack {name}: {e}; leaving it out"),
+            }
+        }
         let resolution = manifest.as_ref().map_or(0, |m| m.resolution);
-        Ok(Self { name: manifest.map_or(name, |m| m.name), files, recipes, resolution, variants, served: 0, shipped: false })
+        Ok(Self { name: manifest.map_or(name, |m| m.name), files, recipes, resolution, variants, held, served: 0, shipped: false })
     }
 
     /// Whether the pack has `<path>.png`, as an image or a recipe.
@@ -337,6 +349,12 @@ impl Source {
     /// Reads `<path>.png` from the first pack that has it.
     pub fn read(&mut self, path: &str) -> Option<Rgba> {
         self.packs.iter_mut().find_map(|pack| pack.read(path))
+    }
+
+    /// How the packs hold things in the hand (`held.ron`): each pack's book, the highest
+    /// priority first.
+    pub fn held_books(&self) -> Vec<(String, crate::held::Book)> {
+        self.packs.iter().filter_map(|pack| Some((pack.name.clone(), pack.held.clone()?))).collect()
     }
 
     /// For each block texture reference, the pack that draws it (by name) and whether the
@@ -623,6 +641,17 @@ fn gradient_colormap(base: [u8; 3]) -> Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The look the packs we ship give to the hand (`held.ron`): the default pack's own, and
+    /// Voxmar HD, which builds on it, the same.
+    #[test]
+    fn the_shipped_packs_hold_things_in_the_hand() {
+        let packs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/packs");
+        let default = Pack::open(&packs.join("default")).expect("default pack").held.expect("the default pack's held.ron");
+        let hd = Pack::open(&packs.join(HD_PACK)).expect("Voxmar HD").held.expect("Voxmar HD builds on the default pack's held.ron");
+        assert_eq!(default, hd);
+        default.finish().unwrap_or_else(|problems| panic!("{problems:#?}"));
+    }
 
     /// Whether `pack`'s `texture` may be a face of the opaque block `block`: only if every texel
     /// is wholly opaque, as the packs we ship keep to (a test holds them to it). An opaque face
