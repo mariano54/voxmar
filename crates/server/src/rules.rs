@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 use voxmar_engine::block::{BlockId, BlockRegistry};
-use voxmar_engine::content::ContentFile;
+use voxmar_engine::content::{ContentFile, Laid};
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, SLOTS, max_stack};
 
 const FILE: &str = "survival.ron";
@@ -63,15 +63,20 @@ struct SurvivalFile {
 }
 
 impl SurvivalRules {
-    pub(crate) fn load(files: &[ContentFile], blocks: &BlockRegistry) -> Result<Self, String> {
+    /// The rules the packages' files set, a later package's number replacing an earlier
+    /// one's; `notes` gets one line for each package that does, naming both.
+    pub(crate) fn load(files: &[ContentFile], blocks: &BlockRegistry, notes: &mut Vec<String>) -> Result<Self, String> {
         let mut merged = SurvivalFile::default();
+        let mut laid = Laid::default();
         for file in files.iter().filter(|f| f.name == FILE) {
             let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
             let next: SurvivalFile = options.from_str(&file.source).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
+            let mut set = Vec::new();
             macro_rules! later_wins {
-                ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; })* };
+                ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; set.push(stringify!($field)); })* };
             }
             later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down);
+            laid.set(&file.package, FILE, "survival rules", set, notes);
         }
         macro_rules! set {
             ($field:ident) => {
@@ -172,12 +177,12 @@ mod tests {
     #[test]
     fn the_shipped_rules_load_and_bad_ones_are_refused() {
         let blocks = blocks();
-        let load = |source: &str| SurvivalRules::load(&[file("core", source)], &blocks);
+        let load = |source: &str| SurvivalRules::load(&[file("core", source)], &blocks, &mut Vec::new());
         let rules = load(SHIPPED).unwrap();
         assert_eq!((rules.max_health, rules.burn_ticks()), (20, 10));
         assert!(load(&SHIPPED.replace("burn_every: 0.5", "burn_every: 0.0")).unwrap_err().contains("burn_every"));
         assert!(load(&SHIPPED.replace("max_health: 20", "max_health: 0")).is_err());
-        assert!(SurvivalRules::load(&[], &blocks).unwrap_err().contains("max_health"), "some package must set survival");
+        assert!(SurvivalRules::load(&[], &blocks, &mut Vec::new()).unwrap_err().contains("max_health"), "some package must set survival");
         assert!(load(&SHIPPED.replace("safe_fall: 3.0,", "")).unwrap_err().contains("safe_fall"));
         assert!(load(&SHIPPED.replace("safe_fall", "safe_falls")).is_err(), "a misspelt field is refused");
     }
@@ -185,7 +190,7 @@ mod tests {
     #[test]
     fn a_new_player_gets_tools_bread_torches_planks_and_the_purse() {
         let blocks = blocks();
-        let rules = SurvivalRules::load(&[file("core", SHIPPED)], &blocks).unwrap();
+        let rules = SurvivalRules::load(&[file("core", SHIPPED)], &blocks, &mut Vec::new()).unwrap();
         let inventory = rules.new_inventory(true).unwrap();
         let id = |name: &str| blocks.id(name).unwrap();
         let carried = |item| inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
@@ -199,16 +204,18 @@ mod tests {
     fn a_later_package_changes_only_what_it_names_and_unknown_items_are_refused() {
         let blocks = blocks();
         let later = file("mod", r#"(max_health: 30, starter_kit: [("base:torch", 64)])"#);
-        let rules = SurvivalRules::load(&[file("core", SHIPPED), later], &blocks).unwrap();
+        let mut notes = Vec::new();
+        let rules = SurvivalRules::load(&[file("core", SHIPPED), later], &blocks, &mut notes).unwrap();
         assert_eq!((rules.max_health, rules.safe_fall), (30, 3.0));
+        assert_eq!(notes, ["mod/survival.ron replaces the survival rules core set (max_health, starter_kit)"]);
         assert_eq!(rules.starter_kit, [(blocks.id("base:torch").unwrap(), 64)]);
         assert_eq!(rules.pack_end.len(), 1, "the purse is kept");
         let unknown = file("mod", r#"(starter_kit: [("base:diamond", 1)])"#);
-        assert!(SurvivalRules::load(&[file("core", SHIPPED), unknown], &blocks).unwrap_err().contains("base:diamond"));
+        assert!(SurvivalRules::load(&[file("core", SHIPPED), unknown], &blocks, &mut Vec::new()).unwrap_err().contains("base:diamond"));
         let too_many = file("mod", r#"(pack_end: [("base:bread", 2)])"#);
-        assert!(SurvivalRules::load(&[file("core", SHIPPED), too_many], &blocks).unwrap_err().contains("1 to 1"), "bread takes a slot each");
+        assert!(SurvivalRules::load(&[file("core", SHIPPED), too_many], &blocks, &mut Vec::new()).unwrap_err().contains("1 to 1"), "bread takes a slot each");
         // Thirty-six full stacks and the purse do not fit.
         let crowded = file("mod", &format!("(starter_kit: [{}])", vec![r#"("base:torch", 64)"#; 36].join(", ")));
-        assert!(SurvivalRules::load(&[file("core", SHIPPED), crowded], &blocks).unwrap_err().contains("fit"));
+        assert!(SurvivalRules::load(&[file("core", SHIPPED), crowded], &blocks, &mut Vec::new()).unwrap_err().contains("fit"));
     }
 }

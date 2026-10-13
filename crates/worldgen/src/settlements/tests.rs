@@ -1187,7 +1187,7 @@ fn numbers_planning_cannot_use_are_refused() {
     let a_frame = def.houses.iter().position(|h| h.form == Form::AFrame).unwrap();
     let courtyard = def.houses.iter().position(|h| h.form == Form::Courtyard).unwrap();
     type Change<'a> = &'a dyn Fn(&mut super::SettlementsDef);
-    let cases: [(&str, Change); 17] = [
+    let cases: [(&str, Change); 21] = [
         ("a round house of two storeys", &|d| d.houses[round].storeys = (1, 2)),
         ("an A-frame of two storeys", &|d| d.houses[a_frame].storeys = (2, 2)),
         ("a courtyard house of two storeys", &|d| d.houses[courtyard].storeys = (1, 2)),
@@ -1204,6 +1204,10 @@ fn numbers_planning_cannot_use_are_refused() {
         ("water looked for 300 out", &|d| d.site.water = 300),
         ("a riverside street looking 300 out", &|d| d.rules.lanes.riverside = 300),
         ("levers steep at nothing", &|d| d.rules.levers.steep = 0.0),
+        ("the spawn's square trying no spots", &|d| d.rules.spawn_tries = 0),
+        ("the spawn's square trying 33 times the spots", &|d| d.rules.spawn_tries = 33),
+        ("the spawn's square laying out with no draws", &|d| d.rules.spawn_salts = 0),
+        ("the spawn's square laying out with 33 draws", &|d| d.rules.spawn_salts = 33),
         ("fertility over 1", &|d| d.site.fertility = 1.5),
     ];
     for (what, change) in cases {
