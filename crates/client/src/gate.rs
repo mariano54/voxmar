@@ -328,6 +328,9 @@ enum Step {
     Guides,
     /// The journal key opens the journal, whose Plants page lists what there is to find.
     Journal,
+    /// A sleeping bag with a torch beside it, slept in, is a camp: the Camp chip comes on, the
+    /// chat says so with what to add next, and the sleep is a rest.
+    Home,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
@@ -954,6 +957,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Torches crafted for a pinned quest, waited on in the server's seconds, and a quest
         // done left to drop off.
         Step::Quests => 60.0,
+        // The effects are judged once a second by the server, and a rest is a sleep away.
+        Step::Home => 45.0,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -1208,6 +1213,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Journal => journal(world, gate, now, in_phase),
+        Step::Home => home(world, gate, now),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -3766,7 +3772,76 @@ fn journal(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let found = world.resource::<LocalPlayer>().journal.entries().count();
             gate.check("journal", if open { Ok(format!("J opened the journal ({found} things found so far, {cells} buttons drawn)")) } else { Err("J did not open the journal".into()) });
             world.resource_mut::<UiState>().journal_open = false;
-            gate.next(Step::Quests, now);
+            gate.next(Step::Home, now);
+        }
+    }
+}
+
+/// A sleeping bag and a torch beside the player, slept in: the bed is their home and it has
+/// a light, so the Camp step (docs/home.md) comes on as a chip, the chat names it and what to
+/// add next, and the sleep gives a rest. The blocks go again after, and the rest with them.
+fn home(world: &mut World, gate: &mut Gate, now: f32) {
+    let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let (bag, torch) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0));
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        for at in [bag, torch] {
+            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        }
+        net.command("effect clear");
+        gate.next(Step::Quests, now);
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("effect clear");
+            net.command(&format!("setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z));
+            net.command(&format!("setblock {} {} {} torch", torch.x, torch.y, torch.z));
+            gate.advance(now);
+        }
+        1 => {
+            let placed = {
+                let client = world.resource::<ClientWorld>();
+                match (client.registry.id("base:sleeping_bag"), client.registry.id("base:torch")) {
+                    (Some(b), Some(t)) => Some(client.block(bag) == Some(b) && client.block(torch) == Some(t)),
+                    _ => None,
+                }
+            };
+            match placed {
+                None => {
+                    gate.check("home", Err("no sleeping bag or torch in the content".into()));
+                    leave(world, gate);
+                }
+                Some(true) => {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:sleep"), voxmar_engine::action::ActionTarget::Block { block: bag, face: voxmar_engine::coords::Face::PosY });
+                    gate.advance(now);
+                }
+                Some(false) if waited > 10.0 => {
+                    gate.check("home", Err(format!("the sleeping bag and torch were not on the client {waited:.1} server s after they were placed")));
+                    leave(world, gate);
+                }
+                Some(false) => {}
+            }
+        }
+        _ => {
+            let has = |world: &World, name: &str| {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                launch.content.effects.id(name).is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
+            };
+            let (camp, rested) = (has(world, "base:camp"), has(world, "base:rested"));
+            let (announced, slept) = {
+                let lines: Vec<&str> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).collect();
+                (lines.iter().any(|l| l.contains("Camp:") && l.contains("Next:")), lines.iter().any(|l| l.contains("You sleep soundly")))
+            };
+            if camp && rested && announced && slept {
+                gate.check("home: camp", Ok("a bed and a light slept in showed the Camp chip, the chat named it with its next step, and the sleep was a rest".into()));
+                leave(world, gate);
+            } else if waited > 30.0 {
+                gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, Camp line with Next {announced}, sleep line {slept}")));
+                leave(world, gate);
+            }
         }
     }
 }
