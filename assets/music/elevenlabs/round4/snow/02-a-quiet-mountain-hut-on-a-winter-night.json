@@ -1,0 +1,29 @@
+{
+  "leads": [
+    "wooden flute"
+  ],
+  "support": [
+    "gentle bells and chimes",
+    "marimba",
+    "double bass"
+  ],
+  "texture": "warm ambient synth pads",
+  "opener": "Soft, cozy ambient instrumental",
+  "space": "dry, close-miked and intimate, very little reverb",
+  "form": "a simple, memorable melody that returns as a motif",
+  "percussion": null,
+  "hint": "like watching the light change slowly",
+  "vibes": [
+    "melancholic but comforting",
+    "sparkling and frosty"
+  ],
+  "touch": null,
+  "biome": "snow",
+  "scene": "a quiet mountain hut on a winter night",
+  "bpm": 51,
+  "key": "D major",
+  "length_s": 159,
+  "prompt": "Soft, cozy ambient instrumental for a snowy scene: a quiet mountain hut on a winter night, like watching the light change slowly. Mood: melancholic but comforting, sparkling and frosty. Lead melody on wooden flute, accompanied by gentle bells and chimes, marimba, double bass, over warm ambient synth pads. Structure: a simple, memorable melody that returns as a motif; a clear, singable melody, and rests and silences are welcome. Sound: dry, close-miked and intimate, very little reverb. Slow, unhurried tempo around 51 BPM in D major, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 72
+}

@@ -1,0 +1,28 @@
+{
+  "leads": [
+    "warm solo violin"
+  ],
+  "support": [
+    "qanun",
+    "nylon-string acoustic guitar"
+  ],
+  "texture": null,
+  "opener": "Calm, cozy instrumental",
+  "space": "natural chamber acoustics, moderate reverb",
+  "form": "call-and-response phrases between the lead and a second instrument",
+  "percussion": null,
+  "hint": "like watching the light change slowly",
+  "vibes": [
+    "vast and solitary",
+    "gently mystical and moonlit"
+  ],
+  "touch": "gently mystical and moonlit",
+  "biome": "desert",
+  "scene": "sandstone ruins in warm evening light",
+  "bpm": 53,
+  "key": "E Phrygian",
+  "length_s": 158,
+  "prompt": "Calm, cozy instrumental for a desert scene: sandstone ruins in warm evening light, like watching the light change slowly. Mood: vast and solitary, gently mystical and moonlit. Lead melody on warm solo violin, accompanied by qanun, nylon-string acoustic guitar, with no background pad or drone, just the instruments and the space between notes. Structure: call-and-response phrases between the lead and a second instrument; a clear, singable melody, and rests and silences are welcome. Sound: natural chamber acoustics, moderate reverb. Slow, unhurried tempo around 53 BPM in E Phrygian, soft dynamics throughout. No drums or beats. Strictly no bass drops, no vocals, no choir, no loud crescendos, no distortion, no nature sounds, no rain, no water, no birdsong, no wind, no fire crackle, no field recordings or sound effects - pure instruments only.",
+  "model": "music_v2_5",
+  "seed": 74
+}

@@ -1,0 +1,22 @@
+{
+  "mode": "boss",
+  "biome": "fantasy",
+  "lead": "brass fanfares",
+  "colors": [
+    "low brass",
+    "glockenspiel sparkle"
+  ],
+  "drums": "snare and timpani",
+  "vibes": [
+    "grand and magical",
+    "arcane and electric"
+  ],
+  "scene": "a duel with a rogue archmage in a floating citadel",
+  "form": "tense intro, relentless driving main theme, a brief breather, then a final heroic surge that loops cleanly",
+  "bpm": 140,
+  "key": "D minor",
+  "length_s": 145,
+  "prompt": "Intense boss battle theme for an enchanted fantasy video game: a duel with a rogue archmage in a floating citadel. Mood: grand and magical, arcane and electric. Lead on brass fanfares, with low brass and glockenspiel sparkle; driving rhythm from snare and timpani. Structure: tense intro, relentless driving main theme, a brief breather, then a final heroic surge that loops cleanly. Epic orchestral game-soundtrack sound with a memorable main motif, punchy and clear but musical, not harsh. Fast tempo around 140 BPM in D minor. Strictly no vocals, no choir, no nature sounds or sound effects, no EDM drops, no dubstep, no heavy-metal distortion guitars.",
+  "model": "music_v2_5",
+  "seed": 93
+}
