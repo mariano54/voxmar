@@ -644,7 +644,10 @@ impl Server {
                     times.push_back(now.elapsed());
                 }
                 std::thread::sleep(self.config.lag.of_tick(self.tick));
-                next_tick += tick_length;
+                // Land being generated on other threads arrives at the clock's pace, so a
+                // server whose ticks run quicker than the clock (tests) waits for it at that
+                // pace too: what happens in so many ticks is then what a game would see.
+                next_tick += if self.config.tick_speedup > 1 && !self.generating.is_empty() { real_tick } else { tick_length };
                 if now > next_tick + real_tick * 10 {
                     tracing::warn!("server is running behind, skipping ticks");
                     next_tick = now;

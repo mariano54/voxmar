@@ -1548,9 +1548,13 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
     // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
+    // A cast takes five seconds of the clock (`actions.ron`), and a busy machine takes longer
+    // to bring the catch: waiting just past five seconds cancelled every cast with the next
+    // one (a miss streak of six, on 5.6 s a cast, in one run in a dozen), so each is waited out
+    // with room to spare, the wait ending at the catch.
     for _ in 0..6 {
         client.propose("base:fish", ActionTarget::Block { block: water, face: Face::PosY });
-        let up = Instant::now() + Duration::from_millis(5600);
+        let up = Instant::now() + Duration::from_secs(15);
         client.pump_until(|c| fish(c) || Instant::now() > up);
         if fish(&client) {
             break;

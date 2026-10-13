@@ -51,8 +51,23 @@ branch (main moves on GitHub too: the GPU box pushes straight to origin, so the 
 can be behind), runs `tools/gate` on the result, fast-forwards main to it, pushes main and
 fetches it back to check that origin has the commit. When main moved meanwhile, here or on origin, it merges
 again, up to three times; it never forces. Only its last line, `land: <commit> landed`,
-means landed; anything else, the push included, failed and says why. On a typical change
-it takes well under a minute.
+means landed; anything else, the push included, failed and says why. A tree that already
+passed costs nothing; otherwise a landing takes the build and the tests of the crates the
+change reaches, played side by side with the session (about 6 to 10 minutes on the Mac).
+
+What a change reaches (`crates_for` in `tools/gate`, checked by `reach_self_check`): code
+reaches its crate and what depends on it; assets reach the crates that read them. Music,
+sounds and shader packs are the client's alone; texture packs and fonts are texgen's and the
+client's; a content file that nothing in worldgen reads (quests, recipes, skills, combat,
+lang: anything worldgen names in its sources, the blocks and the creatures are the rest)
+skips worldgen's tests, which are most of the suite's time. Add a file worldgen starts to
+read by naming it in worldgen's sources, and the gate follows.
+
+On a machine with no display (a cloud container) the gate builds and runs the tests, says so,
+and records no pass: the Mac's gate is the landing bar. `VOXMAR_GATE_SOFTWARE=1` also plays
+the session there on a virtual display with Mesa's software Vulkan (`apt install xvfb
+mesa-vulkan-drivers`), as a look: frames take half a second, so the steps that time the game
+(natural births, perfect block, dodge) fail on speed and the run stops at the first.
 
 1. Hygiene: `git diff main --check`, no conflict markers, and no new wall-clock wait in a
    test (`tools/test-waits`). A test that waits until `Instant::now()` passes a deadline,
@@ -297,11 +312,14 @@ running: on 2026-10-06 that turned the play binary and a thread's build into six
   after his game (voxmar not as a capture or gate, or Minecraft) exits, so everything
   waiting starts as soon as he quits; if his game never appears, the flag holds two hours
   after it was written.
-- Everything memcap runs is at background priority: on a Mac, background QoS, which keeps
-  it to the efficiency cores (6 of the 18 are performance cores); elsewhere `nice 19`. At
-  his look-down pose, a full build alongside gave a 326 ms worst frame at normal priority
-  and 57 ms at background QoS (p99 43 against 27 ms), and the build still went at about
-  nine tenths of its speed. Timing runs (`VOXMAR_TIMING=1`) and the benchmark's timed runs
+- Everything memcap runs a step below his game: on a Mac, utility QoS, which may use the
+  performance cores his game leaves free (6 of the 18); elsewhere `nice 10`.
+  `VOXMAR_QOS=background` keeps a job to the efficiency cores (`nice 19`). That was the
+  default until 2026-10-13: at his look-down pose a full build alongside gave a 326 ms
+  worst frame at normal priority and 57 ms at background QoS (p99 43 against 27 ms), but a
+  landing's build took 25 minutes on the efficiency cores alone, and the clamp bought
+  nothing while he is not playing, since PLAYING stops every job and is written only when
+  he plays. Timing runs (`VOXMAR_TIMING=1`) and the benchmark's timed runs
   (`VOXMAR_FOREGROUND=1`) run as his game does, and a timing run takes no slot.
 - Everything memcap runs is muted (`VOXMAR_MUTE=1`): no run of ours ever plays a sound.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
