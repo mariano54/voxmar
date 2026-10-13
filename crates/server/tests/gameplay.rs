@@ -2867,6 +2867,7 @@ fn frozen_says(stream: &mut std::net::TcpStream, message: ClientMessage) {
 /// would come back with the file.
 #[test]
 fn joining_again_takes_what_the_silent_session_held_not_an_older_file() {
+    real_time("a session is silent by the server's clock (rejoin_silence), which ticks run ahead of when sped up");
     let dir = world_dir("again");
     let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), cut_saves: true, ..Default::default() });
     let mut frozen = frozen_game(addr, "guest", &host.content);

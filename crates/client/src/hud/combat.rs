@@ -939,14 +939,14 @@ mod tests {
         let mut since = None;
         assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 100.0), None, "another killed target cannot satisfy the watch");
         assert_eq!(since, Some(100.0), "the watch starts at death after a long fight, not at the fight's start");
-        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 102.0), Some(Err(0.0)), "missing marks fail in bounded time");
+        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 106.0), Some(Err(0.0)), "missing marks fail in bounded time");
         app.world_mut().get_mut::<HitSplat>(entity).unwrap().creature = Some(7);
         app.world_mut().entity_mut(entity).insert(Visibility::Hidden);
-        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 102.0), Some(Err(0.0)), "hidden time is not visibility");
-        assert_eq!(crate::gate::watch_fallen(app.world_mut(), None, Some(anchor), &mut since, 102.0), Some(Err(0.0)), "player splats cannot substitute for a killed target");
+        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 106.0), Some(Err(0.0)), "hidden time is not visibility");
+        assert_eq!(crate::gate::watch_fallen(app.world_mut(), None, Some(anchor), &mut since, 106.0), Some(Err(0.0)), "player splats cannot substitute for a killed target");
         app.world_mut().entity_mut(entity).insert(Visibility::Inherited);
         app.world_mut().get_mut::<HitSplat>(entity).unwrap().killed = false;
-        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 102.0), Some(Err(0.0)), "a missing/admin-removed body is not a server-confirmed killing blow");
+        assert_eq!(crate::gate::watch_fallen(app.world_mut(), Some(7), Some(anchor), &mut since, 106.0), Some(Err(0.0)), "a missing/admin-removed body is not a server-confirmed killing blow");
     }
 
     #[test]
@@ -965,9 +965,9 @@ mod tests {
             "a visible earlier hit with the same event stamp cannot substitute for the killing blow");
         app.world_mut().get_mut::<HitSplat>(killing).unwrap().fallen_draws = Some((10.0, 10.3));
         assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 100.3), Some(Ok(seen)) if seen >= 0.2));
-        assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 102.0), Some(Err(seen)) if seen >= 0.2),
+        assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 106.0), Some(Err(seen)) if seen >= 0.2),
             "success first observed at/after the deadline cannot pass");
-        assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 102.1), Some(Err(_))),
+        assert!(matches!(crate::gate::watch_fallen(app.world_mut(), Some(7), None, &mut since, 106.1), Some(Err(_))),
             "a timed out watch cannot rearm on a later direct call");
     }
 

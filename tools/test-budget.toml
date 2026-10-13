@@ -24,6 +24,7 @@ tests = [
   "a_player_silent_in_mid_jump_lands_without_being_pulled_back",
   "a_swing_is_dropped_when_its_weapon_leaves_the_hand",
   "fires_warm_and_water_chills",
+  "joining_again_takes_what_the_silent_session_held_not_an_older_file",
 ]
 
 [[allow]]
