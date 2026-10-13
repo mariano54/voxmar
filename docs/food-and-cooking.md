@@ -5,10 +5,33 @@ the hunger and warmth the Game UI thread added (`engine::vitals`). Part of the c
 food and breeding design (see [creatures.md](creatures.md)).
 
 > **2026-10-06: there is no hunger any more** (Mariano). Food heals: an item heals its
-> `heal:N` or `food:N` (the larger), a tenth less each time the same food is eaten in a row,
-> down to half, recovering as other foods are eaten or a minute passes
-> (`engine::vitals::Recent`). Health comes back slowly by itself (a point every ten
-> seconds). Read "hunger" below as healing where it still appears.
+> `heal:N`, a tenth less each time the same food is eaten in a row, down to half,
+> recovering as other foods are eaten or a minute passes (`engine::vitals::Recent`).
+> Health comes back slowly by itself (a point every ten seconds). Read "hunger" below as
+> healing where it still appears.
+>
+> **2026-10-08: merged wild items** (design plan P27, second round): the wild plants of one
+> kind stay in the world as blocks but drop one item, tagged `merged` on the plant:
+> `sweet_berry` (sweet berry, blueberry, raspberry, blackberry, cloudberry bushes), `tart_berry`
+> (cranberry, lingonberry, gooseberry), `kitchen_herbs` (oregano, parsley, dill, fennel,
+> coriander, basil, rosemary, cumin), `wild_roots` (turnip, beet, radish, parsnip), `wild_onion`
+> (also leek and garlic, carrying garlic's antidote), `wild_grain` (barley, oats, millet,
+> quinoa; tagged grain), `mushroom` (porcini, shiitake, blewit, oyster, chanterelle, brown) and
+> `pumpkin` (pumpkin, squash). Each is a placeable plant block that looks like one of its
+> plants and carries the `garden` tag (which `regrowth.ron` lists with flower, herb, fungus and berry), so the herb planter takes it and the planted item regrows at its rarity's Farming level; picking a wild plant
+> grows that same wild plant back. Kept apart for their own use: mint, sage and thyme (alchemy),
+> frost turnip (feeds the frost stag), red mushroom, elderberry, rowan, strawberry, dreamberry,
+> glow berries, whisper oats. Old saves' stacks of a merged plant load as the merged item
+> (`BlockRegistry::item_named`). `crates/engine/tests/merged_items.rs` checks every plant
+> drops its merged item and no recipe, quest or loot names a merged-away plant.
+>
+> **2026-10-08: how much food heals** (design drafts 55, 63 and 107): cooked food 0.4 × the
+> lowest level that cooks it, at least 4 (`vitals::cooked_heal`; about a fifth of the
+> health of a player who can make it), so cooking always makes food better; raw produce
+> and meat 1, fruit and berries 2; golden apple and emberfruit follow the cooked rule by
+> the Farming level that picks them (70 and 41: 28 and 16). Hearty gives a tenth more
+> maximum health that comes empty, to fill by eating. `crates/engine/tests/food_heals.rs`
+> holds every food to the rule.
 
 ## Decisions
 
@@ -44,20 +67,34 @@ camel, crocodile, wyrm), fish (trout, carp, cod, tuna, crab, frog legs), eggs (h
 turtle, sunwing), dairy (cow, goat, sheep, reindeer and camel milk), fat (lard, bear fat),
 honey and wax, and supernatural ingredients (moon dust, lumen slime, ember scale).
 
-Plants supply (all real items in plants.ron, crops.ron and trees.ron): grains (wheat,
-barley, oats, rice, millet, quinoa, corn), legumes (beans, peas, lentils), roots (carrot,
-potato, turnip, beet, radish, parsnip, yam, taro, ginger), vegetables (cabbage, tomato,
-onion, leek, garlic, asparagus, pumpkin, squash, chili), fruit (apple, pear, plum,
-cherries, fig, lemon, orange, olives, banana, mango, avocado, coconut, marula, baobab,
-melon, pineapple, grapes, prickly pear), berries (blueberry, raspberry, blackberry,
-elderberry, cranberry, lingonberry, cloudberry, gooseberry, currant, goji, rowan,
-strawberry, sweet berries), nuts (hazelnut, walnut, chestnut, almond), herbs (mint, sage,
-thyme, basil, rosemary, oregano, parsley, dill, fennel, coriander, lemongrass, wild
-garlic, sorrel, nettle), spices (cumin, saffron, vanilla, juniper), fungi (chanterelle,
-porcini, morel, puffball, oyster, shiitake, lion's mane, chicken of the woods, truffle),
-tea and coffee, cacao, and the fantastical plants (moonbloom, glowcap, emberbloom,
-frostpetal, starlily, heartbloom, emberfruit, golden apple and those proposed in
+Plants supply (the items players hold, as the content defines them in blocks.ron,
+crops.ron and trees.ron; since the P27 merge a wild plant of a kind gives one shared item,
+named in bold below). Farmed crops: wheat, rye, rice, chickpea, carrot, potato, taro,
+cabbage, tomato, strawberry, chili pepper, saffron. Tree fruit and nuts: apple, pear,
+plum, cherries, wild cherries, rowan berries, orange, lemon, fig, olives, banana, mango,
+avocado, coconut, dates, tamarind, baobab fruit, marula, almond, hazelnut, walnut,
+chestnut, pine nuts, cacao, and the golden apple and emberfruit. Wild plants, picked as
+items: grains (wild wheat, wild rice, wild corn, **wild grain**: barley, oats, millet,
+quinoa), legumes (wild beans, peas, lentils, chickpea), roots (wild carrot, taro, yam,
+ginger, cattail, paleroot, **wild roots**: turnip, beet, radish, parsnip), vegetables
+(wild asparagus, **wild onion**: onion, leek, garlic; **pumpkin**: pumpkin, squash),
+fruit (wild melon, wild pineapple, wild grapes, prickly pear, wild rose hips), berries
+(**sweet berry**: sweet berries, blueberry, raspberry, blackberry, cloudberry; **tart
+berry**: cranberry, lingonberry, gooseberry; elderberry, currant, goji, juniper), herbs
+(**kitchen herbs**: oregano, parsley, dill, fennel, coriander, basil, rosemary, cumin; mint,
+sage, thyme, lemongrass, sorrel, nettle, lavender, chamomile, yarrow), spices (wild
+vanilla, wild ginger, crocus, juniper), fungi (**mushroom**: porcini, oyster, shiitake,
+blewit, chanterelle, brown mushroom; morel, puffball, lion's mane, chicken of the woods,
+truffle, inkcap), tea and coffee (tea bush, hibiscus, heather, coffee), and the
+fantastical plants (moonbloom, moonmelon, lantern gourd, frost turnip, glowcap, ember
+pepper, starwheat, hearthgrain, whisper oats and those proposed in
 [systems-web.md](systems-web.md)).
+
+A merged-away plant (tagged `merged` in blocks.ron) stays in the world and drops the
+shared item. It is never held, so `BlockRegistry::listed` leaves it out of the creative
+catalogue, the journal's Plants page (finding one finds the item) and the recipe book;
+`/give` and `/drop` hand out the item, and an older save's stack of one loads as the item
+(`item_of`, `item_named`).
 
 ## Recipes
 

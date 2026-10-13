@@ -1,0 +1,31 @@
+// Armour and shields (combat.ron says where each is worn and what it gives; recipes_armour.ron
+// how it is made). Their tags say only how they stack and what they are made of.
+(
+    families: [
+        (template: "drop", name: "hide_hood", tags: ["stack:1", "hide"], all: (color: (150, 105, 70))),
+        (template: "drop", name: "hide_tunic", tags: ["stack:1", "hide"], all: (color: (150, 105, 70))),
+        (template: "drop", name: "hide_trousers", tags: ["stack:1", "hide"], all: (color: (150, 105, 70))),
+        (template: "drop", name: "hide_gloves", tags: ["stack:1", "hide"], all: (color: (150, 105, 70))),
+        (template: "drop", name: "hide_boots", tags: ["stack:1", "hide"], all: (color: (150, 105, 70))),
+        (template: "drop", name: "copper_helmet", tags: ["stack:1", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_chestplate", tags: ["stack:1", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_leggings", tags: ["stack:1", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_gauntlets", tags: ["stack:1", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_boots", tags: ["stack:1", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "bronze_helmet", tags: ["stack:1", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "bronze_scale_shirt", tags: ["stack:1", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "bronze_leggings", tags: ["stack:1", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "bronze_gauntlets", tags: ["stack:1", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "bronze_boots", tags: ["stack:1", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "chainmail_coif", tags: ["stack:1", "metal:iron"], all: (color: (180, 185, 195))),
+        (template: "drop", name: "chainmail_shirt", tags: ["stack:1", "metal:iron"], all: (color: (180, 185, 195))),
+        (template: "drop", name: "chainmail_leggings", tags: ["stack:1", "metal:iron"], all: (color: (180, 185, 195))),
+        (template: "drop", name: "chainmail_gloves", tags: ["stack:1", "metal:iron"], all: (color: (180, 185, 195))),
+        (template: "drop", name: "chainmail_boots", tags: ["stack:1", "metal:iron"], all: (color: (180, 185, 195))),
+        (template: "drop", name: "hide_buckler", tags: ["stack:1", "hide"], all: (color: (150, 105, 70))),
+        (template: "drop", name: "wooden_shield", tags: ["stack:1", "wood"], all: (color: (150, 115, 70))),
+        (template: "drop", name: "copper_shield", tags: ["stack:1", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "bronze_shield", tags: ["stack:1", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "iron_shield", tags: ["stack:1", "metal:iron"], all: (color: (200, 205, 215))),
+    ],
+)

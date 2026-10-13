@@ -137,6 +137,9 @@ pub struct Progress<'a> {
     pub carried: &'a dyn Fn(&str) -> u32,
     /// Whether an item name matches a goal's `tag:TAG`.
     pub has_tag: &'a dyn Fn(&str, &str) -> bool,
+    /// What breaking a block (by name) gives, if anything: a Mine goal counts every block
+    /// that drops its ore (deepslate copper and copper samples for copper).
+    pub drops: &'a dyn Fn(&str) -> Option<String>,
     pub home: bool,
 }
 
@@ -159,7 +162,10 @@ impl Progress<'_> {
             Goal::Kill(creature, n) => (journal(Page::Animals, creature) + journal(Page::Monsters, creature), *n),
             Goal::Tame(creature, n) => (tally("tamed", creature), *n),
             Goal::Pick(plant, n) => (journal(Page::Plants, plant), *n),
-            Goal::Mine(ore, n) => (journal(Page::Ores, ore), *n),
+            Goal::Mine(ore, n) => {
+                let mined = self.journal.entries().filter(|e| e.page == Page::Ores && (matches(ore, &e.name) || (self.drops)(&e.name).is_some_and(|d| matches(ore, &d))));
+                (mined.map(|e| e.count).sum(), *n)
+            }
             Goal::Visit(n) => (self.journal.found(Page::Biomes) as u32, *n),
             Goal::Discover(page, n) => (self.journal.found(*page) as u32, *n),
             Goal::Level(skill, n) => ((self.level)(skill) as u32, *n as u32),
@@ -310,7 +316,8 @@ mod tests {
         let level = |_: &str| 1u8;
         let carried = |_: &str| 0u32;
         let has_tag = |_: &str, _: &str| false;
-        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, home: true };
+        let drops = |_: &str| None;
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: true };
         // The tools were made before the quest was ever seen; the biomes visited too. With
         // a home already, the hearth follows the same moment.
         let done = quests.newly_done(&[], &progress);
@@ -320,8 +327,28 @@ mod tests {
         assert_eq!((fish.done, fish.tasks.clone()), (false, vec![vec![(3, 5)], vec![(1, 10)]]));
         // Two more trout finish it.
         journal.record(&rules, Page::Fish, "base:raw_trout", 2, 3);
-        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, home: true };
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: true };
         assert_eq!(quests.newly_done(&done, &progress), ["base:fish"]);
+    }
+
+    /// A Mine goal counts every block that drops its ore: deepslate copper (and copper
+    /// samples) count toward copper, as they give copper ore.
+    #[test]
+    fn mining_counts_whatever_drops_the_ore() {
+        let rules = crate::journal::JournalRules::default();
+        let mut journal = Journal::default();
+        journal.record(&rules, Page::Ores, "base:copper_ore", 2, 1);
+        journal.record(&rules, Page::Ores, "base:deepslate_copper_ore", 3, 2);
+        journal.record(&rules, Page::Ores, "base:deepslate_iron_ore", 4, 3);
+        let tallies = FxHashMap::default();
+        let (level, carried, has_tag) = (|_: &str| 1u8, |_: &str| 0u32, |_: &str, _: &str| false);
+        let drops = |name: &str| name.strip_prefix("base:deepslate_").map(|ore| format!("base:{ore}"));
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, home: false };
+        assert_eq!(progress.goal(&Goal::Mine("copper_ore".into(), 5)), (5, 5));
+        assert_eq!(progress.goal(&Goal::Mine("base:iron_ore".into(), 5)), (4, 5));
+        let nothing = |_: &str| None;
+        let progress = Progress { drops: &nothing, ..progress };
+        assert_eq!(progress.goal(&Goal::Mine("copper_ore".into(), 5)), (2, 5), "without drops, only copper ore itself");
     }
 
     #[test]

@@ -100,6 +100,8 @@ pub struct Settings {
     pub chat_key: Key,
     /// Key that starts a sprint.
     pub sprint_key: Key,
+    /// Key that dodges, with a direction (a backstep without).
+    pub dodge_key: Key,
     /// Whether tapping forward twice quickly starts a sprint too.
     pub double_tap_sprint: bool,
     /// Whether the view widens a little while sprinting.
@@ -110,6 +112,11 @@ pub struct Settings {
     pub cinematic_zoom: bool,
     /// Whether zooming works in survival too, not only in creative.
     pub zoom_in_survival: bool,
+    /// Whether a right click raises the guard and the next lowers it, rather than holding
+    /// the button.
+    pub toggle_guard: bool,
+    /// Whether a fight shows the number each blow did where it landed (hitsplats).
+    pub damage_numbers: bool,
     /// How far the hotbar and hearts sit above the bottom edge, in HUD pixels.
     pub hud_raise: i32,
     /// Name of the shader pack in use (see `render::pack`).
@@ -326,11 +333,14 @@ impl Default for Settings {
             zoom_key: Key(KeyCode::KeyZ),
             chat_key: Key(KeyCode::KeyT),
             sprint_key: Key(KeyCode::ControlLeft),
+            dodge_key: Key(KeyCode::AltLeft),
             double_tap_sprint: true,
             fov_effects: true,
             zoom: 400,
             cinematic_zoom: true,
             zoom_in_survival: false,
+            toggle_guard: false,
+            damage_numbers: true,
             hud_raise: 3,
             shader_pack: DEFAULT_PACK.into(),
             shadows: ShadowQuality::default(),
@@ -429,7 +439,11 @@ impl Settings {
     }
 
     /// The settings with every value within its slider's range, a listed resolution, and
-    /// no two of the keys that open screens bound to one key.
+    /// no two bindings on one key, nor one on a key the game keeps for itself: a binding
+    /// that collides goes back to its default (one moved off its default first), or to the
+    /// first free key that is not a modifier or Enter if another holds its default, so a
+    /// hand-edited file or a key a new screen took never leaves a screen that cannot open.
+    /// Only what is read changes; nothing is written.
     pub fn clamped(mut self) -> Self {
         self.resolution = nearest_resolution(self.resolution);
         // Each quest pinned once (the quest book caps how many, from its data).
@@ -443,9 +457,23 @@ impl Settings {
         if !TextureOrder::choices(self.minecraft_assets).contains(&self.textures) {
             self.textures = TextureOrder::Voxmar;
         }
-        if self.zoom_key == self.character_key || self.zoom_key == self.inventory_key {
-            // Zoom used to be on C, which now opens the character screen.
-            self.zoom_key = Key(KeyCode::KeyZ);
+        let defaults = Settings::default();
+        // Bindings on their defaults keep them, and the others yield to them (zoom used to be
+        // on C, which now opens the character screen), then later ones to earlier ones.
+        let mut order = Binding::ALL;
+        order.sort_by_key(|b| b.get(&self) != b.get(&defaults));
+        for (i, &binding) in order.iter().enumerate() {
+            let key = binding.get(&self);
+            let taken = FIXED_KEYS.contains(&key.0) || order[..i].iter().any(|other| other.get(&self) == key);
+            if !taken {
+                continue;
+            }
+            let free = |key: Key, settings: &Settings| !FIXED_KEYS.contains(&key.0) && !Binding::ALL.iter().any(|other| other.get(settings) == key);
+            let default = binding.get(&defaults);
+            let moved = if free(default, &self) { Some(default) } else { Key::all().find(|&k| !k.modifier_or_enter() && free(k, &self)) };
+            if let Some(moved) = moved {
+                binding.set(&mut self, moved);
+            }
         }
         for slider in Slider::ALL {
             let (min, max, _) = slider.range();
@@ -623,6 +651,8 @@ enum Toggle {
     DebugOverlay,
     CinematicZoom,
     ZoomInSurvival,
+    ToggleGuard,
+    DamageNumbers,
     DoubleTapSprint,
     FovEffects,
     MinecraftAssets,
@@ -636,6 +666,8 @@ impl Toggle {
             Toggle::DebugOverlay => "settings.debug_overlay",
             Toggle::CinematicZoom => "settings.cinematic_zoom",
             Toggle::ZoomInSurvival => "settings.zoom_in_survival",
+            Toggle::ToggleGuard => "settings.toggle_guard",
+            Toggle::DamageNumbers => "settings.damage_numbers",
             Toggle::DoubleTapSprint => "settings.double_tap_sprint",
             Toggle::FovEffects => "settings.fov_effects",
             Toggle::MinecraftAssets => "settings.minecraft_assets",
@@ -649,6 +681,8 @@ impl Toggle {
             Toggle::DebugOverlay => settings.debug_overlay,
             Toggle::CinematicZoom => settings.cinematic_zoom,
             Toggle::ZoomInSurvival => settings.zoom_in_survival,
+            Toggle::ToggleGuard => settings.toggle_guard,
+            Toggle::DamageNumbers => settings.damage_numbers,
             Toggle::DoubleTapSprint => settings.double_tap_sprint,
             Toggle::FovEffects => settings.fov_effects,
             Toggle::MinecraftAssets => settings.minecraft_assets,
@@ -662,6 +696,8 @@ impl Toggle {
             Toggle::DebugOverlay => &mut settings.debug_overlay,
             Toggle::CinematicZoom => &mut settings.cinematic_zoom,
             Toggle::ZoomInSurvival => &mut settings.zoom_in_survival,
+            Toggle::ToggleGuard => &mut settings.toggle_guard,
+            Toggle::DamageNumbers => &mut settings.damage_numbers,
             Toggle::DoubleTapSprint => &mut settings.double_tap_sprint,
             Toggle::FovEffects => &mut settings.fov_effects,
             Toggle::MinecraftAssets => &mut settings.minecraft_assets,
@@ -710,12 +746,14 @@ impl Choice {
         let words = |key: &str| locale.get(key).to_owned();
         match self {
             Choice::FarDetail => words(settings.far_detail.key()),
-            // Fonts and packs go by their names.
-            Choice::Font => settings.font.label().into(),
+            // Fonts are named in lang, and shader packs too where a language names them.
+            Choice::Font => words(settings.font.key()),
             Choice::UiScale => format!("{}%", settings.ui_scale),
             Choice::UiSounds => words(settings.ui_sounds.key()),
             Choice::AntiAliasing => words(settings.anti_aliasing.key()),
-            Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
+            Choice::ShaderPack => {
+                packs.get(&settings.shader_pack).named(locale).to_owned()
+            }
             Choice::Shadows => words(settings.shadows.key()),
             Choice::Water => words(settings.water_quality.key()),
             Choice::Textures => words(settings.textures.key()),
@@ -771,10 +809,38 @@ fn cycle<T: Copy + PartialEq>(all: &[T], current: T, forward: bool) -> T {
     all[(i + step) % all.len()]
 }
 
+/// Keys the game keeps for itself, which no binding may take: moving, jumping and
+/// descending, flight, dropping, the music, the debug overlay, the hotbar and commands.
+/// (R, which respawns on the death screen, stays bindable: it is the recipes key's default,
+/// and while dead no screen opens, so a binding on R does nothing else there.)
+const FIXED_KEYS: [KeyCode; 20] = [
+    KeyCode::KeyW,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::Space,
+    KeyCode::ShiftLeft,
+    KeyCode::KeyF,
+    KeyCode::KeyQ,
+    KeyCode::KeyM,
+    KeyCode::F3,
+    KeyCode::Slash,
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+];
+
 /// A key the player can rebind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Binding {
     Sprint,
+    Dodge,
     Zoom,
     Chat,
     Inventory,
@@ -787,9 +853,37 @@ enum Binding {
 }
 
 impl Binding {
+    const ALL: [Binding; 9] = [
+        Binding::Sprint,
+        Binding::Zoom,
+        Binding::Chat,
+        Binding::Inventory,
+        Binding::Character,
+        Binding::Journal,
+        Binding::Recipes,
+        Binding::Uses,
+        Binding::Screenshot,
+    ];
+
+    /// Binds `key`. A key another binding has trades places with it, so both still work;
+    /// a key the game keeps for itself (`FIXED_KEYS`) is refused. Returns whether anything
+    /// changed.
+    fn bind(self, settings: &mut Settings, key: Key) -> bool {
+        let old = self.get(settings);
+        if old == key || FIXED_KEYS.contains(&key.0) {
+            return false;
+        }
+        if let Some(other) = Binding::ALL.into_iter().find(|other| *other != self && other.get(settings) == key) {
+            other.set(settings, old);
+        }
+        self.set(settings, key);
+        true
+    }
+
     fn key(self) -> &'static str {
         match self {
             Binding::Sprint => "settings.key.sprint",
+            Binding::Dodge => "settings.key.dodge",
             Binding::Zoom => "settings.key.zoom",
             Binding::Chat => "settings.key.chat",
             Binding::Inventory => "settings.key.inventory",
@@ -805,6 +899,7 @@ impl Binding {
     fn get(self, settings: &Settings) -> Key {
         match self {
             Binding::Sprint => settings.sprint_key,
+            Binding::Dodge => settings.dodge_key,
             Binding::Zoom => settings.zoom_key,
             Binding::Chat => settings.chat_key,
             Binding::Inventory => settings.inventory_key,
@@ -820,6 +915,7 @@ impl Binding {
     fn set(self, settings: &mut Settings, key: Key) {
         *match self {
             Binding::Sprint => &mut settings.sprint_key,
+            Binding::Dodge => &mut settings.dodge_key,
             Binding::Zoom => &mut settings.zoom_key,
             Binding::Chat => &mut settings.chat_key,
             Binding::Inventory => &mut settings.inventory_key,
@@ -946,6 +1042,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Slider(Slider::Zoom),
             Control::Switch(Toggle::CinematicZoom),
             Control::Switch(Toggle::ZoomInSurvival),
+            Control::Switch(Toggle::ToggleGuard),
             Control::Slider(Slider::FlySpeed),
         ],
     ),
@@ -961,6 +1058,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Key(Binding::Screenshot),
             Control::Key(Binding::Chat),
             Control::Key(Binding::Sprint),
+            Control::Key(Binding::Dodge),
             Control::Key(Binding::Zoom),
         ],
     ),
@@ -972,6 +1070,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Choice(Choice::UiScale),
             Control::Choice(Choice::UiSounds),
             Control::Slider(Slider::HudRaise),
+            Control::Switch(Toggle::DamageNumbers),
             Control::Switch(Toggle::DebugOverlay),
         ],
     ),
@@ -1399,7 +1498,7 @@ fn rebind(mut keys: ResMut<ButtonInput<KeyCode>>, mut rebinding: ResMut<Rebindin
     keys.clear_just_pressed(key);
     rebinding.0 = None;
     if key != KeyCode::Escape && binding.get(&settings) != Key(key) {
-        binding.set(&mut settings, Key(key));
+        binding.bind(&mut settings, Key(key));
     }
 }
 
@@ -1799,6 +1898,40 @@ mod tests {
         assert_eq!((old.fov, old.resolution, skipped), (80, 50, vec!["resolution".to_owned()]));
         // Zoom on C made way for the character screen.
         assert_eq!(old.zoom_key, Key(KeyCode::KeyZ));
+    }
+
+    #[test]
+    fn rebinding_onto_a_taken_key_trades_places_and_a_kept_key_is_refused() {
+        let mut settings = Settings::default();
+        // The journal onto E: the inventory takes J, so both screens still open.
+        assert!(Binding::Journal.bind(&mut settings, Key(KeyCode::KeyE)));
+        assert_eq!((settings.journal_key, settings.inventory_key), (Key(KeyCode::KeyE), Key(KeyCode::KeyJ)));
+        // Onto a movement key or a hotbar number: refused.
+        assert!(!Binding::Character.bind(&mut settings, Key(KeyCode::KeyW)));
+        assert!(!Binding::Uses.bind(&mut settings, Key(KeyCode::Digit3)));
+        assert_eq!((settings.character_key, settings.uses_key), (Key(KeyCode::KeyC), Key(KeyCode::KeyU)));
+        // Whatever is bound, no two bindings share a key and none takes a kept one.
+        for binding in Binding::ALL {
+            let key = binding.get(&settings);
+            assert!(!FIXED_KEYS.contains(&key.0));
+            assert_eq!(Binding::ALL.iter().filter(|b| b.get(&settings) == key).count(), 1, "{binding:?}");
+        }
+    }
+
+    #[test]
+    fn colliding_bindings_in_a_file_read_back_at_their_defaults() {
+        // A hand-edited file: the journal on E (the inventory's) and the character screen on W.
+        let (read, _) = Settings::parse("(journal_key: \"KeyE\", character_key: \"KeyW\")", || false);
+        assert_eq!((read.journal_key, read.inventory_key, read.character_key), (Key(KeyCode::KeyJ), Key(KeyCode::KeyE), Key(KeyCode::KeyC)));
+        // Two moved bindings on one key: the later yields.
+        let (read, _) = Settings::parse("(recipes_key: \"KeyG\", uses_key: \"KeyG\")", || false);
+        assert_eq!((read.recipes_key, read.uses_key), (Key(KeyCode::KeyG), Key(KeyCode::KeyU)));
+        // Chat on the inventory's E and the journal on chat's T: chat cannot go back to T,
+        // so it goes to the first key nobody holds.
+        let (read, _) = Settings::parse("(chat_key: \"KeyE\", journal_key: \"KeyT\")", || false);
+        assert_eq!((read.inventory_key, read.journal_key), (Key(KeyCode::KeyE), Key(KeyCode::KeyT)));
+        let keys = Binding::ALL.map(|b| b.get(&read));
+        assert!(!FIXED_KEYS.contains(&read.chat_key.0) && keys.iter().filter(|&&k| k == read.chat_key).count() == 1, "chat on {:?} with {keys:?}", read.chat_key);
     }
 
     /// A new player starts with Voxmar's own textures and sounds; a player whose settings

@@ -3,14 +3,17 @@
 
 mod actions;
 mod commands;
+mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
 pub use commands::{weather_name, weather_numbers};
 mod cooking;
 mod creatures;
+mod fight;
 mod fishing;
 mod death;
 mod hearth;
 mod journal;
+mod machines;
 mod quests;
 mod regrow;
 mod farm;
@@ -20,11 +23,15 @@ mod fluids;
 mod items;
 mod player;
 mod process;
+mod rules;
+mod treasure;
 pub mod save;
+mod villagers;
 mod weather;
 mod wear;
 
 use std::collections::VecDeque;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -37,7 +44,7 @@ use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind};
 use voxmar_engine::content::Content;
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::field::Field;
-use voxmar_engine::fluid::{Budget, Fluids};
+use voxmar_engine::fluid::Fluids;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::{Column, VoxelWorld};
 use voxmar_protocol::{PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
@@ -61,13 +68,97 @@ pub struct ServerConfig {
     /// Names of players with admin rights, besides the integrated server's own player.
     /// Names are not authenticated, so this only suits servers among friends.
     pub admins: Vec<String>,
+    /// Most players playing at once; more are turned away when they say hello.
+    pub max_players: usize,
+    /// A password that makes whoever joins with it an admin, from anywhere (the dedicated
+    /// server reads it from `$VOXMAR_ADMIN_TOKEN` or `--admin-token-file`; a client sends the
+    /// one `VOXMAR_ADMIN_TOKENS` keeps for the server's address). `None` for none.
+    pub admin_token: Option<String>,
+    /// How long a player connected from elsewhere may send nothing before they are let go:
+    /// a connection that died without closing would otherwise keep their name taken. A
+    /// client's network thread sends a keepalive every `transport::KEEPALIVE` whatever the
+    /// game is doing, so a minimized or busy client is never let go.
+    pub idle_timeout: Duration,
     /// Directory the world is saved in; a new world is created there if it holds none. A
     /// saved world's game mode replaces `allow_flight`. `None` keeps the world in memory
     /// only.
     pub world: Option<PathBuf>,
+    /// How much any one connection may send and how many may wait to say hello (the
+    /// dedicated server reads them from `--limits FILE`).
+    pub limits: Limits,
     /// Makes the server run behind, to see how clients cope, as on a busy machine. None
     /// but in tests.
     pub lag: Lag,
+    /// Cuts every save short once its machines are written, as a crash would. Only in
+    /// tests.
+    pub cut_saves: bool,
+}
+
+/// How much any one connection may ask of the server: a server operator's numbers, read
+/// by the dedicated server from a RON file (`--limits FILE`) that sets any of them.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Limits {
+    /// Messages a player's handled per tick, at most; the rest wait for the next (and a
+    /// connection whose queue fills is cut off). Inputs come one a tick.
+    pub messages_per_tick: u32,
+    /// Lines of chat in a burst, and per second after it.
+    pub chat_burst: f32,
+    pub chat_per_second: f32,
+    /// Seconds a connection may take to say hello before it is closed, how many may be
+    /// waiting to at once, and how many of those from one address.
+    pub hello_seconds: f32,
+    pub max_pending: usize,
+    pub max_pending_per_address: usize,
+    /// Characters of a player's name kept.
+    pub name_length: usize,
+    /// How many leading bits of an IPv6 address the limits per address count by: one
+    /// host usually holds a whole /64, so each of its addresses is not another player.
+    pub ipv6_prefix: u8,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32, ipv6_prefix: 64 }
+    }
+}
+
+impl Limits {
+    /// Limits from a RON file's text, refusing any that would shut everyone out or let
+    /// one connection hold the server up.
+    pub fn from_ron(source: &str) -> Result<Self, String> {
+        let limits: Limits = ron::from_str(source).map_err(|e| e.to_string())?;
+        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length, ipv6_prefix } = limits;
+        let rates = [chat_burst, chat_per_second, hello_seconds];
+        if rates.iter().any(|n| !n.is_finite() || *n < 0.0) {
+            Err("chat_burst, chat_per_second and hello_seconds must be zero or more".into())
+        } else if !(2..=1024).contains(&messages_per_tick) {
+            Err("messages_per_tick must be from 2 to 1024 (a player sends an input and more every tick)".into())
+        } else if !(0.5..=60.0).contains(&hello_seconds) {
+            Err("hello_seconds must be from 0.5 to 60".into())
+        } else if max_pending == 0 || max_pending_per_address == 0 {
+            Err("max_pending and max_pending_per_address must be at least 1, or nobody could join".into())
+        } else if !(1..=64).contains(&name_length) {
+            Err("name_length must be from 1 to 64".into())
+        } else if !(16..=128).contains(&ipv6_prefix) {
+            Err("ipv6_prefix must be from 16 to 128".into())
+        } else {
+            Ok(limits)
+        }
+    }
+
+    /// The address the limits per address count `ip` under: an IPv4 address (an IPv4
+    /// client of a dual-stack listener too) as itself, an IPv6 one by its first
+    /// `ipv6_prefix` bits.
+    pub fn address_key(&self, ip: IpAddr) -> IpAddr {
+        match ip.to_canonical() {
+            IpAddr::V6(v6) => {
+                let mask = u128::MAX.checked_shl(128 - self.ipv6_prefix.min(128) as u32).unwrap_or(0);
+                IpAddr::V6((u128::from(v6) & mask).into())
+            }
+            v4 => v4,
+        }
+    }
 }
 
 /// How a server made to run behind does so (see `ServerConfig::lag`).
@@ -100,8 +191,13 @@ impl Default for ServerConfig {
             allow_flight: true,
             local_admin: true,
             admins: Vec::new(),
+            max_players: 64,
+            admin_token: None,
+            idle_timeout: Duration::from_secs(15),
             world: None,
+            limits: Limits::default(),
             lag: Lag::default(),
+            cut_saves: false,
         }
     }
 }
@@ -143,13 +239,37 @@ pub fn assets_dir() -> PathBuf {
     PathBuf::from("assets")
 }
 
+/// Actions the client and server name in code: content that leaves one out fails at
+/// startup rather than in play.
+const NAMED_ACTIONS: &[&str] =
+    &["core:mine", "core:place", "core:transfer", "core:quick_move", "core:craft", "core:stow", "core:drop", "core:attack", "core:eat", "core:respawn"];
+
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
     let content = Content::load(&assets.join("content"))?;
+    if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {
+        return Err(format!("no package defines the action {missing}, which the game needs").into());
+    }
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
+    rules::SurvivalRules::load(&content.files, &content.blocks)?;
+    for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
+        tracing::warn!("the fluid {} is neither swum in (swim: true) nor burns (tagged \"lava\"): players wade through it unharmed", fluid.name);
+    }
     Ok(content)
+}
+
+/// Whether players swim in `fluid` or are burned by it: one that does neither (a mod's
+/// lava that lost its tag, say) is only waded through.
+fn swum_or_burns(blocks: &voxmar_engine::block::BlockRegistry, fluid: &voxmar_engine::fluid::Fluid) -> bool {
+    fluid.def.swim || blocks.def(fluid.source).has_tag("lava")
+}
+
+/// What tells players apart (for who keeps an animal or owns a wheel, and name comparisons):
+/// names that differ only in case are one player (`player::same_name`).
+pub(crate) fn player_key(name: &str) -> String {
+    name.to_lowercase()
 }
 
 /// A running server thread. Dropping it stops the server.
@@ -203,7 +323,21 @@ impl Drop for ServerHandle {
 /// Starts a server thread. With `config.world` set, opens the world saved there (or
 /// creates it); the server saves it periodically and when the handle is dropped.
 pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
-    let (save, meta) = open_world(&mut config)?;
+    let (save, mut meta) = open_world(&mut config)?;
+    // Land made from different worldgen data than before may not line up with it: warned
+    // about, never refused (content-only changes keep the generator's version).
+    let worldgen_content = WorldContent::fingerprint(content.files.iter(), &content.blocks);
+    let generation_changed = meta.worldgen_content.is_some_and(|before| before != worldgen_content);
+    if meta.worldgen_content != Some(worldgen_content) {
+        meta.worldgen_content = Some(worldgen_content);
+        if let Some(save) = &save {
+            if generation_changed {
+                tracing::warn!("{}: {}", save.dir().display(), content.english.render(&voxmar_engine::lang::Words::key("world.generation_changed"), &content.blocks));
+            }
+            save.write_meta(&meta)?;
+        }
+    }
+    let state = save.as_ref().map_or(Ok(save::WorldState::default()), WorldSave::read_state)?;
     let (connections, incoming) = unbounded();
     let (console, lines) = unbounded();
     let stop = Arc::new(AtomicBool::new(false));
@@ -213,7 +347,11 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
         let (stop, tick_times, ticks) = (stop.clone(), tick_times.clone(), ticks.clone());
         std::thread::Builder::new()
             .name("server".into())
-            .spawn(move || Server::new(config, meta, save, content, incoming, lines).run(&stop, &tick_times, &ticks))?
+            .spawn(move || {
+                let mut server = Server::new(config, meta, save, state, content, incoming, lines);
+                server.generation_changed = generation_changed;
+                server.run(&stop, &tick_times, &ticks)
+            })?
     };
     Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks })
 }
@@ -225,7 +363,9 @@ fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, 
     let Some(dir) = &config.world else { return Ok((None, WorldMeta::new("world", config.seed, new_mode))) };
     let save = WorldSave::new(dir);
     let mut meta = if save.exists() {
-        save.read_meta()?
+        let meta = save.read_meta()?;
+        save.recover(&meta);
+        meta
     } else {
         let name = dir.file_name().map_or_else(|| "world".into(), |name| name.to_string_lossy().into_owned());
         let meta = WorldMeta::new(name, config.seed, new_mode);
@@ -253,6 +393,9 @@ fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, 
 pub(crate) struct Loaded {
     column: Column,
     saved: bool,
+    /// The column's file could not be read, nor moved aside, so edits to the column
+    /// generated in its place are not saved over it (`Server::kept`).
+    keep_file: bool,
 }
 
 /// A saved column if there is one, with its worn ground healed up to `today`, otherwise a
@@ -269,18 +412,34 @@ pub(crate) fn load_column(
         match save.read_column(pos, registry) {
             Ok(Some(mut column)) => {
                 wear.heal(&mut column, pos.origin(), today, registry);
-                return Loaded { column, saved: true };
+                return Loaded { column, saved: true, keep_file: false };
             }
             Ok(None) => {}
-            Err(e) => tracing::error!("could not load column {pos:?}, generating it again: {e}"),
+            // Not a column file: set aside, so the column generated in its place never
+            // overwrites it.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => match save.set_aside_column(pos) {
+                Ok(aside) => tracing::error!("could not load column {pos:?}: {e}; kept it as {} and generated the column again", aside.display()),
+                Err(moving) => {
+                    tracing::error!("could not load column {pos:?}: {e}; nor move it aside ({moving}), so edits to it will not be saved");
+                    return Loaded { column: generator.generate(pos), saved: false, keep_file: true };
+                }
+            },
+            // Not read at all (no permission, a failing disk): left alone.
+            Err(e) => {
+                tracing::error!("could not read column {pos:?}: {e}; edits to it will not be saved");
+                return Loaded { column: generator.generate(pos), saved: false, keep_file: true };
+            }
         }
     }
-    Loaded { column: generator.generate(pos), saved: false }
+    Loaded { column: generator.generate(pos), saved: false, keep_file: false }
 }
 
 pub(crate) struct Server {
     config: ServerConfig,
     meta: WorldMeta,
+    /// The last save generation begun, whether or not it counted: none is begun twice, so
+    /// files a failed save left can never pass for a later one's.
+    generation: u64,
     save: Option<WorldSave>,
     content: Content,
     generator: Arc<dyn Generator>,
@@ -291,14 +450,32 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
-    /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
+    /// Machines players built, and the power between them.
+    factory: voxmar_engine::factory::Factory,
+    /// Cells whose block a player placed: ores, which then teach nothing; plants, which
+    /// don't regrow by themselves; and furnishings, which give themselves back only from
+    /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
-    /// Picked wild plants waiting to grow back (see `regrow`).
+    /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
+    /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
+    planter_grown: FxHashSet<IVec3>,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
+    /// The moment before which every player message has been handled: the last time all
+    /// were taken in, except messages past a player's share for the tick (the
+    /// `messages_left` cap), which only that player pays for. A creature's blow is judged
+    /// once it has landed by then (`fight`).
+    /// None until messages are first taken in (unit tests tick without them).
+    heard: Option<Instant>,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
+    /// The people of settlements near players.
+    villagers: villagers::Villagers,
+    /// A new player's health and kit, and what falls, lava, fires and water do.
+    survival: Arc<rules::SurvivalRules>,
+    /// Swings, guards, dodges and creatures' wind-ups (`fight`).
+    fights: fight::Fights,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -308,14 +485,19 @@ pub(crate) struct Server {
     /// admins have forced.
     weather: WeatherState,
     world: VoxelWorld,
-    /// Water and lava waiting to flow, and how much of it a tick may move.
+    /// Water and lava waiting to flow.
     fluids: Fluids,
-    fluid_budget: Budget,
-    /// Seconds the last tick took.
-    tick_seconds: f64,
     /// Columns edited since they were last saved. They stay loaded until saved; without a
     /// save, that is forever.
     dirty: FxHashSet<ColumnPos>,
+    /// Columns whose files could not be read, which saving leaves alone (`Loaded`).
+    kept: FxHashSet<ColumnPos>,
+    /// The world's worldgen data changed since land was last made in it, so admins who
+    /// join are warned that new land may not line up (`WorldMeta::worldgen_content`).
+    generation_changed: bool,
+    /// When each address's new players had the starting kit, in ticks (`Server::grant_kit`).
+    /// Kept only while the server runs.
+    kits: FxHashMap<std::net::IpAddr, Vec<u64>>,
     generating: FxHashSet<ColumnPos>,
     generated_tx: Sender<(ColumnPos, Loaded)>,
     generated_rx: Receiver<(ColumnPos, Loaded)>,
@@ -341,6 +523,7 @@ impl Server {
         config: ServerConfig,
         meta: WorldMeta,
         save: Option<WorldSave>,
+        state: save::WorldState,
         content: Content,
         incoming: Receiver<ServerConnection>,
         console: Receiver<String>,
@@ -369,26 +552,21 @@ impl Server {
         let spawn = find_ground(&world, &content.blocks, spawn_block);
         let (generated_tx, generated_rx) = unbounded();
         tracing::info!("world seed {:#x}, spawn at {spawn}", meta.seed);
-        let saved_items = save.as_ref().map_or(Ok(Vec::new()), |save| save.read_items()).unwrap_or_else(|e| {
-            tracing::error!("could not load dropped items: {e}");
-            Vec::new()
-        });
-        let items = items::Items::restore(saved_items, |name| content.blocks.id(name));
-        let saved_crops = save.as_ref().map_or(Ok(Vec::new()), |save| save.read_crops()).unwrap_or_else(|e| {
-            tracing::error!("could not load crops: {e}");
-            Vec::new()
-        });
+        let items = items::Items::restore(state.items, |name| content.blocks.item_named(name));
         let crops = &content.crops;
-        let farm = farm::Farm::restore(saved_crops, |name| {
+        let farm = farm::Farm::restore(state.crops, |name| {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
+        let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks).expect("checked by load_content"));
         let mut server = Self {
             config,
             tick,
             day: meta.day.unwrap_or(tick) as f64,
             day_speed: meta.day_speed,
+            generation: meta.generation,
             meta,
             save,
             content,
@@ -397,19 +575,26 @@ impl Server {
             executor: Executor::default(),
             items,
             farm,
+            factory: voxmar_engine::factory::Factory::default(),
             placed,
             regrowing,
+            planter_grown,
             arrival: Instant::now(),
+            heard: None,
             creatures: creatures::Creatures::default(),
+            villagers: villagers::Villagers::restore(state.villagers),
+            survival,
+            fights: fight::Fights::default(),
             processes,
             temperature,
             wear_rules,
             weather,
             world,
             fluids,
-            fluid_budget: Budget::default(),
-            tick_seconds: 0.0,
             dirty: FxHashSet::default(),
+            kept: if loaded.keep_file { FxHashSet::from_iter([spawn_column]) } else { FxHashSet::default() },
+            generation_changed: false,
+            kits: FxHashMap::default(),
             generating: FxHashSet::default(),
             generated_tx,
             generated_rx,
@@ -420,11 +605,8 @@ impl Server {
             spawn,
         };
         server.show_grown_crops(spawn_column);
-        let saved_creatures = server.save.as_ref().map_or(Ok(Vec::new()), |save| save.read_creatures()).unwrap_or_else(|e| {
-            tracing::error!("could not load creatures: {e}");
-            Vec::new()
-        });
-        server.restore_creatures(saved_creatures);
+        server.restore_creatures(state.creatures);
+        server.restore_machines(state.machines);
         server
     }
 
@@ -468,9 +650,21 @@ impl Server {
 
     fn accept_connections(&mut self) {
         while let Ok(connection) = self.incoming.try_recv() {
+            // Those still to say hello count against their own small limit, and fewer from
+            // any one address, so sockets left silent cannot fill the server or crowd out
+            // everyone else (players are counted at hello).
+            let pending = || self.players.values().filter(|p| !p.joined);
+            let limits = &self.config.limits;
+            let key = |connection: &ServerConnection| connection.peer().map(|ip| limits.address_key(ip));
+            let peer = key(&connection);
+            if pending().count() >= limits.max_pending || peer.is_some() && pending().filter(|p| key(&p.connection) == peer).count() >= limits.max_pending_per_address
+            {
+                connection.send(ServerMessage::Rejected { reason: voxmar_engine::lang::Words::key("net.rejected.full") });
+                continue;
+            }
             let id = self.next_player;
             self.next_player += 1;
-            self.players.insert(id, Player::new(id, connection, self.spawn, self.config.view_distance));
+            self.players.insert(id, Player::new(id, connection, self.spawn, self.config.view_distance, self.tick, self.survival.max_health, &self.config.limits));
         }
     }
 
@@ -486,32 +680,84 @@ impl Server {
 
     /// Adds a loaded column to the world, and lets fluid waiting for it flow on.
     pub(crate) fn insert_column(&mut self, pos: ColumnPos, loaded: Loaded) {
+        if loaded.keep_file {
+            self.kept.insert(pos);
+        }
         self.world.insert(pos, Arc::new(loaded.column));
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
+        self.reconcile_machines(pos, loaded.saved);
     }
 
     fn handle_messages(&mut self) {
-        let ids: Vec<PlayerId> = self.players.keys().copied().collect();
+        // A message is stamped as it goes into its channel, so every one stamped before now
+        // is handled below, except messages past a player's share for the tick (the
+        // `messages_left` cap), which only that player pays for.
+        let heard = Instant::now();
+        // Oldest connection first, so a player's dropped connection is seen gone before a
+        // new one's hello under their name is answered (else a quick rejoin is turned away).
+        let mut ids: Vec<PlayerId> = self.players.keys().copied().collect();
+        ids.sort_unstable();
         for id in ids {
-            while let Some(player) = self.players.get(&id) {
+            // A player's messages beyond their share of this tick wait for the next.
+            while let Some(player) = self.players.get_mut(&id)
+                && player.messages_left > 0
+            {
                 match player.connection.try_recv_at() {
-                    Ok(Some((at, message))) => self.handle_message(id, message, at),
-                    Ok(None) => break,
-                    Err(_) => {
-                        tracing::info!("{} left", player.name);
-                        self.save_player(player);
-                        self.players.remove(&id);
+                    Ok(Some((at, message))) => {
+                        player.messages_left -= 1;
+                        self.handle_message(id, message, at);
                     }
+                    Ok(None) => {
+                        if self.players[&id].idle(Instant::now(), self.config.idle_timeout) {
+                            tracing::info!("{} sent nothing for {:?}; letting them go", self.players[&id].name, self.config.idle_timeout);
+                            self.leave(id);
+                        }
+                        break;
+                    }
+                    Err(_) => self.leave(id),
                 }
             }
         }
+        self.heard = Some(heard);
+    }
+
+    /// Lets a player go. Leaving dead buries first, or rejoining would revive them with
+    /// everything they carried. One who had joined is saved with the whole world: what they
+    /// hold is saved as one with what machines and the ground hold, or a crash could double
+    /// it. A connection that never said hello holds nothing, and opening and closing sockets
+    /// must not make the server save.
+    fn leave(&mut self, id: PlayerId) {
+        self.bury_if_dead(id);
+        let player = &self.players[&id];
+        if player.joined {
+            tracing::info!("{} left", player.name);
+            self.save();
+        }
+        self.players.remove(&id);
+    }
+
+    /// The dropped items to save, and loot still waiting for a creature's body to fall,
+    /// saved as lying where it will drop, or a server stopped in that moment would lose it
+    /// (the creature is gone).
+    fn saved_items(&self) -> Vec<save::SavedItem> {
+        let blocks = &self.content.blocks;
+        let mut saved = self.items.saved(|item| blocks.def(item).name.clone());
+        saved.extend(self.creatures.falling_loot.iter().map(|(_, stack, body)| save::SavedItem {
+            item: blocks.def(stack.item).name.clone(),
+            count: stack.count,
+            position: body.position.to_array(),
+            age: 0.0,
+            owner: None,
+            lifetime: None,
+        }));
+        saved
     }
 
     fn tick(&mut self) {
         let _span = tracing::info_span!("server_tick").entered();
-        let started = Instant::now();
         self.tick += 1;
+        self.limit_players();
         // At normal speed a day takes the content's `day_minutes`.
         self.day += (self.day_speed * self.content.commands.day_pace()) as f64;
         self.run_processes();
@@ -521,6 +767,7 @@ impl Server {
         self.check_quests();
         self.tick_items();
         self.tick_creatures();
+        self.tick_fights();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
@@ -535,58 +782,110 @@ impl Server {
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();
         }
-        self.tick_seconds = started.elapsed().as_secs_f64();
+        if self.tick.is_multiple_of(60 * TICKS_PER_SECOND as u64) {
+            self.forget_old_kits();
+        }
     }
 
-    /// Writes edited columns, joined players and the world's metadata. Failures are
-    /// logged; columns that failed stay dirty and are tried again at the next save.
+    /// Writes edited columns, joined players and the world's metadata, as one generation:
+    /// if any of it fails, none of it counts, and edited columns are tried again next time.
     fn save(&mut self) {
+        if self.save.is_none() {
+            return;
+        }
+        self.note_all_deaths();
+        // A player who died since the last tick (a command, say) is saved buried.
+        self.bury_the_dead();
         let Some(save) = &self.save else { return };
         let _span = tracing::info_span!("save_world").entered();
         let started = Instant::now();
-        let (world, registry) = (&self.world, &self.content.blocks);
-        let columns = self.dirty.len();
+        // One generation: nothing counts until `world.ron` does, so a save cut short leaves
+        // the last whole one, and what a player holds never also stays in a machine.
+        let generation = self.generation.max(self.meta.generation) + 1;
+        self.generation = generation;
+        save.begin(generation);
+        let mut ok = true;
+        let mut failed = |what: &str, e: std::io::Error| {
+            tracing::error!("could not save {what}: {e}");
+            ok = false;
+        };
+        let (world, registry, kept) = (&self.world, &self.content.blocks, &self.kept);
+        // A column no longer in the world has nothing left to save, and one whose file
+        // could not be read is never saved over it (`kept`).
         self.dirty.retain(|&pos| {
-            let Some(column) = world.column(pos) else { return false };
-            let result = save.write_column(pos, column, registry);
-            if let Err(e) = &result {
-                tracing::error!("could not save column {pos:?}: {e}");
+            if world.column(pos).is_none() {
+                return false;
             }
-            result.is_err()
+            if kept.contains(&pos) {
+                tracing::warn!("not saving column {pos:?} over a file that could not be read");
+                return false;
+            }
+            true
         });
-        for player in self.players.values().filter(|p| p.joined) {
-            self.save_player(player);
+        let mut written = FxHashSet::default();
+        for &pos in &self.dirty {
+            let Some(column) = world.column(pos) else { continue };
+            match save.write_column(pos, column, registry) {
+                Ok(()) => {
+                    written.insert(pos);
+                }
+                Err(e) => failed(&format!("column {pos:?}"), e),
+            }
         }
-        let blocks = &self.content.blocks;
-        if let Err(e) = save.write_items(&self.items.saved(|item| blocks.def(item).name.clone())) {
-            tracing::error!("could not save dropped items: {e}");
+        if let Err(e) = save.write_machines(&self.saved_machines()) {
+            failed("machines", e);
+        }
+        if self.config.cut_saves {
+            tracing::warn!("save {generation} cut short after its machines, as asked");
+            return;
+        }
+        for player in self.players.values().filter(|p| p.joined) {
+            if let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills, &self.content.effects), registry) {
+                failed(&format!("player {}", player.name), e);
+            }
+        }
+        if let Err(e) = save.write_items(&self.saved_items()) {
+            failed("dropped items", e);
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
-            tracing::error!("could not save creatures: {e}");
+            failed("creatures", e);
+        }
+        if let Err(e) = save.write_villagers(&self.villagers.saved()) {
+            failed("who of the villagers died", e);
         }
         let crops = &self.content.crops;
         if let Err(e) = save.write_crops(&self.farm.saved(|id| crops.get(id).def.name.clone())) {
-            tracing::error!("could not save crops: {e}");
+            failed("crops", e);
         }
-        self.meta.time = self.tick;
-        self.meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
-        self.meta.regrowing = self.saved_regrowing();
-        self.meta.day = Some(self.day as u64);
-        self.meta.day_speed = self.day_speed;
-        self.meta.last_played = save::unix_time();
-        if let Err(e) = save.write_meta(&self.meta) {
-            tracing::error!("could not save {}: {e}", save.dir().display());
+        if !ok {
+            // A part missing would let what moved since the last save be in two places, or
+            // none: the world stays as last saved.
+            save.abandon();
+            tracing::error!("save {generation} of {} abandoned", save.dir().display());
+            return;
         }
-        tracing::debug!("saved {columns} columns and {} players in {:?}", self.players.len(), started.elapsed());
-    }
-
-    fn save_player(&self, player: &Player) {
-        if let Some(save) = &self.save
-            && player.joined
-            && let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills, &self.content.effects), &self.content.blocks)
-        {
-            tracing::error!("could not save player {}: {e}", player.name);
+        let mut meta = self.meta.clone();
+        meta.time = self.tick;
+        meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
+        meta.regrowing = self.saved_regrowing();
+        let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
+        grown.sort();
+        meta.planter_grown = grown;
+        meta.day = Some(self.day as u64);
+        meta.day_speed = self.day_speed;
+        meta.last_played = save::unix_time();
+        meta.generation = generation;
+        match save.commit(&meta) {
+            Ok(moved) => {
+                self.meta = meta;
+                // Columns saved are clean; any not moved into place are written again next time.
+                if moved {
+                    self.dirty.retain(|pos| !written.contains(pos));
+                }
+            }
+            Err(e) => tracing::error!("could not save {}: {e}", save.dir().display()),
         }
+        tracing::debug!("saved {} columns and {} players in {:?}", written.len(), self.players.len(), started.elapsed());
     }
 
     /// The clocks, as players are told them.
@@ -667,6 +966,7 @@ impl Server {
             .collect();
         for pos in unload {
             self.world.remove(pos);
+            self.kept.remove(&pos);
             self.fluids.column_unloaded(pos);
         }
     }
@@ -684,9 +984,11 @@ impl Server {
     pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
         let mut done = Vec::with_capacity(changes.len());
         for &(pos, block) in changes {
-            if self.world.set_block(pos, block).is_some() {
+            if let Some(old) = self.world.set_block(pos, block) {
                 self.dirty.insert(ColumnPos::of_block(pos));
+                self.forget_placed(pos);
                 done.push((pos, block));
+                self.machine_changed(pos, old, block);
             }
         }
         for &(pos, _) in &done {
@@ -707,10 +1009,19 @@ impl Server {
 
     /// Changes a block, telling only the players who have its column (the others get the
     /// change with the column), and wakes any fluid it lets flow.
+    /// A block changed: whatever a player placed there, or a planter grew, is gone (those
+    /// who place and grow mark it again after setting it).
+    fn forget_placed(&mut self, pos: IVec3) {
+        self.placed.remove(&pos);
+        self.planter_grown.remove(&pos);
+    }
+
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {
         let column = ColumnPos::of_block(pos);
-        if self.world.set_block(pos, block).is_some() {
+        if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
+            self.forget_placed(pos);
+            self.machine_changed(pos, old, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
@@ -757,9 +1068,132 @@ fn ring_positions(center: ColumnPos, ring: i32) -> impl Iterator<Item = ColumnPo
     })
 }
 
+/// A server on the game's own content with a new world kept in memory, for unit tests.
+#[cfg(test)]
+pub(crate) fn test_server() -> Server {
+    let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+    let mut config = ServerConfig::default();
+    let (save, meta) = open_world(&mut config).expect("no save to open");
+    let (_, incoming) = crossbeam_channel::unbounded();
+    let (_, console) = crossbeam_channel::unbounded();
+    Server::new(config, meta, save, save::WorldState::default(), content, incoming, console)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A drop and its rejoin are queued together before one reading loop: the old
+    /// connection must leave before the new hello is answered, without scheduler luck.
+    #[test]
+    fn a_dropped_player_rejoining_in_the_same_loop_is_let_in() {
+        use voxmar_protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage, local_pair};
+        let mut server = test_server();
+        let (connections, incoming) = unbounded();
+        server.incoming = incoming;
+        let fingerprint = server.content.fingerprint();
+        let join = |server: &mut Server| {
+            let (client, server_side) = local_pair();
+            connections.send(server_side).unwrap();
+            client.send(ClientMessage::Hello { name: "bob".into(), protocol: PROTOCOL_VERSION, content: fingerprint, admin_token: None });
+            server.accept_connections();
+            server.handle_messages();
+            client
+        };
+        let answer = |client: &voxmar_protocol::ClientConnection| loop {
+            match client.try_recv() {
+                Ok(Some(ServerMessage::Welcome { .. })) => break Ok(()),
+                Ok(Some(ServerMessage::Rejected { reason })) => break Err(reason),
+                Ok(Some(_)) => {}
+                other => panic!("no answer to the hello: {other:?}"),
+            }
+        };
+        let mut bob = join(&mut server);
+        answer(&bob).expect("the first bob is let in");
+        for round in 0..8 {
+            drop(bob);
+            bob = join(&mut server);
+            answer(&bob).unwrap_or_else(|reason| panic!("round {round}: same-loop rejoin rejected: {reason:?}"));
+        }
+    }
+
+    #[test]
+    fn loot_waiting_for_a_body_to_fall_is_saved_where_it_will_drop() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let dir = std::env::temp_dir().join(format!("voxmar-falling-loot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let meta = WorldMeta::new("loot", 1, GameMode::Survival);
+        let save = WorldSave::new(&dir);
+        save.create(&meta).unwrap();
+        let ((_, incoming), (_, console)) = (unbounded(), unbounded());
+        let config = ServerConfig { view_distance: 2, ..Default::default() };
+        let mut server = Server::new(config, meta, Some(save), save::WorldState::default(), content.clone(), incoming, console);
+        let slime = content.blocks.expect("base:lumen_slime");
+        let at = Vec3::new(3.5, 70.0, -2.5);
+        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack { item: slime, count: 2 }, voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
+        server.save();
+        let saved = WorldSave::new(&dir).read_items().unwrap();
+        assert_eq!(saved.len(), 1, "{saved:?}");
+        assert_eq!((saved[0].item.as_str(), saved[0].count, saved[0].position), ("base:lumen_slime", 2, at.to_array()));
+        // Saving takes nothing from the queue: the loot still drops when its body has fallen.
+        assert_eq!(server.creatures.falling_loot.len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn every_shipped_fluid_is_swum_in_or_burns() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let blocks = &content.blocks;
+        assert!(blocks.fluids().iter().all(|fluid| swum_or_burns(blocks, fluid)));
+        // Water that is not swum in would be named at load.
+        let mut water = blocks.fluid_def(blocks.fluid(blocks.expect("base:water")).unwrap().fluid).clone();
+        water.def.swim = false;
+        assert!(!swum_or_burns(blocks, &water));
+    }
+
+    #[test]
+    fn addresses_count_together_by_ipv4_address_or_ipv6_prefix() {
+        let limits = Limits::default();
+        let key = |ip: &str| limits.address_key(ip.parse().unwrap());
+        assert_eq!(key("::ffff:127.0.0.1"), key("127.0.0.1"));
+        assert_eq!(key("::ffff:127.0.0.1"), "127.0.0.1".parse::<IpAddr>().unwrap());
+        // One host's /64 shares a kit and a share of those waiting to say hello...
+        assert_eq!(key("2001:db8:1:2::1"), key("2001:db8:1:2:abcd:ef01:2345:6789"));
+        // ...while the next /64, and other IPv4 addresses, do not.
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        assert_ne!(key("10.0.0.1"), key("10.0.0.2"));
+        let whole = Limits { ipv6_prefix: 128, ..Limits::default() };
+        assert_ne!(whole.address_key("2001:db8::1".parse().unwrap()), whole.address_key("2001:db8::2".parse().unwrap()));
+    }
+
+    #[test]
+    fn one_ipv6_host_or_one_machine_over_both_gets_one_kit_and_old_kits_are_forgotten() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let ((_, incoming), (_, console)) = (unbounded(), unbounded());
+        let config = ServerConfig { view_distance: 2, ..Default::default() };
+        let mut server = Server::new(config, WorldMeta::new("kits", 1, GameMode::Survival), None, save::WorldState::default(), content, incoming, console);
+        let mut grant = |ip: &str| server.grant_kit(ip.parse().unwrap());
+        assert!(grant("2001:db8:1:2::1"));
+        assert!(!grant("2001:db8:1:2::77"), "the same /64");
+        assert!(grant("2001:db8:1:3::1"), "the next /64");
+        assert!(grant("127.0.0.1"));
+        assert!(!grant("::ffff:127.0.0.1"), "the same machine through a dual-stack listener");
+        server.forget_old_kits();
+        assert_eq!(server.kits.len(), 3);
+        server.tick += (server.survival.kit_window * TICKS_PER_SECOND as f32) as u64;
+        server.forget_old_kits();
+        assert!(server.kits.is_empty());
+    }
+
+    #[test]
+    fn a_limits_file_sets_what_it_names_and_refuses_numbers_that_shut_everyone_out() {
+        let limits = Limits::from_ron("(chat_burst: 4.0, max_pending_per_address: 2)").unwrap();
+        assert_eq!(limits, Limits { chat_burst: 4.0, max_pending_per_address: 2, ..Limits::default() });
+        assert_eq!(Limits::from_ron("()").unwrap(), Limits::default());
+        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(ipv6_prefix: 8)", "(ipv6_prefix: 129)", "(chat_brust: 4.0)"] {
+            assert!(Limits::from_ron(bad).is_err(), "{bad} is accepted");
+        }
+    }
 
     #[test]
     fn rings_cover_square_once() {
@@ -777,7 +1211,7 @@ mod tests {
     /// Village furnishings give nothing when broken (design draft 80), and nothing about
     /// them lets them be picked for more: regrowth does not take them, and the journal does
     /// not log them as wild plants. The props are read from settlements.ron's furnishings
-    /// (barrel, bell, hay, sacks, hanging things, nets), so a mod's own props are held to it
+    /// (barrel, bell, hay, sacks, crates, hanging things, nets), so a mod's own props are held to it
     /// too.
     #[test]
     fn village_furnishings_drop_nothing() {
@@ -788,7 +1222,7 @@ mod tests {
         let blocks = &content.blocks;
         let mut props: Vec<voxmar_engine::block::BlockId> = f.barrel.iter().chain(&f.bell).map(|name| blocks.expect(name)).collect();
         // A list may pick by tag: every block with the tag is a prop.
-        for list in [&f.hay, &f.sacks, &f.hanging, &f.nets] {
+        for list in [&f.hay, &f.sacks, &f.crates, &f.hanging, &f.nets] {
             for select in list {
                 match select {
                     Select::Name(name, _) => props.push(blocks.expect(name)),

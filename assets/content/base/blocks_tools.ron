@@ -5,10 +5,11 @@
 (
     blocks: [
         // The crafting table: a three-by-three grid for what the inventory's two-by-two
-        // cannot make (tools, stations). Right click it to work at it.
+        // cannot make (tools, stations). Right click it to work at it. A `furnishing`: a
+        // village's gives nothing, one a player placed gives itself back.
         (
             name: "crafting_table", sound: Wood, textures: Sides(top: "crafting_table_top", bottom: "oak_planks", side: "crafting_table_side"),
-            hardness: 2.5, color: (150, 110, 70), tags: ["station", "crafting_table", "wood", "fuel", "building"],
+            hardness: 2.5, color: (150, 110, 70), tags: ["station", "crafting_table", "wood", "fuel", "building", "furnishing"],
         ),
         // The Homestead Hearth's pieces (multiblocks.ron): a hearthstone, ringed with stone
         // and lit with a right click, and a chimney two blocks tall at a corner.
@@ -42,16 +43,19 @@
             hardness: 0.3, color: (150, 110, 70), tags: ["bed", "sleeping_bag"],
         ),
         // A stone altar: blocks tagged `altar` restore prayer and take bones for Magic
-        // (combat's prayers.ron); settlements set them in chapels and shrines.
+        // (combat's prayers.ron); settlements set them in chapels and shrines. A
+        // `furnishing` drops itself only where a player placed it: a village's gives nothing
+        // (design draft 80).
         (
             name: "stone_altar", sound: Stone, textures: Sides(top: "stone_altar_top", bottom: "stone_bricks", side: "stone_altar_side"),
-            hardness: 2.0, color: (130, 130, 135), tags: ["altar", "building"],
+            hardness: 2.0, color: (130, 130, 135), tags: ["altar", "building", "furnishing"],
         ),
         // A herb planter: herbs and flowers placed in it grow back when picked (regrowth.ron),
-        // for a gardener whose Farming level is enough for them. Herbs cannot be sown.
+        // for a gardener whose Farming level is enough for them. Herbs cannot be sown. A
+        // `furnishing`, as villages set them too.
         (
             name: "herb_planter", sound: Wood, textures: Sides(top: "herb_planter_top", bottom: "oak_planks", side: "herb_planter_side"),
-            hardness: 1.5, color: (120, 85, 55), tags: ["planter", "wood", "building"],
+            hardness: 1.5, color: (120, 85, 55), tags: ["planter", "wood", "building", "furnishing"],
         ),
         // Farmland: soil a hoe has turned, where crops are sown.
         (
@@ -91,9 +95,9 @@
         (template: "drop", name: "stick", tags: ["stick", "wood", "fuel"], all: (color: (130, 95, 55))),
         // Charcoal: a log burnt at a campfire (cooking.ron), fuel and torches.
         // Pouches: one slot for many herbs, or many seeds (right click one to empty it).
-        (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
-        (template: "drop", name: "coin_purse", tags: ["pouch", "holds:currency"], all: (color: (140, 100, 60), action: Some("base:empty_pouch"))),
-        (template: "drop", name: "seed_pouch", tags: ["pouch", "holds:seed"], all: (color: (170, 140, 90), action: Some("base:empty_pouch"))),
+        (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb", "holds_each:1000"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
+        (template: "drop", name: "coin_purse", tags: ["pouch", "holds:currency", "holds_each:1000"], all: (color: (140, 100, 60), action: Some("base:empty_pouch"))),
+        (template: "drop", name: "seed_pouch", tags: ["pouch", "holds:seed", "holds_each:1000"], all: (color: (170, 140, 90), action: Some("base:empty_pouch"))),
         // Worn or carried when you die, it keeps a fourth item and holds the rest for an hour.
         (template: "drop", name: "grave_ward_amulet", tags: ["amulet", "grave_ward"], all: (color: (110, 80, 180), rarity: VeryRare)),
         // Pottery and metal for the Farm age: clay fired in a pit kiln, and bronze.
@@ -101,7 +105,7 @@
         (template: "drop", name: "vial", tags: ["vial", "container"], all: (color: (190, 120, 80))),
         (template: "drop", name: "fired_clay", tags: ["fired_clay", "brick"], all: (color: (170, 90, 60))),
         // Gold coins: what shops pay and charge (prices.ron, Settlements). Never placed.
-        (template: "drop", name: "gold_coin", tags: ["currency", "coin", "metal:gold"], all: (color: (230, 190, 60))),
+        (template: "drop", name: "gold_coin", tags: ["currency", "coin"], all: (color: (230, 190, 60))),
         // Flint: one gravel in eight breaks to it (tools.ron); arrowheads and spear points.
         (template: "drop", name: "flint", tags: ["flint", "sharp"], all: (color: (60, 60, 66))),
         (template: "drop", name: "bronze_blend", tags: ["alloy_blend", "metal:bronze"], all: (color: (190, 140, 80))),

@@ -38,6 +38,7 @@ mod creature_sounds;
 mod creatures;
 mod drops;
 mod emitters;
+mod fight;
 mod gate;
 mod hud;
 mod interact;
@@ -145,6 +146,8 @@ struct Options {
     press: Option<MouseButton>,
     /// `--hold ITEM`: select the hotbar slot holding an item, once it is there.
     hold: Option<String>,
+    /// `--wear ITEM` (again for each piece): put armour on, once it is in the inventory.
+    wear: Vec<String>,
     /// `--repeat`: click `--press`'s button over and over through the clip.
     repeat: bool,
     /// `--face-creature`: keep looking at the nearest creature.
@@ -203,6 +206,7 @@ fn parse_options() -> Result<Options, String> {
         clip_commands: Vec::new(),
         press: None,
         hold: None,
+        wear: Vec::new(),
         repeat: false,
         face_creature: false,
         size: UVec2::new(1920, 1080),
@@ -265,6 +269,7 @@ fn parse_options() -> Result<Options, String> {
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--hold" => options.hold = Some(value()?),
+            "--wear" => options.wear.push(value()?),
             "--repeat" => options.repeat = true,
             "--face-creature" => options.face_creature = true,
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
@@ -320,6 +325,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
+    let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
+    let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -419,7 +426,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let terrain = app.world().resource::<render::terrain::Terrain>().clone();
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
-    .insert_resource(Actions(content.actions))
+    .insert_resource(Actions::new(content.actions))
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
     .insert_resource(shader_packs)
     .insert_resource(lang::Locale::load(&assets.join("content"), &settings.language))
@@ -444,7 +451,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else if options.world.is_some() || headless {
         let world = match &options.world {
             Some(name) => Some(menu::worlds_dir().ok_or("no configuration directory to keep worlds in")?.join(name)),
-            None => None,
+            // Gates exercise saved reconnects too; their disposable world stays beside
+            // the gate's own logs and is cleared by the next run.
+            None => options.gate.as_ref().map(|dir| dir.join("world")),
         };
         let gate_lag = options.gate.as_ref().map(|_| gate::SERVER_LAG);
         let asked = options.server_lag.map(|ms| voxmar_server::Lag { per_tick: Duration::from_millis(ms), ..default() });
@@ -455,7 +464,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }
@@ -525,6 +534,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             clip_commands: options.clip_commands,
             press: options.press,
             hold: options.hold,
+            wear: options.wear,
             repeat: options.repeat,
             face_creature: options.face_creature,
             strike: options.strike,
@@ -595,6 +605,25 @@ struct Registry {
 #[derive(Resource)]
 pub struct Actions(pub Arc<ActionRegistry>);
 
+/// The actions the client asks for by name.
+const NAMED_ACTIONS: [&str; 9] = ["core:mine", "core:place", "core:transfer", "core:quick_move", "core:stow", "core:drop", "core:craft", "core:eat", "core:respawn"];
+
+impl Actions {
+    /// The content's actions, warning once for each the client asks for that no package
+    /// defines (a broken or partial mod): its gesture will do nothing.
+    pub fn new(actions: Arc<voxmar_engine::action::ActionRegistry>) -> Self {
+        for name in NAMED_ACTIONS.into_iter().filter(|name| actions.id(name).is_none()) {
+            warn!("no package defines the action {name}, so it cannot be done");
+        }
+        Self(actions)
+    }
+
+    /// The action called `name`, which the game asks for by name, if the content has it.
+    pub fn named(&self, name: &str) -> Option<voxmar_engine::action::ActionId> {
+        self.0.id(name)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
@@ -612,15 +641,29 @@ fn setup(
     let (registry, world_content) = (&registry.blocks, registry.world.clone());
     let mut source = Source::discover(settings.textures, settings.minecraft_assets);
     let (size, mut block_textures, animations) = source.block_textures(registry.textures());
-    // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
+    // A pack we don't ship may give an opaque face clear texels, which are filled below; it
+    // hears of it if that is most of the face.
+    let opaque = textures::opaque_faces(registry);
+    for warning in textures::see_through_warnings(registry.textures(), &block_textures, &opaque, &source.servers(registry.textures())) {
+        warn!("{warning}");
+    }
+    // Opaque blocks must not show see-through texels; cut-out and translucent ones, and the
+    // quads of shapes, keep them.
     let mut see_through = vec![false; block_textures.len()];
     for id in 0..registry.len() {
-        let info = registry.info(voxmar_engine::block::BlockId(id as u16));
+        let block = voxmar_engine::block::BlockId(id as u16);
+        let info = registry.info(block);
         if !matches!(info.render, RenderKind::Opaque | RenderKind::Invisible) {
-            for layer in info.layers {
+            for &layer in info.layers.iter().chain(registry.shape_layers(block)) {
                 see_through[layer as usize] = true;
             }
         }
+    }
+    // But an opaque block's face is always filled, though a shape or a cut-out block shares
+    // it (planks with the slabs): drawn without an alpha test, it would show clear texels
+    // in their own colour.
+    for (keep, block) in see_through.iter_mut().zip(&opaque) {
+        *keep &= block.is_none();
     }
     for (texture, &keep) in block_textures.iter_mut().zip(&see_through) {
         if !keep {
@@ -703,7 +746,7 @@ fn setup(
     ui::skin::load(&mut source, &mut images);
     ui::skin::set_font(settings.font, &mut fonts);
     let colormaps = source.colormaps();
-    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &layers);
+    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &layers, render::terrain::shape_table(registry));
     let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
     render::cracks::setup(&mut commands, &mut images, &mut meshes, &mut crack_materials, crack_stages);
     let palette = LodPalette::new(registry, &block_textures, &layers);
@@ -750,8 +793,27 @@ fn setup(
         }
         let (info, def) = (registry.info(block), registry.def(block));
         let own = def.icon.as_ref().and_then(|name| source.read(&format!("item/{name}")));
-        let icon = own.unwrap_or_else(|| match info.render {
-            RenderKind::Plant | RenderKind::Invisible => face_texture(info, Face::PosZ),
+        // A shape as it stands (a barrel's staves, a stair's steps), each quad in its own
+        // texture; a block in facings turned south, so its front faces the icon's left.
+        let shown = registry.facing(block, voxmar_engine::block::Facing::South);
+        let icon = own.unwrap_or_else(|| match (info.render, registry.shape(shown)) {
+            (RenderKind::Plant | RenderKind::Invisible, _) => face_texture(info, Face::PosZ),
+            (RenderKind::Model, Some(shape)) => {
+                let textures: Vec<_> = registry.shape_layers(shown).iter().map(|&layer| as_image(block_textures[layer as usize].clone())).collect();
+                let quads: Vec<_> = shape
+                    .quads
+                    .iter()
+                    .zip(&textures)
+                    .map(|(quad, texture)| voxmar_texgen::icon::IconQuad {
+                        corners: quad.corners.map(|c| c.to_array()),
+                        uvs: quad.uvs,
+                        texture,
+                        light: voxmar_texgen::icon::icon_light(quad.normal.to_array()),
+                    })
+                    .collect();
+                let icon = voxmar_texgen::icon::isometric_quads(&quads, 32);
+                Rgba { width: icon.width, height: icon.height, pixels: icon.pixels }
+            }
             _ => {
                 // Leaves would show only their holes' rims: draw them as a solid bush.
                 let [top, left, right] = [Face::PosY, Face::PosZ, Face::PosX].map(|face| {

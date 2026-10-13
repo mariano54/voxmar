@@ -1,0 +1,7 @@
+// How the interface draws things a package may restyle (crates/client/src/hud/inventory.rs).
+// A later package changes what it gives.
+(
+    // How strongly an empty worn well shows what it takes (the pack's `ui/slot/*` marks),
+    // from 0 (not at all) to 1 (as drawn).
+    worn_glyph_alpha: 0.25,
+)

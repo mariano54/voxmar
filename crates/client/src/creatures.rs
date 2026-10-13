@@ -27,7 +27,7 @@ use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rustc_hash::FxHashMap;
-use voxmar_engine::action::{ActionTarget, REACH_CREATURE};
+use voxmar_engine::action::ActionTarget;
 use voxmar_engine::creature::brain::Pose;
 use voxmar_engine::creature::skin::{self, FACES};
 use voxmar_engine::creature::volume::{self, BodyMesh, Shape};
@@ -106,6 +106,11 @@ const DRAWN_WITHIN: f32 = 96.0;
 const LIGHT_STEPS: f32 = 128.0;
 
 pub struct CreaturesPlugin;
+
+/// The gate retains its eye fixture's CPU pixels after their upload to the GPU. Other
+/// skins give up their pixels as usual, so normal play pays no memory cost for the check.
+#[derive(Resource)]
+pub(crate) struct InspectEyes;
 
 impl Plugin for CreaturesPlugin {
     fn build(&self, app: &mut App) {
@@ -339,6 +344,52 @@ impl Creatures {
         self.shown.values().filter(|s| s.dying.is_none()).map(|s| &s.view)
     }
 
+    /// The gate checks both eyes in the actual painted skin worn by a summoned shambler.
+    /// None means its body or asynchronous skin has not reached the client yet.
+    pub(crate) fn front_eyes(&self, launch: &Launch, images: &Assets<Image>) -> Option<Result<String, String>> {
+        let species = launch.content.creatures.find("base:shambler")?;
+        let shown = self.shown.values().find(|s| s.view.species == species && s.dying.is_none())?;
+        if shown.painting.is_some() {
+            return None;
+        }
+        let image = images.get(&shown.skin)?;
+        let pixels = image.data.as_ref()?;
+        let body = self.bodies.get(&species)?;
+        let head = shown.joints.iter().map(|(_, p)| p).find(|p| p.role == creature::Role::Head)?;
+        let def = &launch.content.creatures.get(species).def.body;
+        let Some(radius) = def.skin.eye.map(|r| r * def.scale) else {
+            return Some(Err("the front-eye fixture has no skin.eye radius".into()));
+        };
+        let [w, h, d] = body.dims.map(|n| n as usize);
+        let mut eyes = [[0usize; 3]; 2];
+        for (side, counts) in eyes.iter_mut().enumerate() {
+            let sign = if side == 0 { -1.0 } else { 1.0 };
+            let eye = Vec3::new(sign * head.size.x * 0.24, head.size.y * 0.1, -head.size.z * 0.5);
+            for z in 0..d {
+                for y in 0..h {
+                    for x in 0..w {
+                        let at = body.origin + (Vec3::new(x as f32, y as f32, z as f32) + 0.5) / skin::TEXELS;
+                        let local = head.rest.inverse() * (at - head.centre);
+                        let delta = (local - eye).abs();
+                        if delta.x > radius || delta.y > radius || delta.z > 1.0 / skin::TEXELS {
+                            continue;
+                        }
+                        let at = ((z * h + y) * w + x) * 4;
+                        let c = &pixels[at..at + 4];
+                        if c[3] == 0 {
+                            continue;
+                        }
+                        counts[0] += usize::from(c[..3].iter().all(|&v| v > 170) && c[0].abs_diff(c[2]) < 8);
+                        counts[1] += usize::from(c[1] > 140 && c[1] > c[0] && c[2] < 130);
+                        counts[2] += usize::from(c[..3].iter().all(|&v| v < 30));
+                    }
+                }
+            }
+        }
+        let detail = format!("sclera/catchlight, iris, pupil texels on each front eye: {eyes:?}");
+        Some(if eyes.iter().all(|counts| counts.iter().all(|&n| n > 0)) { Ok(detail) } else { Err(detail) })
+    }
+
     /// The box a creature is drawn in, by its species' size and its own scale.
     /// The living creature along a ray from `eye`, within `reach` and nearer than `block`.
     pub fn pointed(&self, launch: &Launch, eye: Vec3, look: Vec3, reach: f32, block: f32) -> Option<u32> {
@@ -348,6 +399,19 @@ impl Creatures {
             .filter(|&(_, d)| d <= reach && d < block)
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(id, _)| id)
+    }
+
+    /// Every living creature's body, for the player to bump against (`player::movement`).
+    pub fn bodies<'a>(&'a self, launch: &'a Launch) -> impl Iterator<Item = Aabb> + 'a {
+        self.shown.keys().filter_map(move |&id| self.aabb(launch, id))
+    }
+
+    /// The middle of creature `id`'s body while it is shown, alive or falling, and whether
+    /// it is falling: for marks that follow a body to its end (the killing blow's hitsplat).
+    pub fn centre(&self, launch: &Launch, id: u32) -> Option<(Vec3, bool)> {
+        let shown = self.shown.get(&id)?;
+        let height = launch.content.creatures.get(shown.view.species).def.body.size.1 * shown.view.scale;
+        Some((shown.position + Vec3::Y * height * 0.5, shown.dying.is_some()))
     }
 
     fn aabb(&self, launch: &Launch, id: u32) -> Option<Aabb> {
@@ -419,7 +483,7 @@ fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mes
 
 /// Paints an individual's skin through its species' body volume, off the main thread, so
 /// a herd coming into view never holds a frame: the body shows once its skin is ready.
-fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32) -> Task<Image> {
+fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32, inspect: bool) -> Task<Image> {
     let (shape, origin, dims) = (body.shape.clone(), body.origin, body.dims);
     AsyncComputeTaskPool::get().spawn(async move {
         let shell = shape.cell * 0.75 + 1.5 / skin::TEXELS;
@@ -427,7 +491,8 @@ fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed
         let pixels = skin::paint_volume(&def, &parts, seed, origin, dims, shell, |p| shape.nearest(p).map(|(i, _)| (i, shape.distance(p))));
         let [w, h, d] = dims;
         let extent = Extent3d { width: w, height: h, depth_or_array_layers: d };
-        let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+        let usage = if inspect { RenderAssetUsages::all() } else { RenderAssetUsages::RENDER_WORLD };
+        let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, usage);
         image.sampler = nearest();
         image
     })
@@ -438,6 +503,7 @@ fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed
 struct Drawn<'w, 's> {
     visible: Query<'w, 's, &'static mut Visibility>,
     globals: Query<'w, 's, &'static GlobalTransform>,
+    inspect: Option<Res<'w, InspectEyes>>,
 }
 
 /// The light creatures are lit by and the air they are fogged by, as the terrain's.
@@ -600,7 +666,7 @@ fn show(
         // Painted as its genes show: its coat colours and markings.
         let genes = &species.def.genes;
         let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));
-        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed));
+        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed, drawn.inspect.is_some() && species.def.name == "base:shambler"));
         let skin = creatures.blank.get_or_insert_with(|| images.add(blank_skin())).clone();
         let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
         let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };
@@ -875,8 +941,8 @@ fn show(
 #[allow(clippy::too_many_arguments)]
 pub fn aim(
     time: Res<Time>,
-    mut cooldown: Local<f32>,
     mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
     ui: Res<UiState>,
     launch: Res<Launch>,
     net: Res<Net>,
@@ -884,27 +950,37 @@ pub fn aim(
     player: Res<LocalPlayer>,
     creatures: Res<Creatures>,
     mut target: ResMut<Target>,
+    mut fighting: ResMut<crate::fight::Fighting>,
 ) {
+    // What the right button did this frame, if anything, is said afresh: here, then in
+    // `interact::break_and_place`; `fight::guard` raises no guard if it did something.
+    target.used_right = false;
     let eye = player.eye();
     let look = player.look_direction().normalize_or_zero();
     let block = target.hit.map_or(f32::MAX, |hit| hit.distance);
-    // What a blow would be struck with: its reach, and how soon the next may come.
+    // What a blow would be struck with: its reach and rhythm, and whether it guards.
     let held = player.inventory.get(player.selected).map(|s| s.item);
-    let weapon = launch.content.combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    let combat = &launch.content.combat;
+    let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    // Aimed at as far as it can be touched (tended, looked at) or struck, whichever is
+    // further; struck only within the weapon's reach.
     let nearest = creatures
         .shown
         .keys()
         .filter_map(|&id| Some((id, ray_box(eye, look, &creatures.aabb(&launch, id)?)?)))
-        .filter(|&(_, d)| d <= REACH_CREATURE + weapon.reach && d < block)
+        .filter(|&(_, d)| d <= weapon.reach.max(combat.feel.touch) && d < block)
         .min_by(|a, b| a.1.total_cmp(&b.1));
     target.creature = nearest.map(|(id, _)| id);
+    let in_reach = nearest.is_some_and(|(_, d)| d <= weapon.reach);
     if target.creature.is_some() {
         target.hit = None;
     }
-    *cooldown -= time.delta_secs();
     // A right click tends it with what is in hand: food that tames it or readies a kept one
     // to breed, or a tool for its product (the server judges; this only asks when it may).
-    // With anything else, or nothing, in hand, it looks closely at it.
+    // At a creature fighting the player (it struck or was struck lately, or is winding up)
+    // with a weapon or shield that guards, the button guards (`fight`); otherwise it looks
+    // closely at it. With Shift held, on one of your own, it asks to let it go wild (twice
+    // to do it).
     if let Some(id) = target.creature
         && ui.cursor_locked
         && !player.dead
@@ -913,27 +989,41 @@ pub fn aim(
     {
         let species = launch.content.creatures.get(view.species);
         let mine = view.kept && view.owner.is_some() && view.owner == creatures.me;
-        let accepts = player.inventory.get(player.selected).map(|s| s.item).is_some_and(|item| {
+        let accepts = held.is_some_and(|item| {
             let tags = &launch.content.blocks.def(item).tags;
             let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
-            (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool))
+            // One of yours takes its food as a meal or to breed (the server judges which).
+            let food = species.tame_food.contains(&item) || species.breed_food.contains(&item) || tags.iter().any(|t| t == "breeding_feed");
+            (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
         });
-        let action = if accepts { "base:tend" } else { "base:inspect" };
-        if let Some(action) = actions.0.id(action) {
+        let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
+        let engaged = !view.kept && (view.pose == Pose::Attacking || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
+        let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        let action = if shift && mine {
+            Some("base:release")
+        } else if accepts {
+            Some("base:tend")
+        } else if !(guards && engaged) {
+            Some("base:inspect")
+        } else {
+            None
+        };
+        if let Some(action) = action.and_then(|a| actions.0.id(a)) {
             net.propose_from(&player, action, ActionTarget::Creature(id));
+            target.used_right = true;
         }
     }
+    // A left click swings: at once, or held for the beat (the server keeps the same
+    // rhythm and says what lands).
     if let Some(id) = target.creature
-        && *cooldown <= 0.0
+        && in_reach
         && ui.cursor_locked
         && !player.dead
         && mouse.just_pressed(MouseButton::Left)
         && let Some(attack) = actions.0.id("core:attack")
+        && fighting.click(time.elapsed_secs_f64(), &combat.timing(&weapon), held, &combat.feel)
     {
         net.propose_from(&player, attack, ActionTarget::Creature(id));
-        // Blows come no faster than the server takes them; how hard each lands for the wait
-        // is the server's (`voxmar_engine::combat`).
-        *cooldown = weapon.quickest();
     }
 }
 

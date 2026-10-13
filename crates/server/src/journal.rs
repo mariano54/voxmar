@@ -25,17 +25,22 @@ impl Server {
         }
     }
 
-    /// The journal page a creature kind is found on.
-    pub(crate) fn page_of(kind: Kind) -> Page {
+    /// The journal page a creature kind is found on; people are on none.
+    pub(crate) fn page_of(kind: Kind) -> Option<Page> {
         match kind {
-            Kind::Animal => Page::Animals,
-            Kind::Monster | Kind::Spirit => Page::Monsters,
-            Kind::Fish => Page::Fish,
+            Kind::Animal => Some(Page::Animals),
+            Kind::Monster | Kind::Spirit => Some(Page::Monsters),
+            Kind::Fish => Some(Page::Fish),
+            Kind::Villager => None,
         }
     }
 
     /// `agent` broke `block`: an ore, gem or rock goes on the Ores page, a plant on Plants.
     pub(crate) fn discover_broken(&mut self, agent: PlayerId, block: BlockId) {
+        // A crop's stages are found when it is harvested (see `harvest`).
+        if self.content.crops.stage_of(block).is_some() {
+            return;
+        }
         let (def, info) = (self.content.blocks.def(block), self.content.blocks.info(block));
         let page = if def.has_tag("ore") || def.has_tag("gem") || (def.has_tag("stone") && def.has_tag("natural")) {
             Page::Ores
@@ -44,7 +49,8 @@ impl Server {
         } else {
             return;
         };
-        let name = def.name.clone();
+        // A wild plant whose item merged is found as that item (the journal lists the item).
+        let name = self.content.blocks.def(self.content.blocks.item_of(block)).name.clone();
         self.discover(agent, page, &name, 1);
     }
 
@@ -60,7 +66,9 @@ impl Server {
             for creature in self.creatures.live.values() {
                 if creature.body.position.distance(player.position) <= SIGHT {
                     let species = self.content.creatures.get(creature.species);
-                    found.push((player.id, Self::page_of(species.def.kind), species.def.name.clone()));
+                    if let Some(page) = Self::page_of(species.def.kind) {
+                        found.push((player.id, page, species.def.name.clone()));
+                    }
                 }
             }
         }

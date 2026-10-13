@@ -109,6 +109,7 @@
         (template: "flower", name: "wild_beans"),
         (template: "flower", name: "wild_peas"),
         (template: "flower", name: "wild_lentils"),
+        (template: "flower", name: "wild_chickpea"),
         (template: "flower", name: "rosemary"),
         (template: "flower", name: "oregano"),
         (template: "flower", name: "parsley"),

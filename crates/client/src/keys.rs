@@ -16,6 +16,18 @@ impl Key {
         KEYS.iter().any(|&(k, _)| k == key)
     }
 
+    /// Every bindable key, in the menu's order.
+    pub fn all() -> impl Iterator<Item = Key> {
+        KEYS.iter().map(|&(k, _)| Key(k))
+    }
+
+    /// Whether it is a modifier (Shift, Ctrl, Alt, Super) or Enter, which a binding moved
+    /// for the player never lands on.
+    pub fn modifier_or_enter(self) -> bool {
+        use KeyCode::*;
+        matches!(self.0, ShiftLeft | ShiftRight | ControlLeft | ControlRight | AltLeft | AltRight | SuperLeft | SuperRight | Enter | NumpadEnter)
+    }
+
     /// What the menu calls it in the player's language. A key with a word for a name
     /// (Space, Left Shift) is named by the language, `key.<code>`, and on this system by
     /// `key.<code>.<system>` where that differs (Option on macOS for Alt, Win on Windows

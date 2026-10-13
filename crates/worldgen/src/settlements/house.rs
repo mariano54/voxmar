@@ -40,6 +40,9 @@ pub enum Kind {
 }
 
 impl Kind {
+    pub const ALL: [Kind; 12] =
+        [Kind::House, Kind::Trader, Kind::Inn, Kind::Smithy, Kind::Stall, Kind::Well, Kind::Shrine, Kind::Field, Kind::Pen, Kind::Orchard, Kind::Woodyard, Kind::Centrepiece];
+
     pub fn name(self) -> &'static str {
         match self {
             Kind::House => "house",
@@ -115,6 +118,7 @@ pub struct Fixed {
     pub hanging: Palette,
     pub nets: Palette,
     pub sacks: Palette,
+    pub crates: Palette,
     pub cloth: Palette,
     pub dirt: BlockId,
     /// The chance of a stone lowest course, and old walls' share of weathered blocks.
@@ -156,6 +160,26 @@ pub struct Spec {
 impl Spec {
     pub fn has(&self, extra: Extra) -> bool {
         self.extras.contains(&extra)
+    }
+
+    /// Indoor ground-floor columns, using the same footprint as the painted floor.
+    /// Furniture and headroom are checked against the live blocks by gameplay.
+    pub fn room(&self, frame: &Frame) -> Vec<IVec2> {
+        if !self.kind.indoors() {
+            return Vec::new();
+        }
+        let foot = Foot { x0: 0, z0: 0, w: self.w, d: self.d, form: self.form };
+        let mut local: Vec<_> = (0..self.d).flat_map(|z| (0..self.w).map(move |x| (x, z)))
+            .filter(|&(x, z)| foot.room(x, z)).collect();
+        if let Some((ww, wd)) = self.wing {
+            // The back wall is opened into this wing, including its joining row.
+            local.extend((self.d - 1..self.d + wd - 1)
+                .flat_map(|z| (self.w - ww + 1..self.w - 1).map(move |x| (x, z))));
+        }
+        local.into_iter().map(|(x, z)| {
+            let p = frame.at(x, 0, z);
+            IVec2::new(p.x, p.z)
+        }).collect()
     }
 
     /// The building's own box, everything it puts down included: overhangs, porch,
@@ -474,7 +498,10 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
             }
         }
     }
+    // A post on a cone's peak, unless a chimney rises through it (`blind` names the wall
+    // behind one), where the two stood side by side like a pair of horns.
     if shape == Roof::Conical
+        && blind.is_none()
         && let Some((x, z, y)) = heights.peak()
     {
         pen.set(x, y + 1, z, mats.frame);
@@ -1029,9 +1056,11 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 /// Each storey's stair but the top's: `wall + 1` cells in a run round the inside of the
 /// walls, the first in the floor of the storey above (stepped up onto), the rest steps
 /// down to the floor. Clear of the door, the hearth, the shop's counter and the top of the
-/// stair below; none where no run fits (only four-walled houses have them).
+/// stair below; for each storey, none where no run fits (only four-walled houses have
+/// them).
 /// A house too small for both its chimney and a stair up each storey goes without the
-/// chimney, and one too small for its stairwells with tall walls has walls of three.
+/// chimney, one too small for its stairwells with tall walls has walls of three, and one
+/// too small for a stair even so (a mod's narrow house) has fewer storeys, down to one.
 pub fn make_room_for_stairs(spec: &mut Spec) {
     let fits = |spec: &Spec| !stairs(spec, spec.door.clamp(1, spec.w - 2), spec.chimney().map(|c| c.0)).iter().any(Option::is_none);
     if spec.chimney().is_some() && !fits(spec) {
@@ -1039,6 +1068,9 @@ pub fn make_room_for_stairs(spec: &mut Spec) {
     }
     while spec.wall > 3 && !fits(spec) {
         spec.wall -= 1;
+    }
+    while spec.storeys > 1 && !fits(spec) {
+        spec.storeys -= 1;
     }
 }
 
@@ -1049,8 +1081,13 @@ const STAIRWELL: usize = 3;
 pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<Option<Vec<(i32, i32)>>> {
     let (w, d) = (spec.w, spec.d);
     let run = (spec.wall + 1) as usize;
-    if spec.storeys < 2 || !matches!(spec.form, Form::Box | Form::ShopFront) || w < 4 || d < 4 {
+    if spec.storeys < 2 || !matches!(spec.form, Form::Box | Form::ShopFront) {
         return Vec::new();
+    }
+    // Too narrow for a run round the inside: a storey above with no way up.
+    let none = vec![None; (spec.storeys - 1) as usize];
+    if w < 4 || d < 4 {
+        return none;
     }
     // The cells inside the walls, round in order: along the back, down the left, along the
     // front and up the right.
@@ -1062,7 +1099,7 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
     ring.extend((z0 + 1..z1).map(|z| (x1, z)));
     ring.dedup();
     if ring.len() < run + 1 {
-        return Vec::new();
+        return none;
     }
     let mut flights = Vec::new();
     let mut below: Vec<(i32, i32)> = Vec::new();
@@ -1399,7 +1436,7 @@ fn well(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Can
     }
 }
 
-/// A wayside shrine: a stepped plinth, a pillar and a light.
+/// A wayside shrine: a stepped plinth, an altar, and a pillar and a light behind it.
 fn shrine(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Canvas) {
     let mut pen = Pen { frame, canvas, seed: spec.seed };
     let (w, d) = (spec.w, spec.d);
@@ -1411,9 +1448,18 @@ fn shrine(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut C
         }
     }
     let (cx, cz) = (w / 2, d / 2);
-    pen.ground(cx, 1, cz, Put::Set(mats.frame));
-    pen.ground(cx, 2, cz, Put::Set(mats.frame));
-    pen.ground(cx, 3, cz, Put::Set(fixed.torch));
+    // The altar in the middle and its lamp behind it; without one (or the room), the lamp
+    // alone.
+    let lamp = match fixed.altar {
+        Some(altar) if d - 1 > cz => {
+            pen.ground(cx, 1, cz, Put::Set(altar));
+            d - 1
+        }
+        _ => cz,
+    };
+    pen.ground(cx, 1, lamp, Put::Set(mats.frame));
+    pen.ground(cx, 2, lamp, Put::Set(mats.frame));
+    pen.ground(cx, 3, lamp, Put::Set(fixed.torch));
     for (x, z) in [(cx - 1, cz), (cx + 1, cz)] {
         if let Some(flower) = fixed.flowers.at(spec.seed ^ 0x5a, frame.at(x, 1, z)) {
             pen.ground(x, 1, z, Put::Soft(flower));

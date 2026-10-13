@@ -83,6 +83,22 @@ pub struct Seen {
     pub friend: bool,
 }
 
+/// Where someone with a routine (villagers) is to be now, as the server's schedule and
+/// path finding say: the next point on their way, and how to be once there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Errand {
+    pub to: Vec3,
+    /// Whether `to` is where they are going, not a turn on the way.
+    pub last: bool,
+    /// How they are once there: resting (asleep), or idle.
+    pub pose: Pose,
+    /// What they face once there.
+    pub face: Option<Vec3>,
+    /// For a way after someone (a guard's pursuit) rather than the day's: within how many
+    /// blocks of them it goes straight at them instead.
+    pub chase: Option<f32>,
+}
+
 /// What a creature senses this decision.
 #[derive(Clone, Copy, Debug)]
 pub struct Situation<'a> {
@@ -102,6 +118,8 @@ pub struct Situation<'a> {
     pub mate: Option<Vec3>,
     /// Whether someone keeps it: a kept creature stays near its home.
     pub kept: bool,
+    /// Where its routine sends it now, for those that have one.
+    pub errand: Option<Errand>,
     /// Seconds since the last decision.
     pub dt: f32,
     /// The seed for this decision's random choices.
@@ -268,6 +286,13 @@ impl Mind {
         }
     }
 
+    /// Lets go of every grudge and fright: it was hurt by no one.
+    pub fn forgive(&mut self) {
+        self.anger = 0.0;
+        self.fear = 0.0;
+        self.memories.retain(|(m, _)| !matches!(m, Memory::HurtBy(_) | Memory::ScaredBy(_)));
+    }
+
     /// Kin nearby raised the alarm.
     pub fn alarmed(&mut self) {
         self.fear = self.fear.max(0.5 + 0.5 * self.personality.nervousness);
@@ -426,14 +451,14 @@ pub(super) mod tests {
     use crate::skill::SkillRegistry;
 
     pub(super) fn species(source: &str) -> Creature {
-        let defs = CreatureRegistry::read("test", source).unwrap();
-        CreatureRegistry::new(defs, &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).unwrap().get(CreatureId(0)).clone()
+        let defs = CreatureRegistry::read("test", source).unwrap().defs;
+        CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).unwrap().get(CreatureId(0)).clone()
     }
 
     pub(super) const BODY: &str = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
 
     pub(super) fn situation<'a>(players: &'a [Seen]) -> Situation<'a> {
-        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, dt: 0.2, seed: 7 }
+        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 }
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
@@ -503,6 +528,53 @@ pub(super) mod tests {
         let far = Situation { position: Vec3::new(20.0, 0.0, 0.0), ..situation(&[]) };
         let decision = think(&snail, &mut mind, &far);
         assert_eq!((doing(&snail, &mind), decision.goal), ("return_home", Some(Vec3::ZERO)));
+    }
+
+    /// Someone the server sends about their day walks their errand however far it takes
+    /// them from home, and a guard after someone follows only a way found after them, not
+    /// the day's.
+    #[test]
+    fn errands_outrank_home_and_only_a_chase_leads_a_fight() {
+        let guard = species(&format!(
+            "(creatures: [(name: \"guard\", health: 10, leash: 8.0, {BODY}, attack: (damage: (1, 2)), behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Defend)])])"
+        ));
+        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: None };
+        let mut mind = Mind::new(&guard.def.temperament, 6);
+        let far = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&[]) };
+        let decision = think(&guard, &mut mind, &far);
+        assert_eq!((doing(&guard, &mind), decision.goal), ("routine", Some(work.to)));
+        // Struck by a player ten blocks off: straight at them while the errand is the day's,
+        // along the way found when it is a chase.
+        let near = [player(Vec3::new(20.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&guard.def.temperament, 6);
+        mind.hurt(&guard, Some(1), 1.0);
+        let at = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&near) };
+        let decision = think(&guard, &mut mind, &at);
+        assert_eq!((doing(&guard, &mind), decision.goal), ("defend", Some(near[0].position)));
+        let turn = Errand { to: Vec3::new(28.0, 0.0, 3.0), last: false, chase: Some(4.0), ..work };
+        let decision = think(&guard, &mut mind, &Situation { errand: Some(turn), ..at });
+        assert_eq!(decision.goal, Some(turn.to));
+        // Within the handoff of its quarry, straight at them whatever the way says.
+        let close = Errand { chase: Some(12.0), ..turn };
+        let decision = think(&guard, &mut mind, &Situation { errand: Some(close), ..at });
+        assert_eq!(decision.goal, Some(near[0].position));
+    }
+
+    #[test]
+    fn forgiven_it_neither_fights_nor_flees() {
+        let guard = species(&format!(
+            "(creatures: [(name: \"guard\", health: 10, {BODY}, attack: (damage: (1, 2)), behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Defend)])])"
+        ));
+        let mut mind = Mind::new(&guard.def.temperament, 6);
+        mind.hurt(&guard, Some(1), 1.0);
+        assert_eq!(mind.attacker(), Some(1));
+        mind.forgive();
+        assert_eq!((mind.attacker(), mind.anger, mind.fear), (None, 0.0, 0.0));
+        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: None };
+        let near = [player(Vec3::new(20.0, 0.0, 0.0))];
+        let at = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&near) };
+        let _ = think(&guard, &mut mind, &at);
+        assert_eq!(doing(&guard, &mind), "routine");
     }
 
     #[test]

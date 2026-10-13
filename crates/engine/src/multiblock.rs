@@ -59,6 +59,26 @@ pub struct Multiblock {
 }
 
 impl Multiblock {
+    /// What it is built of: each set of blocks a cell takes, with how many cells take it,
+    /// the core's among them.
+    pub fn pieces(&self) -> Vec<(&[BlockId], u32)> {
+        let mut pieces: Vec<(&[BlockId], u32)> = Vec::new();
+        for (_, cell) in &self.cells {
+            if let Cell::OneOf(accepts) = cell {
+                match pieces.iter_mut().find(|(takes, _)| *takes == accepts.as_slice()) {
+                    Some((_, n)) => *n += 1,
+                    None => pieces.push((accepts, 1)),
+                }
+            }
+        }
+        pieces
+    }
+
+    /// How far from its core, across, its farthest cell lies (any way it is turned).
+    pub fn reach(&self) -> i32 {
+        self.cells.iter().map(|(o, _)| o.x.abs().max(o.z.abs())).max().unwrap_or(0)
+    }
+
     /// Whether the structure stands with its core at `core`, turned any way; `block` says
     /// what is where (none for a place not loaded, which never matches).
     pub fn stands(&self, core: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> bool {
@@ -142,6 +162,10 @@ impl MultiblockRegistry {
                 Some(Cell::OneOf(accepts)) => accepts.clone(),
                 _ => Vec::new(),
             };
+            // A core is known to need its structure by its tag (a block without it works alone).
+            if let Some(&loose) = core_takes.iter().find(|&&b| !blocks.def(b).has_tag("multiblock_core")) {
+                return Err(bad(format!("its core `{}` is not tagged `multiblock_core`, so it would work without the structure", blocks.def(loose).name)));
+            }
             let cells = cells.into_iter().filter(|(_, cell)| *cell != Cell::Any).map(|(at, cell)| (at - core, cell)).collect();
             multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, core: core_takes, cells });
         }
@@ -170,10 +194,13 @@ mod tests {
     #[test]
     fn a_hearth_stands_turned_any_way_and_not_with_a_piece_missing() {
         let tagged = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
-        let blocks = BlockRegistry::new(vec![tagged("t:cobble", &["stone"]), tagged("t:brick", &["stone"]), tagged("t:hearthstone", &[]), tagged("t:chimney", &[])]).unwrap();
+        let blocks = BlockRegistry::new(vec![tagged("t:cobble", &["stone"]), tagged("t:brick", &["stone"]), tagged("t:hearthstone", &["multiblock_core"]), tagged("t:chimney", &[])]).unwrap();
         let source = r#"(multiblocks: [(name: "hearth", layers: [["sss", "sHs", "sss"], ["C..", "...", "..."], ["C..", "...", "..."]],
             key: {'s': "tag:stone", 'H': "hearthstone", 'C': "chimney"}, core: 'H')])"#;
         let registry = MultiblockRegistry::new(vec![MultiblockRegistry::read("t", source).unwrap()], &blocks).unwrap();
+        // A core without the tag would work with no structure round it: refused.
+        let loose = source.replace("'H': \"hearthstone\"", "'H': \"chimney\"").replace("'C': \"chimney\"", "'C': \"hearthstone\"");
+        assert!(MultiblockRegistry::new(vec![MultiblockRegistry::read("t", &loose).unwrap()], &blocks).is_err());
         let hearth = registry.get("t:hearth").unwrap();
         let id = |n: &str| blocks.id(&format!("t:{n}")).unwrap();
         // Built with its chimney at the south-east corner: the pattern turned twice.

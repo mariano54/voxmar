@@ -25,7 +25,7 @@
 
 use std::time::{Duration, Instant};
 
-use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placement_cell, supported_by};
+use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
@@ -68,6 +68,15 @@ pub struct Executor {
     timed: Vec<Timed>,
     /// Actions proposed so far, for `Lag::proposal_stall`.
     proposals: u64,
+}
+
+impl Server {
+    /// Whether `player` is part way through a timed action that eats (a bite of food).
+    pub(crate) fn eating(&self, player: PlayerId) -> bool {
+        self.executor.timed.iter().any(|t| {
+            t.agent == player && !t.finished && self.content.actions.get(t.action).is_some_and(|def| def.effects.contains(&Effect::EatHeld))
+        })
+    }
 }
 
 /// The validation view of the world from `agent`'s point of view.
@@ -143,12 +152,20 @@ impl ActionContext for Context<'_> {
         Some(&self.server.content.tools)
     }
 
+    fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
+        Some(&self.server.content.machines)
+    }
+
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
     }
 
+    fn creature_is_mine(&self, id: u32) -> bool {
+        self.server.keeps(self.agent, id)
+    }
+
     fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
-        self.server.creatures.reach_box(id)
+        self.server.creatures.reach_box(id, self.server.content.combat.feel.reach_lag)
     }
 
     fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
@@ -287,9 +304,11 @@ impl Server {
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
                 (Effect::Pick, ActionTarget::Block { block, .. }) => self.pick(agent, block),
                 (Effect::Strike, ActionTarget::Creature(id)) => self.player_strikes(agent, id),
+                (Effect::Dodge, _) => self.dodge(agent),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
+                (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     for pos in std::iter::once(block).chain(plants) {
@@ -302,11 +321,16 @@ impl Server {
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
-                    self.set_block(cell, item);
-                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) {
+                    let placed = placed_block(&Context { server: self, agent }, item, block, face);
+                    self.set_block(cell, placed);
+                    // Marked as the player's: an ore teaches nothing broken again, and a
+                    // furnishing gives itself back (where the world placed one, it does not).
+                    // (By the block placed: a held item may place as another, as a torch does.)
+                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) || self.content.blocks.def(placed).has_tag("furnishing") {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);
+                    self.placed_machine(agent, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     let player = self.players.get_mut(&agent).unwrap();
@@ -328,16 +352,19 @@ impl Server {
                 }
                 (Effect::Respawn, _) => {
                     // Home, if the player has one, else the bed they last slept in, else
-                    // world spawn.
+                    // world spawn. What they carried is left where they fell first.
+                    self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
                     let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
-                    player.position = spawn;
+                    // Where they wake is where a grave goes until they stand elsewhere,
+                    // not where they last stood in the life before.
+                    player.last_ground = Some(spawn);
                     player.fall_start = None;
                     player.changed(traits::HEALTH);
                     player.changed(traits::VITALS);
-                    player.connection.send(ServerMessage::Teleport { position: spawn });
+                    player.teleport(spawn);
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
@@ -354,6 +381,8 @@ impl Server {
                     }
                 }
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
+                (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
+                (Effect::PickLock, ActionTarget::Block { block, .. }) => self.pick_lock(agent, block),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => {
                     let player = self.players.get_mut(&agent).unwrap();
                     player.bed = Some(block.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
@@ -408,10 +437,7 @@ impl Server {
         // and tallies are this recipe's, once for each one made.
         let first = recipes.find(&player.inventory.grid()).filter(|r| allowed(r));
         let found = first.map(|r| (r.skill, r.xp, r.output, r.count));
-        let recipe = |grid: &[Option<BlockId>; voxmar_engine::craft::GRID]| {
-            recipes.find(grid).filter(|r| first.is_some_and(|f| std::ptr::eq(*r, f))).map(|r| (r.output, r.count))
-        };
-        let made = player.inventory.craft(recipe, all);
+        let made = player.inventory.craft(recipes.while_making(first), all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);
         if let Some((skill, xp, output, count)) = found.filter(|_| made > 0) {
@@ -441,7 +467,8 @@ impl Server {
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block);
         let info = self.content.blocks.info(block);
         let [roll, kick, ..] = crate::items::random3(self.tick, pos, agent ^ 0xd1ce);
-        if roll < bonus && !info.drops.is_air() && info.drop_count > 0 {
+        // Never a furnishing's: it gives itself back only where a player placed it.
+        if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
             let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };
             let body = voxmar_engine::dropped::popped(pos, [kick, roll, kick * roll]);
             self.items.spawn(stack, body, voxmar_engine::dropped::PICKUP_DELAY);
@@ -477,7 +504,7 @@ impl Server {
     }
 
     /// Tells the client the truth about anything it may have predicted.
-    fn reject(&mut self, agent: PlayerId, target: ActionTarget) {
+    pub(crate) fn reject(&mut self, agent: PlayerId, target: ActionTarget) {
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.changed(traits::INVENTORY);
         if let ActionTarget::Block { block, face } = target {

@@ -54,7 +54,7 @@ impl Levers {
 pub struct Lean(pub Vec<(Lever, f32)>);
 
 impl Lean {
-    fn parse(at: &str, map: &BTreeMap<String, f32>) -> Result<Self, ContentError> {
+    pub(super) fn parse(at: &str, map: &BTreeMap<String, f32>) -> Result<Self, ContentError> {
         map.iter()
             .map(|(name, &lean)| {
                 Lever::parse(name)
@@ -329,6 +329,9 @@ pub struct SiteDef {
     pub caves: i32,
     /// No trees within the first many blocks of a house, fewer out to the second.
     pub glade: (i32, i32),
+    /// The land's trees are cut back over each building and this many blocks round it, as
+    /// their crowns reach past the glade's treeless ring.
+    pub eaves: i32,
     /// The share of trees left just past the treeless ring, and how many more where it is
     /// green.
     pub glade_trees: (f32, f32),
@@ -354,6 +357,9 @@ pub struct SiteDef {
     /// What a spot scores: luck, less how uneven and how steep it is, more for fresh
     /// water, less for every block over sea level.
     pub score: ScoreDef,
+    /// Gentle land first (biome levels, P15): up to biome level `.0` as likely as
+    /// anywhere, and `.1` of that above it.
+    pub levels: (u8, f32),
 }
 
 impl Default for SiteDef {
@@ -366,7 +372,8 @@ impl Default for SiteDef {
             relief: 14,
             caves: 150,
             glade: (5, 16),
-            glade_trees: (0.08, 0.3),
+            glade_trees: (0.08, 0.1),
+            eaves: 1,
             water: 48,
             fertility: 0.3,
             poor: BTreeMap::new(),
@@ -378,11 +385,17 @@ impl Default for SiteDef {
             look: 6,
             creek: 4,
             score: ScoreDef::default(),
+            levels: (5, 0.7),
         }
     }
 }
 
 impl SiteDef {
+    /// How likely a settlement is in a biome of `level`, 0 ..= 1.
+    pub fn level(&self, level: u8) -> f32 {
+        if level <= self.levels.0 { 1.0 } else { self.levels.1 }
+    }
+
     /// How likely a settlement is at `temperature`, 0 ..= 1.
     pub fn climate(&self, temperature: f32) -> f32 {
         let ((cold, hot), (low, high)) = (self.temperature, self.mild);
@@ -663,6 +676,8 @@ pub struct RulesDef {
     /// spawn: the square of the grid they spawn in always holds one, standing within
     /// that reach (none promised at 0).
     pub spawn_settlement_within: i32,
+    /// No two settlements within this many blocks of each other share a name.
+    pub names_apart: i32,
     pub levers: LeversDef,
     pub lanes: LanesDef,
     pub lots: LotsDef,
@@ -677,6 +692,7 @@ impl Default for RulesDef {
     fn default() -> Self {
         Self {
             spawn_settlement_within: 1024,
+            names_apart: 4096,
             levers: LeversDef::default(),
             lanes: LanesDef::default(),
             lots: LotsDef::default(),
@@ -713,6 +729,8 @@ struct FurnishingsFile {
     hanging: Vec<Select>,
     nets: Vec<Select>,
     sacks: Vec<Select>,
+    #[serde(default)]
+    crates: Vec<Select>,
     cloth: Vec<Select>,
 }
 
@@ -741,6 +759,8 @@ pub struct FurnishingsDef {
     /// Nets hung to dry by water; `hanging` when left out.
     pub nets: Vec<Select>,
     pub sacks: Vec<Select>,
+    /// Crates stacked in yards; boards of the place's trim when left out.
+    pub crates: Vec<Select>,
     pub cloth: Vec<Select>,
 }
 
@@ -861,6 +881,14 @@ struct HouseFile {
     /// Only beside fresh water.
     #[serde(default)]
     water: bool,
+    /// How many live in it, fewest and most (fuller where it is crowded).
+    #[serde(default = "household")]
+    people: (u32, u32),
+}
+
+/// How many live in a house that does not say.
+pub(super) fn household() -> (u32, u32) {
+    (1, 2)
 }
 
 #[derive(Deserialize)]
@@ -1006,6 +1034,7 @@ struct StyleFile {
 #[serde(deny_unknown_fields, default)]
 struct RulesFile {
     spawn_settlement_within: Option<i32>,
+    names_apart: Option<i32>,
     levers: Option<LeversDef>,
     lanes: Option<LanesDef>,
     lots: Option<LotsDef>,
@@ -1044,6 +1073,8 @@ struct SettlementFile {
     roofs: Vec<RoofFile>,
     #[serde(default)]
     centrepieces: Vec<CentreFile>,
+    #[serde(default)]
+    people: super::people::PeopleFile,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1100,6 +1131,7 @@ pub struct HouseDef {
     pub most: Option<u32>,
     pub stilts: Option<u32>,
     pub water: bool,
+    pub people: (u32, u32),
 }
 
 /// A roof shape every style may weigh, and the levers it leans on.
@@ -1209,6 +1241,7 @@ pub struct SettlementsDef {
     pub styles: Vec<StyleDef>,
     pub roofs: Vec<RoofDef>,
     pub centrepieces: Vec<CentreDef>,
+    pub people: super::people::PeopleDef,
     /// Every crop by its full name (from `crops.ron`), so settlements grow only everyday
     /// crops a newcomer may harvest, and never ripe.
     pub crops: BTreeMap<String, CropInfo>,
@@ -1266,6 +1299,9 @@ impl SettlementsDef {
             if let Some(within) = rules.spawn_settlement_within {
                 mine.spawn_settlement_within = within;
             }
+            if let Some(apart) = rules.names_apart {
+                mine.names_apart = apart;
+            }
             if let Some(levers) = rules.levers {
                 mine.levers = levers;
             }
@@ -1322,6 +1358,7 @@ impl SettlementsDef {
             (&mut furnishings.hanging, f.hanging),
             (&mut furnishings.nets, f.nets),
             (&mut furnishings.sacks, f.sacks),
+            (&mut furnishings.crates, f.crates),
             (&mut furnishings.cloth, f.cloth),
         ] {
             if !theirs.is_empty() {
@@ -1376,6 +1413,7 @@ impl SettlementsDef {
                 most: h.most,
                 stilts: h.stilts,
                 water: h.water,
+                people: h.people,
             });
         }
         for r in file.roofs {
@@ -1444,6 +1482,7 @@ impl SettlementsDef {
                 window_chance: s.window_chance,
             });
         }
+        self.people.extend(at, package, file.people)?;
         Ok(())
     }
 
@@ -1482,8 +1521,8 @@ impl SettlementsDef {
         }
         let site = &self.site;
         let within = |(a, b): (f32, f32), (lo, hi): (f32, f32)| a <= b && a >= lo && b <= hi;
-        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.bank < 0 || site.water < 0 {
-            return fail(format!("the site needs mild temperatures within its temperatures, a taper in [0, 1], a step of 4 or more, a firm ground no wider than its reach, and tries: {site:?}"));
+        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || !(0.0..=1.0).contains(&site.levels.1) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.bank < 0 || site.water < 0 {
+            return fail(format!("the site needs mild temperatures within its temperatures, a taper and a chance above its levels in [0, 1], a step of 4 or more, a firm ground no wider than its reach, and tries: {site:?}"));
         }
         let rules = &self.rules;
         for (name, special) in &rules.specials {
@@ -1513,6 +1552,9 @@ impl SettlementsDef {
         }
         if !(0..=4096).contains(&rules.spawn_settlement_within) {
             return fail(format!("rules: a settlement is promised within 0 to 4096 blocks of spawn: {}", rules.spawn_settlement_within));
+        }
+        if !(0..=16384).contains(&rules.names_apart) {
+            return fail(format!("rules: names are kept apart by 0 to 16384 blocks: {}", rules.names_apart));
         }
         if site.look == 0 || site.creek < 1 {
             return fail(format!("the site's closer look for creeks needs `look` and `creek` of 1 or more: {}, {}", site.look, site.creek));
@@ -1559,8 +1601,8 @@ impl SettlementsDef {
         if !(every.0 > 0.0 && every.1 >= 0.0 && every.1.is_finite()) || self.sizes.iter().any(|s| every.0 * s.lamps < 1.0) {
             return fail(format!("rules: dressing needs `every` above nothing then nothing or more, and every size's lamps that far apart times its `lamps` a block or more: {every:?}"));
         }
-        if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 {
-            return fail(format!("the site needs ranges low to high and a glade of at most 48 blocks, its treeless ring the smaller: {site:?}"));
+        if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 || !(0..=8).contains(&site.eaves) {
+            return fail(format!("the site needs ranges low to high, a glade of at most 48 blocks, its treeless ring the smaller, and eaves of 0 to 8: {site:?}"));
         }
         for c in &self.centrepieces {
             if let CentreKind::Blocks(name, blocks) = &c.kind {
@@ -1760,7 +1802,9 @@ impl SettlementsDef {
             ("fruit", &f.fruit),
             ("hay", &f.hay),
             ("hanging", &f.hanging),
+            ("nets", &f.nets),
             ("sacks", &f.sacks),
+            ("crates", &f.crates),
             ("cloth", &f.cloth),
         ] {
             for select in list {
@@ -1771,7 +1815,46 @@ impl SettlementsDef {
                 }
             }
         }
-        Ok(())
+        // What a village furnishes its yards and barns with gives nothing when broken
+        // (design draft 80): each block in those slots drops nothing, or is a `furnishing`,
+        // which gives itself back only where a player placed it. So a mod's barrel can't
+        // make every village a free store. An altar is checked once it is one (tagged
+        // `altar`): a building block standing in for it is no village's to give.
+        let named = |select: &Select| -> Vec<String> {
+            match select {
+                Select::Name(name, _) => vec![name.clone()],
+                Select::Tag(tag, _) => registry.tagged(tag).map(|b| registry.def(b).name.clone()).collect(),
+            }
+        };
+        let altar = f.altar.clone().filter(|name| registry.id(name).is_some_and(|id| registry.def(id).has_tag("altar")));
+        let singles = [("campfire", &f.campfire), ("table", &f.table), ("planter", &f.planter), ("barrel", &f.barrel), ("bell", &f.bell), ("altar", &altar)];
+        let singles = singles.into_iter().filter_map(|(what, name)| Some((what, name.clone()?)));
+        // A centrepiece's own bell hangs in its frame as the furnishings' does.
+        let bells = self.centrepieces.iter().flat_map(|c| c.parts.iter()).filter(|(part, name)| part == "bell" && !name.contains('{')).map(|(_, name)| ("centrepiece's bell", name.clone()));
+        let lists = [("hay", &f.hay), ("hanging", &f.hanging), ("nets", &f.nets), ("sacks", &f.sacks), ("crates", &f.crates)];
+        let lists = lists.into_iter().flat_map(|(what, list)| list.iter().flat_map(named).map(move |name| (what, name)));
+        for (what, name) in singles.chain(bells).chain(lists) {
+            let Some(id) = registry.id(&name) else { continue };
+            let info = registry.info(id);
+            if !(info.drops.is_air() || info.drop_count == 0 || registry.def(id).has_tag("furnishing")) {
+                return fail(format!("furnishings: the {what} `{name}` drops itself from every village: tag it `furnishing`, or have it drop nothing"));
+            }
+        }
+        for h in &self.houses {
+            if h.people.0 > h.people.1 {
+                return fail(format!("house `{}` needs people fewest to most", h.name));
+            }
+        }
+        self.people.check(&self.sizes.iter().map(|s| s.name.clone()).collect::<Vec<_>>())
+    }
+}
+
+impl SettlementsDef {
+    /// Every work a building can have and every kind of building, by name: what people's
+    /// jobs and works may name.
+    pub fn works(&self) -> Vec<String> {
+        let kinds = super::house::Kind::ALL.iter().map(|k| k.name().to_owned());
+        self.houses.iter().filter_map(|h| h.work.clone()).chain(kinds).collect()
     }
 }
 

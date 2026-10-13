@@ -83,6 +83,17 @@ pub struct Items {
 }
 
 impl Items {
+    /// Older saves may record several spellings of one keeper. Only hashes of known names
+    /// are migrated; a hash with no surviving spelling must remain protected.
+    pub(crate) fn canonical_owner(&mut self, aliases: &[u64], canonical: u64) {
+        for (&id, item) in &mut self.all {
+            if item.owner.is_some_and(|owner| owner != canonical && aliases.binary_search(&owner).is_ok()) {
+                item.owner = Some(canonical);
+                self.changed.insert(id);
+            }
+        }
+    }
+
     pub fn spawn(&mut self, stack: ItemStack, body: Loose, pickup_delay: f32) -> u32 {
         self.spawn_for(stack, body, pickup_delay, None, lifetime())
     }
@@ -123,9 +134,13 @@ impl Surroundings for Around<'_> {
 
     fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
         let blocks = &self.0.content.blocks;
-        let water = blocks.id("base:water").unwrap_or(BlockId::AIR);
-        movement::water_around(blocks, water, |p| self.0.block(p), aabb)
+        movement::water_around(blocks, |p| self.0.block(p), aabb)
     }
+}
+
+/// Whether a crop nobody sowed gives anything when taken at `tick` (see `unsown_gives`).
+pub(crate) fn unsown_roll(def: &voxmar_engine::crop::CropDef, tick: u64, cell: IVec3, salt: u32) -> bool {
+    def.fruit || random3(tick, cell, salt ^ 0x5eed)[0] < def.unsown.unwrap_or(1.0)
 }
 
 /// A small, fast hash for the spread of popped drops and for chances: deterministic for a
@@ -157,8 +172,20 @@ impl Server {
         for (i, &cell) in cells.iter().enumerate() {
             let Some(block) = self.block(cell) else { continue };
             let wild = !placed.contains(&cell);
-            if let Some(crop) = self.ripe_crop(block).filter(|_| wild) {
-                self.harvest(agent, crop, cell, i as u32, true);
+            // Sown or not, it is gone from the farm.
+            let sown = self.farm.take_sown(cell);
+            // A ripe crop above the player's level (one standing on broken ground) gives
+            // only its plain drop.
+            let ripe = self.ripe_crop(block).filter(|&crop| {
+                let crop = self.content.crops.get(crop);
+                wild && self.check_level(agent, crop.skill) >= crop.def.level
+            });
+            if let Some(crop) = ripe {
+                if sown {
+                    self.harvest(agent, crop, cell, i as u32, true);
+                } else {
+                    self.unsown_ripe(agent, crop, cell, i as u32);
+                }
                 continue;
             }
             if let Some((crop, plants)) = self.content.crops.wild_form(block).filter(|_| wild) {
@@ -171,9 +198,41 @@ impl Server {
             if info.drops.is_air() || info.drop_count == 0 {
                 continue;
             }
+            // A furnishing the world placed (a village's altar) gives nothing.
+            if wild && self.content.blocks.def(block).has_tag("furnishing") {
+                continue;
+            }
+            // A crop nobody sowed (a village's field), broken before it is harvested,
+            // gives its seed or produce only now and then: enough to start the crop, not a
+            // store of free food.
+            if wild
+                && !sown
+                && let Some((crop, _)) = self.content.crops.stage_of(block)
+                && !self.unsown_gives(crop, cell, i as u32)
+            {
+                continue;
+            }
             let stack = ItemStack { item: info.drops, count: info.drop_count };
             let body = dropped::popped(cell, random3(self.tick, cell, i as u32));
             self.items.spawn(stack, body, dropped::PICKUP_DELAY);
+        }
+    }
+
+    /// Whether a crop nobody sowed, at `cell`, gives anything this time (`unsown` in
+    /// crops.ron); fruit on trees always does.
+    pub(crate) fn unsown_gives(&self, crop: voxmar_engine::crop::CropId, cell: IVec3, salt: u32) -> bool {
+        unsown_roll(&self.content.crops.get(crop).def, self.tick, cell, salt)
+    }
+
+    /// A ripe crop nobody sowed: one the world grew wild forages like its wild form (its
+    /// `forage`, and forage experience at its level); one with no forage list (a village's)
+    /// now and then gives its harvest, never its experience.
+    pub(crate) fn unsown_ripe(&mut self, agent: PlayerId, crop: voxmar_engine::crop::CropId, cell: IVec3, salt: u32) {
+        if !self.content.crops.get(crop).forage.is_empty() {
+            self.forage(agent, crop, cell, salt);
+        } else if self.unsown_gives(crop, cell, salt) {
+            let loot = self.content.crops.get(crop).harvest.clone();
+            self.yield_loot(agent, crop, &loot, cell, salt);
         }
     }
 
@@ -397,6 +456,22 @@ impl Items {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_crop_nobody_sowed_gives_at_its_unsown_chance_and_tree_fruit_always() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&dir).unwrap();
+        let def = |name: &str| content.crops.iter().find(|(_, c)| c.def.name == name).unwrap().1.def.clone();
+        let tomato = def("base:tomato");
+        let chance = tomato.unsown.unwrap();
+        // 10,000 cells at one tick: the share's spread is 0.0036, so this is about three
+        // spreads either side.
+        let cells = (0..100).flat_map(|z| (0..100).map(move |x| IVec3::new(x, 70, z)));
+        let gave = cells.filter(|&cell| unsown_roll(&tomato, 12_345, cell, 0)).count() as f32 / 10_000.0;
+        assert!((chance - 0.01..=chance + 0.01).contains(&gave), "{gave} of tomatoes nobody sowed gave, for a chance of {chance}");
+        let apple = def("base:apple");
+        assert!((0..1000).all(|x| unsown_roll(&apple, 12_345, IVec3::new(x, 70, 0), 0)), "tree fruit held back");
+    }
 
     fn item(count: u8, x: f32, age: u32) -> Dropped {
         let body = Loose { position: Vec3::new(x, 0.0, 0.5), velocity: Vec3::ZERO, on_ground: true };

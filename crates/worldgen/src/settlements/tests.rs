@@ -116,7 +116,7 @@ fn top_down(area: &Area, registry: &BlockRegistry, min: IVec2, max: IVec2, scale
 }
 
 /// The box from `min` to `max`, from `low` to `high`, in an isometric view from the
-/// south-east, `a` pixels a block, as `forest_preview` draws.
+/// south-east, `a` pixels a block, as `forest_preview` draws, cut clean at the box.
 #[allow(clippy::too_many_arguments)]
 fn isometric(area: &impl Look, registry: &BlockRegistry, min: IVec2, max: IVec2, low: i32, high: i32, a: f32, path: &str) {
     let project = |p: Vec3| Vec2::new((p.x - p.z) * a, (p.x + p.z) * a * 0.5 - p.y * a);
@@ -155,10 +155,15 @@ fn isometric(area: &impl Look, registry: &BlockRegistry, min: IVec2, max: IVec2,
                 }
                 let p = IVec3::new(min.x + dx, y, min.y + dz);
                 let b = area.block(p);
-                if b.is_air() || ![IVec3::X, IVec3::Y, IVec3::Z].iter().any(|&d| open(area.block(p + d))) {
+                // Cut clean at the box: what lies past it counts as open, so its near
+                // sides show as solid walls down to `low` and nothing within shows past them.
+                let past = |q: IVec3| q.x > max.x || q.z > max.y || q.y > high;
+                if b.is_air() || ![IVec3::X, IVec3::Y, IVec3::Z].iter().any(|&d| past(p + d) || open(area.block(p + d))) {
                     continue;
                 }
-                let base = area.color(registry, p);
+                // Glass as a dark pane, the room behind it, rather than its pale tint.
+                let pane = registry.def(b).render == RenderKind::Cutout && registry.def(b).name.contains("glass");
+                let base = if pane { area.color(registry, p) * 0.45 } else { area.color(registry, p) };
                 let speckle = 0.9 + 0.2 * ((crate::rng::hash3(3, p.x, p.y, p.z) & 0xff) as f32 / 255.0);
                 let at = corner(p.as_vec3()) + shift;
                 for &(px, py, face) in &sprite {
@@ -269,9 +274,21 @@ fn settlement_preview() {
 }
 
 
+/// The base game's blocks, from every file the game reads them from: furnishings (the
+/// crate, the barrel) and tools (the altar) as well as `blocks.ron`.
 fn base_registry() -> std::sync::Arc<BlockRegistry> {
-    let source = include_str!("../../../../assets/content/base/blocks.ron");
-    std::sync::Arc::new(BlockRegistry::from_ron("base", source).unwrap())
+    let sources = [
+        include_str!("../../../../assets/content/base/blocks.ron"),
+        include_str!("../../../../assets/content/base/blocks_creatures.ron"),
+        include_str!("../../../../assets/content/base/blocks_farm.ron"),
+        include_str!("../../../../assets/content/base/blocks_food.ron"),
+        include_str!("../../../../assets/content/base/blocks_furnishings.ron"),
+        include_str!("../../../../assets/content/base/blocks_herbs.ron"),
+        include_str!("../../../../assets/content/base/blocks_tools.ron"),
+        include_str!("../../../../assets/content/base/blocks_weapons.ron"),
+    ];
+    let packages = sources.iter().map(|s| ("base".to_owned(), BlockRegistry::read("base", s).unwrap())).collect();
+    std::sync::Arc::new(BlockRegistry::new(BlockRegistry::expand(packages).unwrap()).unwrap())
 }
 
 fn base_world(seed: u64) -> Overworld {
@@ -424,6 +441,11 @@ fn settlement_at() {
     let world = base_world(env("SEED").unwrap_or(1) as u64);
     for s in world.settlements_near(IVec2::new(env("X").unwrap(), env("Z").unwrap()), env("R").unwrap_or(300)) {
         println!("{} {} {} at {} min {:?}", s.name.0, s.size, s.style, s.centre, s.buildings.iter().map(|b| (b.kind.name(), b.min)).collect::<Vec<_>>());
+        let mut who: std::collections::BTreeMap<&str, u32> = Default::default();
+        for r in &s.people {
+            *who.entry(r.species.as_str()).or_default() += 1;
+        }
+        println!("  {} people: {who:?}", s.people.len());
     }
 }
 
@@ -742,25 +764,27 @@ fn settlement_census() {
 
 /// How much of the world a new player waits for: finding spawn and making its column
 /// plans the settlements and lays the trails round it, and the river regions under both.
-/// Trails near settlements read far (each tile the grids of the regions three around),
-/// so this is most of the time a fresh server takes to answer; the budgets are what it
-/// needs now, and a change needing more must say why here. Counts, not times, so a busy
-/// machine cannot fail it.
+/// Trails near settlements plan the land within a trail's length of the gates near
+/// spawn, in 128-block patches of their grid, so this is most of the time a fresh server
+/// takes to answer; the budgets are what it needs now, and a change needing more must
+/// say why here. Counts, not times, so a busy machine cannot fail it.
 #[test]
 fn spawn_needs_only_so_much_planning() {
     use crate::Generator;
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
     let content = voxmar_engine::content::Content::load(&dir).unwrap();
     let world_content = crate::content::WorldContent::load(&content).unwrap();
-    // Seed, then the most stream-tier river regions, trail grids and settlement squares:
-    // the server's default seed has trails laid at spawn, 0 has none. Seed 0 plans the
-    // squares in reach of spawn first, for the settlement promised there (rules,
-    // `spawn_settlement_within`), which reads one river region more.
-    for (seed, streams, grids, squares) in [(0x5eed, 36, 60, 25), (0, 9, 0, 12)] {
+    // Seed, then the most stream-tier river regions, patches of the trails' grid and
+    // settlement squares: the server's default seed has trails laid at spawn, 0 has none.
+    // Seed 0 plans the squares in reach of spawn first, for the settlement promised there
+    // (rules, `spawn_settlement_within`). Since trails near settlements plan only round
+    // the gates near spawn, the default seed reads 25 stream regions (34 before) and 19
+    // squares (28), and its trails' grid 257 patches of 128 blocks (60 whole regions).
+    for (seed, streams, grids, squares) in [(0x5eed, 25, 257, 19), (0, 9, 0, 9)] {
         let world = Overworld::with_content(seed, content.blocks.clone(), &world_content);
         world.generate(ColumnPos::of_block(world.spawn_point()));
         let made = (world.rivers.made().1, world.trails.made().0, world.settlements.made());
-        assert!(made.0 <= streams && made.1 <= grids && made.2 <= squares, "seed {seed}: {made:?} river regions, trail grids and squares, over {:?}", (streams, grids, squares));
+        assert!(made.0 <= streams && made.1 <= grids && made.2 <= squares, "seed {seed}: {made:?} river regions, trail grid patches and squares, over {:?}", (streams, grids, squares));
     }
 }
 
@@ -810,12 +834,13 @@ fn japanese_names_join_as_they_are_said() {
 /// What every plan keeps to, over the squares round two seeds: about one square in seven
 /// settled, mostly hamlets; each plan inside its square, its buildings apart, enough
 /// homes for its size, none in a biome settlements avoid or on a river or lake; and every
-/// chapel with its altar (in snowy land too, where the snow blanket once covered it).
+/// chapel and wayside shrine with its altar (in snowy land too, where the snow blanket
+/// once covered it).
 #[test]
 fn plans_keep_to_their_squares_and_rules() {
     use crate::trails::Land;
     use super::house::Kind;
-    let (mut squares, mut hamlets, mut villages, mut chapels) = (0, 0, 0, 0);
+    let (mut squares, mut hamlets, mut villages, mut chapels, mut shrines) = (0, 0, 0, 0, 0);
     for seed in [1u64, 42] {
         let world = base_world(seed);
         let def = &world.settlements.def;
@@ -849,11 +874,12 @@ fn plans_keep_to_their_squares_and_rules() {
                             assert!(!g.submerged() && g.river < 0.5, "{at}: {} at {} stands in water ({p})", a.what, a.min);
                         }
                     }
-                    if a.what == "chapel" && chapels < 3 {
-                        chapels += 1;
+                    let looked = if a.what == "chapel" { &mut chapels } else { &mut shrines };
+                    if (a.what == "chapel" || a.what == "shrine") && *looked < 3 {
+                        *looked += 1;
                         let area = Area::new(&world, a.min, a.max);
                         let found = (a.min.y..=a.max.y).any(|z| (a.min.x..=a.max.x).any(|x| (a.floor..a.floor + 4).any(|y| area.block(IVec3::new(x, y, z)) == altar)));
-                        assert!(found, "{at}: the chapel at {} has no altar", a.min);
+                        assert!(found, "{at}: the {} at {} has no altar", a.what, a.min);
                     }
                 }
             }
@@ -863,14 +889,14 @@ fn plans_keep_to_their_squares_and_rules() {
     let share = settled as f32 / squares as f32;
     assert!((0.08..=0.25).contains(&share), "{settled} of {squares} squares settled");
     assert!(hamlets > villages && villages > 0, "{hamlets} hamlets, {villages} villages");
-    assert!(chapels > 0, "no chapel to look in");
+    assert!(chapels > 0 && shrines > 0, "{chapels} chapels and {shrines} shrines to look in");
 }
 
 /// The settlements of a few squares, held fixed: a change to planning that moves a single
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
 fn settlements_are_unchanged() {
-    const EXPECTED: u64 = 2318370820319564431;
+    const EXPECTED: u64 = 7909794199593065950;
     let world = base_world(1);
     let mut text = String::new();
     for cz in -3..3 {
@@ -923,6 +949,64 @@ fn every_style_crop_is_sown_somewhere() {
         }
     }
     assert!(wanted.is_empty(), "no field in {seen} settlements grows {wanted:?}");
+}
+
+/// How far out from the origin each regional crop is first sown in a field, in squares
+/// (rings of the grid), on seeds 1, 7 and 42, with biome levels (P15) and without them
+/// (every biome level 1 and no lower chance above level 3, as before levels): design asked
+/// that preferring gentle land leave no crop's nearest field more than a few squares
+/// further out (draft 95). Slow, by hand:
+/// `cargo test --profile iter -p voxmar_worldgen regional_crop_reach -- --ignored --nocapture`
+/// (`SEEDS=1,7`, and `LEVELS=gentle,chance` to try another `site.levels`).
+#[test]
+#[ignore]
+fn regional_crop_reach() {
+    use super::canvas::Put;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let mut leveled = crate::content::WorldContent::load(&content).unwrap();
+    if let Some((gentle, chance)) = std::env::var("LEVELS").ok().and_then(|v| v.split_once(',').map(|(a, b)| (a.parse().unwrap(), b.parse().unwrap()))) {
+        leveled.settlements.site.levels = (gentle, chance);
+    }
+    let mut plain = leveled.clone();
+    for biome in &mut plain.biomes {
+        biome.level = 1;
+    }
+    plain.settlements.site.levels.1 = 1.0;
+    let crops = ["base:rye", "base:chickpea", "base:rice", "base:taro"];
+    let registry = &content.blocks;
+    println!("seed | {} (squares out, without levels -> with)", crops.join(", "));
+    let seeds: Vec<u64> = std::env::var("SEEDS").map_or(vec![1, 7, 42], |v| v.split(',').map(|s| s.parse().unwrap()).collect());
+    for seed in seeds {
+        let mut rings = Vec::new();
+        for world_content in [&plain, &leveled] {
+            let world = Overworld::with_content(seed, content.blocks.clone(), world_content);
+            let mut first: [Option<i32>; 4] = [None; 4];
+            'search: for ring in 0..40 {
+                for step in 0..(ring * 8).max(1) {
+                    let (cx, cz) = crate::spiral(ring, step);
+                    let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
+                    let Some(plan) = &slot.0 else { continue };
+                    for v in plan.voxels.values().flatten() {
+                        if let Put::Set(b) = v.put {
+                            let name = &registry.def(b).name;
+                            if let Some(crop) = name.strip_suffix("_crop_0").or_else(|| name.strip_suffix("_crop_1")).or_else(|| name.strip_suffix("_crop_2"))
+                                && let Some(i) = crops.iter().position(|c| *c == crop)
+                            {
+                                first[i].get_or_insert(ring);
+                            }
+                        }
+                    }
+                    if first.iter().all(Option::is_some) {
+                        break 'search;
+                    }
+                }
+            }
+            rings.push(first);
+        }
+        let cells: Vec<String> = (0..4).map(|i| format!("{:?} -> {:?}", rings[0][i], rings[1][i])).collect();
+        println!("{seed} | {}", cells.join(", "));
+    }
 }
 
 /// No lane runs through the well or a centrepiece, or within the ring of one block round
@@ -1128,7 +1212,7 @@ fn slopes_never_bury_walls() {
     let registry = base_registry();
     let mut failures = Vec::new();
     let mut looked = 0;
-    for seed in [1u64, 42, 7] {
+    for seed in [0u64, 1, 42, 7] {
         let world = Overworld::new(seed, registry.clone());
         let spawn = world.spawn_point();
         let mut columns: rustc_hash::FxHashMap<ColumnPos, Column> = Default::default();
@@ -1203,6 +1287,17 @@ fn every_storey_has_a_stair_up() {
         }
     }
     assert!(flights > 50, "only {flights} flights");
+    // A mod's house too narrow for any stair is built a storey high, never with a storey
+    // above and no way up.
+    for (w, d) in [(4, 4), (3, 6), (5, 5)] {
+        let mut spec = Spec {
+            kind: Kind::House, w, d, wall: 5, storeys: 3, roof: Roof::Gable, pitch: 1, ridge_x: false, extras: vec![Extra::Chimney], door: w / 2, shed: 0,
+            wing: None, stilts: 0, regular: true, window_chance: 0.5, form: Form::Box, inside: Vec::new(), centre: None, seed: 1,
+        };
+        house::make_room_for_stairs(&mut spec);
+        let up = house::stairs(&spec, spec.door.clamp(1, w - 2), spec.chimney().map(|c| c.0));
+        assert!(up.len() as i32 == spec.storeys - 1 && up.iter().all(Option::is_some), "{w} by {d}: {} storeys, stairs {up:?}", spec.storeys);
+    }
 }
 
 /// A mod's partial `rules` replace only the sections it names.
@@ -1301,6 +1396,55 @@ fn no_snow_falls_indoors() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Room metadata follows the painted footprint after rotation, rather than the graded
+/// construction envelope. Connected wings include the opening through the back wall.
+#[test]
+fn room_columns_exclude_exterior_walls_and_courtyards() {
+    use super::canvas::{Facing, Frame};
+    use super::def::{Extra, Form, Roof};
+    use super::house::{Kind, Spec};
+    let mut spec = Spec {
+        kind: Kind::House, w: 13, d: 13, wall: 3, storeys: 1, roof: Roof::Gable,
+        pitch: 1, ridge_x: false, extras: vec![Extra::Porch], door: 6, shed: 3,
+        wing: None, stilts: 2, regular: true, window_chance: 0.0, form: Form::Box,
+        inside: Vec::new(), centre: None, seed: 3,
+    };
+    for facing in [Facing::North, Facing::South, Facing::West, Facing::East] {
+        let frame = Frame { origin: IVec3::new(100, 132, 200), facing };
+        for form in [Form::Box, Form::Round, Form::Courtyard] {
+            spec.form = form;
+            let room = spec.room(&frame);
+            let contains = |x, z| { let p = frame.at(x, 0, z); room.contains(&IVec2::new(p.x, p.z)) };
+            assert!(contains(2, 6), "no interior for {form:?} facing {facing:?}");
+            for (x, z) in [(6, -2), (14, 6), (6, 13), (0, 6), (12, 6)] {
+                assert!(!contains(x, z), "porch, shed or wall included for {form:?} facing {facing:?}");
+            }
+            if form == Form::Courtyard {
+                assert!(!contains(6, 6), "open courtyard included");
+                assert!(!contains(3, 6), "courtyard wall included");
+            } else {
+                assert!(contains(6, 6));
+            }
+            if form == Form::Round { assert!(!contains(1, 1), "round corner yard included"); }
+        }
+        spec.form = Form::Box;
+        spec.wing = Some((5, 3));
+        let room = spec.room(&frame);
+        assert_eq!(room.len(), 121 + 9);
+        for (x, z) in [(10, 12), (10, 13), (10, 14)] {
+            let p = frame.at(x, 0, z);
+            assert!(room.contains(&IVec2::new(p.x, p.z)), "connected wing floor omitted");
+        }
+        for (x, z) in [(8, 13), (12, 13), (10, 15)] {
+            let p = frame.at(x, 0, z);
+            assert!(!room.contains(&IVec2::new(p.x, p.z)), "wing wall included");
+        }
+        spec.wing = None;
+    }
+    spec.kind = Kind::Well;
+    assert!(spec.room(&Frame { origin: IVec3::ZERO, facing: Facing::North }).is_empty());
+}
+
 /// From the lane, through the door and up the stairs, every storey of every house of more
 /// than one can be walked to, at its least and greatest size, with a chimney and without,
 /// and as an inn: a step up at a time, with room overhead.
@@ -1380,25 +1524,35 @@ fn every_storey_can_be_walked_to() {
 }
 
 /// A new player finds a settlement within `spawn_settlement_within` of where they spawn
-/// (rules), and never spawns inside one. Seed 7 is left out: it spawns on a strip of coast
-/// under mountains, where no spot within reach is the dry, firm, gentle ground away from
-/// the sea that a settlement needs (`site`), so none can be promised there.
+/// (rules), measured from the spawn point itself, and never spawns inside one; over twenty
+/// worlds. Only the land may excuse a world (design, draft 81): one where no square in
+/// reach has a spot a settlement could stand on, as on seed 0. A square with spots tries
+/// each with other draws and as the smallest place before it gives up (`plan::plan`).
 #[test]
 fn a_settlement_stands_near_spawn() {
-    let mut far = Vec::new();
-    for seed in [1u64, 42, 3, 11, 99] {
+    let (mut far, mut excused) = (Vec::new(), Vec::new());
+    // 0x5eed: the world a new game makes unless told otherwise.
+    let seeds: Vec<u64> = (0..20).chain([42, 99, 0x5eed]).collect();
+    for &seed in &seeds {
         let world = base_world(seed);
         let within = world.settlements.def.rules.spawn_settlement_within as f32;
         let spawn = world.spawn_point();
         let at = IVec2::new(spawn.x, spawn.z);
         assert!(!world.settlements.covers(&world, spawn.x, spawn.z), "seed {seed}: spawn at {spawn} is inside a settlement");
         let nearest = world.settlements_near(at, 2048).iter().map(|s| IVec2::new(s.centre.x, s.centre.z).as_vec2().distance(at.as_vec2())).fold(f32::MAX, f32::min);
-        // The spawn may move a step off the spot settlements planned by, off a trail.
-        if nearest > within + 64.0 {
-            far.push(format!("seed {seed}: the nearest settlement is {nearest:.0} blocks from spawn at {spawn}"));
+        if nearest <= within {
+            continue;
+        }
+        let sites = world.settlements.spawn_has_sites(&world);
+        eprintln!("seed {seed}: none within {within} of spawn at {spawn}; spots in reach: {sites}");
+        if sites {
+            far.push(format!("seed {seed}: the nearest settlement is {nearest:.0} blocks from spawn at {spawn}, though the land has spots for one"));
+        } else {
+            excused.push(seed);
         }
     }
     assert!(far.is_empty(), "{}", far.join("\n"));
+    assert_eq!(excused, [0], "the worlds whose land has no spot near spawn");
 }
 
 /// Loading refuses ripe or rare fruit wherever a settlement puts leaves: orchards' fruit by
@@ -1423,4 +1577,421 @@ fn ripe_or_rare_fruit_is_refused() {
         d.centrepieces[0].parts = vec![("leaves".into(), "base:{wood}_leaves".into())];
         d.styles[0].woods.push(("apple".into(), 1.0));
     }));
+}
+
+/// People's numbers that would not play are refused at load: a newcomer sooner than a
+/// quarter day (a village to empty of experience again and again), chances past 1,
+/// weights below nothing, a settlement let go before it comes to life, a tick's search
+/// smaller than one way's.
+#[test]
+fn people_numbers_that_would_not_play_are_refused() {
+    let world = base_world(1);
+    let def = &world.settlements.def;
+    let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
+    assert!(def.people.check(&sizes).is_ok());
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 7] = [
+        ("newcomer in a fifth of a day", |p| p.newcomer = 0.2),
+        ("no newcomers a day", |p| p.newcomers_per_day = 0.0),
+        ("a job chance of 1.5", |p| p.jobs[0].chance = 1.5),
+        ("a folk weight below nothing", |p| p.folk[0].weight = -1.0),
+        ("release inside active", |p| p.live.release = p.live.active - 1.0),
+        ("a tick's search under a way's", |p| p.live.search_per_tick = p.live.search - 1),
+        ("linger from below nothing", |p| p.linger.0 = -1.0),
+    ];
+    for (what, spoil) in spoilt {
+        let mut people = def.people.clone();
+        spoil(&mut people);
+        assert!(people.check(&sizes).is_err(), "{what} was let through");
+    }
+}
+
+/// People name species that are villagers and works there are, or the content fails to
+/// load (rather than warn at every look once a player comes near).
+#[test]
+fn people_name_villagers_and_works_there_are() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world = crate::content::WorldContent::load(&content).unwrap();
+    let (people, works) = (&world.settlements.people, world.settlements.works());
+    assert!(people.check_against(&content.creatures, &works).is_ok());
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 5] = [
+        ("an animal for a folk", |p| p.folk[0].species = "base:rabbit".into()),
+        ("no such guard", |p| p.guards[0].species = "base:gaurd".into()),
+        ("a job at no such work", |p| p.jobs[0].at = "bakehouse".into()),
+        ("folk working at no such work", |p| p.folk.iter_mut().find(|f| f.work.is_some()).expect("a folk works").work = Some("mine".into())),
+        ("a shrine of no such kind", |p| p.shrine = "temple".into()),
+    ];
+    for (what, spoil) in spoilt {
+        let mut spoilt = people.clone();
+        spoil(&mut spoilt);
+        assert!(spoilt.check_against(&content.creatures, &works).is_err(), "{what} was let through");
+    }
+}
+
+/// Every settlement has people: each lives in a home and works at a building that takes
+/// workers, a village keeps guards and an innkeeper, every routine sends them somewhere
+/// each slot of the day, and no two people of a place keep quite the same day.
+#[test]
+fn settlements_are_peopled() {
+    use super::Kind;
+    use super::people::{Place, is, place_at};
+    let mut villages = 0;
+    for seed in [1u64, 42, 7] {
+        let world = base_world(seed);
+        let spawn = world.spawn_point();
+        let people = world.settlement_people();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000) {
+            let what = format!("seed {seed} {} ({})", s.name.0, s.size);
+            assert!(!s.people.is_empty(), "{what}: nobody lives there");
+            for r in &s.people {
+                assert!(matches!(s.buildings[r.home].kind, Kind::House | Kind::Trader | Kind::Inn), "{what}: {} lives in a {}", r.species, s.buildings[r.home].kind.name());
+                if let Some(w) = r.work {
+                    let b = &s.buildings[w];
+                    assert!(people.jobs.iter().any(|j| j.species == r.species && is(b, &j.at)) || people.folk.iter().any(|f| f.species == r.species && f.work.as_deref().is_some_and(|w| is(b, w))), "{what}: {} works at a {}", r.species, b.what);
+                }
+            }
+            let homes = s.buildings.iter().filter(|b| b.kind == Kind::House && b.work.is_none()).count();
+            assert!(s.people.len() >= homes, "{what}: {} people in {homes} homes", s.people.len());
+            if s.size == "village" {
+                villages += 1;
+                assert!(s.people.iter().any(|r| r.guard), "{what}: no guards");
+                assert!(s.people.iter().any(|r| r.species == "base:innkeeper"), "{what}: nobody keeps the inn");
+            }
+            let levers = super::Levers(s.levers);
+            let mut days = std::collections::BTreeSet::new();
+            for r in &s.people {
+                let day: Vec<Place> = (0..100).map(|i| place_at(people, r.routine, r.seed, &levers, 3, i as f32 / 100.0, |_| true).0).collect();
+                // Asleep at the dead of night, unless they keep the night watch.
+                assert!(day[90] == Place::Sleep || people.routines[r.routine].name == "watch_night", "{what}: {} up at night: {:?}", r.species, day[90]);
+                days.insert(day);
+            }
+            assert!(days.len() * 3 >= s.people.len(), "{what}: {} people keep only {} days", s.people.len(), days.len());
+        }
+    }
+    assert!(villages > 0, "no village to look at");
+}
+
+/// Loading refuses a furnishing slot whose block would drop itself from every village
+/// (design draft 80): one that drops nothing passes, and so does one tagged `furnishing`,
+/// which gives itself back only where a player placed it.
+#[test]
+fn furnishings_that_drop_themselves_are_refused_unless_tagged() {
+    use crate::content::Select;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let base = crate::content::WorldContent::load(&content).unwrap().settlements;
+    let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
+        let mut def = base.clone();
+        change(&mut def);
+        def.check_furnishings(&content.blocks).is_err()
+    };
+    assert!(!refused(&|_| {}), "the game's own settlements load");
+    // Planks drop themselves and are no furnishing; the crafting table is one.
+    assert!(refused(&|d| d.furnishings.barrel = Some("base:oak_planks".into())));
+    assert!(!refused(&|d| d.furnishings.barrel = Some("base:crafting_table".into())));
+    assert!(refused(&|d| d.furnishings.hay = vec![Select::Name("base:oak_planks".into(), 1.0)]));
+    assert!(refused(&|d| d.furnishings.sacks = vec![Select::Tag("planks".into(), 1.0)]), "by tag too");
+    assert!(refused(&|d| d.furnishings.campfire = Some("base:torch".into())), "a torch drops itself and is no furnishing");
+    // An altar is checked once it is one: the stone altar passes, and so does a building
+    // block standing in for it.
+    assert!(!refused(&|d| d.furnishings.altar = Some("base:stone_altar".into())));
+    assert!(!refused(&|d| d.furnishings.altar = Some("base:polished_calcite".into())));
+    assert!(refused(&|d| d.furnishings.nets = vec![Select::Name("base:oak_planks".into(), 1.0)]));
+    // A centrepiece's own bell too.
+    assert!(refused(&|d| d.centrepieces[0].parts = vec![("bell".into(), "base:oak_planks".into())]));
+}
+
+/// Snow lies over a snowy village without turning its built stone to snow: chimney
+/// stacks, foundation courses, well rims and stacked stone keep their blocks (and their
+/// drops), as the same village generated with no snow blanket at all has them (Review,
+/// 7 Oct: the blanket once covered every block tagged `stone`, cobbles and bricks too).
+/// The blanket still works there: natural stone open to the sky in and around the
+/// village turns to snow, and its sod roofs whiten as the ground does.
+#[test]
+fn snowy_villages_keep_their_built_stone() {
+    let registry = base_registry();
+    let content = crate::content::WorldContent::base(&registry).unwrap();
+    let mut bare = content.clone();
+    bare.climate.frost.blanket.clear();
+    let def = |b: BlockId| registry.def(b);
+    let built = |b: BlockId| def(b).has_tag("stone") && def(b).has_tag("building");
+    let natural_stone = |b: BlockId| def(b).has_tag("stone") && !def(b).has_tag("building");
+    let (snow, grass, snowy_grass) = (registry.expect("base:snow_block"), registry.expect("base:grass_block"), registry.expect("base:snowy_grass_block"));
+    let (mut villages, mut kept, mut snowed_stone, mut snowed_sod) = (0, 0, 0, 0);
+    'seeds: for seed in 1u64..=60 {
+        let world = Overworld::with_content(seed, registry.clone(), &content);
+        let spawn = world.spawn_point();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 4000) {
+            // Snowy where snow lies on the ground about its middle.
+            let column = world.generate(ColumnPos::of_block(s.centre));
+            let snowy = [(0, 0), (6, 0), (-6, 0), (0, 6), (0, -6)].iter().any(|&(dx, dz)| {
+                let (x, z) = ((s.centre.x + dx) & 31, (s.centre.z + dz) & 31);
+                let top = (0..WORLD_HEIGHT).rev().map(|y| column.block(IVec3::new(x, y, z))).find(|b| !b.is_air());
+                top.is_some_and(|b| def(b).has_tag("snow"))
+            });
+            if !snowy {
+                continue;
+            }
+            // Every column over the village and 16 blocks round it, generated once with the
+            // blanket and once without, then borrowed.
+            let plain = Overworld::with_content(seed, registry.clone(), &bare);
+            let min = s.buildings.iter().fold(IVec2::splat(i32::MAX), |m, b| m.min(b.min)) - 16;
+            let max = s.buildings.iter().fold(IVec2::splat(i32::MIN), |m, b| m.max(b.max)) + 16;
+            let (first, last) = (ColumnPos::of_block(IVec3::new(min.x, 0, min.y)), ColumnPos::of_block(IVec3::new(max.x, 0, max.y)));
+            let size = (last.0 - first.0).max_element() + 1;
+            let (snowed, unsnowed) = (generate_area(&world, first, size), generate_area(&plain, first, size));
+            let both = |x: i32, z: i32| {
+                let at = ColumnPos::of_block(IVec3::new(x, 0, z)).0 - first.0;
+                let i = (at.y * size + at.x) as usize;
+                (&snowed[i], &unsnowed[i])
+            };
+            for b in &s.buildings {
+                for z in b.min.y..=b.max.y {
+                    for x in b.min.x..=b.max.x {
+                        let (with, without) = both(x, z);
+                        for y in b.floor - 2..(b.floor + 24).min(WORLD_HEIGHT) {
+                            let local = IVec3::new(x & 31, y, z & 31);
+                            let (want, got) = (without.block(local), with.block(local));
+                            if built(want) {
+                                assert_eq!(def(got).name, def(want).name, "seed {seed}, {}: the {} at {x} {y} {z} turned to snow", s.name.0, b.what);
+                                kept += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            // The positive control: over the village and 16 blocks round it, natural stone
+            // open to the sky without the blanket is snow with it, and grass roofs and
+            // banks over the ground are snowy grass.
+            for z in min.y..=max.y {
+                for x in min.x..=max.x {
+                    let (with, without) = both(x, z);
+                    let mut open = true;
+                    for y in (1..WORLD_HEIGHT).rev() {
+                        let local = IVec3::new(x & 31, y, z & 31);
+                        let (want, got) = (without.block(local), with.block(local));
+                        if open && natural_stone(want) && got == snow {
+                            snowed_stone += 1;
+                        }
+                        if open && want == grass && got == snowy_grass {
+                            snowed_sod += 1;
+                        }
+                        open &= want.is_air() || def(want).render == RenderKind::Plant;
+                    }
+                }
+            }
+            println!("seed {seed}: snowy {} {} at {}", s.size, s.name.0, s.centre);
+            villages += 1;
+            if villages >= 2 {
+                break 'seeds;
+            }
+        }
+    }
+    assert!(villages > 0, "no snowy settlement found");
+    assert!(kept > 50, "only {kept} built stone blocks in {villages} snowy settlements");
+    assert!(snowed_stone > 0, "no natural stone open to the sky turned to snow in or around {villages} snowy settlements");
+    assert!(snowed_sod > 0, "no grass over the ground turned snowy in or around {villages} snowy settlements");
+    println!("kept {kept} built stone blocks; {snowed_stone} natural stone and {snowed_sod} grass blocks snowed");
+}
+
+/// No tree's crown lies over a roof, and no tree's trunk stands within the glade's treeless
+/// ring of a building's walls, in the woods round spawn (Fernford, seed 1, stands in a forest).
+#[test]
+fn trees_keep_off_roofs_and_walls() {
+    use super::house::Kind;
+    let registry = base_registry();
+    let leaves = |b: BlockId| registry.def(b).render == RenderKind::Leaves && registry.def(b).has_tag("natural");
+    let log = |b: BlockId| registry.def(b).has_tag("log") && registry.def(b).has_tag("natural");
+    let (mut failures, mut roofs) = (Vec::new(), 0);
+    for seed in [1u64, 42, 7] {
+        let world = base_world(seed);
+        // Where a trunk may be rooted, less the block a thick trunk spreads to.
+        let trunks = world.settlements.def.site.glade.0 - 1;
+        let spawn = world.spawn_point();
+        let mut near = world.settlements_near(IVec2::new(spawn.x, spawn.z), 3000);
+        near.sort_by_key(|s| (s.centre.x - spawn.x).pow(2) + (s.centre.z - spawn.z).pow(2));
+        for s in near.iter().take(3) {
+            for b in s.buildings.iter().filter(|b| matches!(b.kind, Kind::House | Kind::Inn | Kind::Trader | Kind::Smithy) && b.what != "courtyard_house") {
+                let area = Area::new(&world, b.min - trunks, b.max + trunks);
+                for z in b.min.y..=b.max.y {
+                    for x in b.min.x..=b.max.x {
+                        // The highest block over the footprint: never a tree's leaves.
+                        let Some(top) = (b.floor + 1..b.floor + 48).rev().find(|&y| !area.block(IVec3::new(x, y, z)).is_air()) else { continue };
+                        roofs += 1;
+                        let block = area.block(IVec3::new(x, top, z));
+                        if leaves(block) {
+                            failures.push(format!("seed {seed} {}: {} over the {} at {x} {top} {z}", s.name.0, registry.def(block).name, b.what));
+                        }
+                    }
+                }
+                // No trunk (three or more natural logs one over another) beside its walls.
+                for z in b.min.y - trunks..=b.max.y + trunks {
+                    for x in b.min.x - trunks..=b.max.x + trunks {
+                        // As the glade measures: straight out from the nearest wall.
+                        let (dx, dz) = ((b.min.x - x).max(x - b.max.x), (b.min.y - z).max(z - b.max.y));
+                        if dx.max(dz) <= 0 || dx.max(0).pow(2) + dz.max(0).pow(2) > trunks * trunks {
+                            continue;
+                        }
+                        // A tree's: logs one over another up into leaves (a post or a
+                        // woodpile has none over it).
+                        let logs: Vec<i32> = (b.floor - 2..b.floor + 12).filter(|&y| log(area.block(IVec3::new(x, y, z)))).collect();
+                        let crowned = logs.last().is_some_and(|&t| (t + 1..t + 4).any(|y| leaves(area.block(IVec3::new(x, y, z)))));
+                        if logs.len() >= 3 && crowned {
+                            failures.push(format!("seed {seed} {}: a trunk beside the {} at {x} {z}", s.name.0, b.what));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(roofs > 1000, "only {roofs} roof columns");
+    failures.dedup();
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.iter().take(40).cloned().collect::<Vec<_>>().join("\n"));
+}
+
+/// No two settlements within `rules.names_apart` blocks of each other share a name, a word
+/// before it aside ("Old Ashcote" and "Ashcote" would not do): seed 1 had two Ashcotes.
+#[test]
+fn near_settlements_have_names_of_their_own() {
+    let mut clashes = Vec::new();
+    let mut pairs = 0;
+    for seed in [1u64, 42] {
+        let world = base_world(seed);
+        let def = &world.settlements.def;
+        let apart = def.rules.names_apart as f32;
+        let bare = |name: &str| {
+            let prefix = def.names.iter().flat_map(|n| &n.prefixes).find(|p| name.starts_with(&format!("{} ", p.0)));
+            prefix.map_or(name, |p| &name[p.0.len() + 1..]).to_string()
+        };
+        let spawn = world.spawn_point();
+        let near = world.settlements_near(IVec2::new(spawn.x, spawn.z), def.rules.names_apart);
+        for (i, a) in near.iter().enumerate() {
+            for b in &near[i + 1..] {
+                if IVec2::new(a.centre.x, a.centre.z).as_vec2().distance(IVec2::new(b.centre.x, b.centre.z).as_vec2()) > apart {
+                    continue;
+                }
+                pairs += 1;
+                if bare(&a.name.0) == bare(&b.name.0) || a.name.1 == b.name.1 {
+                    clashes.push(format!("seed {seed}: {} at {} and {} at {}", a.name.0, a.centre, b.name.0, b.centre));
+                }
+            }
+        }
+    }
+    assert!(pairs > 30, "only {pairs} pairs near enough to compare");
+    assert!(clashes.is_empty(), "{}", clashes.join("\n"));
+}
+
+/// Naming keeps near squares apart whatever names list and form each draws from: over a
+/// stretch of squares wide enough that the same draws would clash many times over.
+#[test]
+fn naming_never_repeats_near() {
+    let world = base_world(1);
+    let def = &world.settlements.def;
+    let (grid, apart) = (&def.grid, def.rules.names_apart as f32);
+    // A quarter of the squares hamlets with small names, then every one: the small names
+    // are few, so near ones run out and fall back on first and last parts. The squares
+    // round the middle are promised to a spawn, settled whatever their roll.
+    let rolled = |x: i32, z: i32| crate::rng::Rng::new(world.settlements.seed, 0x5e771e, x, z).chance(grid.chance);
+    let promised: Vec<IVec2> = (-2..=2).flat_map(|z| (-2..=2).map(move |x| IVec2::new(x, z))).filter(|c| !rolled(c.x, c.y)).collect();
+    assert!(!promised.is_empty());
+    for every in [4u64, 1] {
+        let mut named = Vec::new();
+        for z in -20..20 {
+            for x in -20..20 {
+                let cell = IVec2::new(x, z);
+                if !rolled(x, z) && !promised.contains(&cell) {
+                    continue;
+                }
+                // A list and form per square, as its biome and size would pick.
+                let h = crate::rng::hash3(7, x, 0, z);
+                let list = (h % def.names.len() as u64) as usize;
+                let small = (h >> 32) % every == 0 && !def.names[list].small.is_empty();
+                let name = super::plan::unique_name(def, world.settlements.seed, &promised, cell, list, small).0;
+                named.push((cell, list, name));
+            }
+        }
+        let gap = |a: IVec2, b: IVec2| ((a - b).abs() * grid.spacing - (grid.spacing - 2 * grid.margin)).max(IVec2::ZERO).as_vec2().length();
+        let mut clashes = Vec::new();
+        for (i, a) in named.iter().enumerate() {
+            for b in &named[i + 1..] {
+                if a.2 == b.2 && gap(a.0, b.0) <= apart {
+                    clashes.push(format!("{} in squares {} and {}", a.2, a.0, b.0));
+                }
+            }
+        }
+        assert!(named.len() > 500, "only {} squares named", named.len());
+        assert!(clashes.is_empty(), "one in {every} small: {} clashes:\n{}", clashes.len(), clashes.join("\n"));
+    }
+}
+
+/// A name is never one a neighbour offers while the list has another. Thirty names and
+/// two dozen neighbours offering three each leave a few free: draws alone often miss
+/// them, so a square past its own offers walks the list to one.
+#[test]
+fn a_taken_name_only_when_the_list_has_no_other() {
+    use super::plan::{NAME_OFFERS, offered_name, unique_name};
+    let world = base_world(1);
+    let mut def = world.settlements.def.clone();
+    let mut list = def.names[0].clone();
+    list.first = vec![("Ash".to_owned(), "アッシュ".to_owned())];
+    list.last = (0..30).map(|i| (format!("b{i}"), format!("ブ{i}"))).collect();
+    list.small = Vec::new();
+    def.names = vec![list];
+    // A five by five block of squares, all promised (no roll settles any other), all
+    // within `names_apart` of the middle one.
+    (def.grid.chance, def.rules.names_apart) = (0.0, def.grid.spacing * 3);
+    let promised: Vec<IVec2> = (-2..=2).flat_map(|z| (-2..=2).map(move |x| IVec2::new(x, z))).collect();
+    let (def, mut walked) = (&def, 0);
+    for seed in 0..400u64 {
+        let taken: std::collections::HashSet<String> =
+            promised.iter().filter(|&&c| c != IVec2::ZERO).flat_map(|&c| (0..NAME_OFFERS).map(move |k| offered_name(def, seed, c, 0, k, false).0)).collect();
+        if taken.len() == 30 {
+            continue;
+        }
+        let name = unique_name(def, seed, &promised, IVec2::ZERO, 0, false).0;
+        assert!(!taken.contains(&name), "seed {seed}: took {name}, which a neighbour offers, though {} were free", 30 - taken.len());
+        walked += usize::from(!(0..NAME_OFFERS + 32).any(|k| offered_name(def, seed, IVec2::ZERO, 0, k, false).0 == name));
+    }
+    // Some found their name only by walking the list.
+    assert!(walked > 0);
+}
+
+/// Settling the spawn plans each square in its reach once: the plans made finding the
+/// spawn's square are the squares' own. Prints how long settling the spawn takes once the
+/// land round it is known (design's bar: under 300 ms on the cloud machine); a print, not
+/// an assert, as a busy machine stretches it.
+#[test]
+fn the_spawn_plans_each_square_once() {
+    use std::sync::atomic::Ordering;
+    for seed in [0u64, 1, 7, 42] {
+        let world = base_world(seed);
+        let settlements = &world.settlements;
+        // The land round spawn first, which the spawn's search needs anyway; then settling.
+        let started = std::time::Instant::now();
+        let at = world.spawn_estimate();
+        let land = started.elapsed();
+        let started = std::time::Instant::now();
+        settlements.slot(&world, settlements.cell_of(at.x, at.y));
+        let took = started.elapsed();
+        let spawn = settlements.spawn.get().unwrap();
+        let mut cells: Vec<IVec2> = spawn.early.lock().unwrap().keys().copied().chain(std::iter::once(settlements.cell_of(at.x, at.y))).collect();
+        cells.sort_by_key(|c| (c.x, c.y));
+        cells.dedup();
+        let planned = settlements.planned.load(Ordering::Relaxed);
+        for &c in &cells {
+            settlements.slot(&world, c);
+        }
+        eprintln!("seed {seed}: the spawn's square {:?} settled in {took:?} after {land:?} for the land, {planned} plans (tries near the spawn included) for {} squares in reach", spawn.square.map(|s| s.1), cells.len());
+        assert_eq!(settlements.planned.load(Ordering::Relaxed), planned, "seed {seed}: a square in the spawn's reach was planned again");
+        assert!(spawn.early.lock().unwrap().is_empty());
+    }
+}
+
+/// A site is as likely in a biome of level 5 or below as anywhere, and keeps `levels.1` of
+/// its chance above level 5 (design asked "above 3"; at 3 a regional crop's villages thin
+/// out too far, see `regional_crop_reach`).
+#[test]
+fn sites_thin_out_above_their_level() {
+    let site = super::def::SiteDef::default();
+    assert_eq!((site.level(1), site.level(5), site.level(6), site.level(10)), (1.0, 1.0, 0.7, 0.7));
 }
