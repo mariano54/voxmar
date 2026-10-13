@@ -1044,6 +1044,7 @@ mod tests {
             quests: vec!["base:a".into(), "base:b".into()],
             quests_claimed: vec!["base:a".into()],
             tallies: Vec::new(),
+            prayer_points: None,
         };
         save.write_player("ada", &player, &registry).unwrap();
         assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().quests_claimed, ["base:a"], "a waiting reward is kept");
