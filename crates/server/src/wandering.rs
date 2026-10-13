@@ -87,6 +87,12 @@ const STALK: f32 = 10.0;
 const RUSH: f32 = 3.0;
 const HUNT_GIVE_UP: f32 = 60.0;
 const OVER_THE_KILL: f32 = 6.0;
+/// A journey's walk is at least this long (a town nearer is no journey), and a player must
+/// keep with it this many seconds of the way to be thanked at its end.
+const JOURNEY_LEAST: f32 = 80.0;
+const ESCORTED: f32 = 30.0;
+/// Rain or snow heavier than this falls, to a kind that comes only in the wet.
+const FALLING: f32 = 0.05;
 
 fn ticks(seconds: f32) -> u64 {
     (seconds * TICKS_PER_SECOND as f32).round().max(1.0) as u64
@@ -252,6 +258,9 @@ enum Plan {
     Lead { heading: Vec2, goal: Vec3, waiting: Option<u64>, arrived: Option<u64> },
     /// Working the blocks about an anchor, each worker its own.
     Gather { anchor: Vec3 },
+    /// Walking to a town: the players near it on the way, by how many updates, and the tick
+    /// it arrived.
+    Journey { heading: Vec2, goal: Vec3, pace: f32, with: FxHashMap<PlayerId, u32>, arrived: Option<u64> },
     /// Hunting until a tick: after its quarry (since a tick), with kills `took`, standing
     /// over the last until a tick, and the quarry it gave up on.
     Hunt { target: Option<u32>, since: u64, took: u8, until: u64, rest_until: u64, passed: Vec<u32> },
@@ -413,7 +422,9 @@ impl Server {
             return;
         }
         let Some(spot) = self.wandering_spot(player, seed) else { return };
-        let Some(event) = self.pick_event(player, spot, mix(seed, 5)) else { return };
+        let (tick, day) = (self.tick, self.day);
+        let wet = self.weather.local(&mut self.temperature, xz(spot.as_vec3()), tick, day).weather.precipitation > FALLING;
+        let Some(event) = self.pick_event_in(player, spot, mix(seed, 5), wet) else { return };
         self.begin_event(Some(player), event, spot, mix(seed, 6));
     }
 
@@ -562,7 +573,13 @@ impl Server {
 
     /// An event that suits `spot` and `player`, by its weights: its biome, the hour, what
     /// the player has reached, and a lesser chance for one they met lately.
+    #[cfg(test)]
     fn pick_event(&self, player: PlayerId, spot: IVec3, seed: u64) -> Option<usize> {
+        self.pick_event_in(player, spot, seed, false)
+    }
+
+    /// `pick_event`, where rain or snow falls (`wet`) or none does.
+    fn pick_event_in(&self, player: PlayerId, spot: IVec3, seed: u64, wet: bool) -> Option<usize> {
         let rules = self.content.wandering.rules();
         let p = self.players.get(&player)?;
         let site = self.overworld.site(spot.x, spot.z);
@@ -579,7 +596,9 @@ impl Server {
                 && days >= needs.days
                 && needs.home.is_none_or(|h| h == p.home.is_some())
                 && needs.combat.is_none_or(|(low, high)| (low..=high).contains(&combat))
-                && needs.town.is_none_or(|reach| self.town_near(spot.as_vec3(), reach).is_some());
+                && needs.town.is_none_or(|reach| self.town_near(spot.as_vec3(), reach).is_some())
+                && needs.wet.is_none_or(|w| w == wet)
+                && needs.near_home.is_none_or(|near| p.home.is_some_and(|home| flat(home, p.position) <= near));
             let weight = event.biome_weight(&biome.name, &biome.tags);
             if !suits || weight <= 0.0 {
                 continue;
@@ -588,6 +607,12 @@ impl Server {
             if let Script::Gather { reach, .. } = event.def.script
                 && (self.nearest_block(spot.as_vec3(), reach, &event.seek, 0.0, &[]).is_none()
                     || !event.deliver.is_empty() && self.nearest_block(spot.as_vec3(), reach, &event.deliver, 0.0, &[]).is_none())
+            {
+                continue;
+            }
+            // A journey comes only where there is a town to walk to, and a way to walk.
+            if let Script::Journey { reach, .. } = event.def.script
+                && self.town_near(spot.as_vec3(), reach).is_none_or(|(to, _)| to.length() < JOURNEY_LEAST)
             {
                 continue;
             }
@@ -745,6 +770,14 @@ impl Server {
                 Plan::Lead { heading, goal: at + Vec3::new(heading.x, 0.0, heading.y) * length, waiting: None, arrived: None }
             }
             Script::Gather { .. } => Plan::Gather { anchor: at },
+            // To the town's centre; with none in reach (an admin's start), on along a line.
+            Script::Journey { reach, pace, .. } => match self.town_near(at, reach) {
+                Some((to, town)) => {
+                    let heading = to.try_normalize().unwrap_or(towards);
+                    Plan::Journey { heading, goal: Vec3::new(town.centre.x as f32 + 0.5, at.y, town.centre.z as f32 + 0.5), pace, with: Default::default(), arrived: None }
+                }
+                None => Plan::March { heading: towards, goal: at + Vec3::new(towards.x, 0.0, towards.y) * 80.0, pace },
+            },
             Script::Hunt { seconds, .. } => Plan::Hunt { target: None, since: self.tick, took: 0, until: self.tick + ticks(seconds), rest_until: 0, passed: Vec::new() },
             Script::Roam { seconds, .. } => Plan::Amble { anchor: Some(at), heading: towards, until: self.tick + ticks(seconds), goal: None, pause_until: 0 },
             Script::Drift { seconds, .. } => Plan::Amble { anchor: None, heading: turned(towards, side * 1.2), until: self.tick + ticks(seconds), goal: None, pause_until: 0 },
@@ -1098,6 +1131,17 @@ impl Server {
                     let pick = ((unit_from(mix(self.tick, source as u64 ^ 0x0f07)) * open.len() as f32) as usize).min(open.len() - 1);
                     self.hand_out(player, source, &open[pick..=pick]);
                 }
+                ResolvedReward::Weather(ref name, seconds) => {
+                    let from = self.creatures.live.get(&source).map(|c| c.body.position).or_else(|| self.players.get(&player).map(|p| p.position));
+                    let (Some(from), Some(preset)) = (from, self.content.weather.preset(name)) else { continue };
+                    let preset = preset.at(preset.intensity);
+                    self.weather.force(preset, xz(from), seconds.round() as u32, self.tick);
+                }
+                ResolvedReward::Prayer(points) => {
+                    let most = self.prayer_most(player);
+                    let Some(p) = self.players.get_mut(&player) else { return };
+                    p.praying.points = (p.praying.points + points).min(most);
+                }
                 ResolvedReward::Free | ResolvedReward::Anger | ResolvedReward::Befriend | ResolvedReward::Leave | ResolvedReward::Hand(_) | ResolvedReward::Cook(..) => {}
             }
         }
@@ -1283,7 +1327,7 @@ impl Server {
         // Standing for a player who has come near: a party that halts does, for a while, then
         // goes on, and not again for a while.
         let mut halted = false;
-        if let (Some(halt), Plan::March { .. } | Plan::Amble { .. } | Plan::Gather { .. }) = (event.def.halt, &inst.plan)
+        if let (Some(halt), Plan::March { .. } | Plan::Amble { .. } | Plan::Gather { .. } | Plan::Journey { arrived: None, .. }) = (event.def.halt, &inst.plan)
             && !inst.done
             && inst.provoked.is_none()
             && !mood.wary
@@ -1316,6 +1360,7 @@ impl Server {
         let mut leaving = false;
         let mut revealed = false;
         let mut take: Option<u32> = None;
+        let mut escorted: Vec<PlayerId> = Vec::new();
         let mut hunted_out = false;
         match (&mut inst.plan, script) {
             // Warning a player off: everyone stands and faces them.
@@ -1323,7 +1368,7 @@ impl Server {
                 heading = warning.map_or(heading, |w| (xz(w) - xz(lead)).try_normalize().unwrap_or(heading));
                 (last, pose, face) = (true, Pose::Alert, warning);
             }
-            (Plan::March { heading: h, .. } | Plan::Amble { heading: h, .. }, _) if halted => {
+            (Plan::March { heading: h, .. } | Plan::Amble { heading: h, .. } | Plan::Journey { heading: h, .. }, _) if halted => {
                 heading = *h;
                 last = true;
                 face = nearest;
@@ -1598,6 +1643,30 @@ impl Server {
                     }
                 }
             }
+            // A journey to town: on toward it, counting who keeps with it; at its end, those
+            // who came the way are thanked, and it stays there.
+            (Plan::Journey { heading: h, goal: g, pace: p, with, arrived }, Script::Journey { near, .. }) => {
+                (heading, pace) = (*h, *p);
+                if arrived.is_some() {
+                    (last, face) = (true, nearest);
+                } else {
+                    for &(id, at) in players {
+                        if flat(lead, at) <= near && (at.y - lead.y).abs() <= 8.0 {
+                            *with.entry(id).or_default() += 1;
+                        }
+                    }
+                    if flat(lead, *g) < THERE * 4.0 {
+                        *arrived = Some(self.tick);
+                        inst.stage = Stage::Arrived;
+                        inst.done = true;
+                        last = true;
+                        let enough = (ESCORTED / self.content.wandering.rules().errand_every).ceil() as u32;
+                        escorted = players.iter().filter(|&&(id, at)| flat(lead, at) <= near && with.get(&id).is_some_and(|&n| n >= enough)).map(|&(id, _)| id).collect();
+                    } else {
+                        goal = Some(*g);
+                    }
+                }
+            }
             // A hunt: after the nearest quarry, stalking the last of the way and rushing it at
             // the end; one of them close enough brings it down.
             (Plan::Hunt { target, since, took, until, rest_until, passed }, Script::Hunt { reach, strike, takes, .. }) => {
@@ -1650,6 +1719,15 @@ impl Server {
                 }
                 self.tally(player, "met", &event.def.name, 1);
                 self.hand_out(player, leader, &event.share);
+            }
+        }
+        if !escorted.is_empty() {
+            let event = self.content.wandering.get(inst.event).clone();
+            for player in escorted {
+                if let (Some(who), Some(p)) = (self.speaker_name(leader), self.players.get(&player)) {
+                    p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("arrived"))) });
+                }
+                self.hand_out(player, leader, &event.reveal);
             }
         }
         if hunted_out {
@@ -1961,6 +2039,8 @@ impl Server {
                     ResolvedReward::Cook(station, ..) => held.is_some_and(|h| self.content.cooking.for_item(h.item, std::slice::from_ref(station)).is_some()),
                     // Where nothing of the kind is near, they have nothing to tell.
                     ResolvedReward::Point(..) | ResolvedReward::Town(_) | ResolvedReward::OneOf(_) => self.creatures.live.get(&id).is_some_and(|c| self.has_to_tell(c.body.position, g)),
+                    // Prayer is restored only to one short of it.
+                    ResolvedReward::Prayer(_) => p.praying.points < self.prayer_most(player),
                     _ => true,
                 })
                 && (!held_too
@@ -4523,5 +4603,208 @@ mod tests {
         server.creatures.live.get_mut(&teller).unwrap().body.position = lonely;
         assert!(server.meet(1, teller));
         assert_eq!(count_of(&server, "base:gold_coin"), 1, "nothing to tell, nothing taken");
+    }
+
+    /// Broad day, a few days into the world.
+    fn broad_day(server: &mut Server) {
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (3.0 + i as f64 / 40.0)).find(|&day| (0.6..0.85).contains(&voxmar_engine::creature::daylight(day as u64))).expect("a bright hour");
+    }
+
+    /// A spot near `from` whose biome kind `event` comes to, and that `also` suits.
+    fn land_for(server: &Server, event: usize, from: Vec3, also: impl Fn(Vec3) -> bool) -> IVec3 {
+        let e = server.content.wandering.get(event);
+        (0..4000)
+            .map(|i| {
+                let (a, r) = (i as f32 * 2.399, 40.0 + i as f32 * 2.0);
+                IVec3::new((from.x + a.cos() * r) as i32, 200, (from.z + a.sin() * r) as i32)
+            })
+            .find(|spot| {
+                let biome = server.overworld.biomes().get(server.overworld.site(spot.x, spot.z).biome);
+                e.biome_weight(&biome.name, &biome.tags) > 0.0 && also(spot.as_vec3())
+            })
+            .expect("land the kind comes to")
+    }
+
+    /// Market folk started, their town moved to `goal` (within the fixture's floor).
+    fn market_folk_to(server: &mut Server, goal: Vec3) -> u64 {
+        let id = start(server, "market_folk", (110, 128));
+        let inst = server.wandering.active.get_mut(&id).unwrap();
+        let lead = server.creatures.live[&inst.members[0].creature].body.position;
+        inst.plan = Plan::Journey { heading: (xz(goal) - xz(lead)).normalize(), goal, pace: 0.9, with: Default::default(), arrived: None };
+        id
+    }
+
+    #[test]
+    fn market_folk_walk_to_town_and_thank_whoever_kept_them_company() {
+        let mut server = fixture();
+        let id = market_folk_to(&mut server, Vec3::new(40.5, 200.0, 200.5));
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        // Walking along beside the leader the whole way.
+        let arrived = (0..200).any(|_| {
+            if let Some(at) = leader_at(&server, id) {
+                server.players.get_mut(&1).unwrap().position = at + Vec3::new(3.0, 0.0, 0.0);
+            }
+            run(&mut server, 20);
+            server.wandering.active.get(&id).is_some_and(|inst| inst.stage == Stage::Arrived)
+        });
+        assert!(arrived, "they reach the town");
+        assert!(says(&told(&client), "wander.base.market_folk.arrived"));
+        assert_eq!(count_of(&server, "base:bread"), 2, "their bread for the road");
+        assert!(has_effect(&server, "refreshed"));
+        let trader = members_of(&server, id, 0)[0];
+        assert!(server.meet(1, trader));
+        assert!(says(&told(&client), "wander.base.market_folk.there"), "and they say where the market is");
+    }
+
+    #[test]
+    fn market_folk_thank_only_those_who_walked_the_way() {
+        let mut server = fixture();
+        let id = market_folk_to(&mut server, Vec3::new(40.5, 200.0, 200.5));
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        // Waiting at the town instead of walking with them.
+        server.players.get_mut(&1).unwrap().position = Vec3::new(44.5, 200.0, 200.5);
+        assert!(run_until(&mut server, id, 200, |inst| inst.stage == Stage::Arrived), "they reach the town");
+        assert_eq!(count_of(&server, "base:bread"), 0, "met at the end is not walked with");
+    }
+
+    #[test]
+    fn market_folk_come_only_where_a_town_is_a_walk_away() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        let folk = event(&server, "market_folk");
+        let (centre, lonely) = town_and_wild(&server);
+        let comes = |server: &Server, at: Vec3| (0..600u64).any(|seed| server.pick_event(1, at.floor().as_ivec3(), mix(seed, 3)) == Some(folk));
+        let away = land_for(&server, folk, centre, |at| server.town_near(at, 600.0).is_some_and(|(to, _)| to.length() > 200.0));
+        assert!(comes(&server, away.as_vec3()), "a town a walk away");
+        assert!(!comes(&server, centre + Vec3::new(20.0, 0.0, 0.0)), "not at the town itself");
+        assert!(!comes(&server, lonely), "nor where there is none");
+    }
+
+    #[test]
+    fn market_folk_buy_wheat_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "market_folk", (110, 128));
+        let trader = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:wheat", 16);
+        assert!(server.meet(1, trader));
+        assert_eq!(count_of(&server, "base:wheat"), 8);
+        assert_eq!(count_of(&server, "base:gold_coin"), 1);
+        assert!(server.meet(1, trader));
+        assert_eq!(count_of(&server, "base:wheat"), 8, "once");
+    }
+
+    #[test]
+    fn rain_brings_drenched_travellers_and_never_rainmakers() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        let (drenched, rainmakers) = (event(&server, "drenched_travellers"), event(&server, "rainmakers"));
+        let spot = land_for(&server, drenched, Vec3::new(128.0, 200.0, 128.0), |_| true);
+        let picks = |server: &Server, wet: bool| (0..800u64).filter_map(|seed| server.pick_event_in(1, spot, mix(seed, 3), wet)).collect::<Vec<_>>();
+        let (in_rain, in_dry) = (picks(&server, true), picks(&server, false));
+        assert!(in_rain.contains(&drenched) && !in_dry.contains(&drenched), "travellers caught in the rain come only in it");
+        assert!(!in_rain.contains(&rainmakers), "nobody dances for rain in the rain");
+    }
+
+    #[test]
+    fn a_light_warms_the_drenched_and_food_buys_word_of_ore() {
+        let mut server = fixture();
+        let id = start(&mut server, "drenched_travellers", (110, 128));
+        let traveller = members_of(&server, id, 0)[0];
+        give_held(&mut server, "base:torch", 1);
+        assert!(server.meet(1, traveller));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "a coin for the warmth");
+        assert_eq!(count_of(&server, "base:torch"), 1, "the light is not taken");
+        let at = server.creatures.live[&traveller].body.position.floor().as_ivec3();
+        let ore = tagged(&server, "ore_sample");
+        let name = server.content.blocks.def(ore).name.clone();
+        place(&mut server, &name, IVec3::new(at.x + 20, 200, at.z));
+        give_held(&mut server, "base:bread", 1);
+        let client = listen(&mut server);
+        assert!(server.meet(1, traveller));
+        let said = told(&client);
+        let point = said.iter().find(|(k, _)| k == "wander.point").unwrap_or_else(|| panic!("the ledge: {said:?}"));
+        assert!(point.1.iter().any(|(n, w)| n == "thing" && *w == Words::Block(name.clone())));
+    }
+
+    #[test]
+    fn two_coins_and_the_rainmakers_bring_rain() {
+        let mut server = fixture();
+        let (_, maker) = camped(&mut server, "rainmakers", 3.0);
+        let at = server.creatures.live[&maker].body.position;
+        assert!(server.weather.forced_at(xz(at), server.tick).is_none());
+        give_held(&mut server, "base:gold_coin", 4);
+        assert!(server.meet(1, maker));
+        assert_eq!(count_of(&server, "base:gold_coin"), 2);
+        let (preset, left) = server.weather.forced_at(xz(at), server.tick).expect("rain is on its way");
+        assert_eq!(preset.short_name(), "rain");
+        assert!(left > 500, "for ten minutes: {left}");
+        assert!(server.meet(1, maker));
+        assert_eq!(count_of(&server, "base:gold_coin"), 2, "one dance for the party");
+    }
+
+    #[test]
+    fn the_shrine_fills_spent_prayer_and_shows_a_beginner_the_first() {
+        let mut server = fixture();
+        let id = start(&mut server, "shrine_bearer", (110, 128));
+        let priest = members_of(&server, id, 0)[0];
+        assert!(server.meet(1, priest));
+        assert!(xp_in(&server, "core:magic") > 0, "a first prayer");
+        skill_to(&mut server, "core:magic", 20);
+        let most = server.prayer_most(1);
+        server.players.get_mut(&1).unwrap().praying.points = most;
+        let client = listen(&mut server);
+        assert!(server.meet(1, priest));
+        assert!(!says(&told(&client), "wander.base.shrine_bearer.renew"), "nothing to fill");
+        server.players.get_mut(&1).unwrap().praying.points = 0.0;
+        assert!(server.meet(1, priest));
+        assert!(says(&told(&client), "wander.base.shrine_bearer.renew"));
+        assert_eq!(server.players[&1].praying.points, most.min(30.0), "filled, to the most");
+        server.players.get_mut(&1).unwrap().praying.points = 0.0;
+        assert!(server.meet(1, priest));
+        assert_eq!(server.players[&1].praying.points, 0.0, "once");
+    }
+
+    #[test]
+    fn neighbours_call_only_on_one_at_home() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        let neighbours = event(&server, "neighbours");
+        let spot = IVec3::new(128, 200, 128);
+        let comes = |server: &Server| (0..800u64).any(|seed| server.pick_event(1, spot, mix(seed, 3)) == Some(neighbours));
+        assert!(!comes(&server), "no home, no neighbours");
+        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(140.5, 200.0, 128.5));
+        assert!(comes(&server), "at home");
+        server.players.get_mut(&1).unwrap().position = Vec3::new(140.5 + 300.0, 200.0, 128.5);
+        assert!(!comes(&server), "away from it");
+    }
+
+    #[test]
+    fn neighbours_bring_a_plate_once_and_seed_for_a_cooked_meal() {
+        let mut server = fixture();
+        let id = start(&mut server, "neighbours", (110, 128));
+        let neighbour = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        assert!(server.meet(1, neighbour));
+        assert_eq!(count_of(&server, "base:earthen_plate"), 1, "a housewarming gift");
+        give_held(&mut server, "base:cooked_rabbit", 1);
+        assert!(server.meet(1, neighbour));
+        assert_eq!(count_of(&server, "base:cooked_rabbit"), 0);
+        assert!(count_of(&server, "base:seed_mix") >= 3);
+        assert!(has_effect(&server, "sustained"));
+        assert_eq!(count_of(&server, "base:earthen_plate"), 0, "the plate came once, to the party");
+    }
+
+    #[test]
+    fn wolf_hunters_bring_down_a_wolf_near_a_home() {
+        let mut server = fixture();
+        let wolf = wild(&mut server, "base:wolf", Vec3::new(100.5, 200.0, 160.5), 3);
+        server.creatures.live.get_mut(&wolf).unwrap().hurt_by = Some(1);
+        let id = start(&mut server, "wolf_hunters", (110, 128));
+        let client = listen(&mut server);
+        assert!(run_until(&mut server, id, 120, |inst| inst.stage == Stage::Took), "the wolf is brought down");
+        assert!(!server.creatures.live.contains_key(&wolf));
+        assert!(says(&told(&client), "wander.base.wolf_hunters.share"));
+        assert!(xp_in(&server, "core:attack") > 0);
     }
 }

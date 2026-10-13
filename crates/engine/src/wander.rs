@@ -21,6 +21,7 @@ use crate::cooking::CookingRegistry;
 use crate::creature::{CreatureId, CreatureRegistry, Kind};
 use crate::effect::{EffectId, EffectRegistry};
 use crate::skill::{SkillId, SkillRegistry};
+use crate::weather::WeatherTable;
 
 /// How wandering events come and go (`rules` in `wandering.ron`; a later package's fields
 /// replace an earlier one's, Design draft 91).
@@ -287,6 +288,11 @@ pub struct Needs {
     /// It comes only within this many blocks of a settlement of the world's plan (the
     /// town watch keeps near its town).
     pub town: Option<f32>,
+    /// It comes only while rain or snow falls where it would appear (`Some(true)`), or only
+    /// while none does (`Some(false)`).
+    pub wet: Option<bool>,
+    /// It comes only to a player within this many blocks of their home.
+    pub near_home: Option<f32>,
 }
 
 /// A party that stops for a player: when one comes within `near` blocks of its leader, it
@@ -486,6 +492,12 @@ pub enum Script {
     /// `strike` blocks of it, it falls to them (the stage `Took`), and they stand over it a
     /// moment. After `takes` kills, or `seconds`, or with nothing left in reach, they go.
     Hunt { reach: f32, strike: f32, takes: u8, seconds: f32 },
+    /// Walks to the nearest settlement of the world's plan within `reach` blocks, at
+    /// `pace`. A player who keeps within `near` blocks of the leader for most of the way
+    /// (30 seconds of it at least) and is with it when it arrives is given the event's
+    /// `reveal`, with the line `arrived`; the stage is `Arrived`. It comes only where a
+    /// settlement is within `reach`, and not so near that there is no way to walk.
+    Journey { reach: f32, pace: f32, near: f32 },
 }
 
 /// What a `Gather` worker does with what it worked.
@@ -569,7 +581,7 @@ pub enum Stage {
     Won,
     /// A `Lure` on its way, a follower behind.
     Leading,
-    /// A `Lure` at its journey's end.
+    /// A `Lure` or a `Journey` at its journey's end.
     Arrived,
     /// A `Hunt` that has taken something.
     Took,
@@ -582,7 +594,8 @@ impl Stage {
             Stage::Passing => true,
             Stage::Caught => matches!(script, Script::Chase { .. }),
             Stage::Waiting | Stage::Sprung | Stage::Won => matches!(script, Script::Ambush { .. }),
-            Stage::Leading | Stage::Arrived => matches!(script, Script::Lure { .. }),
+            Stage::Leading => matches!(script, Script::Lure { .. }),
+            Stage::Arrived => matches!(script, Script::Lure { .. } | Script::Journey { .. }),
             Stage::Took => matches!(script, Script::Hunt { .. }),
         }
     }
@@ -645,6 +658,11 @@ pub enum Reward {
     /// by chance among those that have something to tell where the speaker stands: a
     /// fortune. Said only when one of them has.
     OneOf(Vec<Reward>),
+    /// Brings weather of this preset (weather.ron) over the land about the speaker for so
+    /// many seconds, as `/weather` does: a rain dance answered.
+    Weather(String, f32),
+    /// Prayer points restored, up to the player's most. Said only to one short of them.
+    Prayer(f32),
 }
 
 /// A kind of event with its names resolved.
@@ -740,6 +758,8 @@ pub enum ResolvedReward {
     /// A station's tag, the most cooked at once, and how many of them are kept.
     Cook(String, u8, u8),
     OneOf(Vec<ResolvedReward>),
+    Weather(String, f32),
+    Prayer(f32),
 }
 
 /// A block name or a `tag:` selector, resolved: what a `seek` or a `Point` looks for.
@@ -765,6 +785,19 @@ impl Want {
 /// A reward of an event of package `namespace`, whose short skill names are that package's
 /// own skill first, then core's (`SkillRegistry::named`).
 fn resolve_reward(reward: &Reward, namespace: &str, blocks: &BlockRegistry, skills: &SkillRegistry, effects: &EffectRegistry, captive: bool) -> Result<ResolvedReward, String> {
+    resolve_reward_in(reward, namespace, blocks, skills, effects, captive, None)
+}
+
+/// `resolve_reward`, with the weather a `Weather` reward may bring (none: it may bring none).
+fn resolve_reward_in(
+    reward: &Reward,
+    namespace: &str,
+    blocks: &BlockRegistry,
+    skills: &SkillRegistry,
+    effects: &EffectRegistry,
+    captive: bool,
+    weather: Option<&WeatherTable>,
+) -> Result<ResolvedReward, String> {
     Ok(match reward {
         Reward::Item(name, (low, high)) if low > high || *high == 0 => return Err(format!("gives {low} to {high} of `{name}`")),
         Reward::Item(name, count) => ResolvedReward::Item(blocks.id(name).ok_or_else(|| format!("no item `{name}`"))?, *count),
@@ -790,11 +823,19 @@ fn resolve_reward(reward: &Reward, namespace: &str, blocks: &BlockRegistry, skil
             choices
                 .iter()
                 .map(|choice| match choice {
-                    Reward::Item(..) | Reward::Xp(..) | Reward::Effect(..) | Reward::Heal(_) | Reward::Point(..) | Reward::Town(_) => resolve_reward(choice, namespace, blocks, skills, effects, false),
+                    Reward::Item(..) | Reward::Xp(..) | Reward::Effect(..) | Reward::Heal(_) | Reward::Point(..) | Reward::Town(_) => resolve_reward_in(choice, namespace, blocks, skills, effects, false, weather),
                     _ => Err("`OneOf` picks among items, experience, effects, healing, `Point`s and `Town`s".into()),
                 })
                 .collect::<Result<_, _>>()?,
         ),
+        Reward::Weather(_, seconds) if !(60.0..=1800.0).contains(seconds) => return Err(format!("brings weather for {seconds} seconds: 60 to 1800")),
+        Reward::Weather(name, seconds) => match weather {
+            Some(table) if table.preset(name).is_some() => ResolvedReward::Weather(name.clone(), *seconds),
+            Some(_) => return Err(format!("no weather `{name}`")),
+            None => return Err("brings weather only from a meeting's line".into()),
+        },
+        Reward::Prayer(points) if !(1.0..=99.0).contains(points) => return Err(format!("restores {points} prayer points: 1 to 99")),
+        Reward::Prayer(points) => ResolvedReward::Prayer(*points),
     })
 }
 
@@ -926,6 +967,7 @@ impl WanderRegistry {
         skills: &SkillRegistry,
         effects: &EffectRegistry,
         cooking: &CookingRegistry,
+        weather: &WeatherTable,
     ) -> Result<Self, RegistryError> {
         rules.check()?;
         let mut reactions: Vec<Reaction> = Vec::new();
@@ -1026,6 +1068,9 @@ impl WanderRegistry {
                 Script::Hunt { reach, strike, takes, seconds } if !(8.0..=64.0).contains(&reach) || !(1.5..=4.0).contains(&strike) || !(1..=4).contains(&takes) || seconds < 60.0 => {
                     return Err(error(format!("Hunt needs a reach of 8 to 64, a strike of 1.5 to 4, 1 to 4 takes and 60 seconds or more, not {reach}, {strike}, {takes}, {seconds}")));
                 }
+                Script::Journey { reach, pace, near } if !(100.0..=1000.0).contains(&reach) || !(0.3..=2.0).contains(&pace) || !(4.0..=32.0).contains(&near) => {
+                    return Err(error(format!("Journey needs a reach of 100 to 1000, a pace of 0.3 to 2 and near of 4 to 32, not {reach}, {pace}, {near}")));
+                }
                 Script::Gather { carry: Some(Carry { set, tend }), .. }
                     if set.0 < 1.0 || set.0 > set.1 || tend.is_some_and(|(near, stages)| !(1.0..=6.0).contains(&near) || !(1..=2).contains(&stages)) =>
                 {
@@ -1041,8 +1086,12 @@ impl WanderRegistry {
             if (chase || ambush || lure) && (def.halt.is_some() || def.cast.iter().any(|g| g.role == Role::Captive) || def.guide.is_some()) {
                 return Err(error("a chase, an ambush or a lure has its own way of meeting a player: no `halt`, captive or `guide`".into()));
             }
-            if lure != !def.reveal.is_empty() {
-                return Err(error("a `Lure` shows `reveal` at its end, and nothing else has one".into()));
+            let journey = matches!(def.script, Script::Journey { .. });
+            if lure && def.reveal.is_empty() || !lure && !journey && !def.reveal.is_empty() {
+                return Err(error("a `Lure` shows `reveal` at its end, a `Journey` may, and nothing else has one".into()));
+            }
+            if journey && (def.guard.is_some() || def.startle.is_some() || def.cast.iter().any(|g| g.role == Role::Captive) || def.guide.is_some()) {
+                return Err(error("a journey walks to town: no `guard`, `startle`, captive or `guide`".into()));
             }
             let gather = matches!(def.script, Script::Gather { .. });
             if gather == def.seek.is_empty() {
@@ -1140,6 +1189,14 @@ impl WanderRegistry {
             {
                 return Err(error(format!("`town` is 16 to 1000 blocks, not {town}")));
             }
+            if let Some(near) = def.needs.near_home
+                && !(16.0..=400.0).contains(&near)
+            {
+                return Err(error(format!("`near_home` is 16 to 400 blocks, not {near}")));
+            }
+            if def.needs.near_home.is_some() && def.needs.home == Some(false) {
+                return Err(error("`near_home` comes to a player with a home, and `home: Some(false)` to one without".into()));
+            }
             let mut meetings = Vec::new();
             let mut names: Vec<String> = vec!["title".into()];
             if captives == 1 {
@@ -1149,7 +1206,7 @@ impl WanderRegistry {
             if def.guide.is_some() {
                 names.extend(["arrived".into(), "company".into()]);
             }
-            if lure {
+            if lure || journey {
                 names.push("arrived".into());
             }
             if def.guard.is_some() {
@@ -1281,7 +1338,7 @@ impl WanderRegistry {
                                 return Err(at(format!("`Cook` at `{station}`: no recipe is cooked at a station of that tag")));
                             }
                         }
-                        gives.push(resolve_reward(reward, namespace, blocks, skills, effects, captives == 1).map_err(&at)?);
+                        gives.push(resolve_reward_in(reward, namespace, blocks, skills, effects, captives == 1, Some(weather)).map_err(&at)?);
                     }
                     names.push(line.name.clone());
                     if !asks.is_empty() {
