@@ -33,8 +33,12 @@ pub struct MusicRules {
     pub borrowed_volume: f32,
     /// Seconds before the title screen's first track, as a range picked from.
     pub first_menu_delay: (f32, f32),
-    /// Seconds of quiet between tracks.
+    /// Seconds of quiet between tracks in a world, and before its first.
     pub gap: (f32, f32),
+    /// Seconds of quiet between tracks in the menus.
+    pub menu_gap: (f32, f32),
+    /// How the name of a track starting shows.
+    pub now_playing: NowPlaying,
     /// Seconds a track takes to fade out when the player starts or leaves a game.
     pub fade_out: f32,
     /// Seconds before another pick when a borrowed track cannot be read or decoded.
@@ -50,6 +54,16 @@ pub struct MusicRules {
     pub underground: Underground,
     pub prism: Discovery,
     pub rules: Vec<Rule>,
+}
+
+/// The line naming a track as it starts, and its category, at the top right.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NowPlaying {
+    /// Seconds it shows, fading in and out included.
+    pub shown: f32,
+    /// Seconds it takes to fade in, and to fade out.
+    pub fade: f32,
 }
 
 /// When the player counts as underground.
@@ -118,6 +132,8 @@ struct File {
     borrowed_volume: Option<f32>,
     first_menu_delay: Option<(f32, f32)>,
     gap: Option<(f32, f32)>,
+    menu_gap: Option<(f32, f32)>,
+    now_playing: Option<NowPlaying>,
     fade_out: Option<f32>,
     retry_after: Option<f32>,
     resume_after: Option<f32>,
@@ -137,6 +153,8 @@ impl Default for MusicRules {
             borrowed_volume: 1.0,
             first_menu_delay: (2.0, 6.0),
             gap: (180.0, 420.0),
+            menu_gap: (180.0, 420.0),
+            now_playing: NowPlaying { shown: 6.0, fade: 1.0 },
             fade_out: 1.5,
             retry_after: 2.0,
             resume_after: 2.0,
@@ -159,7 +177,7 @@ impl MusicRules {
             macro_rules! replace {
                 ($($field:ident),*) => {$(if let Some(value) = read.$field { rules.$field = value; })*};
             }
-            replace!(volume, borrowed_volume, first_menu_delay, gap, fade_out, retry_after, resume_after, own_share, recent, underground, prism);
+            replace!(volume, borrowed_volume, first_menu_delay, gap, menu_gap, now_playing, fade_out, retry_after, resume_after, own_share, recent, underground, prism);
             for category in read.categories {
                 check_category(&category).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
                 match rules.categories.iter_mut().find(|known| known.name == category.name) {
@@ -336,6 +354,10 @@ mod tests {
             assert!(rule.weight > 0.0);
         }
         assert!(rules.own_share > 0.0 && rules.own_share < 1.0);
+        // A world is mostly quiet: gaps far longer than a track (two to three minutes),
+        // and the name of each shows a moment, fading in and out.
+        assert!(rules.gap.0 >= 600.0 && rules.gap.1 >= rules.gap.0, "{:?}", rules.gap);
+        assert!(rules.now_playing.shown > 2.0 * rules.now_playing.fade && rules.now_playing.fade > 0.0);
         // Voxmar's own tracks, a folder for each source, play in the menus and the world.
         for name in ["suno", "lyria"] {
             let category = rules.category(name).unwrap_or_else(|| panic!("no category {name}"));

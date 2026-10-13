@@ -132,6 +132,7 @@ impl Plugin for GatePlugin {
         app.insert_resource(Gate::new(dir))
             .init_resource::<UiClicks>()
             .insert_resource(crate::creatures::InspectEyes)
+            .insert_resource(crate::music::Rehearse)
             .add_systems(PostStartup, render_offscreen)
             .add_systems(PreUpdate, ui_clicks.after(bevy::ui::UiSystems::Focus))
             .add_systems(Update, crate::capture::target_ui)
@@ -248,7 +249,8 @@ enum Step {
     /// Esc opens and closes the menu, E the inventory.
     Screens,
     /// On the menu's audio page, a switch for each category of music the player can hear;
-    /// clicking one turns that category off, and again on.
+    /// clicking one turns that category off, and again on. A track starting is named, with
+    /// its category, at the top right, and the line fades.
     Music,
     /// F3 opens the debug overlay, and PostUpdate (UI layout among it) takes no longer with
     /// it open than closed.
@@ -3180,6 +3182,9 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// The menu's audio page shows a switch for each category of music there is to hear (its
 /// own tracks, or Minecraft's with Minecraft assets on), and clicking the first turns its
 /// category off in the settings, saying so beside it, and clicking again turns it back on.
+/// Then M turns the music off and on, and the track that comes soon after is named at the
+/// top right with its category, and the line fades away (the gate's music is picked and
+/// started though silent, `music::Rehearse`).
 fn music(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let ui = world.resource::<UiState>();
     let (menu, locked) = (ui.menu_open, ui.cursor_locked);
@@ -3262,12 +3267,48 @@ fn music(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 close(world, gate, now);
             }
         }
-        _ => {
+        5 => {
             key(world, KeyCode::Escape, false);
             if !menu && locked {
-                gate.next(Step::Overlay, now);
+                // M turns the music off and on again, and a track comes soon after.
+                key(world, KeyCode::KeyM, true);
+                gate.advance(now);
             } else if in_phase > SCREEN_WAIT {
                 gate.check("music: close", Err("Esc did not close the menu".into()));
+                gate.next(Step::Overlay, now);
+            }
+        }
+        6 | 7 => {
+            key(world, KeyCode::KeyM, gate.phase == 7);
+            gate.advance(now);
+        }
+        8 => {
+            key(world, KeyCode::KeyM, false);
+            if let Some(line) = crate::music::now_playing_shown(world) {
+                let locale = world.resource::<Locale>();
+                let named = world
+                    .get_resource::<crate::music::MusicCategories>()
+                    .and_then(|c| c.0.iter().map(|c| locale.get(&format!("music.{}", c.name)).to_owned()).find(|name| line.contains(&format!("({name})"))));
+                let result = match named {
+                    Some(category) if line.starts_with("Now playing: ") && line.len() > "Now playing: ".len() + category.len() + 3 => {
+                        Ok(format!("M off and on started a track, shown at the top right as {line:?} ({category})"))
+                    }
+                    _ => Err(format!("the line reads {line:?}, not a title and a category's name")),
+                };
+                gate.check("music: now playing", result);
+                gate.advance(now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: now playing", Err("no track was named within 10 s of turning the music back on with M".into()));
+                gate.next(Step::Overlay, now);
+            }
+        }
+        _ => {
+            // The line fades out by itself.
+            if crate::music::now_playing_shown(world).is_none() {
+                gate.check("music: now playing fades", Ok(format!("gone {in_phase:.1} s after it was checked")));
+                gate.next(Step::Overlay, now);
+            } else if in_phase > SCREEN_WAIT {
+                gate.check("music: now playing fades", Err("still shown 10 s after it was checked".into()));
                 gate.next(Step::Overlay, now);
             }
         }
