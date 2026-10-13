@@ -43,6 +43,15 @@ workshop is the loom frame, spindle stand and quern. All are craftable in the fi
 (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
 crafting, not a grind.
 
+## `/home`
+
+`/home` tells where the home is and, for each chain of steps (the ladder, and with the rooms
+the workbench and the larder), the highest step reached and what the next one lacks, judged
+as if you stood in it: "Camp reached. Next, Hearthside: it needs hearth 0/1." What a step
+lacks is read off its own condition (`Condition::lacks`), so a mod's steps are covered with no
+extra work; a block tag shows by `home.tag.<tag>` in the language files, else as the tag.
+It is a console command, so it needs no protocol change.
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the

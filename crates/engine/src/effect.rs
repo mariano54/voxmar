@@ -169,6 +169,56 @@ impl Condition {
     }
 }
 
+/// What a home condition still lacks, as `/home` tells it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Lack {
+    /// A roof overhead.
+    Roof,
+    /// Standing at home (the home survey is none).
+    Away,
+    /// Blocks with a tag: how many there are and how many are wanted.
+    Tag { tag: String, have: u32, need: u32 },
+    /// Any one of these will do.
+    OneOf(Vec<Vec<Lack>>),
+}
+
+impl Condition {
+    /// Whether the condition is about a home (`AtHome` or `HomeHas` anywhere in it).
+    fn about_home(&self) -> bool {
+        match self {
+            Condition::AtHome | Condition::HomeHas(..) => true,
+            Condition::All(list) | Condition::Any(list) => list.iter().any(Condition::about_home),
+            Condition::Not(c) => c.about_home(),
+            _ => false,
+        }
+    }
+
+    /// What this lacks at `s`, if it does not hold: only what a home can lack (a roof, the
+    /// tags it wants, being there); the weather and the rest are never asked for.
+    pub fn lacks(&self, s: &Situation) -> Vec<Lack> {
+        if self.holds(s) {
+            return Vec::new();
+        }
+        match self {
+            Condition::AtHome => vec![Lack::Away],
+            Condition::Indoors => vec![Lack::Roof],
+            Condition::HomeHas(tag, need) => vec![Lack::Tag { tag: tag.clone(), have: s.home.map_or(0, |h| h.count(tag)), need: *need }],
+            Condition::All(list) => list.iter().flat_map(|c| c.lacks(s)).collect(),
+            Condition::Any(list) => vec![Lack::OneOf(list.iter().map(|c| c.lacks(s)).collect())],
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// One chain of home steps (a ladder, or a pair of rooms) as `/home` tells it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomeProgress {
+    /// The highest step of the chain the home has.
+    pub reached: Option<EffectId>,
+    /// The next one up and what it lacks, if there is one.
+    pub next: Option<(EffectId, Vec<Lack>)>,
+}
+
 /// What the conditions are checked against: the player's state and the weather where they
 /// stand.
 #[derive(Clone, Copy, Debug)]
@@ -451,6 +501,38 @@ impl EffectRegistry {
         self.replaces[winner.0 as usize].contains(&loser)
     }
 
+    /// Where each chain of home steps stands at `situation`: the announced effects about a
+    /// home, grouped by what replaces what, ordered by how much each replaces (the lowest
+    /// first), a chain's highest step met and the lowest one it has yet to reach with what
+    /// that lacks.
+    pub fn home_progress(&self, situation: &Situation) -> Vec<HomeProgress> {
+        let steps: Vec<EffectId> = self.ids().filter(|&id| self.get(id).announce && self.get(id).when.as_ref().is_some_and(Condition::about_home)).collect();
+        // Chains: steps joined by one replacing the other.
+        let mut chain: Vec<usize> = (0..steps.len()).collect();
+        for (i, &a) in steps.iter().enumerate() {
+            for (j, &b) in steps.iter().enumerate() {
+                if self.replaces[a.0 as usize].contains(&b) {
+                    let (from, to) = (chain[j], chain[i]);
+                    chain.iter_mut().filter(|c| **c == from).for_each(|c| *c = to);
+                }
+            }
+        }
+        let mut firsts: Vec<usize> = chain.clone();
+        firsts.sort_unstable();
+        firsts.dedup();
+        firsts
+            .into_iter()
+            .map(|c| {
+                let mut members: Vec<EffectId> = steps.iter().zip(&chain).filter(|(_, k)| **k == c).map(|(&id, _)| id).collect();
+                members.sort_by_key(|id| (self.replaces[id.0 as usize].len(), *id));
+                let holds = |id: EffectId| self.get(id).when.as_ref().is_some_and(|w| w.holds(situation));
+                let reached = members.iter().copied().filter(|&id| holds(id)).next_back();
+                let next = members.iter().copied().find(|&id| !holds(id)).map(|id| (id, self.get(id).when.as_ref().map(|w| w.lacks(situation)).unwrap_or_default()));
+                HomeProgress { reached, next }
+            })
+            .collect()
+    }
+
     /// The tags effects ask of a home (`HomeHas`): what surveying a home counts.
     pub fn home_tags(&self) -> &[String] {
         &self.home_tags
@@ -553,7 +635,7 @@ mod tests {
     }
 
     const HOME: &str = r#"(effects: [
-        (name: "camp", kind: Buff, title: "Camp", description: "", when: Some(All([AtHome, HomeHas("bed", 1)])), modifiers: (heal: 1.2)),
+        (name: "camp", kind: Buff, title: "Camp", description: "", announce: true, when: Some(All([AtHome, HomeHas("bed", 1)])), modifiers: (heal: 1.2)),
         (name: "snug", kind: Buff, title: "Snug", description: "", announce: true, when: Some(All([AtHome, Indoors, HomeHas("bed", 1), HomeHas("seat", 2)])), replaces: ["camp"], modifiers: (heal: 1.5)),
         (name: "rested", kind: Buff, title: "Rested", description: "", modifiers: (xp: 1.05)),
         (name: "well_rested", kind: Buff, title: "Well rested", description: "", replaces: ["rested"], modifiers: (xp: 1.1)),
@@ -613,5 +695,44 @@ mod tests {
         assert!(read(no_when).contains("no `when`"));
         let zero = r#"(effects: [(name: "x", kind: Buff, title: "X", description: "")], sleeps: [(effect: "x", seconds: 0.0)])"#;
         assert!(read(zero).contains("0 seconds"));
+    }
+
+    #[test]
+    fn a_home_says_what_the_next_step_lacks() {
+        let effects = home_registry();
+        let calm = Weather::NONE;
+        let have = survey(&[("bed", 1), ("seat", 1)]);
+        let outdoors = Situation { home: Some(&have), ..situation(&calm, false, 15.0, true) };
+        let progress = effects.home_progress(&outdoors);
+        // `camp` and `snug` are one chain; nothing else is announced and about a home.
+        assert_eq!(progress.len(), 1);
+        let camp = effects.id("core:camp").unwrap();
+        let snug = effects.id("core:snug").unwrap();
+        assert_eq!(progress[0].reached, Some(camp));
+        assert_eq!(
+            progress[0].next,
+            Some((snug, vec![Lack::Roof, Lack::Tag { tag: "seat".into(), have: 1, need: 2 }])),
+            "a roof and a second seat"
+        );
+        let done = survey(&[("bed", 1), ("seat", 2)]);
+        let indoors = Situation { home: Some(&done), ..situation(&calm, false, 15.0, false) };
+        assert_eq!(effects.home_progress(&indoors)[0], HomeProgress { reached: Some(snug), next: None });
+        let away = effects.home_progress(&situation(&calm, false, 15.0, false));
+        assert_eq!(away[0].reached, None);
+        assert_eq!(away[0].next.as_ref().map(|(id, lacks)| (*id, lacks.first().cloned())), Some((camp, Some(Lack::Away))));
+    }
+
+    #[test]
+    fn a_choice_of_blocks_is_one_lack() {
+        let any = Condition::Any(vec![Condition::HomeHas("hearth".into(), 1), Condition::HomeHas("heat".into(), 1)]);
+        let calm = Weather::NONE;
+        let none = survey(&[]);
+        let s = Situation { home: Some(&none), ..situation(&calm, false, 15.0, true) };
+        assert_eq!(
+            any.lacks(&s),
+            [Lack::OneOf(vec![vec![Lack::Tag { tag: "hearth".into(), have: 0, need: 1 }], vec![Lack::Tag { tag: "heat".into(), have: 0, need: 1 }]])]
+        );
+        let warm = survey(&[("heat", 1)]);
+        assert!(any.lacks(&Situation { home: Some(&warm), ..s }).is_empty());
     }
 }

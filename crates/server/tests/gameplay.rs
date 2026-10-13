@@ -2010,6 +2010,35 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
 }
 
 #[test]
+fn home_says_where_home_is_and_what_the_next_step_needs() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    // No bed, no hearth: no home.
+    let lines = client.command("/home");
+    assert!(lines.iter().any(|(kind, text)| *kind != ChatKind::Info && text.contains("no home yet")), "{lines:?}");
+    // A bag and a torch, slept in, are a camp; the hint names the hearth as the next step.
+    let bag = feet + IVec3::new(2, 0, 0);
+    for line in [format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z), format!("/setblock {} {} {} torch", feet.x + 3, feet.y, feet.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(feet + IVec3::new(3, 0, 0)) == c.content.blocks.id("base:torch"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    // Wait out the sleep's own lines and the step's announcement before asking.
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Camp:")));
+    let said = client.ok("/home");
+    assert!(said.contains(&format!("Your home is at {}, {}, {}", bag.x, bag.y + 1, bag.z)), "{said}");
+    assert!(said.contains("Camp reached. Next, Hearthside: it needs hearth 0/1"), "{said}");
+    // A hearthstone lights it: the ladder moves on and the next step names a roof and the rest.
+    let hearth = feet + IVec3::new(4, 0, 0);
+    client.ok(&format!("/setblock {} {} {} hearthstone", hearth.x, hearth.y, hearth.z));
+    client.pump_until(|c| c.world.block(hearth) == c.content.blocks.id("base:hearthstone"));
+    client.chat.clear();
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Hearthside:")));
+    let said = client.ok("/home");
+    assert!(said.contains("Hearthside reached. Next, Snug: it needs a roof overhead, light 1/2"), "{said}");
+}
+
+#[test]
 fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
     let mut client = Client::join();
     let boiler = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);

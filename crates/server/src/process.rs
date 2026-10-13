@@ -246,10 +246,17 @@ impl Server {
         if near.x > rules.home_reach || near.z > rules.home_reach || feet.y > anchor.y + up || feet.y < anchor.y - down {
             return None;
         }
+        Some(self.survey_around(anchor))
+    }
+
+    /// What lies around a home at `anchor`, whoever stands near it.
+    pub(crate) fn survey_around(&self, anchor: IVec3) -> HomeSurvey {
+        let rules = &self.survival;
+        let (up, down) = (rules.home_up, rules.home_down);
         let wanted = self.content.effects.home_tags();
         let mut counts: Vec<(String, u32)> = wanted.iter().map(|tag| (tag.clone(), 0)).collect();
         if wanted.is_empty() {
-            return Some(HomeSurvey { counts });
+            return HomeSurvey { counts };
         }
         let blocks = &self.content.blocks;
         let reach = rules.home_reach;
@@ -269,7 +276,7 @@ impl Server {
                 }
             }
         }
-        Some(HomeSurvey { counts })
+        HomeSurvey { counts }
     }
 
     /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in

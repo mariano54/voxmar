@@ -76,6 +76,9 @@ pub enum Run {
     Skill,
     /// Tells how the machine at a block is doing.
     Machine,
+    /// Tells where the player's home is, how far its furnishing has come and what the next
+    /// step lacks.
+    Home,
     /// Runs these command lines in order. `$1`, `$2`, … stand for this command's
     /// arguments and `$*` for all of them.
     Alias(Vec<String>),
