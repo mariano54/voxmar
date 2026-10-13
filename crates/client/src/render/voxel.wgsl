@@ -36,6 +36,15 @@
 // Biome colours of every column: grass, foliage and water for each block (sRGB, a word
 // each), from the offset a chunk's origin keeps in w.
 @group(2) @binding(5) var<storage, read> column_colours: array<u32>;
+// Every shape quad (terrain.rs `shape_table`), for blocks drawn as their shapes: each
+// corner's position in its cell and u, the corners' v, and the normal with the cube face
+// the quad is lit as.
+struct ShapeQuad {
+    corners: array<vec4<f32>, 4>,
+    v: vec4<f32>,
+    normal: vec4<f32>,
+};
+@group(2) @binding(17) var<storage, read> shape_quads: array<ShapeQuad>;
 #ifndef PREPASS_PIPELINE
 // Each texture layer's overlay and glow (render/mod.rs, `layer_table`): r and g the layer
 // of an overlay drawn over it, tinted (a grass block side's fringe), plus one (0 for
@@ -45,6 +54,9 @@
 // pack gives other drawings of.
 const ANIMATED: u32 = 32u;
 const VARIED: u32 = 16u;
+// How bright a glowing block's brightest channel gets: the display transform rolls off
+// gently up to here, and turns colours white past it.
+const GLOW_PEAK: f32 = 1.15;
 #endif
 @group(3) @binding(0) var<storage, read> vertex_chunks: array<u32>;
 
@@ -125,10 +137,21 @@ const MODEL_HASH: u32 = 1u;
 const MODEL_CAP: u32 = 2u;
 const MODEL_BUSH: u32 = 3u;
 const MODEL_ROCK: u32 = 4u;
+const MODEL_WALL: u32 = 5u;
+// A quad of a block's shape (mesh.rs `emit_model`): placed from the shape table by the
+// quad's number in word 1 (bits 12..23), lit and shaded as the cube face nearest its normal.
+const MODEL_SHAPE: u32 = 6u;
+// A plant on a wall (`MODEL_WALL`, a torch): how high its foot sits on the wall, how far
+// out from the wall, and how far it leans out for every block it rises (22°, as a wall
+// torch leans).
+const WALL_FOOT: vec2<f32> = vec2(0.2, 0.08);
+const WALL_LEAN: f32 = 0.4;
 const PLANT_MODEL_SHIFT: u32 = 28u;
 const PLANT_MODEL_HIGH_SHIFT: u32 = 24u;
 const PLANT_PIECE_SHIFT: u32 = 30u;
 const PLANT_HEIGHT_SHIFT: u32 = 14u;
+// Set on a plant hanging from the block above (mesh.rs, `PLANT_HANGS_SHIFT`).
+const PLANT_HANGS: u32 = 1u << 27u;
 // A mushroom (`MODEL_CAP`, eight quads): a stem of two narrow quads crossing square with
 // the cell, and a cap with volume: a flat crown, four sloping sides down to a wider rim and
 // gills beneath it. Sizes are in blocks across and shares of the plant's height up.
@@ -296,6 +319,42 @@ fn model_across(w0: u32) -> vec2<f32> {
     return plant_across(w0);
 }
 
+// A shape quad's corner: where it lies in its cell (xyz) and its u (w).
+fn shape_corner(w0: u32, w1: u32) -> vec4<f32> {
+    return shape_quads[(w1 >> 12u) & 0xFFFu].corners[(w0 >> 21u) & 3u];
+}
+
+// The cube face a vertex is lit as: its own, a shape quad's nearest, or a plant's.
+fn lit_face(w0: u32, w1: u32) -> u32 {
+    if face_of(w0) >= FACE_PLANT && plant_model(w0) == MODEL_SHAPE {
+        return u32(shape_quads[(w1 >> 12u) & 0xFFFu].normal.w);
+    }
+    return face_of(w0);
+}
+
+// The texture coordinates of a vertex: a cube face's from where it is, a shape quad's from
+// its table, a plant's along its quad.
+fn vertex_uv(w0: u32, w1: u32) -> vec2<f32> {
+    if face_of(w0) < FACE_PLANT {
+        return face_uv(local_position(w0), face_of(w0));
+    }
+    if plant_model(w0) == MODEL_SHAPE {
+        let quad = shape_quads[(w1 >> 12u) & 0xFFFu];
+        let corner = (w0 >> 21u) & 3u;
+        return vec2(quad.corners[corner].w, quad.v[corner]);
+    }
+    return plant_uv(w0);
+}
+
+// The surface word fragments read: the layer, tint and the rest of word 1's low bits; a
+// shape quad keeps only its layer (its quad number lies where a plant's tint is).
+fn surface_of(w0: u32, w1: u32) -> u32 {
+    if face_of(w0) >= FACE_PLANT && plant_model(w0) == MODEL_SHAPE {
+        return w1 & 0xFFFu;
+    }
+    return w1 & 0xFFFFFFu;
+}
+
 // A plant vertex's texture coordinates: along the quad and up it, or across a flat cap.
 fn plant_uv(w0: u32) -> vec2<f32> {
     if plant_model(w0) == MODEL_CAP {
@@ -323,12 +382,27 @@ fn plant_across(w0: u32) -> vec2<f32> {
 // little, and taller or shorter, in tufts across a meadow. It bends from its base with the
 // wind and away from the player.
 fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
+    let model = plant_model(w0);
+    if model == MODEL_SHAPE {
+        return origin + local_position(w0) + shape_corner(w0, w1).xyz;
+    }
     let packed = plant_across(w0);
-    let stack = f32((w0 >> PLANT_STACK_SHIFT) & 3u);
+    // A plant on a wall keeps which way it faces where others keep their stack.
+    let stack = select(f32((w0 >> PLANT_STACK_SHIFT) & 3u), 0.0, model == MODEL_WALL);
     var up = f32((w0 >> 23u) & 1u) + stack;
     // The corner of the cell the whole plant stands in.
     let base = origin + local_position(w0) - vec3(packed.x, up, packed.y);
-    let model = plant_model(w0);
+    if model == MODEL_WALL {
+        // Straight with the blocks and still: its foot against the wall behind it, leaning
+        // out the way it faces (north, east, south, west: -z, +x, +z, -x).
+        let facing = (w0 >> PLANT_STACK_SHIFT) & 3u;
+        let outs = array(vec2(0.0, -1.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(-1.0, 0.0));
+        let out = outs[facing];
+        let rise = up * f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
+        let foot = vec2(0.5) - out * (0.5 - WALL_FOOT.y);
+        let at = foot + (packed - 0.5) + out * rise * WALL_LEAN;
+        return vec3(base.x + at.x, base.y + WALL_FOOT.x + rise, base.z + at.y);
+    }
     var across = model_across(w0);
     let cell = vec3<i32>(floor(base + 0.5));
     let a = pcg3d(vec3<u32>(cell));
@@ -357,7 +431,13 @@ fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
     let offset = across - 0.5;
     let turned = vec2(offset.x * cos(angle) - offset.y * sin(angle), offset.x * sin(angle) + offset.y * cos(angle));
     let shift = (a.yz - 0.5) * 0.3;
-    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x)) * f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
+    let own_height = f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
+    if (w0 & PLANT_HANGS) != 0u {
+        // Hanging from the block above (a bell, herbs, roots, a stalactite): its top at the
+        // top of the cell, as long as its data says, and still, so it stays on its beam.
+        return vec3(base.x + 0.5 + turned.x + shift.x, base.y + 1.0 - (1.0 - up) * own_height, base.z + 0.5 + turned.y + shift.y);
+    }
+    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x)) * own_height;
     let sink = b.y * 0.25;
     // Bent along a curve from the base, and lower for it; the whole plant leans alike, so
     // a tall plant's two blocks stay joined.
@@ -533,8 +613,8 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.unclipped_depth = out.position.z;
     out.position.z = min(out.position.z, 1.0);
 #endif
-    out.uv = select(face_uv(local_position(in.packed.x), face_of(in.packed.x)), plant_uv(in.packed.x), face_of(in.packed.x) >= FACE_PLANT);
-    out.surface = in.packed.y & 0xFFFFFFu;
+    out.uv = vertex_uv(in.packed.x, in.packed.y);
+    out.surface = surface_of(in.packed.x, in.packed.y);
     return out;
 }
 
@@ -603,8 +683,8 @@ fn vertex(in: Vertex) -> VertexOutput {
         out.world_position.y -= smoothstep(PLANT_FADE.x, PLANT_FADE.y, distance);
     }
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
-    out.face = face_of(w0);
-    out.uv = select(face_uv(local_position(w0), out.face), plant_uv(w0), out.face >= FACE_PLANT);
+    out.face = lit_face(w0, w1);
+    out.uv = vertex_uv(w0, w1);
 #ifdef FRINGE
     out.uv = card.uv;
     // Lit as the face of the crown it grows from, so a card seen edge on matches it.
@@ -614,8 +694,8 @@ fn vertex(in: Vertex) -> VertexOutput {
     let water = tint_kind(w1) == TINT_WATER;
     let ao = select(select(AO_CURVE[(w0 >> 21u) & 3u], 1.0, water), plant_shade(w0), face_of(w0) >= FACE_PLANT);
     out.light = vec3(ao, f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
-    out.surface = w1 & 0xFFFFFFu;
-    out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
+    out.surface = surface_of(w0, w1);
+    out.covered = select(0u, 1u, face_of(w0) < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
     out.colours = u32(chunk_of(in).w);
 #ifdef TRANSLUCENT
     if water {
@@ -818,6 +898,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     let glow = entry.a;
     if glow > 0.0 {
         color += self_glow(base, albedo.rgb, glow);
+        // Its colour kept: the brightest channel held a little past where the display
+        // transform starts rolling it towards white (display.wgsl), which turned a torch's
+        // orange core pale peach.
+        let peak = max(color.r, max(color.g, color.b));
+        color *= min(1.0, GLOW_PEAK / max(peak, 1e-4));
     }
     var alpha = albedo.a;
 

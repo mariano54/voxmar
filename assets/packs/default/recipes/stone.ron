@@ -5,7 +5,9 @@
         "moss_overlay": ["#3d5a24", "#4f7029", "#628532", "#779a3c"],
         "stone": ["#5e5f63", "#6c6d70", "#7a7a7c", "#878788", "#949493", "#a3a2a0"],
         "granite": ["#6a4840", "#7d574d", "#90665a", "#a27667", "#b38877", "#c39b8a"],
-        "diorite": ["#8f8f8e", "#a6a6a4", "#bbbbb8", "#cbcbc8", "#dadad6", "#e9e8e3"],
+        // Softened at both ends (Review, 2026-10-08): diorite is field stone in plains,
+        // meadows and steppe mounds, and a near-white top read stark against the grass.
+        "diorite": ["#8f8f8e", "#9e9e9c", "#adadaa", "#bbbab7", "#c7c6c2", "#d2d1cc"],
         "andesite": ["#5d5f61", "#6c6e70", "#7b7c7e", "#898a8b", "#97989a", "#a7a8a8"],
         "tuff": ["#4c4e46", "#5a5c53", "#686a61", "#76786e", "#84867b", "#94958a"],
         "calcite": ["#b9bcb8", "#c8cbc6", "#d6d8d3", "#e1e3de", "#ebede8", "#f6f6f2"],
@@ -93,7 +95,7 @@
             Paint(palette: "fleck", base: 0.0, shade: [Speckle(chance: 1.0, amount: 0.0)], mask: [Speckle(chance: 0.06, amount: 1.0)]),
             Paint(palette: "fleck", base: 0.4, mask: [Speckle(chance: 0.05, amount: 1.0, seed: 3)]),
         ]),
-        "block/diorite": (palettes: {"main": "diorite", "fleck": ["#55565a", "#717276", "#8e8f92"]}, layers: [
+        "block/diorite": (palettes: {"main": "diorite", "fleck": ["#7a7b7e", "#86878a", "#949598"]}, layers: [
             Paint(palette: "main", base: 0.6, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.6)], clean: true),
             Clusters(palette: "fleck", count: 10, size: (1, 4), spacing: 3.0, shade: 1, seed: 1),
         ]),

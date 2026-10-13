@@ -5,8 +5,8 @@
 // turns your stomach, and the best buffs come from what is hardest to get.
 (
     effects: [
-        (name: "hearty", kind: Buff, icon: "hearty", title: "Hearty", description: "Cooked meat: 4 more health while it lasts.",
-            modifiers: (max_health: 4)),
+        (name: "hearty", kind: Buff, icon: "hearty", title: "Hearty", description: "Cooked meat: room for a tenth more health while it lasts.",
+            modifiers: (max_health_share: 1.1)),
         (name: "hunters_vigour", kind: Buff, title: "Hunter's vigour", description: "Game cooked over a fire: quicker on your feet.",
             modifiers: (speed: 1.1)),
         (name: "sustained", kind: Buff, title: "Sustained", description: "Bread and roots: you heal by yourself a quarter faster.",

@@ -58,6 +58,12 @@ impl Net {
         Self { connection, server, input_timer: 0.0 }
     }
 
+    /// The next message from the server, for tests that play without the app.
+    #[cfg(test)]
+    pub fn try_recv(&self) -> Result<Option<voxmar_protocol::ServerMessage>, voxmar_protocol::Disconnected> {
+        self.connection.try_recv()
+    }
+
     /// Whether this is a remote server rather than singleplayer's own.
     pub fn is_remote(&self) -> bool {
         self.server.is_none()
@@ -89,6 +95,11 @@ impl Net {
     /// `ClientMessage::Finished`).
     pub fn finished(&self, target: ActionTarget) {
         self.connection.send(ClientMessage::Finished { target });
+    }
+
+    /// The player raised or lowered their guard (`fight`).
+    pub fn guard(&self, up: bool) {
+        self.connection.send(ClientMessage::Guard { up });
     }
 
     pub fn send_settings(&self, view_distance: u8, fly_speed: f32) {
@@ -163,6 +174,7 @@ pub(crate) fn receive(
     (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     mut broken: MessageWriter<BlockBroken>,
+    mut fighting: ResMut<crate::fight::Fighting>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     loop {
@@ -225,6 +237,7 @@ pub(crate) fn receive(
                 }
             }
             ServerMessage::PlayerState { health, inventory, skills, vitals } => {
+                player.states += 1;
                 player.health = health.current;
                 player.max_health = health.max;
                 player.vitals = vitals;
@@ -250,6 +263,11 @@ pub(crate) fn receive(
                 player.position = position;
                 player.teleports = seq;
                 player.velocity = Vec3::ZERO;
+                // Put somewhere, a dash under way stops: a dodge the server refused, whose
+                // cooldown never ran there either.
+                if fighting.dash.take().is_some() {
+                    fighting.dodge_ready = fighting.dodge_was;
+                }
             }
             ServerMessage::Players { players } => {
                 let seen: Vec<PlayerId> = players.iter().map(|p| p.id).collect();
@@ -281,6 +299,11 @@ pub(crate) fn receive(
                 debug!("chat: {text}");
                 console.push(kind, &text, time.elapsed_secs())
             }
+            ServerMessage::Refused { why } => {
+                let why = locale.render(&why, &world.registry);
+                debug!("refused: {why}");
+                toasts.refused(why, time.elapsed_secs())
+            }
             ServerMessage::Weather { weather: report, effects, nearby, quick } => {
                 weather.receive(report, effects, nearby, quick, time.elapsed_secs())
             }
@@ -293,7 +316,11 @@ pub(crate) fn receive(
             }
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
-            ServerMessage::Struck { creature, damage, killed } => creatures.struck(creature, damage, killed, time.elapsed_secs()),
+            ServerMessage::Struck { creature, damage, killed, blow, pips } => {
+                creatures.struck(creature, damage, killed, time.elapsed_secs());
+                fighting.struck(creature, damage, blow, pips, time.elapsed_secs_f64());
+            }
+            ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
         }
     }

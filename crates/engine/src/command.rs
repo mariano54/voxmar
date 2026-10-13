@@ -74,6 +74,8 @@ pub enum Run {
     Creatures,
     /// Sets a player's level in a skill.
     Skill,
+    /// Tells how the machine at a block is doing.
+    Machine,
     /// Runs these command lines in order. `$1`, `$2`, … stand for this command's
     /// arguments and `$*` for all of them.
     Alias(Vec<String>),

@@ -1,0 +1,30 @@
+// What machines make (engine/src/machine.rs): a recipe of a `kind` that machines of that
+// kind work (machines.ron), what goes in and comes out, now and then a byproduct, and the
+// seconds it takes at speed 1. `tier` is the least electric tier that works it (0: any).
+(
+    recipes: [
+        // Crushing ore into dust (steam crusher, macerator): with their yield, two dusts an ore.
+        (kind: "crush", inputs: [("copper_ore", 1)], outputs: [("copper_dust", 1)], seconds: 6.0),
+        (kind: "crush", inputs: [("iron_ore", 1)], outputs: [("iron_dust", 1)], seconds: 8.0),
+        // Blooming iron (Bellows Bloomery): two ore and a fuel into a bloom, hammered into
+        // three ingots, half as many again as smelting by hand.
+        (kind: "bloom", inputs: [("iron_ore", 2), ("charcoal|coal_ore", 1)], outputs: [("iron_bloom", 1)], seconds: 20.0),
+        (kind: "hammer", inputs: [("iron_bloom", 1)], outputs: [("iron_ingot", 3)], seconds: 8.0),
+        // The Iron age: coal baked into coke (a coke oven), and two ore with a coke blown into
+        // four ingots (a blast furnace): two an ore, the ladder's third rung. It takes ore,
+        // never dust, so crushing first gains nothing.
+        (kind: "coke", inputs: [("coal_ore", 1)], outputs: [("coke", 1)], seconds: 30.0),
+        (kind: "blast", inputs: [("iron_ore", 2), ("coke", 1)], outputs: [("iron_ingot", 4)], seconds: 16.0),
+        // Sawing a log into planks of its wood (a sawmill, with its yield six on average).
+        (kind: "saw", inputs: [("{name}_log", 1)], outputs: [("{name}_planks", 4)], seconds: 2.0),
+        // Hammering ingots into plates (trip hammer).
+        (kind: "hammer", inputs: [("copper_ingot", 1)], outputs: [("copper_plate", 1)], seconds: 4.0),
+        (kind: "hammer", inputs: [("bronze_ingot", 1)], outputs: [("bronze_plate", 1)], seconds: 5.0),
+        (kind: "hammer", inputs: [("iron_ingot", 1)], outputs: [("iron_plate", 1)], seconds: 6.0),
+        // Smelting without fuel (electric furnace): dust and ore into ingots.
+        (kind: "smelt", inputs: [("copper_dust", 1)], outputs: [("copper_ingot", 1)], seconds: 4.0),
+        (kind: "smelt", inputs: [("iron_dust", 1)], outputs: [("iron_ingot", 1)], seconds: 5.0),
+        (kind: "smelt", inputs: [("copper_ore", 1)], outputs: [("copper_ingot", 1)], seconds: 4.0),
+        (kind: "smelt", inputs: [("iron_ore", 1)], outputs: [("iron_ingot", 1)], seconds: 5.0),
+    ],
+)

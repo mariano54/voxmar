@@ -22,6 +22,8 @@
         "block/maple_log": (base: "block/hd_bark", palettes: {"bark": "maple_bark"}, seed: 109),
         "block/cherry_log": (base: "block/hd_bark", palettes: {"bark": "cherry_bark"}, seed: 110),
         "block/baobab_log": (base: "block/hd_bark", palettes: {"bark": "baobab_bark"}, seed: 111),
+        // Bare weathered wood, bark-grey all round.
+        "block/dead_log": (base: "block/hd_bark", palettes: {"bark": "dead_bark"}, seed: 112),
         // Pale bark with a few long dark marks lying across the trunk.
         "block/birch_log": (size: (32, 32), palettes: {"bark": "birch_bark", "mark": ["#1c1814", "#2d2822", "#3e3830", "#57504a"]}, layers: [
             Paint(palette: "bark", base: 0.6, shade: [Noise(cells: (8, 4), octaves: 2, amount: 0.35), Noise(cells: (32, 16), amount: 0.4)], clean: true),

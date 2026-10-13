@@ -447,8 +447,9 @@ mod tests {
     /// `alchemy:<property>` tag is called (`alchemy.<property>`, in item tooltips), each
     /// biome tag (`biome.tag.<tag>`, in `/biome`), what creatures are doing
     /// (`creature.doing.<module>`), animals' genes and alleles (`gene.<species>.<gene>`, in
-    /// `/inspect`), the weather's channels (`weather.channel.<name>`) and the quest book's
-    /// chapters (`quest.age.<age>`).
+    /// `/inspect`; people's are never read out), the weather's channels
+    /// (`weather.channel.<name>`), the quest book's chapters (`quest.age.<age>`), and the
+    /// fonts and shader packs in the settings (`settings.font.<font>`, `shader_pack.<pack>`).
     fn built_keys(content: &voxmar_engine::content::Content) -> BTreeSet<String> {
         let blocks = &content.blocks;
         let mut keys = BTreeSet::new();
@@ -467,8 +468,9 @@ mod tests {
         for (_, species) in content.creatures.iter().filter(|(_, species)| first_party(&species.def.name)) {
             keys.extend(species.modules.iter().map(|(module, _)| format!("creature.doing.{}", module.name())));
         }
-        // What inspecting an animal names: its genes and their alleles.
-        for (_, species) in content.creatures.iter().filter(|(_, species)| first_party(&species.def.name)) {
+        // What inspecting an animal names: its genes and their alleles (never a person's).
+        let animals = content.creatures.iter().filter(|(_, species)| species.def.kind != voxmar_engine::creature::Kind::Villager);
+        for (_, species) in animals.filter(|(_, species)| first_party(&species.def.name)) {
             let name = &species.def.name;
             for gene in &species.def.genes {
                 keys.insert(def_key("gene", &format!("{name}.{}", gene.name)));
@@ -480,8 +482,20 @@ mod tests {
         // The weather's channels in `/weather` and the F3 screen, and what falls.
         let channels = voxmar_engine::weather::Weather::default().channels().map(|(name, _)| name);
         keys.extend(channels.chain(["rain", "snow"]).map(|name| format!("weather.channel.{name}")));
+        // Armour sets by name, and what each kind of pouch holds, in item tooltips.
+        for id in (0..blocks.len()).map(|i| BlockId(i as u16)).filter(|&id| first_party(&blocks.def(id).name)) {
+            if let Some(piece) = content.combat.piece(id) {
+                keys.insert(format!("armour_set.{}", content.combat.set(piece.set).name));
+            }
+            keys.extend(blocks.def(id).tags.iter().filter_map(|tag| tag.strip_prefix("holds:")).map(|kind| format!("pouch.fills.{kind}")));
+        }
+        // What each first-party package is called, at the foot of every item's tooltip.
+        keys.extend(FIRST_PARTY.iter().map(|package| format!("package.{package}")));
         // The quest book's chapters, one per age the first-party quests name.
         keys.extend(content.quests.iter().filter(|quest| first_party(&quest.name)).map(|quest| format!("quest.age.{}", quest.age)));
+        // The interface fonts and the shader packs the game ships, as the settings name them.
+        keys.extend(crate::ui::skin::InterfaceFont::ALL.map(|font| font.key().to_owned()));
+        keys.extend(crate::render::pack::ShaderPacks::load(&assets()).0.iter().filter(|pack| pack.shipped).map(crate::render::pack::ShaderPack::key));
         keys
     }
 
@@ -646,6 +660,35 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{} language keys out of step:\n{}", wrong.len(), wrong.join("\n"));
+    }
+
+    /// Every English name of a block, item or multiblock reads in Title Case ("HV Battery
+    /// Bank"): each word begins with a capital, but for the small words (of, and, the, a,
+    /// with) after the first.
+    #[test]
+    fn every_english_name_is_in_title_case() {
+        use std::collections::BTreeMap;
+        const SMALL: [&str; 5] = ["of", "and", "the", "a", "with"];
+        let mut wrong = Vec::new();
+        for package in FIRST_PARTY {
+            let path = content().join(package).join(format!("lang/{ENGLISH}.ron"));
+            let source = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let english: BTreeMap<String, String> = ron::from_str(&source).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            // A name's key is `kind.package.id`; longer keys (a multiblock's hint) are sentences,
+            // and `item.style.*` are words used in them.
+            let names = english.iter().filter(|(key, _)| {
+                let parts: Vec<&str> = key.split('.').collect();
+                parts.len() == 3 && ["block", "item", "multiblock"].contains(&parts[0]) && parts[1] == package
+            });
+            for (key, name) in names {
+                // A family's `{name}` is filled with a name that is itself checked.
+                let lower = |word: &str| !word.starts_with('{') && word.chars().find(|c| c.is_alphabetic()).is_some_and(char::is_lowercase);
+                if let Some((_, word)) = name.split(' ').enumerate().find(|&(i, word)| lower(word) && (i == 0 || !SMALL.contains(&word))) {
+                    wrong.push(format!("{package}/lang/{ENGLISH}.ron: `{key}` is {name:?}, but `{word}` wants a capital"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{} names not in Title Case:\n{}", wrong.len(), wrong.join("\n"));
     }
 
     /// Every translation of English that lives in a definition (guide lines, help, titles)

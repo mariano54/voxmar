@@ -304,6 +304,15 @@
             attack: (clips: ["sounds/creatures/insect/attack_1.ogg", "sounds/creatures/insect/attack_2.ogg"]),
             hurt: (clips: ["sounds/creatures/insect/hurt_1.ogg"]),
         ),
+        // People of settlements: hums, a surprised "oh", grunts and a cry. Synthesized
+        // (tools/synth_person_voice.py) until recordings replace them.
+        "person": (
+            size: 1.8,
+            idle: (clips: ["sounds/creatures/person/idle_1.ogg", "sounds/creatures/person/idle_2.ogg", "sounds/creatures/person/idle_3.ogg", "sounds/creatures/person/idle_4.ogg"], gain: 0.5, chance: 0.4),
+            alert: (clips: ["sounds/creatures/person/alert_1.ogg", "sounds/creatures/person/alert_2.ogg"], gain: 0.6),
+            hurt: (clips: ["sounds/creatures/person/hurt_1.ogg", "sounds/creatures/person/hurt_2.ogg", "sounds/creatures/person/hurt_3.ogg"]),
+            death: (clips: ["sounds/creatures/person/death_1.ogg"]),
+        ),
         // Groans and gargles.
         "zombie": (
             size: 1.8,
@@ -443,5 +452,20 @@
         "cave_crawler": (voice: "insect"),
         "cave_bat": (voice: "bat"),
         "shambler": (voice: "zombie", aether: 0.3, pitch: 0.85),
+        "villager": (voice: "person"),
+        "farmer": (voice: "person"),
+        "herder": (voice: "person"),
+        "baker": (voice: "person"),
+        "miller": (voice: "person"),
+        "tanner": (voice: "person"),
+        "smith": (voice: "person"),
+        "trader": (voice: "person"),
+        "innkeeper": (voice: "person"),
+        "priest": (voice: "person"),
+        "fisher": (voice: "person"),
+        "woodcutter": (voice: "person"),
+        "guard": (voice: "person"),
+        "elder": (voice: "person", pitch: 0.92),
+        "child": (voice: "person", pitch: 1.5),
     },
 )

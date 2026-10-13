@@ -64,7 +64,7 @@ the last few servers are remembered) and Settings. A new world takes a name, an 
 flight, Survival does not. Either way you are the world's admin, who can run commands.
 
 Controls: WASD move, Space jump, Ctrl (or W tapped twice) sprint, Shift descend, F toggle flight, left mouse break
-(hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
+(hold), right mouse place (on an animal: feed or tame it; Shift and right click one of yours twice to let it go), middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
 inventory, C character screen, T chat, / command, F3 debug overlay (frame rate, and the worst frame, p99 and frames over 25 ms of the last 5 s), Esc menu, R respawn, Z (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
 Movement feels like Minecraft's: a sprint lasts while forward is held, until you run head-on
@@ -165,7 +165,12 @@ its blocks and skills, or adds a whole language. Definitions are named by key fr
 (`block.base.oak_log`, `skill.core.farming`), and a template's members by pattern, so
 `block.base.{name}_log` with `family.base.oak` names オークの原木 and a new wood needs one
 line per language; anything a language leaves out shows in English, then as a name made from
-the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
+the id. A shader pack is named by `shader_pack.<key>`, its key being its name in lower case
+with anything but a letter or a digit made `_` (Verdant is `shader_pack.verdant`, 新緑
+`shader_pack.新緑`, "R&D v1.2" `shader_pack.r_d_v1_2`); a pack no language names shows its own
+name. The packs the game ships (`assets/shaderpacks/shipped.ron`) load first; a pack with a
+name already loaded is refused, and one whose key is already taken ("soft_light" after "Soft
+Light") loads but keeps its own name. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
 way. Kanji and kana come from Fusion Pixel 12px, a Japanese pixel font (listed in
 `assets/ui/fonts/fallback.ron`) whose glyphs are read at startup and merged under the chosen
 interface font, its pixels drawn at three quarters of ours; BIZ UDGothic, a smooth font,
@@ -216,6 +221,9 @@ them says so.
   lying on the ground over a vein (of an ore or vein named so, such as `iron`; within 1000).
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
 
+`/locate settlement [hamlet|village] [RADIUS]` finds a settlement and gives its teleport
+coordinates; the default radius is 4000 blocks.
+
 Commands are data: each package's `commands.ron` names its commands, who may use them, their
 usage and help, and what they run: one of the engine's built-in commands, or other command
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
@@ -233,7 +241,9 @@ broken blocks and the chips while mining, and the smoke, embers, sparks and flam
 and torches give off), how far the hotbar sits above the bottom edge (Raise
 HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the sprint key and double-tap sprint, the zoom key
 (click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
-smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
+smoothly while zoomed), zoom in survival, toggle guard (a right-click raises the guard and the next
+lowers it, instead of holding the button), damage numbers (the hitsplats a fight shows), and fly speed
+for admins, with Resume, Save and quit
 to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in
 the OS config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
 `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`);
@@ -269,7 +279,12 @@ Singleplayer worlds live in `voxmar/worlds/<name>/` next to the settings:
   names of the blocks it uses, so a content change that renumbers blocks does not break saves.
   Untouched columns are not stored; generation recreates them exactly.
 - `players/<name>.ron`: each player's position, health and inventory, restored when they join,
-  under the name in lower case (a file saved under the name as typed is still read).
+  under the name in lower case (a file saved under the name as typed is still read). The
+  file keeps the player's canonical spelling, so Bob reconnecting as BOB keeps animal,
+  machine and death-drop ownership. Older saves recover spellings from their kept animals,
+  machines and actual player filenames and fold matching aliases. An older death drop
+  with only an owner hash and no surviving original spelling remains protected; reconnect
+  with the original spelling to collect it.
 
 The server saves edited columns, players and the time every 30 seconds, when a player leaves
 and when it stops (leaving to the title screen or quitting). Every file is written to a
@@ -463,8 +478,10 @@ no two worlds share a rarity table. Everything else is a continuous field:
   falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
   summed region by region through records of where water crosses each 1 km region's border,
   so rivers can be any length and nothing depends on generation order.
+- **Settlements** have deterministic residents with homes, daily routines and guards.
+  Ordinary villagers give no loot or combat XP; deaths persist until a newcomer arrives.
 - **Trails** (`worldgen/src/trails/`, materials in `trails.ron`; laid only near settlements,
-  of which there are none yet, so `laid: NearSettlements` leaves them all out) join the places worth walking
+  with `laid: NearSettlements`) join the places worth walking
   to: summits that stand above the land around, lake shores, the banks of waterfalls, the edges
   of long drops and flat trailheads in the valleys, a few per 512-block region. Nearby places
   are joined into a sparse network (a Gabriel graph, with no two trails setting off side by

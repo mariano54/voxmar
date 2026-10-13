@@ -132,7 +132,7 @@ pub fn findables(locale: &Locale, launch: &Launch, biomes: &[String], page: Page
             })
             .collect()
     };
-    let ids = || blocks.ids().filter(|&id| !id.is_air() && blocks.def(id).variant_of.is_none());
+    let ids = || blocks.ids().filter(|&id| blocks.listed(id));
     match page {
         Page::Animals => creatures(&[Kind::Animal]),
         Page::Monsters => creatures(&[Kind::Monster, Kind::Spirit]),

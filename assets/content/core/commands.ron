@@ -117,8 +117,8 @@
         (name: "biome", help: "Names the biome you stand in, and its climate.", run: Biome),
         (
             name: "locate",
-            usage: "biome NAME [RADIUS] | gorge [RADIUS] | settlement [RADIUS] | ore [NAME] [RADIUS]",
-            help: "Finds the nearest place of a biome, of a river running deep in a gorge, or of a hamlet or village, within 4000 blocks unless you say (up to 10000), or the nearest sample of ore on the ground over a vein (of an ore such as iron, if you name one), within 1000.",
+            usage: "biome NAME [RADIUS] | gorge [RADIUS] | settlement [{sizes}] [RADIUS] | ore [NAME] [RADIUS]",
+            help: "Finds the nearest place of a biome, of a river running deep in a gorge, or of a hamlet or village (of one size, if you say), within 4000 blocks unless you say (up to 10000), or the nearest sample of ore on the ground over a vein (of an ore such as iron, if you name one), within 1000.",
             permission: Admin,
             run: Locate,
         ),
@@ -136,8 +136,8 @@
         ),
         (
             name: "creatures",
-            usage: "[tame | ready | hasten | hold | kill]",
-            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, or kill them.",
+            usage: "[tame | ready | hasten | hold | kill | remove] [creature]",
+            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, kill them, or take away the ones they keep; only of one species, if they name it.",
             run: Creatures,
         ),
         (
@@ -146,6 +146,12 @@
             help: "Sets your level in a skill (farming, hunter, cooking, attack…), from 1 to the highest.",
             permission: Admin,
             run: Skill,
+        ),
+        (
+            name: "machine",
+            usage: "<x> <y> <z>",
+            help: "Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.",
+            run: Machine,
         ),
     ],
     // Real minutes a whole day takes at normal speed: the sun is up for two thirds of it.

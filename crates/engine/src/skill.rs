@@ -3,9 +3,10 @@
 //! actions yield a little more, never the world run faster (see docs/design-philosophy.md,
 //! "Agents, skills and factories").
 //!
-//! Skills are content: each package's `skills.ron` lists its skills, and one package (core)
-//! sets the curve, so a mod adds a skill the way it adds a block, and switching from
-//! RuneScape's 99 levels to a short ladder of tiers is a change to one file.
+//! Skills are content: each package's `skills.ron` lists its skills, and a package sets the
+//! curve (core does; a later package's replaces it, with a note naming both, Design draft
+//! 91), so a mod adds a skill the way it adds a block, and switching from RuneScape's 99
+//! levels to a short ladder of tiers is a change to one file.
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -84,20 +85,24 @@ pub struct SkillRegistry {
     by_name: FxHashMap<String, SkillId>,
     /// Experience, in tenths, that level `i + 1` starts at; level 1 at 0.
     levels: Vec<u32>,
+    /// The package whose curve that is.
+    curve_by: Option<String>,
 }
 
 impl SkillRegistry {
-    /// Adds a package's skills; unqualified names go into `namespace`.
-    pub fn extend(&mut self, namespace: &str, source: &str) -> Result<(), RegistryError> {
+    /// Adds a package's skills; unqualified names go into `namespace`. A package's curve
+    /// replaces one an earlier package set, and the note saying so comes back for the log.
+    pub fn extend(&mut self, namespace: &str, source: &str) -> Result<Option<String>, RegistryError> {
         let error = |e: String| RegistryError(format!("{namespace}/skills.ron: {e}"));
         // `curve: RuneScape(max: 99)` as well as `curve: Some(...)`.
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let file: SkillFile = options.from_str(source).map_err(|e| error(e.to_string()))?;
+        let mut note = None;
         if let Some(curve) = file.curve {
-            if !self.levels.is_empty() {
-                return Err(error("another package already sets the level curve".into()));
-            }
             self.levels = levels(&curve).map_err(error)?;
+            if let Some(earlier) = self.curve_by.replace(namespace.to_owned()) {
+                note = Some(format!("{namespace}/skills.ron replaces the level curve {earlier} set"));
+            }
         }
         for mut def in file.skills {
             if !def.name.contains(':') {
@@ -112,7 +117,7 @@ impl SkillRegistry {
             }
             self.defs.push(def);
         }
-        Ok(())
+        Ok(note)
     }
 
     /// Checks that a curve was set if there are skills to level.
@@ -287,6 +292,20 @@ mod tests {
         assert_eq!([0, 999, 1000, 3999, 4000, 10_000, 99_999].map(|xp| skills.level(xp)), [1, 1, 2, 2, 3, 4, 4]);
         let mut bad = SkillRegistry::default();
         assert!(bad.extend("core", "(curve: Table([100, 50]))").is_err());
+    }
+
+    #[test]
+    fn a_later_package_replaces_the_curve_with_a_note() {
+        let mut skills = SkillRegistry::default();
+        let core = r#"(curve: RuneScape(max: 99), skills: [(name: "farming", title: "", description: "")])"#;
+        assert_eq!(skills.extend("core", core).unwrap(), None, "the first curve replaces nothing");
+        assert_eq!(skills.extend("other", "(skills: [])").unwrap(), None, "a package without a curve leaves it be");
+        assert_eq!(skills.max_level(), 99);
+        let note = skills.extend("zz_ladder", "(curve: Table([100, 400, 1000]))").unwrap().expect("a note");
+        assert!(note.contains("zz_ladder") && note.contains("core"), "{note}");
+        assert_eq!(skills.max_level(), 4);
+        // A bad curve still fails to load, whoever sets it.
+        assert!(skills.extend("zz_bad", "(curve: Table([100, 50]))").is_err());
     }
 
     #[test]

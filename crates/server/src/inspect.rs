@@ -1,10 +1,12 @@
 //! Looking closely at a creature (right click on one with nothing it wants in hand): what
 //! the player learns grows with their Farming level, as docs/breeding.md, "Inspecting",
-//! lays out. Anyone sees its kind, health, age and temper; Farming 10 reads what its genes
+//! lays out. Anyone sees its kind, health, age and temper, and a kept one's condition in a
+//! word and what it wants (the number at Farming 30); Farming 10 reads what its genes
 //! show, 20 what it carries hidden, 30 the numbers, 40 the odds of a mutation where it
 //! stands. Every line travels as words, in the player's language.
 
 use voxmar_engine::creature::brain::Personality;
+use voxmar_engine::creature::condition;
 use voxmar_engine::genes::{self, Gene, GeneKind, NumberEffect};
 use voxmar_engine::lang::{Words, def_key};
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
@@ -22,6 +24,11 @@ const NOTABLE: f32 = 0.8;
 
 impl Server {
     pub(crate) fn inspect(&mut self, player: PlayerId, id: u32) {
+        // A kept one's needs as they are now, not as last reckoned.
+        if self.creatures.live.get(&id).is_some_and(|c| c.owner.is_some()) {
+            let needs = self.needs_of(id);
+            self.creatures.live.get_mut(&id).expect("checked").needs = needs;
+        }
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species = self.content.creatures.get(creature.species);
         let def = &species.def;
@@ -40,7 +47,28 @@ impl Server {
                 .with("age", age)
                 .with("temper", temper(&creature.mind.personality)),
         ];
-        let defs = &def.genes;
+        // A kept one's condition in a word for anyone, exactly at Farming 30, which way it
+        // is heading, and what it wants.
+        if creature.owner.is_some() {
+            let rules = self.content.creatures.condition();
+            let state = Words::key(&format!("condition.{}", condition::word(creature.condition, rules.breed)));
+            let target = rules.target(&creature.needs, (creature.health as u32) * 2 < def.health as u32);
+            let (kept, exactly) = match condition::trend(creature.condition, target) {
+                Some(true) => ("inspect.kept_improving", "inspect.kept_exactly_improving"),
+                Some(false) => ("inspect.kept_worsening", "inspect.kept_exactly_worsening"),
+                None => ("inspect.kept", "inspect.kept_exactly"),
+            };
+            lines.push(if level >= NUMBERS {
+                Words::key(exactly).with("state", state).with("value", Words::text(format!("{:.2}", creature.condition)))
+            } else {
+                Words::key(kept).with("state", state)
+            });
+            if let Some(wants) = self.wants(id) {
+                lines.push(Words::key("inspect.wants").with("needs", wants));
+            }
+        }
+        // A person's looks are their own, not a breeder's to read.
+        let defs: &[_] = if def.kind == voxmar_engine::creature::Kind::Villager { &[] } else { &def.genes };
         let genome = &creature.genome;
         if !defs.is_empty() {
             if level >= SHOWS {
