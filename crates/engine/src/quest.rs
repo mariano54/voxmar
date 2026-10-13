@@ -9,6 +9,9 @@
 //! hold. Goals read the player's state: their journal (kills, catches, plants picked, ores
 //! mined, biomes stood in), their tallies of things made and cooked, their skills, what they
 //! carry, and whether they have a home.
+//!
+//! Finishing a quest does not pay it: the rewards wait for the player to claim them in the
+//! quest screen (`QuestState::claimed`), unless the quest pays nothing.
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -43,6 +46,10 @@ pub enum Goal {
     Visit(u32),
     /// Found this many entries on a journal page.
     Discover(Page, u32),
+    /// Done this many different kinds of a journal page's entries at least once each (killed,
+    /// caught, picked, mined; only seen does not count), among `any`, a `tag:TAG` or one
+    /// name: `Kinds(Plants, "any", 5)` is five different plants picked.
+    Kinds(Page, String, u32),
     /// Reached a level in a skill.
     Level(String, u8),
     /// Carries this many of an item, or of anything with a tag.
@@ -189,6 +196,7 @@ impl Progress<'_> {
             }
             Goal::Visit(n) => (self.journal.found(Page::Biomes) as u32, *n),
             Goal::Discover(page, n) => (self.journal.found(*page) as u32, *n),
+            Goal::Kinds(page, want, n) => (self.journal.entries().filter(|e| e.page == *page && e.count > 0 && matches(want, &e.name)).count() as u32, *n),
             Goal::Level(skill, n) => ((self.level)(skill) as u32, *n as u32),
             Goal::Have(item, n) => ((self.carried)(item), *n),
             Goal::Home => (u32::from(self.home), 1),
@@ -212,8 +220,18 @@ impl Progress<'_> {
 pub struct QuestState {
     pub name: String,
     pub done: bool,
+    /// Done and paid out. A done quest with rewards waits to be claimed in the quest screen
+    /// (`ClientMessage::ClaimQuest`); one with none is claimed the moment it is done.
+    pub claimed: bool,
     /// For each task, each goal's progress: (have, need).
     pub tasks: Vec<Vec<(u32, u32)>>,
+}
+
+impl QuestDef {
+    /// Whether finishing it pays anything out, to be claimed.
+    pub fn pays(&self) -> bool {
+        !self.rewards.is_empty()
+    }
 }
 
 impl QuestRegistry {
@@ -348,6 +366,14 @@ impl QuestRegistry {
                     Goal::CookAt(name, _, _) => find(name, &made)?,
                     Goal::Thriving(..) => {}
                     Goal::LookUp(name) => find(name, &made)?,
+                    Goal::Kinds(page, name, _) => match page {
+                        Page::Plants => find(name, &plant)?,
+                        Page::Ores => find(name, &rock)?,
+                        Page::Fish => find(name, &fish)?,
+                        Page::Animals | Page::Monsters => find(name, &creature)?,
+                        _ if name == "any" => {}
+                        _ => return Err(refuse("kind on that page (only `any` there)", name)),
+                    },
                     Goal::Visit(_) | Goal::Discover(..) | Goal::Home => {}
                 }
             }
@@ -399,12 +425,13 @@ impl QuestRegistry {
     }
 
     /// Every quest's state for the client.
-    pub fn states(&self, done: &[String], progress: &Progress) -> Vec<QuestState> {
+    pub fn states(&self, done: &[String], claimed: &[String], progress: &Progress) -> Vec<QuestState> {
         self.quests
             .iter()
             .map(|q| QuestState {
                 name: q.name.clone(),
                 done: done.contains(&q.name),
+                claimed: claimed.contains(&q.name),
                 tasks: q.tasks.iter().map(|t| t.iter().map(|g| progress.goal(g)).collect()).collect(),
             })
             .collect()
@@ -481,6 +508,23 @@ mod tests {
     }
 
     #[test]
+    fn kinds_counts_different_entries_done_at_least_once_not_only_seen() {
+        let rules = crate::journal::JournalRules::default();
+        let mut journal = Journal::default();
+        for (name, times) in [("base:poppy", 3), ("base:dandelion", 1), ("base:blueberry_bush", 1), ("base:fern", 0)] {
+            journal.record(&rules, Page::Plants, name, times, 0);
+        }
+        journal.record(&rules, Page::Animals, "base:rabbit", 2, 0);
+        let tallies = FxHashMap::default();
+        let (level, carried, drops, thriving) = (|_: &str| 1, |_: &str| 0, |_: &str| None, |_: u8| 0);
+        let has_tag = |name: &str, tag: &str| tag == "flower" && (name.ends_with("poppy") || name.ends_with("dandelion"));
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &thriving, home: false };
+        assert_eq!(progress.goal(&Goal::Kinds(Page::Plants, "any".into(), 5)), (3, 5), "three picked; the fern was only seen, and a rabbit is no plant");
+        assert_eq!(progress.goal(&Goal::Kinds(Page::Plants, "tag:flower".into(), 2)), (2, 2));
+        assert_eq!(progress.goal(&Goal::Pick("any".into(), 5)), (5, 5), "a count of picks is not a count of kinds");
+    }
+
+    #[test]
     fn reward_items_keep_their_short_names_for_the_load_check_to_resolve() {
         let source = r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "A", why: "", tasks: [[Home]], rewards: [Xp("cooking", 1.0), Item("torch", 4), Item("core:coin", 1)])])"#;
         let file = QuestRegistry::read("t", source).unwrap();
@@ -530,7 +574,11 @@ mod tests {
         // a home already, the hearth follows the same moment.
         let done = quests.newly_done(&[], &progress);
         assert_eq!(done, ["base:tools", "base:settle", "base:hearth"]);
-        let states = quests.states(&done, &progress);
+        let states = quests.states(&done, &done, &progress);
+        // Done is not claimed: the states say which of the finished still wait.
+        let waiting = quests.states(&done, &["base:tools".to_owned()], &progress);
+        assert_eq!(waiting.iter().filter(|s| s.done && !s.claimed).map(|s| s.name.as_str()).collect::<Vec<_>>(), ["base:settle", "base:hearth"]);
+        assert!(states.iter().filter(|s| s.done).all(|s| s.claimed));
         let fish = states.iter().find(|s| s.name == "base:fish").unwrap();
         assert_eq!((fish.done, fish.tasks.clone()), (false, vec![vec![(3, 5)], vec![(1, 10)]]));
         // Two more trout finish it.
@@ -639,6 +687,9 @@ mod tests {
         assert_eq!(refused(r#"Craft("stone_shovel", 1)"#, ""), Some("quest base:dig names the item `stone_shovel`, which no package has".to_owned()));
         // `any` counts anything only where a goal counts things made; nobody carries "any".
         assert!(refused(r#"Cook("any", 1)"#, "").is_none());
+        assert!(refused(r#"Kinds(Plants, "any", 5)"#, "").is_none() && refused(r#"Kinds(Animals, "rabbit", 2)"#, "").is_none());
+        assert!(refused(r#"Kinds(Animals, "rabit", 2)"#, "").is_some(), "a kind is checked against the page's own things");
+        assert!(refused(r#"Kinds(Biomes, "forest", 2)"#, "").is_some(), "a page with no named things takes `any` only");
         assert!(refused(r#"Have("any", 1)"#, "").is_some());
         assert_eq!(refused("Home", r#"Item("tag:log", 1)"#), Some("quest base:dig names the item `tag:log`, which no package has".to_owned()), "a reward is an item, never a tag");
         // Every other kind of goal, one typo each.

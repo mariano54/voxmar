@@ -31,10 +31,14 @@ pub struct RecipeDef {
     pub level: u8,
     /// Experience for cooking one without burning it.
     pub xp: f32,
-    /// The level burning stops at; at `level` the chance is `BURN_AT_START`. 0 for what
+    /// The level burning stops at; at `level` the chance is `burn_start`. 0 for what
     /// never burns (metal, charcoal).
     #[serde(default)]
     pub stop_burning: Option<u8>,
+    /// The chance of burning at `level`; it falls in a straight line to nothing at
+    /// `stop_burning`. A quarter unless given.
+    #[serde(default = "burn_start")]
+    pub burn_start: f32,
     /// What burning it leaves; nothing (the food is lost) unless given.
     #[serde(default)]
     pub burnt: Option<String>,
@@ -52,8 +56,13 @@ fn first() -> u8 {
     1
 }
 
-/// The chance of burning a recipe at the level it starts at.
-pub const BURN_AT_START: f32 = 0.5;
+/// The chance of burning a recipe at the level it starts at, unless it says (a quarter: a
+/// new cook loses some food, not half of it).
+pub const BURN_AT_START: f32 = 0.25;
+
+fn burn_start() -> f32 {
+    BURN_AT_START
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,7 +91,7 @@ impl Recipe {
             return 0.0;
         }
         let through = level.saturating_sub(start) as f32 / (stop - start) as f32;
-        BURN_AT_START * (1.0 - through)
+        self.def.burn_start * (1.0 - through)
     }
 }
 
@@ -124,6 +133,9 @@ impl CookingRegistry {
         for def in defs {
             let error = |message: String| RegistryError(format!("cooking recipe for `{}`: {message}", def.input));
             let block = |name: &str| blocks.id(name).ok_or_else(|| error(format!("no item `{name}`")));
+            if !(0.0..=1.0).contains(&def.burn_start) {
+                return Err(error(format!("burn_start {} is not a chance between 0 and 1", def.burn_start)));
+            }
             let output = block(&def.output)?;
             let burnt = def.burnt.as_deref().map(block).transpose()?;
             let skill = match &def.skill {
@@ -188,6 +200,23 @@ mod tests {
     }
 
     #[test]
+    fn a_recipe_may_start_burning_at_its_own_chance_within_zero_and_one() {
+        let blocks = BlockRegistry::new(vec![
+            BlockDef { name: "base:raw_rabbit".into(), ..Default::default() },
+            BlockDef { name: "base:cooked_rabbit".into(), ..Default::default() },
+        ])
+        .unwrap();
+        let build = |chance: &str| {
+            let source = format!(r#"(recipes: [(input: "raw_rabbit", output: "cooked_rabbit", xp: 1.0, stop_burning: 11, burn_start: {chance})])"#);
+            CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default())
+        };
+        let registry = build("0.1").unwrap();
+        let recipe = registry.iter().next().unwrap().1;
+        assert_eq!(recipe.burn_chance(1), 0.1);
+        assert!(build("1.5").is_err());
+    }
+
+    #[test]
     fn recipes_are_found_by_input_and_station() {
         let registry = registry();
         let raw = BlockId(1);
@@ -201,7 +230,7 @@ mod tests {
         let registry = registry();
         let recipe = registry.for_item(BlockId(1), &["campfire".into()]).unwrap();
         assert_eq!(recipe.burn_chance(1), BURN_AT_START);
-        assert!((recipe.burn_chance(6) - 0.25).abs() < 1e-6);
+        assert!((recipe.burn_chance(6) - BURN_AT_START / 2.0).abs() < 1e-6);
         assert_eq!(recipe.burn_chance(11), 0.0);
         assert_eq!(recipe.burn_chance(50), 0.0);
     }

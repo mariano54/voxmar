@@ -1,0 +1,22 @@
+{
+  "mode": "boss",
+  "biome": "forest",
+  "lead": "fiery solo violin",
+  "colors": [
+    "pizzicato strings",
+    "marimba"
+  ],
+  "drums": "deep toms and timpani",
+  "vibes": [
+    "heroic determination",
+    "ancient and wild"
+  ],
+  "scene": "a corrupted beast stalking the deep woods",
+  "form": "a pulsing ostinato that builds layer by layer into a soaring main theme",
+  "bpm": 136,
+  "key": "C minor",
+  "length_s": 126,
+  "prompt": "Intense boss battle theme for a forest video game: a corrupted beast stalking the deep woods. Mood: heroic determination, ancient and wild. Lead on fiery solo violin, with pizzicato strings and marimba; driving rhythm from deep toms and timpani. Structure: a pulsing ostinato that builds layer by layer into a soaring main theme. Epic orchestral game-soundtrack sound with a memorable main motif, punchy and clear but musical, not harsh. Fast tempo around 136 BPM in C minor. Strictly no vocals, no choir, no nature sounds or sound effects, no EDM drops, no dubstep, no heavy-metal distortion guitars.",
+  "model": "music_v2_5",
+  "seed": 91
+}

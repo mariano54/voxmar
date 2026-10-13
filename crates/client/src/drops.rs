@@ -9,7 +9,7 @@
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::ActionTarget;
-use voxmar_engine::block::{RenderKind, Sound, Tint};
+use voxmar_engine::block::{BlockId, RenderKind, Sound, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos};
 use voxmar_engine::dropped::SIZE;
 use voxmar_engine::inventory::ItemStack;
@@ -90,6 +90,23 @@ impl Drops {
         self.items.iter().filter(|(_, item)| item.collected.is_none()).map(|(&id, item)| (id, item.stack, item.told))
     }
 
+    /// The item lying nearest along the look ray within `within` blocks of the eye, and how
+    /// far, met by a box `width` across (an item is small, and hard to aim at). The box is
+    /// where the item is drawn, which runs a little behind the server's word while it moves.
+    pub fn looked_at(&self, eye: Vec3, look: Vec3, within: f32, width: f32) -> Option<(ItemStack, f32)> {
+        let half = Vec3::new(width, width, width) / 2.0;
+        self.items
+            .values()
+            .filter(|item| item.collected.is_none())
+            .filter_map(|item| {
+                let middle = item.position + Vec3::Y * (SIZE / 2.0);
+                let hit = crate::creatures::ray_box(eye, look, &voxmar_engine::physics::Aabb { min: middle - half, max: middle + half })?;
+                Some((item.stack, hit))
+            })
+            .filter(|&(_, distance)| distance <= within)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
     /// Applies the server's news, at `now` seconds.
     pub fn receive(&mut self, changed: Vec<ItemView>, gone: Vec<ItemGone>, now: f32) {
         for view in changed {
@@ -144,7 +161,7 @@ fn throw(keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, net: Res<Net>, actio
 /// Moves every item on towards where it should be, and hands the renderer this frame's
 /// models.
 #[allow(clippy::too_many_arguments)]
-fn show(
+pub(crate) fn show(
     time: Res<Time>,
     world: Res<ClientWorld>,
     player: Res<LocalPlayer>,
@@ -210,9 +227,20 @@ fn copies(count: u8) -> usize {
     }
 }
 
-/// The models showing `item`: its copies, turning and bobbing together.
-fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<&TexturePieces>, item: &Shown) {
-    let info = world.registry.info(item.stack.item);
+/// How an item is drawn: its shape, texture layers, which faces take a biome colour and
+/// that colour where it is (`at`, a block), and the width of its model.
+pub(crate) struct Look {
+    pub shape: Shape,
+    pub size: f32,
+    pub layers: [u16; 6],
+    pub tinted: u8,
+    pub tint: [u8; 3],
+}
+
+/// The look of `item` where it is at `at`: a tiny block for a block, and a plant's sprite
+/// (or any item's, drawn as a plant) flat.
+pub(crate) fn look_of(world: &ClientWorld, pieces: Option<&TexturePieces>, item: BlockId, at: IVec3) -> Look {
+    let info = world.registry.info(item);
     let sprite = info.render == RenderKind::Plant;
     let (shape, size) = if sprite { (Shape::Sprite, SPRITE_SIZE) } else { (Shape::Cube, SIZE) };
     let layers = if sprite { [info.layers[0]; 6] } else { info.layers };
@@ -230,17 +258,23 @@ fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<
             kind = tint;
         }
     }
-    let pos = item.position.floor().as_ivec3();
     let colors = world
         .voxels
-        .column(ColumnPos::of_block(pos))
-        .map_or(DEFAULT_COLORS, |column| column.colors_at(pos.x & (CHUNK_SIZE - 1), pos.z & (CHUNK_SIZE - 1)));
+        .column(ColumnPos::of_block(at))
+        .map_or(DEFAULT_COLORS, |column| column.colors_at(at.x & (CHUNK_SIZE - 1), at.z & (CHUNK_SIZE - 1)));
     let tint = match kind {
         Tint::None => [255; 3],
         Tint::Grass => colors[0],
         Tint::Foliage => colors[1],
         Tint::Water => colors[2],
     };
+    Look { shape, size, layers, tinted, tint }
+}
+
+/// The models showing `item`: its copies, turning and bobbing together.
+fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<&TexturePieces>, item: &Shown) {
+    let Look { shape, size, layers, tinted, tint } = look_of(world, pieces, item.stack.item, item.position.floor().as_ivec3());
+    let sprite = shape == Shape::Sprite;
     // Lifted off the ground by the bob, as Minecraft's are.
     let center = item.position + Vec3::Y * (BOB + size / 2.0);
     for copy in 0..copies(item.stack.count) {
@@ -248,7 +282,7 @@ fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<
         // own turning frame.
         let spread = if copy == 0 { Vec3::ZERO } else { scatter(copy) * size * 0.35 };
         let offset = if sprite { Vec3::new(spread.x * 0.3, spread.y * 0.3, -(copy as f32) * size / 16.0) } else { spread };
-        models.push(ItemModel { center, phase: item.phase, offset, size, shape, layers, tinted, tint, light: item.light });
+        models.push(ItemModel { center, phase: item.phase, offset, size, shape, layers, tinted, tint, light: item.light, held: None });
     }
 }
 
@@ -303,5 +337,26 @@ mod tests {
         // Gone without a collector (merged, despawned, out of sight): at once.
         drops.receive(vec![ItemView { id: 4, ..view }], vec![ItemGone { id: 4, collector: None }], 1.0);
         assert!(!drops.items.contains_key(&4));
+    }
+
+    #[test]
+    fn a_lying_item_is_looked_at_within_range_and_aim() {
+        let mut drops = Drops::default();
+        let stack = ItemStack { item: voxmar_engine::block::BlockId(1), count: 5 };
+        drops.receive(vec![ItemView { id: 1, stack, position: Vec3::new(0.0, 0.0, -4.0), velocity: Vec3::ZERO }], vec![], 0.0);
+        let eye = Vec3::new(0.0, SIZE / 2.0, 0.0);
+        let (seen, distance) = drops.looked_at(eye, Vec3::NEG_Z, 6.0, 0.6).unwrap();
+        assert_eq!(seen, stack);
+        assert!((distance - 3.7).abs() < 1e-4, "met at the box's near face, not its middle: {distance}");
+        // An item still flying is met where it is drawn, not where the server last put it.
+        drops.items.get_mut(&1).unwrap().position = Vec3::new(2.0, 0.0, -4.0);
+        assert_eq!(drops.looked_at(eye, Vec3::NEG_Z, 6.0, 0.6), None);
+        assert!(drops.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 6.0, 0.6).is_some());
+        drops.items.get_mut(&1).unwrap().position = Vec3::new(0.0, 0.0, -4.0);
+        // Not at all out of range, or aimed a hand's breadth beside it, or when it is picked up.
+        assert_eq!(drops.looked_at(eye, Vec3::NEG_Z, 3.0, 0.6), None);
+        assert_eq!(drops.looked_at(eye + Vec3::X, Vec3::NEG_Z, 6.0, 0.6), None);
+        drops.receive(vec![], vec![ItemGone { id: 1, collector: Some(7) }], 1.0);
+        assert_eq!(drops.looked_at(eye, Vec3::NEG_Z, 6.0, 0.6), None);
     }
 }
