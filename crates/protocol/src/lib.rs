@@ -26,7 +26,8 @@ pub use transport::{ClientConnection, Connection, Disconnected, KEEPALIVE, Serve
 pub use voxmar_engine::weather::Weather;
 
 // 31: the server hardening's 27/28 (numbered teleports, keepalive), after main's 29 and 30 (armour).
-pub const PROTOCOL_VERSION: u32 = 31;
+// 32: Ping and Pong, the round trip a fight's lag allowance reads.
+pub const PROTOCOL_VERSION: u32 = 32;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
