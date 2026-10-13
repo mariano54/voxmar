@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use voxmar_engine::block::{BlockId, BlockRegistry};
 
+use super::culture::{AXES, Axis, CulturesDef};
 use crate::content::{ContentError, Select, qualify};
 
 /// The five levers every settlement draws, each 0 ..= 1 (see `settlements.ron`).
@@ -23,7 +24,7 @@ pub enum Lever {
 impl Lever {
     pub const ALL: [Lever; 5] = [Lever::Wealth, Lever::Age, Lever::Order, Lever::Crowding, Lever::Green];
 
-    fn parse(name: &str) -> Option<Self> {
+    pub(super) fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|l| l.name() == name)
     }
 
@@ -38,35 +39,67 @@ impl Lever {
     }
 }
 
-/// A settlement's levers.
+/// A settlement's character: its five levers and its eight culture axes ([`Axis`]), each
+/// 0 ..= 1.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Levers(pub [f32; 5]);
+pub struct Levers {
+    pub levers: [f32; 5],
+    pub axes: [f32; AXES],
+}
 
 impl Levers {
     pub fn get(&self, lever: Lever) -> f32 {
-        self.0[lever as usize]
+        self.levers[lever as usize]
+    }
+
+    pub fn axis(&self, axis: Axis) -> f32 {
+        self.axes[axis as usize]
+    }
+
+    /// What a lean's key stands for in this settlement.
+    pub fn value(&self, key: Key) -> f32 {
+        match key {
+            Key::Lever(l) => self.get(l),
+            Key::Axis(a) => self.axis(a),
+        }
     }
 }
 
-/// How much an entry's weight follows the levers: each lean multiplies it by
+/// What an entry's lean follows: one of the five levers or one of the eight culture axes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    Lever(Lever),
+    Axis(Axis),
+}
+
+impl Key {
+    pub fn parse(name: &str) -> Option<Self> {
+        Lever::parse(name).map(Key::Lever).or_else(|| Axis::parse(name).map(Key::Axis))
+    }
+}
+
+/// How much an entry's weight follows the levers and axes: each lean multiplies it by
 /// `1 + lean × (2 × lever − 1)`, never below nothing.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Lean(pub Vec<(Lever, f32)>);
+pub struct Lean(pub Vec<(Key, f32)>);
 
 impl Lean {
     pub(super) fn parse(at: &str, map: &BTreeMap<String, f32>) -> Result<Self, ContentError> {
         map.iter()
             .map(|(name, &lean)| {
-                Lever::parse(name)
-                    .map(|lever| (lever, lean))
-                    .ok_or_else(|| ContentError(format!("{at}: no lever is called `{name}` (wealth, age, order, crowding, green)")))
+                if !lean.is_finite() || !(-1.0..=1.0).contains(&lean) {
+                    return Err(ContentError(format!("{at}: lean `{name}` must be finite and in [-1, 1]")));
+                }
+                Key::parse(name).map(|key| (key, lean)).ok_or_else(|| {
+                    ContentError(format!("{at}: no lever or axis is called `{name}` (wealth, age, order, crowding, green; piety, martial, trade, craft, festivity, outlook, hierarchy, lore)"))
+                })
             })
             .collect::<Result<_, _>>()
             .map(Lean)
     }
 
     pub fn weigh(&self, weight: f32, levers: &Levers) -> f32 {
-        self.0.iter().fold(weight, |w, &(lever, lean)| w * (1.0 + lean * (2.0 * levers.get(lever) - 1.0)).max(0.0))
+        self.0.iter().fold(weight, |w, &(key, lean)| w * (1.0 + lean * (2.0 * levers.value(key) - 1.0)).max(0.0))
     }
 }
 
@@ -961,43 +994,6 @@ pub struct KanaJoin {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NamesFile {
-    #[serde(default)]
-    biome: Vec<String>,
-    first: Vec<(String, String)>,
-    last: Vec<(String, String)>,
-    #[serde(default)]
-    small: Vec<(String, String)>,
-    #[serde(default)]
-    prefixes: Vec<PrefixFile>,
-    /// How often a hamlet takes a small word for its last part.
-    #[serde(default = "small_chance")]
-    small_chance: f32,
-    /// How often a name takes a prefix.
-    #[serde(default = "prefix_chance")]
-    prefix_chance: f32,
-}
-
-fn small_chance() -> f32 {
-    0.3
-}
-
-fn prefix_chance() -> f32 {
-    0.14
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PrefixFile {
-    en: String,
-    ja: String,
-    weight: f32,
-    #[serde(default)]
-    lean: BTreeMap<String, f32>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct StyleFile {
     name: String,
     #[serde(default)]
@@ -1063,8 +1059,6 @@ struct SettlementFile {
     extras: Vec<ExtraFile>,
     #[serde(default)]
     props: Vec<PropFile>,
-    #[serde(default)]
-    names: Vec<NamesFile>,
     #[serde(default)]
     kana: Vec<KanaJoin>,
     #[serde(default)]
@@ -1149,6 +1143,16 @@ pub enum CentreKind {
     Blocks(String, Vec<(voxmar_engine::glam::IVec3, String)>),
 }
 
+impl CentreKind {
+    /// Its name in the lists (`GreatTree`), which cultures weigh it by.
+    pub fn label(&self) -> String {
+        match self {
+            CentreKind::Drawn(c) => format!("{c:?}"),
+            CentreKind::Blocks(name, _) => name.rsplit(':').next().unwrap_or(name).to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CentreDef {
     pub kind: CentreKind,
@@ -1180,20 +1184,18 @@ pub enum PropKind {
     Blocks(String, Vec<(voxmar_engine::glam::IVec3, String)>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct NamesDef {
-    pub biome: Vec<String>,
-    pub first: Vec<(String, String)>,
-    pub last: Vec<(String, String)>,
-    pub small: Vec<(String, String)>,
-    /// Words put before a name ("Old", "Upper"), in English and Japanese, by weight.
-    pub prefixes: Vec<(String, String, f32, Lean)>,
-    pub small_chance: f32,
-    pub prefix_chance: f32,
+impl PropKind {
+    /// Its name in the lists, without the package (`Woodpile`, `log_bench`), which cultures weigh it by.
+    pub fn label(&self) -> String {
+        match self {
+            PropKind::Drawn(p) => format!("{p:?}"),
+            PropKind::Blocks(name, _) => name.rsplit(':').next().unwrap_or(name).to_owned(),
+        }
+    }
 }
 
 /// A material: block names, some with `{wood}` or `{trim}` in them, by weight.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Material(pub Vec<(String, f32)>);
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1233,7 +1235,8 @@ pub struct SettlementsDef {
     pub houses: Vec<HouseDef>,
     pub extras: Vec<ExtraDef>,
     pub props: Vec<PropDef>,
-    pub names: Vec<NamesDef>,
+    /// The culture families and quirks (`cultures.ron`).
+    pub cultures: CulturesDef,
     /// How Japanese names join where the English runs a consonant into a vowel: the bare
     /// consonant kana a first part may end in, and the five it becomes before ア, イ, ウ,
     /// エ and オ (サブ + イル: サビル, as Sab + ir is Sabir).
@@ -1270,7 +1273,7 @@ impl SettlementsDef {
     }
 }
 
-fn names(package: &str, at: &str, selects: &[Select]) -> Result<Vec<(String, f32)>, ContentError> {
+pub(super) fn names(package: &str, at: &str, selects: &[Select]) -> Result<Vec<(String, f32)>, ContentError> {
     selects
         .iter()
         .map(|s| match s {
@@ -1447,14 +1450,6 @@ impl SettlementsDef {
             };
             self.props.push(PropDef { lean: Lean::parse(at, &p.lean)?, kind, weight: p.weight, water: p.water });
         }
-        for n in file.names {
-            let prefixes = n
-                .prefixes
-                .into_iter()
-                .map(|p| Ok((p.en, p.ja, p.weight, Lean::parse(at, &p.lean)?)))
-                .collect::<Result<_, ContentError>>()?;
-            self.names.push(NamesDef { biome: n.biome, first: n.first, last: n.last, small: n.small, prefixes, small_chance: n.small_chance, prefix_chance: n.prefix_chance });
-        }
         for s in file.styles {
             let m = |list: &[Select]| names(package, at, list).map(Material);
             self.styles.push(StyleDef {
@@ -1493,8 +1488,8 @@ impl SettlementsDef {
         if grid.spacing < 256 || !(0.0..=1.0).contains(&grid.chance) || grid.margin < 64 || grid.margin * 2 + 64 > grid.spacing {
             return fail(format!("the grid needs a spacing of 256 or more, a chance in [0, 1] and a margin of 64 or more that leaves room: {grid:?}"));
         }
-        if self.sizes.is_empty() || self.layouts.is_empty() || self.houses.is_empty() || self.styles.is_empty() || self.names.is_empty() {
-            return fail("needs sizes, layouts, houses, names and styles".into());
+        if self.sizes.is_empty() || self.layouts.is_empty() || self.houses.is_empty() || self.styles.is_empty() || self.cultures.families.is_empty() {
+            return fail("needs sizes, layouts, houses, styles and culture families".into());
         }
         for s in &self.sizes {
             let ordered = |(a, b): (u32, u32)| a <= b;
@@ -1654,17 +1649,14 @@ impl SettlementsDef {
                 }
             }
         }
-        for n in &self.names {
-            if n.first.is_empty() || n.last.is_empty() {
-                return fail("every list of names needs first and last parts".into());
-            }
-        }
         if let Some(j) = self.kana.iter().find(|j| j.kana.is_empty() || j.into.iter().any(String::is_empty)) {
             return fail(format!("kana join `{}` is empty or becomes nothing", j.kana));
         }
-        if !self.names.iter().any(|n| n.biome.is_empty()) || !self.styles.iter().any(|s| s.biome.is_empty()) {
-            return fail("needs a style and a list of names for anywhere (no biome tags)".into());
+        if !self.styles.iter().any(|s| s.biome.is_empty()) {
+            return fail("needs a style for anywhere (no biome tags)".into());
         }
+        self.cultures.check(self, registry)?;
+        super::plan::check_name_ownership(self)?;
         for style in &self.styles {
             if style.woods.is_empty() || style.roofs.is_empty() || style.crops.is_empty() {
                 return fail(format!("style `{}` needs woods, roofs and crops", style.name));
@@ -1906,6 +1898,22 @@ impl Resolved {
                 let log = fill(&style.log, wood, wood);
                 if let Some(id) = registry.id(&log) {
                     map.insert(log, id);
+                }
+            }
+        }
+        // A family's palette is mixed into any style's, so its `{wood}` and `{trim}` take
+        // every style's woods.
+        for material in def.cultures.families.iter().flat_map(|f| f.palette.materials()) {
+            for style in &def.styles {
+                for (wood, _) in &style.woods {
+                    for (trim, _) in &style.woods {
+                        for (name, _) in &material.0 {
+                            let name = fill(name, wood, trim);
+                            if let Some(id) = registry.id(&name) {
+                                map.insert(name, id);
+                            }
+                        }
+                    }
                 }
             }
         }

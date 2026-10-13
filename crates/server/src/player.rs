@@ -282,6 +282,17 @@ impl Server {
             }
             ClientMessage::Take { item, count, held } => self.take_from_catalogue(id, item, count, held),
             ClientMessage::Guard { up } => self.raise_guard(id, up),
+            ClientMessage::LookedUp { item } => self.looked_up(id, item),
+        }
+    }
+
+    /// A player looked an item up in the recipe viewer: counted once for quests, if the item
+    /// exists.
+    fn looked_up(&mut self, id: PlayerId, item: BlockId) {
+        if (item.0 as usize) < self.content.blocks.len() && !item.is_air() {
+            let name = self.content.blocks.def(item).name.clone();
+            let player = self.players.get_mut(&id).expect("a joined player");
+            player.tallies.entry(format!("lookedup:{name}")).or_insert(1);
         }
     }
 

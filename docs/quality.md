@@ -32,11 +32,19 @@ again, up to three times; it never forces. Only its last line, `land: <commit> l
 means landed; anything else, the push included, failed and says why. On a typical change
 it takes well under a minute.
 
-1. Hygiene: `git diff main --check` and no conflict markers.
+1. Hygiene: `git diff main --check`, no conflict markers, and no new wall-clock wait in a
+   test (`tools/test-waits`). A test that waits until `Instant::now()` passes a deadline,
+   or ends a `pump_until` by the clock, passes on a quick machine and fails on a loaded one
+   (main once went red from an 800 ms wait racing the once-a-second quest check): wait for
+   what the server says (`settle`, a message, its ticks) and space a player's actions with
+   arrival stamps (`propose_at`). Only watchdogs that can never let a check pass
+   (`SERVER_WAIT`, `SERVER_SILENT`, `assert!(Instant::now() < ...)`) and the timing tests
+   that sleep to stand for a player's real time are allowed, by name, in the script.
 2. An incremental build of the workspace, tests included (`--profile iter`); any warning
    fails.
 3. The tests of the crates the change can reach, worked out from the files it touches
-   against main (a client change runs the client's; an engine change everything's),
+   against main (a client change runs the client's; an engine change or any asset
+   everything's, for the engine's and texgen's tests read assets too),
    less the few slow ones listed in the script's `SLOW_TESTS`, and meanwhile
 4. a scripted session in the real game (`voxmar --gate DIR`, crates/client/src/gate.rs) in
    a small world, headless and silent, with the integrated server made to run behind as
@@ -95,6 +103,7 @@ changes don't move it, and checks:
 | cook | a campfire on the pad, raw rabbit used on it, then counts the fire's particles for 1.5 s | cooked (or burnt) food comes back two seconds later, within 15 server seconds; at least 4 particles (smoke, embers, sparks) rise from the fire, a count that holds at any frame rate |
 | ore | `/locate ore`, then goes there and looks down | the server's world has a sample of ore there on solid ground, with ore of the same kind below it within seven blocks across (its vein), the client has the sample, and no more than one in thirty of the ore blocks around lies alone (no other ore within two blocks) |
 | gorge | `/locate gorge`, then goes there | the server's world has water there between walls standing six blocks over it on both sides, within eight blocks |
+| tarns | finds a visible pool filled by the tarn rule near the highlands, then visits it on both peers | at least twenty connected source-water or ice surface columns match on the client and observer; an ordinary high lake cannot replace a missing tarn (shot `tarn`) |
 | pipelines | everything from the world loading to leaving it | no pipeline compiles meanwhile: on Metal each is a hitch in the frame it is first needed, a few hundred ms on a fresh build. What shows only now and then is warmed at load (`render::warm`: other players, creatures, breaking, the menu blur); something new drawn on first use fails this until it is warmed too |
 | leave | quits to the title screen | the world closes cleanly |
 

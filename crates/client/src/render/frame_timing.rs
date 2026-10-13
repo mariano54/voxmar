@@ -30,11 +30,16 @@ const PARTS: [&str; 6] = ["assets", "views", "queue", "prepare", "render", "clea
 const KEPT: usize = 3;
 
 /// Milliseconds of each part of the last few render frames, newest last.
-static FRAMES: LazyLock<Mutex<VecDeque<[f32; PARTS.len()]>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
+static FRAMES: LazyLock<Mutex<VecDeque<FrameRecord>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
+
+struct FrameRecord {
+    parts: [f32; PARTS.len()],
+    work: Option<super::work::Profile>,
+}
 
 /// When each mark of the render frame under way was passed.
 #[derive(Resource, Default)]
-struct Marks([Option<Instant>; PARTS.len() + 1]);
+struct Marks([Option<Instant>; PARTS.len() + 1], u64);
 
 impl Plugin for FrameTimingPlugin {
     fn build(&self, app: &mut App) {
@@ -70,6 +75,10 @@ impl Plugin for FrameTimingPlugin {
 }
 
 fn mark<const I: usize>(mut marks: ResMut<Marks>) {
+    if I == 0 {
+        marks.1 += 1;
+        super::work::begin_frame(marks.1);
+    }
     marks.0[I] = Some(Instant::now());
 }
 
@@ -87,13 +96,17 @@ fn finish(mut marks: ResMut<Marks>) {
     if frames.len() == KEPT {
         frames.pop_front();
     }
-    frames.push_back(parts);
+    frames.push_back(FrameRecord { parts, work: super::work::finish_frame(marks.1) });
 }
 
 /// The parts of the last few render frames, oldest first, for a slow frame's record.
 pub fn recent() -> Value {
     let Ok(frames) = FRAMES.lock() else { return Value::Null };
-    frames.iter().map(|parts| PARTS.iter().zip(parts).map(|(name, ms)| (name.to_string(), json!(*ms))).collect::<serde_json::Map<_, _>>()).collect()
+    frames.iter().map(|frame| {
+        let mut values = PARTS.iter().zip(&frame.parts).map(|(name, ms)| (name.to_string(), json!(*ms))).collect::<serde_json::Map<_, _>>();
+        if let Some(work) = frame.work { values.insert("work".to_string(), work.json()); }
+        values
+    }).collect()
 }
 
 /// Spans of the main world's PostUpdate, each from just before a set to just after it.

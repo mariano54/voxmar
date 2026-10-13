@@ -1,9 +1,9 @@
-//! Finding the notable places water makes: a lake high in the hills, a waterfall, a
+//! Finding the notable places water makes: a lake high in the hills, a tarn, a waterfall, a
 //! confluence, a river's mouth, a tunnel, an island, a hot spring, a gorge. Tools and tests use it
 //! to look at them without knowing where a seed put them, and gameplay can use it to point
 //! players at them.
 
-use voxmar_engine::glam::{IVec2, IVec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec3Swizzles};
 
 use crate::geology::GeoSample;
 use crate::{Body, Overworld, SEA_LEVEL};
@@ -27,11 +27,14 @@ pub enum WaterSight {
     /// A creek or river between walls at least 6 blocks high on both sides, within 6
     /// blocks of it.
     Gorge,
+    /// A still lake as high as tarns lie (`content::TarnsDef::floor`): a tarn, or a lake
+    /// among the peaks.
+    Tarn,
 }
 
 impl WaterSight {
-    pub const ALL: [Self; 8] =
-        [Self::HighlandLake, Self::Waterfall, Self::Confluence, Self::RiverMouth, Self::RiverTunnel, Self::RiverIsland, Self::HotSpring, Self::Gorge];
+    pub const ALL: [Self; 9] =
+        [Self::HighlandLake, Self::Waterfall, Self::Confluence, Self::RiverMouth, Self::RiverTunnel, Self::RiverIsland, Self::HotSpring, Self::Gorge, Self::Tarn];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -43,6 +46,7 @@ impl WaterSight {
             Self::RiverIsland => "river island",
             Self::HotSpring => "hot spring",
             Self::Gorge => "gorge",
+            Self::Tarn => "tarn",
         }
     }
 }
@@ -65,6 +69,35 @@ impl Overworld {
         self.rivers.gorges_near(self.stages(), centre, radius, 24).into_iter().find(|&at| walls(at) >= GORGE_WALLS)
     }
 
+    /// The nearest visible pool made by the tarn rule, within `radius` blocks of
+    /// `centre`. Ordinary high lakes do not stand in for a tarn. Twenty surface columns
+    /// distinguish a pool that can be seen from a puddle; generation itself is unchanged.
+    pub fn locate_tarn(&self, centre: IVec2, radius: i32) -> Option<IVec3> {
+        if radius < 0 || self.rivers.tarns.is_none() {
+            return None;
+        }
+        for pit in self.rivers.tarns_near(self.stages(), centre, radius) {
+            let mut wet = Vec::new();
+            for z in pit.z - 8..=pit.z + 8 {
+                for x in pit.x - 8..=pit.x + 8 {
+                    let g = self.geo(x, z);
+                    if g.body == Body::Lake && g.submerged() && g.water == pit.y {
+                        wet.push(IVec3::new(x, g.water, z));
+                    }
+                }
+            }
+            let water: std::collections::HashSet<IVec2> = wet.iter().map(|p| p.xz()).collect();
+            let pool = super::lake_component(pit.xz(), 8, |p| water.contains(&p));
+            if pool.len() >= 20
+                && let Some(at) = pool.into_iter().filter(|p| (*p - centre).abs().max_element() <= radius)
+                    .min_by_key(|p| ((*p - pit.xz()).length_squared(), p.x, p.y))
+            {
+                return Some(IVec3::new(at.x, pit.y, at.y));
+            }
+        }
+        None
+    }
+
     /// The best place of each kind within `range` blocks of `centre` (searched every two
     /// blocks), each as the column and the height of its water, preferring nearer ones.
     /// Kinds none of which lie within range are left out. Costs about a second for a
@@ -75,6 +108,7 @@ impl Overworld {
         let geos: Vec<GeoSample> = (0..n * n).map(|i| self.geo(centre.x - range + i % n * STEP, centre.y - range + i / n * STEP)).collect();
         let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
         let mut best: [Option<(f32, IVec3)>; WaterSight::ALL.len()] = [None; WaterSight::ALL.len()];
+        let tarns = self.rivers.tarn_floor();
         for j in 1..n - 1 {
             for i in 1..n - 1 {
                 let g = at(i, j);
@@ -102,6 +136,9 @@ impl Overworld {
                 }
                 if g.body == Body::Lake && g.water > SEA_LEVEL + 20 {
                     consider(WaterSight::HighlandLake, (g.water - SEA_LEVEL) as f32);
+                }
+                if g.body == Body::Lake && tarns.is_some_and(|floor| g.water as f32 >= floor) {
+                    consider(WaterSight::Tarn, 1.0);
                 }
                 // From the top of the drop.
                 let drop = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(di, dj)| at(i + di, j + dj)).iter().filter(|o| o.submerged()).map(|o| g.water - o.water).max();

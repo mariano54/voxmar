@@ -84,8 +84,10 @@
         // Moss grows over stonework.
         (ingredients: ["stone_bricks", "moss_block"], output: "mossy_stone_bricks", xp: 3.0),
         (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone", xp: 3.0),
-        // Two logs over two cobblestones make a campfire, which cooks (cooking.ron).
+        // Two logs (barked or stripped), or bark-on-all-sides wood blocks, over two
+        // cobblestones make a campfire. Removing bark is never a prerequisite.
         (pattern: [["{name}_log", "{name}_log"], ["cobblestone", "cobblestone"]], output: "campfire", skill: "core:engineering", xp: 10.0),
+        (pattern: [["{name}_wood", "{name}_wood"], ["cobblestone", "cobblestone"]], output: "campfire", skill: "core:engineering", xp: 10.0),
         // Coal or charcoal on a stick makes four torches, in the hand's grid: light for the
         // first night.
         (pattern: [["coal_ore|charcoal"], ["stick"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),

@@ -71,10 +71,11 @@ pub struct Executor {
 }
 
 impl Server {
-    /// Whether `player` is part way through a timed action that eats (a bite of food).
+    /// Whether `player` is part way through a timed action that eats (a bite of food). A bite
+    /// the client has shown done early still runs to its time, so it still counts.
     pub(crate) fn eating(&self, player: PlayerId) -> bool {
         self.executor.timed.iter().any(|t| {
-            t.agent == player && !t.finished && self.content.actions.get(t.action).is_some_and(|def| def.effects.contains(&Effect::EatHeld))
+            t.agent == player && self.content.actions.get(t.action).is_some_and(|def| def.effects.contains(&Effect::EatHeld))
         })
     }
 }
@@ -198,6 +199,9 @@ impl Server {
         } else if !timed {
             self.commit(agent, &def, target);
         } else {
+            if def.effects.contains(&Effect::EatHeld) {
+                self.bite_started(agent);
+            }
             let due = at + Duration::from_secs_f32(seconds);
             self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false });
         }

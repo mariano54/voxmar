@@ -790,7 +790,7 @@ mod tests {
                             let name = if name.contains(':') { name.clone() } else { format!("base:{name}") };
                             route.build(&name);
                         }
-                        Goal::Visit(_) => {}
+                        Goal::Visit(_) | Goal::LookUp(_) => {}
                         Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }

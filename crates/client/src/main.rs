@@ -134,7 +134,7 @@ struct Options {
     /// effect whose hover plate to show over its chip.
     effects: Vec<(String, u16)>,
     effect_tip: Option<String>,
-    /// `--catalogue SEARCH`: creative mode's catalogue, searched.
+    /// `--catalogue SEARCH`: the inventory's catalogue or survival recipe search.
     catalogue: Option<String>,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
