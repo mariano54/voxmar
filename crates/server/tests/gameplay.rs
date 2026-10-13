@@ -93,6 +93,9 @@ fn real_time(why: &str) {
 /// Starts a server as the game does, its ticks `TICK_SPEEDUP` times as quick unless the test
 /// is about the clock (`real_time`) or makes the server run behind on purpose (`lag`).
 fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
+    // No wandering party comes by chance: at these ticks one may arrive while a test slowed
+    // by load is still running, and stand (or fight) beside its player.
+    config.wandering_starts = false;
     if config.lag == voxmar_server::Lag::default() && !REAL_TIME.get() {
         config.tick_speedup = TICK_SPEEDUP;
     }
@@ -1718,8 +1721,9 @@ fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
 /// An animal is found only from close up with nothing in between (`seen_within` in
 /// journal.ron, 3 blocks for animals): not across the floor, not through a wall right
 /// beside it, and at once when the wall goes. The rabbit is the one summoned (told apart
-/// from any wild one by its id and height), held still (`/creatures hold` reaches 8 blocks,
-/// so it is summoned well inside that), and every wait is a count of server ticks.
+/// from any wild one by its id and height), held still from the tick it arrives (`/summon
+/// ... held`: a hold sent after it could land when it had already fled, at these quick
+/// ticks), and every wait is a count of server ticks.
 #[test]
 fn an_animal_is_found_only_from_close_up_in_plain_view() {
     use voxmar_engine::journal::Page;
@@ -1727,8 +1731,7 @@ fn an_animal_is_found_only_from_close_up_in_plain_view() {
     let at = client.position.floor().as_ivec3();
     let rabbit = client.content.creatures.find("rabbit").expect("rabbits in the content");
     let before: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
-    client.ok(&format!("/summon rabbit 1 {} {} {}", at.x + 7, at.y, at.z));
-    client.ok("/creatures hold rabbit");
+    client.ok(&format!("/summon rabbit 1 {} {} {} held", at.x + 7, at.y, at.z));
     let ours = move |c: &Client| c.creatures.iter().find(|(id, v)| v.species == rabbit && !before.contains(id) && (v.position.y - at.y as f32).abs() < 1.0).map(|(&id, _)| id);
     client.pump_until(|c| ours(c).is_some());
     let id = ours(&client).unwrap();
@@ -4213,7 +4216,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
         "/setblock ~5 ~ ~ bellows",
         "/setblock ~6 ~ ~ shaft",
         "/setblock ~7 ~ ~ treadwheel",
-        "/summon aurochs 1 ~7 ~ ~2",
+        "/summon aurochs 1 ~7 ~ ~2 held",
         "/creatures tame aurochs",
         "/creatures hold aurochs",
         "/give iron_ore 2",
@@ -4284,7 +4287,7 @@ fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two
         "/setblock ~5 ~ ~ bellows",
         "/setblock ~6 ~ ~ shaft",
         "/setblock ~7 ~ ~ treadwheel",
-        "/summon aurochs 1 ~7 ~ ~2",
+        "/summon aurochs 1 ~7 ~ ~2 held",
         "/creatures tame aurochs",
         "/creatures hold aurochs",
         "/give coal_ore 1",
@@ -4979,7 +4982,7 @@ fn machines_keep_working_while_their_land_is_unloaded_but_no_animal_walks_a_whee
         "/setblock ~4 ~ ~ steam_crusher",
         "/fill ~2 ~ ~3 ~4 ~1 ~5 air",
         "/setblock ~3 ~ ~4 treadwheel",
-        "/summon aurochs 1 ~3 ~ ~5",
+        "/summon aurochs 1 ~3 ~ ~5 held",
         "/creatures tame aurochs",
         "/creatures hold aurochs",
         "/give coal_ore 2",
@@ -5066,7 +5069,7 @@ fn a_treadwheel_a_player_placed_is_walked_only_by_their_own_animals() {
     owner.propose("core:place", ActionTarget::Block { block: wheel - IVec3::Y, face: Face::PosY });
     owner.pump_until(|c| c.world.block(wheel) == Some(treadwheel));
     // Another player's aurochs beside it does not walk it.
-    for line in ["/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+    for line in ["/summon aurochs 1 ~3 ~ ~2 held", "/creatures tame aurochs", "/creatures hold aurochs"] {
         other.ok(line);
     }
     machine_says(&mut owner, &at, "needs a kept animal", 10);
@@ -5119,7 +5122,7 @@ fn a_full_hopper_leaves_the_stack_in_hand_and_gives_nothing_back() {
 fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_it_is_fed() {
     let mut client = Client::join();
     let aurochs = client.content.creatures.find("aurochs").expect("aurochs in the content");
-    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/setblock ~3 ~ ~ treadwheel", "/summon aurochs 1 ~3 ~ ~2", "/creatures tame aurochs", "/creatures hold aurochs"] {
+    for line in ["/clear", "/fill ~2 ~ ~-1 ~4 ~1 ~3 air", "/setblock ~3 ~ ~ treadwheel", "/summon aurochs 1 ~3 ~ ~2 held", "/creatures tame aurochs", "/creatures hold aurochs"] {
         client.ok(line);
     }
     let start = client.position.floor().as_ivec3();
@@ -5580,7 +5583,7 @@ fn creatures_kill_spares_another_players_kept_animals_whatever_the_case_of_their
     let rabbit = ann.content.creatures.find("rabbit").expect("rabbits in the content");
     let kept = |c: &Client| c.creatures.values().find(|v| v.species == rabbit && v.kept).map(|v| v.id);
     // Held still beside the players while it is tamed and the host tries it.
-    ann.ok("/summon rabbit 1 ~ ~ ~-2");
+    ann.ok("/summon rabbit 1 ~ ~ ~-2 held");
     ann.ok("/creatures hold rabbit");
     ann.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
     ann.ok("/creatures tame rabbit");

@@ -297,7 +297,7 @@ impl Server {
         }
         let _span = tracing::info_span!("wandering").entered();
         let rules = *self.content.wandering.rules();
-        if self.tick.is_multiple_of(ticks(rules.scan_every)) {
+        if self.config.wandering_starts && self.tick.is_multiple_of(ticks(rules.scan_every)) {
             let ids: Vec<PlayerId> = self.players.values().filter(|p| p.joined).map(|p| p.id).collect();
             for (i, player) in ids.into_iter().enumerate() {
                 self.try_wandering(player, i as u64);
