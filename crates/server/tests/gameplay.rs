@@ -1707,6 +1707,7 @@ fn a_player_rejoining_in_another_case_keeps_their_animals_and_their_drops() {
 
 #[test]
 fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
+    real_time("combat is judged on the clock, and the ward drains by the server's seconds while the bear winds up");
     use voxmar_engine::combat::Defended;
     let mut client = Client::join();
     let book = client.content.prayers.clone();
@@ -1725,13 +1726,17 @@ fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
     let (id, slot) = beside_a_bear(&mut client);
     client.connection.send(ClientMessage::Pray { prayer: ward, on: true });
     client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.2 == vec![ward]));
-    // A ward stops 80% of a creature's blow in its styles: a bear's 2 to 4 comes to 1 at
-    // most.
+    // A ward stops 80% of a creature's blow in its styles: a bear's 2 to 6 lets 1.2 at most
+    // through, which rounds by chance to 2 at most.
+    let bear = client.content.creatures.find("brown_bear").unwrap();
+    let high = client.content.creatures.get(bear).def.attack.unwrap().damage.1;
+    let let_through = (high as f32 * (1.0 - book.rules.ward)).ceil() as u16;
+    assert!(let_through < high as u16 / 2, "a ward lets {let_through} of a bear's {high} through");
     for _ in 0..3 {
         let before = provoke_until_it_winds_up(&mut client, id, slot, "bear");
         client.pump_until(|c| c.hurt.len() > before);
         let (damage, defended) = client.hurt[before];
-        assert!(defended != Defended::Hit || damage <= 1, "a warded bear's blow did {damage}");
+        assert!(defended != Defended::Hit || damage <= let_through, "a warded bear's blow did {damage}");
     }
     // Ward Melee drains 24 a minute: some are gone.
     let (points, most, _) = client.prayers.clone().unwrap();
