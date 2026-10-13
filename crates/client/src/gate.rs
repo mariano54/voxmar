@@ -2098,11 +2098,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 fail(world, gate, "grave", format!("nothing more was picked up for 15 server seconds, carrying {back} of {} items; stacks lying near, from where they fell: [{}]", gate.count_before, left.join(" ")));
             }
         }
-        // Right clicking the crucible lights the kiln: the quest that asks for it counts it.
+        // Right clicking the crucible lights the kiln: the quest that asks for it counts it in its last part.
         15 => {
             let kiln = gate.kiln;
             let lit = |world: &World| {
-                world.resource::<LocalPlayer>().quests.iter().find(|q| q.name == "base:crucible_kiln").and_then(|q| q.tasks.first()?.first().copied()).is_some_and(|(have, _)| have > 0)
+                world.resource::<LocalPlayer>().quests.iter().find(|q| q.name == "base:crucible_kiln").and_then(|q| q.tasks.first()?.last().copied()).is_some_and(|(have, _)| have > 0)
             };
             let crucible = world.resource::<ClientWorld>().registry.id("base:crucible");
             if world.resource::<ClientWorld>().block(kiln) != crucible {
