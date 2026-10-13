@@ -74,13 +74,6 @@ tests = [
 ]
 
 
-[[allow]]
-binary = "voxmar"
-seconds = 20
-why = "Shapes every text of every language in every interface font."
-tests = [
-  "lang::tests::no_text_shows_a_missing_glyph_box",
-]
 
 [[allow]]
 binary = "voxmar_server"
