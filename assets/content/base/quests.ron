@@ -85,7 +85,7 @@
         ),
         (
             name: "torchlight", age: "nomad", branch: "main", title: "Torchlight",
-            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a wooden one. Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal (Coal and Cinders), or cooking and crafting at home.",
+            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a wooden one. Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal, or at home cooking (Meat on the Fire) and crafting.",
             tasks: [[Craft("torch", 8)]],
             after: ["first_night"],
             rewards: [Xp("engineering", 21.0)],
@@ -404,7 +404,7 @@
         ),
         (
             name: "herb_garden", age: "farm", branch: "farming", title: "Herb Garden",
-            why: "Herbs cannot be sown, but a herb planter (planks round dirt, Construction 3) lets a picked herb grow back at home. Make a planter, set a herb in it, and pick it again when it returns. Pick six wild plants on your rounds as well. While a herb grows back, take spare herbs to the folk on the road who know them (Herb Lore).",
+            why: "Herbs cannot be sown, but a herb planter (planks round dirt, Construction 3) lets a picked herb grow back at home. Make a planter, set a herb in it, and pick it again when it returns. Pick six wild plants on your rounds as well. While a herb grows back, sow four crops by the house (A Kitchen Garden).",
             tasks: [[Craft("herb_planter", 1), Pick("any", 6)]],
             after: ["first_harvest"],
             rewards: [Xp("construction", 80.0), Xp("farming", 60.0)],

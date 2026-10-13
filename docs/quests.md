@@ -248,6 +248,10 @@ is digging, firing or crafting. The idle waits are off it: crops growing, animal
 regrowing, a herb growing back, and the night. Each quest that sets one off now names, in
 en and ja, an optional quest that is already open at that moment:
 
+`a_quest_names_only_quests_open_beside_it` (crates/engine/tests/early_quests.rs) holds every
+quest to this: a quest title its words name in brackets is done already or opens with what
+that quest needs.
+
 | Wait | Length | Quest that sets it off | What its text offers meanwhile (all open by then) |
 | --- | --- | --- | --- |
 | Wheat ripening | 12 min | First Harvest | Patient Angler, Hens in a Row, A Seat by the Fire |
@@ -256,8 +260,8 @@ en and ja, an optional quest that is already open at that moment:
 | A hen laying | 5 min an egg | Fresh Eggs | A Woolly Flock, A Full House |
 | Wool growing back | 6 min | Wool Gathering | Wool and Dye, The Milk Pail |
 | Milk | 5 min | The Milk Pail | A Full Pen |
-| A herb growing back | Its regrowth | Herb Garden | Herb Lore (new) |
-| Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Coal and Cinders underground, cooking and crafting at home |
+| A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
+| Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
 | Long clay firing | 59 + 97 s of firing for the bot | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
 
 A script checked that every quest title written in parentheses in a why is a real quest's
