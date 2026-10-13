@@ -798,5 +798,88 @@
                 (name: "fortune", wants: ("gold_coin", 1), gives: [OneOf([Point("tag:wonder", 128.0), Point("tag:ore_sample", 128.0), Point("tag:root", 96.0), Town(600.0)])], once: Player),
             ])],
         ),
+        // Market folk on their way to town with what they grew. Walk the way with them and
+        // at the town they share their bread; on the road, eight wheat sell for a coin.
+        (
+            name: "market_folk", weight: 0.7, lifetime: 1500.0,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.3, 0.9), needs: (days: 0.8),
+            cast: [(species: "trader"), (species: "farmer", count: (1, 2), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
+            script: Journey(reach: 600.0, pace: 0.9, near: 16.0),
+            halt: (near: 6.0, seconds: (6.0, 10.0), cooldown: 45.0),
+            reveal: [Item("bread", (2, 2)), Effect("refreshed", 600.0)],
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "there", needs: [When(Arrived)]),
+                (name: "sell", wants: ("wheat", 8), gives: [Item("gold_coin", (1, 1))], once: Player),
+            ])],
+        ),
+        // Travellers caught in the rain, huddled where it found them. A light held up warms
+        // them and they press a coin on you; share food and they tell you of the ledge they
+        // sheltered under, with ore showing in it.
+        (
+            name: "drenched_travellers", weight: 0.8,
+            biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:grassland", 1.0)],
+            needs: (days: 0.6, wet: Some(true)),
+            cast: [(species: "traveller"), (species: "child", count: (0, 1), role: Follow)],
+            script: Roam(radius: 0.0, pause: (40.0, 60.0), rest: true, seconds: 300.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "warm", needs: [Holds("fire")], gives: [Item("gold_coin", (1, 1))], once: Player),
+                (name: "ledge", wants: ("tag:edible", 1), gives: [Point("tag:ore_sample", 96.0)], once: Player),
+            ])],
+        ),
+        // Rainmakers dance for rain in a dry spell. Watch the dance through and you go off
+        // Refreshed; two coins and they dance it in earnest, and the rain comes.
+        (
+            name: "rainmakers", weight: 0.4,
+            biomes: [("tag:grassland", 1.0), ("tag:savanna", 1.2), ("tag:scrubland", 1.0), ("tag:open", 0.6)],
+            daylight: (0.35, 1.0), needs: (days: 1.2, wet: Some(false)),
+            cast: [(species: "bard"), (species: "villager", count: (2, 3), role: Follow)],
+            script: Camp(near: 22.0, stay: (240.0, 360.0), mill: 3.5, away: 120.0),
+            show: (near: 8.0, seconds: 20.0, gives: [Effect("refreshed", 600.0)]),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "rain", wants: ("gold_coin", 2), gives: [Weather("rain", 600.0)], once: Party),
+            ])],
+        ),
+        // A priest bearing a little shrine on the road, pilgrims with them. They fill the
+        // prayer of one who has spent it, and show a beginner their first prayer.
+        (
+            name: "shrine_bearer", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 0.8), ("tag:mountain", 0.8), ("tag:forest", 0.5)],
+            daylight: (0.25, 1.0), needs: (days: 1.0),
+            cast: [(species: "priest"), (species: "pilgrim", count: (1, 2), role: Follow)],
+            script: March(pass: (10.0, 20.0), length: 150.0, pace: 0.6),
+            halt: (near: 7.0, seconds: (20.0, 30.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "first_prayer", needs: [Below("magic", 5)], gives: [Xp("magic", 10.0)], once: Player),
+                (name: "renew", gives: [Prayer(30.0)], once: Player),
+            ])],
+        ),
+        // Neighbours from over the hill call on someone newly settled, near their home. A
+        // cooked meal shared and they leave seed for the garden; the first to call bring a
+        // plate for the house.
+        (
+            name: "neighbours", weight: 0.6,
+            daylight: (0.3, 0.9), needs: (days: 1.5, home: Some(true), near_home: Some(48.0)),
+            cast: [(species: "villager"), (species: "farmer", role: Follow), (species: "child", count: (0, 1), role: Follow)],
+            script: Camp(near: 16.0, stay: (300.0, 420.0), mill: 2.5, away: 100.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "housewarming", gives: [Item("earthen_plate", (1, 1))], once: Party),
+                (name: "meal", wants: ("tag:cooked", 1), gives: [Effect("sustained", 900.0), Item("seed_mix", (3, 4))], once: Player),
+            ])],
+        ),
+        // Wolf hunters out by night after the wolves that come near folk's homes. Whoever
+        // drew first blood on one they bring down is given a share.
+        (
+            name: "wolf_hunters", weight: 0.4,
+            biomes: [("tag:forest", 1.0), ("tag:cold", 1.0), ("tag:grassland", 0.6)],
+            daylight: (0.0, 0.35), needs: (days: 2.0, home: Some(true), near_home: Some(160.0)),
+            cast: [(species: "guard"), (species: "hunter", role: Follow), (species: "hound", count: (1, 2), role: Pet(0))],
+            script: Hunt(reach: 56.0, strike: 2.5, takes: 2, seconds: 420.0),
+            quarry: ["wolf"],
+            share: [Xp("attack", 10.0)],
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "took", needs: [When(Took)]),
+            ])],
+        ),
     ],
 )

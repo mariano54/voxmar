@@ -15,7 +15,7 @@ fn dir() -> std::path::PathBuf {
 #[test]
 fn every_event_word_is_a_key_in_both_languages() {
     let content = Content::load(&dir()).unwrap();
-    assert!(content.wandering.len() >= 52, "the first eight batches load");
+    assert!(content.wandering.len() >= 58, "the first nine batches load");
     for code in ["en", "ja"] {
         let lang = Lang::load(&dir(), code);
         for (_, event) in content.wandering.iter() {
@@ -42,7 +42,7 @@ fn every_event_word_is_a_key_in_both_languages() {
             }
             match event.def.script {
                 Script::Ambush { .. } => keys.push(event.key("sprung")),
-                Script::Lure { .. } => keys.push(event.key("arrived")),
+                Script::Lure { .. } | Script::Journey { .. } => keys.push(event.key("arrived")),
                 _ => {}
             }
             for key in keys {
@@ -84,7 +84,7 @@ fn hunts_and_fortunes_are_checked_as_they_load() {
     let content = Content::load(&dir()).unwrap();
     let load = |event: &str| {
         let package = WanderRegistry::read("base", &format!("(events: [(name: \"x\", cast: [(species: \"hunter\")], {event})])")).expect("parses");
-        WanderRegistry::new(vec![package], Rules::default(), &content.creatures, &content.blocks, &content.skills, &content.effects, &content.cooking)
+        WanderRegistry::new(vec![package], Rules::default(), &content.creatures, &content.blocks, &content.skills, &content.effects, &content.cooking, &content.weather)
     };
     let hunt = "script: Hunt(reach: 30.0, strike: 2.0, takes: 1, seconds: 120.0)";
     assert!(load(&format!("{hunt}, quarry: [\"wild_boar\"]")).is_ok());
@@ -100,4 +100,30 @@ fn hunts_and_fortunes_are_checked_as_they_load() {
     assert!(fortune("OneOf([Town(300.0)])").is_err(), "one of one is no choice");
     assert!(fortune("OneOf([Town(300.0), Leave])").is_err(), "a fortune tells or gives, it does not send a party off");
     assert!(fortune("OneOf([Point(\"no_such_block\", 64.0), Town(300.0)])").is_err(), "its choices are checked too");
+}
+
+#[test]
+fn journeys_weather_prayer_and_the_new_needs_are_checked_as_they_load() {
+    use voxmar_engine::wander::{Rules, WanderRegistry};
+    let content = Content::load(&dir()).unwrap();
+    let load = |event: &str| {
+        let package = WanderRegistry::read("base", &format!("(events: [(name: \"x\", cast: [(species: \"trader\")], {event})])")).expect("parses");
+        WanderRegistry::new(vec![package], Rules::default(), &content.creatures, &content.blocks, &content.skills, &content.effects, &content.cooking, &content.weather)
+    };
+    let journey = "script: Journey(reach: 400.0, pace: 0.9, near: 12.0)";
+    assert!(load(journey).is_ok(), "a journey with no gift at its end");
+    assert!(load(&format!("{journey}, reveal: [Item(\"bread\", (1, 1))]")).is_ok());
+    assert!(load("script: Journey(reach: 40.0, pace: 0.9, near: 12.0)").is_err(), "a town 40 blocks off is no journey");
+    assert!(load(&format!("{journey}, guard: (near: 5.0, warn: 2.0, calm: 9.0)")).is_err());
+    let roam = "script: Roam(radius: 4.0, pause: (2.0, 3.0), rest: false, seconds: 60.0)";
+    let line = |gives: &str| load(&format!("{roam}, meetings: [(lines: [(name: \"l\", gives: [{gives}])])]"));
+    assert!(line("Weather(\"rain\", 600.0)").is_ok());
+    assert!(line("Weather(\"no_such_sky\", 600.0)").is_err(), "weather the sky has");
+    assert!(line("Weather(\"rain\", 10.0)").is_err(), "for a while");
+    assert!(load(&format!("{roam}, show: (near: 5.0, seconds: 5.0, gives: [Heal(2)]), reveal: [Weather(\"rain\", 600.0)]")).is_err(), "weather only from a line");
+    assert!(line("Prayer(30.0)").is_ok());
+    assert!(line("Prayer(0.0)").is_err());
+    assert!(load(&format!("{roam}, needs: (wet: Some(true), near_home: Some(48.0))")).is_ok());
+    assert!(load(&format!("{roam}, needs: (near_home: Some(48.0), home: Some(false))")).is_err(), "near a home it has not");
+    assert!(load(&format!("{roam}, needs: (near_home: Some(4.0))")).is_err());
 }

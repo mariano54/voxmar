@@ -20,7 +20,9 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   kind is drawn by weight from the kinds that suit the biome (name or tag), the hour
   (`daylight`), and the player (`needs`: days, home or not, combat level, `away`: how far from where the world began,
   so the tutors and the convoys are for those who go exploring, and `town`: within so many
-  blocks of a settlement of the world's plan, so the town watch keeps to its town's land); a kind met in the
+  blocks of a settlement of the world's plan, so the town watch keeps to its town's land;
+  `wet`: only while rain or snow falls where it would appear, or only while none does; and
+  `near_home`: only to a player within so many blocks of their home); a kind met in the
   last `repeat_memory` seconds weighs `repeat_weight` of itself.
 - **Budgets.** People of a party count against `people_most`, not against the settlements'
   villager cap. Animals and monsters of a party count against the usual land caps near
@@ -93,6 +95,13 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
     line, and the kill's own loot drops for them; with no `share`, the party keeps it all.
     A hunting kind comes only where its quarry is within `reach` of the spot, and does not
     halt, guard, startle or hold a captive.
+  - `Journey(reach, pace, near)`: walks to the centre of the nearest settlement of the
+    world's plan within `reach` blocks, at `pace`, halting for a player as a march does.
+    A player who keeps within `near` blocks of the leader for 30 seconds of the way and is
+    with it when it arrives is given the event's `reveal` (if any), with the line
+    `arrived`; the stage is `Arrived`, and the party stays in the town until nobody
+    watches. It comes only where a settlement is within `reach` of the spot and at least
+    80 blocks off.
   The leader strides in 6-block steps and turns aside where the ground will not do; with no
   headway for six seconds it detours, and after four detours the party gives up and leaves.
 - **Stopping.** A party with a `halt` stops for a player who comes within `near` of its
@@ -118,7 +127,10 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   game's own recipes at that station (cooking.ron), never burnt, up to `most` of what is in
   hand, keeping `keep` for the speaker's pot, said only with something it cooks in hand; `OneOf([...])`: one of two or more items, XP,
   effects, healing, `Point`s or `Town`s, picked by chance among those that have something
-  to tell where the speaker stands, a fortune; said only when one has). A
+  to tell where the speaker stands, a fortune; said only when one has; `Weather(preset,
+  seconds)`: brings that weather (weather.ron) over the land about the speaker, as
+  `/weather` does, from a line only; `Prayer(points)`: restores prayer points up to the
+  player's most, said only to one short of them). A
   line can also need `When(stage)` (the party is at that
   stage of its script: `Caught`, `Waiting`, `Sprung`, `Won`, `Leading`, `Arrived`, `Took`; the stage
   must belong to the event's script) or `Struck(group)` (this player struck a member of that
@@ -398,6 +410,43 @@ fortune: one true thing among several), and a new species, the poacher.
 The beekeeper waits for bees: honey only comes with the farming age's skeps, as one item
 that both heals and goes into a recipe, not before.
 
+## Batch 9 (implemented, six kinds): roads to town, rain and the settled
+
+Kinds that answer what the first ages already have: towns, the weather, prayer, a home,
+hunting. The new pieces are the `Journey` script (walk to a town, and thank those who came
+along), `needs.wet` and `needs.near_home`, and the `Weather` and `Prayer` rewards.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| market folk | Journey | A trader and farmers walk to the nearest town (80 to 600 blocks off). Keep with them and at the town they share their bread (two loaves, Refreshed). Eight wheat sell for a coin on the road, once. |
+| drenched travellers | Roam (sitting), wet | Only in rain or snow. A light held up earns a coin; food shared and they tell of the ledge they sheltered under, with ore in it (true to the land). |
+| rainmakers | Camp, show, dry | Only in a dry spell, in grass and dry land. Watch the dance (20 s) for Refreshed; two coins and it rains there for ten minutes (the glimmer koi rises only in rain). |
+| shrine bearer | March | A priest and pilgrims bear a shrine. A beginner (Magic below 5) is shown the first prayer; one short of prayer points is filled by 30, once. |
+| neighbours | Camp, near home | Call on a player near their home (48 blocks). The first to call bring an earthen plate for the house (crockery for a cosy home); a cooked meal shared buys garden seed and Sustained. |
+| wolf hunters | Hunt | Hunt wolves at night near players' homes. First blood on one they bring down is shared (Attack XP and the wolf's loot). |
+
+| the player | market folk | drenched travellers | neighbours |
+| --- | --- | --- | --- |
+| walks with them | thanked at the town | n/a | n/a |
+| waits at the town | nothing | n/a | n/a |
+| holds a light | nothing | a coin | nothing |
+| holds food | wheat sells | food: word of ore | a cooked meal: seed |
+| strikes one | scatter | scatter | scatter |
+
+## Quest hooks
+
+Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
+should ask for it as an "if you meet them" side step, never on the main line):
+
+- **Walk to market** (market folk): follow a party to town; the first town found by road.
+- **A share of the hunt** (hunting party, trapper, wolf hunters): draw first blood on what
+  a hunt brings down.
+- **Neighbourly** (neighbours): share a cooked meal with neighbours who call; their plate
+  counts toward a cosy home.
+- **The rain dance** (rainmakers): pay the rainmakers and see the rain come.
+- **Filled again** (shrine bearer): have spent prayer restored at a wandering shrine.
+- **A fortune told** (fortune teller): follow a fortune to what it named.
+
 ## Catalogue of 100
 
 Status: `done` is in a batch above, `next` is the second batch (ages 1 and 2: Nomad and Farm
@@ -490,7 +539,7 @@ are the mechanics later batches add, each used by several kinds.
 | 82 | mage duel | two mages cast at each other and ignore you | Duel | 4 | later |
 | 83 | archmage and pupils | a tutor with five pupils; a tougher lesson | March | 4 | later |
 | 84 | star gazers | at night, with a brass tube; shows the sky for a bonus | Camp | 3 | later |
-| 85 | rainmakers | a dance before a storm that makes it rain | Dance | 3 | later |
+| 85 | rainmakers | see batch 9 | Weather | 2 | done |
 | 86 | storm chasers | follow lightning and gather a charged rock | Chase | 4 | later |
 | 87 | frost caravan | in the cold biomes; furs to swap | March | 3 | later |
 | 88 | desert nomads | camels, water for a coin | March | 3 | later |
@@ -507,6 +556,11 @@ are the mechanics later batches add, each used by several kinds.
 | 99 | angel passing | a light; heals the hurt | Ambient | 5 | later |
 | 100 | wandering god | a veiled figure; a single wish for a price | Meeting | 5 | later |
 | 101 | trapper | see batch 8 | Hunt | 1 | done |
+| 102 | market folk | see batch 9 | Journey | 1 | done |
+| 103 | drenched travellers | see batch 9 | wet | 1 | done |
+| 104 | shrine bearer | see batch 9 | Prayer | 1 | done |
+| 105 | neighbours | see batch 9 | near home | 2 | done |
+| 106 | wolf hunters | see batch 9 | Hunt | 2 | done |
 
 ## Mechanics the next batches add
 
@@ -524,6 +578,7 @@ Each is a script or a role used by many kinds, so every kind stays a few lines o
   later `Lure` whose lurkers spring at the end.
 - **Show**: done (batch 7): a camped party puts on something to watch; staying pays.
 - **Hunt**: done (batch 8): a party goes after wild quarry and brings it down; first blood shares.
+- **Journey**: done (batch 9): a party walks to a town; those who walk with it are thanked there.
 - **Duel / Dance / Crossing / Vigil**: fixed arrangements of the formation code.
 
 ## Notes
