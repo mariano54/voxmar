@@ -2729,7 +2729,7 @@ fn say_hello(connection: &ClientConnection, name: &str, content: &Content) {
 fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_a_silent_game_there() {
     let dir = world_dir("names");
     let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
-    let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
     host.connection.send(ClientMessage::Command { line: "/op guest".into() });
     guest.pump_until(|c| c.admin);
     guest.ok("/skill mining 7");
@@ -2764,7 +2764,7 @@ fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_a_silent_game
     let until = ticks(&host) + (silence * TICKS_PER_SECOND as f32) as u64 + 2;
     host.pump_until(|c| ticks(c) >= until);
     let mining = host.content.skills.id("core:mining").unwrap();
-    let again = Client::greet(tcp::connect(addr).unwrap(), "GuEsT", None);
+    let again = Client::greet(|| tcp::connect(addr).unwrap(), "GuEsT", None);
     assert!(!again.admin, "admin rights given for a session lasted into the next");
     assert_eq!(again.content.skills.level(again.skills.xp(mining)), 7, "joined again without what the save holds");
     // The same in process: the integrated server's own player coming back, never silent.
@@ -2813,7 +2813,7 @@ fn joining_again_takes_what_the_silent_session_held_not_an_older_file() {
     let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
     let until = ticks(&host) + (Limits::default().rejoin_silence * TICKS_PER_SECOND as f32) as u64 + 2 * TICKS_PER_SECOND as u64;
     host.pump_until(|c| ticks(c) >= until);
-    let again = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    let again = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
     let (mining, ore) = (host.content.skills.id("core:mining").unwrap(), host.content.blocks.expect("base:iron_ore"));
     assert_eq!(again.content.skills.level(again.skills.xp(mining)), 7, "joined again without what the silent session had gained");
     let held: u32 = again.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum();
