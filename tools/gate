@@ -346,7 +346,13 @@ fi
 # averaged while the tests ran.
 if compgen -G "$out/test-*.txt" >/dev/null; then
   scale=$(awk -v c="$(getconf _NPROCESSORS_ONLN)" '{ s += $1; n++ } END { s = n ? s / n / c : 1; print (s < 1 ? 1 : s) }' "$out/load.txt")
-  tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || fail "test times (tools/test-budget.toml)"
+  # A machine loaded past three times its cores says nothing about a test's own time (the
+  # box of a cloud thread, 32 test threads on 4 cores): the times are listed, not judged.
+  if awk -v s="$scale" 'BEGIN { exit !(s > 3) }'; then
+    tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || echo "gate: test times not judged: the machine was loaded x$scale over its cores; run tools/gate on a calmer one"
+  else
+    tools/test-times "$out" $( ((full)) && echo --full) --scale "$scale" --top 8 || fail "test times (tools/test-budget.toml)"
+  fi
 fi
 status=$(cat "$out/game.status" 2>/dev/null || echo 0)
 ((session)) && [[ ! -e $out/game.status ]] && fail "the session never ran ($out/run.txt)"
