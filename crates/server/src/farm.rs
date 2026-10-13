@@ -224,6 +224,15 @@ impl Server {
         grown
     }
 
+    /// Whether a crop planted within `radius` of `at` has a stage left to grow (what
+    /// `grow_around` would move on).
+    pub(crate) fn unripe_near(&self, at: voxmar_engine::glam::Vec3, radius: f32) -> bool {
+        self.farm.planted.iter().any(|(&pos, planted)| {
+            let crop = self.content.crops.get(planted.crop);
+            (pos.as_vec3() + 0.5).distance(at) <= radius && planted.stage < crop.ripe_stage() && self.block(pos) == Some(crop.stages[planted.stage as usize])
+        })
+    }
+
     /// Shows the stages crops reached while their column was away.
     pub(crate) fn show_grown_crops(&mut self, column: ColumnPos) {
         let Some(positions) = self.farm.unseen.remove(&column) else { return };

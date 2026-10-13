@@ -663,6 +663,10 @@ pub enum Reward {
     Weather(String, f32),
     /// Prayer points restored, up to the player's most. Said only to one short of them.
     Prayer(f32),
+    /// The crops planted within so many blocks of the speaker grow on so many stages, as
+    /// water poured on a field does: a blessing on the fields. Said only with one there to
+    /// grow.
+    Grow(f32, u8),
 }
 
 /// A kind of event with its names resolved.
@@ -760,6 +764,7 @@ pub enum ResolvedReward {
     OneOf(Vec<ResolvedReward>),
     Weather(String, f32),
     Prayer(f32),
+    Grow(f32, u8),
 }
 
 /// A block name or a `tag:` selector, resolved: what a `seek` or a `Point` looks for.
@@ -836,6 +841,10 @@ fn resolve_reward_in(
         },
         Reward::Prayer(points) if !(1.0..=99.0).contains(points) => return Err(format!("restores {points} prayer points: 1 to 99")),
         Reward::Prayer(points) => ResolvedReward::Prayer(*points),
+        Reward::Grow(reach, stages) if !(4.0..=48.0).contains(reach) || !(1..=3).contains(stages) => {
+            return Err(format!("grows crops within {reach} blocks by {stages} stages: 4 to 48 blocks, 1 to 3 stages"))
+        }
+        Reward::Grow(reach, stages) => ResolvedReward::Grow(*reach, *stages),
     })
 }
 

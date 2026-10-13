@@ -15,7 +15,7 @@ fn dir() -> std::path::PathBuf {
 #[test]
 fn every_event_word_is_a_key_in_both_languages() {
     let content = Content::load(&dir()).unwrap();
-    assert!(content.wandering.len() >= 58, "the first nine batches load");
+    assert!(content.wandering.len() >= 64, "the first ten batches load");
     for code in ["en", "ja"] {
         let lang = Lang::load(&dir(), code);
         for (_, event) in content.wandering.iter() {
@@ -123,6 +123,9 @@ fn journeys_weather_prayer_and_the_new_needs_are_checked_as_they_load() {
     assert!(load(&format!("{roam}, show: (near: 5.0, seconds: 5.0, gives: [Heal(2)]), reveal: [Weather(\"rain\", 600.0)]")).is_err(), "weather only from a line");
     assert!(line("Prayer(30.0)").is_ok());
     assert!(line("Prayer(0.0)").is_err());
+    assert!(line("Grow(32.0, 1)").is_ok());
+    assert!(line("Grow(32.0, 0)").is_err(), "grows at least a stage");
+    assert!(line("Grow(80.0, 1)").is_err(), "a field's worth, not a county");
     assert!(load(&format!("{roam}, needs: (wet: Some(true), near_home: Some(48.0))")).is_ok());
     assert!(load(&format!("{roam}, needs: (near_home: Some(48.0), home: Some(false))")).is_err(), "near a home it has not");
     assert!(load(&format!("{roam}, needs: (near_home: Some(4.0))")).is_err());

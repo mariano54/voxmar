@@ -130,7 +130,9 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   to tell where the speaker stands, a fortune; said only when one has; `Weather(preset,
   seconds)`: brings that weather (weather.ron) over the land about the speaker, as
   `/weather` does, from a line only; `Prayer(points)`: restores prayer points up to the
-  player's most, said only to one short of them). A
+  player's most, said only to one short of them; `Grow(reach, stages)`: the crops planted
+  within `reach` blocks of the speaker grow on `stages`, as water carried to a field does,
+  said only with one there still growing). A
   line can also need `When(stage)` (the party is at that
   stage of its script: `Caught`, `Waiting`, `Sprung`, `Won`, `Leading`, `Arrived`, `Took`; the stage
   must belong to the event's script) or `Struck(group)` (this player struck a member of that
@@ -186,7 +188,9 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   core's. Everyone who came with a party, freed or let go, stays outside the settlements'
   people budget.
 - **Admin.** `/wander` lists the parties about, `/wander list` the kinds, `/wander start
-  NAME` begins one ahead of you, `/wander end` sends them all away.
+  NAME` begins one ahead of you (nearer, down to your feet, where there is no standing room
+  ahead), `/wander end` sends them all away, and `/wander hold` keeps any from setting out
+  by chance until `/wander allow` (the gate holds them through its session).
 
 ## Reactions
 
@@ -431,6 +435,29 @@ along), `needs.wet` and `needs.near_home`, and the `Weather` and `Prayer` reward
 | holds food | wheat sells | food: word of ore | a cooked meal: seed |
 | strikes one | scatter | scatter | scatter |
 
+## Batch 10 (implemented, six kinds): clay, coal and the harvest
+
+The farm age's work, and the first coal and torchlight. The new piece is the `Grow` reward
+(a blessing on the fields about the speaker), and the tag `coal` on coal and charcoal, so a
+line can want either.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| clay diggers | Gather, carry | A potter and an apprentice dig clay at a bank and carry it to their pile, to players with a home. Clay handed over comes back fired in their kiln, none cracked, one kept (up to eight, once); a beginner (Crafting below 8) who shows a fired piece learns to throw a pot. Only where clay shows. |
+| harvest home | March, near home | The last sheaf carried round the fields near a player's home (40 blocks). Three wheat on the dolly and the crops within 32 blocks of them grow on a stage (once for the party, only with something growing there); a beginner (Farming below 5) learns the sowing song: wheat seed. |
+| coal carters | Journey | Carters walk coal to the nearest town. Keep with them and at the town they give two or three coal and a little Mining. On the road, two sticks from a beginner (Engineering below 5) buy a lump of coal for a first torch, and they say where coal shows at the surface. |
+| tanner | Camp | After the hunters come the hides. A beginner (Crafting below 6) holding a hide is shown how to cure it; four hides buy two coins, once. |
+| rat catcher | Lure | A piper at dusk near players' homes, field mice at his heels. He waits to be seen, then leads them off; follow to the end of his tune for seed mix and Farming. Struck, he and the mice scatter. |
+| benighted miners | Roam (sitting), night | Miners caught by the dark far from where the world began, their lamp out. Coal or charcoal lights it again: a coin and a little Mining, once; they say where coal shows. |
+
+| the player | clay diggers | harvest home | coal carters | rat catcher |
+| --- | --- | --- | --- | --- |
+| walks past | they halt if close, then dig on | they halt if close | they halt, then walk on | he waits, then leads off |
+| walks with them | n/a | n/a | coal at the town | seed at the end of the tune |
+| holds what they want | clay: fired whole | wheat: the fields grow | sticks: a lump of coal | n/a |
+| has no field near | n/a | the sheaf is not taken | n/a | n/a |
+| strikes one | scatter | scatter | scatter | scatter |
+
 ## Quest hooks
 
 Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
@@ -444,6 +471,10 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **The rain dance** (rainmakers): pay the rainmakers and see the rain come.
 - **Filled again** (shrine bearer): have spent prayer restored at a wandering shrine.
 - **A fortune told** (fortune teller): follow a fortune to what it named.
+- **Fired whole** (clay diggers): have clay fired at a wandering potter's kiln.
+- **Harvest home** (harvest home): give a sheaf to the dolly and see the field grow.
+- **Coal by road** (coal carters): walk the coal to town; the first coal for torchlight.
+- **The piper's tune** (rat catcher): follow the piper to the end of his tune.
 
 ## Catalogue of 100
 
@@ -500,7 +531,7 @@ are the mechanics later batches add, each used by several kinds.
 | 45 | knight errant | duels for a coin; wins a favour | Duel | 3 | later |
 | 46 | wandering monk | see batch 7 | Meeting | 2 | done |
 | 47 | travelling alchemist | see batch 6 | Asks | 2 | done |
-| 48 | rat catcher | a piper followed by rats | Lure | 2 | later |
+| 48 | rat catcher | see batch 10 (a piper and field mice) | Lure | 2 | done |
 | 49 | fortune teller | see batch 8 | OneOf | 2 | done |
 | 50 | puppeteers | see batch 7 | Show | 2 | done |
 | 51 | circus | acrobats, a bear on a chain; scares animals | Camp | 3 | later |
@@ -559,6 +590,11 @@ are the mechanics later batches add, each used by several kinds.
 | 104 | shrine bearer | see batch 9 | Prayer | 1 | done |
 | 105 | neighbours | see batch 9 | near home | 2 | done |
 | 106 | wolf hunters | see batch 9 | Hunt | 2 | done |
+| 107 | clay diggers | see batch 10 | Carry | 2 | done |
+| 108 | harvest home | see batch 10 | Grow | 2 | done |
+| 109 | coal carters | see batch 10 | Journey | 1 | done |
+| 110 | tanner | see batch 10 | Camp | 1 | done |
+| 111 | benighted miners | see batch 10 | night | 1 | done |
 
 ## Mechanics the next batches add
 

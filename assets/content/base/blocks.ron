@@ -308,7 +308,7 @@
         (name: "brown_mushroom", render: Plant, solid: false, sound: Grass, textures: Sides(top: "brown_mushroom_cap", bottom: "brown_mushroom_gills", side: "brown_mushroom_stem"), icon: "brown_mushroom", model: Cap, hardness: 0.0, drops: "mushroom", color: (150, 110, 80), tags: ["merged", "plant", "fungus", "edible", "forest_floor", "shade", "cave", "flavour:savoury"]),
         (name: "red_mushroom", render: Plant, solid: false, sound: Grass, textures: Sides(top: "red_mushroom_cap", bottom: "red_mushroom_gills", side: "red_mushroom_stem"), icon: "red_mushroom", model: Cap, hardness: 0.0, color: (200, 40, 40), tags: ["plant", "fungus", "forest_floor", "shade", "alchemy:poison", "dye:red"]),
         // Ores
-        (name: "coal_ore", texture_variety: (turn: true, mirror: true), textures: All("coal_ore"), host: "stone", hardness: 3.0, color: (90, 90, 90), tags: ["ore", "fuel", "natural"]),
+        (name: "coal_ore", texture_variety: (turn: true, mirror: true), textures: All("coal_ore"), host: "stone", hardness: 3.0, color: (90, 90, 90), tags: ["ore", "fuel", "coal", "natural"]),
         (name: "iron_ore", texture_variety: (turn: true, mirror: true), textures: All("iron_ore"), host: "stone", hardness: 3.0, color: (160, 140, 120), tags: ["ore", "metal:iron", "natural"]),
         (name: "copper_ore", texture_variety: (turn: true, mirror: true), textures: All("copper_ore"), host: "stone", hardness: 3.0, color: (150, 110, 80), tags: ["ore", "metal:copper", "natural"]),
         (name: "gold_ore", texture_variety: (turn: true, mirror: true), textures: All("gold_ore"), host: "stone", hardness: 3.0, color: (200, 180, 80), rarity: Uncommon, tags: ["ore", "metal:gold", "natural"]),
