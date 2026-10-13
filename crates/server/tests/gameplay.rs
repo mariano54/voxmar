@@ -5042,3 +5042,38 @@ fn an_hv_hall_runs_a_processing_array_and_an_induction_smelter_on_one_cable() {
     assert!(powered(&machine_says(&mut client, &at(array), "making", 20)));
     assert!(powered(&machine_says(&mut client, &at(smelter), "making", 20)));
 }
+
+/// A relic from a chest says it is worn and what repairs it; with that in hand, using it
+/// spends the repair and makes it the machine it is of.
+#[test]
+fn a_worn_machine_says_what_repairs_it_and_is_made_whole_by_it() {
+    let mut client = Client::join();
+    let p = client.position.floor().as_ivec3();
+    let at = p + IVec3::new(2, 0, 0);
+    let (worn, whole) = (client.content.blocks.expect("base:worn_beam_engine"), client.content.blocks.expect("base:beam_engine"));
+    let relic = client.content.machines.relic(worn).cloned().expect("a relic");
+    let (plate, count) = (relic.repair.0, relic.repair.1);
+    client.ok("/clear");
+    client.ok(&format!("/setblock {} {} {} worn_beam_engine", at.x, at.y, at.z));
+    client.pump_until(|c| c.world.block(at) == Some(worn) && c.inventory.slots.iter().all(Option::is_none));
+    // Empty-handed it says it is worn, how much of its speed it keeps, and what repairs it.
+    let said = client.ok(&format!("/machine {} {} {}", at.x, at.y, at.z));
+    assert!(said.contains("Worn:") && said.contains("50%") && said.contains(&format!("{count} × Iron Plate")), "{said}");
+    use_machine(&mut client, at);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Worn:")));
+    assert_eq!(client.world.block(at), Some(worn), "nothing in hand repairs nothing");
+    // One plate short of the repair does nothing either, and is kept.
+    client.ok(&format!("/give iron_plate {}", count - 1));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == plate));
+    use_machine(&mut client, at);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Worn:")));
+    assert_eq!(client.world.block(at), Some(worn));
+    // Enough, and it is whole, the repair used up.
+    client.ok("/give iron_plate 1");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().filter(|s| s.item == plate).map(|s| s.count as u32).sum::<u32>() == count as u32);
+    use_machine(&mut client, at);
+    client.pump_until(|c| c.world.block(at) == Some(whole) && c.inventory.slots.iter().all(Option::is_none));
+    assert!(client.chat.iter().any(|(_, t)| t.contains("Repaired") && t.contains("Beam Engine")), "{:?}", client.chat);
+    let said = client.ok(&format!("/machine {} {} {}", at.x, at.y, at.z));
+    assert!(!said.contains("Worn:"), "{said}");
+}

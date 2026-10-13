@@ -24,6 +24,20 @@
             name: "steam_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "treasure_chest_side"),
             hardness: -1.0, color: (120, 120, 125), tags: ["locked", "wood"],
         ),
+        // Relics (machines.ron's `relics`): worn gate machines found in chests, at half
+        // rate until repaired into the machine they are of.
+        (
+            name: "worn_bloomery", sound: Stone, textures: Sides(top: "worn_kiln_bricks", bottom: "worn_kiln_bricks", side: "worn_bloomery_side"),
+            hardness: 3.0, color: (140, 85, 60), light: 6, rarity: Rare, tags: ["machine", "multiblock_core", "heat", "building", "relic"],
+        ),
+        (
+            name: "worn_beam_engine", sound: Stone, textures: Sides(top: "worn_beam_engine_top", bottom: "worn_iron_casing", side: "worn_beam_engine_side"),
+            hardness: 3.5, color: (100, 95, 85), rarity: Rare, tags: ["machine", "building", "relic"],
+        ),
+        (
+            name: "worn_dynamo", sound: Stone, textures: Sides(top: "worn_dynamo_top", bottom: "worn_iron_casing", side: "worn_dynamo_side"),
+            hardness: 3.5, color: (110, 90, 75), rarity: Rare, tags: ["machine", "building", "relic"],
+        ),
     ],
     families: [
         // Lockpicks, one an age: bone, then each age's metal.

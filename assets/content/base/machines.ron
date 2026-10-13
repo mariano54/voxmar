@@ -99,6 +99,15 @@
     // say, and the tag of items (machines) laid against a bin rather than put in it. A later
     // package's `rules` replaces these.
     rules: Some((chute_burst: 1.0, slots: 3, machine_tag: "machine")),
+    // Relics (treasure.ron puts them in chests): worn gate machines that work at `rate` of
+    // the machine they are `of` until `repair` is used on them, which makes them it. `age`
+    // is that machine's age: a chest holds one at most an age ahead of its own, two only
+    // one chest in 100 or rarer.
+    relics: [
+        (block: "worn_bloomery", of: "bloomery", age: 3, rate: 0.5, repair: ("bronze_plate", 2)),
+        (block: "worn_beam_engine", of: "beam_engine", age: 4, rate: 0.5, repair: ("iron_plate", 4)),
+        (block: "worn_dynamo", of: "dynamo", age: 5, rate: 0.5, repair: ("copper_wire", 4)),
+    ],
     // Kept animals that walk a treadwheel: the big, steady grazers. A later package may
     // add to them, or take one away with `not_walkers`.
     walkers: ["aurochs", "wild_horse", "camel", "bison"],

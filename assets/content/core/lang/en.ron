@@ -336,6 +336,8 @@
     "machine.overloaded": "{machine}: a cable on this network is too weak for its voltage.",
     "machine.incomplete": "{machine}: its structure is not complete.",
     "machine.network": "{machine}: {supply} power offered, {demand} asked.",
+    "machine.worn": "Worn: it works at {rate}% of its speed. Use {count} × {item} on it to repair it.",
+    "machine.repaired": "Repaired: it is a {machine} now.",
     "machine.chute": "{machine}: moves up to {rate} items a second.",
     "machine.bin": "{machine}: holds {count} items.",
     "machine.idle": "{machine}: idle.",

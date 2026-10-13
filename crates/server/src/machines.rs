@@ -298,6 +298,9 @@ impl Server {
     /// what it made comes out; then they are told how it is doing.
     pub(crate) fn use_machine(&mut self, agent: PlayerId, pos: IVec3) {
         let machines = self.content.machines.clone();
+        if self.repair_relic(agent, pos) {
+            return;
+        }
         // What the world gives it now, so what it says as things go in is so.
         let sites = self.machine_sites();
         self.survey_machine(pos, &sites, 0.0);
@@ -361,14 +364,51 @@ impl Server {
             }
             None => lines.push(self.machine_words(&view)),
         }
+        lines.extend(self.worn_words(view.block));
         let player = &self.players[&agent];
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::Lines(lines) });
+    }
+
+    /// If the machine at `pos` is a relic and `agent` holds what repairs it, uses that up
+    /// and makes it the machine it is a relic of, keeping all it held and its work.
+    fn repair_relic(&mut self, agent: PlayerId, pos: IVec3) -> bool {
+        let machines = self.content.machines.clone();
+        let Some((block, _)) = self.factory.get(pos) else { return false };
+        let Some(relic) = machines.relic(block).cloned() else { return false };
+        let Some(player) = self.players.get_mut(&agent) else { return false };
+        let selected = player.selected;
+        let (item, count) = relic.repair;
+        if !player.inventory.get(selected).is_some_and(|s| s.item == item && s.count >= count) {
+            return false;
+        }
+        player.inventory.take(selected, count);
+        player.changed(traits::INVENTORY);
+        player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("machine.repaired").with("machine", Words::Block(self.content.blocks.def(relic.of).name.clone())) });
+        // Out of the factory first, so changing the block drops nothing; then back in as
+        // the machine it is of, with what it held.
+        let (_, state) = self.factory.remove(pos).expect("the relic is in the factory");
+        self.set_block(pos, relic.of);
+        self.factory.insert_state(pos, relic.of, state, &machines);
+        let sites = self.machine_sites();
+        self.survey_machine(pos, &sites, 0.0);
+        true
     }
 
     /// How the machine at `pos` is doing, in a line, if there is one (`/machine`).
     pub(crate) fn machine_status(&self, pos: IVec3) -> Option<Words> {
         let view = self.factory.view(pos, &self.content.machines)?;
-        Some(self.machine_words(&view))
+        let words = self.machine_words(&view);
+        Some(match self.worn_words(view.block) {
+            Some(worn) => Words::Lines(vec![words, worn]),
+            None => words,
+        })
+    }
+
+    /// A relic says it is worn, how much of its work it keeps and what repairs it.
+    fn worn_words(&self, block: BlockId) -> Option<Words> {
+        let relic = self.content.machines.relic(block)?;
+        let item = Words::Block(self.content.blocks.def(relic.repair.0).name.clone());
+        Some(Words::key("machine.worn").with("rate", Words::text((relic.rate * 100.0).round())).with("count", Words::text(relic.repair.1)).with("item", item))
     }
 
     /// How a machine is doing, in a line.

@@ -323,6 +323,8 @@
     "machine.overloaded": "{machine}：この回路の電線が電圧に耐えられない。",
     "machine.incomplete": "{machine}：構造が完成していない。",
     "machine.network": "{machine}：供給{supply}、需要{demand}。",
+    "machine.worn": "古びていて、本来の{rate}%の速さで動きます。{item}を{count}個使うと直せます。",
+    "machine.repaired": "修理しました。{machine}になりました。",
     "machine.chute": "{machine}：毎秒最大{rate}個を運ぶ。",
     "machine.bin": "{machine}：{count}個入っている。",
     "machine.idle": "{machine}：停止中。",

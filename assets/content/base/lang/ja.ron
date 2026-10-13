@@ -1158,4 +1158,7 @@
     "block.base.iron_lockpick": "鉄のロックピック",
     "block.base.chute": "シュート",
     "block.base.conveyor": "コンベア",
+    "block.base.worn_bloomery": "古びた塊鉄炉",
+    "block.base.worn_beam_engine": "古びたビームエンジン",
+    "block.base.worn_dynamo": "古びた発電機",
 }

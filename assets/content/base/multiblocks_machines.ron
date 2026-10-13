@@ -15,7 +15,7 @@
                 ["kkk", "k k", "kkk"],
                 ["kkk", "k k", "kkk"],
             ],
-            key: {'k': "kiln_bricks", 'B': "bloomery", 'b': "bellows"},
+            key: {'k': "kiln_bricks", 'B': "bloomery|worn_bloomery", 'b': "bellows"},
             core: 'B',
         ),
         // The Coke Oven: a sealed chamber of kiln bricks three on a side, hollow inside,

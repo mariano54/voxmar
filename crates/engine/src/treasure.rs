@@ -17,6 +17,9 @@ use crate::loot::{Loot, Resolved};
 
 /// The rarest a find may be: one chest in this many (the design's floor).
 pub const RAREST: f32 = 1.0 / 400.0;
+/// The most often a relic two ages ahead of its chest may come: the design's "very rare
+/// roll". One age ahead is as often as a table likes; three, never.
+pub const TWO_AGES_AHEAD: f32 = 1.0 / 100.0;
 /// The tag every locked chest block carries, which the `Locked` requirement looks for.
 pub const LOCKED_TAG: &str = "locked";
 
@@ -126,6 +129,13 @@ pub struct Table {
     pub one_of: Vec<(f32, (u8, u8), Vec<BlockId>)>,
 }
 
+impl Table {
+    /// Everything it can give, with the share of chests each comes in.
+    pub fn finds(&self) -> impl Iterator<Item = (BlockId, f32)> + '_ {
+        let loot = self.loot.iter().map(|r| (r.item, r.loot.chance));
+        loot.chain(self.one_of.iter().flat_map(|(chance, _, items)| items.iter().map(move |&i| (i, chance / items.len() as f32))))
+    }
+}
 
 /// What a lockpick does to a chest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

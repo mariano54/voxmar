@@ -332,14 +332,36 @@ impl Content {
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
+        // A relic of a multiblock's core stands in its place, or it would never work.
+        for relic_block in blocks.ids().filter(|&b| machines.relic(b).is_some()) {
+            let of = machines.relic(relic_block).map(|r| r.of).expect("a relic");
+            for structure in multiblocks.with_core(of) {
+                if !multiblocks.with_core(relic_block).any(|m| m.name == structure.name) {
+                    return Err(RegistryError(format!("`{}` is a relic of `{}`, the core of {}, which does not take it", blocks.def(relic_block).name, blocks.def(of).name, structure.name)));
+                }
+            }
+        }
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
         }
         let value = crate::value::Value::merge(value);
         let limits = stack_limits(&blocks, &stacking)?;
         let treasure = crate::treasure::Treasure::new(treasure, &blocks, &value, &limits, &mut notes)?;
-        // An opened chest becomes a bin with room for all it can give.
+        // An opened chest becomes a bin with room for all it can give, and a relic in it is at
+        // most one age ahead of it, two only on a very rare roll.
         for (block, chest) in treasure.chests() {
+            for (item, chance) in treasure.tables[chest.table].finds() {
+                let Some(relic) = machines.relic(item) else { continue };
+                let ahead = relic.age.saturating_sub(chest.age);
+                if ahead > 2 || (ahead == 2 && chance > crate::treasure::TWO_AGES_AHEAD * 1.001) {
+                    return Err(RegistryError(format!(
+                        "treasure.ron: `{}` holds `{}`, {ahead} ages ahead, in one chest in {:.0}; one age ahead is the most, two only one chest in 100 or rarer",
+                        blocks.def(block).name,
+                        blocks.def(item).name,
+                        1.0 / chance
+                    )));
+                }
+            }
             let room = machines.get(chest.opens_to).map_or(0, |m| m.bin_slots());
             let most = treasure.most_stacks(chest);
             if room < most {

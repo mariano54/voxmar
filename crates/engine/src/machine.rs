@@ -179,6 +179,35 @@ pub struct MachineFile {
     /// How the factory itself runs; a later package's replaces it.
     #[serde(default)]
     pub rules: Option<FactoryRules>,
+    /// Relics: worn machines found in treasure (`treasure.ron`), working as the machine
+    /// they are a relic `of` at `rate` of its speed or power until repaired.
+    #[serde(default)]
+    pub relics: Vec<RelicDef>,
+}
+
+/// A relic machine (`relics` in `machines.ron`).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelicDef {
+    pub block: String,
+    /// The machine it is a worn one of.
+    pub of: String,
+    /// The age that machine belongs to (1 Nomad, 2 Farm, 3 Bronze ...), which says how far
+    /// ahead of a chest's age it may be found.
+    pub age: u8,
+    /// The share of that machine's speed (a processor) or power (a generator) it works at.
+    pub rate: f32,
+    /// What repairs it into that machine, used up: an item and how many.
+    pub repair: (String, u8),
+}
+
+/// A relic machine, resolved.
+#[derive(Clone, Debug)]
+pub struct Relic {
+    pub of: BlockId,
+    pub age: u8,
+    pub rate: f32,
+    pub repair: (BlockId, u8),
 }
 
 /// How the factory runs (`rules` in `machines.ron`).
@@ -473,6 +502,8 @@ pub struct MachineRegistry {
     pub sources: SourceRules,
     /// How the factory runs.
     pub rules: FactoryRules,
+    /// Worn machines, by block.
+    relics: FxHashMap<BlockId, Relic>,
 }
 
 impl MachineRegistry {
@@ -487,6 +518,11 @@ impl MachineRegistry {
         }
         for walker in file.walkers.iter_mut().chain(&mut file.not_walkers) {
             qualify(namespace, walker);
+        }
+        for relic in &mut file.relics {
+            qualify(namespace, &mut relic.block);
+            qualify(namespace, &mut relic.of);
+            qualify(namespace, &mut relic.repair.0);
         }
         Ok(file)
     }
@@ -534,7 +570,9 @@ impl MachineRegistry {
             let byproducts = def.byproducts.iter().map(|(name, n, chance)| Ok((item(name)?, (*n).max(1), chance.clamp(0.0, 1.0)))).collect::<Result<_, RegistryError>>()?;
             registry.processes.push(Process { kind: def.kind.clone(), inputs, outputs, byproducts, seconds: def.seconds, tier: def.tier });
         }
+        let mut relics = Vec::new();
         for file in files {
+            relics.extend(file.relics.iter().cloned());
             for def in file.machines {
                 let block = blocks.id(&def.block).ok_or_else(|| RegistryError(format!("machine: no block `{}`", def.block)))?;
                 let processes = match &def.role {
@@ -571,6 +609,30 @@ impl MachineRegistry {
                 registry.rules = rules;
             }
         }
+        // Relics: the machine they are of, at their rate, a later package's replacing an
+        // earlier one's of the same block.
+        let mut seen = rustc_hash::FxHashSet::default();
+        for def in relics.into_iter().rev().filter(|r| seen.insert(r.block.clone())) {
+            let bad = |what: String| RegistryError(format!("relic {}: {what}", def.block));
+            let block = blocks.id(&def.block).ok_or_else(|| bad("no such block".into()))?;
+            let of = blocks.id(&def.of).ok_or_else(|| bad(format!("no block `{}`", def.of)))?;
+            let repair = blocks.id(&def.repair.0).ok_or_else(|| bad(format!("no item `{}` repairs it", def.repair.0)))?;
+            if !(def.rate > 0.0 && def.rate < 1.0) || def.age == 0 || def.repair.1 == 0 {
+                return Err(bad("needs a rate between 0 and 1, an age from 1 and a repair of at least one item".into()));
+            }
+            let Some(machine) = registry.get(of).cloned() else { return Err(bad(format!("`{}` is no machine", def.of))) };
+            let mut role = machine.role.clone();
+            match &mut role {
+                Role::Processor { speed, .. } => *speed *= def.rate,
+                Role::Generator { power, .. } => *power *= def.rate,
+                _ => return Err(bad("only processors and generators wear".into())),
+            }
+            if registry.by_block.insert(block, registry.machines.len()).is_some() {
+                return Err(bad("is a machine already".into()));
+            }
+            registry.machines.push(Machine { block, role, processes: machine.processes.clone() });
+            registry.relics.insert(block, Relic { of, age: def.age, rate: def.rate, repair: (repair, def.repair.1) });
+        }
         // Processors that do not say how many stacks they hold take the factory's default.
         let slots = registry.rules.slots.max(1);
         for machine in &mut registry.machines {
@@ -588,6 +650,11 @@ impl MachineRegistry {
     /// The machine a block is, if it is one.
     pub fn get(&self, block: BlockId) -> Option<&Machine> {
         self.by_block.get(&block).map(|&i| &self.machines[i])
+    }
+
+    /// The relic `block` is, if it is one.
+    pub fn relic(&self, block: BlockId) -> Option<&Relic> {
+        self.relics.get(&block)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Machine> {
@@ -885,5 +952,50 @@ mod tests {
             }
         }
         assert!(checked >= 2, "copper and iron at least");
+    }
+    /// The game's relics work as the machine they are of at their rate, are machines of their
+    /// own (so a chest can hold them and a cable can join them), and are refused when they
+    /// could not wear: no such machine, a rate that is not between 0 and 1, a conduit.
+    #[test]
+    fn a_relic_works_at_its_rate_of_the_machine_it_is_of() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let id = |name: &str| blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("no {name}"));
+        let mut seen = 0;
+        for block in blocks.ids() {
+            let Some(relic) = machines.relic(block) else { continue };
+            seen += 1;
+            let (worn, whole) = (machines.get(block).expect("a relic is a machine"), machines.get(relic.of).expect("the machine it is of"));
+            match (&worn.role, &whole.role) {
+                (Role::Processor { speed: a, .. }, Role::Processor { speed: b, .. }) => assert!((a - b * relic.rate).abs() < 1e-5, "{}", blocks.def(block).name),
+                (Role::Generator { power: a, .. }, Role::Generator { power: b, .. }) => assert!((a - b * relic.rate).abs() < 1e-5, "{}", blocks.def(block).name),
+                other => panic!("{}: {other:?}", blocks.def(block).name),
+            }
+            assert_eq!(worn.processes, whole.processes, "it does the same work, slower");
+            assert!(relic.rate > 0.0 && relic.rate < 1.0 && relic.repair.1 > 0);
+        }
+        assert_eq!(seen, 3, "a worn bloomery, beam engine and dynamo");
+        assert_eq!(machines.relic(id("worn_dynamo")).map(|r| r.of), Some(id("dynamo")));
+        assert!(machines.relic(id("dynamo")).is_none());
+        // The load checks.
+        let blocks = blocks_with_relic();
+        let make = |relics: &str| {
+            let file = MachineRegistry::read("t", &format!(r#"(machines: [(block: "crusher", role: Processor(kinds: ["crush"], speed: 2.0, yield: 1.0, power: Some((Electric, 8.0)), tier: 1)), (block: "cable", role: Conduit(carrier: Electric, tier: 1))], relics: [{relics}])"#)).unwrap();
+            let processes = MachineRegistry::read_processes("t", r#"(recipes: [(kind: "crush", inputs: [("ore", 1)], outputs: [("dust", 1)], seconds: 10.0)])"#).unwrap();
+            MachineRegistry::new(vec![file], vec![processes], &blocks)
+        };
+        let good = r#"(block: "worn_crusher", of: "crusher", age: 2, rate: 0.5, repair: ("ore", 2))"#;
+        let worn = make(good).unwrap();
+        let worn_crusher = worn.get(blocks.id("t:worn_crusher").unwrap()).unwrap();
+        assert!(matches!(worn_crusher.role, Role::Processor { speed, .. } if (speed - 1.0).abs() < 1e-6), "half of 2");
+        assert!(make(&good.replace("0.5", "1.0")).is_err() && make(&good.replace("0.5", "0.0")).is_err(), "a rate between 0 and 1");
+        assert!(make(&good.replace(r#"of: "crusher""#, r#"of: "cable""#)).is_err(), "only processors and generators wear");
+        assert!(make(&good.replace(r#"of: "crusher""#, r#"of: "nothing""#)).is_err(), "of a machine that exists");
+        assert!(make(&good.replace("age: 2", "age: 0")).is_err() && make(&good.replace(r#"("ore", 2)"#, r#"("ore", 0)"#)).is_err());
+    }
+
+    fn blocks_with_relic() -> BlockRegistry {
+        let block = |name: &str| BlockDef { name: format!("t:{name}"), ..Default::default() };
+        BlockRegistry::new(vec![block("ore"), block("dust"), block("crusher"), block("cable"), block("worn_crusher")]).unwrap()
     }
 }

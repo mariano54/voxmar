@@ -1161,4 +1161,7 @@
     "block.base.bronze_treasure_chest": "Bronze Treasure Chest",
     "block.base.iron_treasure_chest": "Iron Treasure Chest",
     "block.base.steam_treasure_chest": "Steam Treasure Chest",
+    "block.base.worn_bloomery": "Worn Bloomery",
+    "block.base.worn_beam_engine": "Worn Beam Engine",
+    "block.base.worn_dynamo": "Worn Dynamo",
 }

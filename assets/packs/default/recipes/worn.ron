@@ -1,0 +1,33 @@
+// Relics (content: base/blocks_treasure.ron, machines.ron's `relics`): a gate machine
+// found worn in a chest is its own texture under `shape/worn`, a stamp of cracks, rust
+// streaks and soot. Placeholders for the pack to redraw.
+(
+    legend: {'C': "#1c1612", 'c': "#3a2e24", 'r': "#7a3c1a", 'R': "#a0582a", 'o': "#c07a3a", 's': "#2a2622"},
+    textures: {
+        "shape/worn": (layers: [Grid(rows: [
+            "s..............s",
+            ".C.........r....",
+            "..C........R....",
+            "..cC.......r....",
+            "....C......o....",
+            "....cC.....r....",
+            "......C....R....",
+            "......cC...r..s.",
+            "........C..r....",
+            "....r...C.......",
+            "....R...cC......",
+            "....r.....C.....",
+            "....o.....cC....",
+            "..........r.C...",
+            "s.........R..C.s",
+            "ss.......s.r...s",
+        ])]),
+        "block/worn_kiln_bricks": (base: "block/kiln_bricks", layers: [Stamp(texture: "shape/worn")]),
+        "block/worn_bloomery_side": (base: "block/bloomery_side", layers: [Stamp(texture: "shape/worn")]),
+        "block/worn_iron_casing": (base: "block/iron_casing", layers: [Stamp(texture: "shape/worn")]),
+        "block/worn_beam_engine_side": (base: "block/beam_engine_side", layers: [Stamp(texture: "shape/worn")]),
+        "block/worn_beam_engine_top": (base: "block/beam_engine_top", layers: [Stamp(texture: "shape/worn", mirror: true)]),
+        "block/worn_dynamo_side": (base: "block/dynamo_side", layers: [Stamp(texture: "shape/worn")]),
+        "block/worn_dynamo_top": (base: "block/dynamo_top", layers: [Stamp(texture: "shape/worn", mirror: true)]),
+    },
+)
