@@ -4,8 +4,8 @@
 // altar (a block tagged `altar`, base:stone_altar) fills them; with no prayer on and no blow
 // either way for `calm` seconds, a point comes back every `regain` seconds. One ward is on
 // at a time, and one boost of each stat: the last turned on puts out the one it shares a
-// kind with. A ward stops `ward` of a creature's blows in its styles (`ward_boss` a boss's,
-// `ward_player` a player's), so food still matters with one up.
+// kind with. A ward stops `ward` of a creature's blows in its styles, so food still
+// matters with one up (bosses and players' blows get their own shares when there are any).
 //
 // The book holds what fights do today; ranged and magic boosts (Steady Eye, Spark Will, Far
 // Eye, Flame Will, Falcon Eye, Star Will) come with ranged and magic attacks, Lingering with
@@ -17,8 +17,6 @@
         calm: 10.0,
         regain: 20.0,
         ward: 0.8,
-        ward_boss: 0.5,
-        ward_player: 0.4,
         // Magic experience a bone offered at an altar gives (the wiki: 16 at a wayside
         // shrine), times what the offering is worth in bones.
         offer_xp: 16.0,

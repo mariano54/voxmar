@@ -132,10 +132,9 @@ rules! {
     /// every `regain` seconds.
     calm: f32 = 10.0,
     regain: f32 = 20.0,
-    /// The share of a blow in its style a ward stops: from a creature, a boss, a player.
+    /// The share of a creature's blow in its style a ward stops. (Bosses and players' blows get
+    /// their own shares when there are bosses and player fights to ward off.)
     ward: f32 = 0.8,
-    ward_boss: f32 = 0.5,
-    ward_player: f32 = 0.4,
     /// Magic experience for each bone offered at an altar, times the offering's worth.
     offer_xp: f32 = 16.0,
 }
@@ -201,8 +200,7 @@ impl PrayerRegistry {
             offerings.extend(file.offerings);
         }
         let wrong = |what: String| RegistryError(format!("prayers.ron: {what}"));
-        let shares = [rules.ward, rules.ward_boss, rules.ward_player];
-        if shares.iter().any(|s| !(0.0..=1.0).contains(s)) || rules.points < 1.0 || rules.per_level < 0.0 || rules.calm < 0.0 || rules.regain <= 0.0 || rules.offer_xp < 0.0 {
+        if !(0.0..=1.0).contains(&rules.ward) || rules.points < 1.0 || rules.per_level < 0.0 || rules.calm < 0.0 || rules.regain <= 0.0 || rules.offer_xp < 0.0 {
             return Err(wrong("a ward stops a share from 0 to 1, points start at 1 or more, and no time or experience is negative".into()));
         }
         if prayers.len() > u16::MAX as usize {
@@ -377,7 +375,7 @@ mod tests {
     #[test]
     fn later_packages_patch_the_rules_and_replace_a_prayer_in_its_place() {
         let book = book();
-        assert_eq!((book.rules.calm, book.rules.ward, book.rules.ward_boss), (8.0, 0.75, 0.5));
+        assert_eq!((book.rules.calm, book.rules.ward), (8.0, 0.75));
         assert_eq!(book.id("base:bark_skin"), Some(PrayerId(0)));
         assert_eq!(book.get(PrayerId(0)).unwrap().drain, 4.0);
         assert_eq!(book.most(80), 90.0, "10 + Magic");

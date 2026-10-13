@@ -350,7 +350,7 @@
     "prayer.effect.boost.defence": "防御 +{percent}%。",
     "prayer.effect.boost.strength": "近接ダメージ +{percent}%。",
     "prayer.effect.boost.accuracy": "近接命中 +{percent}%。",
-    "prayer.effect.ward": "{styles}の攻撃の{percent}%を防ぐ（ボスは{boss}%、プレイヤーは{player}%）。",
+    "prayer.effect.ward": "{styles}の攻撃の{percent}%を防ぐ。",
     "prayer.effect.keep": "死んでもアイテムを{count}個多く持ち帰る。",
     "prayer.effect.mending": "体力が{times}倍の速さで戻る。",
     "prayer.effect.last_breath": "攻撃で体力が{below}%を下回ると、{heal}%回復し、祈りの力はすべて尽きる。",

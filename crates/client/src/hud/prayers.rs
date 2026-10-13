@@ -188,9 +188,7 @@ pub fn describe(lang: &Lang, book: &PrayerRegistry, def: &PrayerDef) -> String {
             Effect::Boost { stat, share } => lang.format(&format!("prayer.effect.boost.{}", stat.key()), &[("percent", &percent(*share))]),
             Effect::Ward { styles } => {
                 let names: Vec<String> = styles.iter().map(|style| lang.get(&format!("item.style.{}", style.key())).to_owned()).collect();
-                let args: [(&str, &dyn std::fmt::Display); 4] =
-                    [("percent", &percent(rules.ward)), ("styles", &names.join(lang.get("language.comma"))), ("boss", &percent(rules.ward_boss)), ("player", &percent(rules.ward_player))];
-                lang.format("prayer.effect.ward", &args)
+                lang.format("prayer.effect.ward", &[("percent", &percent(rules.ward)), ("styles", &names.join(lang.get("language.comma")))])
             }
             Effect::Keep(more) => lang.format("prayer.effect.keep", &[("count", more)]),
             Effect::Mending(times) => lang.format("prayer.effect.mending", &[("times", times)]),
@@ -397,7 +395,7 @@ mod tests {
         let english = Lang::load(&assets().join("content"), "en");
         let find = |name: &str| book.get(book.id(name).unwrap()).unwrap();
         assert_eq!(describe(&english, book, find("base:bark_skin")), "Defence +5%.");
-        assert_eq!(describe(&english, book, find("base:ward_melee")), "Stops 80% of stab, slash, crush blows (50% from bosses, 40% from players).");
+        assert_eq!(describe(&english, book, find("base:ward_melee")), "Stops 80% of stab, slash, crush blows.");
         assert_eq!(describe(&english, book, find("base:keepsake")), "Death keeps 1 more item.");
         assert_eq!(describe(&english, book, find("base:mending")), "Health comes back 2 times as fast.");
     }

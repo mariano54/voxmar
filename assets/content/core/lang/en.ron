@@ -363,7 +363,7 @@
     "prayer.effect.boost.defence": "Defence +{percent}%.",
     "prayer.effect.boost.strength": "Melee damage +{percent}%.",
     "prayer.effect.boost.accuracy": "Melee accuracy +{percent}%.",
-    "prayer.effect.ward": "Stops {percent}% of {styles} blows ({boss}% from bosses, {player}% from players).",
+    "prayer.effect.ward": "Stops {percent}% of {styles} blows.",
     "prayer.effect.keep": "Death keeps {count} more item.",
     "prayer.effect.mending": "Health comes back {times} times as fast.",
     "prayer.effect.last_breath": "Left under {below}% health by a blow, you heal {heal}% of it, and every prayer point goes.",
