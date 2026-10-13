@@ -4628,7 +4628,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::render::atmosphere::Atmosphere;
     use crate::render::cracks::Crack;
-    // The rig stands apart from everything else: stone eleven blocks across and sixteen deep,
+    // The rig stands apart from everything else: stone eleven blocks across and seventeen deep,
     // level with the test ground, with a shaft down its middle and a sealed room below.
     let middle = gate.feet + IVec3::new(-24, 0, 0);
     let top = gate.feet.y - 1;
@@ -4677,7 +4677,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let net = world.resource::<Net>();
             let (x, z) = (middle.x, middle.z);
             for line in [
-                format!("fill {} {} {} {} {} {} stone", x - 5, top - 15, z - 5, x + 5, top, z + 5),
+                format!("fill {} {} {} {} {} {} stone", x - 5, top - 16, z - 5, x + 5, top, z + 5),
                 format!("fill {x} {} {z} {x} {top} {z} air", top - 11),
                 format!("fill {} {} {} {} {} {} air", x - 4, top - 15, z - 1, x + 4, top - 13, z + 1),
                 "time set noon".to_owned(),
@@ -4691,7 +4691,8 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         1 => {
             let built = world.resource::<ClientWorld>().block(shaft_foot).is_some_and(|b| b.is_air())
                 && world.resource::<ClientWorld>().block(shaft_foot - IVec3::Y).is_some_and(|b| !b.is_air())
-                && world.resource::<ClientWorld>().block(wall).is_some_and(|b| !b.is_air());
+                && world.resource::<ClientWorld>().block(wall).is_some_and(|b| !b.is_air())
+                && world.resource::<ClientWorld>().block(room_floor - IVec3::Y).is_some_and(|b| !b.is_air());
             let foggy = shown.ground_fog > 0.3 || shown.fog > 0.3;
             if !(built && foggy) {
                 if gate.server_in_phase() > 20.0 {
