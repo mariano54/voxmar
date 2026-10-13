@@ -4696,6 +4696,9 @@ enum View {
     Debug,
     Inventory,
     Character,
+    /// The prayer book over the character screen, and the strip over the hotbar naming as
+    /// many prayers as can be on together.
+    Prayers,
     /// The character screen with one skill's guide open.
     Guide(usize),
     /// The journal on one page.
@@ -4738,7 +4741,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Recipes(3), View::Character]
+        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Recipes(3), View::Character, View::Prayers]
             .into_iter()
             .chain((0..skills).map(View::Guide))
             .chain([View::Quests, View::FirstNight])
@@ -4794,6 +4797,35 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     gate.advance(now);
 }
 
+/// The player's own prayers while [`fit_prayers`] shows others, and those it shows.
+#[derive(Resource)]
+struct KeptPrayers(crate::fight::Prayers, crate::fight::Prayers);
+
+/// With `full`, the strip over the hotbar shows as many prayers as can be on together (each
+/// turned on in the book's order, as the server turns them on) and its meter half full;
+/// without, the player's own come back, unless the server has told new ones since.
+fn fit_prayers(world: &mut World, full: bool) {
+    if !full {
+        if let Some(KeptPrayers(kept, shown)) = world.remove_resource::<KeptPrayers>() {
+            let mut fighting = world.resource_mut::<crate::fight::Fighting>();
+            if fighting.prayers == shown {
+                fighting.prayers = kept;
+            }
+        }
+        return;
+    }
+    if world.contains_resource::<KeptPrayers>() {
+        return;
+    }
+    let book = &world.resource::<Launch>().content.prayers;
+    let on = book.all().fold(Vec::new(), |on, (id, _)| book.turn_on(&on, id));
+    let kept = world.resource::<crate::fight::Fighting>().prayers.clone();
+    let most = kept.most.max(10);
+    let shown = crate::fight::Prayers { points: most / 2, most, on };
+    world.resource_mut::<crate::fight::Fighting>().prayers = shown.clone();
+    world.insert_resource(KeptPrayers(kept, shown));
+}
+
 /// Opens one view of [`fit`]'s tour, or closes every screen.
 fn show_view(world: &mut World, view: Option<View>, now: f32) {
     let screen = match view {
@@ -4818,7 +4850,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
     (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open, ui.journal_open, ui.quests_open) = (false, false, false, false, false, false);
     match view {
         Some(View::Inventory) => ui.inventory_open = true,
-        Some(View::Character | View::Guide(_)) => ui.character_open = true,
+        Some(View::Character | View::Prayers | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
         Some(View::Journal(_)) => ui.journal_open = true,
         Some(View::Quests | View::FirstNight) => ui.quests_open = true,
@@ -4829,6 +4861,11 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
     if !matches!(view, Some(View::Recipes(_))) {
         ui.recipes_open = false;
     }
+    let book = matches!(view, Some(View::Prayers));
+    if world.resource::<crate::hud::prayers::PrayerBook>().0 != book {
+        world.resource_mut::<crate::hud::prayers::PrayerBook>().0 = book;
+    }
+    fit_prayers(world, book);
     if let Some(View::Quests) = view {
         // A quest still waiting on another, so its page reads so, beside those done and open.
         use crate::hud::quests::{QuestView, Standing, standing};
