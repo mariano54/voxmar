@@ -4525,28 +4525,40 @@ mod tests {
         let snowy = ["base:snow_block", "base:powder_snow", "base:snowy_grass_block"].map(|n| registry.expect(n));
         // Some world must have a desert, or the test would pass for want of one.
         let mut any_desert = false;
-        for seed in [1, 3, 0x5eed] {
+        use rayon::prelude::*;
+        let half = SIZE * STEP / 2;
+        // Each world on its own core, and each of its columns of samples.
+        let worlds: Vec<(u64, Vec<bool>, Vec<i32>, Vec<(i32, i32, i32)>)> = [1u64, 3, 0x5eed].into_par_iter().map(|seed| {
             let world = Overworld::new(seed, registry.clone());
-            let half = SIZE * STEP / 2;
             let sampler = world.sampler(IVec2::splat(-half - 1), IVec2::splat(half + 1));
-            let mut snow = vec![false; (SIZE * SIZE) as usize];
-            let mut heights = vec![0; (SIZE * SIZE) as usize];
-            let mut deserts = Vec::new();
-            for i in 0..SIZE {
-                for j in 0..SIZE {
+            let rows: Vec<Vec<(bool, i32, bool)>> = (0..SIZE).into_par_iter().map(|i| {
+                (0..SIZE).map(|j| {
                     let (x, z) = (i * STEP - half, j * STEP - half);
                     let site = sampler.site(x, z);
                     let top = world.surface_layers(&site, x, z).top;
-                    snow[(j * SIZE + i) as usize] = snowy.contains(&top);
-                    heights[(j * SIZE + i) as usize] = site.height;
                     // Warm sand away from beaches, banks and the sea's islands is desert (cold
                     // steppes have sandy patches too).
                     let shore = world.biomes.get(site.home).has_tag("ocean");
-                    if (top == sand || top == red_sand) && site.height > SEA_LEVEL + 3 && site.river < 0.3 && !shore && site.temperature >= 17.0 {
-                        deserts.push((i, j, site.height));
+                    let desert = (top == sand || top == red_sand) && site.height > SEA_LEVEL + 3 && site.river < 0.3 && !shore && site.temperature >= 17.0;
+                    (snowy.contains(&top), site.height, desert)
+                }).collect()
+            }).collect();
+            let mut snow = vec![false; (SIZE * SIZE) as usize];
+            let mut heights = vec![0; (SIZE * SIZE) as usize];
+            let mut deserts = Vec::new();
+            for (i, row) in rows.into_iter().enumerate() {
+                for (j, (snowy, height, desert)) in row.into_iter().enumerate() {
+                    let (i, j) = (i as i32, j as i32);
+                    snow[(j * SIZE + i) as usize] = snowy;
+                    heights[(j * SIZE + i) as usize] = height;
+                    if desert {
+                        deserts.push((i, j, height));
                     }
                 }
             }
+            (seed, snow, heights, deserts)
+        }).collect();
+        for (seed, snow, heights, deserts) in worlds {
             any_desert |= !deserts.is_empty();
             for (i, j, height) in deserts {
                 for dj in -GAP..=GAP {
