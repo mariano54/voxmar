@@ -36,6 +36,9 @@ reward, shown first), tasks, after, rewards. Goals:
 | `Home` | a lit Homestead Hearth |
 | `LookUp(item)` | the recipe viewer was opened on the item (the client says so once, `ClientMessage::LookedUp`; tally `lookedup:<item>`) |
 | `Thriving(n, percent)` | the player keeps n animals right now at a condition of at least that percent (read live from the kept animals, not tallied; a newly tamed one starts at 60) |
+| `Met(kind, n)`, `Met("Kinds", n)` | dealings with wandering parties (docs/wandering.md), tallied `met:<kind>`: a line said that gave or took something, a show watched, a share of a hunt, a captive's or a guided one's thanks, a lure followed to its end; a greeting alone is none. `any` counts every kind; `Kinds` counts the kinds dealt with at least once |
+| `Prayed(prayer, n)` | prayers turned on (`prayed:<prayer>`); one already on is not turned on again |
+| `Offered(item, n)` | what was offered at an altar (`offered:<item>`), an item, `any` or a `tag:TAG` |
 
 Items and creatures may be `any` or `tag:TAG`. Rewards are `Xp(skill, xp)` and
 `Item(item, count)`. Titles and reasons are translated as `quest.<package>.<name>` and
@@ -101,3 +104,21 @@ mix and the wheat to make it from), Fresh Eggs (fry the first egg, then keep fiv
 and shears made), The Milk Pail (the pail, then the milk), A Silvery Ore (tin and copper from
 one seam), Many Kinds (three kinds, six cooked). The main line of each age (the pacing
 test's milestones) stays as it was. Rewards are unchanged.
+
+## Quests that meet the rest of the game
+
+Oct 13: sixteen quests tie the first two ages to what came after the quest book was written,
+so that what the game already does is something the book points to:
+
+- **Wanderers** (`Met`). Nomad: Folk of the Road (deal with anyone), A Kind Turn (feed the lost
+  child or the hurt hunter), Something for Something (a pedlar, tinker, berry pickers,
+  woodcutters or charcoal burners). Farm: Farmers on the Road (the harvest family, goose
+  girl, cowherd, water carriers or shepherd), Safe Home (refugees, the prison convoy or the
+  hurt traveller) and Many Travellers (five kinds). Each route names a kind, so the hint is
+  true; parties are rare, so the routes are alternatives rather than a list.
+- **Home rooms** (`Built` on a room's step). Nomad: A Bench to Work At, Pantry Shelves,
+  Company at Camp. Farm: A Proper Workshop, A Larder, A Kitchen Garden, A Full House. Each
+  room's first step is Nomad's, its second Farm's, as `effects.ron` lays them out.
+- **The altar** (`Offered`, `Prayed`). Altar Rites (three bones offered and Bark Skin turned
+  on) and A Prayer in the Fight (Ember Arm and Bark Skin on, ten creatures defeated).
+- **Cooking**: A Varied Table (meat, fish and bread together).

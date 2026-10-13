@@ -57,6 +57,9 @@ fn every_early_quest_names_things_the_content_has() {
                 Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some() || content.effects.steps().contains(name)),
                 Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
                 Goal::Level(name, _) => skill(name),
+                Goal::Met(name, _) => name == "Kinds" || name == "any" || content.wandering.find(name).is_some(),
+                Goal::Prayed(name, _) => qualified(package, name).iter().any(|name| content.prayers.id(name).is_some()),
+                Goal::Offered(name, _) => item(name),
                 _ => true,
             };
             if !known {

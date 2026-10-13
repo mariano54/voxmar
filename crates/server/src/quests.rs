@@ -138,3 +138,138 @@ impl Server {
         self.update_quests(agent);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use voxmar_engine::coords::ColumnPos;
+    use voxmar_engine::glam::{IVec3, Vec3};
+    use voxmar_engine::world::Column;
+    use voxmar_protocol::TICKS_PER_DAY;
+
+    use crate::Server;
+
+    /// A stone floor at y 199 under a morning sky, and one player in the middle: a party can
+    /// stand and talk, an altar can be prayed at, with no generated land.
+    fn fixture() -> Server {
+        let mut server = crate::test_server();
+        server.world = Default::default();
+        let stone = server.content.blocks.expect("base:stone");
+        for cx in 0..8 {
+            for cz in 0..8 {
+                let mut column = Column::default();
+                for x in 0..32 {
+                    for z in 0..32 {
+                        column.set_block(IVec3::new(x, 199, z), stone);
+                    }
+                }
+                server.world.insert(ColumnPos::new(cx, cz), std::sync::Arc::new(column));
+            }
+        }
+        server.day = TICKS_PER_DAY as f64 * 0.3;
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let mut player = crate::player::Player::new(1, connection, Vec3::new(128.5, 200.0, 128.5), 2, server.tick, server.survival.max_health, &server.config.limits);
+        (player.joined, player.name) = (true, "Tëster".into());
+        server.players.insert(1, player);
+        server
+    }
+
+    fn hold(server: &mut Server, item: &str, count: u8) {
+        let item = server.content.blocks.expect(item);
+        let p = server.players.get_mut(&1).unwrap();
+        p.selected = 0;
+        p.inventory.clear(|_| true);
+        assert_eq!(p.inventory.add(item, count), 0);
+    }
+
+    /// Starts a party of `kind` beside the player and gives back its first member.
+    fn party(server: &mut Server, kind: &str) -> u32 {
+        let event = server.content.wandering.find(kind).unwrap_or_else(|| panic!("no wandering kind `{kind}`"));
+        let spot = server.standing_spot(130, 128, 200).expect("floor");
+        let before: Vec<u32> = server.creatures.live.keys().copied().collect();
+        server.begin_event_at(Some(1), event, spot, 7, true).expect("the party fits");
+        let leads = server.content.wandering.get(event).groups[0].0;
+        let mut found = server.creatures.live.iter().filter(|&(id, c)| c.species == leads && !before.contains(id) && server.wandering.manages(*id)).map(|(&id, _)| id);
+        found.next().expect("the party's leader")
+    }
+
+    fn tally(server: &Server, key: &str) -> u32 {
+        server.players[&1].tallies.get(key).copied().unwrap_or(0)
+    }
+
+    fn done(server: &Server, quest: &str) -> bool {
+        server.players[&1].quests_done.iter().any(|q| q == quest)
+    }
+
+    #[test]
+    fn a_dealing_with_a_wanderer_counts_and_a_greeting_does_not() {
+        let mut server = fixture();
+        let pedlar = party(&mut server, "pedlar_and_hound");
+        hold(&mut server, "base:hide", 1);
+        assert!(server.meet(1, pedlar));
+        assert_eq!(tally(&server, "met:base:pedlar_and_hound"), 0, "one hide buys nothing: only a greeting");
+        hold(&mut server, "base:hide", 2);
+        assert!(server.meet(1, pedlar));
+        assert_eq!(tally(&server, "met:base:pedlar_and_hound"), 1, "two hides for twine is a dealing");
+    }
+
+    #[test]
+    fn dealing_with_travellers_finishes_the_road_quests() {
+        let mut server = fixture();
+        for quest in ["base:look_it_up", "base:timber", "base:stone_in_hand", "base:where_to_settle"] {
+            server.players.get_mut(&1).unwrap().quests_done.push(quest.into());
+        }
+        let pedlar = party(&mut server, "pedlar_and_hound");
+        hold(&mut server, "base:hide", 2);
+        assert!(server.meet(1, pedlar));
+        server.update_quests(1);
+        assert!(done(&server, "base:folk_of_the_road") && done(&server, "base:something_for_something"), "a pedlar's swap is a dealing, and a trade");
+        assert!(!done(&server, "base:a_kind_turn"), "a trade is no kindness");
+        let hunter = party(&mut server, "wounded_hunter");
+        hold(&mut server, "base:bread", 4);
+        assert!(server.meet(1, hunter));
+        server.update_quests(1);
+        assert!(done(&server, "base:a_kind_turn"), "food for a hurt hunter is");
+        assert!(!done(&server, "base:many_travellers"), "two kinds of five, and no home yet");
+        let progress = server.quest_check(1).1.into_iter().find(|s| s.name == "base:many_travellers").unwrap();
+        assert_eq!(progress.tasks[0][0], (2, 5), "kinds dealt with, out of five");
+    }
+
+    #[test]
+    fn prayers_turned_on_and_bones_offered_finish_the_altar_rites() {
+        let mut server = fixture();
+        server.players.get_mut(&1).unwrap().quests_done.push("base:a_place_to_pray".into());
+        let bark = server.content.prayers.id("base:bark_skin").expect("bark skin");
+        hold(&mut server, "base:bone", 3);
+        for _ in 0..3 {
+            server.pray_at_altar(1);
+        }
+        assert_eq!(tally(&server, "offered:base:bone"), 3);
+        server.update_quests(1);
+        assert!(!done(&server, "base:altar_rites"), "the bones, but no prayer yet");
+        server.pray(1, bark, true);
+        server.pray(1, bark, true);
+        assert_eq!(tally(&server, "prayed:base:bark_skin"), 1, "a prayer already on is not turned on again");
+        server.update_quests(1);
+        assert!(done(&server, "base:altar_rites"));
+        // Nothing to offer is nothing offered.
+        server.pray_at_altar(1);
+        assert_eq!(tally(&server, "offered:base:bone"), 3);
+    }
+
+    #[test]
+    fn the_home_room_quests_read_the_steps_the_home_reaches() {
+        let mut server = fixture();
+        for quest in ["base:look_it_up", "base:timber", "base:first_night", "base:a_bed_of_your_own", "base:torchlight", "base:make_camp", "base:a_friend_in_the_wild"] {
+            server.players.get_mut(&1).unwrap().quests_done.push(quest.into());
+        }
+        // Reaching a room's step is tallied as the home is surveyed (process.rs); the quests
+        // name those steps.
+        server.tally(1, "built", "base:home_company", 1);
+        server.update_quests(1);
+        assert!(done(&server, "base:company_at_camp"));
+        server.tally(1, "built", "base:home_pantry", 1);
+        server.update_quests(1);
+        assert!(done(&server, "base:pantry_shelves"));
+    }
+}
