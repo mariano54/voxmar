@@ -419,6 +419,8 @@
     "quest.goal.cook": "Cook {item}",
     "quest.goal.catch": "Catch {item}",
     "quest.goal.kinds": "Kinds of fish caught",
+    "quest.goal.kinds_of": "Different kinds: {page}",
+    "quest.goal.kinds_of_which": "Different kinds: {page} ({item})",
     "quest.goal.kill": "Defeat {creature}",
     "quest.goal.tame": "Tame {creature}",
     "quest.goal.pick": "Pick {item}",

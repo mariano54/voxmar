@@ -93,6 +93,24 @@ Mostly yes, with these checks:
     one; Homestead Hearth no longer waits for three biomes (Where to Settle is its own
     exploration quest).
 
+12. **Finding animals took no effort** (playtest): they were found from 16 blocks off,
+    through walls. Now an animal is found only within 3 blocks with nothing in between
+    (`seen_within` in `core/journal.ron`), for every quest that counts found animals.
+13. **Wild Harvest counted any five picks** (playtest), so one flower bed did it. It now
+    asks for five different plants (`Kinds(Plants, "any", 5)`, a general goal for N
+    different entries of a journal page).
+
+14. **Nothing said where things are, and wild wheat was nearly absent** (playtest: "no
+    help about where to find wheat"). A census (`rare_herb_census` with `WILD=wild_wheat`,
+    seeds 7 and 1) found about one tuft per 30,000 columns on plains: it grew as a flower
+    drift, so it waited on blooms and was thinned with the flowers. It now grows alone
+    and is named by the grassland biomes (`plants.ron`, `biomes.ron`): one tuft in about
+    400 columns on plains, 480 on steppe, 550 on meadows, 920 in flower meadows. Every
+    gather and find step's quest text now says where its thing is found, checked against
+    the biomes, creature habitats, ore veins and that census (wild wheat on grassland and
+    in village fields; copper and coal under their ore samples; tin below copper; herbs,
+    berries and flowers by biome; each animal by its habitat).
+
 Next (Mac): run `tools/gate` (the cloud cannot build the client's graphics stack and has
 no GPU), then play the first three days once in a fresh survival world and note where you
 stalled.

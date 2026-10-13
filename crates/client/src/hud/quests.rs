@@ -285,6 +285,15 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
             let page = locale.get(&format!("journal.page.{}", super::journal::page_name(*page))).to_owned();
             locale.format("quest.goal.discover", &[("page", &page)])
         }
+        Goal::Kinds(page, want, _) => {
+            let page_words = locale.get(&format!("journal.page.{}", super::journal::page_name(*page))).to_owned();
+            if want == "any" {
+                locale.format("quest.goal.kinds_of", &[("page", &page_words)])
+            } else {
+                let which = if matches!(page, voxmar_engine::journal::Page::Animals | voxmar_engine::journal::Page::Monsters) { creature_words(locale, content, package, want) } else { item_words(locale, content, package, want) };
+                locale.format("quest.goal.kinds_of_which", &[("page", &page_words), ("item", &which)])
+            }
+        }
         Goal::Level(skill, level) => {
             return locale.format("quest.goal.level", &[("skill", &skill_words(locale, content, skill)), ("level", level)]);
         }
@@ -935,6 +944,11 @@ mod tests {
                 let known = match goal {
                     Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
                     Goal::Catch(name, _) => name == "Kinds" || item(name),
+                    Goal::Kinds(page, name, _) => match page {
+                        voxmar_engine::journal::Page::Animals | voxmar_engine::journal::Page::Monsters => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
+                        voxmar_engine::journal::Page::Plants | voxmar_engine::journal::Page::Ores | voxmar_engine::journal::Page::Fish => item(name),
+                        _ => name == "any",
+                    },
                     Goal::Kill(name, _) | Goal::Tame(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                     Goal::Built(name, _) | Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
                     Goal::Level(skill, _) => skill_id(&content, skill).is_some(),

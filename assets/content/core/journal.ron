@@ -1,14 +1,16 @@
 // The journal (engine/src/journal.rs): what it takes to study and master an entry on each
 // page. An entry is seen when first found; each kill, catch, pick or mine counts toward
 // studied and mastered. Pages without numbers are studied some other way (a codex
-// instrument, a book) or only ever seen.
+// instrument, a book) or only ever seen. `seen_within`: for a page of creatures, how near
+// (blocks) a player must come, with nothing solid between, for one to count as found; a
+// page without it finds its creatures only by what is done to them.
 (
     pages: [
         // Ten kills show a monster's weak style, a hundred its drop table.
-        (page: Monsters, studied: 10, mastered: 100),
-        (page: Animals, studied: 10, mastered: 100),
+        (page: Monsters, studied: 10, mastered: 100, seen_within: 3.0),
+        (page: Animals, studied: 10, mastered: 100, seen_within: 3.0),
         (page: Bosses, studied: 1, mastered: 10),
-        (page: Fish, studied: 10, mastered: 100),
+        (page: Fish, studied: 10, mastered: 100, seen_within: 3.0),
         (page: Plants, studied: 10, mastered: 100),
         (page: Ores, studied: 25, mastered: 250),
         (page: Collection, studied: 10, mastered: 100),

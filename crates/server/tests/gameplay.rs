@@ -1695,6 +1695,34 @@ fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
     assert_eq!(client.world.block(far), Some(BlockId::AIR), "a flower came back on ground that was replaced");
 }
 
+/// An animal is found only from close up with nothing in between (`seen_within` in
+/// journal.ron, 3 blocks for animals): not across the floor, not through a wall right
+/// beside it, and at once when the wall goes.
+#[test]
+fn an_animal_is_found_only_from_close_up_in_plain_view() {
+    use voxmar_engine::journal::Page;
+    let mut client = on_a_test_floor();
+    let at = client.position.floor().as_ivec3();
+    let rabbit = client.content.creatures.find("rabbit").expect("rabbits in the content");
+    client.ok(&format!("/summon rabbit 1 {} {} {}", at.x + 10, at.y, at.z));
+    client.ok("/creatures hold rabbit");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
+    let found = |c: &Client| c.journal.get(Page::Animals, "base:rabbit").is_some();
+    // Eight blocks off in the open: seen, but not found.
+    client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
+    assert!(!found(&client), "a rabbit eight blocks away was found");
+    // Within three blocks, with a wall between.
+    let p = client.creatures.values().find(|v| v.species == rabbit).unwrap().position;
+    let wall = p.x.floor() as i32 - 1;
+    client.ok(&format!("/fill {wall} {} {} {wall} {} {} stone", at.y, at.z - 3, at.y + 3, at.z + 3));
+    client.tp(Vec3::new(wall as f32 - 0.35, at.y as f32, p.z));
+    client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
+    assert!(!found(&client), "a rabbit was found through a wall");
+    // The wall gone, it is found from where the player stands.
+    client.ok(&format!("/fill {wall} {} {} {wall} {} {} air", at.y, at.z - 3, at.y + 3, at.z + 3));
+    client.pump_until(found);
+}
+
 #[test]
 fn picking_any_wild_herb_gives_kitchen_herbs_and_the_herb_regrows() {
     let mut client = Client::join();
