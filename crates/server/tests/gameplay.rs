@@ -107,7 +107,7 @@ impl Client {
         let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
         let (connection, server_side) = delayed(round_trip);
         server.connections().send(server_side).unwrap();
-        Self::hello(connection, "test", server)
+        Self::hello(|| connection, "test", server)
     }
 
     /// Joins a new server over TCP as `name`.
