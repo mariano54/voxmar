@@ -81,6 +81,16 @@ const TICK_SPEEDUP: u32 = 20;
 thread_local! {
     /// Set by a test that runs its server at the clock's pace (`real_time`).
     static REAL_TIME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set by a test whose server may tick quicker still (`quicker`).
+    static SPEEDUP: std::cell::Cell<u32> = const { std::cell::Cell::new(TICK_SPEEDUP) };
+}
+
+/// Makes this test's servers tick `speedup` times as quick as the clock, for a long test
+/// whose player stamps every message with the game's clock (`Fresh::now`), so that nothing
+/// it waits on keeps the clock's pace (`why` says what it plays).
+fn quicker(speedup: u32, why: &str) {
+    assert!(!why.is_empty() && speedup > TICK_SPEEDUP);
+    SPEEDUP.set(speedup);
 }
 
 /// Makes this test's servers tick at the clock's pace, for a test whose claim is about what
@@ -99,7 +109,7 @@ fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHa
     // by load is still running, and stand (or fight) beside its player.
     config.wandering_starts = false;
     if config.lag == voxmar_server::Lag::default() && !REAL_TIME.get() {
-        config.tick_speedup = TICK_SPEEDUP;
+        config.tick_speedup = SPEEDUP.get();
     }
     keep_world(config.seed, &content);
     voxmar_server::spawn(config, content)
@@ -6172,6 +6182,9 @@ struct Fresh {
     acts: [u64; 4],
     /// Times the lane ran out of animals and was stocked again.
     restocks: u32,
+    /// A server tick and the moment it stood for: the game's clock, which the player's
+    /// messages are stamped with (`Fresh::now`).
+    epoch: (u64, Instant),
 }
 
 /// How many of `item` the pack and its pouches carry.
@@ -6207,9 +6220,15 @@ impl Fresh {
         (self.c.ticks() - self.t0) as f32 / TICKS_PER_SECOND as f32
     }
 
+    /// Marks a milestone; one that finishes a quest waits for the book to show it done and
+    /// claims its rewards, as a player does (the experience they pay is what later steps'
+    /// levels come from).
     fn mark(&mut self, name: &'static str) {
         let (at, acts) = (self.secs(), self.acts.map(|t| t as f32 / TICKS_PER_SECOND as f32));
         self.marks.push(Mark { name, at, acts });
+        if let Some(&(_, quest)) = FRESH_QUESTS.iter().find(|(mark, _)| *mark == name) {
+            self.claim(quest);
+        }
     }
 
     fn rel(&self, x: i32, y: i32, z: i32) -> IVec3 {
@@ -6234,9 +6253,14 @@ impl Fresh {
     }
 
     /// Waits for `done`, at most `limit` server seconds by the tick counter.
+    /// The player stands still meanwhile, saying so each tick, which brings the game's clock
+    /// to the server: a timed action is done once a message stamped after it arrives.
     fn wait(&mut self, limit: f32, what: &str, done: impl Fn(&Client) -> bool) {
         let until = self.c.ticks() + (limit * TICKS_PER_SECOND as f32) as u64;
-        self.c.pump_until(|c| done(c) || c.ticks() >= until);
+        while !done(&self.c) && self.c.ticks() < until {
+            self.send();
+            self.tick();
+        }
         assert!(done(&self.c), "{what}: not done within {limit} server seconds (now {:.1} s into the run)", self.secs());
     }
 
@@ -6246,16 +6270,48 @@ impl Fresh {
         self.c.pump_until(|c| c.ticks() > t);
     }
 
+    /// The game's clock: the moment the server's tick stands for, at its pace. The player's
+    /// messages are stamped with it (`Client::propose_at`), so what the server times by
+    /// their arrival (a break, a cooking, a blow, a stride) takes the game's time however
+    /// quickly a test server's ticks come, and the run waits for nothing but ticks.
+    fn now(&self) -> Instant {
+        self.epoch.1 + Duration::from_secs_f64((self.c.ticks() - self.epoch.0) as f64 / TICKS_PER_SECOND as f64)
+    }
+
+    fn propose(&self, action: &str, target: ActionTarget) {
+        self.c.propose_at(action, target, self.now());
+    }
+
     fn send(&self) {
         let c = &self.c;
-        c.connection.send(ClientMessage::Input(PlayerInput { teleport: c.teleports, position: self.at, yaw: 0.0, pitch: 0.0, selected_slot: self.held, flying: false }));
+        let input = PlayerInput { teleport: c.teleports, position: self.at, yaw: 0.0, pitch: 0.0, selected_slot: self.held, flying: false };
+        c.connection.send_at(ClientMessage::Input(input), self.now());
     }
 
     /// Walks towards `goal` over the ground, a fifth of a block a tick (four blocks a second,
     /// under the walking speed the server allows), until `stop` blocks from it. Where a
     /// block is in the way, as the table or a fire is, the player turns aside the way a
     /// person would.
+    ///
+    /// Across the plot (more than eight blocks) the player is teleported to the near side of
+    /// the goal first, where that spot is clear: the test's shortcut for travel, since the
+    /// way round the plot's builds is no part of what it checks.
     fn walk_toward(&mut self, goal: Vec3, stop: f32) {
+        if across(goal, self.at) > 8.0 {
+            // The nearest spot round the goal, a little inside where the walk stops, with
+            // room for the body and a step every way.
+            let r = (stop - 0.3).max(0.0) + 0.25;
+            let room = |me: &Self, p: Vec3| (-2..=2).all(|i| (-2..=2).all(|k| me.has_room(p + Vec3::new(i as f32 * 0.2, 0.0, k as f32 * 0.2))));
+            let near = (0..24)
+                .map(|i| (i as f32 * 15.0).to_radians())
+                .map(|a| Vec3::new(goal.x + r * a.cos(), self.at.y, goal.z + r * a.sin()))
+                .filter(|&p| room(self, p))
+                .min_by(|a, b| across(*a, self.at).total_cmp(&across(*b, self.at)));
+            if let Some(to) = near {
+                self.c.tp(to);
+                self.at = to;
+            }
+        }
         self.spend(Act::Walk, |me| {
             let mut corrections = 0;
             for _ in 0..2000 {
@@ -6290,6 +6346,13 @@ impl Fresh {
         })
     }
 
+    /// Whether the body has room standing at `at`: air at both its heights, at each corner.
+    fn has_room(&self, at: Vec3) -> bool {
+        [(-0.32, -0.32), (-0.32, 0.32), (0.32, -0.32), (0.32, 0.32)]
+            .iter()
+            .all(|&(dx, dz)| (0..2).all(|dy| self.c.world.block(IVec3::new((at.x + dx).floor() as i32, self.origin.y + dy, (at.z + dz).floor() as i32)) == Some(BlockId::AIR)))
+    }
+
     /// Puts `item` in the hand: on the hotbar already, or swapped onto its last slot.
     fn hold(&mut self, item: &str) {
         // Nothing: bare hands, on a hotbar slot with nothing in it.
@@ -6307,7 +6370,7 @@ impl Fresh {
             Some(slot) => slot,
             None => {
                 let from = (hotbar..voxmar_engine::inventory::SLOTS).find(|&s| on(&self.c, s)).unwrap_or_else(|| panic!("no {item} to hold"));
-                self.c.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: hotbar as u8 - 1, count: u8::MAX });
+                self.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: hotbar as u8 - 1, count: u8::MAX });
                 self.wait(5.0, "bringing it to the hotbar", |c| on(c, hotbar - 1));
                 hotbar - 1
             }
@@ -6318,8 +6381,14 @@ impl Fresh {
 
     /// Breaks one block with what is in hand, waiting out its time by the server's ticks.
     fn mine(&mut self, block: IVec3) {
-        self.c.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
-        self.spend(Act::Mine, |me| me.wait(30.0, "mining", |c| !solid(c, block)));
+        self.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
+        let what = {
+            let c = &self.c;
+            let mining = c.content.skills.id("core:mining").map(|id| c.content.skills.level(c.skills.xp(id)));
+            let block_name = c.world.block(block).map(|b| c.content.blocks.def(b).name.clone());
+            format!("mining {block_name:?} at Mining {mining:?} (last refusals {:?})", c.refused.iter().rev().take(3).collect::<Vec<_>>())
+        };
+        self.spend(Act::Mine, |me| me.wait(30.0, &what, |c| !solid(c, block)));
         self.mined += 1;
     }
 
@@ -6397,28 +6466,35 @@ impl Fresh {
         let mut left: Vec<u32> = (0..slots).map(|s| self.c.inventory.get(s).map_or(0, |x| x.count as u32)).collect();
         for &(cell, item, count) in cells {
             let id = self.c.content.blocks.expect(item);
-            let from = (0..slots)
-                .find(|&s| self.c.inventory.get(s).is_some_and(|x| x.item == id) && left[s] >= count as u32)
-                .unwrap_or_else(|| panic!("not enough {item} for {makes}: {count} wanted"));
-            left[from] -= count as u32;
-            self.c.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (voxmar_engine::inventory::CRAFT + cell) as u8, count });
+            // From one stack, or topped up from the next where one holds too few.
+            let mut wanted = count as u32;
+            while wanted > 0 {
+                let from = (0..slots)
+                    .filter(|&s| self.c.inventory.get(s).is_some_and(|x| x.item == id) && left[s] > 0)
+                    .max_by_key(|&s| left[s].min(wanted))
+                    .unwrap_or_else(|| panic!("not enough {item} for {makes}: {count} wanted"));
+                let take = left[from].min(wanted);
+                left[from] -= take;
+                wanted -= take;
+                self.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (voxmar_engine::inventory::CRAFT + cell) as u8, count: take as u8 });
+            }
         }
-        self.c.propose("core:craft", ActionTarget::Slot(0));
+        self.propose("core:craft", ActionTarget::Slot(0));
         self.wait(10.0, &format!("crafting {makes}"), |c| holding(c, makes) >= before + made);
-        self.c.propose("core:stow", ActionTarget::None);
+        self.propose("core:stow", ActionTarget::None);
         self.wait(10.0, "clearing the grid", |c| c.inventory.craft.iter().all(Option::is_none));
     }
 
     /// Goes near the crafting table at `table` and opens it.
     fn at_table(&mut self, table: IVec3) {
         self.walk_toward(Self::middle(table), 3.0);
-        self.c.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
+        self.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
     }
 
     /// Sets down what is in hand on top of `ground`, which must be in reach.
     fn place(&mut self, item: &str, ground: IVec3) -> IVec3 {
         self.hold(item);
-        self.c.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+        self.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
         let cell = ground + IVec3::Y;
         self.wait(5.0, &format!("placing {item}"), |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
         cell
@@ -6428,7 +6504,7 @@ impl Fresh {
     fn cook(&mut self, station: IVec3, food: &str, cooked: &str) -> bool {
         self.hold(food);
         let (raw, done) = (self.have(food), self.have(cooked));
-        self.c.propose("base:cook", ActionTarget::Block { block: station, face: Face::PosY });
+        self.propose("base:cook", ActionTarget::Block { block: station, face: Face::PosY });
         // A spoiled attempt can give the food back (a cracked clay is clay again), so the
         // count alone does not say it ended: it ended once the two seconds plus a second's
         // slack of server ticks have passed, or the cooked food arrived.
@@ -6449,7 +6525,7 @@ impl Fresh {
     /// more are brought in (the wild would hold more than a lane of them).
     fn hunt(&mut self, prefer: impl Fn(&Client) -> &'static str, done: impl Fn(&Client) -> bool) {
         let (mouth, lane_x) = (Self::middle(self.rel(-9, 0, 2)), self.rel(-9, 0, 0).x as f32 + 0.5);
-        let started = self.c.ticks();
+        let mut swings = 0;
         let hand = if self.have("base:stone_axe") > 0 { "base:stone_axe" } else { "" };
         self.hold(hand);
         // In by the open end.
@@ -6457,7 +6533,8 @@ impl Fresh {
             self.walk_toward(mouth, 0.05);
         }
         while !done(&self.c) {
-            assert!(self.c.ticks() < started + 300 * TICKS_PER_SECOND as u64, "hunting took over five minutes");
+            swings += 1;
+            assert!(swings <= 400, "hunting took over 400 swings: at {:?}, lane {:?}, blows {} damage {:?}", self.at, lane(&self.c, self.origin), self.c.blows, self.c.damage);
             let (at, wanted) = (self.at, self.c.content.creatures.find(prefer(&self.c)));
             let Some((id, p, _)) = lane(&self.c, self.origin).into_iter().min_by(|a, b| {
                 let key = |x: &(u32, Vec3, voxmar_engine::creature::CreatureId)| (Some(x.2) != wanted, (x.1.z - at.z).abs());
@@ -6475,10 +6552,15 @@ impl Fresh {
             if (p.z - at.z).abs() > 1.6 {
                 self.walk_toward(Vec3::new(lane_x, at.y, p.z + 1.3), 0.1);
             }
-            self.c.propose("core:attack", ActionTarget::Creature(id));
+            self.propose("core:attack", ActionTarget::Creature(id));
             // One swing a beat, and on to the next once it is down.
             let t = self.c.ticks();
-            self.spend(Act::Hunt, |me| me.c.pump_until(|c| c.ticks() >= t + 14 || !c.creatures.contains_key(&id)));
+            self.spend(Act::Hunt, |me| {
+                while me.c.ticks() < t + 14 && me.c.creatures.contains_key(&id) {
+                    me.send();
+                    me.tick();
+                }
+            });
         }
     }
 
@@ -6507,7 +6589,8 @@ impl Fresh {
         let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
-        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0 };
+        let epoch = (t0, Instant::now());
+        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch };
         // Ten animals in the lane: three rabbits and seven junglefowl.
         for (i, z) in (-10..=-1).enumerate() {
             plot.stock(if i % 3 == 1 { "rabbit" } else { "junglefowl" }, z);
@@ -6525,8 +6608,27 @@ impl Fresh {
 #[test]
 #[ignore = "plays 3 to 4 minutes of real server time; run it after changing early-age content"]
 fn a_fresh_survival_player_reaches_each_nomad_milestone() {
+    real_time("it measures the early game's pace in server seconds, and a hunt's blows land by the clock");
     let c = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
     let mut f = Fresh::lay_out(c);
+    the_first_days(&mut f);
+    finish(f)
+}
+
+/// What the first days leave standing on the plot, which the Farm age comes back to.
+struct Site {
+    table: IVec3,
+    /// The campfire First Night set down, and the pit kiln.
+    fire: IVec3,
+    kiln: IVec3,
+    /// The ponds' clay and the banks it is dug from.
+    bed: Vec<IVec3>,
+    banks: Vec<Vec3>,
+}
+
+/// The Nomad age's main line, played with legitimate actions only, and the Farm age's first
+/// fire: from bare hands to twelve fired clay.
+fn the_first_days(f: &mut Fresh) -> Site {
     let v = IVec3::new;
     let up = IVec3::Y;
     let rel = |f: &Fresh, cells: Vec<IVec3>| -> Vec<IVec3> { cells.into_iter().map(|p| f.origin + p).collect() };
@@ -6534,7 +6636,7 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
 
     // Timber, with bare hands (a new player starts with nothing): eight logs, four more for
     // the two campfires, and four more for planks.
-    let trunks = rel(&f, [1, 3, 5, 7].into_iter().flat_map(|x| (0..4).map(move |y| v(x, y, -5))).collect());
+    let trunks = rel(f, [1, 3, 5, 7].into_iter().flat_map(|x| (0..4).map(move |y| v(x, y, -5))).collect());
     f.gather("", trunks, log, 16);
     f.mark("timber");
     f.craft(&[(0, log, 4)], "base:oak_planks", 16);
@@ -6551,7 +6653,7 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (2, "base:oak_planks", 1), (4, stick, 1), (7, stick, 1)], "base:wooden_pickaxe", 1);
 
     // Stone in Hand: cobblestone with the wooden pickaxe, then a stone pickaxe and axe.
-    let stone = rel(&f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
+    let stone = rel(f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
     f.gather("base:wooden_pickaxe", stone.clone(), cobble, 9);
     f.at_table(table);
     f.craft(&[(0, cobble, 1), (1, cobble, 1), (2, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_pickaxe", 1);
@@ -6597,7 +6699,7 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     f.mark("a_bed_of_your_own");
 
     // Torchlight: two coal ores, each with a stick making four torches.
-    let coal = rel(&f, vec![v(9, 0, 3), v(9, 0, 4)]);
+    let coal = rel(f, vec![v(9, 0, 3), v(9, 0, 4)]);
     f.gather_from("base:stone_pickaxe", &[Fresh::middle(f.rel(7, 0, 3))], coal, "base:coal_ore", 2);
     f.at_table(table);
     f.craft(&[(0, "base:coal_ore", 2), (3, stick, 2)], "base:torch", 8);
@@ -6607,7 +6709,7 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     // cobblestones, a hearthstone (eight round an empty middle) and two chimneys (six and two
     // clay each) crafted at the table, the hearthstone set in a ring of eight stone with both
     // chimneys stacked on one corner stone, and lit.
-    let bed = rel(&f, (2..=11).flat_map(|z| [-2, -1].into_iter().flat_map(move |x| [-2, -3].into_iter().map(move |y| v(x, y, z)))).collect());
+    let bed = rel(f, (2..=11).flat_map(|z| [-2, -1].into_iter().flat_map(move |x| [-2, -3].into_iter().map(move |y| v(x, y, z)))).collect());
     let banks: Vec<Vec3> = (2..=11).step_by(2).map(|z| Fresh::middle(f.rel(0, 0, z))).collect();
     f.at_table(table);
     f.craft(&[(0, cobble, 1), (3, stick, 1), (6, stick, 1)], "base:stone_shovel", 1);
@@ -6626,7 +6728,7 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     let first = f.place("base:chimney", f.rel(3, 0, 6));
     f.place("base:chimney", first);
     f.c.chat.clear();
-    f.c.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    f.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
     f.wait(5.0, "lighting the hearth", |c| c.chat.iter().any(|(_, t)| t.contains("your home")));
     f.mark("hearth_lit");
 
@@ -6652,7 +6754,186 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
         f.cook(kiln, clay, fired);
     }
     f.mark("fire_the_clay");
-    finish(f)
+    Site { table, fire, kiln, bed, banks }
+}
+
+/// The quests a new player follows from nothing to the lit Crucible Kiln, in the order the
+/// book opens them: the Nomad main line to the lit Homestead Hearth, then the Farm main line.
+const QUEST_BOOK_ORDER: &[&str] = &[
+    "look_it_up",
+    "timber",
+    "crafting_table",
+    "stone_in_hand",
+    "first_night",
+    "a_bed_of_your_own",
+    "torchlight",
+    "homestead_hearth",
+    "a_pit_kiln",
+    "fire_the_clay",
+    "the_potter",
+    "charcoal",
+    "red_metal",
+    "brick_by_brick",
+    "the_crucible",
+    "crucible_kiln",
+];
+
+impl Fresh {
+    /// More of the plot for the Farm age, east and north of the first days' ground: two more
+    /// ponds like the first (two blocks wide, clay two deep under a block of water, a bank
+    /// each side), fourteen more oak trunks for charcoal, and a copper vein's ten ores.
+    fn lay_out_the_farm(&mut self) {
+        let (o, v) = (self.origin, IVec3::new);
+        self.c.fill(o, v(21, 0, -11), v(30, 10, 13), "air");
+        self.c.fill(o, v(21, -4, -11), v(30, -1, 13), "dirt");
+        for x in [22, 26] {
+            self.c.fill(o, v(x, -3, 2), v(x + 1, -2, 11), "clay");
+            self.c.fill(o, v(x, -1, 2), v(x + 1, -1, 11), "water");
+        }
+        for z in [-7, -9] {
+            for x in [1, 3, 5, 7, 11, 13, 15] {
+                self.c.fill(o, v(x, 0, z), v(x, 3, z), "oak_log");
+            }
+        }
+        self.c.fill(o, v(18, 0, 7), v(19, 0, 11), "copper_ore");
+        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore")];
+        self.c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(o + at) == c.content.blocks.id(name)));
+    }
+
+    /// Waits for the server to count `quest` done (it looks once a second), and claims its
+    /// rewards in the quest screen.
+    fn claim(&mut self, quest: &str) {
+        self.wait(5.0, &format!("the quest book showing {quest} done (done, a task holding: {:?})", quest_status(&self.c, quest)), |c| quest_status(c, quest).0);
+        let name = format!("base:{quest}");
+        self.c.connection.send_at(ClientMessage::ClaimQuest { name: name.clone() }, self.now());
+        self.wait(5.0, &format!("claiming {quest}"), |c| c.quests.iter().any(|q| q.name == name && q.claimed));
+    }
+
+    /// Fires clay at the pit kiln until `need` fired clay are in hand, digging more from the
+    /// ponds whenever the clay runs out.
+    fn fire_clay(&mut self, site: &Site, need: u32) {
+        let (clay, fired) = ("base:clay", "base:fired_clay");
+        while self.have(fired) < need {
+            if self.have(clay) == 0 {
+                let more = (need - self.have(fired)).min(32);
+                self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, more);
+            }
+            if across(self.at, Self::middle(site.kiln)) > 3.5 {
+                self.walk_toward(Self::middle(site.kiln), 3.0);
+            }
+            self.cook(site.kiln, clay, fired);
+        }
+    }
+
+    /// Burns logs down at the campfire until `need` charcoal are in hand.
+    fn burn_charcoal(&mut self, site: &Site, need: u32) {
+        if self.have("base:charcoal") >= need {
+            return;
+        }
+        self.walk_toward(Self::middle(site.fire), 2.5);
+        while self.have("base:charcoal") < need {
+            assert!(self.have("base:oak_log") > 0, "out of logs for charcoal");
+            self.cook(site.fire, "base:oak_log", "base:charcoal");
+        }
+    }
+}
+
+/// A new player's first two ages, played from nothing by what the quest book says: each
+/// quest's text is the script, every item is gathered, crafted with a recipe the player has
+/// unlocked, cooked or fired, and nothing is given (no /give; the plot built by /fill stands
+/// in for terrain, as for the pacing test above). Each main quest must be done in the
+/// book's order, so a step that cannot be finished from its text and recipes fails here.
+///
+/// The player's messages carry the game's clock (`Fresh::now`), so the run goes at the
+/// test server's quick ticks; only the hunt's blows keep the clock's pace. It prints the
+/// server seconds of each quest and the run's wall time, for the test-time budgets.
+#[test]
+fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
+    quicker(60, "some eleven minutes of game time, from bare hands to the lit Crucible Kiln");
+    let wall = Instant::now();
+    let c = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    let mut f = Fresh::lay_out(c);
+    f.lay_out_the_farm();
+    let o = f.origin;
+    let (stick, log, charcoal) = ("base:stick", "base:oak_log", "base:charcoal");
+    let (fired, bricks, ingot, copper) = ("base:fired_clay", "base:kiln_bricks", "base:copper_ingot", "base:copper_ore");
+
+    // Look It Up, pinned in a new book: the stone pickaxe looked up in the recipe viewer.
+    let pickaxe = f.c.content.blocks.expect("base:stone_pickaxe");
+    f.c.connection.send_at(ClientMessage::LookedUp { item: pickaxe }, f.now());
+    f.mark("look_it_up");
+
+    // The Nomad main line to the lit Homestead Hearth, and the Farm age's pit kiln and first
+    // twelve fired clay (the pacing test's script).
+    let mut site = the_first_days(&mut f);
+    // The Farm's ponds, dug from the bank on each side.
+    for x in [22, 26] {
+        site.bed.extend((2..=11).flat_map(|z| [x, x + 1].into_iter().flat_map(move |x| [-2, -3].into_iter().map(move |y| o + IVec3::new(x, y, z)))));
+        for bank in [x - 1, x + 2] {
+            site.banks.extend((2..=11).step_by(2).map(|z| Fresh::middle(o + IVec3::new(bank, 0, z))));
+        }
+    }
+
+    // The Potter: six clay pots at the table, five fired clay round an empty top middle
+    // making two (Crafting 2).
+    f.fire_clay(&site, 15);
+    f.at_table(site.table);
+    f.craft(&[(0, fired, 3), (2, fired, 3), (3, fired, 3), (4, fired, 3), (5, fired, 3)], "base:clay_pot", 6);
+    f.mark("the_potter");
+
+    // Charcoal: logs held and burnt down at the campfire, sixteen. The trunks give the
+    // charcoal for the copper ingots and the kiln's charge as well.
+    let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
+    f.gather("base:stone_axe", trunks, log, 52);
+    f.burn_charcoal(&site, 16);
+    f.mark("charcoal");
+
+    // Red Metal: nine copper ores (Mining 5) with the stone pickaxe; a copper ore over a
+    // charcoal in the grid makes an ingot (Engineering 5); three ingots over two sticks at
+    // the table make the copper pickaxe.
+    let vein: Vec<IVec3> = (18..=19).flat_map(|x| (7..=11).map(move |z| o + IVec3::new(x, 0, z))).collect();
+    f.gather("base:stone_pickaxe", vein, copper, 9);
+    f.craft(&[(0, copper, 3), (3, charcoal, 3)], ingot, 3);
+    if f.have(stick) < 2 {
+        f.craft(&[(0, log, 1)], "base:oak_planks", 4);
+        f.craft(&[(0, "base:oak_planks", 1), (3, "base:oak_planks", 1)], stick, 4);
+    }
+    f.at_table(site.table);
+    f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
+    f.mark("red_metal");
+
+    // Brick by Brick: nineteen kiln bricks, four fired clay each in the grid (Crafting 5).
+    f.fire_clay(&site, 76);
+    f.craft(&[(0, fired, 19), (1, fired, 19), (3, fired, 19), (4, fired, 19)], bricks, 19);
+    f.mark("brick_by_brick");
+
+    // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).
+    f.at_table(site.table);
+    f.craft(&[(0, bricks, 1), (2, bricks, 1), (3, bricks, 1), (4, "base:clay_pot", 1), (5, bricks, 1), (6, bricks, 1), (7, bricks, 1), (8, bricks, 1)], "base:crucible", 1);
+    f.mark("the_crucible");
+
+    // The Crucible Kiln: the crucible set down, ringed with eight kiln bricks, one more on
+    // each corner of the ring; thirty-two charcoal held and the crucible right-clicked.
+    f.burn_charcoal(&site, 32);
+    let centre = f.rel(13, 0, 9);
+    f.walk_toward(Fresh::middle(f.rel(13, 0, 6)), 0.05);
+    let core = f.place("base:crucible", centre - IVec3::Y);
+    for (dx, dz) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+        f.place(bricks, centre + IVec3::new(dx, -1, dz));
+    }
+    for (dx, dz) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
+        f.place(bricks, centre + IVec3::new(dx, 0, dz));
+    }
+    f.hold(charcoal);
+    f.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    f.mark("crucible_kiln");
+
+    // Every quest of the line done, none skipped, and the report for the budgets.
+    assert_eq!(f.c.died, 0, "the player died on the way");
+    let missed: Vec<&str> = QUEST_BOOK_ORDER.iter().copied().filter(|q| !quest_status(&f.c, q).0).collect();
+    assert!(missed.is_empty(), "quests of the line not done: {missed:?}");
+    let marks: Vec<String> = f.marks.iter().map(|m| format!("{} {:.0}", m.name, m.at)).collect();
+    eprintln!("a new player to the lit Crucible Kiln, server seconds: {}; {:.1} s of wall time", marks.join(", "), wall.elapsed().as_secs_f32());
 }
 
 /// What the server says of a quest: whether it is done, and whether one of its tasks holds.
@@ -6663,6 +6944,7 @@ fn quest_status(c: &Client, quest: &str) -> (bool, bool) {
 
 /// The quest each milestone is, as the server counts it.
 const FRESH_QUESTS: &[(&str, &str)] = &[
+    ("look_it_up", "look_it_up"),
     ("timber", "timber"),
     ("crafting_table", "crafting_table"),
     ("stone_in_hand", "stone_in_hand"),
@@ -6672,6 +6954,12 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("hearth_lit", "homestead_hearth"),
     ("pit_kiln", "a_pit_kiln"),
     ("fire_the_clay", "fire_the_clay"),
+    ("the_potter", "the_potter"),
+    ("charcoal", "charcoal"),
+    ("red_metal", "red_metal"),
+    ("brick_by_brick", "brick_by_brick"),
+    ("the_crucible", "the_crucible"),
+    ("crucible_kiln", "crucible_kiln"),
 ];
 
 /// Checks the server's own books agree with what the player did, prints the run's one summary
