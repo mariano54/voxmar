@@ -182,7 +182,7 @@ impl Server {
     pub(crate) fn propose(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget, at: Instant) {
         self.executor.proposals += 1;
         let stall = self.config.lag.proposal_stall;
-        if !stall.is_zero() && self.executor.proposals % 2 == 1 {
+        if !stall.is_zero() && self.executor.proposals % 2 == 1 && self.lagging.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(stall);
         }
         let Some(def) = self.action_def(action) else { return };

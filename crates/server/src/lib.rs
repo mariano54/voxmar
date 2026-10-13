@@ -294,6 +294,7 @@ pub struct ServerHandle {
     thread: Option<JoinHandle<()>>,
     tick_times: Arc<Mutex<VecDeque<Duration>>>,
     ticks: Arc<AtomicU64>,
+    lagging: Arc<AtomicBool>,
 }
 
 /// Ticks whose times a server keeps, for `ServerHandle::tick_times`: the last minute.
@@ -310,6 +311,13 @@ impl ServerHandle {
     /// on a busy machine keeps, where wall-clock seconds do not.
     pub fn ticks(&self) -> u64 {
         self.ticks.load(Ordering::Relaxed)
+    }
+
+    /// Whether a server made to run behind (`ServerConfig::lag`) does so from now on: it
+    /// does from the start. The gate's session holds it off in the steps that do not play
+    /// against a server running behind.
+    pub fn set_lagging(&self, lagging: bool) {
+        self.lagging.store(lagging, Ordering::Relaxed);
     }
 
     /// Sender for new connections (local or accepted by a TCP listener).
@@ -357,17 +365,19 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
     let stop = Arc::new(AtomicBool::new(false));
     let tick_times = Arc::new(Mutex::new(VecDeque::with_capacity(TICK_TIMES)));
     let ticks = Arc::new(AtomicU64::new(0));
+    let lagging = Arc::new(AtomicBool::new(true));
     let thread = {
-        let (stop, tick_times, ticks) = (stop.clone(), tick_times.clone(), ticks.clone());
+        let (stop, tick_times, ticks, lagging) = (stop.clone(), tick_times.clone(), ticks.clone(), lagging.clone());
         std::thread::Builder::new()
             .name("server".into())
             .spawn(move || {
                 let mut server = Server::new(config, meta, save, state, content, incoming, lines);
                 server.generation_changed = generation_changed;
+                server.lagging = lagging;
                 server.run(&stop, &tick_times, &ticks)
             })?
     };
-    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks })
+    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks, lagging })
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -511,6 +521,9 @@ pub(crate) struct Server {
     /// The world's worldgen data changed since land was last made in it, so admins who
     /// join are warned that new land may not line up (`WorldMeta::worldgen_content`).
     generation_changed: bool,
+    /// Whether a server made to run behind (`ServerConfig::lag`) does so now
+    /// (`ServerHandle::set_lagging`).
+    lagging: Arc<AtomicBool>,
     /// When each address's new players had the starting kit, in ticks (`Server::grant_kit`).
     /// Kept only while the server runs.
     kits: FxHashMap<std::net::IpAddr, Vec<u64>>,
@@ -613,6 +626,7 @@ impl Server {
             dirty: FxHashSet::default(),
             kept: if loaded.keep_file { FxHashSet::from_iter([spawn_column]) } else { FxHashSet::default() },
             generation_changed: false,
+            lagging: Arc::new(AtomicBool::new(true)),
             kits: FxHashMap::default(),
             generating: FxHashSet::default(),
             generated_tx,
@@ -656,7 +670,9 @@ impl Server {
                     }
                     times.push_back(now.elapsed());
                 }
-                std::thread::sleep(self.config.lag.of_tick(self.tick));
+                if self.lagging.load(Ordering::Relaxed) {
+                    std::thread::sleep(self.config.lag.of_tick(self.tick));
+                }
                 // Land being generated on other threads arrives at the clock's pace, so a
                 // server whose ticks run quicker than the clock (tests) waits for it at that
                 // pace too: what happens in so many ticks is then what a game would see.
