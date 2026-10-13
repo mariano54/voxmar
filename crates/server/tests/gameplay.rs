@@ -3188,6 +3188,7 @@ fn a_blow_wait_keeps_other_creatures_and_earlier_blows_separate() {
 
 #[test]
 fn a_windup_wait_does_not_strike_a_creature_that_is_already_fighting() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
     let mut client = Client::join();
     client.ok("/gamemode survival");
     client.ok("/skill hitpoints 60");

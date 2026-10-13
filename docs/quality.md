@@ -167,7 +167,8 @@ shrunk below what proves its claim or stripped of its negative side to save time
 run's output (`DIR/test-*.txt`, the test binaries run with `-Z unstable-options
 --report-time`, which needs `RUSTC_BOOTSTRAP=1` off nightly): a test may take
 `per_test_seconds` (5 now, measured while the gate runs every binary side by side, times how
-much busier than idle the machine is), the slowest test binary `suite_seconds`, and a test
+much busier than idle the machine is), the slowest test binary `suite_seconds` (`--full`:
+`full_suite_seconds`, with the slow tests the default gate skips), and a test
 over its budget is listed in `[[allow]]` with its own `seconds` and the reason. It prints the
 slowest tests every time. It fails on a test over its budget, on a binary over the suite
 budget, and on an allowance the test no longer needs (it ran back under the default), so the

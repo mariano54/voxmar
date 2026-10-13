@@ -2212,7 +2212,7 @@ fn neighbouring_places_share_a_family() {
     let (mut same, mut pairs) = (0, 0);
     let mut seen = std::collections::BTreeSet::new();
     for seed in [1u64, 7, 42, 99, 0x5eed] {
-        let world = base_world(seed);
+        let world = shared_world(seed);
         let families = cell_families(&world);
         let region = |at: IVec2| world.settlements.def.cultures.region_at(world.settlements.seed, at, &families).0;
         for k in 0..400u64 {
@@ -2229,13 +2229,13 @@ fn neighbouring_places_share_a_family() {
     let share = same as f32 / pairs as f32;
     assert!(share >= 0.7, "{same} of {pairs} places 3 km apart share a family: {share:.2}");
     println!("culture regions: {same}/{pairs} neighbours share a family ({share:.3}), {} families seen", seen.len());
-    let families = base_world(1).settlements.def.cultures.families.len();
+    let families = shared_world(1).settlements.def.cultures.families.len();
     assert!(seen.len() >= 9, "only {} of {families} families turn up as a region's: {seen:?}", seen.len());
     // Settlements near one another, as planned (some claimed by river folk, which is why
     // this one counts the region's family, the second of a claimed place).
     let (mut near_same, mut near_pairs) = (0, 0);
     for seed in [1u64, 42] {
-        let world = base_world(seed);
+        let world = shared_world(seed);
         let all = world.settlements_near(IVec2::ZERO, 12_000);
         let region = |c: &super::CultureInfo| if c.family == "river" { c.second.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { c.family.clone() };
         for (i, a) in all.iter().enumerate() {
@@ -2695,7 +2695,7 @@ fn culture_quirks_are_applied_before_style_selection() {
     use super::culture::{Entry, Listing, Need};
     let registry = base_registry();
     let mut content = crate::content::WorldContent::base(&registry).unwrap();
-    let ordinary = Overworld::with_content(7, registry.clone(), &content);
+    let ordinary = shared_world(7);
     assert!(!ordinary.settlements_near(IVec2::ZERO, 2048).is_empty());
     let def = &mut content.settlements;
     def.cultures.quirks.truncate(1);
