@@ -223,9 +223,23 @@ pub struct EventDef {
     /// skilled one may come.
     #[serde(default)]
     pub startle: Option<Startle>,
+    /// What a camped party puts on for whoever stays to watch (a puppet play, a dance).
+    #[serde(default)]
+    pub show: Option<Show>,
     /// Seconds it lasts at most; it ends sooner when it has gone by.
     #[serde(default = "lifetime")]
     pub lifetime: f32,
+}
+
+/// A show a `Camp` party puts on while it stays: a player who watches it, within `near`
+/// blocks of its leader for `seconds` together, is given `gives` once, with the event's
+/// `show` line. Walking off starts the count again.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Show {
+    pub near: f32,
+    pub seconds: f32,
+    pub gives: Vec<Reward>,
 }
 
 fn one() -> f32 {
@@ -597,6 +611,10 @@ pub enum Reward {
     /// `tag:` lies within so many blocks of the speaker: true to the land, or that there is
     /// none near.
     Point(String, f32),
+    /// Tells the player the name of the nearest settlement within so many blocks of the
+    /// speaker, which way and how far, by the world's own plan (as `/locate settlement`
+    /// does). Said only when there is one.
+    Town(f32),
     /// Hands one member of this group of the cast to the player, kept as if tamed (a calf
     /// sold): it leaves the party. Said only when there is one, and room for it.
     Hand(usize),
@@ -624,6 +642,8 @@ pub struct Event {
     pub deliver: Vec<BlockId>,
     /// The skill whose level lets a player come nearer a startled party, and by how much a level.
     pub stalk: Option<(SkillId, f32)>,
+    /// What watching its show gives.
+    pub show: Vec<ResolvedReward>,
 }
 
 /// A meeting with its lines resolved.
@@ -689,6 +709,7 @@ pub enum ResolvedReward {
     Anger,
     Leave,
     Point(Want, f32),
+    Town(f32),
     Hand(usize),
     /// A station's tag, the most cooked at once, and how many of them are kept.
     Cook(String, u8, u8),
@@ -731,6 +752,8 @@ fn resolve_reward(reward: &Reward, namespace: &str, blocks: &BlockRegistry, skil
         Reward::Leave => ResolvedReward::Leave,
         Reward::Point(_, reach) if !(8.0..=128.0).contains(reach) => return Err(format!("points within {reach} blocks: 8 to 128")),
         Reward::Point(name, reach) => ResolvedReward::Point(selector(name, blocks)?, *reach),
+        Reward::Town(reach) if !(64.0..=1000.0).contains(reach) => return Err(format!("names a settlement within {reach} blocks: 64 to 1000")),
+        Reward::Town(reach) => ResolvedReward::Town(*reach),
         // The group is checked against the cast, and the station against the recipes, by the caller.
         Reward::Hand(group) => ResolvedReward::Hand(*group),
         Reward::Cook(_, most, keep) if *most == 0 || keep >= most => return Err(format!("cooks up to {most} and keeps {keep}: it must give some back")),
@@ -820,7 +843,7 @@ impl WanderRegistry {
             event.cast.iter_mut().for_each(|g| qualify(&mut g.species));
             event.seek.iter_mut().for_each(qualify);
             event.deliver.iter_mut().for_each(qualify);
-            for reward in event.freed.iter_mut().flat_map(|f| f.thanks.iter_mut()).chain(event.guide.iter_mut().flat_map(|g| g.thanks.iter_mut())).chain(event.reveal.iter_mut()) {
+            for reward in event.freed.iter_mut().flat_map(|f| f.thanks.iter_mut()).chain(event.guide.iter_mut().flat_map(|g| g.thanks.iter_mut())).chain(event.reveal.iter_mut()).chain(event.show.iter_mut().flat_map(|s| s.gives.iter_mut())) {
                 match reward {
                     Reward::Item(item, _) | Reward::Point(item, _) => qualify(item),
                     Reward::Effect(effect, _) => qualify(effect),
@@ -1068,6 +1091,22 @@ impl WanderRegistry {
                 }
                 reveal.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("reveal: {why}")))?);
             }
+            let mut show = Vec::new();
+            if let Some(def_show) = &def.show {
+                if !matches!(def.script, Script::Camp { .. }) {
+                    return Err(error("only a `Camp` party puts on a `show`".into()));
+                }
+                if !(2.0..=16.0).contains(&def_show.near) || !(3.0..=120.0).contains(&def_show.seconds) || def_show.gives.is_empty() {
+                    return Err(error(format!("a show is watched from 2 to 16 blocks for 3 to 120 seconds and gives something, not {} blocks for {} s", def_show.near, def_show.seconds)));
+                }
+                for reward in &def_show.gives {
+                    if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..) | Reward::Point(..) | Reward::Town(_)) {
+                        return Err(error("a show gives items, experience, effects or healing only".into()));
+                    }
+                    show.push(resolve_reward(reward, namespace, blocks, skills, effects, false).map_err(|why| error(format!("show: {why}")))?);
+                }
+                names.push("show".into());
+            }
             let mut guide_thanks = Vec::new();
             for reward in def.guide.iter().flat_map(|g| &g.thanks) {
                 if matches!(reward, Reward::Free | Reward::Anger | Reward::Befriend | Reward::Leave | Reward::Hand(_) | Reward::Cook(..)) {
@@ -1172,7 +1211,7 @@ impl WanderRegistry {
                 meetings.push(ResolvedMeeting { who: meeting.who, greet: meeting.greet.clone(), greets: meeting.greets, lines });
             }
             registry.by_name.insert(def.name.clone(), registry.events.len());
-            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk });
+            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk, show });
         }
         Ok(registry)
     }

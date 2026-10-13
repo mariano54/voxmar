@@ -100,7 +100,9 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   true to the land (a line that points is said only when something of the kind is near, so
   a once-only line is not spent on nothing); `Hand(group)`: hands one member of that group to
   the player as if tamed (a calf sold), said only when there is one and the player has room
-  for another kept animal; `Cook(station, most, keep)`: cooks what the line takes by the
+  for another kept animal; `Town(reach)`: names the nearest settlement of the world's plan
+  within `reach` blocks of the speaker, which way and about how far (as `/locate
+  settlement` finds it; said only when there is one); `Cook(station, most, keep)`: cooks what the line takes by the
   game's own recipes at that station (cooking.ron), never burnt, up to `most` of what is in
   hand, keeping `keep` for the speaker's pot, said only with something it cooks in hand). A
   line can also need `When(stage)` (the party is at that
@@ -124,6 +126,10 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   `least`. A player who has not moved for `still_for` seconds is noticed only at `still`, and
   a still one holding what draws the kind (food) not at all. Bolted, it runs off and is done.
   A party that startles does not halt or guard.
+- **Shows.** A `Camp` party with a `show(near, seconds, gives)` puts one on while it stays at
+  its spot: a player who stands within `near` blocks of its leader for `seconds` together
+  is given `gives` (items, XP, effects, healing), once each, with the event's `show`
+  line. One who walks off starts the count again; a party struck or startled shows nothing.
 - **Young.** A group with `young: true` comes young (piglets, a calf, fawns) and grows up as
   kept young do.
 - **Being struck.** `hurt` says what a party does when a player strikes one of its own:
@@ -325,6 +331,31 @@ is `asks` on a line, so two meetings with one kind can want different things and
 | wedding | March | A priest, the couple and guests walk to the shrine. A flower given returns bread and Refreshed, once. |
 | funeral | March | A slow procession that does not stop for a player. A flower laid with them is a little Magic, once. |
 
+## Batch 7 (implemented, eight kinds): shows, towns, and folk of the road
+
+More of the Nomad and Farm ages. The new pieces are `show` on a `Camp` (stand and watch,
+no talking needed) and the `Town` reward (the way to the nearest settlement), and a new
+species, the scarecrow.
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| travelling smith | Camp | A smith camps a while. A coin and every edge you carry is whetted: Keen edge, a tenth faster at every tool for twenty minutes, once. A tool in a beginner's hand (Crafting below 10) gets a word on its care. |
+| truffle hunter | Gather | Works the mushrooms of a wood with a boar on a rope. Show a mushroom to a beginner cook (Cooking below 10) and learn which are good to eat; a coin buys where a truffle grows, said only when one is near. |
+| wandering monk | March | A monk under a vow of silence, slow through high and quiet land. Answers in gestures: binds the hurt, and a mote of aether buys a blessing (Focused, a little Magic). |
+| refugees | Roam (sitting) | A family fled from a raid, to players with a home. A meal and one of them follows you home and stays there as one of your people; the seed they carried is yours. |
+| puppeteers | Camp, show | Set up a little stage by day, children gathered. Watch the play through (20 s within 8 blocks) and you go off Refreshed; a coin in the hat is Focused. |
+| dance circle | Camp, show | Villagers turn round a drummer at nightfall. Stand in the ring 15 s: Ember-warmed and mended a little. Dance a round (talk) for Hitpoints XP. |
+| cartographer | Camp, Town | Camps far from where the world began. Tells the way to the nearest town within 600 blocks, once; teaches a beginner builder to pace out ground. |
+| scarecrow | Shadow | A straw figure walks the grass at dusk near a player's home, keeps off and stands stock still when looked at. Whoever reaches it finds seed in its pockets, once. |
+
+| the player | camp with a show | refugees | cartographer |
+| --- | --- | --- | --- |
+| walks past | nothing | they sit on | nothing |
+| stands near | the show, once, after its seconds | nothing | nothing |
+| walks off mid-show | the count starts again | n/a | n/a |
+| holds what they want | a coin in the hat | food: one follows home | n/a |
+| strikes one | scatter, no show | scatter | scatter |
+
 ## Catalogue of 100
 
 Status: `done` is in a batch above, `next` is the second batch (ages 1 and 2: Nomad and Farm
@@ -356,7 +387,7 @@ are the mechanics later batches add, each used by several kinds.
 | 21 | herb gatherer | see batch 4 | Forage | 1 | done |
 | 22 | wandering healer | see batch 5 | | 1 | done |
 | 23 | hermit | see batch 6 | Asks | 1 | done |
-| 24 | travelling smith | repairs held tools for coin | Camp | 2 | next |
+| 24 | travelling smith | see batch 7 | Camp | 2 | done |
 | 25 | travelling cook | see batch 4 | Camp | 1 | done |
 | 26 | story teller | see batch 5 | Camp | 1 | done |
 | 27 | stray hound | see batch 2 | Roam | 1 | done |
@@ -366,33 +397,33 @@ are the mechanics later batches add, each used by several kinds.
 | 31 | thief and constable | see batch 3 | Chase | 2 | done |
 | 32 | poacher | hunts deer; reporting them to a guard pays | Hunt | 2 | later |
 | 33 | hunting party | villagers with hounds track a boar | Hunt | 2 | later |
-| 34 | scarecrow walker | a straw figure that stands among crops and moves when unseen | Shadow | 2 | later |
+| 34 | scarecrow walker | see batch 7 | Shadow | 2 | done |
 | 35 | night watchman | walks a village ring with a lantern | Patrol | 2 | later |
 | 36 | village guard patrol | guards walk a loop between settlements | Patrol | 2 | later |
 | 37 | tax collector | asks coin from a player with a home; refusing makes guards hostile for a day | Meeting | 2 | later |
 | 38 | wedding procession | see batch 6 | | 2 | done |
 | 39 | funeral procession | see batch 6 | | 2 | done |
 | 40 | festival drummers | drums and a dance ring; a refreshed effect | Dance | 2 | later |
-| 41 | dance circle | villagers circle a bonfire at night | Dance | 2 | later |
+| 41 | dance circle | see batch 7 | Show | 2 | done |
 | 42 | caravan | pack animals, guards and a merchant on a long road | March | 3 | later |
-| 43 | refugees | a worn party fleeing a raid; food earns a hearth | Escort | 2 | later |
+| 43 | refugees | see batch 7 | Guide | 2 | done |
 | 44 | soldiers on the march | two columns that do not stop for a player | March | 3 | later |
 | 45 | knight errant | duels for a coin; wins a favour | Duel | 3 | later |
-| 46 | wandering monk | a vow of silence; sells a blessing for a mote | Meeting | 2 | later |
+| 46 | wandering monk | see batch 7 | Meeting | 2 | done |
 | 47 | travelling alchemist | see batch 6 | Asks | 2 | done |
 | 48 | rat catcher | a piper followed by rats | Lure | 2 | later |
 | 49 | gypsy wagon | a wagon camps; fortunes told (a journal hint) | Camp | 2 | later |
-| 50 | puppeteers | a cart that opens into a stage | Camp | 2 | later |
+| 50 | puppeteers | see batch 7 | Show | 2 | done |
 | 51 | circus | acrobats, a bear on a chain; scares animals | Camp | 3 | later |
 | 52 | messenger | runs between settlements; a letter for a coin | Errand | 2 | later |
 | 53 | postman with mule | delivers to a player's home mailbox | Errand | 3 | later |
-| 54 | cartographer | sells a sketched map of nearby ruins | Meeting | 2 | later |
+| 54 | cartographer | see batch 7 | Town | 2 | done |
 | 55 | prospector | see batch 6 | Gather | 2 | done |
 | 56 | miners' shift | a row of miners with lamps walk to a mine mouth | March | 3 | later |
 | 57 | stonecutters | haul a block; leave a cut stone | Haul | 3 | later |
 | 58 | lamplighter | at dusk lights lamps along a road | Errand | 3 | later |
 | 59 | beekeeper | smoke and bees; honey for a comb | Camp | 2 | later |
-| 60 | forager of mushrooms | follows a pig that finds truffles | Forage | 2 | later |
+| 60 | truffle hunter | see batch 7 | Forage | 2 | done |
 | 61 | goblin raiders | a small band that rushes a farm at dusk | Ambush | 2 | later |
 | 62 | goblin scouts | a pair that slips away if seen, then returns with more | Chase | 2 | later |
 | 63 | skeleton march | at night, a file of bones along a road | March | 3 | later |
@@ -448,6 +479,7 @@ Each is a script or a role used by many kinds, so every kind stays a few lines o
 - **Ambush**: done (batch 3): lies in wait until a player is within a distance, then rushes.
 - **Lure**: done (batch 3): leads the player on if followed; the end is a reward. A trap end is a
   later `Lure` whose lurkers spring at the end.
+- **Show**: done (batch 7): a camped party puts on something to watch; staying pays.
 - **Duel / Dance / Crossing / Vigil**: fixed arrangements of the formation code.
 
 ## Notes

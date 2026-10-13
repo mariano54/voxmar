@@ -30,7 +30,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::brain::{Errand, Memory, Pose};
 use voxmar_engine::creature::{CreatureId, Kind, mix, unit_from};
-use voxmar_engine::glam::{IVec3, Vec2, Vec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
 use voxmar_engine::lang::{Words, def_key};
 use voxmar_engine::traits;
 use voxmar_engine::wander::{Arrival, Hurt, Once, ResolvedNeed, ResolvedReward, Response, Role, Script, Stage, Want};
@@ -149,6 +149,10 @@ struct Instance {
     startled: bool,
     /// Where each player near a party that startles stood, and since when.
     still: FxHashMap<PlayerId, (Vec3, u64)>,
+    /// The tick each player near a camped party's show began watching, and those who have
+    /// watched it through.
+    watching: FxHashMap<PlayerId, u64>,
+    shown: FxHashSet<PlayerId>,
 }
 
 impl Instance {
@@ -182,6 +186,8 @@ impl Instance {
             warned: None,
             startled: false,
             still: Default::default(),
+            watching: Default::default(),
+            shown: Default::default(),
         }
     }
 }
@@ -493,6 +499,18 @@ impl Server {
     }
 
     /// Makes creature `id` young, to grow up as kept young do.
+    /// The nearest settlement of the world's plan within `reach` blocks (across) of `from`,
+    /// and the way to its centre.
+    fn town_near(&self, from: Vec3, reach: f32) -> Option<(Vec2, voxmar_worldgen::SettlementInfo)> {
+        let at = IVec2::new(from.x.floor() as i32, from.z.floor() as i32);
+        self.overworld
+            .settlements_near(at, reach.ceil() as i32)
+            .into_iter()
+            .map(|s| (Vec2::new(s.centre.x as f32 + 0.5, s.centre.z as f32 + 0.5) - xz(from), s))
+            .filter(|(to, _)| to.length() <= reach)
+            .min_by(|a, b| a.0.length().total_cmp(&b.0.length()))
+    }
+
     fn make_young(&mut self, id: u32) {
         let tick = self.tick;
         let Some(creature) = self.creatures.live.get_mut(&id) else { return };
@@ -773,12 +791,47 @@ impl Server {
         }
         if !inst.release {
             self.walk_plan(&mut inst, &players);
+            self.show_to_watchers(&mut inst, &players);
         }
         if inst.ended {
             self.end_event(inst);
             return;
         }
         self.keep(inst);
+    }
+
+    /// A camped party's show: each player who has stood within its reach of the leader for
+    /// its seconds is given what it gives, once, with the event's `show` line. Only while the
+    /// party is settled and at peace; one who walks off starts again.
+    fn show_to_watchers(&mut self, inst: &mut Instance, players: &[(PlayerId, Vec3)]) {
+        let registry = self.content.wandering.clone();
+        let event = registry.get(inst.event);
+        let Some(show) = &event.def.show else { return };
+        let settled = matches!(inst.plan, Plan::Camp { stay_until: Some(until), .. } if self.tick < until);
+        let lead = inst.members.first().and_then(|m| self.creatures.live.get(&m.creature).map(|c| (m.creature, c.body.position)));
+        let Some((speaker, at)) = lead.filter(|_| settled && inst.provoked.is_none() && !inst.startled) else {
+            inst.watching.clear();
+            return;
+        };
+        let near: Vec<PlayerId> = players
+            .iter()
+            .filter(|&&(id, p)| flat(p, at) <= show.near && (p.y - at.y).abs() <= 3.0 && self.players.get(&id).is_some_and(|pl| pl.health.alive()))
+            .map(|&(id, _)| id)
+            .collect();
+        inst.watching.retain(|id, _| near.contains(id));
+        for id in near {
+            if inst.shown.contains(&id) {
+                continue;
+            }
+            let since = *inst.watching.entry(id).or_insert(self.tick);
+            if self.tick >= since + ticks(show.seconds) {
+                inst.shown.insert(id);
+                if let (Some(who), Some(p)) = (self.speaker_name(speaker), self.players.get(&id)) {
+                    p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("show"))) });
+                }
+                self.hand_out(id, speaker, &event.show);
+            }
+        }
     }
 
     /// The plan of walking off from the nearest player (or on along `heading`), `pace` of a
@@ -910,7 +963,11 @@ impl Server {
         let member = inst.members.remove(at);
         let id = self.wandering.next;
         self.wandering.next += 1;
-        Some(Instance::new(id, inst.event, mix(inst.seed, 0xde7a ^ self.tick), self.tick, vec![member], Plan::Shadow { until: 0 }))
+        // What was said to whom goes with it: a line its party has used up (the meal that
+        // befriended it) is not offered again by the one who left.
+        let mut alone = Instance::new(id, inst.event, mix(inst.seed, 0xde7a ^ self.tick), self.tick, vec![member], Plan::Shadow { until: 0 });
+        (alone.told, alone.spent) = (inst.told.clone(), inst.spent.clone());
+        Some(alone)
     }
 
     /// The speaker `creature` of `inst` follows `player` toward its event's journey's end.
@@ -947,6 +1004,19 @@ impl Server {
                                 .with("far", Words::text(far))
                         }
                         None => Words::key("wander.point_none"),
+                    };
+                    p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text });
+                }
+                ResolvedReward::Town(reach) => {
+                    let from = self.creatures.live.get(&source).map(|c| c.body.position).or_else(|| self.players.get(&player).map(|p| p.position));
+                    let (Some(from), Some(p)) = (from, self.players.get(&player)) else { return };
+                    let text = match self.town_near(from, reach) {
+                        Some((to, s)) => Words::key("wander.town")
+                            .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
+                            .with("size", Words::key(&format!("settlement.size.{}", s.size)))
+                            .with("dir", crate::commands::compass(to))
+                            .with("far", Words::text(((to.length() / 50.0).round().max(1.0) * 50.0) as u32)),
+                        None => Words::key("wander.town_none"),
                     };
                     p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text });
                 }
@@ -1774,6 +1844,7 @@ impl Server {
                     ResolvedReward::Cook(station, ..) => held.is_some_and(|h| self.content.cooking.for_item(h.item, std::slice::from_ref(station)).is_some()),
                     // Where nothing of the kind is near, they have nothing to tell.
                     ResolvedReward::Point(want, reach) => self.creatures.live.get(&id).is_some_and(|c| self.point_at(c.body.position, want, *reach).is_some()),
+                    ResolvedReward::Town(reach) => self.creatures.live.get(&id).is_some_and(|c| self.town_near(c.body.position, *reach).is_some()),
                     _ => true,
                 })
                 && (!held_too
@@ -3881,5 +3952,245 @@ mod tests {
         let magic = server.content.skills.id("core:magic").unwrap();
         assert!(server.players[&1].skills.xp(magic) > 0);
         assert_eq!(count_of(&server, &name), 0);
+    }
+
+    fn xp_in(server: &Server, skill: &str) -> u32 {
+        let skill = server.content.skills.id(skill).unwrap();
+        server.players[&1].skills.xp(skill)
+    }
+
+    #[test]
+    fn a_travelling_smith_whets_every_edge_for_a_coin_and_teaches_a_beginner_holding_a_tool() {
+        let mut server = fixture();
+        let id = start(&mut server, "travelling_smith", (110, 128));
+        let smith = members_of(&server, id, 0)[0];
+        // Empty-handed: a greeting, nothing given.
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        let client = listen(&mut server);
+        assert!(server.meet(1, smith));
+        assert!(!has_effect(&server, "keen_edge"));
+        // A coin: every edge whetted, once.
+        give_held(&mut server, "base:gold_coin", 2);
+        assert!(server.meet(1, smith));
+        assert!(says(&told(&client), "wander.base.travelling_smith.whet"));
+        assert!(has_effect(&server, "keen_edge"));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1);
+        assert!(server.meet(1, smith));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "once");
+        // A tool in a beginner's hand: a word on its care, and Crafting.
+        let tool = tagged(&server, "tool");
+        let name = server.content.blocks.def(tool).name.clone();
+        give_held(&mut server, &name, 1);
+        assert!(server.meet(1, smith));
+        assert!(says(&told(&client), "wander.base.travelling_smith.care"));
+        assert!(xp_in(&server, "core:crafting") > 0);
+        assert_eq!(count_of(&server, &name), 1, "the tool is not taken");
+    }
+
+    #[test]
+    fn the_truffle_hunter_tells_a_good_mushroom_and_sells_a_truffle_spot_only_with_one_near() {
+        let mut server = fixture();
+        let id = start(&mut server, "truffle_hunter", (110, 128));
+        let hunter = members_of(&server, id, 0)[0];
+        assert_eq!(members_of(&server, id, 1).len(), 1, "a boar on a rope");
+        // A mushroom shown to a beginner cook: which are good to eat, and it is kept.
+        let fungus = tagged(&server, "fungus");
+        let name = server.content.blocks.def(fungus).name.clone();
+        give_held(&mut server, &name, 1);
+        let client = listen(&mut server);
+        assert!(server.meet(1, hunter));
+        assert!(says(&told(&client), "wander.base.truffle_hunter.safe"));
+        assert!(xp_in(&server, "core:cooking") > 0);
+        assert_eq!(count_of(&server, &name), 1);
+        // A coin with no truffle near: kept, nothing to tell.
+        give_held(&mut server, "base:gold_coin", 1);
+        assert!(server.meet(1, hunter));
+        assert!(told(&client).iter().all(|(key, _)| key != "wander.point"));
+        assert_eq!(count_of(&server, "base:gold_coin"), 1, "no secret, no sale");
+        // A truffle forty blocks east: the coin buys the way to it.
+        let at = server.creatures.live[&hunter].body.position;
+        server.world.set_block(IVec3::new(at.x as i32 + 40, 200, at.z as i32), server.content.blocks.expect("base:truffle"));
+        assert!(server.meet(1, hunter));
+        let said = told(&client);
+        let point = said.iter().find(|(key, _)| key == "wander.point").unwrap_or_else(|| panic!("pointed to: {said:?}"));
+        assert!(point.1.iter().any(|(n, w)| n == "dir" && *w == Words::key("compass.east")));
+        assert_eq!(count_of(&server, "base:gold_coin"), 0);
+    }
+
+    #[test]
+    fn the_silent_monk_binds_wounds_and_blesses_for_a_mote_of_aether() {
+        let mut server = fixture();
+        let id = start(&mut server, "wandering_monk", (110, 128));
+        let monk = members_of(&server, id, 0)[0];
+        let max = server.players[&1].health.max;
+        server.players.get_mut(&1).unwrap().health.current = max - 6;
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        assert!(server.meet(1, monk));
+        assert_eq!(server.players[&1].health.current, max, "bound up");
+        give_held(&mut server, "base:aether_mote", 1);
+        assert!(server.meet(1, monk));
+        assert!(has_effect(&server, "focused"));
+        assert!(xp_in(&server, "core:magic") > 0);
+        assert_eq!(count_of(&server, "base:aether_mote"), 0);
+    }
+
+    #[test]
+    fn a_refugee_fed_follows_the_player_home_stays_and_gives_the_seed_they_carried() {
+        let mut server = fixture();
+        let id = start(&mut server, "refugees", (110, 128));
+        let refugee = members_of(&server, id, 0)[0];
+        let near = server.creatures.live[&refugee].body.position;
+        // Empty-handed, they ask; a meal and one of them follows.
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        assert!(server.meet(1, refugee));
+        assert!(server.wandering.by_creature.contains_key(&refugee));
+        give_held(&mut server, "base:bread", 1);
+        assert!(server.meet(1, refugee));
+        assert_eq!(count_of(&server, "base:bread"), 0);
+        let party = server.wandering.by_creature[&refugee].0;
+        assert!(party != id, "the one who follows leaves the family");
+        assert!(matches!(server.wandering.active[&party].plan, Plan::Follow { guided: true, arrive: Arrival::Home, .. }));
+        // Fed once is enough: talked to again with food in hand, they keep you company and
+        // take nothing more.
+        give_held(&mut server, "base:bread", 1);
+        let client = listen(&mut server);
+        assert!(server.meet(1, refugee));
+        assert!(says(&told(&client), "wander.base.refugees.company"));
+        assert_eq!(count_of(&server, "base:bread"), 1, "no second meal is taken");
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        // Home: they stay as one of the player's people, and the seed is the player's.
+        let home = Vec3::new(near.x + 30.0, 200.0, near.z);
+        let player = server.players.get_mut(&1).unwrap();
+        (player.position, player.home) = (home, Some(home));
+        for _ in 0..60 {
+            run(&mut server, 20);
+            if !server.wandering.by_creature.contains_key(&refugee) {
+                break;
+            }
+        }
+        assert!(!server.wandering.by_creature.contains_key(&refugee), "it has arrived");
+        assert!(server.creatures.live[&refugee].companion, "it stays at the player's home");
+        assert!(count_of(&server, "base:seed_mix") >= 4);
+        assert!(xp_in(&server, "core:farming") > 0);
+    }
+
+    /// Starts a camping party and runs it until it has settled at its spot; returns its
+    /// leader, and puts player 1 `off` blocks east of it.
+    fn camped(server: &mut Server, name: &str, off: f32) -> (u64, u32) {
+        let id = start(server, name, (110, 128));
+        assert!(run_until(server, id, 60, |inst| matches!(inst.plan, Plan::Camp { stay_until: Some(_), .. })), "the party settles");
+        let lead = members_of(server, id, 0)[0];
+        let at = server.creatures.live[&lead].body.position;
+        server.players.get_mut(&1).unwrap().position = at + Vec3::new(off, 0.0, 0.0);
+        (id, lead)
+    }
+
+    #[test]
+    fn a_puppet_show_watched_through_refreshes_once_and_walking_off_starts_it_again() {
+        let mut server = fixture();
+        let (id, lead) = camped(&mut server, "puppeteers", 4.0);
+        let at = server.creatures.live[&lead].body.position;
+        let client = listen(&mut server);
+        // Most of the play, then off: nothing.
+        run(&mut server, 15 * TICKS_PER_SECOND as u64);
+        server.players.get_mut(&1).unwrap().position = at + Vec3::new(30.0, 0.0, 0.0);
+        run(&mut server, 2 * TICKS_PER_SECOND as u64);
+        assert!(!has_effect(&server, "refreshed"), "half a play is no play");
+        // Back, and the whole of it: Refreshed, with the show's end.
+        server.players.get_mut(&1).unwrap().position = at + Vec3::new(4.0, 0.0, 0.0);
+        run(&mut server, 15 * TICKS_PER_SECOND as u64);
+        assert!(!has_effect(&server, "refreshed"), "the count began again");
+        run(&mut server, 7 * TICKS_PER_SECOND as u64);
+        assert!(has_effect(&server, "refreshed"));
+        assert!(says(&told(&client), "wander.base.puppeteers.show"));
+        assert!(server.wandering.active[&id].shown.contains(&1));
+        // Once.
+        run(&mut server, 25 * TICKS_PER_SECOND as u64);
+        assert!(!says(&told(&client), "wander.base.puppeteers.show"), "the show is given once");
+        // A coin in the hat.
+        give_held(&mut server, "base:gold_coin", 1);
+        assert!(server.meet(1, lead));
+        assert!(has_effect(&server, "focused"));
+        assert_eq!(count_of(&server, "base:gold_coin"), 0);
+    }
+
+    #[test]
+    fn a_struck_troupe_puts_on_no_show() {
+        let mut server = fixture();
+        let (id, lead) = camped(&mut server, "puppeteers", 4.0);
+        server.wandering_hurt(lead, 1);
+        run(&mut server, 25 * TICKS_PER_SECOND as u64);
+        assert!(!has_effect(&server, "refreshed"));
+        assert!(server.wandering.active.get(&id).is_none_or(|inst| !inst.shown.contains(&1)));
+    }
+
+    #[test]
+    fn standing_in_a_dance_circle_warms_and_mends_and_a_round_trains_hitpoints() {
+        let mut server = fixture();
+        let (_, lead) = camped(&mut server, "dance_circle", 3.0);
+        let max = server.players[&1].health.max;
+        server.players.get_mut(&1).unwrap().health.current = max - 8;
+        run(&mut server, 17 * TICKS_PER_SECOND as u64);
+        assert!(has_effect(&server, "ember_warmed"));
+        assert!(server.players[&1].health.current >= max - 4, "mended by the dance");
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        assert!(server.meet(1, lead));
+        assert!(xp_in(&server, "core:hitpoints") > 0);
+    }
+
+    #[test]
+    fn the_cartographer_names_the_nearest_town_only_when_one_is_near() {
+        let mut server = fixture();
+        let id = start(&mut server, "cartographer", (110, 128));
+        let drawer = members_of(&server, id, 0)[0];
+        let towns = server.overworld.settlements_near(IVec2::new(128, 128), 6000);
+        let town = towns.first().expect("a settlement in the world's plan");
+        let centre = town.centre.as_vec3();
+        // Far from every town, and a seasoned builder: nothing to tell.
+        let lonely = (1..200)
+            .map(|i| centre + Vec3::new(i as f32 * 400.0, 0.0, 0.0))
+            .find(|&p| server.town_near(p, 600.0).is_none())
+            .expect("somewhere far from towns");
+        server.creatures.live.get_mut(&drawer).unwrap().body.position = lonely;
+        skill_to(&mut server, "core:construction", 20);
+        let client = listen(&mut server);
+        assert!(server.meet(1, drawer));
+        assert!(told(&client).iter().all(|(key, _)| key != "wander.town"), "no town near");
+        // Two hundred blocks east of the town: its name, west, about 200.
+        server.creatures.live.get_mut(&drawer).unwrap().body.position = centre + Vec3::new(200.0, 0.0, 0.0);
+        let (to, nearest) = server.town_near(centre + Vec3::new(200.0, 0.0, 0.0), 600.0).unwrap();
+        assert!(server.meet(1, drawer));
+        let said = told(&client);
+        let named = said.iter().find(|(key, _)| key == "wander.town").unwrap_or_else(|| panic!("named: {said:?}"));
+        assert!(named.1.iter().any(|(n, w)| n == "name" && *w == Words::Name(vec![("en".into(), nearest.name.0.clone()), ("ja".into(), nearest.name.1.clone())])));
+        assert!(named.1.iter().any(|(n, w)| n == "dir" && *w == crate::commands::compass(to)));
+        assert!(server.meet(1, drawer));
+        assert!(told(&client).iter().all(|(key, _)| key != "wander.town"), "once");
+    }
+
+    #[test]
+    fn a_cartographer_teaches_a_beginner_to_pace_out_ground() {
+        let mut server = fixture();
+        let id = start(&mut server, "cartographer", (110, 128));
+        let drawer = members_of(&server, id, 0)[0];
+        // Far from every town, so the lesson is what is said.
+        let lonely = (1..400).map(|i| Vec3::new(128.0 + i as f32 * 400.0, 200.0, 128.0)).find(|&p| server.town_near(p, 600.0).is_none()).unwrap();
+        server.creatures.live.get_mut(&drawer).unwrap().body.position = lonely;
+        assert!(server.meet(1, drawer));
+        assert!(xp_in(&server, "core:construction") > 0);
+    }
+
+    #[test]
+    fn whoever_reaches_the_scarecrow_finds_seed_in_its_pockets_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "scarecrow", (110, 128));
+        let scarecrow = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        assert!(server.meet(1, scarecrow));
+        let seed = count_of(&server, "base:seed_mix");
+        assert!((3..=5).contains(&seed), "{seed} seed");
+        assert!(xp_in(&server, "core:farming") > 0);
+        assert!(server.meet(1, scarecrow));
+        assert_eq!(count_of(&server, "base:seed_mix"), seed, "once");
     }
 }

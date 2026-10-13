@@ -33,6 +33,8 @@
             when: Some(InBiome("mountain")), modifiers: (mining: 1.1)),
         (name: "aether_touched", kind: Buff, title: "Aether-touched", description: "The aether hums here: every skill learns a twentieth more.",
             when: Some(InBiome("fantastical")), modifiers: (xp: 1.05)),
+        (name: "keen_edge", kind: Buff, title: "Keen edge", description: "A travelling smith whetted your tools: they bite a tenth faster.",
+            modifiers: (mining: 1.1)),
         (name: "mired", kind: Debuff, title: "Mired", description: "Soft wet ground: a little slower going.",
             when: Some(InBiome("wetland")), modifiers: (speed: 0.93)),
 

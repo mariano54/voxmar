@@ -491,6 +491,7 @@
         "pedlar": (voice: "person", pitch: 1.04),
         "bard": (voice: "person", pitch: 1.06),
         "stranger": (voice: "person", pitch: 0.88),
+        "scarecrow": (voice: "person", pitch: 0.62),
         "raider": (voice: "person", pitch: 0.9),
         "jailer": (voice: "person", pitch: 0.85),
         "thief": (voice: "person", pitch: 1.1),

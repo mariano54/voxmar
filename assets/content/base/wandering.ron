@@ -601,5 +601,114 @@
                 (name: "respects", wants: ("tag:flower", 1), gives: [Xp("magic", 8.0)], once: Player),
             ])],
         ),
+        // A travelling smith camps a while with tools on a cart. A coin and they whet every
+        // edge you carry (Keen edge); a beginner with a tool in hand learns to keep it.
+        (
+            name: "travelling_smith", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.3, 1.0), needs: (days: 1.5),
+            cast: [(species: "smith"), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 24.0, stay: (300.0, 480.0), mill: 3.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "whet", wants: ("gold_coin", 1), gives: [Effect("keen_edge", 1200.0)], once: Player),
+                (name: "care", needs: [Below("crafting", 10), Holds("tool")], gives: [Xp("crafting", 20.0)], once: Player),
+            ])],
+        ),
+        // A truffle hunter works the mushrooms of a wood with a boar on a rope. Show a
+        // mushroom and a beginner cook learns which are good to eat; a coin and they say
+        // where a truffle grows, if one is near.
+        (
+            name: "truffle_hunter", weight: 0.5,
+            biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0)],
+            daylight: (0.3, 0.9), needs: (days: 1.0),
+            cast: [(species: "villager"), (species: "wild_boar", role: Pet(0))],
+            script: Gather(reach: 20.0, work: (6.0, 12.0), visits: 8),
+            seek: ["tag:fungus"],
+            halt: (near: 6.0, seconds: (12.0, 20.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "safe", needs: [Below("cooking", 10), Holds("fungus")], gives: [Xp("cooking", 15.0)], once: Player),
+                (name: "truffle", wants: ("gold_coin", 1), gives: [Point("truffle", 128.0)], once: Player),
+            ])],
+        ),
+        // A monk under a vow of silence walks slowly through high and quiet land. They
+        // answer in gestures: they bind the hurt, and a mote of aether buys a blessing.
+        (
+            name: "wandering_monk", weight: 0.4,
+            biomes: [("tag:mountain", 1.0), ("tag:forest", 0.8), ("tag:open", 0.6)],
+            daylight: (0.0, 1.0), needs: (days: 2.0),
+            cast: [(species: "pilgrim")],
+            script: March(pass: (8.0, 18.0), length: 120.0, pace: 0.5),
+            halt: (near: 5.0, seconds: (10.0, 16.0)),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "mend", needs: [Hurt], gives: [Heal(6)], once: Player),
+                (name: "blessing", wants: ("aether_mote", 1), gives: [Effect("focused", 900.0), Xp("magic", 12.0)], once: Player),
+            ])],
+        ),
+        // A family that fled a raid sits worn by the road, to players with a home. A meal and
+        // one of them follows you home and stays there, and the seed they carried is yours.
+        (
+            name: "refugees", weight: 0.4,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
+            daylight: (0.2, 1.0), needs: (days: 2.0, home: Some(true)),
+            cast: [(species: "villager"), (species: "elder", count: (0, 1), role: Follow), (species: "child", count: (1, 2), role: Follow)],
+            script: Roam(radius: 10.0, pause: (6.0, 16.0), rest: true, seconds: 600.0),
+            guide: (follow_for: 900.0, arrive: Home, thanks: [Item("seed_mix", (4, 6)), Xp("farming", 20.0)]),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "shelter", wants: ("tag:edible", 1), gives: [Befriend], once: Party),
+            ])],
+        ),
+        // Puppeteers set up their little stage by day and children gather. Stay and watch the
+        // play through and you go off Refreshed; a coin in the hat is a laugh that stays
+        // with you (Focused).
+        (
+            name: "puppeteers", weight: 0.5,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.3)],
+            daylight: (0.4, 1.0), needs: (days: 1.0),
+            cast: [(species: "bard"), (species: "child", count: (2, 3), role: Follow)],
+            script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.5, away: 120.0),
+            show: (near: 8.0, seconds: 20.0, gives: [Effect("refreshed", 600.0)]),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "hat", wants: ("gold_coin", 1), gives: [Effect("focused", 600.0)], once: Player),
+            ])],
+        ),
+        // A dance circle at nightfall: villagers turn round a drummer. Stand in the ring a
+        // while and you leave warm and mended; dance a round and you are fitter for it.
+        (
+            name: "dance_circle", weight: 0.5,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:forest", 0.4)],
+            daylight: (0.0, 0.3), needs: (days: 1.0),
+            cast: [(species: "bard"), (species: "villager", count: (3, 4), role: Follow)],
+            script: Camp(near: 24.0, stay: (240.0, 420.0), mill: 4.0, away: 120.0),
+            show: (near: 6.0, seconds: 15.0, gives: [Effect("ember_warmed", 600.0), Heal(4)]),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "round", gives: [Xp("hitpoints", 10.0)], once: Player),
+            ])],
+        ),
+        // A cartographer camps to draw the land, far from where the world began. They tell
+        // the way to the nearest town, if one is within a few hundred blocks, and teach a
+        // beginner builder to pace out ground.
+        (
+            name: "cartographer", weight: 0.4,
+            biomes: [("tag:open", 1.0), ("tag:mountain", 0.8), ("tag:forest", 0.6)],
+            daylight: (0.3, 1.0), needs: (days: 1.5, away: Some((60.0, 100000.0))),
+            cast: [(species: "traveller"), (species: "villager", count: (0, 1), role: Follow)],
+            script: Camp(near: 24.0, stay: (300.0, 480.0), mill: 2.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "town", gives: [Town(600.0)], once: Player),
+                (name: "pace", needs: [Below("construction", 8)], gives: [Xp("construction", 15.0)], once: Player),
+            ])],
+        ),
+        // A scarecrow walks the grass at dusk near a player's home. It keeps off, and stands
+        // stock still whenever it is looked at; whoever reaches it finds seed in its pockets.
+        (
+            name: "scarecrow", weight: 0.3,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8)],
+            daylight: (0.0, 0.3), needs: (days: 2.0, home: Some(true)),
+            cast: [(species: "scarecrow")],
+            script: Shadow(keep: (10.0, 18.0), seconds: 240.0),
+            meetings: [(who: 0, lines: [
+                (name: "pockets", gives: [Item("seed_mix", (3, 5)), Xp("farming", 10.0)], once: Player),
+            ])],
+        ),
     ],
 )

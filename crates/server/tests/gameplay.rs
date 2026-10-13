@@ -1561,7 +1561,8 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     let mut client = Client::join();
     let water = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
     client.clear();
-    for line in ["/fill ~-1 ~-2 ~1 ~1 ~-1 ~3 water", "/fill ~-1 ~ ~1 ~1 ~3 ~3 air", "/give fishing_rod 1", "/skill fishing 80"] {
+    // By day, the day held and the sky clear: what bites here (and so the odds) stays the same.
+    for line in ["/time set day", "/time freeze", "/weather clear", "/fill ~-1 ~-2 ~1 ~1 ~-1 ~3 water", "/fill ~-1 ~ ~1 ~1 ~3 ~3 air", "/give fishing_rod 1", "/skill fishing 80"] {
         client.ok(line);
     }
     client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(0).is_some_and(|s| s.item == c.content.blocks.expect("base:fishing_rod")));
@@ -1569,14 +1570,18 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
     let miss = client.content.english.render(&voxmar_engine::lang::Words::key("fishing.nothing"), &client.content.blocks);
     let nothing = |c: &Client| c.chat.iter().any(|(_, text)| *text == miss);
-    // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
+    // At level 80 with this rod, by day here, a cast lands six times in ten (the best fish
+    // biting asks level 55: 0.35 + 0.008 a level above it + 0.05 for the rod tier,
+    // fishing.rs), so sixteen casts miss them all about once in two million runs. The roll
+    // is drawn from the tick a cast lands on, and casts land on much the same ticks every
+    // run, so six casts once failed in a third of runs on a busy machine.
     // A cast takes five seconds of the clock (`actions.ron`), judged by when the player's
     // messages arrive: each is proposed as if clicked at `at`, and a command stamped just
     // past its time is handled after the cast is done, so the casts follow one another
     // exactly, however busy the machine, without waiting the seconds out. Each ends in a
     // fish or nothing before the next.
     let mut at = Instant::now();
-    for _ in 0..6 {
+    for _ in 0..16 {
         client.chat.clear();
         client.propose_at("base:fish", ActionTarget::Block { block: water, face: Face::PosY }, at);
         at += Duration::from_millis(5100);
@@ -1590,7 +1595,7 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
         client.after_server_ticks(1);
         at += Duration::from_millis(100);
     }
-    assert!(fish(&client), "six casts at Fishing 80 caught nothing");
+    assert!(fish(&client), "sixteen casts at Fishing 80 caught nothing");
     client.pump_until(|c| !c.earned.is_empty());
 }
 
