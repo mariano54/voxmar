@@ -511,6 +511,8 @@ struct Gate {
     tame_nearest: f32,
     /// The newest creature id when the party step began: what is newer is the party's.
     party_after: u32,
+    /// Whether the party step has put the player on the pad for the start.
+    party_placed: bool,
     breaks: Breaks,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
@@ -636,6 +638,7 @@ impl Gate {
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
             party_after: 0,
+            party_placed: false,
             breaks: Breaks::default(),
             mining_before: None,
             struck_heights: (f32::MAX, f32::MIN),
@@ -7419,7 +7422,19 @@ fn party(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.next(Step::Ore, now);
     };
     match gate.phase {
+        // On the pad, looking level across it, whatever the steps before left: the party
+        // comes the same way every run.
         0 => {
+            look(world, 180.0, 0.0);
+            if !gate.party_placed {
+                gate.party_placed = true;
+                world.resource::<Net>().command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 0.5));
+                return;
+            }
+            if gate.server_in_phase() < 1.0 {
+                return;
+            }
+            gate.party_placed = false;
             gate.party_after = world.resource::<crate::creatures::Creatures>().views().map(|v| v.id).max().unwrap_or(0);
             gate.count_before = item_count(world, "base:bread");
             let net = world.resource::<Net>();

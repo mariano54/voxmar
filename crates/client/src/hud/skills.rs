@@ -1,7 +1,8 @@
 //! Skills on the HUD, RuneScape-style: each bit of experience earned rises at the right of
 //! the screen as "+18 Farming" and fades (gains close together add up into one line), a
 //! new level is noted in a small plate above them with the skill's icon, and an action
-//! refused for want of a level says what it needs. The character screen lists every
+//! refused for want of a level says what it needs (all of them waiting under the quest book
+//! and the journal while one is open). The character screen lists every
 //! skill's level and how far it is to the next.
 
 use bevy::prelude::*;
@@ -9,6 +10,7 @@ use voxmar_engine::skill::SkillId;
 
 use crate::lang::Locale;
 use crate::menu::Screen;
+use crate::player::UiState;
 use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, SHADOW, TEXT, UiFont, shadowed};
@@ -134,15 +136,19 @@ struct LevelOpens;
 #[derive(Component)]
 struct Corner;
 
-fn move_aside(catalogue: Query<&Visibility, With<super::creative::CataloguePanel>>, mut corners: Query<&mut Node, With<Corner>>) {
+fn move_aside(ui: Res<UiState>, catalogue: Query<&Visibility, (With<super::creative::CataloguePanel>, Without<Corner>)>, mut corners: Query<(&mut Node, &mut Visibility), With<Corner>>) {
     let aside = catalogue.iter().any(|v| *v != Visibility::Hidden);
     let (left, right, align) = if aside { (Val::Px(space::SECTION), Val::Auto, AlignItems::FlexStart) } else { (Val::Auto, Val::Px(space::SECTION), AlignItems::FlexEnd) };
-    for mut node in &mut corners {
+    // The quest book and the journal fill the screen: notes that came while one is open wait
+    // under it, rather than being written over its pages.
+    let shown = if ui.quests_open || ui.journal_open { Visibility::Hidden } else { Visibility::Inherited };
+    for (mut node, mut visibility) in &mut corners {
         if node.right != right {
             node.left = left;
             node.right = right;
             node.align_items = align;
         }
+        visibility.set_if_neq(shown);
     }
 }
 
