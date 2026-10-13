@@ -18,8 +18,9 @@ trees (Timber is pinned first), make planks in the grid, a crafting table, stick
 wooden pickaxe and axe at the table, then stone. Recipes are never locked by quests; a quest only opens its
 own page, and finishing is retroactive (it counts what you already did).
 
-**Day 1, daylight: tools and a fire.** Logs (Timber), cobblestone (A Pile of Stone), a
-crafting table, then stone pickaxe and axe (Stone in Hand). Hunt a rabbit or hen, make a
+**Day 1, daylight: tools and a fire.** Four logs by hand (Timber), a crafting table, a
+wooden axe for the rest of the wood (An Axe to It), cobblestone (A Pile of Stone), then
+stone pickaxe and axe (Stone in Hand). Hunt a rabbit or hen, make a
 campfire (two logs over two cobblestone in the 2x2 grid) and cook it (First Night). Wild wheat
 and herbs on the way (A Handful of Grain, Wild Harvest). The quest book is the guide: Look It
 Up teaches the recipe search in its first line.
@@ -199,6 +200,56 @@ Where the grind was, and what changed (Oct 13, from the bot's first timeline):
   Load's bricks, a copper ingot or dug clay then had nowhere to go (a claim or craft
   refused). Those two now pay three (two and one), and the bot still throws away its spare
   (burnt food, feathers, the wooden pickaxe, raw meat) at Charcoal if the pack fills.
+
+### Quick upgrades on common resources
+
+Oct 13, from the bot's timeline: the first upgrade for each resource a new player gathers
+in the first two ages, when the bot reaches it, what it costs and how much faster it is.
+Mining time is the block's hardness over the tool's speed (tools.ron), so a tool's
+`speed` is the whole of the gain.
+
+| Resource | Bare | First upgrade (bot reaches it) | Cost | Faster by | Next |
+|---|---|---|---|---|---|
+| Wood (log 2.0) | 2.0 s | Wooden axe (32 s, was never made) | 3 planks, 2 sticks | x2 | Stone axe at 44 s, x4 |
+| Stone (1.5) | 1.5 s | Wooden pickaxe (13 s) | 3 planks, 2 sticks | x2 | Stone pickaxe at 44 s, x4; copper at 233 s, x6 |
+| Clay (0.6) | 0.6 s | Stone shovel (Dig In, about 100 s) | 1 cobblestone, 2 sticks | x4 | Copper shovel, x6 |
+| Coal ore (3.0) | none | Wooden pickaxe (13 s) | as above | needs a pickaxe | Stone pickaxe, x2 more |
+| Fibre (wild wheat, grass) | instant | none needed | | | Sown wheat in the Farm age |
+| Meat (hunting) | max hit 1 | Stone axe or sword (44 s) | 3 or 2 cobblestone, sticks | x3 max hit | Copper sword, max hit 5 |
+| Charcoal (a log in the fire) | 2 s each | none: coal ore instead (Charcoal's other route) | | | The Crucible pays 16 |
+
+What changed:
+- **Wood was the late one.** Timber asked for eight logs by hand, and nothing asked for the
+  wooden axe, so a player (and the bot) punched every log until the stone axe. Timber now
+  asks for four, exactly the planks for the table, sticks, wooden pickaxe and axe, and
+  says to chop the rest with the axe. A new side quest, An Axe to It (after Crafting
+  Table), asks for the wooden axe and eight logs, pays four sticks toward Stone in Hand,
+  and says the stone axe halves the time again. The first upgrade is now felt within the
+  first minute: twelve logs by axe take about 19 s where punching them took about 30.
+- **Hunting.** The stone axe made for Stone in Hand already hits three times a fist, but
+  nothing said so. First Night's text now tells the player to swing it.
+- Stone, clay and coal were already quick: the wooden pickaxe comes with the table, and
+  Dig In asks for the stone shovel before the hearth's clay.
+- Charcoal has no faster tier, and none was added (no new systems): coal ore is the other
+  route, and The Crucible's sixteen charcoal now covers half the kiln's charge. The bot had
+  also been chopping 52 logs for 20 it used; it now chops 24, which takes the Charcoal
+  phase from 75 to 49 s. That is the bot's own waste, not the game's.
+
+The bot's timeline after this (three runs, Oct 13), against the one above:
+
+| Milestone | Before | After |
+|---|---|---|
+| Timber | 41 | 13 (four logs) |
+| An Axe to It | | 32 to 33 |
+| Stone in Hand | 53 | 44 to 50 |
+| First Night | 73 | 59 to 71 |
+| Homestead Hearth lit | 118 | 100 to 112 |
+| Fire the Clay | 175 | 162 to 184 |
+| Charcoal | 260 | 222 to 242 |
+| Red Metal | 271 | 233 to 252 |
+| A Kiln Load | 375 | 317 to 344 |
+| Brick by Brick | 478 | 439 to 449 |
+| Crucible Kiln lit | 489 | 450 to 459 |
 
 ## Measured pacing
 

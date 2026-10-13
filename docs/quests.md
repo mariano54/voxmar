@@ -135,3 +135,11 @@ so that what the game already does is something the book points to:
   twenty-four fired in all; pays twelve clay), The Last Sheaf (the harvest home procession,
   and twelve wheat brought in; pays eight wheat seed) and Mice in the Stores (follow the
   piper to the end of his tune, and a pantry or larder at home; pays four seed mix).
+
+## Quick upgrades
+
+Oct 13 (docs/first-days.md, "Quick upgrades on common resources"): Timber asks for four logs
+by hand, the planks for the table, sticks and both wooden tools, and An Axe to It (after
+Crafting Table) asks for the wooden axe and eight logs chopped with it, so the first tool
+upgrade comes in the first minute. First Night tells the player the stone axe hits three
+times as hard as a fist.
