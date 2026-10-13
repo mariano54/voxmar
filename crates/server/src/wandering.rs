@@ -963,7 +963,11 @@ impl Server {
         let member = inst.members.remove(at);
         let id = self.wandering.next;
         self.wandering.next += 1;
-        Some(Instance::new(id, inst.event, mix(inst.seed, 0xde7a ^ self.tick), self.tick, vec![member], Plan::Shadow { until: 0 }))
+        // What was said to whom goes with it: a line its party has used up (the meal that
+        // befriended it) is not offered again by the one who left.
+        let mut alone = Instance::new(id, inst.event, mix(inst.seed, 0xde7a ^ self.tick), self.tick, vec![member], Plan::Shadow { until: 0 });
+        (alone.told, alone.spent) = (inst.told.clone(), inst.spent.clone());
+        Some(alone)
     }
 
     /// The speaker `creature` of `inst` follows `player` toward its event's journey's end.
@@ -4044,7 +4048,16 @@ mod tests {
         assert!(server.meet(1, refugee));
         assert_eq!(count_of(&server, "base:bread"), 0);
         let party = server.wandering.by_creature[&refugee].0;
+        assert!(party != id, "the one who follows leaves the family");
         assert!(matches!(server.wandering.active[&party].plan, Plan::Follow { guided: true, arrive: Arrival::Home, .. }));
+        // Fed once is enough: talked to again with food in hand, they keep you company and
+        // take nothing more.
+        give_held(&mut server, "base:bread", 1);
+        let client = listen(&mut server);
+        assert!(server.meet(1, refugee));
+        assert!(says(&told(&client), "wander.base.refugees.company"));
+        assert_eq!(count_of(&server, "base:bread"), 1, "no second meal is taken");
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
         // Home: they stay as one of the player's people, and the seed is the player's.
         let home = Vec3::new(near.x + 30.0, 200.0, near.z);
         let player = server.players.get_mut(&1).unwrap();
