@@ -3744,15 +3744,26 @@ fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let snail = |world: &World| world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
     let named = |world: &World| world.resource::<crate::hud::target::Readout>().clone();
     match gate.phase {
-        // On the creatures' pad (clear stone, air above): a plank block close by.
+        // On the creatures' pad (clear stone, air above): a plank block close by, once what the
+        // creatures step left there (a grazer or two in the walls) is gone, since a wanderer on
+        // the look ray would take the name.
         0 => {
             let net = world.resource::<Net>();
+            for species in ["mouflon", "rabbit", "lumen_snail", "shambler"] {
+                net.command(&format!("creatures remove {species}"));
+            }
             net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
             net.command(&format!("setblock {} {} {} oak_planks", planks.x, planks.y, planks.z));
             net.command("time set noon");
             gate.advance(now);
         }
         1 if in_phase > 0.5 => {
+            // Nothing alive on the pad before the first look (given a few server seconds to go).
+            let middle = pad.as_vec3();
+            let crowded = world.resource::<crate::creatures::Creatures>().views().any(|v| v.position.distance(middle) < 12.0);
+            if crowded && gate.server_in_phase() < 6.0 {
+                return;
+            }
             let client = world.resource::<ClientWorld>();
             let Some(block) = client.block(planks).filter(|b| !b.is_air()) else {
                 if gate.server_in_phase() > 10.0 {

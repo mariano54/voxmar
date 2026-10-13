@@ -91,14 +91,17 @@ impl Drops {
     }
 
     /// The item lying nearest along the look ray within `within` blocks of the eye, and how
-    /// far, met by a box `width` across (an item is small, and hard to aim at).
+    /// far, met by a box `width` across (an item is small, and hard to aim at). The box is
+    /// where the item is drawn, which runs a little behind the server's word while it moves.
     pub fn looked_at(&self, eye: Vec3, look: Vec3, within: f32, width: f32) -> Option<(ItemStack, f32)> {
         let half = Vec3::new(width, width, width) / 2.0;
-        self.lying()
-            .filter_map(|(_, stack, at)| {
-                let middle = at + Vec3::Y * (SIZE / 2.0);
+        self.items
+            .values()
+            .filter(|item| item.collected.is_none())
+            .filter_map(|item| {
+                let middle = item.position + Vec3::Y * (SIZE / 2.0);
                 let hit = crate::creatures::ray_box(eye, look, &voxmar_engine::physics::Aabb { min: middle - half, max: middle + half })?;
-                Some((stack, hit))
+                Some((item.stack, hit))
             })
             .filter(|&(_, distance)| distance <= within)
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -328,6 +331,11 @@ mod tests {
         let (seen, distance) = drops.looked_at(eye, Vec3::NEG_Z, 6.0, 0.6).unwrap();
         assert_eq!(seen, stack);
         assert!((distance - 3.7).abs() < 1e-4, "met at the box's near face, not its middle: {distance}");
+        // An item still flying is met where it is drawn, not where the server last put it.
+        drops.items.get_mut(&1).unwrap().position = Vec3::new(2.0, 0.0, -4.0);
+        assert_eq!(drops.looked_at(eye, Vec3::NEG_Z, 6.0, 0.6), None);
+        assert!(drops.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 6.0, 0.6).is_some());
+        drops.items.get_mut(&1).unwrap().position = Vec3::new(0.0, 0.0, -4.0);
         // Not at all out of range, or aimed a hand's breadth beside it, or when it is picked up.
         assert_eq!(drops.looked_at(eye, Vec3::NEG_Z, 3.0, 0.6), None);
         assert_eq!(drops.looked_at(eye + Vec3::X, Vec3::NEG_Z, 6.0, 0.6), None);
