@@ -446,7 +446,29 @@ impl Server {
         let (tick, day) = (self.tick, self.day);
         let wet = self.weather.local(&mut self.temperature, xz(spot.as_vec3()), tick, day).weather.precipitation > FALLING;
         let Some(event) = self.pick_event_in(player, spot, mix(seed, 5), wet) else { return };
-        self.begin_event(Some(player), event, spot, mix(seed, 6));
+        if let Some(id) = self.begin_event(Some(player), event, spot, mix(seed, 6)) {
+            self.mark_forerunner(id, event, spot);
+        }
+    }
+
+    /// A party that comes after another (`needs.after`) and started on its own: the nearest
+    /// forerunner of its kind within reach that no party joined yet counts as joined, so
+    /// none joins it again through `try_follower`.
+    fn mark_forerunner(&mut self, id: u64, event: usize, spot: IVec3) {
+        let Some((forerunner, reach)) = self.content.wandering.get(event).def.needs.after.clone() else { return };
+        let Some(kind) = self.content.wandering.find(&forerunner) else { return };
+        let nearest = self
+            .wandering
+            .active
+            .values()
+            .filter(|inst| inst.id != id && inst.event == kind && !self.wandering.followed.contains(&inst.id))
+            .filter_map(|inst| inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map(|c| (inst.id, flat(c.body.position, spot.as_vec3()))))
+            .filter(|(_, d)| *d <= reach)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id);
+        if let Some(led) = nearest {
+            self.wandering.followed.insert(led);
+        }
     }
 
     /// One try at a party that comes after one already near `player` (`needs.after`): it
@@ -6088,6 +6110,15 @@ mod tests {
         assert_eq!(follow(&mut server), Some(event(&server, "rival_pedlar")), "the second pedlar has its rival");
         assert!(server.wandering.followed.contains(&second));
         assert_eq!(follow(&mut server), None, "both joined, none more");
+        // A rival that came on its own, not through the gap, still counts as the third
+        // pedlar's: no other rival joins it after.
+        let third = start(&mut server, "pedlar_and_hound", (land.x - 40, land.z - 50));
+        server.tick += ticks(server.content.wandering.rules().follow_after);
+        let (x, z) = (land.x - 40, land.z - 40);
+        let rival = start(&mut server, "rival_pedlar", (x, z));
+        server.mark_forerunner(rival, event(&server, "rival_pedlar"), IVec3::new(x, 200, z));
+        assert!(server.wandering.followed.contains(&third));
+        assert_eq!(follow(&mut server), None, "a rival that came on its own counts as the join");
     }
 
     /// Callers come only to a home that has come far enough (`home_is`), judged at the home
