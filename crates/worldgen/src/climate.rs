@@ -454,6 +454,17 @@ impl ClimateGrid {
         Self { origin, width: size.x, points }
     }
 
+    /// As [`Self::new`], with each lattice point worked out alone rather than through the
+    /// cached tiles: the same values (`regionals_match_regional_alone`), for a few points of
+    /// country a coarse decision asks about once, where working out a whole tile of 289 points
+    /// for the four it reads cost twenty times as much.
+    pub fn alone(geology: &Geology, min: IVec2, max: IVec2) -> Self {
+        let origin = min.div_euclid(IVec2::splat(CELL));
+        let size = max.div_euclid(IVec2::splat(CELL)) + 2 - origin;
+        let at: Vec<(f32, f32)> = (0..size.y).flat_map(|j| (0..size.x).map(move |i| ((origin.x + i) * CELL, (origin.y + j) * CELL))).map(|(x, z)| (x as f32, z as f32)).collect();
+        Self { origin, width: size.x, points: geology.climate.regionals(geology, &at) }
+    }
+
     /// The regional climate at a position inside the grid's area.
     pub fn at(&self, x: i32, z: i32) -> Regional {
         let cell = IVec2::new(x, z).div_euclid(IVec2::splat(CELL)) - self.origin;

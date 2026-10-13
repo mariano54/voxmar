@@ -395,6 +395,15 @@ impl Step {
     }
 }
 
+impl Gate {
+    /// Whether the server runs behind now: in a lagged step, but in the fight-feel step only
+    /// through its tries (the block, counter and dodge), not while the bear is summoned and
+    /// the sword given, nor while the bears are swept away after.
+    fn lagging(&self) -> bool {
+        self.step.lagged() && (self.step != Step::Feel || (FEEL_BLOCK..=FEEL_DODGE).contains(&self.phase))
+    }
+}
+
 #[derive(Resource)]
 struct Gate {
     dir: PathBuf,
@@ -860,7 +869,7 @@ fn run(world: &mut World) {
     if let Some(net) = world.get_resource::<Net>() {
         gate.server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
         if let Some(server) = net.server() {
-            server.set_lagging(gate.step.lagged());
+            server.set_lagging(gate.lagging());
         }
     }
     // The wall clock, for what ends a session whose other clocks stopped (`guard`).
@@ -6385,7 +6394,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             summon(world);
             let fighting = world.resource::<crate::fight::Fighting>();
-            gate.feel = FeelRun { after: (windup - 0.2).max(0.0), centre: (windup - 0.2).max(0.0), hurts: fighting.hurt_count, struck: fighting.struck_count, poked: f32::MIN, bears: 1, started: gate.server_now, ..default() };
+            // The search starts 0.15 s before the blow, where the perfect block has been found
+            // on the Mac (0.55 s into a 0.7 s wind-up); it moves either way from there.
+            gate.feel = FeelRun { after: (windup - 0.15).max(0.0), centre: (windup - 0.15).max(0.0), hurts: fighting.hurt_count, struck: fighting.struck_count, poked: f32::MIN, bears: 1, started: gate.server_now, ..default() };
             gate.advance(now);
         }
         1 => {
