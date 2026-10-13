@@ -1357,7 +1357,9 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
 fn looking_closely_shows_more_with_farming() {
     let mut client = Client::join();
     let hen = client.content.creatures.find("junglefowl").expect("junglefowl in the content");
-    client.ok("/summon junglefowl 1 ~ ~ ~-1");
+    // Held from the tick it arrives: a hen left to wander could be out of `/creatures tame`'s
+    // reach by the time that came, on a busy machine.
+    client.ok("/summon junglefowl 1 ~ ~ ~-1 held");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == hen));
     let id = *client.creatures.iter().find(|(_, v)| v.species == hen).unwrap().0;
     let look = |client: &mut Client| -> String {
