@@ -141,7 +141,11 @@ so that what the game already does is something the book points to:
   shrine bearer and the stragglers asking after it), From Wedding to Christening, Those
   Taken In (refugees, then their kin), First Metal (the bloomery smelters before the
   Crucible Kiln, and four copper ore) and A Hen of Your Own (the henwife's hen, kept near
-  home).
+  home). Three more from batch 16: Master and Journeyman (Farm: the apprentice
+  who asks to learn your best skill at 15, then the journeyman), The Market Road (Nomad,
+  after To Market: the market folk, then beat the highwaymen's ambush; the win is the
+  dealing their tally counts) and Found and Thanked (Nomad, after A Kind Turn: the lost
+  child brought to town, then the parents who come to your home).
 
 ## Quick upgrades
 
@@ -150,3 +154,21 @@ by hand, the planks for the table, sticks and both wooden tools, and An Axe to I
 Crafting Table) asks for the wooden axe and eight logs chopped with it, so the first tool
 upgrade comes in the first minute. First Night tells the player the stone axe hits three
 times as hard as a fist.
+
+## Structure (Oct 13)
+
+A pass on the Nomad and Farm chapters against the way a long modpack's quest book is laid
+out: each chapter a spine of main quests to one goal, side branches hanging off it, nothing
+on the spine gated by a side quest, and a quest that is several steps shown as several.
+
+| Check | Before | After |
+|---|---|---|
+| A clear goal per chapter | Nomad's goal Homestead Hearth ("the Farm age opens"); Farm's goal the lit Crucible Kiln ("starts the Bronze age"), with First Bronze after it as the bridge to the next age | Unchanged: both goals are the last spine quest their text names as the age's end |
+| Side branches read as optional | No spine quest comes after a side quest (the_potter, brick_by_brick and crucible_kiln come only after spine quests or the hearth); the wanderer quests say "may" | Unchanged |
+| Nothing unreachable or a dead end | Every `after` names a quest that exists (load-checked); no Nomad quest waits on a Farm one; no Craft or Level goal asks more than Engineering 10 (The Crucible). A Place to Pray stood in the Farm tab with no `after`, so it could finish before the Farm age opened. Stone in Hand had no `after`, so the spine read as three loose starts | A Place to Pray comes after Homestead Hearth like the rest of its tab; Stone in Hand after Crafting Table, so the Nomad spine reads Crafting Table, Stone in Hand, then First Night's line (First Night stays pinned at the start, with no `after`) |
+| Several steps shown as several | Homestead Hearth was one goal (`Home`) for a hearthstone, two chimneys and the lighting | Three parts: the hearthstone, two chimneys, and the lit hearth (`Home`). The book ticks each as it is made |
+
+Left as they are: Timber stays off the spine (branch `start`, with An Axe to It), since the
+main-line walk test models only the spine's goals; Crafting Table stays a root so a player
+who already has a table finds it done.
+

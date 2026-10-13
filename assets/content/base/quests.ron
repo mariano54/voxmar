@@ -33,6 +33,7 @@
             name: "stone_in_hand", age: "nomad", branch: "main", title: "Stone in Hand",
             why: "Bare hands are slow. At the crafting table, three planks over two sticks make a wooden pickaxe: dig a few blocks under the dirt, or into a bare hillside, and break stone for cobblestone. Three cobblestone over two sticks make a stone pickaxe, and a stone axe is shaped like the wooden one. Stone tools mine twice as fast and reach coal for torches.",
             tasks: [[Craft("stone_pickaxe", 1), Craft("stone_axe", 1)]],
+            after: ["crafting_table"],
             rewards: [Xp("engineering", 51.0), Xp("mining", 31.0)],
         ),
         (
@@ -52,7 +53,7 @@
         (
             name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",
             why: "Your home: you wake here after dying, and the Farm age opens. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel.",
-            tasks: [[Home]],
+            tasks: [[Craft("hearthstone", 1), Craft("chimney", 2), Home]],
             after: ["a_bed_of_your_own"],
             rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 1)],
         ),
@@ -671,6 +672,7 @@
             name: "a_place_to_pray", age: "farm", branch: "prayer", title: "A Place to Pray",
             why: "Stone bricks ringed round one more brick make a stone altar (Construction 5). Place it and right-click it: your prayer points fill, and a bone in hand is offered for Magic experience. Then press C and open Prayers to turn Bark Skin on.",
             tasks: [[Craft("stone_altar", 1)]],
+            after: ["homestead_hearth"],
             rewards: [Xp("magic", 120.0)],
         ),
         (
