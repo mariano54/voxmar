@@ -489,6 +489,30 @@ the knight errant to come.
 | walks off mid-bout | no winner | no winner, the wager kept | the push starts again |
 | strikes outside a bout | he fights in earnest | the same | they scatter |
 
+## Batch 12 (implemented, six kinds): the home's fields, first crafts and the road
+
+No new mechanics: each kind is the framework and data, and each answers something the first
+two ages already have (a home's crops, wheat seed, flint and hides, the marsh at night, the
+road to town).
+
+| kind | script | what it adds |
+| --- | --- | --- |
+| wassailers | Camp, near home, night | Singers come at night to one at home. A loaf and they toast the fields: unripe crops within 24 blocks grow a stage, and a little Farming (once for the party; only where something grows). |
+| thatchers | March, near home | Two on their way to a roof. A beginner builder (Construction below 10) gives four wheat and learns how straw is laid, once. |
+| seed swappers | Camp | A farmer who has grown a little (Farming 3) swaps four wheat seeds for two rye, carrot or chickpea to sow, again and again; a beginner learns when to sow. |
+| flint knappers | Camp | At a gravel bank. Two flints and a beginner (Crafting below 8) learns to knap, once; a beginner miner is told where gravel lies; a hide buys three or four flints. |
+| frog giggers | Hunt, night, marsh | Hunt frogs and toads with a lantern; first blood on one they take is shared (Hunter); a beginner learns to still the light. |
+| messenger | Journey (fast) | Runs a letter to town at half again a walk. Keep up the whole way and they stand you a coin and some Hitpoints. On the road they pass on news of a wonder, once. |
+
+| the player | wassailers | seed swappers | messenger |
+| --- | --- | --- | --- |
+| gives what's asked | the fields grow a stage | seed of another crop | n/a |
+| has nothing growing near | no toast taken | n/a | n/a |
+| is a beginner | n/a | told when to sow, no swap | n/a |
+| keeps up to town | n/a | n/a | a coin and Hitpoints |
+| falls behind | n/a | n/a | nothing at the town |
+| strikes one | they scatter | they scatter | they scatter |
+
 ## Quest hooks
 
 Kinds that make a good step in the first two ages' quest books (each is rare, so a quest
@@ -509,6 +533,9 @@ should ask for it as an "if you meet them" side step, never on the main line):
 - **A first bout** (sparring master): spar with a wandering soldier, win or lose.
 - **Ring champion** (village champion): win a wager in the champion's ring.
 - **Under the stars** (stargazers): watch the sky with the stargazers.
+- **A toast to the fields** (wassailers): share a loaf with the wassailers and see a field grow.
+- **New seed** (seed swappers): swap wheat seed for another crop and sow it.
+- **Keep up** (messenger): run with a messenger all the way to town.
 
 ## Catalogue of 100
 
@@ -569,7 +596,7 @@ are the mechanics later batches add, each used by several kinds.
 | 49 | fortune teller | see batch 8 | OneOf | 2 | done |
 | 50 | puppeteers | see batch 7 | Show | 2 | done |
 | 51 | circus | acrobats, a bear on a chain; scares animals | Camp | 3 | later |
-| 52 | messenger | runs between settlements; a letter for a coin | Errand | 2 | later |
+| 52 | messenger | see batch 12 | Journey | 2 | done |
 | 53 | postman with mule | delivers to a player's home mailbox | Errand | 3 | later |
 | 54 | cartographer | see batch 7 | Town | 2 | done |
 | 55 | prospector | see batch 6 | Gather | 2 | done |
@@ -634,6 +661,11 @@ are the mechanics later batches add, each used by several kinds.
 | 114 | chimney sweep | see batch 11 | near home | 2 | done |
 | 115 | quack doctor | see batch 11 | OneOf | 1 | done |
 | 116 | stuck cart | see batch 11 | wet, show | 1 | done |
+| 117 | wassailers | see batch 12 | Grow | 2 | done |
+| 118 | thatchers | see batch 12 | near home | 1 | done |
+| 119 | seed swappers | see batch 12 | OneOf | 2 | done |
+| 120 | flint knappers | see batch 12 | Point | 1 | done |
+| 121 | frog giggers | see batch 12 | Hunt | 1 | done |
 
 ## Mechanics the next batches add
 

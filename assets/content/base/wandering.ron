@@ -1050,5 +1050,88 @@
             script: Camp(near: 18.0, stay: (180.0, 300.0), mill: 1.0, away: 100.0),
             show: (near: 4.0, seconds: 12.0, gives: [Item("gold_coin", (1, 1)), Item("bread", (1, 1))]),
         ),
+        // Wassailers come singing at night to a home's fields. Share a loaf and they toast
+        // the crops, and what grows near them grows on a stage (once for the party).
+        (
+            name: "wassailers", weight: 0.5,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.0, 0.3), needs: (days: 2.0, home: true, near_home: Some(40.0)),
+            cast: [(species: "bard"), (species: "villager", count: (2, 3), role: Follow)],
+            script: Camp(near: 16.0, stay: (180.0, 300.0), mill: 3.0, away: 100.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "toast", wants: ("bread", 1), gives: [Grow(24.0, 1), Xp("farming", 8.0)], once: Party),
+            ])],
+        ),
+        // Thatchers on their way to a roof. A beginner builder who brings them four wheat
+        // is shown how straw is laid so the rain runs off.
+        (
+            name: "thatchers", weight: 0.5,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:forest", 0.4)],
+            daylight: (0.3, 0.9), needs: (days: 1.5, near_home: Some(64.0)),
+            cast: [(species: "villager"), (species: "villager", role: Follow)],
+            script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.8),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "lesson", needs: [Below("construction", 10)], wants: ("wheat", 4), gives: [Xp("construction", 16.0)], once: Player),
+                (name: "roof", needs: [Home(true)]),
+            ])],
+        ),
+        // Seed swappers camp with sacks of what grew well for them. A farmer who has grown
+        // a little (Farming 3) swaps four wheat seeds for a few of another crop to sow; a
+        // beginner is told when to sow.
+        (
+            name: "seed_swappers", weight: 0.5,
+            biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:temperate", 0.6)],
+            daylight: (0.3, 0.9), needs: (days: 2.0),
+            cast: [(species: "farmer"), (species: "child", count: (0, 1), role: Follow)],
+            script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "sow", needs: [Below("farming", 5)], gives: [Xp("farming", 6.0)], once: Player),
+                (name: "swap", needs: [Skill("farming", 3)], wants: ("wheat_seeds", 4), gives: [OneOf([Item("rye", (2, 2)), Item("carrot", (2, 2)), Item("chickpea", (2, 2))])]),
+            ])],
+        ),
+        // Flint knappers at a gravel bank, chipping blades. A beginner who brings two flints
+        // is shown the knack; a hide buys a handful; they say where the gravel lies.
+        (
+            name: "flint_knappers", weight: 0.5,
+            biomes: [("tag:rocky", 1.0), ("tag:mountain", 0.7), ("tag:open", 0.6), ("tag:water", 0.4)],
+            daylight: (0.25, 0.9), needs: (days: 0.5),
+            cast: [(species: "hunter"), (species: "child", count: (0, 1), role: Follow)],
+            script: Camp(near: 20.0, stay: (200.0, 320.0), mill: 1.5, away: 100.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "knap", needs: [Below("crafting", 8)], wants: ("flint", 2), gives: [Xp("crafting", 12.0)], once: Player),
+                (name: "gravel", needs: [Below("mining", 6)], gives: [Point("tag:gravel", 64.0)], once: Player),
+                (name: "trade", wants: ("hide", 1), gives: [Item("flint", (3, 4))]),
+            ])],
+        ),
+        // Frog giggers out on a wet night with a lantern and a forked spear, after the frogs
+        // of the marsh. A beginner learns to still the light; first blood on one is shared.
+        (
+            name: "frog_giggers", weight: 0.6,
+            biomes: [("tag:wetland", 1.0), ("tag:wet", 0.8), ("tag:water", 0.5)],
+            daylight: (0.0, 0.3), needs: (days: 1.0),
+            cast: [(species: "hunter"), (species: "child", count: (0, 1), role: Follow)],
+            script: Hunt(reach: 32.0, strike: 2.0, takes: 3, seconds: 360.0),
+            quarry: ["common_frog", "toad"],
+            share: [Xp("hunter", 3.0)],
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "still", needs: [Below("hunter", 6)], gives: [Xp("hunter", 8.0)], once: Player),
+            ])],
+        ),
+        // A messenger running a letter to town, who stops only to catch a breath. Keep up
+        // all the way and they stand you a coin at the town; on the road they pass on news
+        // of something strange they saw.
+        (
+            name: "messenger", weight: 0.5, lifetime: 900.0,
+            biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
+            daylight: (0.3, 0.9), needs: (days: 1.0),
+            cast: [(species: "traveller")],
+            script: Journey(reach: 500.0, pace: 1.5, near: 12.0),
+            halt: (near: 4.0, seconds: (3.0, 4.0), cooldown: 60.0),
+            reveal: [Item("gold_coin", (1, 1)), Xp("hitpoints", 12.0)],
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "there", needs: [When(Arrived)]),
+                (name: "news", gives: [Point("tag:wonder", 128.0)], once: Player),
+            ])],
+        ),
     ],
 )
