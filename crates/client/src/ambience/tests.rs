@@ -358,3 +358,17 @@ fn ambience_survey() {
         }
     }
 }
+
+/// Leaving a world forgets where the player was in it, so the next world's music does not
+/// start out underground.
+#[test]
+fn leaving_a_world_forgets_the_surroundings() {
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::prelude::World;
+    let mut world = World::new();
+    world.insert_resource(super::Surroundings { flowers: 0.6, depth: 40.0, sky: 0.0 });
+    world.run_system_once(super::leave).unwrap();
+    let left = world.resource::<super::Surroundings>();
+    let fresh = super::Surroundings::default();
+    assert_eq!((left.flowers, left.depth, left.sky), (fresh.flowers, fresh.depth, fresh.sky));
+}

@@ -38,6 +38,7 @@ use crate::rarity::{Rarity, Tier};
 use crate::rng::hash3;
 use crate::trees::TreeId;
 use crate::Site;
+use voxmar_engine::glam::IVec2;
 
 pub use crate::content::Ground;
 
@@ -72,6 +73,17 @@ const HABITAT_CHANCE: f32 = 0.15;
 const ALONE_CHANCE: f32 = 0.01;
 /// Chance per block of a weight-1 wonder plant where aether is at its highest.
 const WONDER_PLANT_CHANCE: f32 = 0.003;
+/// Rare herbs grow in small patches (`PlantDef::patches`): the land is cut into cells this
+/// many blocks across, and each cell holds at most one patch of each herb, its plants
+/// within two blocks of its centre and its centre this far inside the cell.
+pub(crate) const PATCH_CELL: i32 = 32;
+const PATCH_MARGIN: i32 = 3;
+const PATCHES: u64 = 0x3b5d;
+/// Patches of a rare herb along water (`Ecology::edge_patches`) start at least this many
+/// blocks apart, and take the columns of their habitat within this reach of their start.
+const EDGE_SPACING: i32 = 7;
+const EDGE_REACH: i32 = 3;
+const EDGES: u64 = 0x5e9a;
 /// Wonder trees outside the biomes that name them are a find: a lone tree or a tiny grove
 /// of one kind, in at most one place per cell of this many blocks, ...
 const WONDER_GROVE_CELL: i32 = 1024;
@@ -120,6 +132,8 @@ struct PlantSpec {
     habitat: Habitat,
     comfort: Comfort,
     snowy: Option<BlockId>,
+    /// A rare herb's patches: plants per million blocks, and the least and most in a patch.
+    patches: Option<(f32, u32, u32)>,
 }
 
 /// What one biome grows: candidates from the pools with the biome's weight for each,
@@ -139,6 +153,11 @@ struct Flora {
     alone: Vec<(PlantId, f32)>,
     wonder_trees: Vec<(TreeId, f32)>,
     wonder_plants: Vec<(PlantId, f32)>,
+    /// Rare herbs the biome names that grow in patches, with the weight it names each with.
+    patch_herbs: Vec<(PlantId, f32)>,
+    /// Those of them whose habitat runs along the edge of water (`Habitat::edge`), whose
+    /// patches start from it (`Ecology::edge_patches`).
+    edge_herbs: Vec<(PlantId, f32)>,
 }
 
 /// What a plant is good for, for gameplay (cooking, alchemy, dyeing).
@@ -178,6 +197,8 @@ pub struct Ecology {
     richness: f32,
     /// The content's tree density, on forest trees.
     tree_density: f32,
+    /// Whether any biome grows a rare herb along water (`edge_patches`).
+    edges: bool,
     /// Each plant's share of its biome's rate that grows: the content's plant density,
     /// or all of it for the plants the density keeps (gatherables).
     plant_density: Vec<f32>,
@@ -236,6 +257,7 @@ fn habitat(habitat: Habitat, site: &Site) -> f32 {
         Habitat::Water => smoothstep(0.35, 0.7, site.river) * yes(above <= 3),
         Habitat::Shore => yes((0..=3).contains(&above) && (coast || site.river > 0.5)),
         Habitat::Shallows => yes((-2..=1).contains(&above) && (coast || site.river > 0.3)),
+        Habitat::LakeShore => yes(site.body == crate::Body::Lake && (0..=2).contains(&above)),
     }
 }
 
@@ -282,6 +304,7 @@ impl Ecology {
                     habitat: p.habitat,
                     comfort: p.comfort.clone(),
                     snowy: p.snowy.as_deref().map(|n| registry.expect(n)),
+                    patches: p.patches.as_ref().map(|q| (q.rate, q.size.0, q.size.1)),
                 }
             })
             .collect();
@@ -293,7 +316,7 @@ impl Ecology {
         let scaled = |t: &TreeDef| t.tags.iter().any(|tag| content.climate.levels.trees.contains(tag));
         let tree_class: Vec<Option<Rarity>> = content.trees.iter().map(|t| scaled(t).then_some(t.rarity)).collect();
         let plant_class: Vec<Option<Rarity>> = content.plants.iter().map(|p| Some(plant_rarity_of(p))).collect();
-        let flora = content
+        let flora: Vec<Flora> = content
             .biomes
             .iter()
             .map(|biome| {
@@ -304,6 +327,7 @@ impl Ecology {
                 Flora::new(biome, content, registry, &at_level(&tree_class, &tree_rarity), &at_level(&plant_class, &plant_rarity), &plant_rarity)
             })
             .collect();
+        let edges = flora.iter().any(|f| !f.edge_herbs.is_empty());
 
         let hardy = content
             .trees
@@ -329,6 +353,7 @@ impl Ecology {
             varieties: noise(seed, 36, 1.0 / 600.0, FractalType::FBm, 2),
             richness: dials.vegetation,
             tree_density: content.tree_density,
+            edges,
             plant_density: content.plants.iter().map(|p| if content.plant_kept(p, registry) { 1.0 } else { content.plant_density }).collect(),
             seed,
         }
@@ -507,7 +532,7 @@ impl Ecology {
     /// other plants that grow alone, then the carpet of grasses and ferns), so a stage can
     /// only take what the earlier ones left.
     pub fn plant(&self, site: &Site, ground: Ground, x: i32, z: i32) -> Option<Plant> {
-        if matches!(ground, Ground::Bare | Ground::Shallows) {
+        if ground == Ground::Shallows {
             return None;
         }
         let flora = &self.flora[site.biome.0 as usize];
@@ -541,6 +566,18 @@ impl Ecology {
         let choose_thinned = |list: &[(PlantId, f32)], total: f32, u: f32| choose(list, total * kept(list, total), u, thinned);
         let fertile = 0.8 + 0.4 * site.fertility;
 
+        // Rare herbs, in their patches, in the biome the position belongs to (banks and
+        // borders included), wherever the ground and habitat suit each plant: the biomes
+        // that name a herb already choose its climate, so its comfort does not thin it.
+        for &(plant, weight) in &self.flora[site.home.0 as usize].patch_herbs {
+            if self.in_patch(plant, weight, x, z) && third < self.rooted(plant, ground) * habitat(self.plants[plant.0 as usize].habitat, site) {
+                return Some(self.place(plant, second, snow));
+            }
+        }
+        // Nothing else grows on bare rock, gravel or ice.
+        if ground == Ground::Bare {
+            return None;
+        }
         // Flowers, sparse: a stray one here and there, drifts where the bloom field runs
         // high, and dense patches only in its rare peaks (and throughout biomes in `bloom`,
         // such as flower meadows). A smooth noise chooses along the cumulative
@@ -594,15 +631,130 @@ impl Ecology {
         None
     }
 
+    /// The plants of the patches of rare herbs whose habitat runs along water
+    /// (`Habitat::edge`: a lake's bank, a beach, a river's edge) in the cell of `PATCH_CELL`
+    /// blocks whose first column is `first`, as each one's column (its index in the cell,
+    /// row by row) and plant. A patch at a random spot, as other rare herbs have
+    /// (`in_patch`), would seldom touch so thin a line, so these start from it: each such
+    /// herb that the biomes of the cell name takes patches in proportion to the columns of
+    /// its habitat there (its rate counts plants per million of them, times the naming
+    /// biome's weight), each started at one of those columns chosen by hash, at least
+    /// `EDGE_SPACING` blocks from the others, of as many of the nearest such columns within
+    /// `EDGE_REACH` as its size. `column(i)` gives the site and ground of the cell's i-th
+    /// column, or none where nothing may grow (under water, under a tree, on a trail). Only
+    /// the cell's own columns decide, so a cell is the same whatever generated it.
+    pub fn edge_patches<'s>(&self, first: IVec2, column: impl Fn(usize) -> Option<(&'s Site, Ground)>) -> Vec<(usize, Plant)> {
+        let mut out = Vec::new();
+        if !self.edges {
+            return out;
+        }
+        let side = PATCH_CELL as usize;
+        // The columns of each herb's habitat, with the weight their biome names it with.
+        let mut found: Vec<(PlantId, Vec<(usize, f32)>)> = Vec::new();
+        for i in 0..side * side {
+            let Some((site, ground)) = column(i) else { continue };
+            for &(plant, weight) in &self.flora[site.home.0 as usize].edge_herbs {
+                if self.rooted(plant, ground) == 0.0 || habitat(self.plants[plant.0 as usize].habitat, site) < 0.5 {
+                    continue;
+                }
+                match found.iter_mut().find(|(p, _)| *p == plant) {
+                    Some((_, columns)) => columns.push((i, weight)),
+                    None => found.push((plant, vec![(i, weight)])),
+                }
+            }
+        }
+        let cell = first.div_euclid(IVec2::splat(PATCH_CELL));
+        let unit = |bits: u64| (bits & 0xff_ffff) as f32 / (1u32 << 24) as f32;
+        let at = |i: usize| IVec2::new(first.x + (i % side) as i32, first.y + (i / side) as i32);
+        for (plant, columns) in found {
+            let Some((rate, least, most)) = self.plants[plant.0 as usize].patches else { continue };
+            let seed = self.seed ^ EDGES ^ (plant.0 as u64) << 24;
+            // As many patches as the habitat's columns make on average, rounded up or down
+            // by a roll.
+            let mean = (least + most) as f32 / 2.0;
+            let expected: f32 = columns.iter().map(|&(_, weight)| rate * weight / 1e6).sum::<f32>() / mean;
+            let count = (expected + unit(hash3(seed, cell.x, 0, cell.y))) as usize;
+            if count == 0 {
+                continue;
+            }
+            let mut order: Vec<(u64, usize)> = columns.iter().map(|&(i, _)| (hash3(seed, at(i).x, 1, at(i).y), i)).collect();
+            order.sort_unstable();
+            let mut starts: Vec<IVec2> = Vec::new();
+            let mut taken: Vec<usize> = Vec::new();
+            for &(hash, i) in &order {
+                if starts.len() >= count {
+                    break;
+                }
+                let start = at(i);
+                if starts.iter().any(|s| (*s - start).abs().max_element() < EDGE_SPACING) {
+                    continue;
+                }
+                starts.push(start);
+                let size = least as usize + (hash >> 40) as usize % (most - least + 1) as usize;
+                let mut near: Vec<(i32, u64, usize)> = order
+                    .iter()
+                    .filter(|&&(_, j)| (at(j) - start).abs().max_element() <= EDGE_REACH && !taken.contains(&j))
+                    .map(|&(h, j)| ((at(j) - start).length_squared(), h, j))
+                    .collect();
+                near.sort_unstable();
+                taken.extend(near.iter().take(size).map(|&(_, _, j)| j));
+            }
+            for i in taken {
+                let p = at(i);
+                let look = unit(hash3(self.seed ^ PLANTS, p.x, 0, p.y) >> 24);
+                let snow = column(i).is_some_and(|(_, ground)| ground == Ground::Snow);
+                out.push((i, self.place(plant, look, snow)));
+            }
+        }
+        out
+    }
+
+    /// Whether (x, z) holds a plant of a rare herb's patch, for a biome naming it with
+    /// `weight`. Each cell of `PATCH_CELL` blocks holds a patch with the chance that makes
+    /// the herb's rate, centred where its hash says, of a size from its range: the centre and
+    /// the rest at hashed spots within two blocks of it (two may fall together).
+    fn in_patch(&self, plant: PlantId, weight: f32, x: i32, z: i32) -> bool {
+        let Some((rate, least, most)) = self.plants[plant.0 as usize].patches else { return false };
+        let (gx, gz) = (x.div_euclid(PATCH_CELL), z.div_euclid(PATCH_CELL));
+        let seed = self.seed ^ PATCHES ^ (plant.0 as u64) << 24;
+        let hash = hash3(seed, gx, 0, gz);
+        let unit = |bits: u64| (bits & 0xffff) as f32 / 65536.0;
+        let mean = (least + most) as f32 / 2.0;
+        let chance = rate * weight * (PATCH_CELL * PATCH_CELL) as f32 / (mean * 1e6);
+        if unit(hash) >= chance {
+            return false;
+        }
+        let span = (PATCH_CELL - 2 * PATCH_MARGIN) as f32;
+        let cx = gx * PATCH_CELL + PATCH_MARGIN + (unit(hash >> 16) * span) as i32;
+        let cz = gz * PATCH_CELL + PATCH_MARGIN + (unit(hash >> 32) * span) as i32;
+        let (dx, dz) = (x - cx, z - cz);
+        if dx.abs() > 2 || dz.abs() > 2 {
+            return false;
+        }
+        let size = least + ((hash >> 48) % (most - least + 1) as u64) as u32;
+        (dx, dz) == (0, 0)
+            || (1..size).any(|k| {
+                let h = hash3(seed, cx, k as i32, cz);
+                ((h % 5) as i32 - 2, ((h >> 8) % 5) as i32 - 2) == (dx, dz)
+            })
+    }
+
     /// How well a plant grows on `ground` at a site with temperature `t` and soil moisture
     /// `m`, 0 ..= 1. Under snow, only plants with a snowy look grow, where they would on soil.
     fn grows(&self, plant: PlantId, site: &Site, ground: Ground, t: f32, m: f32) -> f32 {
         let spec = &self.plants[plant.0 as usize];
-        let rooted = spec.ground & ground_bit(ground) != 0 || (ground == Ground::Snow && spec.snowy.is_some() && spec.ground & ground_bit(Ground::Soil) != 0);
-        if !rooted {
+        if self.rooted(plant, ground) == 0.0 {
             return 0.0;
         }
         fit(&spec.comfort, t, m) * habitat(spec.habitat, site)
+    }
+
+    /// 1 if a plant can root in `ground`, else 0. Under snow, only plants with a snowy look
+    /// root, where they would on soil.
+    fn rooted(&self, plant: PlantId, ground: Ground) -> f32 {
+        let spec = &self.plants[plant.0 as usize];
+        let rooted = spec.ground & ground_bit(ground) != 0 || (ground == Ground::Snow && spec.snowy.is_some() && spec.ground & ground_bit(Ground::Soil) != 0);
+        if rooted { 1.0 } else { 0.0 }
     }
 
     /// A plant from `list` (weights) that suits a site, with `u` and `look` in 0..1, or
@@ -623,8 +775,8 @@ impl Ecology {
             .enumerate()
             .filter_map(|(i, plant)| {
                 let tags = content.plant_tags(plant, registry);
-                // Rare herbs keep to the biomes that name them (see `Flora::new`).
-                if tags.clone().any(|t| t == "rare_herb") && !selects.iter().any(|s| matches!(s, Select::Name(n, _) if *n == plant.name)) {
+                // Plants that grow only where named keep to them (see `Flora::new`).
+                if plant.named_only && !selects.iter().any(|s| matches!(s, Select::Name(n, _) if *n == plant.name)) {
                     return None;
                 }
                 let weight = selected(selects, &[], &plant.name, tags) * self.rarity[i];
@@ -688,7 +840,7 @@ impl Flora {
         // biome's foliage, judged more loosely, rarer the further it strays.
         let canopy_fit = |tree: &TreeDef, named: bool| -> f32 {
             let crown = tree.leaves.as_deref().unwrap_or(&tree.log);
-            if !tree.crown.shades() || registry.def(registry.expect(crown)).tint != voxmar_engine::block::Tint::None {
+            if !tree.crown.shades() || registry.def(registry.expect(crown)).tint.drawn() != voxmar_engine::block::Tint::None {
                 return 1.0;
             }
             let fit = match def.palette.canopy {
@@ -714,20 +866,24 @@ impl Flora {
             }
             let weight = selected(&def.trees, &def.exclude, &tree.name, tags) * tree_rarity[i] * canopy_fit(tree, named);
             if weight > 0.0 {
-                let own_terms = matches!(tree.habitat, Habitat::Water | Habitat::Shore | Habitat::Shallows);
-                if own_terms { &mut flora.habitat } else { &mut flora.canopy }.push((id, weight));
+                if tree.habitat.edge() { &mut flora.habitat } else { &mut flora.canopy }.push((id, weight));
             }
         }
         for (i, plant) in content.plants.iter().enumerate() {
             let tags = content.plant_tags(plant, registry);
             let id = PlantId(i as u16);
-            // A rare herb (tagged `rare_herb`) grows only in the biomes that name it, in
-            // their plants or wonders: never through a tag, the forage sweep or the wonders
-            // every biome takes by default, so each keeps to its one or two biomes.
-            if tags.clone().any(|t| t == "rare_herb") {
+            // A plant that grows only where named (`named_only`, the rare herbs) keeps to the
+            // biomes that name it, in their plants or wonders, so each keeps to its one or two.
+            if plant.named_only {
                 let named = |list: &[Select]| list.iter().find_map(|s| matches!(s, Select::Name(n, _) if *n == plant.name).then(|| s.weight())).unwrap_or(0.0);
-                // Their rates are set for the one or two biomes that name them (design draft
-                // 89), so their biome's level leaves them as they are.
+                if plant.patches.is_some() {
+                    let weight = named(&def.plants).max(def.wonders.as_deref().map_or(0.0, named));
+                    if weight > 0.0 {
+                        if plant.habitat.edge() { &mut flora.edge_herbs } else { &mut flora.patch_herbs }.push((id, weight));
+                    }
+                    continue;
+                }
+                // Rare herbs keep draft 89 rates independently of biome level.
                 let wonder = def.wonders.as_deref().map_or(0.0, named) * herb_rarity[i];
                 let weight = named(&def.plants) * herb_rarity[i];
                 if wonder > 0.0 {
@@ -810,7 +966,7 @@ mod tests {
     use voxmar_engine::content::ContentFile;
 
     fn registry() -> BlockRegistry {
-        BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap()
+        crate::test_registry()
     }
 
     fn content(extra: &[(&str, &str)], registry: &BlockRegistry) -> WorldContent {
@@ -829,7 +985,7 @@ mod tests {
         let registry = registry();
         let content = content(&[], &registry);
         let ecology = Ecology::new(1, &WorldDials::sample(1), &content, &registry);
-        let rare: Vec<usize> = content.plants.iter().enumerate().filter(|(_, p)| content.plant_tags(p, &registry).any(|t| t == "rare_herb")).map(|(i, _)| i).collect();
+        let rare: Vec<usize> = content.plants.iter().enumerate().filter(|(_, p)| p.named_only).map(|(i, _)| i).collect();
         assert!(rare.len() >= 10, "the ten rare herbs are tagged");
         for &i in &rare {
             let plant = &content.plants[i];
@@ -837,15 +993,86 @@ mod tests {
             let mut grows_in = Vec::new();
             for (b, biome) in content.biomes.iter().enumerate() {
                 let flora = &ecology.flora[b];
-                let listed = [&flora.carpet, &flora.drifts, &flora.alone, &flora.wonder_plants].iter().any(|l| l.iter().any(|(p, _)| p.0 as usize == i));
+                let listed = [&flora.carpet, &flora.drifts, &flora.alone, &flora.wonder_plants, &flora.patch_herbs, &flora.edge_herbs].iter().any(|l| l.iter().any(|(p, _)| p.0 as usize == i));
                 let named = names(&biome.flora.plants) || biome.flora.wonders.as_deref().is_some_and(names);
                 assert_eq!(listed, named, "{} in {}: listed {listed}, named {named}", plant.name, biome.name);
                 if listed {
                     grows_in.push(biome.name.clone());
                 }
             }
-            assert!((1..=2).contains(&grows_in.len()), "{} grows in {grows_in:?}", plant.name);
+            // A variant (alpine meadows in the mountains) counts with the biome it varies.
+            let own = grows_in.iter().filter(|b| !content.biomes.iter().any(|p| grows_in.contains(&p.name) && p.variants.iter().any(|(v, _)| v == *b))).count();
+            assert!((1..=2).contains(&own), "{} grows in {grows_in:?}", plant.name);
         }
+    }
+
+    /// A rare herb's patches make its rate before ground and climate thin them, in patches
+    /// of 3 to 6 (design's drafts 61 and 89), cheaply, with no terrain: the full count in
+    /// generated land, against each herb's aim, is `rare_herbs_grow_at_their_rates`.
+    #[test]
+    fn patches_make_a_rare_herbs_rate() {
+        let registry = registry();
+        let content = content(&[], &registry);
+        let ecology = Ecology::new(1, &WorldDials::sample(1), &content, &registry);
+        for (i, plant) in content.plants.iter().enumerate() {
+            let Some(patches) = &plant.patches else { continue };
+            assert!(plant.named_only, "{} grows in patches but not only where named", plant.name);
+            if plant.habitat.edge() {
+                continue;
+            }
+            assert!(patches.size.0 >= 3 && patches.size.1 <= 6 && patches.size.0 <= patches.size.1, "{}: size {:?}", plant.name, patches.size);
+            let (span, mut hits, mut cells) = (4096, 0u32, std::collections::HashSet::new());
+            for z in 0..span {
+                for x in 0..span {
+                    if ecology.in_patch(PlantId(i as u16), 1.0, x, z) {
+                        hits += 1;
+                        cells.insert((x.div_euclid(PATCH_CELL), z.div_euclid(PATCH_CELL)));
+                    }
+                }
+            }
+            let rate = hits as f32 * 1e6 / (span * span) as f32;
+            let size = hits as f32 / cells.len().max(1) as f32;
+            assert!((0.8 * patches.rate..=1.15 * patches.rate).contains(&rate), "{}: {rate:.0} per million, wants {}", plant.name, patches.rate);
+            assert!((2.5..=6.0).contains(&size), "{}: {size:.1} a patch", plant.name);
+        }
+    }
+
+    /// A rare herb of a lake's bank (the sky lotus) grows only on the bank, in patches of
+    /// 3 to 6 that start from it, at its rate per column of bank, whatever the cell: here a
+    /// straight bank two columns wide through cells of an alpine meadow.
+    #[test]
+    fn bank_herbs_grow_in_patches_along_their_bank() {
+        let world = crate::Overworld::new(1, std::sync::Arc::new(registry()));
+        let ecology = &world.ecology;
+        let lotus = PlantId(ecology.plant_names.iter().position(|n| n == "base:sky_lotus").unwrap() as u16);
+        let meadow = world.biomes.id("base:alpine_meadow").unwrap();
+        let weight = ecology.flora[meadow.0 as usize].edge_herbs.iter().find(|(p, _)| *p == lotus).expect("alpine meadows grow sky lotus").1;
+        let template = world.site(0, 0);
+        let side = PATCH_CELL as usize;
+        // Rows 14 and 15 of every cell are bank, a block over a lake's water; the rest is dry.
+        let bank = |i: usize| (14..=15).contains(&(i / side));
+        let sites: Vec<Site> = (0..side * side)
+            .map(|i| {
+                let (height, body) = if bank(i) { (201, crate::Body::Lake) } else { (210, crate::Body::Sea) };
+                Site { height, water: 200, body, home: meadow, biome: meadow, forest: 0.0, ..template }
+            })
+            .collect();
+        let (cells, mut plants, mut starts) = (2000, 0usize, 0usize);
+        for c in 0..cells {
+            let first = IVec2::new((c % 50) as i32 * PATCH_CELL, (c / 50) as i32 * PATCH_CELL);
+            let grown = ecology.edge_patches(first, |i| Some((&sites[i], Ground::Soil)));
+            assert!(grown.iter().all(|&(i, _)| bank(i)), "a sky lotus off the bank");
+            // Patches: plants within reach of each other along the bank.
+            let mut columns: Vec<i32> = grown.iter().map(|&(i, _)| (i % side) as i32).collect();
+            columns.sort_unstable();
+            starts += columns.windows(2).filter(|w| w[1] - w[0] > 2 * EDGE_REACH).count() + usize::from(!columns.is_empty());
+            plants += grown.len();
+        }
+        let rate = plants as f32 * 1e6 / (cells * 2 * side) as f32;
+        let wants = ecology.plants[lotus.0 as usize].patches.unwrap().0 * weight;
+        assert!((0.8 * wants..=1.2 * wants).contains(&rate), "{rate:.0} per million columns of bank, wants {wants:.0}");
+        let size = plants as f32 / starts.max(1) as f32;
+        assert!((2.5..=6.5).contains(&size), "{size:.1} a patch");
     }
 
     #[test]
@@ -999,11 +1226,19 @@ mod tests {
         assert!(gathering > 0 && gathering < flora_low.canopy.len(), "plains' forest has gathering trees and others");
         // A rare herb's biome may sit at any level; its rate stays as design set it.
         let herb = |p: &PlantId| content.plant_tags(&content.plants[p.0 as usize], &registry).any(|t| t == "rare_herb");
-        let home = content.biomes.iter().position(|b| b.flora.plants.iter().any(|s| matches!(s, Select::Name(n, _) if n == "base:windroot"))).expect("windroot grows somewhere");
-        let mut wild = content.clone();
-        wild.biomes[home].level = 9;
-        let wild = Ecology::new(1, &dials, &wild, &registry);
-        let herbs = |e: &Ecology| [&e.flora[home].alone, &e.flora[home].carpet, &e.flora[home].drifts, &e.flora[home].wonder_plants].into_iter().flatten().filter(|(p, _)| herb(p)).copied().collect::<Vec<_>>();
-        assert!(!herbs(&low).is_empty() && herbs(&low) == herbs(&wild), "{:?} against {:?}", herbs(&low), herbs(&wild));
+        for name in ["base:windroot", "base:sky_lotus"] {
+            let home = content.biomes.iter().position(|b| b.flora.plants.iter().any(|s| matches!(s, Select::Name(n, _) if n == name))).expect("rare herb grows somewhere");
+            let mut wild = content.clone();
+            wild.biomes[home].level = 9;
+            let wild = Ecology::new(1, &dials, &wild, &registry);
+            let herbs = |e: &Ecology| {
+                let f = &e.flora[home];
+                [&f.alone, &f.carpet, &f.drifts, &f.wonder_plants, &f.patch_herbs, &f.edge_herbs]
+                    .into_iter().flatten().filter(|(p, _)| herb(p)).copied().collect::<Vec<_>>()
+            };
+            let (a, b) = (herbs(&low), herbs(&wild));
+            assert!(a.iter().any(|(p, _)| low.plant_names[p.0 as usize] == name), "{name} is in its biome's herb pool");
+            assert_eq!(a, b, "{name}'s biome level keeps rare-herb rates");
+        }
     }
 }

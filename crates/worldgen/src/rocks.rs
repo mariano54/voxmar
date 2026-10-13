@@ -236,12 +236,11 @@ impl ProvinceMask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use voxmar_engine::block::BlockRegistry;
 
     /// The pruned search for the nearest cell finds what a search of all nine finds.
     #[test]
     fn nearest_cell_matches_a_full_search() {
-        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = WorldContent::base(&registry).unwrap();
         let rocks = Rocks::new(9, &content, &registry, &crate::rarity::Featured::new(9, 0.5));
         let mut rng = crate::rng::Rng::new(9, 9, 9, 9);
@@ -270,7 +269,7 @@ mod tests {
     /// clashing stone among a province's bands or outcrops.
     #[test]
     fn bare_rock_keeps_to_one_colour_family() {
-        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = WorldContent::base(&registry).unwrap();
         let rocks = Rocks::new(5, &content, &registry, &crate::rarity::Featured::new(5, 0.5));
         let color = |block: BlockId| registry.def(block).color.map(f32::from);
@@ -291,7 +290,7 @@ mod tests {
 
     #[test]
     fn province_depth_measures_to_the_border() {
-        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = WorldContent::base(&registry).unwrap();
         let rocks = Rocks::new(5, &content, &registry, &crate::rarity::Featured::new(5, 0.5));
         let mask = rocks.mask("karst");

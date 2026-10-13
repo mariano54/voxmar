@@ -488,8 +488,9 @@ impl Caves {
 
     /// Sinkholes within reach of the column at `origin`.
     fn sinkholes_near(&self, geology: &GeoGrid, origin: IVec3) -> Vec<Sinkhole> {
-        // The widest sinkhole's rim, plus the reach of features asking `surface_open`.
-        const REACH: i32 = 32 + features::REACH;
+        // The widest sinkhole's rim, plus the reach of features asking `surface_open` (and a
+        // column more, for the columns beside a candidate they ask about too).
+        const REACH: i32 = 32 + features::REACH + 1;
         let cell = |v: i32| v.div_euclid(SINKHOLE_CELL);
         let mut found = Vec::new();
         for sz in cell(origin.z - REACH)..=cell(origin.z + CHUNK_SIZE + REACH) {

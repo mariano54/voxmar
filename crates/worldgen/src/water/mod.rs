@@ -27,17 +27,20 @@ mod sights;
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use voxmar_engine::glam::{IVec2, IVec3};
+use rustc_hash::FxHashMap;
+use voxmar_engine::glam::{IVec2, IVec3, Vec3Swizzles};
 
 use self::cache::Cache;
 use self::channel::{Carved, Channels, Span, Style, carve, top_block};
-use self::drainage::{Budget, DIRS, Drainage, Ground, Reader, Tier, Tile, TunnelRule};
+use self::drainage::{Budget, DIRS, Drainage, Ground, Reader, TarnRule, Tier, Tile, TunnelRule};
 use crate::climate::{self, Climate, LAPSE_RATE, Regional};
 use crate::dials::WorldDials;
-use fastnoise_lite::FractalType;
+use fastnoise_lite::{FastNoiseLite, FractalType};
 
 use crate::density::Crag;
 use crate::geology::{Corners, GeoSample, Geology, Landform, noise, smoothstep};
+use crate::content::WorldContent;
+use crate::shapes::{Gate, region_share};
 use crate::stage::{self, Stage};
 use crate::{SEA_LEVEL, rng};
 
@@ -60,9 +63,52 @@ const STREAM_TILE: i32 = 32;
 /// How far a region's trunks and streams reach beyond it, in blocks.
 const TRUNK_MARGIN: i32 = 192;
 const STREAM_MARGIN: i32 = 64;
+
+/// Maximum centre samples sharing one bounded planning batch.
+pub const SAMPLE_BATCH: usize = 32;
+const RAW_COLUMN_LIMIT: usize = 32_768;
+// Close site searches reached the old corner headroom and repeated relief work.
+const CORNER_LIMIT: usize = 8_192;
+
+#[cfg(test)]
+thread_local! {
+    static QUERY_WORK: std::cell::Cell<Option<[usize; 8]>> = const { std::cell::Cell::new(None) };
+    static ORIGINAL_BATCHES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Use the literal original batch finalizer for complete planner comparisons.
+#[cfg(test)]
+pub(crate) fn with_original_batches<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) { ORIGINAL_BATCHES.with(|flag| flag.set(self.0)); }
+    }
+    let _restore = Restore(ORIGINAL_BATCHES.with(|flag| flag.replace(true)));
+    f()
+}
+
+#[cfg(test)]
+pub(crate) fn profile_queries(enabled: bool) {
+    QUERY_WORK.with(|c| c.set(enabled.then_some([0; 8])));
+}
+
+#[cfg(test)]
+pub(crate) fn query_work() -> Option<[usize; 8]> { QUERY_WORK.with(|c| c.get()) }
+
+#[cfg(test)]
+fn record_query(work: [usize; 8]) {
+    QUERY_WORK.with(|c| {
+        if let Some(previous) = c.get() { c.set(Some(std::array::from_fn(|i| previous[i] + work[i]))); }
+    });
+}
+
+pub(crate) fn freshwater(g: &GeoSample) -> bool {
+    (g.submerged() || g.river > 0.5) && g.body != Body::Sea
+}
 /// Spacing of the climate samples rivers read rainfall from, in blocks.
 const RAIN_CELL: i32 = 128;
 const MB: usize = 1 << 20;
+const MAX_RIVER_WIDTH: f32 = 28.0;
 /// Area that counts as one unit of flow, in square blocks, at a runoff of 1.
 const FLOW_AREA: f32 = 10_000.0;
 
@@ -82,6 +128,30 @@ pub struct Rivers {
     trunk: f32,
     /// Tells this world's entries apart in the per-thread cache of channels.
     id: u64,
+    /// Where tarns may lie, if the content has them.
+    tarns: Option<Tarns>,
+}
+
+/// Where tarns lie (`content::TarnsDef`): their climate, and the slow noise that gathers
+/// them into tarn country.
+struct Tarns {
+    gates: Vec<Gate>,
+    country: FastNoiseLite,
+    share: f32,
+}
+
+impl Tarns {
+    /// How fully tarns may lie at a position, 0 ..= 1: none outside tarn country (a sharp
+    /// edge, where `region_share` is half way up its ramp: design says none outside, not
+    /// fewer), and inside it as far inside their climate as the position lies.
+    fn weight(&self, land: Stages, at: IVec2) -> f32 {
+        if region_share(self.share, self.country.get_noise_2d(at.x as f32, at.y as f32)) < 0.5 {
+            return 0.0;
+        }
+        let r = land.climate.regional_at(land.geology, at);
+        let fields = [r.temperature(), r.moisture(), r.continentalness, r.erosion];
+        self.gates.iter().map(|g| g.weight(&fields)).fold(0.0, f32::max)
+    }
 }
 
 /// The stages rivers read: the land, and the climate for rain.
@@ -127,6 +197,86 @@ impl Ground for StreamGround<'_> {
     fn humidity(&self, cell: IVec2) -> f32 {
         self.rivers.humidity(self.land, self.rivers.streams.tier.centre(cell))
     }
+
+    fn tarns(&self, cell: IVec2) -> f32 {
+        let Some(tarns) = &self.rivers.tarns else { return 0.0 };
+        let weight = tarns.weight(self.land, self.rivers.streams.tier.centre(cell));
+        if weight > 0.0 { weight * self.humidity(cell) } else { 0.0 }
+    }
+
+    fn tarn_cells(&self, pit: IVec2, level: i32, size: (i32, i32)) -> Option<Vec<IVec2>> {
+        let pit = self.rivers.streams.tier.centre(pit);
+        let reach = size.1 + 2 * STREAM_CELL;
+        let (min, max) = (pit - reach, pit + reach);
+        // Read only the natural land and trunks. Asking for stream ground here would
+        // ask the drainage currently deciding this very lake. The window includes
+        // the whole permitted component, its dry boundary and the coarse cells it fills.
+        let width = 2 * reach + 1;
+        let points: Vec<(i32, i32)> = (min.y..=max.y).flat_map(|z| (min.x..=max.x).map(move |x| (x, z))).collect();
+        let trunks = self.rivers.near(self.land, Level::Trunk, TRUNK_MARGIN, min, max);
+        let grounds: Vec<Carved> = self.land.geology.lands(&points).into_iter().zip(&points).map(|(land, &(x, z))| {
+            carve(&self.rivers.trunk_style, trunks.list(), x, z, Carved::land(land.height))
+        }).collect();
+        let cells = natural_tarn(pit, STREAM_CELL, size, |p| {
+            let local = p - min;
+            (0..width).contains(&local.x) && (0..width).contains(&local.y) && (grounds[(local.y * width + local.x) as usize].ground.floor() as i32) < top_block(level)
+        })?;
+        // Trunk water or a tunnel must not masquerade as a dry boundary. Refuse the
+        // candidate if either reaches its painted cells or their cardinal boundary.
+        for &c in &cells {
+            for z in -1..=STREAM_CELL {
+                for x in -1..=STREAM_CELL {
+                    let p = c * STREAM_CELL + IVec2::new(x, z) - min;
+                    let ground = &grounds[(p.y * width + p.x) as usize];
+                    if ground.cavity.is_some() || ground.water.is_some() { return None; }
+                }
+            }
+        }
+        self.rivers.tarn_isolated(self, &cells).then_some(cells)
+    }
+}
+
+/// Find a complete natural hollow before choosing the stream cells that paint it. A
+/// bounded search refuses a larger basin whole, rather than cropping it at a cell edge.
+fn natural_tarn(pit: IVec2, cell: i32, size: (i32, i32), wet: impl Fn(IVec2) -> bool) -> Option<Vec<IVec2>> {
+    let first = (-cell..=cell).flat_map(|z| (-cell..=cell).map(move |x| pit + IVec2::new(x, z)))
+        .filter(|&p| wet(p)).min_by_key(|p| ((*p - pit).length_squared(), p.x, p.y))?;
+    let mut water = rustc_hash::FxHashSet::default();
+    let mut pending = vec![first];
+    water.insert(first);
+    let (mut low, mut high) = (first, first);
+    while let Some(p) = pending.pop() {
+        low = low.min(p);
+        high = high.max(p);
+        if (high - low + 1).max_element() > size.1 {
+            return None;
+        }
+        for d in [IVec2::X, -IVec2::X, IVec2::Y, -IVec2::Y] {
+            let next = p + d;
+            if wet(next) && water.insert(next) {
+                pending.push(next);
+            }
+        }
+    }
+    if (high - low + 1).max_element() < size.0 {
+        return None;
+    }
+    let mut cells: Vec<IVec2> = water.iter().map(|p| p.div_euclid(IVec2::splat(cell))).collect();
+    cells.sort_unstable_by_key(|p| (p.x, p.y));
+    cells.dedup();
+    // Painting uses complete coarse cells. Do not bring an unrelated low lobe into
+    // the pool merely because it shares one of those cells.
+    for &c in &cells {
+        for z in 0..cell {
+            for x in 0..cell {
+                let p = c * cell + IVec2::new(x, z);
+                if wet(p) && !water.contains(&p) {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(cells)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -145,7 +295,7 @@ thread_local! {
 }
 
 impl Rivers {
-    pub fn new(seed: u64, dials: &WorldDials) -> Self {
+    pub fn new(seed: u64, dials: &WorldDials, content: &WorldContent) -> Self {
         static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seed = rng::mix(seed ^ 0x51ee_4a7e);
         let trunks = Tier {
@@ -161,6 +311,7 @@ impl Rivers {
             incision: 3.0,
             lakes: false,
             springs: 0.0,
+            tarns: None,
             tunnel: Some(TunnelRule { depth: 14.0, chance: 0.35, length: 6 }),
             seed,
         };
@@ -178,6 +329,7 @@ impl Rivers {
             lakes: true,
             // Rare: a few in a volcanic world's kilometre, none in a quiet one.
             springs: 0.02 * smoothstep(0.35, 0.9, dials.volcanism),
+            tarns: content.tarns.as_ref().map(|t| TarnRule { floor: SEA_LEVEL as f32 + t.floor, depth: t.depth, size: t.size, chance: t.chance }),
             tunnel: None,
             seed: rng::mix(seed),
         };
@@ -216,13 +368,56 @@ impl Rivers {
             creek,
             trunk: creek * 6.0,
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            tarns: content.tarns.as_ref().map(|t| Tarns {
+                gates: t.climate.iter().map(|b| Gate::new(content, b)).collect(),
+                country: noise(seed, 0x17, 1.0 / t.country.scale, FractalType::FBm, 2),
+                share: t.country.share,
+            }),
         }
+    }
+
+    /// No stream may carve this hollow or its dry boundary into a larger connected
+    /// pool. Routing is published separately from tarn geometry, so upstream flow is
+    /// complete here without asking for the stream channels currently being built.
+    fn tarn_isolated(&self, ground: &StreamGround<'_>, cells: &[IVec2]) -> bool {
+        let tier = &self.streams.tier;
+        let first = cells[0];
+        let min = cells.iter().copied().fold(first, IVec2::min) * tier.cell - 1;
+        let max = (cells.iter().copied().fold(first, IVec2::max) + 1) * tier.cell;
+        // Even the widest edge, its valley, cell tangents and jitter fit in this halo.
+        let curve = 2.0 * tier.cell as f32 + 2.0 * self.stream_style.jitter;
+        let reach = (MAX_RIVER_WIDTH / 2.0 + self.stream_style.valley + curve).ceil() as i32;
+        let from = (min - reach - tier.cell).div_euclid(IVec2::splat(tier.cell));
+        let to = (max + reach + tier.cell).div_euclid(IVec2::splat(tier.cell));
+        let mut basins = rustc_hash::FxHashMap::default();
+        for z in from.y..=to.y {
+            for x in from.x..=to.x {
+                let cell = IVec2::new(x, z);
+                let region = self.streams.region_of(cell);
+                let basin = basins.entry(region).or_insert_with(|| self.streams.routing(ground, region));
+                let k = basin.next(cell);
+                if k >= 8 { continue; }
+                let local = cell - region * tier.side;
+                let q = self.streams.totals(ground, basin)[(local.y * tier.side + local.x) as usize];
+                if q < self.creek { continue; }
+                let end = cell + DIRS[k as usize];
+                // A conservative envelope of the actual jittered Catmull-Rom edge,
+                // including the valley that can lower dry banks outside its channel.
+                let margin = self.width(q) / 2.0 + self.stream_style.valley + curve;
+                let low = tier.centre(cell).min(tier.centre(end)).as_vec2() - margin;
+                let high = tier.centre(cell).max(tier.centre(end)).as_vec2() + margin;
+                if low.x <= max.x as f32 && low.y <= max.y as f32 && high.x >= min.x as f32 && high.y >= min.y as f32 {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Width of a river carrying `flow`, in blocks: two and a half at the smallest creek,
     /// seven and a half with twenty times its water, eleven and a half with fifty.
     fn width(&self, flow: f32) -> f32 {
-        (1.5 + (flow / self.creek).powf(0.6)).clamp(2.5, 28.0)
+        (1.5 + (flow / self.creek).powf(0.6)).clamp(2.5, MAX_RIVER_WIDTH)
     }
 
     /// The regional climate over the region holding (x, z), sampled every `RAIN_CELL`
@@ -248,6 +443,55 @@ impl Rivers {
     }
 
     /// Whether lakes stay full: 0 in deserts, 1 from moist grassland up.
+    /// The still lakes whose pits lie in a region of the stream tier, wet ones only: each
+    /// one's pit (the centre of its cell, in blocks), top water block and cells. For the
+    /// tarn census.
+    #[cfg(test)]
+    pub(crate) fn stream_lakes(&self, land: Stages, region: IVec2) -> Vec<(IVec2, i32, usize, bool)> {
+        let ground = StreamGround { rivers: self, land };
+        let basin = self.streams.basin(&ground, region);
+        let side = self.streams.tier.side;
+        basin
+            .lakes
+            .iter()
+            .filter(|l| l.wet() && !l.spring && l.pit.div_euclid(IVec2::splat(side)) == region)
+            .map(|l| (self.streams.tier.centre(l.pit), top_block(l.level), l.cells.len(), l.tarn))
+            .collect()
+    }
+
+    /// Pits filled by the tarn rule, in the regions within `radius` of `centre`.
+    fn tarns_near(&self, land: Stages, centre: IVec2, radius: i32) -> Vec<IVec3> {
+        let ground = StreamGround { rivers: self, land };
+        let low = (centre - radius).div_euclid(IVec2::splat(REGION));
+        let high = (centre + radius).div_euclid(IVec2::splat(REGION));
+        let mut found = Vec::new();
+        for z in low.y..=high.y {
+            for x in low.x..=high.x {
+                let region = IVec2::new(x, z);
+                for lake in &self.streams.basin(&ground, region).lakes {
+                    let pit = self.streams.tier.centre(lake.pit);
+                    if lake.tarn && lake.wet() && lake.pit.div_euclid(IVec2::splat(self.streams.tier.side)) == region && (pit - centre).abs().max_element() <= radius {
+                        found.push(IVec3::new(pit.x, top_block(lake.level), pit.y));
+                    }
+                }
+            }
+        }
+        found.sort_unstable_by_key(|p| ((p.xz() - centre).as_i64vec2().length_squared(), p.x, p.z));
+        found
+    }
+
+    /// The lowest a tarn lies, in blocks, if there are tarns.
+    pub(crate) fn tarn_floor(&self) -> Option<f32> {
+        self.streams.tier.tarns.as_ref().map(|t| t.floor)
+    }
+
+    /// How much of tarn country a position lies in, 0 ..= 1 (none without tarns), for the
+    /// tarn census.
+    #[cfg(test)]
+    pub(crate) fn tarn_country(&self, x: i32, z: i32) -> f32 {
+        self.tarns.as_ref().map_or(0.0, |t| region_share(t.share, t.country.get_noise_2d(x as f32, z as f32)))
+    }
+
     fn humidity(&self, land: Stages, at: IVec2) -> f32 {
         let height = land.geology.land(at.x, at.y).height;
         smoothstep(0.2, 0.5, self.moisture(land, at.x, at.y, height))
@@ -543,6 +787,225 @@ impl Rivers {
         sample[0]
     }
 
+    /// A planning sample, sharing relief corners and exactly the same channel regions
+    /// as standalone samples. The scratch storage belongs to one planning call.
+    pub fn sample_cached(&self, land: Stages, x: i32, z: i32, scratch: &mut Samples) -> GeoSample {
+        scratch.prepare(self.id, 1);
+        let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
+        let key = Samples::key(min, max);
+        let column_key = scratch.column_key(key);
+        let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, min, max));
+        let p = IVec2::new(x, z);
+        let ground = (!scratch.columns.contains_key(&(p, column_key))).then(|| {
+            #[cfg(test)]
+            if ORIGINAL_BATCHES.with(|flag| flag.get()) { return land.geology.lands_with(&[(x, z)], &mut scratch.corners)[0]; }
+            land.geology.land_with(x, z, &mut scratch.corners)
+        });
+        self.sealed_cached(land, tiers, column_key, p, ground, &mut scratch.corners, &mut scratch.columns)
+    }
+
+    /// Exact standalone samples in a bounded batch. Every centre keeps its own
+    /// p +/- 1 channel bounds and sealed neighbours. Carve the original batched
+    /// centre landforms first, so sealing an earlier centre can reuse a later centre
+    /// under the same exact key rather than sampling its geology for a second time.
+    pub fn samples_cached(&self, land: Stages, points: &[(i32, i32)], scratch: &mut Samples) -> Vec<GeoSample> {
+        assert!(points.len() <= SAMPLE_BATCH);
+        scratch.prepare(self.id, points.len());
+        if points.is_empty() { return Vec::new(); }
+        let mut batch = std::mem::take(&mut scratch.batch);
+        batch.clear();
+        batch.keys.extend(points.iter().map(|&(x, z)| Samples::key(IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1))));
+        batch.column_keys.extend(batch.keys.iter().map(|&key| scratch.column_key(key)));
+        batch.needed.extend(points.iter().zip(&batch.column_keys).map(|(&(x, z), &key)| !scratch.columns.contains_key(&(IVec2::new(x, z), key))));
+        batch.coords.extend(points.iter().zip(&batch.needed).filter_map(|(&p, &need)| need.then_some(p)));
+        let mut grounds = land.geology.lands_with(&batch.coords, &mut scratch.corners).into_iter();
+        for (i, &(x, z)) in points.iter().enumerate() {
+            if !batch.needed[i] { continue; }
+            // Consume the original miss mask even for duplicate centres. Cache
+            // insertion order changes no pure value, but this keeps batch alignment.
+            let ground = grounds.next().expect("batched missing landform");
+            if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
+            let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
+            let tiers = scratch.tiers.entry(batch.keys[i]).or_insert_with(|| self.tiers(land, min, max));
+            scratch.columns.entry((IVec2::new(x, z), batch.column_keys[i])).or_insert_with(|| self.unsealed(tiers, x, z, ground));
+        }
+        // Batch only the raw neighbours that sealing these centres will request.
+        // Keep first-use centre/cardinal order and full requesting-key identity.
+        // The reserved five-column/twenty-corner headroom covers the same union.
+        for (i, &(x, z)) in points.iter().enumerate() {
+            let p = IVec2::new(x, z);
+            if !scratch.columns[&(p, batch.column_keys[i])].near { continue; }
+            for at in [p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y] {
+                if !scratch.columns.contains_key(&(at, batch.column_keys[i])) && batch.queued.insert((at, batch.column_keys[i])) {
+                    batch.neighbours.push((at, i));
+                }
+            }
+        }
+        if !batch.neighbours.is_empty() {
+            batch.coords.clear();
+            batch.coords.extend(batch.neighbours.iter().map(|(p, _)| (p.x, p.y)));
+            let grounds = land.geology.lands_with(&batch.coords, &mut scratch.corners);
+            for (&(p, i), ground) in batch.neighbours.iter().zip(grounds) {
+                if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
+                let centre = IVec2::new(points[i].0, points[i].1);
+                let tiers = scratch.tiers.entry(batch.keys[i]).or_insert_with(|| self.tiers(land, centre - 1, centre + 1));
+                scratch.columns.insert((p, batch.column_keys[i]), self.unsealed(tiers, p.x, p.y, ground));
+            }
+        }
+        #[cfg(test)]
+        if ORIGINAL_BATCHES.with(|flag| flag.get()) {
+            let samples = self.finish_original_batch(land, points, scratch, &batch);
+            batch.clear();
+            scratch.batch = batch;
+            return samples;
+        }
+        // Both passes above materialized every raw centre and every required
+        // cardinal neighbour under this centre's exact key. Only the tier memo
+        // may clear in those passes; raw columns and interned IDs stay intact.
+        let samples = points.iter().enumerate().map(|(i, &(x, z))| {
+            let (p, key) = (IVec2::new(x, z), batch.column_keys[i]);
+            let column = scratch.columns[&(p, key)];
+            if !column.near { return column.sample; }
+            let neighbours = [p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y]
+                .map(|at| scratch.columns[&(at, key)].sample);
+            settle(column.sample, &neighbours)
+        }).collect();
+        batch.clear();
+        scratch.batch = batch;
+        samples
+    }
+
+    /// Literal original final pass, independent of the materialized-column path.
+    #[cfg(test)]
+    fn finish_original_batch(&self, land: Stages, points: &[(i32, i32)], scratch: &mut Samples, batch: &SampleBatch) -> Vec<GeoSample> {
+        points.iter().enumerate().map(|(i, &(x, z))| {
+            // Clear only channel groups here: the already computed centre landforms
+            // remain valid, and the reserved corner headroom covers all neighbours.
+            if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
+            let (min, max) = (IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
+            let tiers = scratch.tiers.entry(batch.keys[i]).or_insert_with(|| self.tiers(land, min, max));
+            // All centres now hold their original raw values; neighbours still use
+            // the requesting centre's bounds, including when keys differ nearby.
+            self.sealed_cached(land, tiers, batch.column_keys[i], IVec2::new(x, z), None, &mut scratch.corners, &mut scratch.columns)
+        }).collect()
+    }
+
+    /// Remember the exact sealed values from this river land's coarse site grid.
+    /// Channel bounds of a grid include each centre's halo, so the full GeoSample is
+    /// identical to standalone sampling. No raw column is given different tier keys.
+    pub(crate) fn remember_freshwater_grid(&self, origin: IVec2, step: i32, size: i32, samples: &[GeoSample], cache: &mut Freshwater) {
+        assert!(size > 0 && step > 0 && samples.len() == (size as usize) * (size as usize));
+        if cache.id != self.id { *cache = Freshwater { id: self.id, ..Freshwater::default() }; }
+        if cache.seen.len() + cache.dry.len() + samples.len() > 16_384 { cache.seen.clear(); cache.dry.clear(); }
+        for (i, &sample) in samples.iter().take(16_384).enumerate() {
+            let p = origin + IVec2::new(i as i32 % size, i as i32 / size) * step;
+            cache.seen.insert(p, sample);
+            cache.dry.remove(&p);
+        }
+    }
+
+    /// The same sampled freshwater test as a full close-look grid. Consume its circle
+    /// row by row and stop after a matching batch; no outside-circle centre is needed,
+    /// but sealing still reads all four neighbours, including those outside the circle.
+    /// Callers supply radius >= 0 and step >= 1, as settlement loading validates.
+    pub fn freshwater_near(&self, land: Stages, centre: IVec2, radius: i32, step: i32, cache: &mut Freshwater) -> bool {
+        let first = centre - radius;
+        let size = radius * 2 / step + 1;
+        let changed_world = cache.id != self.id;
+        if changed_world { *cache = Freshwater { id: self.id, ..Freshwater::default() }; }
+        let mut points = Vec::with_capacity(SAMPLE_BATCH);
+        #[cfg(test)]
+        let profiling = query_work().is_some();
+        #[cfg(test)]
+        let mut work = [1, (size * size) as usize, 0, 0, 0, 0, 0, usize::from(changed_world)];
+        for i in 0..size * size {
+            let p = first + IVec2::new(i % size, i / size) * step;
+            if p.as_vec2().distance(centre.as_vec2()) <= radius as f32 {
+                if let Some(g) = cache.seen.get(&p) {
+                    #[cfg(test)]
+                    if profiling { work[6] += 1; }
+                    // A known exact witness is enough for this existential query,
+                    // even if earlier missing centres are still waiting for a batch.
+                    if freshwater(g) {
+                        #[cfg(test)]
+                        if profiling { work[2] = i as usize + 1; record_query(work); }
+                        return true;
+                    }
+                } else if cache.dry.contains(&p) {
+                    #[cfg(test)]
+                    if profiling { work[6] += 1; }
+                } else {
+                    points.push((p.x, p.y));
+                }
+            }
+            if points.len() == SAMPLE_BATCH {
+                let (found, cleared, sampled) = self.freshwater_batch(land, &points, cache);
+                #[cfg(test)]
+                if profiling {
+                    work[2] = i as usize + 1;
+                    work[3] += sampled;
+                    work[4] += 1;
+                    work[7] += usize::from(cleared);
+                    if let Some(k) = found { work[5] += sampled - k - 1; }
+                }
+                let _ = (cleared, sampled);
+                if found.is_some() {
+                    #[cfg(test)]
+                    if profiling { record_query(work); }
+                    return true;
+                }
+                points.clear();
+            }
+        }
+        let (found, cleared, sampled) = if points.is_empty() { (None, false, 0) } else { self.freshwater_batch(land, &points, cache) };
+        #[cfg(test)]
+        if profiling {
+            work[2] = (size * size) as usize;
+            work[3] += sampled;
+            work[4] += usize::from(!points.is_empty());
+            work[7] += usize::from(cleared);
+            if let Some(k) = found { work[5] += sampled - k - 1; }
+            record_query(work);
+        }
+        let _ = (cleared, sampled);
+        found.is_some()
+    }
+
+    /// The original channel indexes prove absence at every geology height. Keep
+    /// the exact halo/tier bounds and scratch world identity used by full samples.
+    pub fn freshwater_absent_cached(&self, land: Stages, p: IVec2, scratch: &mut Samples) -> bool {
+        scratch.prepare(self.id, 1);
+        self.freshwater_absent(land, p, scratch)
+    }
+
+    fn freshwater_absent(&self, land: Stages, p: IVec2, scratch: &mut Samples) -> bool {
+        if scratch.tiers.len() >= 16 { scratch.tiers.clear(); }
+        let key = Samples::key(p - 1, p + 1);
+        let tiers = scratch.tiers.entry(key).or_insert_with(|| self.tiers(land, p - 1, p + 1));
+        !tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().expect("filled").may_have_water(p.x, p.y))
+    }
+
+    fn freshwater_batch(&self, land: Stages, points: &[(i32, i32)], cache: &mut Freshwater) -> (Option<usize>, bool, usize) {
+        let cleared = cache.seen.len() + cache.dry.len() + points.len() > 16_384;
+        if cleared { cache.seen.clear(); cache.dry.clear(); }
+        cache.scratch.prepare(self.id, points.len());
+        let mut possible = Vec::new();
+        for &(x, z) in points {
+            let p = IVec2::new(x, z);
+            if !self.freshwater_absent(land, p, &mut cache.scratch) {
+                possible.push((x, z));
+            } else {
+                // Carving sets neither a body nor wetness; unsealed() assigns Sea
+                // and skips sealing. Freshwater is false at any geology height.
+                cache.dry.insert(p);
+            }
+        }
+        let samples = self.samples_cached(land, &possible, &mut cache.scratch);
+        let found = samples.iter().position(freshwater);
+        cache.seen.extend(possible.iter().zip(samples).map(|(&(x, z), g)| (IVec2::new(x, z), g)));
+        (found, cleared, possible.len())
+    }
+
     /// One column with both tiers carved in and sealed: the same whatever the columns
     /// `tiers` were found for, as long as they include it and its neighbours. (A region
     /// whose index does not reach a column adds nothing to it, and `near` keeps regions
@@ -557,6 +1020,24 @@ impl Rivers {
         let around = [(x + 1, z), (x - 1, z), (x, z + 1), (x, z - 1)];
         let grounds = land.geology.lands_with(&around, corners);
         let neighbours = std::array::from_fn(|k| self.unsealed(tiers, around[k].0, around[k].1, grounds[k]).sample);
+        settle(column.sample, &neighbours)
+    }
+
+    /// Reuse only unsealed columns computed under these exact channel bounds. A
+    /// neighbour keeps the requesting centre's key, not its own standalone halo key.
+    #[allow(clippy::too_many_arguments)]
+    fn sealed_cached(&self, land: Stages, tiers: &(Near, Near), key: u32, p: IVec2, ground: Option<Landform>, corners: &mut Corners, columns: &mut FxHashMap<(IVec2, u32), Column>) -> GeoSample {
+        let column = *columns.entry((p, key)).or_insert_with(|| self.unsealed(tiers, p.x, p.y, ground.expect("uncached centre landform")));
+        if !column.near { return column.sample; }
+        let around = [p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y];
+        let missing: Vec<_> = around.iter().filter(|&&at| !columns.contains_key(&(at, key))).map(|at| (at.x, at.y)).collect();
+        if !missing.is_empty() {
+            let grounds = land.geology.lands_with(&missing, corners);
+            for ((x, z), ground) in missing.into_iter().zip(grounds) {
+                columns.insert((IVec2::new(x, z), key), self.unsealed(tiers, x, z, ground));
+            }
+        }
+        let neighbours = around.map(|at| columns[&(at, key)].sample);
         settle(column.sample, &neighbours)
     }
 
@@ -601,6 +1082,119 @@ impl Rivers {
             .collect();
         crag_tops(land.geology, &mut samples, |i| (min.x + i as i32 % size, min.y + i as i32 / size));
         samples
+    }
+}
+
+/// Work buffers for at most 32 centres and their 128 cardinal neighbours. Only
+/// allocated capacity is reused; every batch clears all values before and after use.
+#[derive(Default)]
+struct SampleBatch {
+    keys: Vec<[IVec2; 4]>,
+    column_keys: Vec<u32>,
+    needed: Vec<bool>,
+    coords: Vec<(i32, i32)>,
+    neighbours: Vec<(IVec2, usize)>,
+    queued: rustc_hash::FxHashSet<(IVec2, u32)>,
+}
+
+impl SampleBatch {
+    fn clear(&mut self) {
+        self.keys.clear();
+        self.column_keys.clear();
+        self.needed.clear();
+        self.coords.clear();
+        self.neighbours.clear();
+        self.queued.clear();
+    }
+}
+
+/// Temporary terrain work reused within a planner, never retained by a world cache.
+/// Switching worlds resets it so corners and channels cannot leak between seeds.
+#[derive(Default)]
+pub struct Samples {
+    id: u64,
+    batch: SampleBatch,
+    corners: Corners,
+    tiers: FxHashMap<[IVec2; 4], (Near, Near)>,
+    /// Full exact keys are interned separately from the evictable tier memo. Raw
+    /// columns hash only position and ID; both maps reset together before a batch.
+    column_keys: FxHashMap<[IVec2; 4], u32>,
+    columns: FxHashMap<(IVec2, u32), Column>,
+    #[cfg(test)]
+    work: [usize; 4],
+}
+
+/// Exact water-bearing terrain shared by a site's overlapping close looks. Only
+/// original land is stored, bounded to 16,384 centres; a different world resets it.
+#[derive(Default)]
+pub struct Freshwater {
+    id: u64,
+    seen: FxHashMap<IVec2, GeoSample>,
+    /// Exact false freshwater answers with no water-channel influence. These are
+    /// Boolean witnesses, never invented terrain samples. Shared 16,384-point cap.
+    dry: rustc_hash::FxHashSet<IVec2>,
+    scratch: Samples,
+}
+
+impl Freshwater {
+    /// Consume this site's exact samples and Boolean witnesses with their whole
+    /// sampler scratch. The receiving planner must use the same immutable land;
+    /// raw columns keep their original world identity and interned tier keys.
+    pub(crate) fn into_work(self) -> (FxHashMap<IVec2, GeoSample>, rustc_hash::FxHashSet<IVec2>, Samples) {
+        (self.seen, self.dry, self.scratch)
+    }
+}
+
+#[cfg(test)]
+impl Freshwater {
+    pub(crate) fn work(&self) -> [usize; 4] { self.scratch.work() }
+}
+
+impl Samples {
+    #[cfg(test)]
+    pub(crate) fn work(&self) -> [usize; 4] {
+        [self.work[0], self.work[1], self.work[2].max(self.corners.len()), self.work[3].max(self.columns.len())]
+    }
+
+    fn prepare(&mut self, id: u64, count: usize) {
+        // Each centre and its four cardinal neighbours add at most twenty corners.
+        // Reserve the whole batch before any centre or neighbour work is performed.
+        if self.id != id {
+            *self = Self { id, ..Self::default() };
+        }
+        #[cfg(test)]
+        { self.work[2] = self.work[2].max(self.corners.len()); self.work[3] = self.work[3].max(self.columns.len()); }
+        if self.corners.len() + 20 * count > CORNER_LIMIT {
+            self.corners = Corners::default();
+            #[cfg(test)]
+            { self.work[0] += 1; }
+        }
+        // A batch inserts at most its centres and four neighbours per centre.
+        if self.columns.len() + 5 * count > RAW_COLUMN_LIMIT || self.column_keys.len() + count > RAW_COLUMN_LIMIT {
+            self.columns.clear();
+            self.column_keys.clear();
+            #[cfg(test)]
+            { self.work[1] += 1; }
+        }
+        // Skip one intermediate rehash only once actual column work fills a large
+        // table. Small callers retain ordinary growth; clearing and exact key
+        // identity still use the unchanged joint entry bound above.
+        let capacity = self.columns.capacity();
+        let large = RAW_COLUMN_LIMIT / 8 * 7;
+        if capacity >= 4096 && capacity < large && self.columns.len() + 5 * count > capacity {
+            self.columns.reserve(large - self.columns.len());
+        }
+        if self.tiers.len() >= 16 { self.tiers.clear(); }
+    }
+
+    fn key(min: IVec2, max: IVec2) -> [IVec2; 4] {
+        let region = |at: IVec2| at.div_euclid(IVec2::splat(REGION));
+        [region(min - TRUNK_MARGIN), region(max + TRUNK_MARGIN), region(min - STREAM_MARGIN), region(max + STREAM_MARGIN)]
+    }
+
+    fn column_key(&mut self, key: [IVec2; 4]) -> u32 {
+        let next = self.column_keys.len() as u32;
+        *self.column_keys.entry(key).or_insert(next)
     }
 }
 
@@ -660,6 +1254,7 @@ impl Near {
 }
 
 /// A column before sealing, and whether it lies near any river or lake.
+#[derive(Clone, Copy)]
 struct Column {
     sample: GeoSample,
     near: bool,
@@ -723,10 +1318,623 @@ fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
     sample
 }
 
+/// The four-neighbour component of lake water nearest a pit. Dry banks cannot bridge
+/// pools. The bounded result is a lower bound when water reaches the sampling edge.
+pub(crate) fn lake_component(pit: IVec2, reach: i32, wet: impl Fn(IVec2) -> bool) -> Vec<IVec2> {
+    let near = reach.min(8);
+    let start = (pit.y - near..=pit.y + near).flat_map(|z| (pit.x - near..=pit.x + near).map(move |x| IVec2::new(x, z)))
+        .filter(|&p| wet(p)).min_by_key(|p| ((*p - pit).length_squared(), p.x, p.y));
+    let Some(start) = start else { return Vec::new() };
+    let mut seen = std::collections::HashSet::new();
+    let mut todo = vec![start];
+    let mut out = Vec::new();
+    while let Some(p) = todo.pop() {
+        if (p - pit).abs().max_element() > reach || !seen.insert(p) || !wet(p) {
+            continue;
+        }
+        out.push(p);
+        todo.extend([p + IVec2::X, p - IVec2::X, p + IVec2::Y, p - IVec2::Y]);
+    }
+    out.sort_unstable_by_key(|p| (p.x, p.y));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dials::WorldDials;
+
+    #[test]
+    fn planning_samples_match_standalone_across_water_boundaries_and_worlds() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let mut points = Vec::new();
+        // The actual seed-7 river settlement's search area includes both narrow water
+        // and dry banks, not just an empty plane where every implementation agrees.
+        for z in 0..25 {
+            for x in 0..25 {
+                points.push((-1976 + 16 * x, 552 + 16 * z));
+            }
+        }
+        // Dense, overlapping centre/neighbour work near the same actual river.
+        for z in 0..9 {
+            for x in 0..35 { points.push((-1793 + x, 748 + z)); }
+        }
+        // Each side of the exact tier-group transitions, including negative regions
+        // and the one-block halo used to seal water against its four neighbours.
+        for margin in [TRUNK_MARGIN, STREAM_MARGIN] {
+            for boundary in [-REGION, 0, REGION] {
+                for delta in [-1, 0, 1] {
+                    for sign in [-1, 1] {
+                        let edge = boundary + sign * (margin + 1) + delta;
+                        points.extend([(edge, boundary + 17), (boundary - 19, edge)]);
+                    }
+                }
+            }
+        }
+        let mut scratch = Samples::default();
+        let mut original = Samples::default();
+        let mut wet = 0;
+        let mut dry = 0;
+        let (mut near_centres, mut plain_centres) = (0, 0);
+        for seed in [7, 42, 7] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            for reverse in [false, true] {
+                for i in 0..points.len() {
+                    let (x, z) = points[if reverse { points.len() - i - 1 } else { i }];
+                    let expected = world.rivers.sample(world.stages(), x, z, false);
+                    let actual = world.rivers.sample_cached(world.stages(), x, z, &mut scratch);
+                    assert_eq!(actual, expected, "seed {seed} at {x},{z}, reverse {reverse}");
+                    assert!(scratch.corners.len() <= CORNER_LIMIT);
+                    assert!(scratch.tiers.len() <= 16);
+                    assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
+                    assert!(scratch.column_keys.len() <= RAW_COLUMN_LIMIT);
+                    if expected.submerged() && expected.body != Body::Sea { wet += 1; } else if !expected.submerged() { dry += 1; }
+                }
+                let ordered: Vec<_> = if reverse { points.iter().rev().copied().collect() } else { points.clone() };
+                for batch_size in [1, 31, 32] {
+                    for batch in ordered.chunks(batch_size) {
+                        let actual = world.rivers.samples_cached(world.stages(), batch, &mut scratch);
+                        let expected: Vec<_> = batch.iter().map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect();
+                        assert_eq!(actual, expected, "batch {batch_size}, seed {seed}, reverse {reverse}");
+                        let before = with_original_batches(|| world.rivers.samples_cached(world.stages(), batch, &mut original));
+                        assert_eq!(actual, before, "literal original finalizer, seed {seed}, reverse {reverse}");
+                        for &(x, z) in batch {
+                            let p = IVec2::new(x, z);
+                            let key = scratch.column_keys[&Samples::key(p - 1, p + 1)];
+                            if scratch.columns[&(p, key)].near { near_centres += 1; } else { plain_centres += 1; }
+                        }
+                        assert!(scratch.corners.len() <= CORNER_LIMIT);
+                        assert!(scratch.tiers.len() <= 16);
+                        assert!(scratch.columns.len() <= RAW_COLUMN_LIMIT);
+                        assert!(scratch.column_keys.len() <= RAW_COLUMN_LIMIT);
+                    }
+                }
+                assert!(world.rivers.samples_cached(world.stages(), &[], &mut scratch).is_empty());
+                let split: Vec<_> = ordered[..33].chunks(SAMPLE_BATCH).flat_map(|batch| world.rivers.samples_cached(world.stages(), batch, &mut scratch)).collect();
+                let expected: Vec<_> = ordered[..33].iter().map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect();
+                assert_eq!(split, expected, "33-point caller splits into bounded 32+1 batches");
+                // Populate valid relief corners near the capacity limit without
+                // creating distant river regions, then require a real batch to reset.
+                scratch.corners = Corners::default();
+                let distant: Vec<_> = (0..(CORNER_LIMIT - 20 * SAMPLE_BATCH) / 4 + 1).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
+                world.geology.reliefs_with(&distant, &mut scratch.corners);
+                assert!(scratch.corners.len() > CORNER_LIMIT - 20 * SAMPLE_BATCH);
+                assert!(scratch.corners.len() <= CORNER_LIMIT, "reset fixture starts within the current corner limit");
+                let batch = &ordered[..SAMPLE_BATCH];
+                let actual = world.rivers.samples_cached(world.stages(), batch, &mut scratch);
+                let expected: Vec<_> = batch.iter().map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect();
+                assert_eq!(actual, expected, "capacity reset, seed {seed}");
+                assert!(scratch.corners.len() <= 20 * SAMPLE_BATCH, "whole batch must reserve headroom before centre work");
+                assert!(scratch.tiers.len() <= 16);
+            }
+        }
+        assert!(wet > 0 && dry > 0, "fixture needs fresh water and dry ground: {wet}/{dry}");
+        assert!(near_centres > 0 && plain_centres > 0, "both the four-neighbour and direct-sample finalization paths must run");
+    }
+
+    #[test]
+    fn planning_batch_scratch_reuses_storage_without_values() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let world = crate::Overworld::new(7, registry.clone());
+        let p = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
+            .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual river fixture");
+        let offsets = [IVec2::ZERO, IVec2::X, -IVec2::X, IVec2::Y, -IVec2::Y];
+        let mut points: Vec<_> = (0..32).map(|i| { let q = p + offsets[i % 5]; (q.x, q.y) }).collect();
+        let mut scratch = Samples::default();
+        let expected = |world: &crate::Overworld, points: &[(i32, i32)]| points.iter()
+            .map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect::<Vec<_>>();
+        let clean = |b: &SampleBatch| {
+            assert!(b.keys.is_empty() && b.column_keys.is_empty() && b.needed.is_empty()
+                && b.coords.is_empty() && b.neighbours.is_empty() && b.queued.is_empty());
+            assert!(b.keys.capacity() <= SAMPLE_BATCH && b.column_keys.capacity() <= SAMPLE_BATCH
+                && b.needed.capacity() <= SAMPLE_BATCH && b.coords.capacity() <= 4 * SAMPLE_BATCH
+                && b.neighbours.capacity() <= 4 * SAMPLE_BATCH && b.queued.capacity() <= 224,
+                "all work storage stays within the largest original batch");
+        };
+        assert_eq!(world.rivers.samples_cached(world.stages(), &points, &mut scratch), expected(&world, &points));
+        clean(&scratch.batch);
+        assert!(scratch.batch.coords.capacity() >= 32 && scratch.batch.neighbours.capacity() > 0
+            && scratch.batch.queued.capacity() > 0, "the real wet fixture must allocate centre and sealing work");
+        let pointers = |b: &SampleBatch| [b.keys.as_ptr() as usize, b.column_keys.as_ptr() as usize,
+            b.needed.as_ptr() as usize, b.coords.as_ptr() as usize, b.neighbours.as_ptr() as usize];
+        let original_pointers = pointers(&scratch.batch);
+        // Poison every work buffer, including out-of-range centre indexes. Only
+        // their allocations may survive; a reused value would corrupt or panic.
+        let poison = |b: &mut SampleBatch| {
+            b.keys.extend([[IVec2::MAX; 4]; 32]);
+            b.column_keys.extend([u32::MAX; 32]);
+            b.needed.extend([false; 32]);
+            b.coords.extend([(i32::MAX, i32::MAX); 32]);
+            b.neighbours.extend((0..b.neighbours.capacity()).map(|_| (IVec2::MAX, usize::MAX)));
+            b.queued.insert((IVec2::MAX, u32::MAX));
+        };
+        poison(&mut scratch.batch);
+        scratch.columns.clear();
+        scratch.column_keys.clear();
+        points.reverse();
+        assert_eq!(world.rivers.samples_cached(world.stages(), &points, &mut scratch), expected(&world, &points));
+        clean(&scratch.batch);
+        assert_eq!(pointers(&scratch.batch), original_pointers, "reversed cold batches must reuse their actual work allocations");
+        assert!(world.rivers.samples_cached(world.stages(), &[], &mut scratch).is_empty());
+        clean(&scratch.batch);
+        poison(&mut scratch.batch);
+        let another = crate::Overworld::new(42, registry);
+        assert_eq!(another.rivers.samples_cached(another.stages(), &points, &mut scratch), expected(&another, &points));
+        assert_eq!(scratch.id, another.rivers.id, "world switching still resets all planner scratch");
+        clean(&scratch.batch);
+    }
+
+    #[test]
+    fn planning_raw_columns_reuse_neighbours_and_respect_exact_keys() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let world = crate::Overworld::new(7, registry.clone());
+        let p = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
+            .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual river fixture");
+        let expected = world.rivers.sample(world.stages(), p.x, p.y, false);
+        let key = Samples::key(p - 1, p + 1);
+        let mut scratch = Samples { id: world.rivers.id, ..Samples::default() };
+        let wrong_key = Samples::key(p - REGION, p + REGION);
+        assert_ne!(key, wrong_key);
+        let wrong = Column { sample: GeoSample { height: 9999, ..expected }, near: true };
+        let wrong_id = scratch.column_key(wrong_key);
+        scratch.columns.insert((p, wrong_id), wrong);
+        assert_eq!(world.rivers.sample_cached(world.stages(), p.x, p.y, &mut scratch), expected, "same position under different channel bounds cannot alias");
+        let id = scratch.column_key(key);
+        assert_ne!(id, wrong_id);
+        assert!(scratch.columns[&(p, id)].near);
+        assert_eq!(scratch.columns.len(), 6, "exact centre and all four raw neighbours are retained beside the unrelated key");
+        let corners = scratch.corners.len();
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.columns.len(), 6);
+        assert_eq!(scratch.corners.len(), corners, "all warm centres and neighbours need no new terrain");
+        // Evicting sixteen channel groups must not recycle raw-column identities.
+        // The wrong-key poison would alias the centre if its ID were reused here.
+        let identities = scratch.column_keys.clone();
+        scratch.tiers.clear();
+        scratch.tiers.extend((0..16).map(|k| ([IVec2::splat(100_000 + k); 4], (Near::new(), Near::new()))));
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.column_keys, identities);
+        assert_eq!(scratch.columns.len(), 6);
+        assert_eq!(scratch.corners.len(), corners);
+        // Corner-only eviction must not discard pure raw columns or their keys.
+        scratch.corners = Corners::default();
+        let distant: Vec<_> = (0..(CORNER_LIMIT - 20 * SAMPLE_BATCH) / 4 + 1).map(|i| (100_001.0 + 8.0 * i as f32, 100_001.0)).collect();
+        world.geology.reliefs_with(&distant, &mut scratch.corners);
+        assert!(scratch.corners.len() > CORNER_LIMIT - 20 * SAMPLE_BATCH);
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.corners.len(), 0, "retained raw values survive the corner reset without recomputation");
+        // Cross the new allocation boundary with an original real batch. Unqueried
+        // pressure entries must survive, as must both exact key identities.
+        scratch.columns = FxHashMap::default();
+        scratch.columns.reserve(4096);
+        let capacity = scratch.columns.capacity();
+        assert!(capacity >= 4096 && capacity < RAW_COLUMN_LIMIT / 8 * 7);
+        scratch.columns.extend((0..capacity).map(|k| ((IVec2::new(200_000 + k as i32, 200_000), id), wrong)));
+        let before = scratch.work[1];
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.work[1], before, "growth must not clear original raw entries");
+        assert_eq!(scratch.column_keys, identities);
+        assert_eq!(scratch.columns.len(), capacity + 5);
+        assert!((0..capacity).all(|k| {
+            let column = scratch.columns[&(IVec2::new(200_000 + k as i32, 200_000), id)];
+            column.sample == wrong.sample && column.near == wrong.near
+        }));
+        assert!(scratch.columns.capacity() >= RAW_COLUMN_LIMIT / 8 * 7, "the large growth path must actually run");
+        let prior_full_capacity = FxHashMap::<(IVec2, u32), Column>::with_capacity_and_hasher(RAW_COLUMN_LIMIT, Default::default()).capacity();
+        assert!(scratch.columns.capacity() <= prior_full_capacity, "allocation stays within ordinary growth at the original full limit");
+        // Pressure entries are never queried. Full-batch headroom clears them first.
+        let fill = RAW_COLUMN_LIMIT - scratch.columns.len();
+        scratch.columns.extend((0..fill).map(|k| ((IVec2::new(300_000 + k as i32, 300_000), id), wrong)));
+        assert_eq!(scratch.columns.len(), RAW_COLUMN_LIMIT);
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.columns.len(), 5);
+        // Registry pressure independently resets IDs and their raw values together.
+        let id = scratch.column_key(key);
+        scratch.columns.insert((p, id), wrong);
+        let fill = RAW_COLUMN_LIMIT - scratch.column_keys.len();
+        for k in 0..fill { scratch.column_key([IVec2::new(300_000 + k as i32, 300_000); 4]); }
+        assert_eq!(scratch.column_keys.len(), RAW_COLUMN_LIMIT);
+        assert_eq!(world.rivers.samples_cached(world.stages(), &[(p.x, p.y); 32], &mut scratch), vec![expected; 32]);
+        assert_eq!(scratch.column_keys.len(), 1);
+        assert_eq!(scratch.columns.len(), 5);
+        let id = scratch.column_key(key);
+        let wrong_id = scratch.column_key(wrong_key);
+        scratch.columns.insert((p, id), wrong);
+        scratch.columns.insert((p, wrong_id), wrong);
+        let another = crate::Overworld::new(42, registry);
+        assert_eq!(another.rivers.sample_cached(another.stages(), p.x, p.y, &mut scratch), another.rivers.sample(another.stages(), p.x, p.y, false));
+        assert_eq!(scratch.id, another.rivers.id);
+        assert!(!scratch.column_keys.contains_key(&wrong_key));
+        assert!(scratch.column_keys.len() <= 1);
+        assert!(scratch.columns.len() <= 5);
+    }
+
+    #[test]
+    fn site_work_preserves_exact_sampler_keys() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let world = crate::Overworld::new(7, registry.clone());
+        let p = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
+            .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual river fixture");
+        let mut water = Freshwater::default();
+        assert!(world.rivers.freshwater_near(world.stages(), p, 0, 1, &mut water));
+        let points: Vec<_> = (0..SAMPLE_BATCH).map(|i| (p.x + i as i32 % 8 - 4, p.y + i as i32 / 8 - 2)).collect();
+        world.rivers.samples_cached(world.stages(), &points, &mut water.scratch);
+        assert!(!water.scratch.columns.is_empty() && !water.scratch.column_keys.is_empty() && !water.scratch.tiers.is_empty());
+        let id = water.scratch.id;
+        let keys = water.scratch.column_keys.clone();
+        let raw: Vec<_> = water.scratch.columns.iter().map(|(key, column)| (*key, column as *const Column)).collect();
+        let tiers: Vec<_> = water.scratch.tiers.iter().map(|(key, near)| (*key, near as *const (Near, Near))).collect();
+        let work = water.scratch.work();
+        let capacities = |s: &Samples| [s.columns.capacity(), s.column_keys.capacity(), s.tiers.capacity(),
+            s.batch.keys.capacity(), s.batch.column_keys.capacity(), s.batch.needed.capacity(),
+            s.batch.coords.capacity(), s.batch.neighbours.capacity(), s.batch.queued.capacity()];
+        let capacity = capacities(&water.scratch);
+        let (seen, _, mut scratch) = water.into_work();
+        assert_eq!(seen[&p], world.rivers.sample(world.stages(), p.x, p.y, false));
+        assert_eq!(scratch.id, id);
+        assert_eq!(scratch.column_keys, keys, "raw columns keep their exact interned keys");
+        assert!(raw.iter().all(|(key, ptr)| scratch.columns.get(key).map(|c| c as *const Column) == Some(*ptr)));
+        assert!(tiers.iter().all(|(key, ptr)| scratch.tiers.get(key).map(|c| c as *const (Near, Near)) == Some(*ptr)));
+        assert_eq!(scratch.work(), work);
+        assert_eq!(capacities(&scratch), capacity, "move all bounded work buffers together");
+        let expected = |world: &crate::Overworld, points: &[(i32, i32)]| points.iter()
+            .map(|&(x, z)| world.rivers.sample(world.stages(), x, z, false)).collect::<Vec<_>>();
+        assert_eq!(world.rivers.samples_cached(world.stages(), &points, &mut scratch), expected(&world, &points));
+        for first in [IVec2::new(-1032, -1032), IVec2::new(1008, 1008)] {
+            let boundary: Vec<_> = (0..SAMPLE_BATCH).map(|i| (first.x + i as i32 % 8, first.y + i as i32 / 8)).collect();
+            assert_eq!(world.rivers.samples_cached(world.stages(), &boundary, &mut scratch), expected(&world, &boundary));
+        }
+        // The whole scratch still obeys its original world reset at a later caller.
+        let another = crate::Overworld::new(42, registry);
+        assert_eq!(another.rivers.samples_cached(another.stages(), &points, &mut scratch), expected(&another, &points));
+        assert_eq!(scratch.id, another.rivers.id);
+    }
+
+    #[test]
+    fn freshwater_grid_reuses_exact_samples() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let mut cache = Freshwater::default();
+        for seed in [7, 42, 7] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            let mut wet = 0;
+            let mut dry = 0;
+            for (first, step, size) in [
+                (IVec2::new(-1904, 528), 16, 25),
+                (IVec2::new(-1032, -1032), 4, 9),
+                (IVec2::new(1008, 1008), 4, 9),
+                // Forces grid's >4-region branch, including negative boundaries.
+                (IVec2::new(-1200, -1200), 80, 31),
+            ] {
+                let samples = world.rivers.grid(world.stages(), first, step, size);
+                // Poison a distant value and both scratch types as if an earlier
+                // world used this same cache, then seed it from the actual grid.
+                if cache.id != world.rivers.id {
+                    cache.seen.insert(IVec2::splat(200_000), samples[0]);
+                    world.rivers.sample_cached(world.stages(), first.x, first.y, &mut cache.scratch);
+                    assert!(!cache.scratch.columns.is_empty() && !cache.scratch.tiers.is_empty());
+                    world.rivers.remember_freshwater_grid(first, step, size, &samples, &mut cache);
+                    assert!(!cache.seen.contains_key(&IVec2::splat(200_000)));
+                    assert!(cache.scratch.columns.is_empty() && cache.scratch.column_keys.is_empty() && cache.scratch.tiers.is_empty() && cache.scratch.corners.len() == 0);
+                } else {
+                    world.rivers.remember_freshwater_grid(first, step, size, &samples, &mut cache);
+                }
+                assert_eq!(cache.id, world.rivers.id);
+                profile_queries(true);
+                for (i, &sample) in samples.iter().enumerate() {
+                    if freshwater(&sample) { wet += 1; } else { dry += 1; }
+                    let p = first + IVec2::new(i as i32 % size, i as i32 / size) * step;
+                    assert_eq!(sample, world.rivers.sample(world.stages(), p.x, p.y, false), "seed {seed} point {p:?}");
+                    assert_eq!(cache.seen[&p], sample, "complete sealed sample is preserved");
+                    assert_eq!(world.rivers.freshwater_near(world.stages(), p, 0, 1, &mut cache), freshwater(&sample));
+                }
+                let work = query_work().unwrap();
+                profile_queries(false);
+                assert_eq!(work[3], 0, "every seeded wet and dry centre reuses original terrain");
+                assert_eq!(work[6], samples.len());
+            }
+            assert!(wet > 0 && dry > 0, "seed {seed}: seeded wet and dry controls must both occur ({wet}/{dry})");
+            // An oversized grid retains only bounded storage and resets before
+            // inserting. The retained row prefix must keep the original coordinates.
+            let first = IVec2::splat(300_000);
+            let samples = vec![cache.seen.values().next().copied().unwrap(); 129 * 129];
+            world.rivers.remember_freshwater_grid(first, 1, 129, &samples, &mut cache);
+            assert_eq!(cache.seen.len(), 16_384);
+            assert_eq!(cache.seen[&(first + IVec2::new(16_383 % 129, 16_383 / 129))], samples[16_383]);
+            assert!(!cache.seen.contains_key(&(first + IVec2::new(16_384 % 129, 16_384 / 129))));
+        }
+    }
+
+    #[test]
+    fn freshwater_absent_channels_skip_geology_and_reset_false_answers() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let world = crate::Overworld::new(7, registry.clone());
+        let dry = (0..1024).map(|i| IVec2::new(-336 + 16 * (i % 32), 816 + 16 * (i / 32))).find(|p| {
+            let tiers = world.rivers.tiers(world.stages(), *p - 1, *p + 1);
+            !tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().unwrap().may_have_water(p.x, p.y))
+        }).expect("actual position with no channel influence");
+        assert!(!freshwater(&world.rivers.sample(world.stages(), dry.x, dry.y, false)));
+        let mut cache = Freshwater::default();
+        for _ in 0..2 {
+            profile_queries(true);
+            assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 1, &mut cache));
+            let work = query_work().unwrap();
+            profile_queries(false);
+            assert_eq!(work[3], 0, "channel absence needs no original geology");
+            assert!(cache.dry.contains(&dry));
+            assert!(cache.seen.is_empty() && cache.scratch.columns.is_empty() && cache.scratch.corners.len() == 0, "false answers never masquerade as GeoSamples");
+        }
+        let wet = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
+            .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual wet control");
+        let expected = world.rivers.sample(world.stages(), wet.x, wet.y, false);
+        assert!(world.rivers.freshwater_near(world.stages(), wet, 0, 1, &mut cache));
+        assert_eq!(cache.seen[&wet], expected, "possible water still uses complete original terrain");
+        // Pressure false answers are never queried. Whole-batch headroom clears
+        // them before inserting the original wet sample and its Boolean answer.
+        let fill = 16_384 - cache.seen.len() - cache.dry.len();
+        cache.dry.extend((0..fill).map(|i| IVec2::new(200_000 + i as i32, 200_000)));
+        assert_eq!(cache.seen.len() + cache.dry.len(), 16_384);
+        assert_eq!(world.rivers.freshwater_batch(world.stages(), &[(wet.x, wet.y)], &mut cache), (Some(0), true, 1));
+        assert!(cache.dry.is_empty());
+        assert_eq!(cache.seen[&wet], expected);
+        // Poison a genuinely wet position from another world with a false answer.
+        // Requiring true makes the world reset observable without coincidences.
+        let another = crate::Overworld::new(42, registry);
+        let wet42 = (0..625).map(|i| IVec2::new(520 + 16 * (i % 25), -984 + 16 * (i / 25)))
+            .find(|p| freshwater(&another.rivers.sample(another.stages(), p.x, p.y, false))).expect("world42 wet reset control");
+        cache.dry.insert(wet42);
+        assert!(another.rivers.freshwater_near(another.stages(), wet42, 0, 1, &mut cache));
+        assert!(!cache.dry.contains(&wet42));
+        assert_eq!(cache.id, another.rivers.id);
+        assert_eq!(cache.seen[&wet42], another.rivers.sample(another.stages(), wet42.x, wet42.y, false));
+    }
+
+    #[test]
+    fn freshwater_query_matches_full_grid_circle() {
+        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let mut wet = 0;
+        let mut dry = 0;
+        let mut cache = Freshwater::default();
+        for (seed, centres) in [
+            (7, vec![IVec2::new(-1776, 752), IVec2::new(-1976, 552), IVec2::new(-336, 816)]),
+            (11, vec![IVec2::new(-688, 464), IVec2::new(1648, -784)]),
+            (42, vec![IVec2::new(720, -784), IVec2::new(-REGION + TRUNK_MARGIN + 1, STREAM_MARGIN - 1)]),
+        ] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            for centre in centres {
+                for (radius, step) in [(0, 8), (3, 8), (17, 8), (48, 8), (48, 4)] {
+                    let first = centre - radius;
+                    let size = radius * 2 / step + 1;
+                    let grid = world.rivers.grid(world.stages(), first, step, size);
+                    let expected = grid.iter().enumerate().any(|(i, g)| {
+                        let p = first + IVec2::new(i as i32 % size, i as i32 / size) * step;
+                        p.as_vec2().distance(centre.as_vec2()) <= radius as f32 && freshwater(g)
+                    });
+                    let actual = world.rivers.freshwater_near(world.stages(), centre, radius, step, &mut cache);
+                    assert_eq!(actual, expected, "seed {seed} at {centre}, radius {radius}, step {step}");
+                    assert_eq!(cache.id, world.rivers.id);
+                    assert!(cache.seen.len() + cache.dry.len() <= 16_384);
+                    if expected { wet += 1; } else { dry += 1; }
+                }
+            }
+        }
+        assert!(wet > 0 && dry > 0, "query oracle requires positive and negative controls: {wet}/{dry}");
+        let world = crate::Overworld::new(7, registry.clone());
+        let mut sample = world.rivers.sample(world.stages(), -1776, 752, false);
+        sample.height = 140;
+        sample.water = 139;
+        sample.body = Body::River;
+        sample.river = 0.5;
+        assert!(!freshwater(&sample));
+        sample.river = 0.5f32.next_up();
+        assert!(freshwater(&sample));
+        sample.body = Body::Sea;
+        sample.water = 141;
+        assert!(!freshwater(&sample), "even submerged sea is not freshwater");
+        let first = IVec2::new(-1976, 552);
+        let grid = world.rivers.grid(world.stages(), first, 16, 25);
+        let i = grid.iter().position(|g| g.submerged() && g.body != Body::Sea).expect("fixture has actual freshwater");
+        let centre = first + IVec2::new(i as i32 % 25, i as i32 / 25) * 16;
+        profile_queries(true);
+        assert!(world.rivers.freshwater_near(world.stages(), centre, 16, 4, &mut cache));
+        let work = query_work().unwrap();
+        profile_queries(false);
+        assert!(work[3] > 0 && work[3] < work[1], "real freshwater query must save terrain reads: {work:?}");
+        assert!(work[2] < work[1], "a positive centre must stop before scanning the full square: {work:?}");
+        assert!(work[5] < SAMPLE_BATCH, "last-batch lookahead must be bounded: {work:?}");
+        profile_queries(true);
+        assert!(world.rivers.freshwater_near(world.stages(), centre, 0, 4, &mut cache));
+        let work = query_work().unwrap();
+        profile_queries(false);
+        assert_eq!(work[3], 0, "a cached exact witness requires no physical terrain reads");
+        assert_eq!(work[6], 1);
+        // The witness sits after fewer than 32 unknown eligible points. It proves
+        // true without flushing the earlier pending positions or counting them as reads.
+        cache.seen.clear();
+        cache.dry.clear();
+        cache.seen.insert(centre, grid[i]);
+        profile_queries(true);
+        assert!(world.rivers.freshwater_near(world.stages(), centre, 16, 4, &mut cache));
+        let work = query_work().unwrap();
+        profile_queries(false);
+        assert!(work[2] > 1);
+        assert_eq!(work[3], 0, "pending unknown positions are not physical terrain reads");
+        assert_eq!(work[4], 0);
+        assert_eq!(work[6], 1);
+        let another = crate::Overworld::new(42, registry);
+        let expected = freshwater(&another.rivers.sample(another.stages(), centre.x, centre.y, false));
+        profile_queries(true);
+        assert_eq!(another.rivers.freshwater_near(another.stages(), centre, 0, 4, &mut cache), expected);
+        let work = query_work().unwrap();
+        profile_queries(false);
+        let tiers = another.rivers.tiers(another.stages(), centre - 1, centre + 1);
+        let possible = tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().unwrap().may_have_water(centre.x, centre.y));
+        assert_eq!(work[3], usize::from(possible), "another world recomputes its possibility test and any needed original terrain");
+        assert_eq!(cache.id, another.rivers.id);
+        assert!(world.rivers.freshwater_near(world.stages(), centre, 0, 4, &mut cache));
+        assert_eq!(cache.id, world.rivers.id);
+        let dry_i = grid.iter().enumerate().find(|(i, g)| {
+            let p = first + IVec2::new(*i as i32 % 25, *i as i32 / 25) * 16;
+            let tiers = world.rivers.tiers(world.stages(), p - 1, p + 1);
+            !freshwater(g) && tiers.0.list().iter().chain(tiers.1.list()).any(|c| c.as_ref().unwrap().may_have_water(p.x, p.y))
+        }).map(|(i, _)| i).expect("fixture has dry water-influenced centres requiring real terrain");
+        let dry = first + IVec2::new(dry_i as i32 % 25, dry_i as i32 / 25) * 16;
+        assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 4, &mut cache));
+        profile_queries(true);
+        assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 4, &mut cache));
+        let work = query_work().unwrap();
+        profile_queries(false);
+        assert_eq!(work[3], 0, "a repeated dry query also reuses exact terrain");
+        assert_eq!(work[6], 1);
+        // Unqueried distant fixture entries create pressure; the actual dry candidate
+        // is absent and must be freshly sampled after the whole-map eviction.
+        cache.seen.clear();
+        cache.dry.clear();
+        cache.seen.extend((0..16_384).map(|k| (IVec2::new(200_000 + k, 200_000), grid[dry_i])));
+        assert_eq!(cache.seen.len() + cache.dry.len(), 16_384);
+        assert!(!cache.seen.contains_key(&dry) && !cache.dry.contains(&dry));
+        assert!(!world.rivers.freshwater_near(world.stages(), dry, 0, 4, &mut cache));
+        assert_eq!(cache.seen.len(), 1);
+        assert_eq!(cache.seen[&dry], grid[dry_i]);
+    }
+
+    /// Natural water may cross a sampled cell edge, but a larger basin must be
+    /// refused whole. Nearby low lobes must not be filled by sharing a painted cell.
+    #[test]
+    fn tarns_require_one_complete_natural_hollow() {
+        let pool = |p: IVec2| (2..=13).contains(&p.x) && (1..=6).contains(&p.y);
+        assert_eq!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), pool), Some(vec![IVec2::ZERO, IVec2::X]));
+        assert!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), |p| (2..=16).contains(&p.x) && (1..=6).contains(&p.y)).is_some(), "a complete hollow crossing the old cell edge");
+        assert!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), |p| (2..=29).contains(&p.x) && (1..=6).contains(&p.y)).is_none(), "a larger natural basin");
+        assert!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), |p| p.y == 2 && ((2..=10).contains(&p.x) || (12..=13).contains(&p.x))).is_none(), "a disconnected lobe sharing painted cells");
+        assert!(natural_tarn(IVec2::new(4, 4), 8, (8, 25), |p| (2..=5).contains(&p.x) && (2..=5).contains(&p.y)).is_none(), "a tiny puddle");
+        assert_eq!(natural_tarn(IVec2::new(-12, -12), 8, (8, 25), |p| pool(p + 16)), Some(vec![IVec2::new(-2, -2), IVec2::new(-1, -2)]));
+    }
+
+    /// Tarn geometry cannot change routing or upstream totals: publishing ordinary
+    /// flow first must give exactly the flow used by the final channels. Exercise
+    /// accepted pools too, then force a stream through their isolation envelope.
+    #[test]
+    fn tarn_geometry_preserves_routing_and_uses_complete_flow() {
+        let registry = Arc::new(crate::test_registry());
+        let mut accepted = 0;
+        for seed in [1, 2, 3, 4] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            let meadow = world.locate_biome("alpine_meadow", IVec2::ZERO, 60000).unwrap();
+            let centre = meadow.div_euclid(IVec2::splat(REGION));
+            let ground = StreamGround { rivers: &world.rivers, land: world.stages() };
+            for r in 0..9 {
+                let region = centre + IVec2::new(r % 3 - 1, r / 3 - 1);
+                let ordinary = world.rivers.streams.routing(&ground, region);
+                let final_basin = world.rivers.streams.basin(&ground, region);
+                let side = world.rivers.streams.tier.side;
+                for z in -drainage::CORE..side + drainage::CORE {
+                    for x in -drainage::CORE..side + drainage::CORE {
+                        let cell = region * side + IVec2::new(x, z);
+                        assert_eq!(ordinary.next(cell), final_basin.next(cell), "seed {seed}, routing at {cell}");
+                    }
+                }
+                assert_eq!(world.rivers.streams.totals(&ground, &ordinary), world.rivers.streams.totals(&ground, &final_basin), "seed {seed}, totals in {region}");
+                for lake in final_basin.lakes.iter().filter(|l| l.tarn && l.pit.div_euclid(IVec2::splat(side)) == region) {
+                    accepted += 1;
+                    assert!(world.rivers.tarn_isolated(&ground, &lake.cells));
+                    let mut blocked = crate::Overworld::new(seed, registry.clone());
+                    blocked.rivers.creek = 0.000_001;
+                    let ground = StreamGround { rivers: &blocked.rivers, land: blocked.stages() };
+                    assert!(!blocked.rivers.tarn_isolated(&ground, &lake.cells), "an active stream failed to veto seed {seed}, pit {}", lake.pit);
+                    assert!(ground.tarn_cells(lake.pit, lake.level, world.rivers.streams.tier.tarns.as_ref().unwrap().size).is_none(), "production admitted a stream through seed {seed}, pit {}", lake.pit);
+                }
+            }
+        }
+        assert!(accepted > 0, "no accepted tarn exercised the flow invariant");
+    }
+
+    /// A dry saddle between same-level lakes does not join them into one visible pool.
+    #[test]
+    fn lake_components_do_not_cross_dry_banks() {
+        let wet = |p: IVec2| p.y == 0 && ((0..=2).contains(&p.x) || (4..=24).contains(&p.x));
+        assert_eq!(lake_component(IVec2::ZERO, 32, wet), vec![IVec2::new(0, 0), IVec2::new(1, 0), IVec2::new(2, 0)]);
+        assert_eq!(lake_component(IVec2::new(4, 0), 32, wet).len(), 21);
+    }
+
+    /// The game gate's seed has a real, visible pool near its alpine highlands. The
+    /// query must return the tarn rule's water, and disappear when that rule is absent.
+    #[test]
+    fn tarn_query_finds_visible_rule_pools() {
+        let registry = Arc::new(crate::test_registry());
+        let mut world = crate::Overworld::new(0x5eed, registry);
+        let spawn = crate::Generator::spawn_point(&world);
+        let offsets = [IVec2::ZERO, IVec2::new(24000, 8000), IVec2::new(-8000, 24000), IVec2::new(-24000, -8000), IVec2::new(8000, -24000)];
+        let (mountain, at) = offsets.into_iter().find_map(|offset| {
+            let alpine = world.locate_biome("alpine_meadow", spawn.xz() + offset, 60000)?;
+            let site = world.site(alpine.x, alpine.y);
+            let pools = world.rivers.tarns_near(world.stages(), alpine, 4096).len();
+            println!("gate seed spawn {spawn}, alpine {alpine}, height {}, continentalness {:.2}, {pools} marked pits", site.height, site.continentalness);
+            world.locate_tarn(alpine, 4096).map(|at| (alpine, at))
+        }).expect("a visible tarn in the gate's sampled alpine highlands");
+        println!("gate seed tarn {at}");
+        let pool = lake_component(at.xz(), 32, |p| {
+            let g = world.geo(p.x, p.y);
+            g.submerged() && g.cavity.is_none() && g.water == at.y
+        });
+        let wet = pool.len();
+        assert!(wet >= 20, "only {wet} visible water columns at {at}");
+        let low = pool.iter().copied().fold(at.xz(), IVec2::min);
+        let high = pool.iter().copied().fold(at.xz(), IVec2::max);
+        assert!((8..=25).contains(&(high - low + 1).max_element()), "connected physical water spans {} at {at}", high - low + 1);
+        assert!(pool.iter().all(|p| (*p - at.xz()).abs().max_element() < 32), "a clipped physical component at {at}");
+        assert!(world.rivers.tarns_near(world.stages(), mountain, 4096).iter().any(|pit| pit.y == at.y && (pit.xz() - at.xz()).abs().max_element() <= 8));
+        assert!(world.locate_tarn(mountain, -1).is_none());
+        world.rivers.tarns = None;
+        assert!(world.locate_tarn(mountain, 4096).is_none(), "an ordinary high lake stood in for a disabled tarn rule");
+    }
+
+    /// The country's faded noise is a classification, not a chance multiplier. In the
+    /// fading band outside its halfway edge even a fully suitable climate stays dry.
+    #[test]
+    fn tarn_country_has_a_sharp_edge() {
+        let registry = Arc::new(crate::test_registry());
+        let content = crate::WorldContent::base(&registry).unwrap();
+        let mut world = crate::Overworld::new(1, registry);
+        let tarns = world.rivers.tarns.as_mut().unwrap();
+        tarns.gates = vec![Gate::new(&content, &crate::content::ClimateBox::default())];
+        let (mut edge, mut inside) = (0, 0);
+        for z in (-2048..=2048).step_by(64) {
+            for x in (-2048..=2048).step_by(64) {
+                let at = IVec2::new(x, z);
+                let tarns = world.rivers.tarns.as_ref().unwrap();
+                let country = world.rivers.tarn_country(x, z);
+                let weight = tarns.weight(world.stages(), at);
+                if (0.0..0.5).contains(&country) && country > 0.0 {
+                    edge += 1;
+                    assert_eq!(weight, 0.0, "tarn chance fades beyond its country at {at}");
+                } else if country >= 0.5 {
+                    inside += 1;
+                    assert_eq!(weight, 1.0, "country weakens a fully suitable climate at {at}");
+                }
+            }
+        }
+        assert!(edge > 10 && inside > 10, "sample missed the edge or country: {edge}, {inside}");
+    }
 
     /// `cargo test --release -p voxmar_worldgen river_stats -- --ignored --nocapture`
     #[test]
@@ -735,11 +1943,11 @@ mod tests {
         let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1u64);
         let stream = rng::stream_seed(seed, crate::Overworld::ID, crate::Overworld::VERSION);
         let dials = WorldDials::sample(stream);
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = crate::WorldContent::base(&registry).unwrap();
         let rocks = crate::rocks::Rocks::new(stream, &content, &registry, &dials.featured);
         let geology = Geology::new(stream, &dials, &content, &rocks);
-        let rivers = Rivers::new(stream, &dials);
+        let rivers = Rivers::new(stream, &dials, &content);
         let land = Stages { geology: &geology, climate: geology.climate() };
         let x = std::env::var("X").ok().and_then(|s| s.parse().ok()).unwrap_or(2544);
         let z = std::env::var("Z").ok().and_then(|s| s.parse().ok()).unwrap_or(384);

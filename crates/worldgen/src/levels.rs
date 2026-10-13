@@ -159,7 +159,7 @@ mod tests {
 
     /// The levels the base package sets (`climate.ron`), which is what the world uses.
     fn base() -> LevelsDef {
-        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         crate::content::WorldContent::base(&registry).unwrap().climate.levels
     }
 

@@ -661,7 +661,7 @@ mod tests {
     use crate::rng::Rng;
 
     fn biomes() -> Biomes {
-        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let content = WorldContent::base(&registry).unwrap();
         let mut rules = SurfaceRules::new(1, &content, &registry);
         let featured = Featured::new(1, 0.5);
@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn legendary_biomes_are_a_real_find() {
-        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let registry = crate::test_registry();
         let mut files: Vec<_> = crate::content::BASE_FILES.iter().map(|(name, source)| voxmar_engine::content::ContentFile { package: "base".into(), name: (*name).into(), source: (*source).into() }).collect();
         // A legendary biome that may grow in every climate.
         files.push(voxmar_engine::content::ContentFile {

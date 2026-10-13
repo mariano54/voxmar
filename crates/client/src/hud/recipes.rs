@@ -8,6 +8,7 @@
 //! The book comes from the game's content (`voxmar_engine::recipe_book`), so a package's
 //! recipes show here as soon as it adds them.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use bevy::prelude::*;
@@ -37,9 +38,10 @@ impl Plugin for RecipesPlugin {
         app.init_resource::<RecipeViewer>()
             .init_resource::<HoveredItem>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (look_up, click, draw).chain().run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (look_up, click, report, draw).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
                 viewer.trail.clear();
+                viewer.reported.clear();
                 ui.recipes_open = false;
             });
     }
@@ -71,6 +73,8 @@ pub struct RecipeViewer {
     book: Option<Arc<RecipeBook>>,
     /// What was drawn last, to draw again only on a change.
     drawn: Option<(Lookup, String, u32)>,
+    /// Items reported in this game, bounded by the content registry, cleared on leaving.
+    reported: HashSet<BlockId>,
 }
 
 impl RecipeViewer {
@@ -96,6 +100,11 @@ impl RecipeViewer {
     fn pages(&self) -> usize {
         self.found().len().div_ceil(PER_PAGE).max(1)
     }
+
+    fn unreported_item(&mut self) -> Option<BlockId> {
+        let item = self.trail.last()?.item;
+        self.reported.insert(item).then_some(item)
+    }
 }
 
 #[derive(Component)]
@@ -107,14 +116,14 @@ struct ViewerBody;
 #[derive(Component)]
 struct ViewerPage;
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum ViewerButton {
+pub(crate) enum ViewerButton {
     Previous,
     Next,
     Back,
 }
 /// An item drawn in the viewer: hover to look it up, click for its recipes.
 #[derive(Component)]
-struct ViewerItem(BlockId);
+pub struct ViewerItem(pub BlockId);
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -152,7 +161,7 @@ fn look_up(
     mut hovered: ResMut<HoveredItem>,
     mut viewer: ResMut<RecipeViewer>,
     mut ui: ResMut<UiState>,
-    items: Query<(&ViewerItem, &RelativeCursorPosition)>,
+    items: Query<(&ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
     start: Option<Res<StartLookup>>,
     mut commands: Commands,
 ) {
@@ -170,8 +179,8 @@ fn look_up(
         }
     }
     // Over an item in the viewer, it is the one to look up.
-    if ui.recipes_open {
-        hovered.0 = items.iter().find(|(_, cursor)| cursor.cursor_over()).map(|(item, _)| item.0);
+    if ui.recipes_open || ui.quests_open {
+        hovered.0 = items.iter().find(|(_, cursor, visible)| visible.get() && cursor.cursor_over()).map(|(item, _, _)| item.0);
     }
     if ui.console_open {
         return;
@@ -191,19 +200,20 @@ fn look_up(
 }
 
 fn click(
-    buttons: Query<(&ViewerButton, &Interaction), Changed<Interaction>>,
-    items: Query<(&ViewerItem, &Interaction, &RelativeCursorPosition), Changed<Interaction>>,
+    buttons: Query<(&ViewerButton, &Interaction, &InheritedVisibility), Changed<Interaction>>,
+    items: Query<(&ViewerItem, &Interaction, &InheritedVisibility), Changed<Interaction>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    hovered_items: Query<(&ViewerItem, &RelativeCursorPosition)>,
+    hovered_items: Query<(&ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
     mut viewer: ResMut<RecipeViewer>,
     mut ui: ResMut<UiState>,
 ) {
-    if viewer.trail.is_empty() {
+    // The quest book's item icons look their item up too, opening the viewer over it.
+    if viewer.trail.is_empty() && !ui.quests_open {
         return;
     }
     let pages = viewer.pages();
-    for (button, interaction) in &buttons {
-        if *interaction != Interaction::Pressed {
+    for (button, interaction, visible) in &buttons {
+        if !visible.get() || *interaction != Interaction::Pressed {
             continue;
         }
         match button {
@@ -223,16 +233,49 @@ fn click(
             }
         }
     }
-    for (item, interaction, _) in &items {
-        if *interaction == Interaction::Pressed {
+    for (item, interaction, visible) in &items {
+        if visible.get() && *interaction == Interaction::Pressed {
             viewer.open(item.0, false);
+            ui.recipes_open = true;
         }
     }
     // A right click on an item looks up its uses (Interaction answers only the left).
     if mouse.just_pressed(MouseButton::Right)
-        && let Some((item, _)) = hovered_items.iter().find(|(_, cursor)| cursor.cursor_over())
+        && let Some((item, _, _)) = hovered_items.iter().find(|(_, cursor, visible)| visible.get() && cursor.cursor_over())
     {
         viewer.open(item.0, true);
+        ui.recipes_open = true;
+    }
+}
+
+/// Tells the server of each item the viewer is opened on, once (for the quest book's
+/// look-up goals).
+fn report(mut viewer: ResMut<RecipeViewer>, net: Res<crate::net::Net>) {
+    if let Some(item) = viewer.unreported_item() {
+        net.looked_up(item);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reopening_or_turning_a_lookup_reports_each_item_once_per_game() {
+        let mut viewer = RecipeViewer::default();
+        assert_eq!(viewer.unreported_item(), None);
+        viewer.open(BlockId(1), false);
+        assert_eq!(viewer.unreported_item(), Some(BlockId(1)));
+        assert_eq!(viewer.unreported_item(), None, "redrawing reports nothing");
+        viewer.open(BlockId(2), false);
+        assert_eq!(viewer.unreported_item(), Some(BlockId(2)));
+        viewer.trail.pop();
+        assert_eq!(viewer.unreported_item(), None, "Back reports nothing");
+        viewer.trail.clear();
+        viewer.open(BlockId(1), true);
+        assert_eq!(viewer.unreported_item(), None, "reopening and switching to uses report nothing");
+        viewer.reported.clear();
+        assert_eq!(viewer.unreported_item(), Some(BlockId(1)), "a new game needs its own report");
     }
 }
 
@@ -288,34 +331,7 @@ fn draw(
             let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::GAP)), ..default() };
             body.spawn((card, Piece::Well.image())).with_children(|card| {
                 // What goes in, as it is laid out in the game.
-                match &entry.method {
-                    Method::Craft { variants, .. } => {
-                        // Looking up a use, the variant with that item; else they take turns.
-                        let wanted = |cells: &&[Option<BlockId>; GRID]| lookup.uses && cells.contains(&Some(lookup.item));
-                        let cells = variants.iter().find(wanted).unwrap_or(&variants[tick as usize % variants.len()]);
-                        // Two by two, or three by three for what takes a crafting table.
-                        let side = if variants.iter().any(|v| (0..GRID).any(|i| v[i].is_some() && (i % SIDE == 2 || i / SIDE == 2))) { SIDE } else { 2 };
-                        let grid = Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(side as u16, SLOT), row_gap: Val::Px(PX), column_gap: Val::Px(PX), ..default() };
-                        card.spawn(grid).with_children(|grid| {
-                            for i in (0..GRID).filter(|i| i % SIDE < side && i / SIDE < side) {
-                                item_cell(grid, font, &images, cells[i], None);
-                            }
-                        });
-                    }
-                    Method::Cook { input, station, .. } => {
-                        item_cell(card, font, &images, Some(*input), None);
-                        if let Some(fire) = content.blocks.tagged(station).next() {
-                            card.spawn(text(font, "+", BODY, MUTED));
-                            item_cell(card, font, &images, Some(fire), None);
-                        }
-                    }
-                    Method::Product { tool, .. } => {
-                        if let Some(tool) = tool.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
-                            item_cell(card, font, &images, Some(tool), None);
-                        }
-                    }
-                    Method::Drop { .. } => {}
-                }
+                way_inputs(card, font, &images, content, &entry.method, lookup.uses.then_some(lookup.item), tick);
                 card.spawn(shadowed(font, "→", LARGE, GOLD));
                 // A fixed count sits on the slot's corner, as in the inventory; a range of
                 // amounts is too wide for that and goes with the name instead.
@@ -336,6 +352,39 @@ fn draw(
     });
 }
 
+/// What goes into a way, as it is laid out in the game: the crafting grid (two by two, or
+/// three by three for what takes a crafting table), a cooked item and its station, or the
+/// tool that takes a creature's product. A family of recipes shows the variant with `using`
+/// if it has one, else each in turn by `tick`.
+pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &voxmar_engine::content::Content, method: &Method, using: Option<BlockId>, tick: u32) {
+    match method {
+        Method::Craft { variants, .. } => {
+            let wanted = |cells: &&[Option<BlockId>; GRID]| using.is_some_and(|item| cells.contains(&Some(item)));
+            let cells = variants.iter().find(wanted).unwrap_or(&variants[tick as usize % variants.len()]);
+            let side = if variants.iter().any(|v| (0..GRID).any(|i| v[i].is_some() && (i % SIDE == 2 || i / SIDE == 2))) { SIDE } else { 2 };
+            let grid = Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(side as u16, SLOT), row_gap: Val::Px(PX), column_gap: Val::Px(PX), ..default() };
+            card.spawn(grid).with_children(|grid| {
+                for i in (0..GRID).filter(|i| i % SIDE < side && i / SIDE < side) {
+                    item_cell(grid, font, images, cells[i], None);
+                }
+            });
+        }
+        Method::Cook { input, station, .. } => {
+            item_cell(card, font, images, Some(*input), None);
+            if let Some(fire) = content.blocks.tagged(station).next() {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(fire), None);
+            }
+        }
+        Method::Product { tool, .. } => {
+            if let Some(tool) = tool.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
+                item_cell(card, font, images, Some(tool), None);
+            }
+        }
+        Method::Drop { .. } => {}
+    }
+}
+
 /// The words under a way's result: how it is done, and what it takes.
 fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, Color)> {
     let content = &launch.content;
@@ -345,6 +394,7 @@ fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, C
         Method::Cook { station, skill, level, burnt, .. } => {
             let station = content.blocks.tagged(station).next().map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
             let mut lines = vec![(locale.format("recipes.cook", &[("station", &station)]), MUTED)];
+            lines.push((locale.get("recipes.cook.use").to_owned(), SOFT));
             let skill = skill.map(|id| locale.skill(content.skills.get(id)));
             if let Some(skill) = skill {
                 lines.push((locale.format("recipes.level", &[("skill", &skill), ("level", level)]), SOFT));
@@ -370,7 +420,7 @@ fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, C
 
 /// A slot showing `item` (or empty), with a count under it if given; hover it to look it
 /// up, click it for its recipes.
-fn item_cell(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, item: Option<BlockId>, count: Option<String>) {
+pub(super) fn item_cell(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, item: Option<BlockId>, count: Option<String>) {
     let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), flex_shrink: 0.0, ..default() };
     let mut cell = parent.spawn((node, Piece::Well.image()));
     let Some(item) = item else { return };
