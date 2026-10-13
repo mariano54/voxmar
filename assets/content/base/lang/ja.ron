@@ -873,7 +873,7 @@
     "quest.age.nomad": "放浪",
     "quest.age.farm": "農耕",
     "quest.base.a_bed_of_your_own": "自分の寝床",
-    "quest.base.a_bed_of_your_own.why": "どこかで眠るまで、倒れるとワールドの初期地点に戻される。羊毛と皮、毛皮、羽根で寝袋を作れる。",
+    "quest.base.a_bed_of_your_own.why": "どこかで眠るまで、倒れるとワールドの初期地点に戻される。羽根2枚と皮2枚で寝袋を作れる（作業台は要らない）。羊毛と皮、または毛皮なら製作5で作れる。",
     "quest.base.the_potter": "陶工",
     "quest.base.the_potter.why": "壺や小瓶は薬やシチューを入れ、壺は目指す窯の心臓部にもなる。焼き粘土から土の壺を6個作ろう（焼き粘土5個で2個）。",
     "quest.base.charcoal": "木炭",

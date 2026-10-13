@@ -142,7 +142,7 @@
     "multiblock.base.homestead_hearth": ("Homestead Hearth", "開拓の炉"),
     "multiblock.base.homestead_hearth.hint": ("The hearth needs a ring of stone around the hearthstone and a chimney two blocks tall at one corner.", "炉には、炉石を囲む石の輪と、角に2ブロックの高さの煙突が必要です。"),
     "quest.base.a_bed_of_your_own": ("A Bed of Your Own", "自分の寝床"),
-    "quest.base.a_bed_of_your_own.why": ("Until you sleep somewhere, death sends you back to world spawn. Wool and hide, pelts, or feathers make a sleeping bag.", "どこかで眠るまで、倒れるとワールドの初期地点に戻される。羊毛と皮、毛皮、羽根で寝袋を作れる。"),
+    "quest.base.a_bed_of_your_own.why": ("Until you sleep somewhere, death sends you back to world spawn. Two feathers and two hides make a sleeping bag, no table needed; wool and hide, or pelts, make one at Crafting 5.", "どこかで眠るまで、倒れるとワールドの初期地点に戻される。羽根2枚と皮2枚で寝袋を作れる（作業台は要らない）。羊毛と皮、または毛皮なら製作5で作れる。"),
     "quest.base.a_friend_in_the_wild": ("A Friend in the Wild", "野生の友"),
     "quest.base.a_friend_in_the_wild.why": ("Hold wheat seeds (or a carrot for a rabbit), walk up slowly without sprinting or hitting, and right-click a junglefowl. A tamed hen lays eggs at home: your first step to a farm, and to pets.", "小麦の種（ウサギならニンジン）を持ち、走らず殴らずにそっと近づいて、ヤケイを右クリックしよう。手なずけた雌鶏は家で卵を産む。農場とペットへの第一歩だ。"),
     "quest.base.bare_hands": ("First Catch", "初めての釣果"),

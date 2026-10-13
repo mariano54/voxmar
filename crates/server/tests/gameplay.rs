@@ -5688,13 +5688,13 @@ const FRESH_BUDGETS: &[(&str, f32)] = &[
     ("timber", 60.0),
     ("crafting_table", 60.0),
     ("stone_in_hand", 120.0),
-    ("first_night", 240.0),
-    ("a_bed_of_your_own", 420.0),
-    ("torchlight", 480.0),
-    ("hearth_materials", 600.0),
-    ("hearth_lit", 700.0),
-    ("pit_kiln", 800.0),
-    ("fire_the_clay", 1000.0),
+    ("first_night", 180.0),
+    ("a_bed_of_your_own", 200.0),
+    ("torchlight", 220.0),
+    ("hearth_materials", 300.0),
+    ("hearth_lit", 320.0),
+    ("pit_kiln", 360.0),
+    ("fire_the_clay", 500.0),
 ];
 
 /// What the player's time goes on, besides crafting, placing and waiting.
@@ -5982,7 +5982,11 @@ impl Fresh {
         self.hold(food);
         let (raw, done) = (self.have(food), self.have(cooked));
         self.c.propose("base:cook", ActionTarget::Block { block: station, face: Face::PosY });
-        self.spend(Act::Cook, |me| me.wait(10.0, "cooking", |c| holding(c, food) < raw));
+        // A spoiled attempt can give the food back (a cracked clay is clay again), so the
+        // count alone does not say it ended: it ended once the two seconds plus a second's
+        // slack of server ticks have passed, or the cooked food arrived.
+        let over = self.c.ticks() + 3 * TICKS_PER_SECOND as u64;
+        self.spend(Act::Cook, |me| me.wait(10.0, "cooking", |c| holding(c, cooked) > done || holding(c, food) < raw || c.ticks() >= over));
         self.have(cooked) > done
     }
 
@@ -6131,15 +6135,14 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     }
     f.mark("first_night");
 
-    // A Bed of Your Own: seven feathers (junglefowl) and two hides (rabbits) for a sleeping
-    // bag, crafted at the table.
+    // A Bed of Your Own: two feathers (junglefowl) and two hides (rabbits) for a sleeping
+    // bag, crafted in the two by two grid.
     let (feather, hide) = ("base:feather", "base:hide");
     let (feathers, hides) = (|c: &Client| holding(c, feather) + loose(c, feather), |c: &Client| holding(c, hide) + loose(c, hide));
-    f.hunt(|c| if hides(c) < 2 { "rabbit" } else { "junglefowl" }, |c| feathers(c) >= 7 && hides(c) >= 2);
-    f.collect(feather, 7);
+    f.hunt(|c| if hides(c) < 2 { "rabbit" } else { "junglefowl" }, |c| feathers(c) >= 2 && hides(c) >= 2);
+    f.collect(feather, 2);
     f.collect(hide, 2);
-    f.at_table(table);
-    f.craft(&[(0, feather, 1), (1, feather, 1), (2, feather, 1), (3, feather, 1), (4, hide, 1), (5, feather, 1), (6, feather, 1), (7, hide, 1), (8, feather, 1)], "base:sleeping_bag", 1);
+    f.craft(&[(0, feather, 1), (1, feather, 1), (3, hide, 1), (4, hide, 1)], "base:sleeping_bag", 1);
     f.mark("a_bed_of_your_own");
 
     // Torchlight: two coal ores, each with a stick making four torches.
