@@ -86,3 +86,73 @@ Mostly yes, with these checks:
 Next (Mac): run `tools/gate` (the cloud cannot build the client's graphics stack and has
 no GPU), then play the first three days once in a fresh survival world and note where you
 stalled.
+
+## Measured pacing
+
+`a_fresh_survival_player_reaches_each_nomad_milestone` (crates/server/tests/gameplay.rs) plays
+the start of a fresh survival game headless, with only actions a player can propose: mine at
+real tool speed, collect drops, craft, place, cook (2 s each), light, strike animals. Nothing
+comes from a command: no /give, /skill, /xp, /clear, no /tp of the player, no fill into the
+inventory. Times are server seconds (20 ticks per second, counted from the server's own tick
+counter, never wall clock), measured from the first action. The test runs in real time
+because mining and cooking are timed by message arrival, so it takes 3 to 4 minutes of wall
+time. It asserts only the budget table at the top of the test (generous ceilings, so a
+regression such as a recipe that suddenly needs ten times the work fails it) and prints one
+summary block to stderr (`--nocapture`).
+
+Four full runs. "Typical" is the median, "range" is the fastest and slowest.
+
+| Milestone (quest) | Typical | Range | What the time went on |
+|---|---|---|---|
+| 8 logs (Timber) | 14.8 s | 14.8 to 15.1 | Chopping 12 logs with the wooden axe (13 s of the 15), 2 s of walking between trunks. |
+| Crafting table | 14.8 s | 14.8 to 15.1 | Free: the logs for it were already in hand. Crafting takes no server time. |
+| Stone pickaxe and axe (Stone in Hand) | 23.9 s | 23.9 to 24.4 | 9 cobble with the wooden pickaxe (about 7 s of mining), then crafting. |
+| Campfire and a cooked meal (First Night) | 66 s | 47 to 101 | Walking to and chasing animals, killing rabbits and junglefowl, 2 s per cook. The spread is cook burns (see below) and hunting luck. |
+| Torches and sleeping bag (A Bed of Your Own) | 89 s | 66 to 115 | Hunting again for 7 feathers and 2 hides (rabbit hide drops 80%, feathers 90%), 12 s of walking. Torches add 4 s (2 coal). |
+| Hearth materials (28 cobble, 4 clay) | 113 s | 90 to 139 | About 15 s of mining cobble, clay from the pond bank with a stone shovel, 6 to 8 s of walking. |
+| Homestead Hearth built and lit | 117 s | 93 to 142 | 3 s: ring of 8 cobble, hearthstone, 2 chimneys, light. Home is set ("your home"). |
+| Pit kiln built | 124 s | 100 to 148 | 7 s: 7 more cobble, a campfire, the kiln recipe. |
+| 12 fired clay (Fire the Clay) | 176 s | 155 to 221 | 28 clay to dig (7 s), then 33 to 55 s of cooking, because half the attempts are lost (see below). |
+
+Blocks mined over the whole run: about 90. Animals killed: 7 to 8 (no restock of the lane
+was ever needed). By the Hearth the player has spent roughly 35% of the time mining, 45%
+walking and 20% hunting and cooking. Everything up to the Hearth is under two minutes in a
+typical run, i.e. a small part of day one (a day is 24000 ticks, 1200 s); the whole
+Nomad opening, including 12 fired clay, fits in about three minutes.
+
+### Assumptions (read before trusting the numbers)
+
+- **The player stands beside a plot built by /fill and /setblock** (trees, stone, coal, a clay
+  pond, a table-sized clearing) and /summon puts 10 animals in a 1-wide lane beside it.
+  These stand in for terrain. Real worlds have to be explored for them.
+- **Walking between biomes is not modelled.** Real stone, clay, coal and herds can be a long
+  walk away; the "walking" figures here are only the few metres inside the plot. Add your own
+  estimate for finding each resource. Because of this the numbers are a floor, not a forecast.
+- **Animals come by command.** No herd search, no flight, no waiting for spawns. The lane is
+  stocked at the start (and would be restocked if empty).
+- Mining uses real tool speed, so stone with the stone pickaxe, clay with the stone shovel
+  and logs with the axe are all honest. A drop has a 0.5 s pickup delay and a 2.5 block magnet.
+- The player does perfect inputs: no hesitation, menus, misclicks or reading. Real players
+  will be slower, mostly on the first two minutes.
+
+### What the run showed
+
+- **Cooking burns 50% of the time at Cooking level 1 and the raw item is lost.** A cooked
+  meal takes two attempts on average. This is the largest source of variance in
+  First Night (47 to 101 s).
+- **Fired clay is the slowest step of all.** 12 fired clay took about 26 cook attempts (33 to
+  55 s) because clay cracks at the same 50% rate. The pit kiln tail is a third of the run.
+  If the "fire the clay" step should be quicker, the crack chance is the lever, not the
+  2 s cook time.
+- **The sleeping bag needs 7 feathers and 2 hides at Crafting level 1.** Wool and hide or fur
+  need Crafting 5, so the first bed is a junglefowl and rabbit hunt, not a sheep.
+- **The Homestead Hearth quest cannot finish on the plot.** It has `after:
+  ["a_bed_of_your_own", "where_to_settle"]` and Where to Settle needs three biomes visited;
+  the plot is one, sometimes two. The hearth is built and lit and `player.home` is set, but
+  the quest stays "held, not done". The farm quests that chain on it (`a_pit_kiln`,
+  `fire_the_clay`) are then held too, even though their goals (kiln built, 12 fired clay)
+  are fully met. This is the exact blocker for completing the Nomad chain without leaving the
+  plot; it is a design fact (the quest is meant to be done after exploring), not a bug, but a
+  player who builds the Hearth early sees no reward for it until they have wandered.
+- **The starter kit leaves one hotbar slot free (slot 8)**; bread takes four slots. The test
+  swaps tools through that slot.
