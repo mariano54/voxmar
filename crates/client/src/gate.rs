@@ -5348,9 +5348,12 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     // Watched over several frames, not one: three samples of every joint. The
                     // tip over lasts half its death's 0.9 s, so three frames need frames under
                     // 150 ms: a machine drawing slower saw fewer, which is known, not a fault,
-                    // as long as it saw the body fall at all.
+                    // as long as it saw the body fall at all. The frames that count are those
+                    // of the tip itself (`Fall::slowest`): the last frames before this check
+                    // come after the corpse watch, seconds later, and a loaded machine's slow
+                    // frames during the fall once failed it with "frames up to 15 ms".
                     let joints = fall.joints.max(1);
-                    let slowest = gate.frame_ms.iter().rev().take(30).copied().fold(0.0, f32::max);
+                    let slowest = fall.slowest * 1000.0;
                     let few = fall.samples < 3 * joints;
                     let result = if fall.samples < joints || (few && slowest < FALL_FRAME_MS) {
                         Err(format!("its fall was hardly seen: {} joint samples for {} joints (frames up to {slowest:.0} ms)", fall.samples, fall.joints))
