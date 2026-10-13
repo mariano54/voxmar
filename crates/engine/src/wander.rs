@@ -39,6 +39,9 @@ pub struct Rules {
     /// At most this many people (villager-kind members of events) alive at once, apart
     /// from the settlements' own.
     pub people_most: usize,
+    /// At most this many wanderers led to a player's home may stay in the world (they are
+    /// saved with it); later ones go their own way.
+    pub companions_most: usize,
     /// How far from the player a cast first stands, no nearer and no further.
     pub appear_near: f32,
     pub appear_far: f32,
@@ -66,6 +69,7 @@ impl Default for Rules {
             near: 110.0,
             most_total: 8,
             people_most: 16,
+            companions_most: 24,
             appear_near: 55.0,
             appear_far: 85.0,
             leave: 150.0,
@@ -82,6 +86,7 @@ crate::content::settable! {
     /// The rules one package sets: any of them.
     SetRules for Rules {
         scan_every: f32, chance: f32, gap: f32, most_near: usize, near: f32, most_total: usize, people_most: usize,
+        companions_most: usize,
         appear_near: f32, appear_far: f32, leave: f32, errand_every: f32, first_days: f32, speak_reach: f32,
         repeat_weight: f32, repeat_memory: f32,
     }

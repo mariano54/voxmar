@@ -623,6 +623,7 @@ impl Server {
         };
         server.show_grown_crops(spawn_column);
         server.restore_creatures(state.creatures);
+        server.restore_companions(state.companions);
         server.restore_machines(state.machines);
         server
     }
@@ -867,6 +868,9 @@ impl Server {
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
             failed("creatures", e);
+        }
+        if let Err(e) = save.write_companions(&self.saved_companions()) {
+            failed("settled companions", e);
         }
         if let Err(e) = save.write_villagers(&self.villagers.saved()) {
             failed("who of the villagers died", e);

@@ -2693,14 +2693,14 @@ fn unreadable_world_files_are_set_aside_and_the_world_still_opens() {
     let column_file = dir.join(format!("columns/{}.{}.bin", column.0.x, column.0.y));
     assert!(column_file.is_file());
     std::fs::write(&column_file, b"vxc4 not zlib").unwrap();
-    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron", "villagers.ron"] {
+    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron", "villagers.ron", "companions.ron"] {
         std::fs::write(dir.join(file), "[(oops").unwrap();
     }
     let client = Client::join_with(config());
     drop(client);
     assert_eq!(set_aside(&dir.join("columns")).len(), 1, "the bad column is set aside");
     let aside = set_aside(&dir);
-    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron", "villagers.ron"] {
+    for file in ["items.ron", "crops.ron", "creatures.ron", "machines.ron", "villagers.ron", "companions.ron"] {
         assert!(aside.iter().any(|n| n.starts_with(&format!("{file}.corrupt-"))), "{file} was not set aside: {aside:?}");
         assert_ne!(std::fs::read_to_string(dir.join(file)).unwrap(), "[(oops", "{file} is written afresh");
     }
@@ -5508,6 +5508,29 @@ fn a_kept_animal_whose_species_is_gone_waits_in_the_save() {
     assert_eq!(saved.matches("base:rabbit").count(), 1, "the rabbit is in the save once: {saved}");
     // The rabbit came back into the world, so it is saved with the genes it was given there.
     assert_eq!(saved.replace(' ', "").matches("genome:Some").count(), 1, "only the rabbit came back with genes: {saved}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A freed prisoner who settled at a player's home is in `companions.ron`, and a world that
+/// opens with one there has them standing where they were left, saved again at the end.
+#[test]
+fn a_settled_companion_is_back_when_the_world_opens_again() {
+    let dir = world_dir("companions");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let client = Client::join_with(config());
+    let spawn = client.position;
+    drop(client);
+    let path = dir.join("companions.ron");
+    assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "[]", "nobody has settled yet");
+    let at = format!("({}, {}, {})", spawn.x + 3.0, spawn.y, spawn.z);
+    std::fs::write(&path, format!("[(species: \"base:captive\", seed: 9, position: {at}, yaw: 0.0, health: 5), (species: \"lostmod:ghost\", seed: 10, position: {at}, yaw: 0.0, health: 5)]")).unwrap();
+    let mut client = Client::join_with(config());
+    let captive = client.content.creatures.find("captive").expect("the captive in the content");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == captive));
+    drop(client);
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(saved.matches("base:captive").count(), 1, "the captive is saved again, once: {saved}");
+    assert_eq!(saved.matches("lostmod:ghost").count(), 1, "and the one whose species is gone waits: {saved}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

@@ -20,6 +20,7 @@
         near: 110.0,
         most_total: 8,
         people_most: 16,
+        companions_most: 24,
         appear_near: 55.0,
         appear_far: 85.0,
         leave: 150.0,

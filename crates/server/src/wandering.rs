@@ -23,6 +23,7 @@
 use std::collections::BTreeMap;
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::brain::{Errand, Memory, Pose};
 use voxmar_engine::creature::{CreatureId, Kind, mix, unit_from};
@@ -71,6 +72,9 @@ pub struct Wandering {
     quiet_until: FxHashMap<PlayerId, u64>,
     /// What each player met lately, by event, and when.
     recent: FxHashMap<PlayerId, Vec<(usize, u64)>>,
+    /// Companions from the save whose species is not in the content (a mod turned off):
+    /// saved again as they were, for when it comes back.
+    waiting: Vec<SavedCompanion>,
 }
 
 struct Instance {
@@ -102,6 +106,9 @@ struct Instance {
     last_blow: Option<PlayerId>,
     /// To be let go: its members become creatures of the land like any other.
     release: bool,
+    /// Let go at the end of a journey home (not given up on): its members stay as people
+    /// of the player's home, and are saved with the world (`Live::companion`).
+    settles: bool,
 }
 
 struct Member {
@@ -149,6 +156,51 @@ impl Wandering {
 
     fn people(&self, server: &Server) -> usize {
         self.by_creature.keys().filter(|id| server.creatures.live.get(id).is_some_and(|c| server.content.creatures.get(c.species).def.kind == Kind::Villager)).count()
+    }
+}
+
+/// A wanderer who settled at a player's home, as a save keeps them (`companions.ron`): the
+/// individual comes back from its `seed`, where it was left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedCompanion {
+    pub species: String,
+    pub seed: u64,
+    pub position: [f32; 3],
+    pub yaw: f32,
+    pub health: u16,
+}
+
+impl Server {
+    /// The companions, as the save keeps them.
+    pub(crate) fn saved_companions(&self) -> Vec<SavedCompanion> {
+        let mut saved: Vec<SavedCompanion> = self
+            .creatures
+            .live
+            .values()
+            .filter(|c| c.companion)
+            .map(|c| SavedCompanion { species: self.content.creatures.get(c.species).def.name.clone(), seed: c.seed, position: c.body.position.to_array(), yaw: c.body.yaw, health: c.health })
+            .collect();
+        // The same file for the same world, whatever order the creatures are kept in.
+        saved.sort_by_key(|s| s.seed);
+        saved.extend(self.wandering.waiting.iter().cloned());
+        saved
+    }
+
+    /// Puts companions from a save back where they were.
+    pub(crate) fn restore_companions(&mut self, saved: Vec<SavedCompanion>) {
+        for s in saved {
+            let Some(species) = self.content.creatures.id(&s.species) else {
+                tracing::warn!("a companion {} waits: its species is not in the content", s.species);
+                self.wandering.waiting.push(s);
+                continue;
+            };
+            let at = Vec3::from_array(s.position);
+            let Some(id) = self.place_creature(species, at, s.seed, 0.0) else { continue };
+            let creature = self.creatures.live.get_mut(&id).expect("just made");
+            creature.body.yaw = s.yaw;
+            creature.health = s.health.min(creature.health).max(1);
+            creature.companion = true;
+        }
     }
 }
 
@@ -347,7 +399,7 @@ impl Server {
             self.wandering.by_creature.insert(member.creature, (id, i));
         }
         let born = self.tick;
-        self.wandering.active.insert(id, Instance { id, event, seed, born, members, plan, told: Default::default(), spent: Default::default(), best: (f32::MAX, born), aim: None, detour: None, lost: 0, done: false, halt: (0, 0), provoked: None, freed: false, last_blow: None, release: false });
+        self.wandering.active.insert(id, Instance { id, event, seed, born, members, plan, told: Default::default(), spent: Default::default(), best: (f32::MAX, born), aim: None, detour: None, lost: 0, done: false, halt: (0, 0), provoked: None, freed: false, last_blow: None, release: false, settles: false });
         if let Some(player) = player {
             self.wandering.quiet_until.insert(player, self.tick + ticks(rules.gap));
             let recent = self.wandering.recent.entry(player).or_default();
@@ -444,12 +496,14 @@ impl Server {
     /// Puts an instance back among the running, or lets its members go when it is released.
     fn keep(&mut self, inst: Instance) {
         if inst.release {
-            for member in &inst.members {
+            let room = self.content.wandering.rules().companions_most.saturating_sub(self.creatures.live.values().filter(|c| c.companion).count());
+            for (i, member) in inst.members.iter().enumerate() {
                 self.wandering.by_creature.remove(&member.creature);
                 if let Some(creature) = self.creatures.live.get_mut(&member.creature) {
-                    // Wherever they were let go is home now.
+                    // Wherever they were let go is home now; those led home stay for good.
                     creature.mind.forgive();
                     creature.home = creature.body.position;
+                    creature.companion = inst.settles && i < room;
                 }
             }
             tracing::info!("wandering: {} lets its people go", self.content.wandering.get(inst.event).def.name);
@@ -511,6 +565,7 @@ impl Server {
                 freed: true,
                 last_blow: None,
                 release: false,
+                settles: false,
             })
         };
         let target = me.as_mut().unwrap_or(inst);
@@ -775,7 +830,7 @@ impl Server {
                     heading = (xz(p.position) - xz(lead)).try_normalize().unwrap_or(heading);
                     if p.home.is_some_and(|h| flat(h, lead) < SETTLE_AT) {
                         // At their door: it stays, a person of the land.
-                        inst.release = true;
+                        (inst.release, inst.settles) = (true, true);
                         if let Some(who) = self.speaker_name(leader) {
                             p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.settled").with("who", who) });
                         }
@@ -1381,9 +1436,45 @@ mod tests {
         }
     }
 
+    /// Frees a prisoner who follows player 1 and walks them to a home at `home`, where they
+    /// settle; the prisoner's creature id.
+    fn settled_prisoner(server: &mut Server, home: Vec3) -> u32 {
+        for seed in 0..40u64 {
+            // Whoever settled before stays.
+            let companions: Vec<_> = std::mem::take(&mut server.creatures.live).into_iter().filter(|(_, c)| c.companion).collect();
+            clear(server);
+            server.creatures.live.extend(companions);
+            let event = event(server, "prison_convoy");
+            let spot = server.standing_spot(100, 128, 200).unwrap();
+            let id = server.begin_event_at(Some(1), event, spot, seed, true).unwrap();
+            let captive = members_of(server, id, 2)[0];
+            server.free_in_test(id);
+            if !server.wandering.by_creature.contains_key(&captive) {
+                continue;
+            }
+            // The player has a home a little way off; the prisoner walks with them and stays.
+            let player = server.players.get_mut(&1).unwrap();
+            (player.home, player.position) = (Some(home), home);
+            run(server, 20 * 120);
+            return captive;
+        }
+        panic!("some seed has the prisoner follow");
+    }
+
     #[test]
     fn a_freed_prisoner_follows_the_player_and_settles_at_their_home() {
         let home = Vec3::new(150.5, 200.0, 128.5);
+        let mut server = fixture();
+        let captive = settled_prisoner(&mut server, home);
+        assert!(server.creatures.live.contains_key(&captive));
+        assert!(!server.wandering.by_creature.contains_key(&captive), "it is a person of the land now");
+        let at = server.creatures.live[&captive].body.position;
+        assert!(flat(at, home) < 20.0, "and it is by the player's home: {at}");
+        assert!(server.creatures.live[&captive].companion, "a companion, who is saved");
+    }
+
+    #[test]
+    fn a_prisoner_let_go_elsewhere_is_no_companion() {
         let mut server = fixture();
         for seed in 0..40u64 {
             clear(&mut server);
@@ -1395,17 +1486,72 @@ mod tests {
             if !server.wandering.by_creature.contains_key(&captive) {
                 continue;
             }
-            // The player has a home a little way off; the prisoner walks with them and stays.
-            let player = server.players.get_mut(&1).unwrap();
-            (player.home, player.position) = (Some(home), home);
-            run(&mut server, 20 * 120);
-            assert!(server.creatures.live.contains_key(&captive));
-            assert!(!server.wandering.by_creature.contains_key(&captive), "it is a person of the land now");
-            let at = server.creatures.live[&captive].body.position;
-            assert!(flat(at, home) < 20.0, "and it is by the player's home: {at}");
+            // The player has no home to walk them to: the prisoner follows a while, then goes.
+            run(&mut server, 20 * 700);
+            assert!(!server.wandering.by_creature.contains_key(&captive), "let go");
+            assert!(!server.creatures.live[&captive].companion);
+            assert!(server.saved_companions().is_empty(), "so nobody is saved");
             return;
         }
         panic!("some seed has the prisoner follow");
+    }
+
+    #[test]
+    fn a_settled_prisoner_survives_a_restart() {
+        let home = Vec3::new(150.5, 200.0, 128.5);
+        let mut server = fixture();
+        let captive = settled_prisoner(&mut server, home);
+        server.creatures.live.get_mut(&captive).unwrap().health = 3;
+        let (species, at) = (server.creatures.live[&captive].species, server.creatures.live[&captive].body.position);
+        let saved = server.saved_companions();
+        assert_eq!(saved.len(), 1);
+        // Through the file, into a world that has just opened.
+        let dir = std::env::temp_dir().join(format!("voxmar-companions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let save = crate::save::WorldSave::new(dir.clone());
+        save.write_companions(&saved).unwrap();
+        let state = save.read_state().unwrap();
+        assert_eq!(state.companions, saved);
+        let mut reopened = fixture();
+        clear(&mut reopened);
+        reopened.restore_companions(state.companions);
+        let (id, back) = reopened.creatures.live.iter().find(|(_, c)| c.companion).expect("the prisoner is back");
+        assert_eq!(back.species, species);
+        assert_eq!(back.health, 3, "as wounded as it was");
+        assert!(flat(back.body.position, at) < 0.01, "where it stood");
+        assert!(!reopened.wandering.manages(*id));
+        assert_eq!(reopened.saved_companions(), saved, "and is saved again the same");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_companion_stays_when_every_player_is_far() {
+        let mut server = fixture();
+        let captive = settled_prisoner(&mut server, Vec3::new(150.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().position = Vec3::new(-5000.0, 200.0, 0.0);
+        server.despawn_far();
+        assert!(server.creatures.live.contains_key(&captive), "far from every player, it is still there");
+        server.creatures.live.get_mut(&captive).unwrap().companion = false;
+        server.despawn_far();
+        assert!(!server.creatures.live.contains_key(&captive), "while a wanderer let go is despawned like any");
+    }
+
+    #[test]
+    fn only_so_many_companions_stay() {
+        let mut server = fixture();
+        let most = server.content.wandering.rules().companions_most;
+        let home = Vec3::new(150.5, 200.0, 128.5);
+        let first = settled_prisoner(&mut server, home);
+        // The rest of the world's companions are already there.
+        let species = server.creatures.live[&first].species;
+        for i in 1..most {
+            let id = server.spawn_creature(species, Vec3::new(120.5 + i as f32, 200.0, 140.5), i as u64).unwrap();
+            server.creatures.live.get_mut(&id).unwrap().companion = true;
+        }
+        assert_eq!(server.creatures.live.values().filter(|c| c.companion).count(), most);
+        let last = settled_prisoner(&mut server, home);
+        assert!(!server.creatures.live.get(&last).is_some_and(|c| c.companion), "the world is full of companions");
     }
 
     #[test]

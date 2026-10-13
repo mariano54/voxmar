@@ -64,7 +64,10 @@ rule numbers field by field (`Setting`, design draft 91). The engine half is
   peaceful person of the land for as long as anyone is near. The same cast can be solved
   by killing the jailers, by a bribe, or by a knife (which the jailers see).
 - **Persistence.** A party is a passing thing and is not saved. A freed prisoner who settles
-  stays while players are near like any creature of the land; a restart does not keep them.
+  by a player's home becomes a companion: saved in `companions.ron` (species, seed, place,
+  health), kept out of the settlements' people budget, never despawned for distance, and put
+  back at the next start. At most `companions_most` stay; later ones go their own way, and
+  so does anyone let go anywhere else, who is a creature of the land like any other.
 - **Ending.** An event ends when no player is within `leave`, after its `lifetime`, when its
   march is walked and nobody is within 40 blocks, or when its leader is gone. Its people are
   taken away without a death. Killed members leave the party; the party goes on.

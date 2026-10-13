@@ -53,6 +53,8 @@ const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
 const VILLAGERS_FILE: &str = "villagers.ron";
 const MACHINES_FILE: &str = "machines.ron";
+/// Wanderers who settled at a player's home.
+const COMPANIONS_FILE: &str = "companions.ron";
 /// What a file being saved ends with, after its generation.
 const STAGED: &str = "new";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
@@ -678,6 +680,21 @@ impl WorldSave {
         }
     }
 
+    /// The wanderers settled at players' homes, none if the world has no companions file.
+    pub fn read_companions(&self) -> io::Result<Vec<crate::wandering::SavedCompanion>> {
+        let path = self.dir.join(COMPANIONS_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn write_companions(&self, companions: &[crate::wandering::SavedCompanion]) -> io::Result<()> {
+        let text = ron::ser::to_string(companions).map_err(io::Error::other)?;
+        write_atomic(&self.target(self.dir.join(COMPANIONS_FILE)), text.as_bytes())
+    }
+
     pub fn write_villagers(&self, dead: &[SavedDead]) -> io::Result<()> {
         let text = ron::ser::to_string(dead).map_err(io::Error::other)?;
         write_atomic(&self.target(self.dir.join(VILLAGERS_FILE)), text.as_bytes())
@@ -697,10 +714,11 @@ pub(crate) struct WorldState {
     pub creatures: Vec<crate::husbandry::SavedCreature>,
     pub machines: Vec<crate::machines::SavedMachine>,
     pub villagers: Vec<SavedDead>,
+    pub companions: Vec<crate::wandering::SavedCompanion>,
 }
 
 impl WorldSave {
-    /// The dropped items, crops, kept creatures, machines and who of the villagers died. A file that is not what it should be is
+    /// The dropped items, crops, kept creatures, machines, who of the villagers died and the settled companions. A file that is not what it should be is
     /// moved aside and logged, and the world opens without what it held; a file that could
     /// not be read at all, or moved aside (and so would be overwritten at the next save), is
     /// an error.
@@ -711,6 +729,7 @@ impl WorldSave {
             creatures: self.read_or_set_aside(CREATURES_FILE, Self::read_creatures)?,
             machines: self.read_or_set_aside(MACHINES_FILE, Self::read_machines)?,
             villagers: self.read_or_set_aside(VILLAGERS_FILE, Self::read_villagers)?,
+            companions: self.read_or_set_aside(COMPANIONS_FILE, Self::read_companions)?,
         })
     }
 

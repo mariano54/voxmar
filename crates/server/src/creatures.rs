@@ -90,6 +90,9 @@ pub struct Live {
     /// Once kept and let go (`release`): taming it again pays no Hunter xp and counts for
     /// no quest. Only wild creatures carry it, and those are never saved.
     pub was_kept: bool,
+    /// A wanderer led to a player's home and left to live there (`wandering`): saved with
+    /// the world, never despawned for distance, and outside the settlements' budget.
+    pub companion: bool,
     /// Seconds without getting nearer its goal, to notice being stuck.
     pub stuck: f32,
     /// The player who keeps it, by name (tamed or bred), and the id they have now.
@@ -803,7 +806,7 @@ impl Server {
         // animals of wandering parties (`wandering`) have their own, so they use up
         // neither.
         let people = self.creatures.live.keys().filter(|id| self.content.creatures.get(self.creatures.live[*id].species).def.kind == Kind::Villager);
-        let (all, settled) = people.fold((0, 0), |(all, settled), id| (all + 1, settled + usize::from(!self.wandering.manages(*id))));
+        let (all, settled) = people.fold((0, 0), |(all, settled), id| (all + 1, settled + usize::from(!self.wandering.manages(*id) && !self.creatures.live[id].companion)));
         let full = if self.content.creatures.get(species).def.kind == Kind::Villager {
             settled >= self.overworld.settlement_people().live.most
         } else {
@@ -849,6 +852,7 @@ impl Server {
             hurt_by: None,
             fought: None,
             was_kept: false,
+            companion: false,
             stuck: 0.0,
             owner: None,
             owner_id: None,
@@ -1118,13 +1122,13 @@ impl Server {
     }
 
     /// Wild creatures far from every player, or in columns that went, go.
-    fn despawn_far(&mut self) {
+    pub(crate) fn despawn_far(&mut self) {
         let players: Vec<Vec3> = self.players.values().filter(|p| p.joined).map(|p| p.position).collect();
         let gone: Vec<u32> = self
             .creatures
             .live
             .iter()
-            .filter(|(id, c)| c.owner.is_none() && !self.villagers.manages(**id))
+            .filter(|(id, c)| c.owner.is_none() && !c.companion && !self.villagers.manages(**id))
             .filter(|(_, c)| {
                 let far = players.iter().all(|p| p.distance(c.body.position) > DESPAWN);
                 far || !self.world.contains(ColumnPos::of_block(c.body.position.floor().as_ivec3()))
