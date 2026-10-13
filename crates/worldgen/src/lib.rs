@@ -1725,31 +1725,36 @@ mod tests {
     /// uneven ground could leave wood over a hole.
     #[test]
     fn wood_never_floats() {
+        use rayon::prelude::*;
         let registry = registry();
-        let mut failures = Vec::new();
-        let mut places = 0;
-        for seed in [1u64, 7, 22, 42, 0x5eed] {
-            let world = Overworld::new(seed, registry.clone());
-            let spawn = world.spawn_point();
-            let mut at: Vec<(String, IVec2)> = vec![("spawn".into(), IVec2::new(spawn.x, spawn.z))];
-            for (name, x, z) in world.caves.sights((spawn.x, spawn.z), 1500) {
-                if matches!(name, "entrances" | "ravine" | "sinkhole") {
-                    at.push((name.into(), IVec2::new(x, z)));
+        // The seeds, their places and the biomes looked for side by side; the failures in
+        // the same order as one after another.
+        let seeds: Vec<(Vec<String>, usize)> = [1u64, 7, 22, 42, 0x5eed]
+            .into_par_iter()
+            .map(|seed| {
+                let world = Overworld::new(seed, registry.clone());
+                let spawn = world.spawn_point();
+                let mut at: Vec<(String, IVec2)> = vec![("spawn".into(), IVec2::new(spawn.x, spawn.z))];
+                for (name, x, z) in world.caves.sights((spawn.x, spawn.z), 1500) {
+                    if matches!(name, "entrances" | "ravine" | "sinkhole") {
+                        at.push((name.into(), IVec2::new(x, z)));
+                    }
                 }
-            }
-            for biome in ["forest", "old_growth_taiga", "wooded_badlands", "bayou", "mangrove_swamp", "jungle", "baobab_savanna", "snowy_taiga", "ghost_forest", "steppe", "meadow", "redwood_forest", "dark_forest", "glowcap_forest", "desert"] {
-                if let Some(p) = world.locate_biome(biome, IVec2::new(spawn.x, spawn.z), 4000) {
-                    at.push((biome.into(), p));
-                }
-            }
-            for (name, p) in at {
-                places += 1;
-                let first = ColumnPos::of_block(IVec3::new(p.x, 0, p.y)).offset(-2, -2);
-                for (low, block, size) in floating_wood(&world, &registry, first, 5) {
-                    failures.push(format!("seed {seed} {name}: {size} {block} from {low}"));
-                }
-            }
-        }
+                let biomes = ["forest", "old_growth_taiga", "wooded_badlands", "bayou", "mangrove_swamp", "jungle", "baobab_savanna", "snowy_taiga", "ghost_forest", "steppe", "meadow", "redwood_forest", "dark_forest", "glowcap_forest", "desert"];
+                let found: Vec<_> = biomes.into_par_iter().map(|biome| world.locate_biome(biome, IVec2::new(spawn.x, spawn.z), 4000).map(|p| (biome.to_owned(), p))).collect();
+                at.extend(found.into_iter().flatten());
+                let failures: Vec<String> = at
+                    .par_iter()
+                    .flat_map_iter(|(name, p)| {
+                        let first = ColumnPos::of_block(IVec3::new(p.x, 0, p.y)).offset(-2, -2);
+                        floating_wood(&world, &registry, first, 5).into_iter().map(move |(low, block, size)| format!("seed {seed} {name}: {size} {block} from {low}"))
+                    })
+                    .collect();
+                (failures, at.len())
+            })
+            .collect();
+        let places: usize = seeds.iter().map(|(_, n)| n).sum();
+        let failures: Vec<String> = seeds.into_iter().flat_map(|(f, _)| f).collect();
         assert!(failures.is_empty(), "wood floats in {} of {places} places:\n{}", failures.len(), failures.join("\n"));
     }
 
@@ -2671,16 +2676,21 @@ mod tests {
             .collect();
         let full = WorldContent::from_files(files.iter(), &registry).unwrap();
         assert_eq!(full.plant_density, 1.0);
-        let (mut all, mut gathered) = ([0u32; 2], [0u32; 2]);
-        for seed in [1, 7] {
-            for (k, content) in [&full, &half].into_iter().enumerate() {
+        use rayon::prelude::*;
+        // Each seed's world at each density, and its biomes, side by side.
+        let counts: Vec<(usize, u32, u32)> = [1, 7]
+            .into_par_iter()
+            .flat_map(|seed| [(seed, 0usize), (seed, 1)])
+            .flat_map(|(seed, k)| {
+                let content = [&full, &half][k];
                 let world = Overworld::with_content(seed, registry.clone(), content);
-                for biome in ["forest", "plains", "taiga"] {
-                    let (a, g) = plants_in(&world, content, biome, &registry);
-                    all[k] += a;
-                    gathered[k] += g;
-                }
-            }
+                ["forest", "plains", "taiga"].into_par_iter().map(|biome| plants_in(&world, content, biome, &registry)).map(|(a, g)| (k, a, g)).collect::<Vec<_>>()
+            })
+            .collect();
+        let (mut all, mut gathered) = ([0u32; 2], [0u32; 2]);
+        for (k, a, g) in counts {
+            all[k] += a;
+            gathered[k] += g;
         }
         let (ratio, kept) = (all[1] as f32 / all[0] as f32, gathered[1] as f32 / gathered[0] as f32);
         println!("plants {} → {} ({ratio:.2}); gathered {} → {} ({kept:.2})", all[0], all[1], gathered[0], gathered[1]);
@@ -3045,8 +3055,9 @@ mod tests {
     fn fluids_are_contained() {
         let registry = registry();
         let (water, lava) = (registry.expect("base:water"), registry.expect("base:lava"));
-        let (mut fluids, mut caves) = (0, 0);
-        for (seed, place) in [(1, (0, 0)), (42, (3000, -2000)), (0x5eed, (-4100, 900)), (7, (1500, 5200))] {
+        use rayon::prelude::*;
+        // The seeds and their places side by side.
+        let counted: Vec<(usize, usize)> = [(1, (0, 0)), (42, (3000, -2000)), (0x5eed, (-4100, 900)), (7, (1500, 5200))].into_par_iter().map(|(seed, place)| {
             let world = Overworld::new(seed, registry.clone());
             // Some coast too, where caves meet the sea.
             let coast = (0..4000).map(|i| (place.0 + i % 64 * 48, place.1 + i / 64 * 48)).find(|&(x, z)| (world.height(x, z) - SEA_LEVEL).abs() <= 2).unwrap();
@@ -3056,7 +3067,9 @@ mod tests {
                 42 => &[(-306, -70)],
                 _ => &[],
             };
-            for (x, z) in [place, (place.0 + 700, place.1 + 300), (place.0 - 900, place.1 - 600), coast].into_iter().chain(rivers.iter().copied()) {
+            let places: Vec<(i32, i32)> = [place, (place.0 + 700, place.1 + 300), (place.0 - 900, place.1 - 600), coast].into_iter().chain(rivers.iter().copied()).collect();
+            places.into_par_iter().map(|(x, z)| {
+                let (mut fluids, mut caves) = (0, 0);
                 let first = ColumnPos::of_block(IVec3::new(x, 0, z)).offset(-2, -2);
                 let columns = generate_area(&world, first, 5);
                 let origin = first.origin();
@@ -3097,8 +3110,10 @@ mod tests {
                         }
                     }
                 }
-            }
-        }
+                (fluids, caves)
+            }).reduce(|| (0, 0), |a, b| (a.0 + b.0, a.1 + b.1))
+        }).collect();
+        let (fluids, caves) = counted.iter().fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
         assert!(fluids > 0 && caves > 0);
     }
 
