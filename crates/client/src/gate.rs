@@ -5305,20 +5305,30 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         12 => {
-            // It stays its while, counted from when it was pinned done, then goes.
-            let stays = world.resource::<Launch>().content.quests.tracker().done_stays;
+            // It stays its while, counted from when it was pinned done, then goes, and what
+            // it opens is pinned in its place (`follow_ons`), or nothing where the data says.
+            let content = world.resource::<Launch>().content.clone();
+            let stays = content.quests.tracker().done_stays;
             let since = now - gate.quest_pinned;
-            let pinned = !world.resource::<crate::settings::Settings>().pinned_quests.is_empty();
+            let pins = world.resource::<crate::settings::Settings>().pinned_quests.clone();
+            let still = pins.iter().any(|p| p == DONE_QUEST);
             let lines = tracker_lines(world);
-            if lines.is_none() && since < stays - 1.0 {
+            if !still && since < stays - 1.0 {
                 return quit(world, gate, "quests: retired", format!("done, it dropped off after only {since:.1} s of {stays} s"));
             }
-            if (pinned || lines.is_some()) && since < stays + 3.0 {
+            let follows = {
+                let player = world.resource::<LocalPlayer>();
+                let done = |name: &str| player.quests.iter().any(|q| q.name == name && q.done);
+                if content.quests.tracker().follow_on { crate::hud::quests::follow_ons(&content, &[], &[DONE_QUEST.to_owned()], &done) } else { Vec::new() }
+            };
+            // The tracker shows what follows once it is drawn again, or goes.
+            let settled = !still && pins == follows && lines.is_some() == !follows.is_empty();
+            if !settled && since < stays + 3.0 {
                 return;
             }
             gate.check(
                 "quests: retired",
-                if pinned || lines.is_some() { Err(format!("{since:.1} s after it was pinned done, still pinned: {pinned}; the tracker reads {lines:?}")) } else { Ok(format!("done, it stayed and dropped off by {since:.1} s ({stays} s asked), and the tracker went")) },
+                if settled { Ok(format!("done, it stayed and dropped off by {since:.1} s ({stays} s asked), and {follows:?} followed it")) } else { Err(format!("{since:.1} s after it was pinned done, pinned {pins:?}, not {follows:?}; the tracker reads {lines:?}")) },
             );
             world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
             gate.advance(now);
