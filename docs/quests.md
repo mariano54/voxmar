@@ -241,9 +241,9 @@ Game, First Metal, Fired Whole and A Place to Pray.
 
 The Nomad tab opened ten quests at once on a new world (Wild Harvest, A Pile of Stone,
 Twine and Thong and the rest beside the first three), so a newcomer met a wall before
-their first tool. Now three quests open at the start, the three pinned ones (Look It Up,
-Timber, First Night), and every other path starts from a step the main line reaches: the
-crafting table, the stone tools, the first night or the bed. Each path runs as a chain:
+their first tool. Now four quests open at the start, the three pinned ones (Look It Up,
+Timber, First Night) and the Crafting Table, and every other path starts from a step the
+main line reaches: the crafting table, the stone tools, the first night or the bed. Each path runs as a chain:
 mining runs A Pile of Stone, Dig In, Coal and Cinders, First Ore, Stockpile; fighting runs
 Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw; the camp runs Make
 Camp, Company at Camp, Pantry Shelves, From the Shelves, with A Lit Corner and A Bench to
@@ -273,9 +273,9 @@ does not know.
 | Measure | Nomad before | Nomad after | Farm before | Farm after |
 |---|---|---|---|---|
 | Open at once along the kiln bot's run (max, median) | 17, 14.5 | 9, 6.5 | 13, 8 | 13, 8 |
-| Open at once, clearing the age one quest at a time (max, median) | 16, 11 | 10, 6 | 15, 12 | 14, 11 |
-| Starts (quests after nothing in the age) | 10 | 3 | 8 | 8 |
-| Columns, and the tallest | 7, 14 | 10, 9 | 11, 13 | 10, 12 |
+| Open at once, clearing the age one quest at a time (max, median) | 16, 11 | 13, 9 | 15, 12 | 14, 11 |
+| Starts (quests after nothing in the age) | 10 | 4 | 8 | 8 |
+| Columns, and the tallest | 7, 14 | 8, 13 | 11, 13 | 10, 12 |
 
 These counts come from the quest data and twelve logs of the kiln bot; along the bot's run
 a Farm count includes every quest open since the hearth was lit.
