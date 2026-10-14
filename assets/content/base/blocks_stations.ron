@@ -1,0 +1,22 @@
+// Home stations (stations.ron, docs/stations.md): a player loads one and leaves it to work.
+// Each is three blocks, empty, working and ready, and gives back the empty one when broken
+// (with what was on it). A drying rack of sticks and twine, hung with meat, then hung with
+// jerky; a hung rack counts toward a home's herb nook (`drying`). A compost heap of boards,
+// heaped with greens, then rotted down to compost.
+(
+    blocks: [
+        (name: "drying_rack", render: Plant, solid: false, sound: Wood, textures: All("drying_rack"), drops: "drying_rack", hardness: 0.3, color: (140, 105, 60), tags: ["decor"]),
+        (name: "drying_rack_hung", render: Plant, solid: false, sound: Wood, textures: All("drying_rack_hung"), drops: "drying_rack", hardness: 0.3, color: (170, 80, 70), tags: ["drying", "decor"]),
+        (name: "drying_rack_dry", render: Plant, solid: false, sound: Wood, textures: All("drying_rack_dry"), drops: "drying_rack", hardness: 0.3, color: (110, 60, 40), tags: ["drying", "decor"]),
+        (name: "compost_heap", sound: Wood, textures: Column(end: "compost_heap_top", side: "compost_heap_side"), drops: "compost_heap", hardness: 1.0, color: (120, 90, 55), tags: ["wood"]),
+        (name: "compost_heap_full", sound: Wood, textures: Column(end: "compost_heap_full_top", side: "compost_heap_side"), drops: "compost_heap", hardness: 1.0, color: (90, 120, 50), tags: ["wood"]),
+        (name: "compost_heap_ready", sound: Wood, textures: Column(end: "compost_heap_ready_top", side: "compost_heap_side"), drops: "compost_heap", hardness: 1.0, color: (60, 45, 30), tags: ["wood"]),
+    ],
+    families: [
+        // Jerky: meat dried on a rack. It stacks, as cooked food does not, and heals as fruit does.
+        (template: "drop", name: "jerky", tags: ["meat", "dried", "edible", "heal:2", "flavour:savoury"], all: (color: (120, 50, 35))),
+        // Compost: greens rotted down in a heap. Held to a growing crop, it grows the crops
+        // about it a stage (stations.ron's `fertilisers`).
+        (template: "drop", name: "compost", tags: ["fertiliser"], all: (color: (60, 45, 30))),
+    ],
+)

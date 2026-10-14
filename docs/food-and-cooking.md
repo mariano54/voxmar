@@ -126,7 +126,7 @@ Named dishes (data) match exact ingredients and override the name and add an eff
 | Churn | butter, cream | milk | 15 |
 | Smoker | smoke meat and fish; hours | wood (oak, cherry, maple, juniper, pine each flavour differently) | 23 |
 | Cheese press and cellar | fresh then aged cheese; days to weeks | milk, rennet or a herb; a cool place (temperature 4–15 °C) | 25, 35 |
-| Drying rack | jerky, dried fruit, dried herbs; hours | dry air (moisture field low, no rain) and warmth | 31 |
+| Drying rack | jerky from raw meat or fish in 10 min (built, docs/stations.md); later dried fruit and herbs | open sky; a fire within 3 doubles the speed; later dry air | 1 (jerky), 31 |
 | Crock | ferment: sauerkraut, pickles, sauces, cider; days | a cool place | 33 |
 | Table | banquet: dishes set out together, shared effects | | 50 |
 

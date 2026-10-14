@@ -313,6 +313,9 @@ enum Step {
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
+    /// A drying rack stood by the campfire, raw rabbit in hand: a right click hangs it, the
+    /// rack the server sends back is the hung one, and chat says where it stands makes it quicker.
+    Dry,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
     /// `/wander start tinker_camp` brings a travelling party: its trader and hound reach the
@@ -1341,6 +1344,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
+        Step::Dry => dry(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Party => party(world, gate, now),
         Step::Gorge => gorge(world, gate, now, in_phase),
@@ -8094,7 +8098,73 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             for at in [hearth, chimney[0], chimney[1]] {
                 net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
             }
-            gate.next(Step::Tame, now);
+            gate.next(Step::Dry, now);
+        }
+        _ => {}
+    }
+}
+
+/// Where the dry step stands its rack: two blocks from the cook step's campfire, within
+/// the three that make it dry twice as fast.
+const RACK_FROM_FIRE: IVec3 = IVec3::new(2, 0, 0);
+
+/// Server seconds the dry step waits on each answer.
+const DRY_WAIT: f32 = 10.0;
+
+/// A drying rack by the campfire, raw rabbit selected: right clicks on it hang the rabbit
+/// (`base:use_station`), so the server sends the hung rack back (shot `rack`). Then the rack
+/// goes, letting the rabbit fall as a broken rack does.
+fn dry(world: &mut World, gate: &mut Gate, now: f32) {
+    let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
+    let waited = gate.server_in_phase() > DRY_WAIT;
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} drying_rack", rack.x, rack.y, rack.z));
+            net.command("give raw_rabbit 2");
+            net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 1.5));
+            gate.advance(now);
+        }
+        1 => {
+            let client = world.resource::<ClientWorld>();
+            let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
+            if stood && select(world, "base:raw_rabbit") {
+                gate.advance(now);
+            } else if waited {
+                gate.check("drying rack", Err(format!("the rack ({stood}) or raw rabbit in hand never came in {DRY_WAIT} server seconds")));
+                gate.next(Step::Tame, now);
+            }
+        }
+        2 => {
+            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
+            let client = world.resource::<ClientWorld>();
+            let hung = client.registry.id("base:drying_rack_hung").is_some_and(|h| client.block(rack) == Some(h));
+            if hung {
+                mouse(world, MouseButton::Right, false);
+                gate.advance(now);
+            } else if waited {
+                mouse(world, MouseButton::Right, false);
+                gate.check("drying rack", Err(format!("right clicks with raw rabbit in hand never hung the rack in {DRY_WAIT} server seconds")));
+                gate.next(Step::Tame, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        3 => {
+            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
+            // The word that the fire near makes it quicker: the tail of `station.loaded_faster`,
+            // which nothing before this step says.
+            let faster = world.resource::<crate::lang::Locale>().get("station.loaded_faster").replace("{words}", "").trim().to_owned();
+            let said = world.resource::<crate::hud::console::Console>().since(0.0).any(|line| line.contains(faster.as_str()));
+            if !said && !waited {
+                return;
+            }
+            if gate.shot(world, "rack").is_some() {
+                let result = if said { Ok("raw rabbit hung on a rack by the fire: the server sent back the hung rack, quicker for the fire".into()) } else { Err(format!("the rack hung, but chat never said \"{faster}\" in {DRY_WAIT} server seconds, with a campfire two blocks off")) };
+                gate.check("drying rack", result);
+                world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+                gate.next(Step::Tame, now);
+            }
         }
         _ => {}
     }

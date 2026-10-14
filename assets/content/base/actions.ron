@@ -47,5 +47,10 @@
         (name: "tend_bees", duration: Instant, requires: [Alive, InReach, Bees], effects: [TendBees]),
         // Pray at an altar: an offering in hand for Magic experience, else prayer points back.
         (name: "pray", duration: Instant, requires: [Alive, InReach, Altar], effects: [Pray]),
+        // Use a home station (stations.ron): load it with what is in hand, take what it
+        // made, or be told how it goes.
+        (name: "use_station", duration: Instant, requires: [Alive, InReach, Station], effects: [UseStation]),
+        // Spread a fertiliser in hand on a growing crop: the crops about it grow a stage.
+        (name: "fertilise", duration: Instant, requires: [Alive, InReach, Fertilisable], effects: [Fertilise]),
     ],
 )
