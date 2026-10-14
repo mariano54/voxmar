@@ -68,6 +68,12 @@ struct Client {
     hurt: Vec<(u16, voxmar_engine::combat::Defended)>,
     hurt_by: Vec<(u32, u16)>,
     hurt_at: Vec<Instant>,
+    /// When the server sent each creature's attacking pose now shown (in process, a
+    /// message's stamp is when it was sent): a wind-up's start, however late this thread
+    /// read it.
+    attacking_since: std::collections::HashMap<u32, Instant>,
+    /// The stamp of the message being applied.
+    stamp: Option<Instant>,
     journal: voxmar_engine::journal::Journal,
     quests: Vec<voxmar_engine::quest::QuestState>,
     /// The server, for the first player to join it (dropping it stops the server).
@@ -252,6 +258,8 @@ impl Client {
             hurt: Vec::new(),
             hurt_by: Vec::new(),
             hurt_at: Vec::new(),
+            attacking_since: Default::default(),
+            stamp: None,
             journal: Default::default(),
             quests: Vec::new(),
             _server: server,
@@ -297,9 +305,10 @@ impl Client {
                 (now - heard).as_secs_f32(),
                 name = self.name, id = self.id, phase = self.phase, tick = self.server_tick, local = self.connection.is_local()
             );
-            match self.connection.try_recv() {
-                Ok(Some(message)) => {
+            match self.connection.try_recv_at() {
+                Ok(Some((stamp, message))) => {
                     heard = now;
+                    self.stamp = Some(stamp);
                     self.apply(message);
                 }
                 Ok(None) => match taken {
@@ -367,9 +376,16 @@ impl Client {
             }
             ServerMessage::Creatures { changed, gone } => {
                 for view in changed {
+                    let attacking = |v: &voxmar_protocol::CreatureView| v.pose == voxmar_engine::creature::brain::Pose::Attacking;
+                    if !attacking(&view) {
+                        self.attacking_since.remove(&view.id);
+                    } else if !self.creatures.get(&view.id).is_some_and(attacking) {
+                        self.attacking_since.insert(view.id, self.stamp.unwrap_or_else(Instant::now));
+                    }
                     self.creatures.insert(view.id, view);
                 }
                 for gone in gone {
+                    self.attacking_since.remove(&gone.id);
                     self.creatures.remove(&gone.id);
                     self.deaths += gone.died as u32;
                 }
@@ -420,7 +436,8 @@ impl Client {
 
     /// Applies every message waiting.
     fn drain(&mut self) {
-        while let Ok(Some(message)) = self.connection.try_recv() {
+        while let Ok(Some((stamp, message))) = self.connection.try_recv_at() {
+            self.stamp = Some(stamp);
             self.apply(message);
         }
     }
@@ -4387,30 +4404,48 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     let (windup, recovery) = (attack.windup.unwrap_or(feel.creature_windup), attack.recovery.unwrap_or(feel.creature_recovery));
     // Waits for the bear to wind up at us (standing beside it, facing it, striking it every
     // few seconds only while it does not fight back), then answers `respond` `after`
-    // seconds later; returns the selected bear's answered blow index.
-    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> usize {
+    // seconds after the server sent the wind-up (its pose's stamp: on a busy machine this
+    // thread may read it long after); returns the selected bear's answered blow index, and
+    // how late past that moment the answer went.
+    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> (usize, f32) {
         let before = provoke_until_it_winds_up(client, id, slot, "bear");
-        std::thread::sleep(Duration::from_secs_f32(after));
+        let due = client.attacking_since[&id] + Duration::from_secs_f32(after);
+        if let Some(wait) = due.checked_duration_since(Instant::now()) {
+            std::thread::sleep(wait);
+        }
+        let sent = Instant::now();
         respond(client);
-        wait_for_blow(client, id, before)
+        (wait_for_blow(client, id, before), sent.saturating_duration_since(due).as_secs_f32())
     };
     // Each answer's moment moves by what came of the last, so a slow machine is met where
-    // its blows fall: a block not perfect was too soon, a hit too late.
+    // its blows fall: a block not perfect was too soon, a hit too late. An answer that went
+    // more than a step past its moment (the wind-up read after it, or this thread kept off
+    // its cores while it waited) says nothing of the moment: it is set aside and the search
+    // stays, `LATE_ANSWERS` of them at most.
+    const STEP: f32 = 0.05;
+    const LATE_ANSWERS: u32 = 24;
     let answer = |client: &mut Client, want: Defended, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| {
         let mut after = windup - 0.1;
         let mut outcomes = Vec::new();
-        for _ in 0..8 {
-            let struck = fight(client, after.max(0.0), respond);
+        let mut late = Vec::new();
+        while outcomes.len() < 8 {
+            let (struck, sent_late) = fight(client, after.max(0.0), respond);
             let outcome = client.hurt[struck].1;
             undo(client);
-            outcomes.push(outcome);
             if outcome == want {
                 return struck;
             }
-            after += if outcome == Defended::Blocked { 0.05 } else { -0.05 };
             client.wait_server(1);
+            if sent_late > STEP {
+                late.push(sent_late);
+                assert!(late.len() < LATE_ANSWERS as usize, "{} answers went more than {STEP} s past their moment ({late:.2?} s late), so none could say when the bear's blow is met; the rest came to {outcomes:?}", late.len());
+                eprintln!("answer: set aside, sent {sent_late:.2} s past its moment ({outcome:?})");
+                continue;
+            }
+            outcomes.push(outcome);
+            after += if outcome == Defended::Blocked { STEP } else { -STEP };
         }
-        panic!("answers to the bear's blows came to {outcomes:?}");
+        panic!("answers to the bear's blows came to {outcomes:?}, {} more set aside as late", late.len());
     };
     // Raised just before the blow: a perfect block, and the next blow a counter.
     let raise = |c: &Client| {
