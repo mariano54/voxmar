@@ -152,6 +152,10 @@ pub struct ClassDef {
     /// line from the eye to what it is aimed at, where a melee blow needs only reach.
     #[serde(default)]
     pub ammo: Option<String>,
+    /// The chance a shot that hits leaves what it shot lying by the target, to be picked up
+    /// again (an arrow pulled from a kill, a stone in the grass): 0 to 1.
+    #[serde(default)]
+    pub recover: f32,
 }
 
 fn buffer() -> f32 {
@@ -1127,6 +1131,9 @@ impl CombatRegistry {
                     None => blocks.id(name).into_iter().collect(),
                 },
             };
+            if !(0.0..=1.0).contains(&class.recover) || (class.recover > 0.0 && class.ammo.is_none()) {
+                return Err(RegistryError(format!("combat.ron: class `{}` recovers {} of its shots: it must shoot something, and recover 0 to 1", class.name, class.recover)));
+            }
             if class.ammo.is_some() && items.is_empty() {
                 return Err(RegistryError(format!("combat.ron: class `{}` shoots {:?}, which no item is", class.name, class.ammo.as_deref().unwrap_or_default())));
             }
@@ -1239,6 +1246,12 @@ impl CombatRegistry {
     /// What `weapon` shoots: the items a shot takes one of, empty for a weapon that strikes.
     pub fn ammo(&self, weapon: &Weapon) -> &[BlockId] {
         weapon.class.and_then(|i| self.ammo.get(i)).map_or(&[], Vec::as_slice)
+    }
+
+    /// The chance a hit by `weapon` leaves its shot to be picked up again (0 for a weapon
+    /// that strikes).
+    pub fn recover(&self, weapon: &Weapon) -> f32 {
+        self.class_of(weapon).map_or(0.0, |class| class.recover)
     }
 
     /// `weapon`'s rhythm.
@@ -1500,6 +1513,18 @@ mod tests {
         assert_eq!(combat.wielded(None, at(1)).reach, FIST_REACH, "fists without a fist class");
         assert!(registry(r#"(weapons: [(item: "nothing", class: "sword", max_hit: 1)])"#).is_err());
         assert!(registry(r#"(classes: [(name: "sword", style: Slash, cooldown: 0.6)], weapons: [(item: "sword", class: "axe", max_hit: 1)])"#).is_err());
+    }
+
+    #[test]
+    fn a_shooting_class_names_real_ammo_and_recovers_a_share_of_its_shots() {
+        let (combat, blocks) = registry(r#"(classes: [(name: "sling", style: Ranged, cooldown: 0.5, ammo: "stone", recover: 0.25)], weapons: [(item: "stick", class: "sling", max_hit: 2)])"#).unwrap();
+        let sling = combat.wielded(blocks.id("t:stick"), |_| 1);
+        assert_eq!(combat.ammo(&sling), [blocks.id("t:stone").unwrap()]);
+        assert_eq!(combat.recover(&sling), 0.25);
+        assert_eq!(combat.recover(&combat.wielded(None, |_| 1)), 0.0, "fists recover nothing");
+        assert!(registry(r#"(classes: [(name: "sling", style: Ranged, cooldown: 0.5, ammo: "nothing")])"#).is_err(), "ammo that is no item");
+        assert!(registry(r#"(classes: [(name: "sling", style: Ranged, cooldown: 0.5, ammo: "stone", recover: 1.5)])"#).is_err(), "recover above 1");
+        assert!(registry(r#"(classes: [(name: "sword", style: Slash, cooldown: 0.6, recover: 0.5)])"#).is_err(), "recovering with nothing to shoot");
     }
 
     #[test]

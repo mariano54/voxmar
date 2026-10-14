@@ -41,7 +41,9 @@ and "Items" tabs); the code is `engine/src/combat.rs`, the data each package's
 A ranged weapon is a class with `ammo` (an item or `tag:`): each shot spends one when it
 lands, hit or miss, and with none the server starts no swing and says what it needs. A shot
 needs a clear line from the eye to the middle of the target as well as reach; otherwise it
-is the same blow, rhythm and experience as any other. Arrows: four from flint or
+is the same blow, rhythm and experience as any other. A shot that hits may be left lying
+by the target to pick up again: `recover` is that chance (sling stones 0.25, arrows 0.5),
+rolled by the server from the tick and the creature. A miss is gone. Arrows: four from flint or
 cobblestone, a stick and a feather, Crafting 5.
 
 Creatures' styles and weaknesses (systems agreed them, 7 Oct): wolves, foxes, cave crawlers

@@ -4164,6 +4164,48 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     client.pump_until(|c| c.chat.iter().any(|(_, line)| line.contains("Nothing to shoot")));
 }
 
+#[test]
+fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
+    let mut client = Client::join();
+    let (bow, arrow) = (client.content.blocks.expect("base:short_bow"), client.content.blocks.expect("base:arrow"));
+    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
+    let recover = client.content.combat.recover(&client.content.combat.wielded(Some(bow), |_| 10));
+    assert!(recover >= 0.5, "a bow leaves its arrow by what it hit at least half the time, not {recover}");
+    client.ok("/gamemode creative");
+    client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
+    client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
+    client.ok("/clear");
+    client.ok("/skill ranged 10");
+    client.ok("/give short_bow 1");
+    client.ok("/give arrow 48");
+    client.pump_until(|c| carried_of(c, bow) == 1 && carried_of(c, arrow) == 48);
+    let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == bow)).expect("the bow on the hotbar");
+    let before: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
+    client.ok("/summon brown_bear 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear && !before.contains(&v.id)));
+    let id = client.creatures.values().find(|v| v.species == bear && !before.contains(&v.id)).unwrap().id;
+    client.ok("/creatures hold");
+    let at = client.creatures[&id].position;
+    client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
+    let yaw = yaw_toward(client.position, at);
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
+    client.wait_server(1);
+    // Shot until an arrow lies by the bear: a hit leaves one half the time, so a forty-health
+    // bear dies only after a dozen or more hits, by which one has all but surely been left.
+    let lying = |c: &Client| c.items.values().any(|v| v.stack.item == arrow && v.position.distance(at) < 3.0);
+    let mut shots = 0;
+    while !lying(&client) {
+        assert!(client.creatures.contains_key(&id) && shots < 48, "no arrow left by the bear after {shots} shots: {:?}", client.damage);
+        client.propose("core:attack", ActionTarget::Creature(id));
+        shots += 1;
+        client.pump_until(|c| c.blows == shots || !c.creatures.contains_key(&id));
+        client.wait_server(1);
+    }
+    let hits = client.damage.iter().filter(|&&d| d > 0).count();
+    assert!(hits >= 1, "an arrow lay by the bear with no hit: {:?}", client.damage);
+}
+
 /// Whether a dodge proposed now is taken: a second one at once must then be refused by its
 /// cooldown, so exactly one Teleport comes back (two: the first was refused too; none: the
 /// cooldown did not hold).

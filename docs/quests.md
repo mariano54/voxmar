@@ -290,6 +290,8 @@ How a shot works, the same way every blow does:
   target's centre. A wall in between drops the shot.
 - Each shot uses one ammo when it lands, hit or miss. With none, the server sends "Nothing
   to shoot" and starts no swing.
+- A shot that hits may drop at the target to pick up again, by the class's `recover`
+  (a sling stone one time in four, an arrow one in two). A miss is lost.
 - Ranged XP comes from hits, like every style skill (40 per damage, plus Hitpoints).
 
 Quests that teach it:
