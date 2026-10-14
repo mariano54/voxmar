@@ -323,6 +323,10 @@ const TOLD_NEAR: f32 = 6.0;
 /// Seconds a tell's ring stays after the blow lands.
 const MARKER_AFTER: f32 = 0.12;
 
+/// How long before its end a wind-up seen to stop is its blow, not cut short: the pose is
+/// seen late by up to the round trip, so the blow can end it this much early to the eye.
+const BLOW_SLACK: f32 = 0.25;
+
 /// What has been seen of the fight so far, to find what is new.
 #[derive(Resource, Default)]
 struct Seen {
@@ -411,7 +415,9 @@ fn tell(
         // Heard as well as a blow near at hand, fainter further off.
         let gain = (TOLD_NEAR / at.distance(player.position).max(TOLD_NEAR)).sqrt();
         *heard.asked.entry(tell.sound.clone()).or_default() += 1;
-        pending.0.push(Cue { due: now + (told.windup - tell.peak).max(0.0), sound: tell.sound.clone(), id: told.id, gain, ducks: tell.ducks });
+        // Seen first mid wind-up, how much of it is left is not known: told at once.
+        let due = if told.late { now } else { now + (told.windup - tell.peak).max(0.0) };
+        pending.0.push(Cue { due, sound: tell.sound.clone(), id: told.id, gain, ducks: tell.ducks });
         let Some(marker) = tell.marker else { continue };
         heard.markers += 1;
         let colour = |alpha: f32| StandardMaterial { base_color: marker.colour.color().with_alpha(alpha), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, ..default() };
@@ -428,11 +434,19 @@ fn tell(
             ));
         }
     }
-    pending.0.retain(|cue| creatures.winding(cue.id));
-    let (due, waiting): (Vec<_>, Vec<_>) = pending.0.drain(..).partition(|cue| cue.due <= now);
-    pending.0 = waiting;
-    for cue in due {
-        queued.0.push((cue.sound, cue.gain, 1.0, cue.ducks));
+    // A wind-up that stops near its end was the blow: a tell still to come plays with it.
+    // One that stops sooner, or whose creature falls or goes, was cut short: its tell is
+    // dropped.
+    for cue in std::mem::take(&mut pending.0) {
+        let struck = !creatures.winding(cue.id);
+        if struck && !(creatures.standing(cue.id) && cue.due - now <= BLOW_SLACK) {
+            continue;
+        }
+        if struck || cue.due <= now {
+            queued.0.push((cue.sound, cue.gain, 1.0, cue.ducks));
+        } else {
+            pending.0.push(cue);
+        }
     }
 }
 
@@ -473,14 +487,16 @@ fn markers(
     for (entity, marker, mut transform, material) in &mut rings {
         let t = now - marker.from;
         let body = creatures.body(marker.id);
-        // Gone with its wind-up: run out, or ended first (died, went, or struck sooner).
-        let ended = t < marker.windup && !creatures.winding(marker.id);
+        // Its blow fills it at once; a wind-up cut short (it fell, went, or stopped well
+        // before its end) takes it away.
+        let struck = !creatures.winding(marker.id);
+        let ended = struck && (!creatures.standing(marker.id) || t < marker.windup - BLOW_SLACK);
         if t > marker.windup + MARKER_AFTER || body.is_none() || ended {
             materials.remove(&material.0);
             commands.entity(entity).despawn();
             continue;
         }
-        let filled = marker_fill(t, marker.windup);
+        let filled = if struck { 1.0 } else { marker_fill(t, marker.windup) };
         if let Some((_, at, _)) = body {
             transform.translation = at + Vec3::Y * 0.04;
         }
