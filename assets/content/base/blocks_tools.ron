@@ -16,7 +16,7 @@
         // chimney's top smokes over a hearthstone, seen from across a valley: home.
         (
             name: "hearthstone", sound: Stone, textures: Sides(top: "hearthstone_top", bottom: "cobblestone", side: "hearthstone_side"),
-            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "multiblock_core", "station", "hob", "building"], light: 6,
+            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "multiblock_core", "station", "hob", "campfire", "building"], light: 6,
         ),
         (
             name: "chimney", sound: Stone, textures: Sides(top: "chimney_top", bottom: "cobblestone", side: "chimney_side"),
