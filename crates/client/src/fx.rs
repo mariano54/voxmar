@@ -255,7 +255,10 @@ struct Burst {
 }
 
 /// Where an effect shows for an action aimed at `target`, and the cell and face it is of.
-fn place(effect: &Effect, target: ActionTarget, player: &LocalPlayer) -> Option<(Vec3, IVec3, Face)> {
+/// A block set down went into the cell in front of the aimed face, or, the aimed block being
+/// replaceable (grass, snow, flowers, water), into that block's own cell: whichever holds a
+/// block now (`world` shows the placing at once).
+fn place(effect: &Effect, target: ActionTarget, player: &LocalPlayer, world: &ClientWorld) -> Option<(Vec3, IVec3, Face)> {
     let eye = player.eye();
     match (effect.at, target) {
         (At::Mouth, _) => {
@@ -263,7 +266,9 @@ fn place(effect: &Effect, target: ActionTarget, player: &LocalPlayer) -> Option<
             Some((eye + ahead.normalize_or_zero() * 0.35 - Vec3::Y * 0.3, eye.floor().as_ivec3(), Face::PosY))
         }
         (At::Placed, ActionTarget::Block { block, face }) => {
-            let cell = block + face.normal();
+            let front = block + face.normal();
+            let shows = |cell: IVec3| world.block(cell).is_some_and(|b| world.registry.info(b).render != RenderKind::Invisible);
+            let cell = if shows(front) { front } else { block };
             Some((cell.as_vec3() + Vec3::new(0.5, 0.05, 0.5), cell, Face::PosY))
         }
         (At::Target, ActionTarget::Block { block, face }) => Some((block.as_vec3() + 0.5 + face.normal().as_vec3() * 0.55, block, face)),
@@ -273,7 +278,7 @@ fn place(effect: &Effect, target: ActionTarget, player: &LocalPlayer) -> Option<
 }
 
 /// Every action proposed shows its effect, the first burst at once.
-fn show_actions(net: Option<Res<Net>>, shown: Option<Res<Shown>>, player: Res<LocalPlayer>, time: Res<Time>, mut pending: ResMut<Pending>, mut glints: Commands, slots: Query<Entity, With<crate::hud::inventory::OutputSlot>>) {
+fn show_actions(net: Option<Res<Net>>, shown: Option<Res<Shown>>, player: Res<LocalPlayer>, world: Res<ClientWorld>, time: Res<Time>, mut pending: ResMut<Pending>, mut glints: Commands, slots: Query<Entity, With<crate::hud::inventory::OutputSlot>>) {
     let (Some(net), Some(shown)) = (net, shown) else { return };
     let now = time.elapsed_secs();
     let held = player.inventory.slots.get(player.selected).copied().flatten().map(|stack| stack.item);
@@ -285,7 +290,7 @@ fn show_actions(net: Option<Res<Net>>, shown: Option<Res<Shown>>, player: Res<Lo
             }
             continue;
         }
-        let Some((at, cell, face)) = place(effect, target, &player) else { continue };
+        let Some((at, cell, face)) = place(effect, target, &player, &world) else { continue };
         for burst in 0..effect.bursts {
             pending.0.push(Burst { name: name.clone(), effect: effect.clone(), at, cell, face, held, when: now + burst as f32 * effect.every });
         }
@@ -474,14 +479,23 @@ mod tests {
         let fx = ActionFx::load(&content().files).unwrap();
         let player = LocalPlayer { position: Vec3::new(0.5, 64.0, 0.5), ..default() };
         let target = ActionTarget::Block { block: IVec3::new(3, 63, 0), face: Face::PosY };
-        let at = |name: &str| place(&fx.effects[name], target, &player).map(|(at, cell, _)| (at, cell));
-        assert_eq!(at("settle"), Some((Vec3::new(3.5, 64.05, 0.5), IVec3::new(3, 64, 0))));
-        assert_eq!(at("steam").unwrap().0, Vec3::new(3.5, 64.02, 0.5));
-        assert_eq!(at("picked").unwrap(), (Vec3::new(3.5, 64.05, 0.5), IVec3::new(3, 63, 0)));
-        let (mouth, _) = at("crumbs").unwrap();
+        let content = content();
+        let mut world = ClientWorld::new(content.blocks.clone(), 2, crate::render::terrain::Terrain::detached());
+        world.insert_column(voxmar_engine::coords::ColumnPos::of_block(IVec3::new(3, 63, 0)), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+        let planks = content.blocks.expect("base:oak_planks");
+        world.set_block(IVec3::new(3, 64, 0), planks);
+        let at = |world: &ClientWorld, name: &str| place(&fx.effects[name], target, &player, world).map(|(at, cell, _)| (at, cell));
+        assert_eq!(at(&world, "settle"), Some((Vec3::new(3.5, 64.05, 0.5), IVec3::new(3, 64, 0))));
+        assert_eq!(at(&world, "steam").unwrap().0, Vec3::new(3.5, 64.02, 0.5));
+        assert_eq!(at(&world, "picked").unwrap(), (Vec3::new(3.5, 64.05, 0.5), IVec3::new(3, 63, 0)));
+        let (mouth, _) = at(&world, "crumbs").unwrap();
         assert!(mouth.y < player.eye().y && mouth.distance(player.eye()) < 0.6, "{mouth}");
-        assert_eq!(at("made"), None);
-        assert_eq!(place(&fx.effects["settle"], ActionTarget::None, &player), None);
+        assert_eq!(at(&world, "made"), None);
+        assert_eq!(place(&fx.effects["settle"], ActionTarget::None, &player, &world), None);
+        // Set into a replaceable block's own cell (aiming at grass), the dust is there.
+        world.set_block(IVec3::new(3, 64, 0), voxmar_engine::block::BlockId::AIR);
+        world.set_block(IVec3::new(3, 63, 0), planks);
+        assert_eq!(at(&world, "settle"), Some((Vec3::new(3.5, 63.05, 0.5), IVec3::new(3, 63, 0))));
     }
 
     /// A burst gives its count at full particles, none with particles off, and its look:
