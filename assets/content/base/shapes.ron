@@ -176,6 +176,10 @@
             (from: (1, 14, 13), to: (15, 16, 15), textures: All("cloth_grey")),
             (from: (2, 0, 13.5), to: (14, 14, 14.5)),
         ]),
+        // A door's leaf, a block's height (a door is two): shut across the middle of its
+        // cell, and open, swung back against its jamb on the west side.
+        "door": (boxes: [(from: (0, 0, 6.5), to: (16, 16, 9.5))]),
+        "door_open": (boxes: [(from: (0, 0, 0), to: (3, 16, 16))]),
         "curtain": (boxes: [
             (from: (0, 15, 6), to: (16, 16, 10), textures: All("cloth_grey")),
             (from: (0, 0, 7), to: (16, 15, 9)),

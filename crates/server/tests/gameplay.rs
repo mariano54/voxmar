@@ -6622,13 +6622,26 @@ impl Fresh {
         true
     }
 
-    /// Goes to a drop at `p`: walking up to it on open ground, or by teleport to the nearest
-    /// bank in reach of one that floated out on a pond (the walk keeps out of the water, and
-    /// the way round a pond is no part of what the test checks).
-    fn go_near(&mut self, p: Vec3) {
+    /// Goes to a drop at `p`: walking up to it on open ground; to the nearest place in reach
+    /// of it with room for the body, where it lies with none (under a trunk cut from below);
+    /// or by teleport to the nearest bank in reach of one that floated out on a pond (the walk
+    /// keeps out of the water, and the way round a pond is no part of what the test checks).
+    /// False where nowhere on the ground is in reach of it.
+    fn go_near(&mut self, p: Vec3) -> bool {
         let floor = |me: &Self| solid(&me.c, IVec3::new(p.x.floor() as i32, me.origin.y - 1, p.z.floor() as i32));
+        if floor(self) && self.has_room(p.with_y(self.at.y)) {
+            self.walk_toward(p, 0.5);
+            return true;
+        }
         if floor(self) {
-            return self.walk_toward(p, 0.5);
+            let beside = (0..=4)
+                .flat_map(|ring| (0..16).map(move |i| (ring as f32 * 0.3, (i as f32 * 22.5).to_radians())))
+                .map(|(r, a)| Vec3::new(p.x + r * a.cos(), self.at.y, p.z + r * a.sin()))
+                .filter(|&q| self.has_room(q) && self.in_reach(q, p))
+                .min_by(|a, b| across(*a, self.at).total_cmp(&across(*b, self.at)));
+            let Some(beside) = beside else { return false };
+            self.walk_toward(beside, 0.05);
+            return true;
         }
         let spot = (1..=4)
             .flat_map(|ring| (0..16).map(move |i| (ring as f32 * 0.4, (i as f32 * 22.5).to_radians())))
@@ -6640,6 +6653,7 @@ impl Fresh {
             self.c.tp(spot);
             self.at = spot;
         }
+        true
     }
 
     /// Whether the body has room standing at `at`: air at both its heights, at each corner,
@@ -6716,23 +6730,30 @@ impl Fresh {
         self.hold(tool);
         let id = self.c.content.blocks.expect(item);
         let mut owed = self.have(item);
-        for &stand in stands {
-            let near = |t: &IVec3| across(Self::middle(*t), stand) <= 2.3;
-            targets.retain(|&t| solid(&self.c, t));
-            if owed >= need || !targets.iter().any(near) {
-                continue;
-            }
-            self.walk_toward(stand, 0.05);
-            while owed < need {
+        loop {
+            for &stand in stands {
+                let near = |t: &IVec3| across(Self::middle(*t), stand) <= 2.3;
                 targets.retain(|&t| solid(&self.c, t));
-                let Some(target) = targets.iter().copied().filter(near).min_by_key(|t| ((across(Self::middle(*t), stand) * 10.0) as i32, -t.y)) else { break };
-                let info = self.c.content.blocks.info(self.c.world.block(target).unwrap());
-                owed += if info.drops == id { info.drop_count as u32 } else { 0 };
-                self.mine(target);
+                if owed >= need || !targets.iter().any(near) {
+                    continue;
+                }
+                self.walk_toward(stand, 0.05);
+                while owed < need {
+                    targets.retain(|&t| solid(&self.c, t));
+                    let Some(target) = targets.iter().copied().filter(near).min_by_key(|t| ((across(Self::middle(*t), stand) * 10.0) as i32, -t.y)) else { break };
+                    let info = self.c.content.blocks.info(self.c.world.block(target).unwrap());
+                    owed += if info.drops == id { info.drop_count as u32 } else { 0 };
+                    self.mine(target);
+                }
+            }
+            assert!(owed >= need, "the blocks ran out: {owed} of {need} {item}");
+            // Drops lying where no one can stand to reach them are lost, as a player would
+            // leave them: more is dug for them.
+            match self.collect_reachable(item, need) {
+                0 => return,
+                lost => owed -= lost,
             }
         }
-        assert!(owed >= need, "the blocks ran out: {owed} of {need} {item}");
-        self.collect(item, need);
     }
 
     /// As [`Fresh::gather_from`] over open ground: the player walks up to the nearest block
@@ -6741,29 +6762,49 @@ impl Fresh {
         self.hold(tool);
         let id = self.c.content.blocks.expect(item);
         let mut owed = self.have(item);
-        while owed < need {
-            targets.retain(|&t| solid(&self.c, t));
-            let from = self.at;
-            let target = targets.iter().copied().min_by_key(|t| ((across(Self::middle(*t), from) * 10.0) as i32, t.y)).expect("blocks to gather from");
-            let centre = Self::middle(target);
-            if across(centre, self.at) > 2.3 {
-                self.walk_toward(centre, 1.3);
-            } else {
-                let info = self.c.content.blocks.info(self.c.world.block(target).unwrap());
-                owed += if info.drops == id { info.drop_count as u32 } else { 0 };
-                self.mine(target);
+        loop {
+            while owed < need {
+                targets.retain(|&t| solid(&self.c, t));
+                let from = self.at;
+                let target = targets.iter().copied().min_by_key(|t| ((across(Self::middle(*t), from) * 10.0) as i32, t.y)).expect("blocks to gather from");
+                let centre = Self::middle(target);
+                if across(centre, self.at) > 2.3 {
+                    self.walk_toward(centre, 1.3);
+                } else {
+                    let info = self.c.content.blocks.info(self.c.world.block(target).unwrap());
+                    owed += if info.drops == id { info.drop_count as u32 } else { 0 };
+                    self.mine(target);
+                }
+            }
+            // As in `gather_from`: what lies out of every reach is dug again.
+            match self.collect_reachable(item, need) {
+                0 => return,
+                lost => owed -= lost,
             }
         }
-        self.collect(item, need);
     }
 
     /// Waits until `need` of `item` are carried, closing on the nearest loose one until it is
     /// taken: walking to one out of the pull, and onto one in reach that has lain there untaken.
     fn collect(&mut self, item: &str, need: u32) {
+        let lost = self.collect_reachable(item, need);
+        assert_eq!(lost, 0, "{item}: {lost} lie where no one can stand to reach them, with {} of {need} carried", self.have(item));
+    }
+
+    /// As [`Fresh::collect`], stepping down into a pit or hole for a drop that fell below the
+    /// ground, as a player does, and back up once it is taken. A drop with nowhere a body
+    /// fits in reach of it (a slot one block high) is left lying, as a player leaves it, and
+    /// the bot goes on to the others: what is still short of `need` once only such drops
+    /// are loose is returned, for the caller to dig again.
+    fn collect_reachable(&mut self, item: &str, need: u32) -> u32 {
         let id = self.c.content.blocks.expect(item);
+        // Where the bot climbs back to after stepping down for a drop, and the turn it went.
+        let mut climb: Option<(Vec3, u64, u32)> = None;
+        // Drops left lying where no one can reach them.
+        let mut left: Vec<Vec3> = Vec::new();
         // Thirty seconds of the bot's turns (`Fresh::steps`), not the server's ticks.
         let until = self.steps + 30 * TICKS_PER_SECOND as u64;
-        self.spend(Act::Mine, |me| {
+        let short = self.spend(Act::Mine, |me| {
             // Ticks the nearest drop has lain in the body's reach, by the player's reckoning,
             // without coming in.
             let mut beside = 0;
@@ -6782,6 +6823,15 @@ impl Fresh {
                 if me.have(item) != had {
                     (came, had) = (me.steps, me.have(item));
                 }
+                // Back up out of the pit once the drop came in, or a second on if it did not.
+                if let Some((back, went, then)) = climb
+                    && (me.have(item) > then || me.steps > went + TICKS_PER_SECOND as u64)
+                {
+                    climb = None;
+                    did(format!("climbed back to {back:.2} from {:.2}", me.at), &mut done);
+                    me.c.tp(back);
+                    me.at = back;
+                }
                 // Put back by the server after a walk ended (its last step refused, heard a tick
                 // late): the server picks up where it has the player, so the player goes on from
                 // there rather than waiting beside a drop it has them nowhere near.
@@ -6790,22 +6840,38 @@ impl Fresh {
                     me.at = back;
                 }
                 let at = me.at;
-                let near = me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
+                let reachable = |p: &Vec3| !left.iter().any(|l| l.distance(*p) < 0.3);
+                let near = me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).filter(reachable).min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
+                // Only drops no one can reach are loose: what is still short is the caller's to dig.
+                if near.is_none() && climb.is_none() && !left.is_empty() && me.c.items.values().any(|i| i.stack.item == id) {
+                    return need - me.have(item);
+                }
                 // Nothing in for three seconds with one loose: put by the server where it lies,
                 // the test's shortcut where closing on it has not done (where the server has
-                // the player, not the bot, is what takes it).
+                // the player, not the bot, is what takes it). One that fell below the ground
+                // is reached from inside its pit, and one with no room for a body by it is left.
                 if let Some(p) = near
+                    && climb.is_none()
                     && me.steps > came + 3 * TICKS_PER_SECOND as u64
                 {
                     came = me.steps;
                     let on = p.with_y(me.at.y);
-                    if me.has_room(on) {
+                    let floor = me.at;
+                    if me.in_reach(on, p) && me.has_room(on) {
                         me.c.tp(on);
                         me.at = on;
+                        did(format!("hopped to {:.2} for the drop at {p:.2}", me.at), &mut done);
+                    } else if me.in_reach(p.with_y(me.at.y), p) && me.hop_near(p, 0.5) {
+                        did(format!("hopped to {:.2} for the drop at {p:.2}", me.at), &mut done);
+                    } else if let Some(down) = me.room_in_reach(p) {
+                        climb = Some((floor, me.steps, me.have(item)));
+                        me.c.tp(down);
+                        me.at = down;
+                        did(format!("stepped down to {down:.2} for the drop at {p:.2}"), &mut done);
                     } else {
-                        assert!(me.hop_near(p, 0.5), "no room near the drop at {p:?}");
+                        left.push(p);
+                        did(format!("left the drop at {p:.2}: no room for a body in reach of it"), &mut done);
                     }
-                    did(format!("hopped to {:.2} for the drop at {p:.2}", me.at), &mut done);
                     me.send();
                     me.tick();
                     continue;
@@ -6817,8 +6883,14 @@ impl Fresh {
                     Some(p) if across(p, me.at) > 0.8 => {
                         beside = 0;
                         let from = me.at;
-                        me.go_near(p);
-                        did(format!("went from {from:.2} to {:.2} for the drop at {p:.2}", me.at), &mut done);
+                        if me.go_near(p) {
+                            did(format!("went from {from:.2} to {:.2} for the drop at {p:.2}", me.at), &mut done);
+                        } else {
+                            // Nowhere on the ground in reach of it: straight to stepping down
+                            // for it, or leaving it.
+                            came = me.steps.saturating_sub(3 * TICKS_PER_SECOND as u64 + 1);
+                            did(format!("found no room on the ground in reach of the drop at {p:.2}"), &mut done);
+                        }
                     }
                     // In reach and not taken for half a second: stepped onto, on open ground.
                     Some(p) if beside >= TICKS_PER_SECOND / 2 && solid(&me.c, IVec3::new(p.x.floor() as i32, me.origin.y - 1, p.z.floor() as i32)) => {
@@ -6834,7 +6906,37 @@ impl Fresh {
                 me.send();
                 me.tick();
             }
+            if let Some((back, _, _)) = climb {
+                me.c.tp(back);
+                me.at = back;
+            }
+            0
         });
+        short
+    }
+
+    /// Whether a body standing at `at` takes a drop at `p`: the server's reach is the body's
+    /// box grown a block across and half a block up and down.
+    fn in_reach(&self, at: Vec3, p: Vec3) -> bool {
+        let (half, size) = (0.3, voxmar_engine::dropped::SIZE * 0.5);
+        (p.x - at.x).abs() <= half + 1.0 + size && (p.z - at.z).abs() <= half + 1.0 + size && p.y + size >= at.y - 0.5 && p.y - size <= at.y + 1.8 + 0.5
+    }
+
+    /// The nearest place below the ground, down to the drop's own level, where a body stands
+    /// (two cells clear of solid blocks, water allowed, over solid ground at each corner) and
+    /// takes the drop at `p`: the bottom of the pit or hole it fell into.
+    fn room_in_reach(&self, p: Vec3) -> Option<Vec3> {
+        let stands = |q: Vec3| {
+            [(-0.32, -0.32), (-0.32, 0.32), (0.32, -0.32), (0.32, 0.32)].iter().all(|&(dx, dz)| {
+                let (x, y, z) = ((q.x + dx).floor() as i32, q.y as i32, (q.z + dz).floor() as i32);
+                (0..2).all(|dy| !solid(&self.c, IVec3::new(x, y + dy, z))) && solid(&self.c, IVec3::new(x, y - 1, z))
+            })
+        };
+        (p.y.floor() as i32 - 1..self.origin.y)
+            .flat_map(|y| [0.0f32, 0.35, 0.7, 1.0].into_iter().flat_map(move |r| (0..16).map(move |i| (y, r, (i as f32 * 22.5).to_radians()))))
+            .map(|(y, r, a)| Vec3::new(p.x + r * a.cos(), y as f32, p.z + r * a.sin()))
+            .filter(|&q| self.in_reach(q, p) && stands(q))
+            .min_by(|a, b| a.distance(p).total_cmp(&b.distance(p)))
     }
 
     /// Lays `cells` (grid cell, item, how many) in the crafting grid and crafts as often as
@@ -7033,6 +7135,84 @@ fn the_bot_collects_while_the_server_ticks_far_ahead_of_it() {
     f.c.pump_until(|c| loose(c, "base:cobblestone") == 6);
     f.collect("base:cobblestone", 6);
     assert_eq!(f.have("base:cobblestone"), 6);
+}
+
+/// A drop that fell below the ground (dug clay that rolled into the hole it came from, on a
+/// busy Mac: "no room near the drop" two blocks under the floor) is taken from inside its
+/// pit: the bot steps down into it, as a player would, and climbs back out.
+#[test]
+fn the_bot_steps_down_into_a_pit_for_a_drop_and_back_out() {
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    // Ground under the floor, then a pit four blocks off, one wide and three deep, a
+    // cobblestone at its bottom.
+    f.c.fill(origin, IVec3::new(2, -5, -2), IVec3::new(6, -2, 2), "stone");
+    let pit = origin + IVec3::X * 4;
+    f.c.pump_until(|c| c.world.block(pit - IVec3::Y * 4) == c.content.blocks.id("base:stone"));
+    for dy in 1..=3 {
+        f.c.ok(&format!("/setblock {} {} {} air", pit.x, pit.y - dy, pit.z));
+    }
+    f.c.pump_until(|c| c.world.block(pit - IVec3::Y * 3) == Some(BlockId::AIR));
+    let bottom = pit - IVec3::Y * 3;
+    f.c.ok(&format!("/drop cobblestone 1 {} {} {}", bottom.x, bottom.y, bottom.z));
+    f.c.pump_until(|c| c.items.values().any(|i| i.position.y < (origin.y - 2) as f32));
+    f.collect("base:cobblestone", 1);
+    assert_eq!(f.have("base:cobblestone"), 1);
+    assert_eq!(f.at.y, feet.y, "back out of the pit on the ground");
+}
+
+/// A drop under a trunk cut from below lies in a one-high gap, where the body has no room:
+/// the bot walks up beside it, in reach, rather than onto it (the kiln bot, gathering logs
+/// beside a trunk it had just cut: "no way round ... and no room near it").
+#[test]
+fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    // A log hanging a block over the ground four blocks off, a cobblestone in the gap under it.
+    let gap = origin + IVec3::X * 4;
+    f.c.ok(&format!("/setblock {} {} {} oak_log", gap.x, gap.y + 1, gap.z));
+    f.c.pump_until(|c| c.world.block(gap + IVec3::Y) == c.content.blocks.id("base:oak_log"));
+    f.c.ok(&format!("/drop cobblestone 1 {} {} {}", gap.x, gap.y, gap.z));
+    f.c.pump_until(|c| loose(c, "base:cobblestone") == 1);
+    f.collect("base:cobblestone", 1);
+    assert_eq!(f.have("base:cobblestone"), 1);
+}
+
+/// A drop with no room for a body anywhere in reach of it (a slot one block high under the
+/// ground) is left lying, as a player leaves it: the bot takes the others, and the gather
+/// it was for digs another block for the one lost rather than waiting it out.
+#[test]
+fn the_bot_leaves_a_drop_no_one_can_reach_and_digs_another() {
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    // Ground under the floor, and in it a one-high slot two blocks down, three blocks off,
+    // a cobblestone in it.
+    f.c.fill(origin, IVec3::new(1, -5, -2), IVec3::new(5, -2, 2), "stone");
+    let slot = origin + IVec3::new(3, -3, 0);
+    f.c.pump_until(|c| c.world.block(slot) == c.content.blocks.id("base:stone"));
+    f.c.ok(&format!("/setblock {} {} {} air", slot.x, slot.y, slot.z));
+    f.c.pump_until(|c| c.world.block(slot) == Some(BlockId::AIR));
+    f.c.ok(&format!("/drop cobblestone 1 {} {} {}", slot.x, slot.y, slot.z));
+    f.c.pump_until(|c| loose(c, "base:cobblestone") == 1);
+    // Two cobblestone blocks to break: the two dug must make three, with the one in the slot.
+    f.c.ok("/give stone_pickaxe 1");
+    f.c.pump_until(|c| holding(c, "base:stone_pickaxe") == 1);
+    let stones: Vec<IVec3> = (0..3).map(|i| origin + IVec3::new(8 + 2 * i, 0, 2)).collect();
+    for s in &stones {
+        f.c.ok(&format!("/setblock {} {} {} cobblestone", s.x, s.y, s.z));
+    }
+    f.c.pump_until(|c| stones.iter().all(|&s| c.world.block(s) == c.content.blocks.id("base:cobblestone")));
+    let have = f.have("base:cobblestone");
+    f.gather("base:stone_pickaxe", stones.clone(), "base:cobblestone", have + 3);
+    assert_eq!(f.have("base:cobblestone"), have + 3);
+    assert!(stones.iter().all(|&s| !solid(&f.c, s)), "all three dug: two owed, and one more for the one left in the slot");
+    assert_eq!(loose(&f.c, "base:cobblestone"), 1, "the one in the slot still lies there");
 }
 
 /// The bot's hand is the server's before it places: a move the server corrected, heard

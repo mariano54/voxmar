@@ -166,6 +166,15 @@ impl Emitters {
         self.searched_at = None;
     }
 
+    /// How many particles `pos` gives off a second on average, as found now (its giving
+    /// emissions' rates, at `amount` and its share of the budget): what the gate waits on.
+    pub(crate) fn rate_of(&self, pos: IVec3, world: &ClientWorld, amount: f32) -> f32 {
+        self.near.iter().filter(|e| e.pos == pos).map(|e| {
+            let def = world.registry.def(e.block);
+            def.particles.iter().enumerate().filter(|&(i, _)| i < 8 && e.giving & (1 << i) != 0).map(|(_, emission)| emission.rate.max(0.0) * emission.count.max(1) as f32).sum::<f32>() * amount * e.share
+        }).sum()
+    }
+
     /// Why a watched block might give off nothing, for the gate's message.
     pub(crate) fn why_quiet(&self, pos: IVec3, amount: f32) -> String {
         let found = self.near.iter().any(|e| e.pos == pos);

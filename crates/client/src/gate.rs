@@ -374,6 +374,9 @@ enum Step {
     /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
     /// recipe fills the crafting grid from a barrel there.
     Home,
+    /// A wooden door placed before the player goes in whole, both halves facing them, and a
+    /// right click on it opens it and another shuts it, as the server turns it.
+    Door,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
@@ -466,6 +469,8 @@ struct Gate {
     natural_home: Vec3,
     /// The way home's hiding distance, while the Home step shows the mark close up.
     home_hidden_within: Option<f32>,
+    /// Puffs the watched chimney owed so far (its rate times the seconds watched).
+    chimney_owed: f32,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -653,6 +658,7 @@ impl Gate {
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
             home_hidden_within: None,
+            chimney_owed: 0.0,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -1387,6 +1393,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
+        Step::Door => door(world, gate, now),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -4482,7 +4489,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         net.command("effect clear");
         let style = &mut world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
         style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
-        gate.next(Step::Quests, now);
+        gate.next(Step::Door, now);
     };
     match gate.phase {
         0 => {
@@ -4666,6 +4673,96 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             }
         }
+    }
+}
+
+/// The door step's two cells, as the client has them: (shut, open) when both halves are
+/// a door's, shut or open alike.
+fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
+    let client = world.resource::<ClientWorld>();
+    let [low, high] = [at, at + IVec3::Y].map(|cell| client.block(cell).map(|b| client.registry.def(b)));
+    let (low, high) = (low?, high?);
+    let door = |tag: &str| low.has_tag(tag) && high.has_tag(tag);
+    door("door").then(|| (door("door_shut"), door("door_open")))
+}
+
+/// A wooden door set in the ground two blocks before the player, opened and shut by right
+/// clicks the server answers (it holds the collision, so the client never guesses).
+fn door(world: &mut World, gate: &mut Gate, now: f32) {
+    let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let at = stand + IVec3::new(0, 0, -2);
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
+        net.command("clear wooden_door");
+        gate.next(Step::Quests, now);
+    };
+    let use_door = |world: &mut World| {
+        let actions = world.resource::<crate::Actions>().0.clone();
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: at, face: voxmar_engine::coords::Face::PosZ });
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
+            net.command("clear wooden_door");
+            net.command("give wooden_door 1");
+            gate.advance(now);
+        }
+        // In hand, set on the ground before the player.
+        1 => {
+            if select(world, "base:wooden_door") {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: at - IVec3::Y, face: voxmar_engine::coords::Face::PosY });
+                gate.advance(now);
+            } else if waited > 10.0 {
+                let held = holding(world, "base:wooden_door");
+                gate.check("door: placed", Err(format!("no wooden door came to hand {waited:.1} server s after it was given (carried, first slot: {held:?})")));
+                leave(world, gate);
+            }
+        }
+        2 => match door_cells(world, at) {
+            Some((true, false)) => {
+                gate.check("door: placed", Ok("a wooden door went in whole, both halves shut".into()));
+                aim_at(world, at.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+                use_door(world);
+                gate.advance(now);
+            }
+            _ if waited > 10.0 => {
+                gate.check("door: placed", Err(format!("{waited:.1} server s after placing, the door's cells are {:?}", door_cells(world, at))));
+                leave(world, gate);
+            }
+            _ => {}
+        },
+        3 => match door_cells(world, at) {
+            Some((false, true)) => {
+                if gate.shot(world, "door-open").is_none() {
+                    return;
+                }
+                let solid = world.resource::<ClientWorld>().is_solid(at);
+                gate.check("door: open", if solid { Err("the open door is still solid on the client".into()) } else { Ok("a right click opened both halves, as the server turned them".into()) });
+                use_door(world);
+                gate.advance(now);
+            }
+            _ if waited > 10.0 => {
+                gate.check("door: open", Err(format!("{waited:.1} server s after a right click, the door's cells are {:?}", door_cells(world, at))));
+                leave(world, gate);
+            }
+            _ => {}
+        },
+        _ => match door_cells(world, at) {
+            Some((true, false)) => {
+                let solid = world.resource::<ClientWorld>().is_solid(at) && world.resource::<ClientWorld>().is_solid(at + IVec3::Y);
+                gate.check("door: shut", if solid { Ok("another shut it, solid again".into()) } else { Err("the shut door is not solid on the client".into()) });
+                leave(world, gate);
+            }
+            _ if waited > 10.0 => {
+                gate.check("door: shut", Err(format!("{waited:.1} server s after a second right click, the door's cells are {:?}", door_cells(world, at))));
+                leave(world, gate);
+            }
+            _ => {}
+        },
     }
 }
 
@@ -8274,15 +8371,28 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.phase = 8;
             }
         }
-        8 if in_phase > FIRE_WATCH => {
+        // Watched until enough puffs rose, or until so many were owed (by the chimney's
+        // rate, the particle amount and its share) that missing them is no chance.
+        8 => {
             let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let owed = {
+                let (emitters, client) = (world.resource::<crate::emitters::Emitters>(), world.resource::<ClientWorld>());
+                gate.chimney_owed += emitters.rate_of(chimney[1], client, amount) * world.resource::<Time>().delta_secs().min(0.1);
+                gate.chimney_owed
+            };
+            let count = world.resource::<crate::emitters::Emitters>().watched;
+            let done = count >= CHIMNEY_PARTICLES;
+            if !done && owed < CHIMNEY_OWED && in_phase < CHIMNEY_WAIT {
+                return;
+            }
             let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
-            let (count, why) = (emitters.watched, emitters.why_quiet(chimney[1], amount));
+            let why = emitters.why_quiet(chimney[1], amount);
             emitters.watch = None;
-            gate.check("chimney smoke", if count >= CHIMNEY_PARTICLES {
-                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {FIRE_WATCH} s"))
+            gate.chimney_owed = 0.0;
+            gate.check("chimney smoke", if done {
+                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {in_phase:.1} s ({owed:.1} owed)"))
             } else {
-                Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {FIRE_WATCH} s, under {CHIMNEY_PARTICLES} ({why})"))
+                Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {in_phase:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
             });
             let net = world.resource::<Net>();
             for at in [hearth, chimney[0], chimney[1]] {
@@ -8422,9 +8532,15 @@ const FIRE_WATCH: f32 = 1.5;
 /// fewer than this means the fire gives off (almost) nothing.
 const FIRE_PARTICLES: u32 = 4;
 
-/// Puffs a chimney's top over a hearth must give off in `FIRE_WATCH` seconds: about three
-/// a second, so none means it gives off nothing.
-const CHIMNEY_PARTICLES: u32 = 1;
+/// Puffs a chimney's top over a hearth must give off: it smokes all the while, not once.
+const CHIMNEY_PARTICLES: u32 = 3;
+/// Puffs owed (its rate times the seconds watched) by when they must have risen. The count
+/// varies less than a Poisson's of that mean, so three or fewer of twenty owed is under one
+/// in a hundred thousand: a chimney that falls short gives off less than it says.
+const CHIMNEY_OWED: f32 = 20.0;
+/// Longest the chimney is watched, in the game's seconds, for one never found or never owed
+/// anything.
+const CHIMNEY_WAIT: f32 = 12.0;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
 /// player and is theirs (kept, with them as its owner).

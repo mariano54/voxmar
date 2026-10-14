@@ -129,6 +129,11 @@
         (name: "full_house", kind: Buff, title: "Full house", description: "A yard full of animals: you heal a fifth faster, learn a bit more here.", announce: true,
             when: Some(All([AtHome, HomeHas("kept", 4)])),
             replaces: ["company"], modifiers: (heal: 1.2, xp: 1.05)),
+        // A door shut on the night (`door_shut`, a shut door's tag): indoors at home behind
+        // it, the draughts and the dark stay out.
+        (name: "door_shut", kind: Buff, title: "Door shut", description: "The door shut on the night: you heal a tenth faster here, and are 1° warmer.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("door_shut", 1)])),
+            replaces: [], modifiers: (heal: 1.1, warmth: 1.0)),
         (name: "kitchen_garden", kind: Buff, title: "Kitchen garden", description: "Greens growing by the door: meals heal a tenth more here.", announce: true,
             when: Some(All([AtHome, HomeHas("crop", 4)])),
             replaces: [], modifiers: (meal_heal: 1.1)),
