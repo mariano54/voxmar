@@ -58,9 +58,13 @@
         (ingredients: ["earthen_{name}", "tag:dye:white"], output: "ivory_{name}", skill: "core:crafting", level: 4, xp: 2.0),
         (ingredients: ["earthen_{name}", "tag:dye:blue"], output: "cobalt_{name}", skill: "core:crafting", level: 5, xp: 2.0),
 
-        // Singles. Tallow lights a candle until bees give wax; a lantern holds a torch in
+        // Singles. Tallow lights a candle, and beeswax better; a lantern holds a torch in
         // metal, a stone one in four blocks of stone.
         (pattern: [["twine", ""], ["hide", "hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
+        // Beeswax burns cleaner and longer: one cake and a wick make three (bees.ron).
+        (pattern: [["twine"], ["beeswax"]], output: "candle", count: 3, skill: "core:crafting", level: 3, xp: 3.0),
+        // A skep: wheat straw coiled into a dome, bound with twine; a swarm is taken into it.
+        (pattern: [["wheat", "wheat", "wheat"], ["wheat", "twine", "wheat"], ["twine", "", "twine"]], output: "skep", skill: "core:crafting", level: 6, xp: 10.0),
         // Two herbs tied up with twine, to hang and dry: a home's herb nook.
         (pattern: [["twine", "twine"], ["tag:herb", "tag:herb"]], output: "hanging_herbs", count: 2, skill: "core:crafting", level: 4, xp: 3.0),
         (pattern: [["copper_ingot"], ["torch"], ["copper_ingot"]], output: "copper_hanging_lantern", skill: "core:engineering", level: 5, xp: 12.0),

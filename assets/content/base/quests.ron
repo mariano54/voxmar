@@ -845,6 +845,30 @@
             after: ["homestead_hearth"],
             rewards: [Xp("farming", 80.0), Xp("crafting", 40.0)],
         ),
+        // Bees (bees.ron, docs/bees.md): a swarm from a wild nest, a bee garden at home, and
+        // the beekeeper with wax candles. The hive fills over a few days' foraging, so the
+        // second names quests to do by it meanwhile.
+        (
+            name: "humming_in_the_meadow", age: "farm", branch: "farming", title: "Humming in the Meadow",
+            why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them, then hold the skep up to it and right-click (Farming 12). Without smoke they only sting.",
+            tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
+            after: ["a_field_of_gold"],
+            rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
+        ),
+        (
+            name: "a_bee_garden", age: "farm", branch: "home", title: "A Bee Garden",
+            why: "Set your skep of bees down at home with three flowers near: a bee garden, where you heal a tenth faster and crops within eight blocks of the hive grow a quarter faster. The bees forage by day in dry weather, quicker with more flowers about (a honeydew lily counts for four), and a full skep drips honey. A fire right beside it drives them off; one within four blocks smokes them calm. Right-click a full skep for two or three honey, and half the time a cake of beeswax. While it fills, sow a Kitchen Garden by the hive or plant a Herb Garden.",
+            tasks: [[Built("home_bee_garden", 1), Have("honey", 3)]],
+            after: ["humming_in_the_meadow"],
+            rewards: [Xp("farming", 250.0)],
+        ),
+        (
+            name: "the_beekeeper_calls", age: "farm", branch: "home", title: "The Beekeeper Calls",
+            why: "A home with bees draws the beekeeper by day, to look over your skeps and walk your garden with you; three honey buys a spare skep for a second hive. Beeswax makes the best light a Farm home has before coal: a wick of twine over a cake of wax gives three candles. Meet the beekeeper and make three candles, or, with no visit yet, keep two cakes of wax and make six.",
+            tasks: [[Met("beekeeper", 1), Craft("candle", 3)], [Have("beeswax", 2), Craft("candle", 6)]],
+            after: ["a_bee_garden"],
+            rewards: [Xp("farming", 200.0), Xp("crafting", 60.0), Item("skep", 1)],
+        ),
         (
             name: "callers_at_the_door", age: "farm", branch: "home", title: "Callers at the Door",
             why: "A homely home draws callers. With seats, a table and stores under your roof, guests may come of an evening to sit by your fire while you are home: talk with them, share a cooked supper. Make it cosy and, by night, something smaller may come to the door for the crumbs.",

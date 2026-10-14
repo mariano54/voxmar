@@ -270,6 +270,9 @@
         (name: "tidekelp", block: "tidekelp", spread: Drifts, habitat: Shore, ground: [Sand], comfort: (temperature: (2.0, 32.0)), properties: (nutrition: 1.0)),
         (name: "wyrmroot", block: "wyrmroot", spread: Alone, habitat: Open, ground: [Sand], comfort: (temperature: (20.0, 50.0), moisture: (0.00, 0.40))),
         (name: "hearthgrain", block: "hearthgrain", spread: Drifts, habitat: Open, comfort: (temperature: (-8.0, 14.0), moisture: (0.20, 1.00)), properties: (nutrition: 2.0)),
+        // A wild bees' nest (bees.ron), placed only by decorations.ron's `bee_nest` at the
+        // foot of trees where flowers grow thick: no biome draws it among its plants.
+        (name: "bee_nest", block: "bee_nest", spread: Alone, habitat: Anywhere),
         (name: "honeydew_lily", block: "honeydew_lily", spread: Drifts, habitat: Open, comfort: (temperature: (6.0, 28.0), moisture: (0.40, 1.60))),
         (name: "lantern_gourd", block: "lantern_gourd", spread: Alone, habitat: Water, comfort: (temperature: (14.0, 36.0), moisture: (1.00, 8.00)), properties: (nutrition: 2.0)),
         (name: "silvermint", block: "silvermint", named_only: true, tags: ["rare_herb"], patches: (rate: 300.0, size: (3, 6), aim: 260.0), spread: Drifts, habitat: Anywhere, comfort: (temperature: (-6.0, 14.0), moisture: (0.60, 2.20))),

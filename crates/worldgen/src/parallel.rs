@@ -42,16 +42,20 @@ pub(crate) fn set_enabled(enabled: bool) {
 /// Calls `f` on every item, on the calling thread and on helpers (up to one per other
 /// core, as the cap allows), each taking the next item in order.
 pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
-    // Under test, the cores the tests were given (`RAYON_NUM_THREADS`, the gate's share
-    // for them), not the whole machine's: eight tests each taking a helper a core ran an
-    // 18-core machine three times over.
-    #[cfg(test)]
-    let cores = rayon::current_num_threads();
-    #[cfg(not(test))]
-    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    // Given a share of the cores (`RAYON_NUM_THREADS`, as the gate gives its test binaries,
+    // the server's and the gameplay tests' as well as these), that share and no more helpers
+    // alive than it: eight tests each taking a helper a core ran an 18-core machine three
+    // times over, and the server binaries' worlds once had 36 helpers out at once.
+    let (cores, cap) = match given_threads() {
+        Some(given) => (given, given),
+        None => {
+            let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+            (cores, 2 * cores)
+        }
+    };
     let limit = LIMIT.load(Ordering::Relaxed);
     let wanted = cores.min(items.len()).saturating_sub(1);
-    let cap = if limit == 0 { 2 * cores } else { limit };
+    let cap = if limit == 0 { cap } else { limit };
     let helpers = if ENABLED.load(Ordering::Relaxed) { reserve(wanted.min(cap), cap) } else { 0 };
     if helpers == 0 {
         items.iter().for_each(f);
@@ -70,6 +74,12 @@ pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
         work();
     });
     HELPERS.fetch_sub(helpers, Ordering::Relaxed);
+}
+
+/// The threads the process was given with `RAYON_NUM_THREADS`, if any.
+fn given_threads() -> Option<usize> {
+    static GIVEN: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    *GIVEN.get_or_init(|| std::env::var("RAYON_NUM_THREADS").ok().and_then(|n| n.parse().ok()).filter(|&n| n > 0))
 }
 
 /// Takes up to `wanted` helpers while fewer than `cap` are alive; how many it took.

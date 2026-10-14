@@ -157,6 +157,10 @@ impl ActionContext for Context<'_> {
         Some(&self.server.content.machines)
     }
 
+    fn bees(&self) -> Option<&voxmar_engine::bees::Bees> {
+        Some(&self.server.content.bees)
+    }
+
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
     }
@@ -387,6 +391,7 @@ impl Server {
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
                 (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
                 (Effect::PickLock, ActionTarget::Block { block, .. }) => self.pick_lock(agent, block),
+                (Effect::TendBees, ActionTarget::Block { block, .. }) => self.tend_bees(agent, block),
                 (Effect::Pray, ActionTarget::Block { .. }) => self.pray_at_altar(agent),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => self.sleep(agent, block),
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {

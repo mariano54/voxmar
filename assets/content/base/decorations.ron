@@ -163,6 +163,15 @@
             trees: [Tag("autumn", 1.0), Tag("blossom", 1.0)],
         ),
         (
+            // Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees
+            // where flowers grow thick: flower meadows, cherry groves and lavender fields
+            // (bees.ron; the Humming in the Meadow quest says so, and a test holds it to this).
+            name: "bee_nest", tags: ["flowers", "blossom"],
+            shape: Foot(plants: [Name("bee_nest", 1.0)], cover: 0.25),
+            chance: 0.2,
+            trees: [Tag("broadleaf", 1.0), Tag("fruit", 1.0), Tag("blossom", 1.0)],
+        ),
+        (
             // Mushrooms at the foot of trunks in damp woods.
             name: "foot_fungi", tags: ["forest", "wetland"],
             shape: Foot(plants: [Tag("fungus", 1.0)], cover: 0.25),
