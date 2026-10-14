@@ -360,7 +360,19 @@ pub struct Emission {
     /// How much of what lies behind a particle that adds light it hides, 0..1, instead of
     /// the style's own: a spark is solid and hides it all; a flame's tongue hides some.
     pub hides: Option<f32>,
+    /// How far off it is seen, in blocks, instead of the client's own nearness (24), up to
+    /// [`MAX_EMISSION_RANGE`]: a chimney's smoke shows from across a valley.
+    pub range: Option<f32>,
+    /// `(tag, reach)`: given off only while a block with `tag` lies below it, up to `reach`
+    /// blocks down and one across, and only from the top of a stack (open air above it): a
+    /// chimney smokes over a hearth, from its top.
+    pub over: Option<(String, u8)>,
 }
+
+/// The farthest a block's particles are seen (`Emission::range`), in blocks.
+pub const MAX_EMISSION_RANGE: f32 = 128.0;
+/// The deepest a block looks for what it smokes over (`Emission::over`), in blocks.
+pub const MAX_EMISSION_OVER: u8 = 8;
 
 /// How a particle is drawn over what lies behind it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -410,6 +422,8 @@ impl Default for Emission {
             height: None,
             blend: None,
             hides: None,
+            range: None,
+            over: None,
         }
     }
 }
@@ -1017,6 +1031,16 @@ impl BlockRegistry {
             if by_name.insert(def.name.clone(), BlockId(i as u16)).is_some() {
                 return Err(RegistryError(format!("duplicate block `{}`", def.name)));
             }
+            for emission in &def.particles {
+                if emission.range.is_some_and(|range| !(1.0..=MAX_EMISSION_RANGE).contains(&range)) {
+                    return Err(RegistryError(format!("block `{}` gives off particles seen from {:?} blocks; from 1 to {MAX_EMISSION_RANGE}", def.name, emission.range)));
+                }
+                if let Some((tag, reach)) = &emission.over
+                    && (tag.is_empty() || !(1..=MAX_EMISSION_OVER).contains(reach))
+                {
+                    return Err(RegistryError(format!("block `{}` gives off particles over `{tag}` {reach} blocks down; a tag, from 1 to {MAX_EMISSION_OVER} down", def.name)));
+                }
+            }
         }
 
         let sources: Vec<BlockId> = fluid_sources.iter().map(|&i| BlockId(i as u16)).collect();
@@ -1398,6 +1422,19 @@ mod tests {
         assert_eq!(def.particles[0], Emission { style: ParticleStyle::Flame, rate: 10.0, at: [0.5, 0.6, 0.5], ..Emission::default() });
         assert_eq!((def.particles[1].count, def.particles[1].rate, def.particles[1].color), (4, 1.0, Some([1, 2, 3])));
         assert!(BlockDef::default().particles.is_empty());
+    }
+
+    /// A chimney's smoke, seen from afar over a hearth, loads; one seen past the limit, or
+    /// over nothing, does not.
+    #[test]
+    fn far_and_conditional_emissions_are_checked() {
+        let block = |emission: &str| format!("(blocks: [(name: \"chimney\", textures: All(\"chimney\"), particles: [{emission}])])");
+        let registry = BlockRegistry::from_ron("base", &block("(range: Some(96.0), over: Some((\"hearth\", 3)))")).unwrap();
+        let smoke = &registry.def(registry.expect("base:chimney")).particles[0];
+        assert_eq!((smoke.range, smoke.over.clone()), (Some(96.0), Some(("hearth".to_string(), 3))));
+        assert!(BlockRegistry::from_ron("base", &block("(range: Some(500.0))")).is_err());
+        assert!(BlockRegistry::from_ron("base", &block("(over: Some((\"\", 3)))")).is_err());
+        assert!(BlockRegistry::from_ron("base", &block("(over: Some((\"hearth\", 0)))")).is_err());
     }
 
     #[test]
