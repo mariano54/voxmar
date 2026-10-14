@@ -284,6 +284,7 @@ impl Neighbours {
 }
 
 impl Creatures {
+
     /// Takes a creature out of the world without a death (`/creatures remove`).
     pub(crate) fn take_away(&mut self, id: u32) {
         if self.live.remove(&id).is_some() {
@@ -656,6 +657,8 @@ impl Server {
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
                     let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land };
                     let found = path::find(&Ground(self), &walker, (body.position + Vec3::Y * 0.01).floor().as_ivec3(), to);
+                    #[cfg(test)]
+                    tick_cost_tests::SEARCHES.with(|n| n.set((n.get().0 + 1, n.get().1 + found.is_none() as u64)));
                     searched = Some((found.is_some().then_some(to), self.tick));
                     cells = found.unwrap_or_default();
                 }
@@ -1981,7 +1984,7 @@ mod density_tests {
     }
 
     /// The nearest place to the origin, spiralling out, whose biome is `biome`.
-    fn find_biome(server: &Server, biome: &str) -> Option<(i32, i32)> {
+    pub(super) fn find_biome(server: &Server, biome: &str) -> Option<(i32, i32)> {
         let biomes = server.overworld.biomes();
         (0..60).find_map(|r| {
             (0..(8 * r).max(1)).find_map(|i| {
@@ -2978,5 +2981,159 @@ mod lure_tests {
         assert!(server.creatures.live[&near].lured && !server.creatures.live[&far].lured);
         second(&mut server);
         assert_eq!(lured(&server), 1, "the same rabbit counted twice");
+    }
+}
+
+/// What creatures cost a server tick: 64 kept animals in a pen by a player's home, and the
+/// wild creatures about a player in a forest, on a plain and by a pond. Prints server ms per
+/// tick and path searches per tick (`cargo test --release -p voxmar_server creature_tick_cost
+/// -- --ignored --nocapture`). The numbers compare one build with another on one machine;
+/// they say nothing of how fast any machine is.
+#[cfg(test)]
+pub(crate) mod tick_cost_tests {
+    use super::cornered_tests::{join, pen};
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    thread_local! {
+        /// Path searches, and those that found no way, since the thread began.
+        pub(crate) static SEARCHES: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+    }
+
+    /// Runs `seconds` of creature ticks, the steps of `tick_creatures` timed one by one;
+    /// prints mean, 99th-percentile and worst ms per tick, the mean of each step, and path
+    /// searches per tick.
+    fn measure(server: &mut Server, label: &str, seconds: u64) {
+        let ticks = seconds * TICKS_PER_SECOND as u64;
+        let mut all = Vec::new();
+        let mut steps = [Duration::ZERO; 6];
+        let before = SEARCHES.with(|n| n.get());
+        for _ in 0..ticks {
+            server.tick += 1;
+            let start = Instant::now();
+            let mut lap = start;
+            let mut mark = |i: usize, steps: &mut [Duration; 6]| {
+                let now = Instant::now();
+                steps[i] += now - lap;
+                lap = now;
+            };
+            // As `tick_creatures` does.
+            server.settle_players();
+            if server.tick.is_multiple_of(server.spawn_every_ticks()) {
+                let ids: Vec<PlayerId> = server.players.values().filter(|p| p.joined).map(|p| p.id).collect();
+                for (i, id) in ids.into_iter().enumerate() {
+                    server.spawn_near(id, i as u64);
+                }
+                server.despawn_far();
+            }
+            mark(0, &mut steps);
+            server.tick_villagers();
+            server.tick_wandering();
+            mark(1, &mut steps);
+            server.think_and_move();
+            mark(2, &mut steps);
+            server.note_lured();
+            server.tick_husbandry();
+            mark(3, &mut steps);
+            server.drop_fallen_loot();
+            if server.tick.is_multiple_of(10 * TICKS_PER_SECOND as u64) {
+                server.place_unplaced();
+            }
+            mark(4, &mut steps);
+            server.replicate_creatures();
+            mark(5, &mut steps);
+            all.push(start.elapsed());
+        }
+        let after = SEARCHES.with(|n| n.get());
+        all.sort();
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let mean = all.iter().map(|d| ms(*d)).sum::<f64>() / all.len() as f64;
+        let creatures = server.creatures.live.len();
+        let per = |d: Duration| ms(d) / ticks as f64;
+        // Where every creature ended up, and what it was doing: the same in two builds when
+        // a change to what a tick costs changed nothing they do.
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for (id, c) in &server.creatures.live {
+            for v in [*id as u64, c.body.position.x.to_bits() as u64, c.body.position.y.to_bits() as u64, c.body.position.z.to_bits() as u64, c.body.yaw.to_bits() as u64, c.mind.doing.map_or(99, |i| i as u64)] {
+                hash = (hash ^ v).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        println!(
+            "{label:>9}: {creatures:>3} creatures, state {hash:016x} | ms/tick mean {mean:.3} p99 {:.3} max {:.3} | spawn {:.3} people {:.3} think+move {:.3} lure+keep {:.3} loot {:.3} send {:.3} | searches/tick {:.3} (no way {:.3})",
+            ms(all[all.len() * 99 / 100]),
+            ms(*all.last().unwrap()),
+            per(steps[0]),
+            per(steps[1]),
+            per(steps[2]),
+            per(steps[3]),
+            per(steps[4]),
+            per(steps[5]),
+            (after.0 - before.0) as f64 / ticks as f64,
+            (after.1 - before.1) as f64 / ticks as f64,
+        );
+    }
+
+    /// 64 kept animals of five kinds in a 25-block pen, the player at its gate.
+    fn kept_pen(server: &mut Server) {
+        let c = pen(server, 12);
+        let player = join(server, c.as_vec3() + Vec3::new(10.5, 0.0, 0.5));
+        let name = server.players[&player].name.clone();
+        let kinds = ["base:mouflon", "base:aurochs", "base:junglefowl", "base:wild_boar", "base:rabbit"];
+        for i in 0..64u32 {
+            let species = server.content.creatures.id(kinds[i as usize % kinds.len()]).expect("species");
+            let at = c.as_vec3() + Vec3::new((i % 8) as f32 * 2.5 - 9.0, 0.0, (i / 8) as f32 * 2.5 - 9.0);
+            let id = server.spawn_creature(species, at, i as u64).expect("room");
+            let creature = server.creatures.live.get_mut(&id).unwrap();
+            creature.owner = Some(name.clone());
+            creature.home = c.as_vec3();
+        }
+    }
+
+    /// A player standing in `biome` (or, for "pond", on the shore of the nearest water),
+    /// the world about them filled with its wild creatures over three minutes.
+    fn wild(server: &mut Server, biome: &str) -> bool {
+        let spot = if biome == "pond" { pond(server) } else { super::density_tests::find_biome(server, biome) };
+        let Some(spot) = spot else { return false };
+        let noon = (0..24_000u64).step_by(100).max_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
+        super::density_tests::density(server, spot, noon + super::density_tests::LATER, 3, false);
+        true
+    }
+
+    /// The nearest dry site beside a lake or river (not the sea) to the world's origin, in
+    /// 16-block steps.
+    fn pond(server: &Server) -> Option<(i32, i32)> {
+        let wet = |x: i32, z: i32| {
+            let site = server.overworld.site(x, z);
+            site.water > site.height
+        };
+        (1..80).find_map(|r| {
+            (0..8 * r).find_map(|i| {
+                let (x, z) = ring(r, i);
+                let (x, z) = (x * 16, z * 16);
+                let inland = server.overworld.site(x, z).height > voxmar_worldgen::SEA_LEVEL + 2;
+                (inland && !wet(x, z) && [(6, 0), (-6, 0), (0, 6), (0, -6)].iter().any(|(dx, dz)| wet(x + dx, z + dz))).then_some((x, z))
+            })
+        })
+    }
+
+    #[test]
+    #[ignore]
+    fn creature_tick_cost() {
+        // VOXMAR_COST names one case to run alone (for a profiler).
+        let only = std::env::var("VOXMAR_COST").ok();
+        let runs = |case: &str| only.as_deref().is_none_or(|o| o == case);
+        if runs("kept") {
+            let mut server = crate::test_server();
+            kept_pen(&mut server);
+            measure(&mut server, "kept pen", 60);
+        }
+        for biome in ["forest", "plains", "pond"].into_iter().filter(|b| runs(b)) {
+            let mut server = crate::test_server();
+            if !wild(&mut server, biome) {
+                println!("{biome:>14}: none found");
+                continue;
+            }
+            measure(&mut server, biome, 60);
+        }
     }
 }
