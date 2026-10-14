@@ -7225,6 +7225,18 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
                 net.command("gamemode survival");
                 gate.settled = 1;
             }
+            // What she was doing as the wait began, and when it gave up.
+            let doing = |world: &World| {
+                let me = world.resource::<LocalPlayer>().position;
+                view.map_or("not seen".to_owned(), |v| {
+                    let flat = (v.position - me).with_y(0.0).length();
+                    format!("at {:.1}, {flat:.2} blocks from the player across the ground, pose {:?}, tell {}, health {}, scale {:.2}, moving {:.1}", v.position, v.pose, v.tell, v.health, v.scale, v.velocity.with_y(0.0).length())
+                })
+            };
+            if gate.settled == 1 && gate.server_in_phase() > 1.0 {
+                info!("gate: boss tell wait began: she is {}", doing(world));
+                gate.settled = 2;
+            }
             let told = view.filter(|v| v.tell != 0 && v.tell != voxmar_protocol::REARING);
             if let Some(view) = told {
                 let content = &world.resource::<Launch>().content;
@@ -7233,7 +7245,7 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
                 world.resource::<Net>().command("gamemode creative");
                 sweep(gate, now);
             } else if waited || view.is_none() {
-                gate.check("boss tell", Err(format!("no move of hers wound up in {BOSS_WAIT} server seconds (seen: {})", view.is_some())));
+                gate.check("boss tell", Err(format!("no move of hers wound up in {BOSS_WAIT} server seconds: she is {}", doing(world))));
                 sweep(gate, now);
             }
         }
