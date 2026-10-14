@@ -375,8 +375,12 @@ enum Step {
     /// hotbar names it once the screen is shut, and its quick key turns it off again.
     Prayers,
     /// A sleeping bag with a torch beside it, slept in, is a camp: the Camp chip comes on, the
-    /// chat says so with what to add next, and the sleep is a rest.
+    /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
+    /// recipe fills the crafting grid from a barrel there.
     Home,
+    /// A wooden door placed before the player goes in whole, both halves facing them, and a
+    /// right click on it opens it and another shuts it, as the server turns it.
+    Door,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
@@ -469,6 +473,8 @@ struct Gate {
     natural_home: Vec3,
     /// The way home's hiding distance, while the Home step shows the mark close up.
     home_hidden_within: Option<f32>,
+    /// Puffs the watched chimney owed so far (its rate times the seconds watched).
+    chimney_owed: f32,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -656,6 +662,7 @@ impl Gate {
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
             home_hidden_within: None,
+            chimney_owed: 0.0,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -1116,7 +1123,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
-        Step::Home => 45.0,
+        Step::Home => 70.0,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -1389,6 +1396,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
+        Step::Door => door(world, gate, now),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -4420,11 +4428,13 @@ fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// A sleeping bag and a torch beside the player, slept in: the bed is their home and it has
 /// a light, so the Camp step (docs/home.md) comes on as a chip, the chat names it and what to
 /// add next, and the sleep gives a rest. Then the way home: with the mark's hiding distance
-/// set to nothing, the hearth mark shows how far the bag is. The blocks go again after, and
+/// set to nothing, the hearth mark shows how far the bag is. Then crafting at home: four
+/// planks shift clicked into a barrel beside the bag, none left in the pack, Lay on the
+/// crafting table's recipe fills the grid from the barrel. The blocks go again after, and
 /// the rest with them.
 fn home(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
-    let (bag, torch) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0));
+    let (bag, torch, barrel) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0), stand + IVec3::new(-2, 0, 0));
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
         let net = world.resource::<Net>();
@@ -4434,7 +4444,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         net.command("effect clear");
         let style = &mut world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
         style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
-        gate.next(Step::Quests, now);
+        gate.next(Step::Door, now);
     };
     match gate.phase {
         0 => {
@@ -4521,18 +4531,202 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             }
         }
-        _ => {
+        5 => {
             let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
             if !shown {
                 let within = world.resource::<crate::hud::inventory::InterfaceStyle>().home_hidden_within;
                 gate.check("home: near", Ok(format!("within {within} blocks of home the mark was gone")));
-                leave(world, gate);
+                // A barrel at home, four planks in it and none in the pack.
+                let net = world.resource::<Net>();
+                net.command("clear oak_planks");
+                net.command(&format!("give oak_planks {LAY_PLANKS}"));
+                net.command(&format!("setblock {} {} {} barrel", barrel.x, barrel.y, barrel.z));
+                gate.advance(now);
             } else if waited > 5.0 {
                 gate.check("home: near", Err("two blocks from home the mark still showed".into()));
                 leave(world, gate);
             }
         }
+        // The barrel opened, the planks shift clicked into it.
+        6 => {
+            let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
+            let player = world.resource::<LocalPlayer>();
+            let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
+            let (held, slot) = holding(world, "base:oak_planks");
+            if stored == LAY_PLANKS && held == 0 {
+                // The crafting table's recipe in the viewer, over the open inventory.
+                let table = world.resource::<ClientWorld>().registry.id("base:crafting_table");
+                // Opened as a click in it does: a trail with the viewer shut reads as Esc.
+                if let Some(table) = table {
+                    world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);
+                    world.resource_mut::<UiState>().recipes_open = true;
+                }
+                gate.advance(now);
+            } else if waited > 10.0 {
+                let open = player.inventory.store.is_some();
+                let laid: u32 = player.inventory.craft.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum();
+                let shown = world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b));
+                gate.check("home: lay", Err(format!("{waited:.1} server s on, the home barrel held {stored} planks (open {open}, on the client {shown}), the pack {held} and the grid {laid}")));
+                lay_done(world, barrel);
+                leave(world, gate);
+            } else if gate.server_now - gate.machines_asked >= 1.0 {
+                if player.inventory.store.is_none() {
+                    // Whatever is in hand: a store opens to anything but a machine.
+                    if world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
+                        world.resource_mut::<LocalPlayer>().store_asked = true;
+                        let actions = world.resource::<crate::Actions>().0.clone();
+                        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: barrel, face: voxmar_engine::coords::Face::PosY });
+                    }
+                } else if let Some(slot) = slot {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose(actions.expect("core:quick_move"), voxmar_engine::action::ActionTarget::Slot(slot as u8));
+                }
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        // Lay pressed: the table's planks come out of the barrel into the grid.
+        7 => {
+            let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.output)).map(|(entity, ..)| entity);
+            if let Some(button) = button {
+                world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
+                gate.advance(now);
+            } else if waited > 10.0 {
+                let ui = world.resource::<UiState>();
+                let (inventory, viewer) = (ui.inventory_open, ui.recipes_open);
+                let shown = world.resource::<crate::hud::recipes::RecipeViewer>().trail.last().map(|lookup| lookup.item);
+                let buttons = world.query::<(&crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).map(|(lay, visible)| (lay.output, visible.get())).collect::<Vec<_>>();
+                let store = world.resource::<LocalPlayer>().inventory.store.as_ref().map(|s| s.slots.iter().flatten().map(|x| x.count as u32).sum::<u32>());
+                gate.check("home: lay", Err(format!("{waited:.1} server s on, no visible Lay button for the crafting table: inventory open {inventory}, viewer open {viewer} on {shown:?}, Lay buttons (item, visible) {buttons:?}, the barrel's slots on the client hold {store:?}")));
+                lay_done(world, barrel);
+                leave(world, gate);
+            }
+        }
+        _ => {
+            let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
+            let player = world.resource::<LocalPlayer>();
+            let laid: u32 = player.inventory.craft.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum();
+            let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
+            if laid == LAY_PLANKS && stored == 0 {
+                if gate.shot(world, "home-lay").is_none() {
+                    return;
+                }
+                gate.check("home: lay", Ok(format!("Lay on the crafting table's recipe filled the grid with {laid} planks from the home barrel")));
+                lay_done(world, barrel);
+                leave(world, gate);
+            } else if waited > 10.0 {
+                let viewer = world.resource::<UiState>().recipes_open;
+                let held = holding(world, "base:oak_planks").0;
+                gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {stored} left in the barrel, {held} in the pack, viewer open {viewer}")));
+                lay_done(world, barrel);
+                leave(world, gate);
+            }
+        }
     }
+}
+
+/// The door step's two cells, as the client has them: (shut, open) when both halves are
+/// a door's, shut or open alike.
+fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
+    let client = world.resource::<ClientWorld>();
+    let [low, high] = [at, at + IVec3::Y].map(|cell| client.block(cell).map(|b| client.registry.def(b)));
+    let (low, high) = (low?, high?);
+    let door = |tag: &str| low.has_tag(tag) && high.has_tag(tag);
+    door("door").then(|| (door("door_shut"), door("door_open")))
+}
+
+/// A wooden door set in the ground two blocks before the player, opened and shut by right
+/// clicks the server answers (it holds the collision, so the client never guesses).
+fn door(world: &mut World, gate: &mut Gate, now: f32) {
+    let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let at = stand + IVec3::new(0, 0, -2);
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
+        net.command("clear wooden_door");
+        gate.next(Step::Quests, now);
+    };
+    let use_door = |world: &mut World| {
+        let actions = world.resource::<crate::Actions>().0.clone();
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: at, face: voxmar_engine::coords::Face::PosZ });
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
+            net.command("clear wooden_door");
+            net.command("give wooden_door 1");
+            gate.advance(now);
+        }
+        // In hand, set on the ground before the player.
+        1 => {
+            if select(world, "base:wooden_door") {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: at - IVec3::Y, face: voxmar_engine::coords::Face::PosY });
+                gate.advance(now);
+            } else if waited > 10.0 {
+                let held = holding(world, "base:wooden_door");
+                gate.check("door: placed", Err(format!("no wooden door came to hand {waited:.1} server s after it was given (carried, first slot: {held:?})")));
+                leave(world, gate);
+            }
+        }
+        2 => match door_cells(world, at) {
+            Some((true, false)) => {
+                gate.check("door: placed", Ok("a wooden door went in whole, both halves shut".into()));
+                aim_at(world, at.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+                use_door(world);
+                gate.advance(now);
+            }
+            _ if waited > 10.0 => {
+                gate.check("door: placed", Err(format!("{waited:.1} server s after placing, the door's cells are {:?}", door_cells(world, at))));
+                leave(world, gate);
+            }
+            _ => {}
+        },
+        3 => match door_cells(world, at) {
+            Some((false, true)) => {
+                if gate.shot(world, "door-open").is_none() {
+                    return;
+                }
+                let solid = world.resource::<ClientWorld>().is_solid(at);
+                gate.check("door: open", if solid { Err("the open door is still solid on the client".into()) } else { Ok("a right click opened both halves, as the server turned them".into()) });
+                use_door(world);
+                gate.advance(now);
+            }
+            _ if waited > 10.0 => {
+                gate.check("door: open", Err(format!("{waited:.1} server s after a right click, the door's cells are {:?}", door_cells(world, at))));
+                leave(world, gate);
+            }
+            _ => {}
+        },
+        _ => match door_cells(world, at) {
+            Some((true, false)) => {
+                let solid = world.resource::<ClientWorld>().is_solid(at) && world.resource::<ClientWorld>().is_solid(at + IVec3::Y);
+                gate.check("door: shut", if solid { Ok("another shut it, solid again".into()) } else { Err("the shut door is not solid on the client".into()) });
+                leave(world, gate);
+            }
+            _ if waited > 10.0 => {
+                gate.check("door: shut", Err(format!("{waited:.1} server s after a second right click, the door's cells are {:?}", door_cells(world, at))));
+                leave(world, gate);
+            }
+            _ => {}
+        },
+    }
+}
+
+/// How many planks the home barrel holds for the table laid from it.
+const LAY_PLANKS: u32 = 4;
+
+/// After the lay: the viewer and inventory shut (the grid goes back to the pack), the
+/// barrel gone, and the planks the session carries before it given back.
+fn lay_done(world: &mut World, barrel: IVec3) {
+    world.resource_mut::<crate::hud::recipes::RecipeViewer>().trail.clear();
+    let mut ui = world.resource_mut::<UiState>();
+    (ui.recipes_open, ui.inventory_open) = (false, false);
+    let net = world.resource::<Net>();
+    net.command(&format!("setblock {} {} {} air", barrel.x, barrel.y, barrel.z));
+    net.command("clear oak_planks");
+    net.command("give oak_planks 64");
 }
 
 /// The torch quest the tracker follows, and the quest it sees done.
@@ -8268,15 +8462,28 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.phase = 8;
             }
         }
-        8 if in_phase > FIRE_WATCH => {
+        // Watched until enough puffs rose, or until so many were owed (by the chimney's
+        // rate, the particle amount and its share) that missing them is no chance.
+        8 => {
             let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let owed = {
+                let (emitters, client) = (world.resource::<crate::emitters::Emitters>(), world.resource::<ClientWorld>());
+                gate.chimney_owed += emitters.rate_of(chimney[1], client, amount) * world.resource::<Time>().delta_secs().min(0.1);
+                gate.chimney_owed
+            };
+            let count = world.resource::<crate::emitters::Emitters>().watched;
+            let done = count >= CHIMNEY_PARTICLES;
+            if !done && owed < CHIMNEY_OWED && in_phase < CHIMNEY_WAIT {
+                return;
+            }
             let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
-            let (count, why) = (emitters.watched, emitters.why_quiet(chimney[1], amount));
+            let why = emitters.why_quiet(chimney[1], amount);
             emitters.watch = None;
-            gate.check("chimney smoke", if count >= CHIMNEY_PARTICLES {
-                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {FIRE_WATCH} s"))
+            gate.chimney_owed = 0.0;
+            gate.check("chimney smoke", if done {
+                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {in_phase:.1} s ({owed:.1} owed)"))
             } else {
-                Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {FIRE_WATCH} s, under {CHIMNEY_PARTICLES} ({why})"))
+                Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {in_phase:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
             });
             let net = world.resource::<Net>();
             for at in [hearth, chimney[0], chimney[1]] {
@@ -8416,9 +8623,15 @@ const FIRE_WATCH: f32 = 1.5;
 /// fewer than this means the fire gives off (almost) nothing.
 const FIRE_PARTICLES: u32 = 4;
 
-/// Puffs a chimney's top over a hearth must give off in `FIRE_WATCH` seconds: about three
-/// a second, so none means it gives off nothing.
-const CHIMNEY_PARTICLES: u32 = 1;
+/// Puffs a chimney's top over a hearth must give off: it smokes all the while, not once.
+const CHIMNEY_PARTICLES: u32 = 3;
+/// Puffs owed (its rate times the seconds watched) by when they must have risen. The count
+/// varies less than a Poisson's of that mean, so three or fewer of twenty owed is under one
+/// in a hundred thousand: a chimney that falls short gives off less than it says.
+const CHIMNEY_OWED: f32 = 20.0;
+/// Longest the chimney is watched, in the game's seconds, for one never found or never owed
+/// anything.
+const CHIMNEY_WAIT: f32 = 12.0;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
 /// player and is theirs (kept, with them as its owner).

@@ -79,6 +79,7 @@ A home also answers other content, as plain effects with a condition, no code of
 | Sheltered | indoors, a fire (hearth or heat block), and rain, snow, hail, dust or a storm falling outside | heal x1.2, learn x1.05 |
 | Company | 1 animal the player keeps within the home's reach | heal x1.1 |
 | Full house | 4 such animals (hides Company) | heal x1.2, learn x1.05 |
+| Door shut | indoors at home with a shut door in it | heal x1.1, 1° warmer |
 | Kitchen garden | 4 crop plants (any stage) within reach | meals heal x1.1 (`meal_heal`, stacks with a larder) |
 | Bee garden | a skep of bees (`hive`) and 3 flowers within reach | heal x1.1; the hive's bees make crops within 8 blocks grow x1.25 (docs/bees.md) |
 
@@ -166,6 +167,39 @@ online only.
 All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST` (1.25).
 Home tiers use `heal`, `warmth` and `xp` only: a location effect that changed maximum health
 would cost health every time the player stepped out.
+
+## A door to shut
+
+A home keeps the night out with a **wooden door** (Construction 2, six planks of any wood at
+a table). It is two blocks tall, and one item places both halves, facing whoever sets it.
+Breaking either half takes the whole door and gives it back. A right click opens or shuts
+it. Shut, it is solid to players and creatures alike, and no creature opens one. Open, it
+stands against its jamb and lets anyone by. It will not shut on anyone standing in the
+doorway. Indoors at home behind a shut door, the **Door shut** reaction gives heal x1.1 and
+1° of warmth.
+
+How it works, for mod authors: it is all data on the blocks (blocks_furnishings.ron).
+`upper` names the block placed above with it, which rests on it (`support: Below`) and goes
+with it either way (`supported_by`). `swaps` names what using it turns it into, in the same
+facing, its other half with it (`action::swapping`, the `open` action, `Effect::Swap`).
+Shut and open are two blocks with their own `solid`, and only the server turns them; the
+client is told, never guesses, so nobody walks through a door the server still holds shut.
+A mod's gate, hatch or portcullis is the same four lines. The gate's Door step places one,
+opens it and shuts it ("door: placed", "door: open", "door: shut").
+
+## Crafting from home's stores
+
+The recipe viewer (U or R over an item) has a **Lay** button on every crafting recipe while
+the inventory is open, as NEI's "+" does: pressed, it fills the crafting grid with what that
+recipe takes (shift: as many sets as will go), putting what the grid held back in the pack
+first. It takes from the pack, and, while the player stands in their home (the box `/home`
+counts, `home_reach` across), from every store in it, nearest first: the barrel of planks
+by the door and the cupboard of wool are a woodshed and a larder to craft from, with no
+trips to fetch. A recipe that needs a table counts only at one; one above the player's
+level is passed over; with nothing to lay from, the chat says what is short. Server side in
+server/src/laying.rs (`core:lay`, an `ActionTarget::Item`, protocol 39), the grid choice in
+`Recipe::lay` (an alternative with enough for every alike cell). The gate's Home step puts
+four planks in a barrel beside the bag and lays a crafting table from it ("home: lay").
 
 ## Smoke over home
 

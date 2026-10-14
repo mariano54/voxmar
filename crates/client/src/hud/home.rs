@@ -18,7 +18,9 @@ pub struct HomePlugin;
 
 impl Plugin for HomePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostStartup, spawn).add_systems(Update, show.run_if(in_state(Screen::InGame)));
+        app.add_systems(PostStartup, spawn)
+            .add_systems(Update, show.run_if(in_state(Screen::InGame)))
+            .add_systems(OnExit(Screen::InGame), hide);
     }
 }
 
@@ -35,6 +37,13 @@ pub(crate) struct HomeMark {
 struct HomeIcon;
 #[derive(Component)]
 pub(crate) struct HomeWords;
+
+/// Out of the world the mark goes, as the combat meter does.
+fn hide(mut marks: Query<&mut Visibility, With<HomeMark>>) {
+    for mut visibility in &mut marks {
+        *visibility = Visibility::Hidden;
+    }
+}
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let mark = Node {

@@ -145,6 +145,10 @@ impl ActionContext for Context<'_> {
         self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
     }
 
+    fn creature_in(&self, cell: IVec3) -> bool {
+        self.server.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+    }
+
     fn cooking(&self) -> Option<&voxmar_engine::cooking::CookingRegistry> {
         Some(&self.server.content.cooking)
     }
@@ -336,6 +340,10 @@ impl Server {
                     player.changed(traits::INVENTORY);
                     let placed = placed_block(&Context { server: self, agent }, item, block, face);
                     self.set_block(cell, placed);
+                    // Its upper half goes in above with it (a door's top).
+                    if let Some(upper) = self.content.blocks.upper(placed) {
+                        self.set_block(cell + IVec3::Y, upper);
+                    }
                     // Marked as the player's: an ore teaches nothing broken again, and a
                     // furnishing gives itself back (where the world placed one, it does not).
                     // (By the block placed: a held item may place as another, as a torch does.)
@@ -387,7 +395,13 @@ impl Server {
                     player.teleport(spawn);
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
+                (Effect::LayRecipe, ActionTarget::Recipe { first, ways, count }) => self.lay_recipe(agent, first as usize, ways as usize, count),
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
+                (Effect::Swap, ActionTarget::Block { block, .. }) => {
+                    // Opened or shut here first: the clients follow what the server holds.
+                    let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
+                    self.set_blocks(&changes);
+                }
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
@@ -478,20 +492,9 @@ impl Server {
     /// recipe's skill level is met, and for a recipe bigger than two by two, at a crafting
     /// table within reach. Experience comes for every one made.
     fn craft(&mut self, agent: PlayerId, all: bool) {
-        let (recipes, skills) = (self.content.recipes.clone(), self.content.skills.clone());
-        let at_table = self.at_table(agent);
-        let (effects, blocks) = (self.content.effects.clone(), self.content.blocks.clone());
+        let recipes = self.content.recipes.clone();
+        let allowed = self.allowed_recipes(agent);
         let player = self.players.get_mut(&agent).unwrap();
-        // Each skill's level, own and boosted, taken before the grid changes.
-        let levels: rustc_hash::FxHashMap<SkillId, (u8, u8)> = skills
-            .ids()
-            .map(|skill| (skill, (skills.level(player.skills.xp(skill)), voxmar_engine::level::check_level(&skills, &effects, &player.skills, &player.vitals.effects, skill))))
-            .collect();
-        let inventory = player.inventory.clone();
-        let allowed = |r: &voxmar_engine::craft::Recipe| {
-            (at_table || !r.needs_table())
-                && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
-        };
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
         let first = recipes.find(&player.inventory.grid()).filter(|r| allowed(r));
