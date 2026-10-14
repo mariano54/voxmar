@@ -33,6 +33,7 @@ mod laying;
 mod stations;
 mod stores;
 mod treasure;
+mod troughs;
 pub mod save;
 mod villagers;
 mod wandering;

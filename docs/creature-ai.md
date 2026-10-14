@@ -94,7 +94,7 @@ Built now (`engine::creature::brain::modules`):
 | herd | social | closes on its group when it drifts well apart (its spacing past it), to its companion's near side, the same companion until there; spacing by sociability |
 | sentinel | social | stands watch while kin graze |
 | tempted | drive | follows a player holding its favourite food, hurrying as they draw ahead, keeping after them to 1.5 times the radius it noticed them at, and stepping back when too close; its home goes with it, so it stays where it was led; a grudge outweighs the food |
-| hunt | danger | chases and strikes, by RuneScape's rules; stalkers creep crouched, then pounce; gives up past its leash, or after balking twice running (a search finding no way to its target brings a balk on sooner), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
+| hunt | danger | chases and strikes, by RuneScape's rules; stalkers creep crouched, then pounce; gives up past its leash (unless struck there in the last 3 s: it fights back), or after balking twice running (a search finding no way to its target brings a balk on sooner), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
 | defend | danger | fights back when hurt (the boar, the bull, the bear); gives up as hunt does |
 | curious | social | comes to look from a distance, backs off if you come closer |
 | return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
