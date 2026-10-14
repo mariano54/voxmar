@@ -5668,8 +5668,9 @@ const HAND_AREA: [f32; 4] = [0.5, 1.0, 0.45, 1.0];
 const OUT_OF_HAND: [f32; 4] = [0.5, 0.8, 0.0, 0.35];
 
 /// The item in the hand, seen in first person: looking up at the open sky, an empty hand,
-/// an iron sword and a stone block each give a shot; the sword and the block each change
-/// the lower right and leave the upper left alone, and differ from each other. Then in a
+/// an iron sword, a stone block and the empty hand again each give a shot; the sword and the
+/// block each change the lower right and leave the sky alone (beyond what it drifted between
+/// the two empty-hand shots), and differ from each other. Then in a
 /// stone box with no light, the sword in hand is much darker (the hand takes the light where
 /// the player stands).
 fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -5713,6 +5714,14 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         4 if in_phase > 0.8 => {
             if gate.shot(world, "held-block").is_some() {
+                empty_hand(world);
+                gate.advance(now);
+            }
+        }
+        // The empty hand again, for how far the sky drifted (clouds go by in the wind) over
+        // the shots of the sword and the block between.
+        5 if in_phase > 0.8 => {
+            if gate.shot(world, "held-empty-after").is_some() {
                 let (x, y, z) = (feet.x, feet.y, feet.z);
                 let net = world.resource::<Net>();
                 net.command(&format!("fill {} {y} {} {} {} {} stone", x - 3, z - 3, x + 3, y + 5, z + 3));
@@ -5722,25 +5731,25 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Sealed in: a roof over the eye and nothing alight.
-        5 => {
+        6 => {
             let roof = feet + IVec3::new(0, 5, 0);
             let sealed = world.resource::<ClientWorld>().block(roof).is_some_and(|b| !b.is_air());
             if (sealed && in_phase > SETTLE) || gate.server_in_phase() > 10.0 {
                 gate.advance(now);
             }
         }
-        6 if in_phase > 1.0 => {
+        7 if in_phase > 1.0 => {
             if gate.shot(world, "held-sword-dark").is_some() {
                 empty_hand(world);
                 gate.advance(now);
             }
         }
-        7 if in_phase > 0.8 => {
+        8 if in_phase > 0.8 => {
             let Some(empty_dark) = gate.shot(world, "held-empty-dark") else { return };
             let (x, y, z) = (feet.x, feet.y, feet.z);
             world.resource::<Net>().command(&format!("fill {} {y} {} {} {} {} air", x - 3, z - 3, x + 3, y + 5, z + 3));
-            let shots: Vec<Option<Image>> = ["held-empty", "held-sword", "held-block", "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
-            let [Some(empty), Some(sword), Some(block), Some(sword_dark)] = shots.as_slice() else {
+            let shots: Vec<Option<Image>> = ["held-empty", "held-sword", "held-block", "held-empty-after", "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
+            let [Some(empty), Some(sword), Some(block), Some(empty_after), Some(sword_dark)] = shots.as_slice() else {
                 gate.check("held", Err("a shot of the hand was never taken".into()));
                 gate.next(Step::NaturalSpawns, now);
                 return;
@@ -5748,7 +5757,11 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let in_hand = |a: &Image, b: &Image| change_in(a, b, HAND_AREA);
             let (sword_seen, block_seen) = (in_hand(empty, sword), in_hand(empty, block));
             let apart = in_hand(sword, block);
-            let (left_sword, left_block) = (change_in(empty, sword, OUT_OF_HAND), change_in(empty, block, OUT_OF_HAND));
+            // Against whichever empty-hand shot it is nearer to, beyond the sky's own drift between
+            // the two: what holding does to the sky shows against both, however it drifts.
+            let drift = change_in(empty, empty_after, OUT_OF_HAND);
+            let left = |held: &Image| change_in(empty, held, OUT_OF_HAND).min(change_in(empty_after, held, OUT_OF_HAND));
+            let (left_sword, left_block) = (left(sword), left(block));
             let dark_seen = in_hand(&empty_dark, sword_dark);
             let result = if sword_seen < HELD_SEEN {
                 Err(format!("the sword barely shows in the lower right: it changed the view there by {sword_seen:.2} levels"))
@@ -5756,13 +5769,15 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("the block barely shows in the lower right: it changed the view there by {block_seen:.2} levels"))
             } else if apart < HELD_SEEN {
                 Err(format!("the sword and the block look alike in hand: they differ by {apart:.2} levels"))
-            } else if left_sword > HELD_ELSEWHERE || left_block > HELD_ELSEWHERE {
-                Err(format!("holding something changed the rest of the view: by {left_sword:.2} (sword) and {left_block:.2} (block) levels"))
+            } else if left_sword > HELD_ELSEWHERE + drift || left_block > HELD_ELSEWHERE + drift {
+                Err(format!(
+                    "holding something changed the rest of the view: by {left_sword:.2} (sword) and {left_block:.2} (block) levels, where the sky drifted {drift:.2} between the empty-hand shots"
+                ))
             } else if dark_seen > sword_seen * 0.5 {
                 Err(format!("the sword is as bright in a sealed dark box ({dark_seen:.2} levels from the empty hand) as under the sky ({sword_seen:.2})"))
             } else {
                 Ok(format!(
-                    "sword {sword_seen:.1} and block {block_seen:.1} levels in the lower right (differing by {apart:.1}), the rest unchanged ({left_sword:.2}, {left_block:.2}); in the dark box the sword shows {dark_seen:.1}"
+                    "sword {sword_seen:.1} and block {block_seen:.1} levels in the lower right (differing by {apart:.1}), the rest unchanged ({left_sword:.2}, {left_block:.2}, the sky drifting {drift:.2}); in the dark box the sword shows {dark_seen:.1}"
                 ))
             };
             gate.check("held", result);
@@ -5773,7 +5788,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// Levels the lower right must change by for the item in hand to count as drawn, and the
-/// most the rest of the view may.
+/// most the rest of the view may, beyond the sky's drift between the empty-hand shots.
 const HELD_SEEN: f32 = 1.0;
 const HELD_ELSEWHERE: f32 = 0.5;
 
